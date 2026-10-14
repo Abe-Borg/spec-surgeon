@@ -1,25 +1,21 @@
-"""A simple window for running Spec Surgeon (docs/NL_SURGICAL_EDITOR_PLAN.md Phase 7).
+"""The logic behind the Spec Surgeon window (docs/NL_SURGICAL_EDITOR_PLAN.md Phase 7), and its entry point.
 
-    spec-surgeon-gui            (no console window on Windows)
+    spec-surgeon-gui            (no console window on Windows; the installed app's SpecSurgeon.exe)
     spec-surgeon gui            (from a terminal)
 
-One window, top to bottom: the specs folder, an optional template, where results go, the request in plain English
-(or a spec file), answers to anything the compiler asks, three options, and the buttons
-**Preview → Run → Load set-aside files → Open results**. Everything the window does is a plain call into the
-engine (``Session`` below); nothing is applied before Preview, and Run refuses when a file changed since the
-preview (approval token).
+``Session`` holds everything the window does — files, compile, preview, run (with the approval-token check),
+Tier B, set-aside passes, advice — as plain calls into the engine; nothing is applied before Preview, and Run
+refuses when a file changed since the preview. It has no widgets and no Qt, so it is tested on its own and the
+command line never loads Qt.
 
-Tkinter only (it ships with Python on Windows) — no new dependency. Long work runs on a background thread; the
-log pane shows its progress.
+The window itself (PySide6 / Qt 6, v0.4.0) is the ``ui`` package: ``main()`` and ``build_window()`` below import it
+lazily and explain how to install Qt when it is missing (``pip install "spec-surgeon[gui]"``).
 """
 from __future__ import annotations
 
 import os
-import queue
 import subprocess
 import sys
-import threading
-import traceback
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -47,6 +43,8 @@ class Session:
     selected_files: Optional[List[Path]] = None   # when set (e.g. from load_set_aside), narrows the active batch
     prior_failures: List[Dict[str, Any]] = field(default_factory=list)
     client: Any = None                            # injectable for tests
+    last_batch: Any = None                        # BatchResult of the last Run (the window's results table)
+    last_trials: Any = None                       # List[codegen.FileTrial] of the last AI-written-transform run
 
     def files(self) -> List[Path]:
         from .batch import expand_inputs
@@ -170,7 +168,7 @@ class Session:
                                  "press Preview again")
             out = (self.out_dir or self.new_out_dir()) / "run"
             res = run_generated(self.generated, [str(f) for f in files], out, log=log)
-            self.last_run_dir = out
+            self.last_run_dir, self.last_trials, self.last_batch = out, res, None
             ok = sum(r.passed for r in res)
             return f"{ok} of {len(res)} file(s) PASS. Outputs: {out / 'outputs'} (your files were not changed)."
         if self.preview is None or self.spec is None:
@@ -181,7 +179,7 @@ class Session:
         out = self.out_dir / "run"
         batch = run_batch([str(f) for f in files], "edit-spec", {}, out, renderer="auto", do_render=render,
                           in_place=in_place, progress=log, spec=self.spec)
-        self.last_run_dir = out
+        self.last_run_dir, self.last_batch, self.last_trials = out, batch, None
         c = batch.counts()
         lines = [f"{len(batch.files)} file(s): PASS {c['PASS']}  FAIL {c['FAIL']}  EXCEPTION {c['EXCEPTION']}"]
         for f in batch.files:
@@ -191,7 +189,7 @@ class Session:
             elif f.record and not f.record.passed:
                 line += "  " + "; ".join(f"{ch.id} FAIL" for ch in f.record.checks if ch.status == "FAIL")
             elif f.delivered_to:
-                line += f"  → written back to {f.delivered_to}"
+                line += f"  → written back to {f.delivered_to}" if in_place else f"  → {f.delivered_to}"
             lines.append(line)
         lines.append(f"\nReport: {out / 'BATCH_REPORT.md'}")
         if not in_place:
@@ -226,206 +224,29 @@ def open_folder(path: Path) -> None:
 
 # ---- the window ----------------------------------------------------------------------------------
 
-def build_app(root=None, session: Optional[Session] = None):
-    import tkinter as tk
-    from tkinter import filedialog, messagebox, ttk
-    from tkinter.scrolledtext import ScrolledText
-    from . import __version__
+def build_window(session: Optional[Session] = None, **kw):
+    """The Qt window (``ui.app.build_window``); imported lazily so this module never needs PySide6."""
+    from .ui.app import build_window as _build
+    return _build(session, **kw)
 
-    root = root or tk.Tk()
-    root.title(f"Spec Surgeon {__version__}")
-    root.geometry("980x760")
-    s = session or Session()
-    q: "queue.Queue[tuple]" = queue.Queue()
-    pad = {"padx": 6, "pady": 3}
 
-    frm = ttk.Frame(root, padding=8)
-    frm.pack(fill="both", expand=True)
-    frm.columnconfigure(1, weight=1)
-
-    folder_v = tk.StringVar(value=str(s.folder or ""))
-    template_v = tk.StringVar(value=str(s.template or ""))
-    out_v = tk.StringVar(value=str(s.out_root))
-    key_v = tk.StringVar(value="")
-    render_v, inplace_v, codegen_v = tk.BooleanVar(value=True), tk.BooleanVar(value=False), tk.BooleanVar(value=False)
-
-    def browse_dir(var):
-        d = filedialog.askdirectory(initialdir=var.get() or str(Path.home()))
-        if d:
-            var.set(d)
-            if var is folder_v:
-                s.reset_set_aside()
-
-    def browse_file(var, types):
-        f = filedialog.askopenfilename(filetypes=types)
-        if f:
-            var.set(f)
-
-    rows = [("Specs folder", folder_v, lambda: browse_dir(folder_v)),
-            ("Template (optional)", template_v, lambda: browse_file(template_v, [("Word", "*.docx")])),
-            ("Results go to", out_v, lambda: browse_dir(out_v))]
-    for r, (label, var, cmd) in enumerate(rows):
-        ttk.Label(frm, text=label).grid(row=r, column=0, sticky="w", **pad)
-        ttk.Entry(frm, textvariable=var).grid(row=r, column=1, sticky="ew", **pad)
-        ttk.Button(frm, text="Browse…", command=cmd).grid(row=r, column=2, **pad)
-
-    ttk.Label(frm, text="What should change?").grid(row=3, column=0, sticky="nw", **pad)
-    request_t = tk.Text(frm, height=3, wrap="word")
-    request_t.grid(row=3, column=1, columnspan=2, sticky="ew", **pad)
-    ttk.Label(frm, text="Answers (if asked)").grid(row=4, column=0, sticky="nw", **pad)
-    answers_t = tk.Text(frm, height=2, wrap="word")
-    answers_t.grid(row=4, column=1, columnspan=2, sticky="ew", **pad)
-
-    ttk.Label(frm, text="Anthropic API key").grid(row=5, column=0, sticky="w", **pad)
-    key_e = ttk.Entry(frm, textvariable=key_v, show="•")
-    key_e.grid(row=5, column=1, sticky="ew", **pad)
-    ttk.Label(frm, text="(only if not set in Windows; kept for this session only)").grid(row=5, column=2, sticky="w")
-
-    opts = ttk.Frame(frm)
-    opts.grid(row=6, column=0, columnspan=3, sticky="w", **pad)
-    ttk.Checkbutton(opts, text="Render pages (Word or LibreOffice)", variable=render_v).pack(side="left", padx=6)
-    ttk.Checkbutton(opts, text="Write results back over the originals (guarded)", variable=inplace_v).pack(side="left", padx=6)
-    ttk.Checkbutton(opts, text="Allow AI-written transforms", variable=codegen_v).pack(side="left", padx=6)
-
-    btns = ttk.Frame(frm)
-    btns.grid(row=7, column=0, columnspan=3, sticky="w", **pad)
-    log_t = ScrolledText(frm, height=24, wrap="word", font=("Consolas", 9))
-    log_t.grid(row=8, column=0, columnspan=3, sticky="nsew", **pad)
-    frm.rowconfigure(8, weight=1)
-    status_v = tk.StringVar(value="Choose the specs folder, type a request (or load a spec file), then Preview.")
-    ttk.Label(frm, textvariable=status_v, relief="sunken", anchor="w").grid(row=9, column=0, columnspan=3, sticky="ew")
-
-    buttons: Dict[str, Any] = {}
-
-    def write(text):
-        log_t.insert("end", text + "\n")
-        log_t.see("end")
-
-    def sync():
-        new_folder = Path(folder_v.get()) if folder_v.get().strip() else None
-        if new_folder != s.folder:
-            s.reset_set_aside()
-        s.folder = new_folder
-        s.template = Path(template_v.get()) if template_v.get().strip() else None
-        s.out_root = Path(out_v.get()) if out_v.get().strip() else s.out_root
-        if key_v.get().strip():
-            os.environ["ANTHROPIC_API_KEY"] = key_v.get().strip()
-
-    def busy(on: bool, label: str = ""):
-        for b in buttons.values():
-            b.state(["disabled"] if on else ["!disabled"])
-        status_v.set(label if on else "Ready.")
-
-    def work(label: str, fn):
-        """Run fn(log) on a background thread; its log lines and result come back through the queue."""
-        sync()
-        busy(True, label + "…")
-        write(f"\n=== {label} ===")
-
-        def target():
-            try:
-                q.put(("done", fn(lambda m: q.put(("log", str(m))))))
-            except Exception as e:  # shown to the user, not swallowed
-                q.put(("error", f"{type(e).__name__}: {e}", traceback.format_exc()))
-        threading.Thread(target=target, daemon=True).start()
-
-    def poll():
-        try:
-            while True:
-                item = q.get_nowait()
-                if item[0] == "log":
-                    write(item[1])
-                elif item[0] == "done":
-                    write(item[1] or "")
-                    busy(False)
-                elif item[0] == "error":
-                    write("ERROR: " + item[1])
-                    busy(False)
-                    status_v.set("Error — see the log.")
-        except queue.Empty:
-            pass
-        root.after(120, poll)
-
-    # Tk widgets and variables may only be touched on the main thread: every value a background job needs is
-    # read here, before the thread starts, and passed in.
-    def do_preview():
-        req = request_t.get("1.0", "end").strip()
-        answers = [a for a in answers_t.get("1.0", "end").splitlines() if a.strip()]
-        allow_codegen, render = codegen_v.get(), render_v.get()
-
-        def fn(log):
-            out = []
-            if s.spec_source and s.spec_source != "compiled" and s.spec is not None and not req:
-                out.append(f"Using the spec file {s.spec_source}.")
-            else:
-                msg = s.compile(req, answers, allow_codegen, log)
-                out.append(msg)
-                if s.questions:
-                    out += [f"  ? {x}" for x in s.questions]
-                    return "\n".join(out)
-            if s.spec is not None or s.generated is not None:
-                out.append(s.make_preview(render, log))
-                if s.preview is not None:
-                    out.append(f"\nPreview files: {s.out_dir / 'preview'}  — look, then press Run.")
-            return "\n".join(out)
-        work("Preview", fn)
-
-    def do_load_spec():
-        f = filedialog.askopenfilename(filetypes=[("EditSpec", "*.json")])
-        if not f:
-            return
-        try:
-            spec = s.load_spec(Path(f))
-            request_t.delete("1.0", "end")
-            write(f"\nLoaded spec {f}: {spec.get('request')!r} — {spec.get('summary')}\nPress Preview.")
-        except Exception as e:
-            messagebox.showerror("Spec Surgeon", f"Cannot use this spec:\n{e}")
-
-    def do_run():
-        sync()
-        if inplace_v.get() and not messagebox.askyesno(
-                "Spec Surgeon", "Write the verified results back over the original files?\n\nOnly files that pass "
-                "every check are written, and a file open in Word or changed since the preview is skipped."):
-            return
-        in_place, render = inplace_v.get(), render_v.get()
-        work("Run", lambda log: s.run(in_place, render, log))
-
-    def do_set_aside():
-        work("Load set-aside files", lambda log: s.load_set_aside())
-
-    def do_open():
-        target = s.last_run_dir or s.out_dir or s.out_root
-        if target and Path(target).exists():
-            open_folder(Path(target))
-        else:
-            messagebox.showinfo("Spec Surgeon", "Nothing there yet.")
-
-    def do_advise():
-        work("Advice on exceptions", lambda log: s.advise(log))
-
-    for name, text, cmd in (("preview", "Preview", do_preview), ("load", "Load spec file…", do_load_spec),
-                            ("run", "Run", do_run), ("set_aside", "Load set-aside files", do_set_aside),
-                            ("open", "Open results folder", do_open),
-                            ("advise", "Advise on exceptions", do_advise)):
-        buttons[name] = ttk.Button(btns, text=text, command=cmd)
-        buttons[name].pack(side="left", padx=4)
-
-    root.after(120, poll)
-    root._spec_surgeon = {"session": s, "buttons": buttons, "log": log_t, "request": request_t, "answers": answers_t,
-                          "vars": {"folder": folder_v, "template": template_v, "out": out_v, "render": render_v,
-                                   "in_place": inplace_v, "codegen": codegen_v}, "status": status_v}
-    return root
+GUI_MISSING = ("The Spec Surgeon window needs Qt for Python (PySide6).\n"
+               "Install it with:\n"
+               '    py -3 -m pip install "spec-surgeon[gui]"\n'
+               "(the Windows installer includes it).")
 
 
 def main(argv=None) -> int:
     try:
-        root = build_app()
-    except ImportError:
-        print("Tkinter is not available in this Python. On Windows it ships with the python.org installer "
-              "(tick 'tcl/tk and IDLE').", file=sys.stderr)
+        import PySide6.QtWidgets  # noqa: F401 — PySide6, or a system library Qt needs (libEGL on Linux), missing
+    except ImportError as e:
+        msg = f"{GUI_MISSING}\n\n({e})"
+        print(msg, file=sys.stderr)
+        from .winapp import message_box
+        message_box("Spec Surgeon", msg)          # the windowed launcher has no console to print to
         return 2
-    root.mainloop()
-    return 0
+    from .ui.app import main as qt_main
+    return qt_main(argv)
 
 
 if __name__ == "__main__":  # pragma: no cover

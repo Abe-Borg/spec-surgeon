@@ -5,6 +5,8 @@ $installDir = Join-Path $work "Installed app with spaces"
 New-Item -ItemType Directory -Force -Path $work | Out-Null
 python packaging/windows/prepare_smoke.py $work
 if ($LASTEXITCODE -ne 0) { throw "Could not prepare installer fixtures" }
+python packaging/windows/prepare_smoke.py $work --update $Installer
+if ($LASTEXITCODE -ne 0) { throw "Could not prepare the update request" }
 
 function Run-Checked([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds = 240) {
     $process = Start-Process -FilePath $File -ArgumentList $Arguments -PassThru
@@ -40,6 +42,25 @@ try {
     Get-Content $reportPath
     $result = Get-Content $reportPath -Raw | ConvertFrom-Json
     if (-not $result.ok) { throw $result.error }
+
+    # The in-app update: the installed window starts this same installer detached (/SILENT ... /RELAUNCH=1) and
+    # quits; Setup must wait for the app mutex, install over the running copy's folder and reopen the app.
+    Run-Checked $gui @("--installer-smoke-test", "`"$work\update-request.json`"")
+    $update = Get-Content (Join-Path $work "update-result.json") -Raw | ConvertFrom-Json
+    if (-not $update.ok) { throw $update.error }
+    Wait-Process -Id $update.installer_pid -Timeout 300 -ErrorAction SilentlyContinue
+    $installLog = Join-Path $work "update-install.log"
+    if (-not (Select-String -Path $installLog -Pattern "Installation process succeeded" -Quiet)) {
+        throw "The in-app update did not install (see update-install.log)"
+    }
+    $deadline = (Get-Date).AddSeconds(90)
+    do {
+        $reopened = Get-Process SpecSurgeon -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $gui }
+        if (-not $reopened) { Start-Sleep -Seconds 1 }
+    } until ($reopened -or (Get-Date) -gt $deadline)
+    if (-not $reopened) { throw "Spec Surgeon did not reopen after the in-app update" }
+    $reopened | Stop-Process -Force
+    Start-Sleep -Seconds 2
 
     # Running the installer again exercises an in-place reinstall with the same application ID.
     Run-Checked $Installer @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",

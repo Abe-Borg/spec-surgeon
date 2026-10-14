@@ -23,3 +23,8 @@ def prepare():
         from installed_smoke import main
 
         sys.exit(main(sys.argv[2]))
+    # The window and the command line (never a pool worker or the sandbox, which returned above) hold the app
+    # mutex for their whole life: an in-app update waits for it, and uninstall refuses while it exists.
+    from spec_surgeon.winapp import hold_app_mutex
+
+    hold_app_mutex()

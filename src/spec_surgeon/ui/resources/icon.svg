@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Spec Surgeon: a specification page with a verified check. Source of the window icon and of
+       packaging/windows/SpecSurgeon.ico (packaging/windows/make_icon.py). -->
+  <rect x="8" y="8" width="240" height="240" rx="52" ry="52" fill="#0F6CBD"/>
+  <path d="M70 36 H160 L194 70 V214 Q194 222 186 222 H78 Q70 222 70 214 Z" fill="#FFFFFF"/>
+  <path d="M160 36 V62 Q160 70 168 70 H194 Z" fill="#B9D7F5"/>
+  <rect x="88" y="88" width="78" height="11" rx="5.5" fill="#8DB4DD"/>
+  <rect x="88" y="112" width="88" height="11" rx="5.5" fill="#8DB4DD"/>
+  <rect x="88" y="136" width="60" height="11" rx="5.5" fill="#8DB4DD"/>
+  <circle cx="184" cy="184" r="48" fill="#0F7B0F" stroke="#FFFFFF" stroke-width="8"/>
+  <path d="M160 185 L177 202 L210 166" fill="none" stroke="#FFFFFF" stroke-width="13" stroke-linecap="round"
+        stroke-linejoin="round"/>
+</svg>

@@ -42,12 +42,15 @@ jobs:
       - name: Install test and build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libreoffice-writer xvfb xauth pandoc
-          python -m pip install -e ".[dev,agent]" build twine jsonschema
-      - name: Test with a display and LibreOffice
+          sudo apt-get install -y libreoffice-writer pandoc libegl1 libopengl0 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+          python -m pip install -e ".[dev,agent,gui]" build twine jsonschema
+      - name: Test with Qt (offscreen) and LibreOffice
+        env:
+          QT_QPA_PLATFORM: offscreen
+          SPEC_SURGEON_REQUIRE_QT: "1"
         run: |
-          python -c "import tkinter; from spec_surgeon.render.libreoffice import find_soffice; assert find_soffice()"
-          xvfb-run -a python -m pytest -q -s --junitxml=release-tests.xml
+          python -c "from PySide6.QtWidgets import QApplication; QApplication([]); from spec_surgeon.render.libreoffice import find_soffice; assert find_soffice()"
+          python -m pytest -q -s --junitxml=release-tests.xml
       - name: Build and validate distributions
         run: |
           python -m build
@@ -57,6 +60,9 @@ jobs:
           cd /tmp
           /tmp/spec-surgeon-release-smoke/bin/spec-surgeon --help
           /tmp/spec-surgeon-release-smoke/bin/spec-surgeon ops --catalog > /tmp/spec-surgeon-catalog.json
+          # without the gui extra the window explains how to get Qt instead of crashing
+          set +e; /tmp/spec-surgeon-release-smoke/bin/spec-surgeon-gui; code=$?; set -e
+          test "$code" = 2
       - name: Create checksums
         run: |
           cd dist

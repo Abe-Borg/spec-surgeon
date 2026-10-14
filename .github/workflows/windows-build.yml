@@ -29,8 +29,11 @@ jobs:
           $version = python -c "import tomllib; print(tomllib.load(open('pyproject.toml', 'rb'))['project']['version'])"
           "version=$version" >> $env:GITHUB_OUTPUT
       - name: Install dependencies
-        run: python -m pip install -e ".[word,agent,dev]" "pyinstaller>=6.11,<7" jsonschema
+        run: python -m pip install -e ".[gui,word,agent,dev]" "PySide6-Essentials==6.12.0" "pyinstaller>=6.11,<7" jsonschema
       - name: Run Windows tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          SPEC_SURGEON_REQUIRE_QT: "1"
         run: python -m pytest -q --junitxml=windows-tests.xml
       - name: Bundle the desktop app and CLI
         shell: pwsh
@@ -52,7 +55,7 @@ jobs:
           }
           & $compiler "/DAppVersion=$env:APP_VERSION" "/O$PWD\dist\installer" packaging/windows/installer.iss
           if ($LASTEXITCODE -ne 0) { throw "Inno Setup failed" }
-      - name: Test install, GUI, batch workers, isolated operations, reinstall, and uninstall
+      - name: Test install, GUI, batch workers, isolated operations, in-app update, reinstall, and uninstall
         shell: pwsh
         env:
           APP_VERSION: ${{ steps.version.outputs.version }}
@@ -66,7 +69,10 @@ jobs:
           path: |
             windows-tests.xml
             ${{ runner.temp }}/Spec Surgeon installer validation/smoke-result.json
+            ${{ runner.temp }}/Spec Surgeon installer validation/gui-windows.png
             ${{ runner.temp }}/Spec Surgeon installer validation/install.log
+            ${{ runner.temp }}/Spec Surgeon installer validation/update-result.json
+            ${{ runner.temp }}/Spec Surgeon installer validation/update-install.log
       - name: Save Windows installer
         uses: actions/upload-artifact@v4
         with:
