@@ -8,6 +8,12 @@ if ($LASTEXITCODE -ne 0) { throw "Could not prepare installer fixtures" }
 python packaging/windows/prepare_smoke.py $work --update $Installer
 if ($LASTEXITCODE -ne 0) { throw "Could not prepare the update request" }
 
+function Show-File([string]$Path) {
+    # Reports and logs go into the job log, so a failure can be diagnosed without downloading artifacts.
+    if (Test-Path $Path) { Write-Host "----- $Path"; Get-Content $Path | Write-Host; Write-Host "-----" }
+    else { Write-Host "----- (missing) $Path" }
+}
+
 function Run-Checked([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds = 240) {
     $process = Start-Process -FilePath $File -ArgumentList $Arguments -PassThru
     if (-not $process.WaitForExit($TimeoutSeconds * 1000)) {
@@ -36,22 +42,25 @@ try {
     $env:PYTHONPATH = $null
     $help = & $cli --help
     if ($LASTEXITCODE -ne 0 -or -not ($help -match "Spec Surgeon")) { throw "Installed CLI failed" }
-    Run-Checked $gui @("--installer-smoke-test", "`"$work\request.json`"")
     $reportPath = Join-Path $work "smoke-result.json"
+    try { Run-Checked $gui @("--installer-smoke-test", "`"$work\request.json`"") }
+    finally { Show-File $reportPath }
     if (-not (Test-Path $reportPath)) { throw "Installed app did not produce a smoke-test report" }
-    Get-Content $reportPath
     $result = Get-Content $reportPath -Raw | ConvertFrom-Json
     if (-not $result.ok) { throw $result.error }
 
     # The in-app update: the installed window starts this same installer detached (/SILENT ... /RELAUNCH=1) and
     # quits; Setup must wait for the app mutex, install over the running copy's folder and reopen the app.
-    Run-Checked $gui @("--installer-smoke-test", "`"$work\update-request.json`"")
-    $update = Get-Content (Join-Path $work "update-result.json") -Raw | ConvertFrom-Json
+    $updateReport = Join-Path $work "update-result.json"
+    try { Run-Checked $gui @("--installer-smoke-test", "`"$work\update-request.json`"") }
+    finally { Show-File $updateReport }
+    $update = Get-Content $updateReport -Raw | ConvertFrom-Json
     if (-not $update.ok) { throw $update.error }
     Wait-Process -Id $update.installer_pid -Timeout 300 -ErrorAction SilentlyContinue
     $installLog = Join-Path $work "update-install.log"
     if (-not (Select-String -Path $installLog -Pattern "Installation process succeeded" -Quiet)) {
-        throw "The in-app update did not install (see update-install.log)"
+        Show-File $installLog
+        throw "The in-app update did not install (see update-install.log above)"
     }
     $deadline = (Get-Date).AddSeconds(90)
     do {
