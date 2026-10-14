@@ -352,6 +352,39 @@ def test_failed_outputs_are_quarantined_and_explained(tmp_path, monkeypatch):
     assert "failed/" in (out / "BATCH_REPORT.md").read_text(encoding="utf-8")
 
 
+def test_v9_guard_failures_are_quarantined_too(tmp_path, monkeypatch):
+    """Codex review on the v0.3.1 PR: V9 runs after the first quarantine check, so a drifted source or a refused
+    in-place write-back used to leave a stale output in outputs/ (and record it as delivered)."""
+    spec = {"request": "replace FM Global with GRC", "summary": "s", "mode": "content",
+            "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
+                     "params": {"find": "FM Global", "replace": "GRC", "author": AUTHOR}}]}
+    # non-in-place: the source drifts while the batch runs
+    d = tmp_path / "drift"; d.mkdir()
+    (d / "21 05 00 – A.docx").write_bytes(build("21 05 00", "A"))
+    monkeypatch.setattr(batch_module.guard, "drifted", lambda identity: "mtime moved during the run")
+    out = tmp_path / "out1"
+    b = run_batch([str(d)], "edit-spec", {}, out, workers=1, renderer="none", do_render=False, spec=spec)
+    f = b.files[0]
+    assert f.status == "FAIL" and f.record.get("V9").status == "FAIL" and f.delivered_to is None
+    assert not list((out / "outputs").iterdir()) and [p.name for p in (out / "failed").iterdir()] == ["21 05 00 – A.docx"]
+    assert f.output == out / "failed" / "21 05 00 – A.docx"
+    monkeypatch.undo()
+    # in place: the guard refuses the write-back (file open in Word / drifted)
+    d2 = tmp_path / "locked"; d2.mkdir()
+    src = d2 / "21 05 00 – B.docx"; src.write_bytes(build("21 05 00", "B")); before = src.read_bytes()
+
+    def refuse(identity, data):
+        raise batch_module.guard.GuardError("Word lock file present: the document is open")
+    monkeypatch.setattr(batch_module.guard, "write_back", refuse)
+    out2 = tmp_path / "out2"
+    b2 = run_batch([str(d2)], "edit-spec", {}, out2, workers=1, renderer="none", do_render=False, spec=spec, in_place=True)
+    f2 = b2.files[0]
+    assert f2.status == "FAIL" and f2.record.get("V9").status == "FAIL" and f2.delivered_to is None
+    assert src.read_bytes() == before
+    assert not list((out2 / "outputs").iterdir()) and [p.name for p in (out2 / "failed").iterdir()] == ["21 05 00 – B.docx"]
+    assert "failed/" in f2.record.get("V9").summary and "failed/" in (out2 / "BATCH_REPORT.md").read_text(encoding="utf-8")
+
+
 # ---- F5: the compiler can read the grammar it is expected to use ------------------------------------------------
 
 def test_catalog_documents_fill_rules_and_expect_ranges_and_the_fallback_example_plans_on_both_layouts():

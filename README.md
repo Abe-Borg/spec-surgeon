@@ -546,7 +546,7 @@ Tier 3 — a request no module handles — is development: use the skill (`src/s
 3. writes a temp file in the same directory and `os.replace`s it (atomic; OneDrive sees one new version);
 4. re-acquires and records the new identity.
 
-Without `--in-place`, outputs stay in `<out>/outputs/` and V9 only confirms the sources did not move during the run. OneDrive/SharePoint version history remains the last-resort rollback. Since v0.3.1 an output that fails any check is moved out of `outputs/` into `<out>/failed/` before delivery, so copying the outputs folder onto a project share can never pick up a file the suite rejected; the batch report, the CLI summary and the window all name the folder.
+Without `--in-place`, outputs stay in `<out>/outputs/` and V9 only confirms the sources did not move during the run. OneDrive/SharePoint version history remains the last-resort rollback. Since v0.3.1 an output that fails any check is moved out of `outputs/` into `<out>/failed/` before delivery, and so is an output whose V9 guard fails afterwards (the source drifted during the run, or the in-place write-back was refused because the file was open in Word), so copying the outputs folder onto a project share can never pick up a file the suite rejected; the batch report, the CLI summary and the window all name the folder.
 
 ---
 

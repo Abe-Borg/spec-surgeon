@@ -193,8 +193,10 @@ proposals and recorded in the plan's status sections.
   templated region: blank ↔ blank, else outer edge + shared words, 2 pt window, footer from the page bottom.
 - `verify/props.py` — V10: assertion kinds, independent selectors/styles/theme, residual identity.
 - `batch.py` — the pipeline; `_process_one` is the per-file worker (must stay top-level and picklable); it
-  runs a named job or an EditSpec (`spec=`). `outputs/` holds only files that passed every check: an output that fails
-  verification is moved to `failed/` (`quarantine_failed_output`) before delivery and V9 records where it went.
+  runs a named job or an EditSpec (`spec=`). `outputs/` holds only files that passed every check, V9 included: an output
+  that fails verification is moved to `failed/` (`quarantine_failed_output`) before delivery, and one whose V9 guard
+  fails afterwards (drift during the run, a refused in-place write-back) is moved the same way; V9 records where it went
+  and `delivered_to` stays empty.
 - `render/` — `word_com.py` (DispatchEx only; copies only; Quit the instance you made), `libreoffice.py`.
 - `guard.py` — identity, drift, lock file, atomic write.
 - `tests/make_fixtures.py` — synthetic specs with the hard cases; `build_rich()` is the op fixture (first/even
