@@ -37,7 +37,10 @@ jobs:
           APP_VERSION: ${{ needs.build.outputs.version }}
         run: |
           tag="v$APP_VERSION"
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::No release $tag yet; the tag's release workflow publishes this installer."
+            exit 0
+          fi
           mkdir existing-checksums
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir existing-checksums
           installer="SpecSurgeon-$APP_VERSION-Setup-x64.exe"

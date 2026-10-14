@@ -1,11 +1,10 @@
-"""The window (Phase 7, first cut): its logic (``gui.Session``) end to end with a scripted client, and — where Tk
-and a display exist — the real window driven through its buttons."""
+"""The window: its logic (``gui.Session``) end to end with a scripted client, and the real Qt window (offscreen)
+driven through its buttons — preview and run, stale previews, questions, errors, updates (check, skip, install
+hand-off, post-update banners), what it remembers, and that Qt never leaks into the engine or the command line."""
 from __future__ import annotations
 
 import json
 import os
-import shutil
-import time
 from pathlib import Path
 
 import pytest
@@ -93,40 +92,112 @@ def test_errors_are_plain(tmp_path):
         Session(folder=empty, out_root=tmp_path).compile("  ", [], False, lambda m: None)
 
 
-def _tk_or_skip():
-    tk = pytest.importorskip("tkinter")
-    try:
-        root = tk.Tk()
-    except tk.TclError as e:
-        pytest.skip(f"no display: {e}")
-    return root
+# ---- the real window (Qt, offscreen) ------------------------------------------------------------------
+
+@pytest.fixture
+def qt(tmp_path, monkeypatch):
+    """A QApplication, a private settings folder, no update check and no API key from the developer's machine."""
+    from qt_support import qt_app_or_skip
+    app = qt_app_or_skip()
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    windows = []
+    yield app, windows
+    for w in windows:
+        w.force_close = True
+        w.close()
+        w.deleteLater()
+    app.processEvents()
 
 
-def test_the_window_previews_and_runs_a_spec_file(folder, tmp_path):
-    root = _tk_or_skip()
-    from spec_surgeon.gui import build_app
+def window(qt, session=None, **kw):
+    from spec_surgeon.gui import build_window
+    from spec_surgeon.ui.app import RecordingPrompts
+    kw.setdefault("prompts", RecordingPrompts())
+    w = build_window(session, **kw)
+    qt[1].append(w)
+    return w, w._spec_surgeon
+
+
+def test_the_window_previews_and_runs_a_spec_file(qt, folder, tmp_path):
     s = Session(out_root=tmp_path / "out")
     s.load_spec(SPECS / "remove-all-headers-footers.json")
-    app = build_app(root, s)
-    ui = app._spec_surgeon
+    w, ui = window(qt, s)
     ui["vars"]["folder"].set(str(folder))
     ui["vars"]["render"].set(False)
-
-    def click_and_wait(name, timeout=60):
-        ui["buttons"][name].invoke()
-        t0 = time.time()
-        while time.time() - t0 < timeout:
-            app.update()
-            if ui["status"].get() in ("Ready.", "Error — see the log."):
-                return ui["log"].get("1.0", "end")
-            time.sleep(0.05)
-        raise AssertionError("timed out")
-
-    text = click_and_wait("preview")
+    assert not ui["buttons"]["run"].isEnabled()                 # nothing runs before a preview
+    ui["buttons"]["preview"].click()
+    text = ui["wait"]()
     assert "2 plan cleanly" in text, text
-    text = click_and_wait("run")
+    assert ui["status"].get() == "Ready."
+    assert ui["preview_model"].badges() == ["planned", "planned"]
+    assert w.stack.currentWidget() is w.preview_page
+    before = {f: f.read_bytes() for f in folder.glob("*.docx")}
+    ui["buttons"]["run"].click()
+    text = ui["wait"](120)
     assert "PASS 2" in text, text
-    app.destroy()
+    assert ui["results_model"].badges() == ["pass", "pass"]
+    assert all("Verified" in r.cells[2] and "written back" not in r.cells[2] for r in ui["results_model"].rows)
+    assert {f: f.read_bytes() for f in folder.glob("*.docx")} == before    # copies only
+    assert w.stack.currentWidget() is w.run_page and w.run_page.results.isVisible() is not None
+
+
+def test_run_is_enabled_only_while_the_preview_is_current(qt, folder, tmp_path):
+    s = Session(out_root=tmp_path / "out")
+    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert ui["buttons"]["run"].isEnabled()
+    ui["request"].set("change all fonts to Arial")              # a typed request replaces the loaded spec
+    assert not ui["buttons"]["run"].isEnabled()
+    assert "press Preview again" in w.run_page.run_hint.text()
+    ui["request"].set("")
+    assert ui["buttons"]["run"].isEnabled()
+    other = tmp_path / "Other"
+    other.mkdir()
+    ui["vars"]["folder"].set(str(other))
+    assert not ui["buttons"]["run"].isEnabled()
+    assert w.do_run() is False
+
+
+def test_the_window_shows_claude_s_questions(qt, folder, tmp_path):
+    s = Session(out_root=tmp_path / "out", client=FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]}))))
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["request"].set("remove some headers")
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert ui["status"].get() == "Ready."
+    assert not w.request_page.answers_card.isHidden()
+    assert "Which sections?" in w.request_page.questions.text()
+    assert "Answers" in w.request_page.answers_label.text()
+    assert not ui["buttons"]["run"].isEnabled()
+
+
+def test_an_error_is_shown_not_swallowed(qt, tmp_path):
+    w, ui = window(qt, Session(out_root=tmp_path / "out"))
+    ui["request"].set("remove all headers and footers")
+    ui["buttons"]["preview"].click()
+    text = ui["wait"]()
+    assert "ERROR: ValueError: choose the folder" in text
+    assert ui["status"].get() == "Error — see the log."
+    assert not w.request_page.info.isHidden() and "choose the folder" in w.request_page.info.text.text()
+
+
+def test_template_in_the_folder_is_left_out_of_the_window_count(qt, folder, tmp_path):
+    from make_fixtures import build_template
+    tpl = folder / "00 00 00 TEMPLATE.docx"
+    tpl.write_bytes(build_template())
+    w, ui = window(qt, Session(out_root=tmp_path / "out"))
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["template"].set(str(tpl))
+    w._refresh_files()
+    assert w.files_page.file_list.count() == 2
+    assert w.files_page.folder_hint.text().startswith("2 Word file(s) ready")
 
 
 def test_template_in_the_folder_is_neither_previewed_nor_run(folder, tmp_path):
@@ -154,3 +225,254 @@ def test_generated_run_refuses_unpreviewed_files(folder, tmp_path):
     (folder / "21 99 00 – NEW.docx").write_bytes(build("21 99 00", "NEW"))
     with pytest.raises(ValueError, match="since the AI-written transform was tested"):
         s.run(False, False, lambda m: None)
+
+
+# ---- updates in the window ----------------------------------------------------------------------------------
+
+def _release(version="9.9.9"):
+    from spec_surgeon.updater import Asset, UpdateInfo
+    name = f"SpecSurgeon-{version}-Setup-x64.exe"
+    return UpdateInfo(version=version, tag=f"v{version}", notes="## New\n- a thing", html_url="https://example.invalid",
+                      installer=Asset(name, "https://example.invalid/" + name, 10),
+                      sums=Asset("SHA256SUMS", "https://example.invalid/SHA256SUMS"))
+
+
+def _checker(results):
+    """Answers each check with the next item: a CheckResult, or an exception to raise."""
+    from spec_surgeon.updater import CheckResult, current_version
+    calls = []
+
+    def check(manual, skipped):
+        calls.append((manual, skipped))
+        item = results.pop(0) if len(results) > 1 else results[0]
+        if isinstance(item, Exception):
+            raise item
+        if item == "update":
+            info = _release()
+            if skipped == info.version and not manual:
+                return CheckResult("current", current_version(), info, skipped=True)
+            return CheckResult("update", current_version(), info, skipped=skipped == info.version)
+        return CheckResult(item, current_version())
+    check.calls = calls
+    return check
+
+
+def test_update_banner_skip_and_manual_check(qt, tmp_path, monkeypatch):
+    from spec_surgeon.settings import Settings, load_settings
+    monkeypatch.delenv("SPEC_SURGEON_NO_UPDATE_CHECK")
+    checker = _checker(["update"])
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), settings=Settings(auto_check_updates=True),
+                   checker=checker)
+    assert ui["banner"].isHidden()
+    assert w.updates.auto_check() is True
+    ui["wait"]()
+    assert not ui["banner"].isHidden() and ui["banner"].mode == "available"
+    assert "9.9.9 is available" in ui["banner"].title.text()
+    assert ui["buttons"]["install_update"].isEnabled()
+    assert w.settings.last_update_check > 0
+    assert w.updates.auto_check() is False                      # once a day
+    ui["banner"].btn_skip.click()
+    assert ui["banner"].isHidden() and load_settings().skipped_version == "9.9.9"
+    w.settings.last_update_check = 0
+    w.updates.auto_check()
+    ui["wait"]()
+    assert ui["banner"].isHidden()                              # a skipped version stays quiet on automatic checks
+    ui["buttons"]["check_updates"].click()
+    ui["wait"]()
+    assert not ui["banner"].isHidden() and "skip" in ui["banner"].text.text()
+    assert checker.calls[-1] == (True, "9.9.9")
+
+
+def test_manual_check_reports_up_to_date_and_errors(qt, tmp_path):
+    from spec_surgeon.updater import UpdateError
+    prompts_ = __import__("spec_surgeon.ui.app", fromlist=["RecordingPrompts"]).RecordingPrompts(answers=[False])
+    checker = _checker(["current", UpdateError("Couldn't reach GitHub — check your internet connection or proxy.",
+                                               "offline")])
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), checker=checker, prompts=prompts_)
+    ui["buttons"]["check_updates"].click()
+    ui["wait"]()
+    assert prompts_.shown[-1][0] == "notify" and "up to date" in prompts_.shown[-1][2]
+    ui["buttons"]["check_updates"].click()
+    ui["wait"]()
+    assert prompts_.shown[-1][0] == "ask" and "Couldn't check for updates" in prompts_.shown[-1][2]
+    assert ui["banner"].isHidden()
+    assert "Couldn't check for updates" in ui["log"].get()
+
+
+def test_install_waits_for_a_running_job(qt, tmp_path):
+    import threading
+    gate = threading.Event()
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), checker=_checker(["update"]), installed=lambda: True)
+    ui["buttons"]["check_updates"].click()
+    ui["wait"]()
+    assert ui["buttons"]["install_update"].isEnabled()
+    assert w._work("Something long", lambda log: gate.wait(30) and "finished")
+    qt[0].processEvents()
+    assert w.busy and not ui["buttons"]["install_update"].isEnabled()
+    assert not ui["banner"].busy_note.isHidden()
+    assert w.updates.install_now() is False
+    gate.set()
+    ui["wait"]()
+    assert ui["buttons"]["install_update"].isEnabled() and ui["banner"].busy_note.isHidden()
+
+
+def test_install_hands_over_to_setup_and_closes(qt, tmp_path):
+    import hashlib
+    from spec_surgeon.settings import load_settings
+    from spec_surgeon.updater import DownloadedInstaller
+    exe = tmp_path / "SpecSurgeon-9.9.9-Setup-x64.exe"
+    exe.write_bytes(b"MZ")
+    launched, closed = [], []
+
+    def downloader(info, dest, progress, cancel):
+        progress(1, 2)
+        return DownloadedInstaller(exe, hashlib.sha256(b"MZ").hexdigest(), info.version)
+
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), checker=_checker(["update"]), installed=lambda: True,
+                   downloader=downloader, launcher=lambda dl, install_dir, log: launched.append((dl, install_dir, log)))
+    w.quit_for_update = lambda: closed.append(True)
+    ui["buttons"]["check_updates"].click()
+    ui["wait"]()
+    ui["buttons"]["install_update"].click()
+    ui["wait"]()
+    assert launched and launched[0][0].path == exe and launched[0][2].name == "install-9.9.9.log"
+    assert closed == [True]
+    assert load_settings().pending_update["version"] == "9.9.9"
+    assert w.updating and not ui["buttons"]["preview"].isEnabled()
+
+
+def test_a_failed_launch_is_reported_and_unblocks(qt, tmp_path):
+    from spec_surgeon.settings import load_settings
+    from spec_surgeon.updater import DownloadedInstaller, UpdateError
+
+    def launcher(dl, install_dir, log):
+        raise UpdateError("The downloaded installer changed after it was checked; it was not started.", "integrity")
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), checker=_checker(["update"]), installed=lambda: True,
+                   downloader=lambda info, dest, progress, cancel: DownloadedInstaller(tmp_path / "x.exe", "0", "9.9.9"),
+                   launcher=launcher)
+    ui["buttons"]["check_updates"].click()
+    ui["wait"]()
+    ui["buttons"]["install_update"].click()
+    ui["wait"]()
+    assert ui["banner"].mode == "error" and "changed after it was checked" in ui["banner"].text.text()
+    assert not w.updating and ui["buttons"]["preview"].isEnabled()
+    assert load_settings().pending_update == {}
+
+
+def test_a_pip_copy_gets_instructions_instead_of_an_install(qt, tmp_path):
+    from spec_surgeon.ui.app import RecordingPrompts
+    prompts_ = RecordingPrompts(answers=[False])
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), checker=_checker(["update"]), installed=lambda: False,
+                   prompts=prompts_, downloader=lambda *a: pytest.fail("must not download"))
+    ui["buttons"]["check_updates"].click()
+    ui["wait"]()
+    assert w.updates.install_now() is False
+    assert "pip" in prompts_.shown[-1][2] or "release page" in prompts_.shown[-1][2]
+
+
+def test_after_an_update_the_window_says_so(qt, tmp_path):
+    from spec_surgeon import __version__
+    from spec_surgeon.settings import Settings
+    w, ui = window(qt, Session(out_root=tmp_path / "out"),
+                   settings=Settings(pending_update={"version": __version__, "log": ""}))
+    w.updates.startup()
+    assert ui["banner"].mode == "updated" and __version__ in ui["banner"].title.text()
+    assert w.settings.pending_update == {} and w.settings.last_run_version == __version__
+    w2, ui2 = window(qt, Session(out_root=tmp_path / "out"),
+                     settings=Settings(pending_update={"version": "99.0.0", "log": str(tmp_path / "x.log")}))
+    w2.updates.startup()
+    assert ui2["banner"].mode == "failed" and "didn't finish" in ui2["banner"].title.text()
+
+
+# ---- what the window remembers ------------------------------------------------------------------------------
+
+def test_the_window_remembers_folders_but_not_the_risky_switches_or_the_key(qt, folder, tmp_path):
+    import os
+    from spec_surgeon.settings import settings_path
+    from spec_surgeon.ui.settings_dialog import SettingsDialog
+    w, ui = window(qt)                                   # a fresh start: values come from settings.json
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["out"].set(str(tmp_path / "Results"))
+    ui["vars"]["render"].set(False)
+    ui["vars"]["in_place"].set(True)
+    ui["vars"]["codegen"].set(True)
+    ui["request"].set("change all fonts to Arial")
+    dlg = SettingsDialog(w)
+    dlg.key.setText("sk-ant-test-not-a-real-key")
+    dlg.apply()
+    assert os.environ["ANTHROPIC_API_KEY"] == "sk-ant-test-not-a-real-key" and w.key_origin == "session"
+    w.close()
+    assert "sk-ant-test" not in settings_path().read_text(encoding="utf-8")
+    w2, ui2 = window(qt)
+    assert ui2["vars"]["folder"].get() == str(folder) and ui2["vars"]["out"].get() == str(tmp_path / "Results")
+    assert ui2["vars"]["render"].get() is False and ui2["request"].get() == "change all fonts to Arial"
+    assert ui2["vars"]["in_place"].get() is False and ui2["vars"]["codegen"].get() is False
+
+
+def test_closing_during_a_job_asks_first(qt, tmp_path):
+    import threading
+    from spec_surgeon.ui.app import RecordingPrompts
+    gate = threading.Event()
+    prompts_ = RecordingPrompts(answers=[False])
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), prompts=prompts_)
+    w.show()
+    w._work("Something long", lambda log: gate.wait(30) and "finished")
+    w.close()
+    assert w.isVisible() and prompts_.shown[-1][0] == "ask"
+    gate.set()
+    ui["wait"]()
+
+
+# ---- Qt stays inside the window --------------------------------------------------------------------------------
+
+def test_without_qt_the_window_explains_how_to_install_it():
+    import subprocess
+    import sys
+    code = "import sys; sys.modules['PySide6'] = None; from spec_surgeon.gui import main; sys.exit(main())"
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 2 and 'pip install "spec-surgeon[gui]"' in r.stderr
+
+
+def test_without_qt_a_message_box_only_when_there_is_no_console(monkeypatch, capsys):
+    """The native message box is modal: with a stream to print to it must never appear (it hung the Windows CI
+    run of the subprocess test above); only pythonw (no stderr) gets it."""
+    import sys
+    from spec_surgeon import gui, winapp
+    shown = []
+    monkeypatch.setattr(winapp, "message_box", lambda title, text: shown.append(text))
+    monkeypatch.setitem(sys.modules, "PySide6", None)
+    assert gui.main() == 2 and shown == []
+    assert 'pip install "spec-surgeon[gui]"' in capsys.readouterr().err
+    monkeypatch.setattr(sys, "stderr", None)
+    assert gui.main() == 2 and len(shown) == 1 and "spec-surgeon[gui]" in shown[0]
+
+
+def test_the_engine_and_command_line_never_load_qt():
+    import subprocess
+    import sys
+    code = ("import sys, spec_surgeon.gui, spec_surgeon.cli, spec_surgeon.batch, spec_surgeon.updater, "
+            "spec_surgeon.settings, spec_surgeon.winapp, spec_surgeon.credentials, spec_surgeon.ui, "
+            "spec_surgeon.ui.rows; "
+            "bad = [m for m in sys.modules if m.split('.')[0] in ('PySide6', 'shiboken6')]; "
+            "assert not bad, bad")
+    r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+
+
+def test_pyside6_is_imported_only_by_the_ui_package():
+    import ast
+    src = Path(__file__).resolve().parent.parent / "src" / "spec_surgeon"
+    offenders = []
+    for py in src.rglob("*.py"):
+        rel = py.relative_to(src).as_posix()
+        tree = ast.parse(py.read_text(encoding="utf-8"))
+        for node in tree.body:                       # module level only; function-level imports are lazy
+            names = []
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom) and node.module:
+                names = [node.module]
+            if any(n.split(".")[0] in ("PySide6", "shiboken6") for n in names) and \
+                    not (rel.startswith("ui/") and rel not in ("ui/__init__.py", "ui/rows.py")):
+                offenders.append(rel)
+    assert offenders == []

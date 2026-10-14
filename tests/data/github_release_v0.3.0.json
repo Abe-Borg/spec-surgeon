@@ -1,0 +1,48 @@
+{
+  "url": "https://api.github.com/repos/Abe-Borg/spec-surgeon/releases/413031283",
+  "html_url": "https://github.com/Abe-Borg/spec-surgeon/releases/tag/v0.3.0",
+  "id": 413031283,
+  "tag_name": "v0.3.0",
+  "target_commitish": "master",
+  "name": "Spec Surgeon v0.3.0",
+  "draft": false,
+  "immutable": false,
+  "prerelease": false,
+  "created_at": "2026-10-14T18:07:14Z",
+  "published_at": "2026-10-14T18:09:42Z",
+  "body": "# Spec Surgeon v0.3.0\n\nThe first packaged release of Spec Surgeon includes the desktop window, deterministic Word specification editing, and the mixed-batch workflow for processing clean files while setting aside files that need another pass.\n\n## Included\n\n- Preview and run edits from the desktop window or CLI, with independent V1\u2013V10 verification and guarded in-place delivery.\n- Header/footer templating, font and paragraph formatting, page numbering, tracked text replacement, and tracked or untracked paragraph insertion and deletion.\n- Body-aware fingerprints and profiles that distinguish mes",
+  "assets": [
+    {
+      "name": "SHA256SUMS",
+      "content_type": "application/octet-stream",
+      "state": "uploaded",
+      "size": 292,
+      "digest": "sha256:f165a98d7b4c058c7419c51f9c000daa728b02c97a3b941c2e84abffce68538a",
+      "browser_download_url": "https://github.com/Abe-Borg/spec-surgeon/releases/download/v0.3.0/SHA256SUMS"
+    },
+    {
+      "name": "SpecSurgeon-0.3.0-Setup-x64.exe",
+      "content_type": "application/octet-stream",
+      "state": "uploaded",
+      "size": 54632846,
+      "digest": "sha256:9506189b8a37d5ce9496cdccbdc1ac24c2425f5c2190698e3c76698996de7310",
+      "browser_download_url": "https://github.com/Abe-Borg/spec-surgeon/releases/download/v0.3.0/SpecSurgeon-0.3.0-Setup-x64.exe"
+    },
+    {
+      "name": "spec_surgeon-0.3.0-py3-none-any.whl",
+      "content_type": "application/octet-stream",
+      "state": "uploaded",
+      "size": 401151,
+      "digest": "sha256:85b293573d02bbea02b3ace8108a7fd5accb934b0f3bac859c411ea88835d00e",
+      "browser_download_url": "https://github.com/Abe-Borg/spec-surgeon/releases/download/v0.3.0/spec_surgeon-0.3.0-py3-none-any.whl"
+    },
+    {
+      "name": "spec_surgeon-0.3.0.tar.gz",
+      "content_type": "application/x-gtar",
+      "state": "uploaded",
+      "size": 796425,
+      "digest": "sha256:3a0d66210fd9944d062f54a4b4c8357e5409f20bc454f78c92714ba7b499d4dd",
+      "browser_download_url": "https://github.com/Abe-Borg/spec-surgeon/releases/download/v0.3.0/spec_surgeon-0.3.0.tar.gz"
+    }
+  ]
+}

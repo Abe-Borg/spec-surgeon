@@ -145,7 +145,8 @@ Abraham before Phase 2: "both"** — yellow highlight and `{{NAME}}` placeholder
 
 Phase 2 (templating op + V7 template reference) is done; the plan's "Phase 2 status" section lists the
 departures. Phases 3–6 (profiler/planner/catalog, compiler + preview + `do`, Tier B codegen, advisor) are done
-(v0.2.0), and a first-cut window (`gui.py`, Phase 7) exists. Abraham skipped the real-file sweep, live API run and
+(v0.2.0), and the window exists (`gui.py` + `ui/`, Phase 7: a Tk first cut, replaced in v0.4.0 by a Qt window with
+remembered settings and in-app updates from GitHub Releases). Abraham skipped the real-file sweep, live API run and
 Word check to start using the window; expect fixes from his first real runs. Abraham asked
 (2026-10-13) to finish the prototype without stopping for questions: §14 #3–#5 are decided by the plan's own
 proposals and recorded in the plan's status sections.
@@ -216,11 +217,25 @@ proposals and recorded in the plan's status sections.
   files, or run in place; never relax a hard limit to make a generated op pass.
 - `advisor.py` — exception record → recommendation or re-compiled spec (pinned to the file's pattern; must pass
   `compiler.check_submission` and plan on that file). Writes `advice/`; never applies anything.
-- `gui.py` — the window (`spec-surgeon-gui` / `spec-surgeon gui`). `Session` holds all logic (files, compile,
-  preview, run with the approval-token check, Tier B, advise) and is what the tests drive; `build_app` is Tk
-  layout only. Tk widgets/variables may only be touched on the main thread: read every value before starting the
-  background job (a background read raises "main thread is not in main loop"). Real-window test: Python with Tk +
-  a display (in the container: a 3.12 venv under `xvfb-run`; the system 3.13 has no Tk, so it skips there).
+- `gui.py` — the window's logic and entry point (`spec-surgeon-gui` / `spec-surgeon gui`). `Session` holds all logic
+  (files, compile, preview, run with the approval-token check, Tier B, set-aside, advise; `last_batch`/`last_trials`
+  keep the results for the tables) and is what most tests drive. No Qt here: `main()`/`build_window()` import
+  `ui/` lazily and explain `pip install "spec-surgeon[gui]"` when PySide6 is missing (exit 2).
+- `ui/` — the Qt window (PySide6-Essentials ≥ 6.8, v0.4.0). `app.py`: `MainWindow` (all wiring), `build_window`
+  (test hook `window._spec_surgeon`: buttons, `Var` values, `wait()`), `Prompts`/`RecordingPrompts` (every dialog
+  goes through `prompts` — a modal dialog hangs an offscreen test), `qt_app`, `main`. `pages.py` the four steps
+  (layout only), `widgets.py`, `models.py`, `rows.py` (tables + `ProgressTracker`; **no Qt**, it parses
+  `run_batch`'s `"N file(s); transform+verify"` / `"  done NAME"` lines — `test_ui_rows.py` pins them),
+  `theme.py` (Fusion + own palette/QSS by default; `windows11` only via Settings), `worker.py`, `update_ui.py`,
+  `settings_dialog.py`, `resources/icon.svg` (source of `packaging/windows/SpecSurgeon.ico` via `make_icon.py`).
+  **Qt rules:** PySide6 is imported at module level only inside `ui/` (never `ui/__init__.py` or `ui/rows.py`) —
+  the CLI, `Session` and pool workers must load without Qt (`test_gui.py` checks both ways). Background work runs
+  on a daemon thread (`worker.start_job`); its signals connect only to `@Slot` methods of GUI-thread QObjects, never
+  to lambdas; read every widget value before the job starts; never touch a widget from the job.
+- `updater.py` — GitHub release check / verified download / detached Setup launch (no Qt; every network and
+  process call injectable). `settings.py` — `settings.json` (+ `config_dir`/`data_dir`/`updates_dir`/`logs_dir`;
+  `SPEC_SURGEON_CONFIG_DIR` moves them). `winapp.py` — app mutex, AppUserModelID, message box (ctypes; no-ops off
+  Windows). `credentials.py` — the API key in Windows Credential Manager (`win32cred`).
 - `profile.py` — bounded per-pattern profiles (descriptive only; no op reads them). `planner.py` — `plan_batch`
   dry run + `summarize_plan`. `catalog.py` — `op_catalog()` (+ `COMMON_ASSUMPTIONS` per op — add one for every
   new op) and `editspec_json_schema()`.
@@ -230,7 +245,27 @@ proposals and recorded in the plan's status sections.
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes; in the Linux container `python3 -m pytest -q -s`).
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0 — 251 pass and the
+Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
+
+## Updater rules (v0.4.0)
+
+1. **Never start anything that has not passed every check:** the asset name equals
+   `SpecSurgeon-<release version>-Setup-x64.exe` exactly; `SHA256SUMS` is fetched first and lists that exact name
+   (no installer byte without a known hash); GitHub's asset `digest`, when present, agrees; the size matches; and
+   (once releases are signed) `verify_signature` passes. Re-hash immediately before `Popen`. Never relax a check to
+   make an update go through — a failing check is reported, the download deleted.
+2. **Only an installed build installs** (`is_installed_build`: frozen, Windows, `unins000.exe` beside the exe); pip
+   copies get instructions. Never while a job runs or another instance holds the app mutex.
+3. **Names shared with the installer** (`installer.iss`) are pinned by `tests/test_packaging.py`: `INSTALLER_NAME` ↔
+   `OutputBaseFilename`, `winapp.APP_MUTEX` ↔ `AppMutexName`, `/RELAUNCH=1` ↔ `ShouldRelaunch`, `winapp.AUMID` ↔
+   the shortcuts' `AppUserModelID`, `contents_directory="_internal"` ↔ `[InstallDelete]`. Change both or neither.
+4. **Setup's environment** (`installer_env`) never carries the API key or the frozen runtime's `_PYI_*`/`_MEI*`
+   variables — the reopened app must start as a fresh top-level process.
+5. **Tests never touch the network or start a process**: scripted openers, recording popen, fake
+   checker/downloader/launcher. The real chain is proven on Windows by `validate_installer.ps1` (update mode).
+6. The API key never goes into `settings.json`; the write-back and AI-written-transform switches are never
+   persisted.
 
 ## Documentation duty
 
@@ -241,7 +276,11 @@ update this file.
 ## Environment notes
 
 - Developed in a Linux container with LibreOffice, pandoc, poppler; Word path untested (marked [unproven]).
-  The container has no `py` launcher: use `python3`. `pip install -e ".[dev]"` first (pytest is not preinstalled).
+  The container has no `py` launcher: use `python3`. `pip install -e ".[dev,gui]"` first (pytest is not
+  preinstalled). Qt needs `apt-get install -y libegl1 libopengl0` in the container; run the suite with
+  `QT_QPA_PLATFORM=offscreen` (no Xvfb needed). Qt tests skip when Qt can't load unless `SPEC_SURGEON_REQUIRE_QT=1`
+  (CI sets it — a broken Qt install must fail, not skip). `python3 packaging/gui_screenshot.py` regenerates
+  `docs/gui.png` / `docs/gui-results.png`; look at screenshots before changing layout.
 - Target platform is Windows 10/11; paths with en-dashes and doubled spaces are normal; keep `pathlib`.
 - `ProcessPoolExecutor` on Windows requires the `__main__` guard in any new entry point.
 
@@ -275,3 +314,17 @@ update this file.
   description, and `examples/specs/apply-header-footer-template-fallback.json`. Keep them in step with
   `ops/slots.py` and `editspec.py`.
 - **Set-aside workflow**: `report.write_batch_report` writes `set_aside.json` and `SET_ASIDE_REPORT.md`; `batch.load_set_aside` loads them for `cli.cmd_retry` (`spec-surgeon retry`) and `gui.Session.load_set_aside`.
+
+
+## v0.4.0 (Qt window, installable app, in-app updates)
+
+- The Tk window is gone; `ui/` is the Qt window (see "Where things are" and the Qt rules there). `gui.Session` is
+  unchanged apart from `last_batch`/`last_trials`; its strings that name controls ("Answers", "Allow AI-written
+  transforms", "Load set-aside files", "Advise on exceptions") must keep matching the window's labels.
+- `FileResult.delivered_to` is the output path for a copy run and the source path for an in-place run
+  (`ui/rows.written_back`); the window's run text no longer says "written back" for copies.
+- Updates: `updater.py` + `ui/update_ui.py` + `installer.iss` (`[Code]` waits for the app mutex in silent mode,
+  `ShouldRelaunch` reopens the app, `[InstallDelete] {app}\_internal` replaces the runtime). See "Updater rules".
+- Packaging: `app.spec` filters Qt to what a widgets app loads (no software OpenGL, Quick/QML, PDF, TLS,
+  translations); the installed smoke test (`installed_smoke.py`, `gui` and `update` modes) is the gate that nothing
+  needed was dropped. Release notes in `docs/releases/v<version>.md` are what the update banner's What's new shows.

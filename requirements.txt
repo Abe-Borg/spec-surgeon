@@ -2,6 +2,9 @@
 lxml>=5.0
 pymupdf>=1.24
 
+# The desktop window (spec-surgeon-gui): Qt 6 widgets
+PySide6-Essentials>=6.8,<7
+
 # Windows only: Word as renderer and accept/reject oracle (recommended)
 pywin32>=306; sys_platform == "win32"
 

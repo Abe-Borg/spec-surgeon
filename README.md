@@ -4,11 +4,11 @@ Fast, provably lossless surgical edits to Word (.docx) specification files — a
 
 Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transform is a deterministic Python/lxml script, the verifier is an independent script that reads only the before/after packages, the expected result is predicted *before* the transform runs, and the output is never written back unless every check passes and the source has not moved. No language model is in the per-file loop; the model's jobs are to build new job modules, to advise on exceptions, and (optionally) to turn a natural-language request into a job call.
 
-**Start here: the window.** `spec-surgeon-gui` opens a simple window — pick the specs folder, type what should change (or load a spec file), Preview, Run. Setup on Windows and a walkthrough: ["The window"](#the-window-gui--start-here).
+**Start here: the window.** Install it on Windows from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases) and open **Spec Surgeon** from the Start menu (or run `spec-surgeon-gui`). The window has four steps: **Files → Describe the change → Preview → Run & results**. Pick the specs folder, type what should change (or load a spec file), look at the preview, then run. Once installed, it updates itself: a banner offers each new version, and **Help → Check for updates…** checks at any time. Setup on Windows and a walkthrough: ["The window"](#the-window-gui--start-here); updates: ["Updates"](#updates).
 
-**Status: v0.3.0 — the desktop window and mixed-quality batch workflow are included.** The natural-language editor prototype is complete through plan Phase 6 (op library, templating, profiles and dry runs, the Claude compiler with preview and approval, Tier B generated transforms, the exception advisor), with the first-cut Phase 7 GUI, set-aside reports and retries, messy-document matching, and paragraph insertion/deletion. What remains needs your machine and your files: Word COM rendering, a read-only sweep over real project specs, and live runs of the Claude layer (all marked [unproven] below). The original v0.1.0 engine capabilities remain: two job modules, the nine-check verification suite (now extended through V10), batch orchestration, Word/LibreOffice rendering, geometry assertion, guarded in-place write-back, and the optional Claude layer.
+**Status: v0.4.0 — a new Qt window, in-app updates and an installable Windows app; the mixed-quality batch workflow from v0.3.x is included.** v0.4.0 replaces the first-cut Tk window with a Qt 6 (PySide6) window. It has step navigation, preview and results tables, before/after page images in the app, light/dark themes and remembered settings. The API key can be kept in Windows Credential Manager. The installed app checks GitHub Releases for updates and installs them with one click, and v0.4.0 also ships the v0.3.1 audit fixes. The natural-language editor prototype is complete through plan Phase 6 (op library, templating, profiles and dry runs, the Claude compiler with preview and approval, Tier B generated transforms, the exception advisor), with the Phase 7 GUI, set-aside reports and retries, messy-document matching, and paragraph insertion/deletion. What remains needs your machine and your files: Word COM rendering, a read-only sweep over real project specs, and live runs of the Claude layer (all marked [unproven] below). The original v0.1.0 engine capabilities remain: two job modules, the nine-check verification suite (now extended through V10), batch orchestration, Word/LibreOffice rendering, geometry assertion, guarded in-place write-back, and the optional Claude layer.
 
-**Packaged releases:** download the Windows installer, wheel, or source archive from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases). [v0.3.0 release notes](docs/releases/v0.3.0.md) include installation instructions. The source archive includes the worked examples, documentation, and complete test fixtures. Windows packaging scripts live in `packaging/windows/` in the repository and are included in subsequent source releases. Release tags (`v<version>`) trigger tests with Tk/LibreOffice and on Windows, package builds and metadata checks, a clean wheel installation, an installed Windows app smoke test, and publication of the distributions with SHA-256 checksums. Before tagging, keep `pyproject.toml` and `spec_surgeon.__version__` in sync and add `docs/releases/v<version>.md`; publication stops if any check fails.
+**Packaged releases:** download the Windows installer, wheel, or source archive from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases). [v0.4.0 release notes](docs/releases/v0.4.0.md) (and [v0.3.0](docs/releases/v0.3.0.md)) include installation instructions. The source archive includes the worked examples, documentation, and complete test fixtures. Windows packaging scripts live in `packaging/windows/` in the repository and are included in subsequent source releases. Release tags (`v<version>`) trigger tests with Qt (offscreen)/LibreOffice and on Windows, package builds and metadata checks, a clean wheel installation, an installed Windows app smoke test (the Qt window's Preview → Run, an offline updater download-and-verify, and a real in-app update that must reopen the app), and publication of the distributions with SHA-256 checksums (the `SHA256SUMS` file the in-app updater checks every download against). Before tagging, keep `pyproject.toml` and `spec_surgeon.__version__` in sync and add `docs/releases/v<version>.md`; publication stops if any check fails.
 
 **NL editor, Phase 1 (operation library foundation) — done.** The engine now has a composable operation library (`ops/`: `remove_header_footer`, `set_font`, `set_style_font`, `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, plus the two v0.1.0 jobs as `fix_page_numbering` and `replace_text`), hand-written **EditSpecs** executed end to end by `spec-surgeon run-spec`, a tenth check (**V10 — property assertions and residual identity**), and V1/V2/V4/V5/V7 extensions for member removal, text-scope union, every revision kind and layout-reference modes. The v0.1.0 jobs and CLI keep working unchanged (they are thin aliases now).
 
@@ -25,7 +25,7 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 ## Contents
 
 1. [How it works](#how-it-works)
-2. [Install](#install) / [The window (GUI) — start here](#the-window-gui--start-here)
+2. [Install](#install) / [The window (GUI) — start here](#the-window-gui--start-here) / [Updates](#updates)
 3. [Quick start](#quick-start)
 4. [Commands](#commands)
 5. [Jobs](#jobs)
@@ -76,9 +76,9 @@ Design rules carried from the method, enforced in code:
 
 ## Install
 
-**Windows 10/11 (64-bit):** download `SpecSurgeon-<version>-Setup-x64.exe` from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases), run it, then launch **Spec Surgeon** from the Start menu. The installer includes Python, Tk, the editing engine, Word integration, and the Anthropic client; no separate Python installation or terminal commands are needed. It installs for the current user without administrator access, offers a desktop shortcut, and includes an uninstaller. Example EditSpecs are available from **Spec Surgeon → Example edit specs** in the Start menu. User documents and result folders are kept when the app is uninstalled.
+**Windows 10/11 (64-bit):** download `SpecSurgeon-<version>-Setup-x64.exe` from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases), run it, then launch **Spec Surgeon** from the Start menu. The installer includes Python, Qt (the window), the editing engine, Word integration, and the Anthropic client; no separate Python installation or terminal commands are needed. From then on the app keeps itself up to date (see [Updates](#updates)); installing a newer setup EXE by hand over an older one also works and keeps your settings and results. It installs for the current user without administrator access, offers a desktop shortcut, and includes an uninstaller. Example EditSpecs are available from **Spec Surgeon → Example edit specs** in the Start menu. User documents and result folders are kept when the app is uninstalled.
 
-Microsoft Word or LibreOffice is still needed for page rendering; neither is installed by this setup program. Typed requests still need your Anthropic API key (paste it into the window); saved EditSpecs run without one. This first installer is unsigned, so Windows may show a publisher/SmartScreen prompt.
+Microsoft Word or LibreOffice is still needed for page rendering; neither is installed by this setup program. Typed requests still need your Anthropic API key. Enter it in the window's **Settings**; tick *Remember on this computer* to keep it in Windows Credential Manager. Saved EditSpecs run without one. The installer is unsigned, so Windows may show a publisher/SmartScreen prompt on the first manual install. Updates installed from inside the app do not trigger that prompt; see [Updates](#updates) for what is checked instead.
 
 **Python package / development setup:**
 
@@ -86,6 +86,7 @@ Requires Python 3.10+ (Windows, macOS, Linux). From the project folder:
 
 ```powershell
 py -3 -m pip install -e .            # core: lxml, pymupdf
+py -3 -m pip install -e ".[gui]"     # the window: PySide6 (Qt 6) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
 py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for `ask` / `agent`
 py -3 -m pip install -e ".[dev]"     # pytest + python-docx (fixtures)
@@ -101,8 +102,11 @@ Environment variables:
 |---|---|
 | `SPEC_SURGEON_AUTHOR` | default tracked-change author (else the OS user name) |
 | `SPEC_SURGEON_SOFFICE` | path to `soffice` / `soffice.exe` |
-| `ANTHROPIC_API_KEY` | for typed requests (`do`, the window), `advise`, `ask` / `agent` — or paste it into the window for one session |
+| `ANTHROPIC_API_KEY` | for typed requests (`do`, the window), `advise`, `ask` / `agent` — or enter it in the window's Settings (for one session, or remembered in Windows Credential Manager; a key set here wins) |
 | `SPEC_SURGEON_MODEL` | model for `do` (the compiler), `ask` / `agent` (default `claude-opus-5-5`) |
+| `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own (Help → Check for updates… still works) |
+| `SPEC_SURGEON_CONFIG_DIR` | where the window keeps `settings.json`, downloaded updates and its error log (default `%APPDATA%\Spec Surgeon` and `%LOCALAPPDATA%\Spec Surgeon`); the tests use it |
+| `SPEC_SURGEON_QT_STYLE` | force a Qt style for the window (e.g. `windows11`, `fusion`) — diagnostics only |
 
 ---
 
@@ -110,33 +114,107 @@ Environment variables:
 
 ![The Spec Surgeon window after a preview](docs/gui.png)
 
-**Set up once (Windows installer):** run the setup EXE from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases), then open **Spec Surgeon** from the Start menu. For typed requests, paste your Anthropic API key into the window. To work without an API key, choose **Load spec file…** and load an example from the Start menu's **Example edit specs** folder.
+**Set up once (Windows installer):** run the setup EXE from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases), then open **Spec Surgeon** from the Start menu. For typed requests, enter your Anthropic API key in **Settings** (the *Set API key…* link on the *Describe the change* step opens it). To work without an API key, choose **Load saved spec…** and load an example from the Start menu's **Example edit specs** folder. After that the app updates itself (see [Updates](#updates)).
 
 **Alternative: set up from source (Windows):**
 
-1. Install Python 3.12 or newer from python.org (keep "tcl/tk and IDLE" ticked — it is by default — and tick "Add python.exe to PATH").
+1. Install Python 3.12 or newer from python.org (tick "Add python.exe to PATH").
 2. Get this repository onto your machine (clone it, or download the ZIP from GitHub and unzip it), open a terminal in its folder and run:
    ```powershell
-   py -3 -m pip install -e ".[word,agent]"
+   py -3 -m pip install -e ".[gui,word,agent]"
    ```
-   (`word` lets Word render the before/after pages; `agent` is the Claude SDK for typed requests.)
-3. For typed requests, set your Anthropic API key once (then open a new terminal), or paste it into the window's key field each time:
+   (`gui` is the window — Qt 6 via PySide6; `word` lets Word render the before/after pages; `agent` is the Claude SDK for typed requests.)
+3. For typed requests, set your Anthropic API key once (then open a new terminal), or enter it in the window's **Settings** (for the session, or remembered in Windows Credential Manager):
    ```powershell
    setx ANTHROPIC_API_KEY "sk-ant-…"
    ```
-4. Start it: press Win+R, type `spec-surgeon-gui`, Enter (or run `spec-surgeon gui` in a terminal). To pin it, make a desktop shortcut to `spec-surgeon-gui.exe` in Python's `Scripts` folder (`py -3 -c "import sys,os; print(os.path.join(sys.prefix,'Scripts'))"` prints where it is).
+4. Start it: press Win+R, type `spec-surgeon-gui`, Enter (or run `spec-surgeon gui` in a terminal). To pin it, make a desktop shortcut to `spec-surgeon-gui.exe` in Python's `Scripts` folder (`py -3 -c "import sys,os; print(os.path.join(sys.prefix,'Scripts'))"` prints where it is). A copy installed this way is not updated in-app: the update banner tells you the `pip install -U …` command instead.
 
-**Use it:**
+**Use it** — four steps down the left side; each shows a check mark when it is done, and you can click any of them:
 
-1. **Specs folder** — the folder with the .docx files (work on a *copy* of a project folder the first few times). **Template** — only for "make the header/footer look like this template". **Results go to** — where previews, edited copies, records and reports land (default `%USERPROFILE%\SpecSurgeon_out\<timestamp>`).
-2. **What should change?** — the request in plain English ("remove all headers and footers", "change all fonts to Arial", "make the header/footer look like this template"). No API key? Use **Load spec file…** with one of `examples\specs\*.json` instead (or a spec saved from an earlier run's `preview\spec.json`).
-3. **Preview** — Claude turns the request into a spec; the engine plans every file (nothing is written to your files), applies it to one or two sample files in memory, verifies them and (with *Render pages*) makes before/after page images. The log shows what will change per file, the files it will refuse and why, and where the preview files are. If Claude needs something from you (e.g. the exact stamp wording), the questions appear in the log: type the answers in **Answers** (one per line) and press Preview again.
-4. **Run** — applies the previewed spec to every file and verifies each one. By default the edited files go to the results folder and **your files are not touched**. Tick **Write results back over the originals** to have verified files written back (guarded: only files that pass every check, never a file open in Word or changed since the preview). Run refuses if anything changed since the preview.
-5. **Open results folder** — `BATCH_REPORT.md`, `outputs\`, `records\` (one verification record per file), `render\`. **Advise on exceptions** — for files the engine refused, Claude writes a recommendation or a corrected spec into `advice\`.
+1. **Files**
+   - **Specs folder:** the folder with the .docx files. Work on a *copy* of a project folder the first few times. Drop a folder onto the field or use **Browse…**. The step counts the Word files it will process and lists them; the template file and Word's `~$` lock files are left out.
+   - **Header/footer template (optional):** only for "make the header/footer look like this template".
+   - **Results folder:** where previews, edited copies, records and reports land. The default is `%USERPROFILE%\SpecSurgeon_out\<timestamp>`, and each preview gets its own time-stamped folder. The folders are remembered for next time.
+2. **Describe the change**
+   - Type the request in plain English ("remove all headers and footers", "change all fonts to Arial", "make the header/footer look like this template"), or click one of the example chips.
+   - No API key? Use **Load saved spec…** with one of `examples\specs\*.json` instead, or a spec saved from an earlier preview's `preview\spec.json`. A loaded spec shows as a strip under the request. Typing a request instead compiles a new spec, and **Remove** drops the loaded one.
+   - Options: *Render pages (Word or LibreOffice)* makes before/after page images and checks layout (slower). *Allow AI-written transforms* is off by default and explained below.
+   - A line at the bottom says where the API key comes from: your Windows environment, saved on this computer, this session only, or none.
+   - Press **Preview** (or Ctrl+Enter).
+3. **Preview**
+   - Claude turns the request into a spec. The engine plans every file (nothing is written to your files), applies the spec to one or two sample files in memory and verifies them. With *Render pages* it also makes before/after page images.
+   - The page shows:
+     - tiles counting the files, the files that plan cleanly, the files set aside, and the structure patterns;
+     - the spec's **assumptions to check** (and renderer warnings);
+     - a table of **every file**: its pattern, *Planned* or *Exception*, and what changes or why it is refused (plain English; the tooltip has the engine's diagnosis). *Show exceptions only* filters it;
+     - each **sample file** with its verification result and before/after pages (click a page to zoom: Fit, 100 %, Ctrl + mouse wheel);
+     - the approval token.
+   - If Claude needs something from you (e.g. the exact stamp wording), an **Answers** box appears on *Describe the change* with the questions. Type one answer per line and press Preview again.
+   - **Open preview folder** shows the preview files (`PREVIEW.md`, `spec.json`, samples, images).
+4. **Run & results**
+   - By default the edited files go to the results folder and **your files are not touched**. Choose **Write verified results back over the originals (guarded)** to have verified files written back: only files that pass every check, never a file open in Word or changed since the preview. You confirm before it starts, and the choice is never remembered.
+   - **Run** is enabled only while the preview is current. Changing the folder, the template, the request or the answers after a preview disables it ("press Preview again"). Run itself still refuses if a file changed since the preview (the approval token).
+   - A progress bar counts the files as they are verified.
+   - Then:
+     - **PASS / FAIL / EXCEPTION tiles** and a **results table**, with *Show problems only*. Double-click a file to open its edited copy, or its verification record for a failure.
+     - **Open results folder** has `BATCH_REPORT.md`, `outputs\`, `records\` (one verification record per file), `failed\` and `render\`.
+     - **View report** shows `BATCH_REPORT.md` in the app; **Open failed/ folder** appears when something failed.
+     - **Load set-aside files** narrows the next pass to the files that were set aside or failed, with their failure reasons sent to Claude.
+     - **Advise on exceptions:** for files the engine refused, Claude writes a recommendation or a corrected spec into `advice\`.
 
-*Allow AI-written transforms* (off by default): when no built-in operation can do the request, Claude may write a one-off transform; it is tested on sample files first and only ever writes edited copies to the results folder.
+![The results step after a run](docs/gui-results.png)
+
+*Allow AI-written transforms* (off by default, and off again at every start): when no built-in operation can do the request, Claude may write a one-off transform. It is tested on sample files first and only ever writes edited copies to the results folder; *Write back over the originals* is unavailable for it.
+
+**Also in the window:**
+- **Errors** appear on the step that caused them, in plain words. The **Activity log**, collapsed at the bottom, holds everything the engine printed (Copy, Save…, Clear). Unexpected errors also go to `%LOCALAPPDATA%\Spec Surgeon\logs\spec-surgeon.log`.
+- **Menus:** **File** has Load saved spec… (Ctrl+O), Open results folder, Settings… (Ctrl+,) and Exit. **Help** has Check for updates…, What's new in this version (the bundled release notes), User guide, Report a problem and About (versions and folders).
+- **Looks:** light or dark follows Windows, or choose it in Settings; the accent colour is your Windows accent; it is sharp on high-DPI screens. The app's own Windows 11-style theme is the same on Windows 10 and 11. *Settings → Use Windows' own controls* switches to Qt's native Windows 11 style instead (Windows 11 only).
+
+**Settings** (sidebar or File → Settings…):
+- **Appearance:** colours (follow Windows, light, dark) and Windows' own controls.
+- **Results:** the default results folder.
+- **Anthropic API key:** typed into a masked field. *Remember on this computer* saves it in Windows Credential Manager (target `Spec Surgeon/ANTHROPIC_API_KEY`); *Forget saved key* removes it. A key already set in the Windows environment (`setx`) takes precedence.
+- **Updates:** check automatically once a day, the last check, the skipped version (with Clear), and Check now.
+
+**What it remembers, and where:** the window keeps `%APPDATA%\Spec Surgeon\settings.json` (plain JSON you can read or delete). It holds the folders, the template, the render option, the last request, the theme, the window size, the update preferences and the update in progress. It never stores the API key, and never stores the two risky switches (write back over the originals, AI-written transforms); both are off at every start. A corrupt settings file is set aside as `settings.json.bad` and the defaults are used.
 
 The window is a thin layer over the library calls (`gui.Session`): everything it does is what `do`, `run-spec` and `advise` do on the command line.
+
+---
+
+## Updates
+
+The installed app keeps itself up to date from this repository's [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases).
+
+**How it works:**
+
+1. **Check.** About four seconds after the window opens, and at most once a day, it asks GitHub for the newest published release. Drafts and pre-releases are never offered. **Help → Check for updates…** (or the sidebar's *Check for updates*) checks at any time and always reports: "you're up to date", the update banner, or why it couldn't check.
+2. **Offer.** A banner above the page shows the new version with **What's new** (the release notes), **Install now**, **Later** (until the next start) and **Skip this version** (no more automatic offers for that version; a manual check still shows it).
+3. **Download.** *Install now* is unavailable while a Preview or Run is in progress, and refuses while another Spec Surgeon window or `spec-surgeon.exe` command is open. It downloads `SpecSurgeon-<version>-Setup-x64.exe` into `%LOCALAPPDATA%\Spec Surgeon\updates\`, with a progress bar and Cancel.
+4. **Install.** The window starts Setup detached (`/SILENT … /RELAUNCH=1`) and closes. Setup shows its progress window, waits for every Spec Surgeon process to exit (up to 60 s, using the app's named mutex), installs over the same folder without administrator rights, and reopens Spec Surgeon.
+5. **Afterwards.** The next start says "Spec Surgeon was updated to X" (with What's new), or "The update to X didn't finish" with **Try again** and **Open install log** (`%LOCALAPPDATA%\Spec Surgeon\updates\install-<version>.log`). Old downloads are cleaned up.
+
+**What is checked before anything runs:**
+- The installer's name must be exactly `SpecSurgeon-<version>-Setup-x64.exe` for the release's version.
+- Its SHA-256 must be listed for that exact name in the release's `SHA256SUMS`, which is fetched first: no installer byte is downloaded without a known hash.
+- When GitHub reports its own checksum for the asset, the two must agree.
+- The size must match.
+- Anything else deletes the download and shows the reason.
+- The file is hashed again immediately before Setup starts. Only HTTPS is used, redirects included.
+
+**What those checks do and don't protect against.** They catch corruption, truncation and a mangled transfer. They do **not** protect against someone taking over the GitHub account or the release workflow, because the checksums come from the same release. Signing the installer (Authenticode) closes that gap; the updater has a `verify_signature` hook for it, and the installer is unsigned today. Files the app downloads carry no "downloaded from the internet" mark, so Windows SmartScreen does not prompt for them; the checks above are the gate.
+
+**What the check sends:** one HTTPS request to `api.github.com` with the app's version in the User-Agent. Nothing about your files, projects or key is sent. GitHub allows 60 such requests an hour per network address; if an office shares one address and hits that limit, the app reads the newest version from the `github.com/…/releases/latest` redirect instead.
+
+**Networks:** the app uses the Windows certificate store, so a company's HTTPS-inspection certificate that Windows trusts works. Proxies set in Windows (or `HTTPS_PROXY`) are used; automatic proxy scripts (PAC/WPAD) are not evaluated. Behind one, the check fails with "Couldn't reach GitHub" and a link to the releases page, where the installer can be downloaded by hand.
+
+**Turning it off:** Settings → Updates → *Check for updates automatically*, or set `SPEC_SURGEON_NO_UPDATE_CHECK=1`. Manual checks still work.
+
+**Copies installed with pip** (from source) are not updated in-app. The banner's Install now shows the `"<this copy's python>" -m pip install -U "spec-surgeon[gui,word,agent] @ <wheel URL>"` command and the release page. The command names the interpreter the window is running in, so it updates the same environment on Windows, macOS or Linux (`pythonw.exe` becomes `python.exe`).
+
+**For the maintainer — publishing an update:** bump `pyproject.toml` and `spec_surgeon.__version__`, add `docs/releases/v<version>.md` (it becomes the banner's What's new), and push the tag `v<version>`. The release workflow tests, builds the installer, runs the installed-app checks (including a real in-app update that must reopen the app), and publishes the installer with `SHA256SUMS` as the latest release. Installed copies see it within a day. v0.3.x has no updater: users on it install v0.4.0 by hand once.
 
 ---
 
@@ -210,7 +288,7 @@ spec-surgeon run-spec C:\Temp\ss-do\preview\spec.json "C:\Projects\AVC11\Specs" 
 | `spec-surgeon do "request" FILES… [--template T] [--answer A]… [--out DIR] [--yes] [--in-place] [--no-render] [--model M]` | natural language end to end: compile (Claude) → preview (`OUT/preview/`: `PREVIEW.md`, `spec.json`, sample outputs, before/after images) → approval (`[y/N]` prompt, `--yes`, or later with `run-spec --approval TOKEN`) → the verified batch in `OUT/run/`. Exit 2 when the compiler asks questions (re-run with `--answer`), says unsupported, or fails |
 | `spec-surgeon run-spec … --approval TOKEN` | run only if the spec and every file are exactly as they were when the preview computed TOKEN |
 | `spec-surgeon do … --allow-codegen` | Tier B: when the compiler answers *unsupported*, generate a transform, prove it on samples, and (after approval) run it over the batch — outputs only, never in place |
-| `spec-surgeon gui` / `spec-surgeon-gui` | the window (see "The window"); `spec-surgeon-gui` opens without a console window on Windows |
+| `spec-surgeon gui` / `spec-surgeon-gui` | the window (see "The window"; needs the `gui` extra, which the Windows installer includes — without it the command says how to install it); `spec-surgeon-gui` opens without a console window on Windows |
 | `spec-surgeon advise OUT_DIR [--file NAME] [--model M]` | for every exception a batch wrote (`OUT_DIR/exceptions/`): Claude reads the diagnosis and the file and answers with a recommendation for a human or a re-compiled spec for that file's structure pattern → `OUT_DIR/advice/<name>.advice.md` (+ `.spec.json`). Nothing is applied |
 | `spec-surgeon ask "…"` | natural-language request → job + params JSON to confirm (needs API key) |
 | `spec-surgeon agent EXCEPTION.json` | written recommendation for one exception, grounded in the skill (needs API key) |
@@ -573,7 +651,23 @@ for fr in batch.files:
     print(fr.source.name, fr.status, fr.record.to_markdown() if fr.record else fr.exception)
 ```
 
-`run_batch` uses a process pool; a GUI entry point must sit under `if __name__ == "__main__":` on Windows. Progress is a callback; the GUI can drive a progress bar from it. The parameter form for a job is its `params_schema` (JSON-schema-like) on the job class.
+`run_batch` uses a process pool; a GUI entry point must sit under `if __name__ == "__main__":` on Windows. Progress is a callback; the GUI can drive a progress bar from it (the window does: `ui/rows.ProgressTracker` reads its `"N file(s); transform+verify …"` and `"  done NAME"` lines). The parameter form for a job is its `params_schema` (JSON-schema-like) on the job class.
+
+The window itself is built on three Qt-free pieces you can reuse:
+
+```python
+from spec_surgeon.gui import Session          # everything the window does: files, compile, preview, run, set-aside, advise
+from spec_surgeon import updater, settings    # update check/download/verify/install; remembered settings
+
+s = Session(folder=Path(r"C:\Projects\AVC11\Specs"))
+s.load_spec(Path("examples/specs/remove-all-headers-footers.json"))
+print(s.make_preview(render=False, log=print))                  # the preview text; s.preview holds the object
+print(s.run(in_place=False, render=False, log=print))           # s.last_batch holds the BatchResult
+
+r = updater.check_for_update()                                    # CheckResult: "update" | "current" | "none"
+if r.status == "update":
+    dl = updater.download_installer(r.info, settings.updates_dir())   # name, size and SHA-256 checked
+```
 
 EditSpecs and single ops:
 
@@ -647,7 +741,9 @@ spec-surgeon/
 ├── pyproject.toml, requirements.txt, README.md, CLAUDE.md
 ├── docs/NL_SURGICAL_EDITOR_PLAN.md   design + phased plan for the natural-language editor (Phase 1 status inside)
 ├── docs/audits/                      the 2026-10-14 independent audit of v0.3.0: report, filled checklist, probe scripts
-├── docs/releases/                    release notes per version (v0.3.0, v0.3.1)
+├── docs/releases/                    release notes per version (v0.3.0, v0.3.1, v0.4.0 — the update banner shows them)
+├── packaging/windows/                PyInstaller spec, Inno Setup script, launchers, the installed-app smoke test,
+│                                     make_icon.py + SpecSurgeon.ico; packaging/gui_screenshot.py makes docs/gui*.png
 ├── examples/jobs/*.json              ready-made --params files
 ├── examples/specs/*.json             ready-made EditSpecs (change-all-font-arial, remove-all-headers-footers,
 │                                     apply-header-footer-template, apply-header-footer-template-fallback — the
@@ -667,7 +763,15 @@ spec-surgeon/
 │   ├── codegen.py                    Tier B: whitelist, sandbox, hard limits, generate/verify loop (Phase 5)
 │   ├── sandbox_runner.py             the isolated process that runs a generated op (Phase 5)
 │   ├── advisor.py                    exception → recommendation or re-compiled spec (Phase 6)
-│   ├── gui.py                        the window: Session (logic) + Tk layout (Phase 7, first cut)
+│   ├── gui.py                        the window's logic (Session) and entry point; no Qt (Phase 7)
+│   ├── ui/                           the Qt window (v0.4.0): app.py (MainWindow, build_window, main), pages.py (the four
+│   │                                 steps), widgets.py, models.py, rows.py (tables + progress, no Qt), theme.py,
+│   │                                 worker.py (background jobs), update_ui.py (banner, checks, install hand-off),
+│   │                                 settings_dialog.py, resources/ (icon.svg, icon-256.png)
+│   ├── updater.py                    GitHub release check, verified download, detached installer launch (no Qt)
+│   ├── settings.py                   settings.json and the app's folders (%APPDATA% / %LOCALAPPDATA%)
+│   ├── winapp.py                     Windows helpers: the app mutex, AppUserModelID, message box
+│   ├── credentials.py                the API key in Windows Credential Manager
 │   ├── ooxml.py                      transform-side helpers (text views, run surgery, revision stamps, paragraph-local merge)
 │   ├── fingerprint.py                structure fingerprint + pattern id
 │   ├── guard.py                      acquisition identity, lock-file check, atomic guarded write-back
@@ -687,7 +791,9 @@ spec-surgeon/
                                       test_ops_base.py, test_package.py, test_verifier_ext.py, test_ops.py,
                                       test_editspec.py, test_template.py, test_independence.py, test_planner.py,
                                       test_compiler.py, test_codegen.py, test_advisor.py, test_gui.py,
-                                      test_adaptive_messy.py (v0.3.0), test_audit_fixes.py (v0.3.1)
+                                      test_adaptive_messy.py (v0.3.0), test_audit_fixes.py (v0.3.1),
+                                      test_updater.py, test_settings.py, test_ui_rows.py, test_packaging.py,
+                                      test_credentials.py, qt_support.py, data/ (v0.4.0)
 ```
 
 ---
@@ -757,6 +863,35 @@ Phase 3 (125 tests):
 
 v0.3.1 adds `tests/test_audit_fixes.py` (11 tests, 189 in total): one test per audit fix, each with its planted output defect and, where a definition is implemented on both the transform and the verifier side (inherited formatting of an inserted paragraph, the new selectors), a planted implementation defect shared by plan and apply that V10 must catch. The audit's own probe scripts under `docs/audits/probes/` reproduce every finding outside pytest.
 
+v0.4.0 — the Qt window and updates (252 tests: 251 pass and the Credential Manager test skips off Windows, ~100 s in the container). The Qt tests run offscreen (`QT_QPA_PLATFORM=offscreen`, no display needed). They skip where PySide6 or a library it needs is missing, unless `SPEC_SURGEON_REQUIRE_QT=1` (CI sets it). In the Linux container, `apt-get install libegl1` was needed for Qt to load:
+
+```powershell
+py -3 -m pip install -e ".[dev,gui]"
+$env:QT_QPA_PLATFORM = "offscreen"; py -3 -m pytest -q -s
+```
+
+| File | Covers |
+|---|---|
+| `test_updater.py` | no network (a scripted opener) and nothing started (a recording popen): versions; the real v0.3.0 release JSON (`tests/data/`) parsed; drafts, pre-releases, non-`X.Y.Z` tags, wrong-version and path-character installer names refused; the request headers; 404 / rate limit (with its reset time) / offline / TLS / bad JSON / HTTP errors in plain words; the rate-limit fallback via the `releases/latest` redirect; skipped versions (quiet on automatic checks, shown on manual ones); the once-a-day rule and its switches; `SHA256SUMS` parsing (CRLF, `*`, upper case, conflicting duplicates); the download (progress, no `.part` left) and every refusal — wrong hash, short, long, a reported size above the 500 MB ceiling (nothing fetched), no checksum line (no installer byte fetched), GitHub digest disagreeing, oversized checksum file, cancel — each leaving nothing behind; HTTPS-only redirects; the Setup command line (quoting paths with spaces and en-dashes); the installer's environment (no API key, no frozen-runtime variables); the launch flags (detached, new group, break-away with a fallback); refusing a copy not installed by Setup and a file changed after the check; cleanup; the pip instructions |
+| `test_settings.py` | round trip, hand-edited files with wrong types and unknown keys (incl. a malformed pending update, which must not break start-up), a corrupt file set aside, atomic writes, `SPEC_SURGEON_CONFIG_DIR`, and that the key and the risky switches are not settings |
+| `test_ui_rows.py` | the preview and results tables from a real preview and run (copies vs written back, a broken file explained in plain English) and the progress bar reading `run_batch`'s real log lines |
+| `test_gui.py` | + the real Qt window offscreen: Preview → Run with the tables filled and the sources untouched; Run enabled only while the preview is current; Claude's questions in the Answers box; an error shown on its step; the template left out of the file count; the update banner from an automatic check, Skip (saved, quiet next time, shown by a manual check); "up to date" and "couldn't check"; Install blocked during a job; the install hand-off (download → launcher → pending update saved → the window closes); a refused launch unblocking the window; a pip copy getting instructions; the post-update banners; what is remembered (folders, request, render) and what is not (the key, write-back, AI-written transforms); closing during a job asks first; without Qt `spec-surgeon-gui` explains how to install it; the engine, CLI and pure modules never import Qt; only `ui/` imports PySide6 |
+| `test_packaging.py` | the names the app, installer and release workflow share: installer file name ↔ updater, app mutex, `/RELAUNCH`, `[InstallDelete] {app}\_internal`, AppUserModelID, the icon (sizes parsed from the .ico) and UI resources, `SHA256SUMS` over the installer, version ↔ release notes |
+| `test_credentials.py` | Windows only: a Credential Manager round trip on a throw-away target |
+
+On Windows, `packaging/windows/validate_installer.ps1` (run by the build) installs the app and runs `SpecSurgeon.exe --installer-smoke-test` twice:
+- **GUI mode:**
+  - the Qt window on Windows' real platform previews and runs a spec through its buttons;
+  - the process pool, the sandbox and the bundled resources work;
+  - the `windows11` style is available, Credential Manager works, and the mutex and AppUserModelID are set;
+  - the updater downloads and verifies an installer from a canned local release and refuses a tampered one;
+  - a screenshot is saved as an artifact.
+- **Update mode:**
+  - the window hands over to the freshly built installer exactly as *Install now* does;
+  - the script then checks that Setup waited, installed over the app, logged success, and **reopened Spec Surgeon**.
+
+It then reinstalls and uninstalls as before.
+
 ## Known limits of the prototype
 
 * Two job modules. Header/footer templating is now an op (`apply_header_footer_template`, Phase 2, run through EditSpecs); numbering conversion is described in the skill's playbooks but not yet implemented.
@@ -778,11 +913,21 @@ Phase 1 (operation library) limits:
 * EditSpec `expect` checks a small numeric vocabulary; prose is recorded, not checked. `applies_to` checks pattern ids; per-pattern compilation is Phase 3. There is no `plan-spec` dry run yet (Phase 3) — `run-spec` without `--in-place` writes only into the output folder.
 * The fixtures have no textboxes (`mc:AlternateContent`), footnotes or comments; the ops and V10 handle them by construction (all `w:r`/`w:p` in both branches; every text part), but no fixture proves it yet.
 
-Window (Phase 7 first cut) limits:
+Window (Phase 7) limits:
 
-* One window, one job at a time; long steps run in the background and the log shows progress, but there is no cancel button (close the window to abandon a preview; a run that started finishes its files).
-* No settings are remembered between sessions (folders, key); the API key typed into the window lives only in that session's environment.
-* Tested in the Linux container under a virtual display and by the Windows installer build's real-window Preview → Run smoke test. Word COM rendering and live Claude API calls remain **[unproven]**; the Windows runner does not have Word or API credentials.
+* One window, one job at a time; long steps run in the background and the progress bar and log show progress, but there is no cancel button (close the window to abandon a preview — it asks first; a run that started finishes its files).
+* ~~No settings are remembered between sessions (folders, key); the API key typed into the window lives only in that session's environment.~~ Since v0.4.0 the folders, request, render option, theme and window size are remembered (`settings.json`), and the key can be remembered in Windows Credential Manager (Settings). The risky switches are deliberately never remembered.
+* Tested in the Linux container offscreen (Qt) and by the Windows installer build's real-window Preview → Run smoke test and in-app update test. Word COM rendering and live Claude API calls remain **[unproven]**; the Windows runner does not have Word or API credentials.
+* The look was checked from offscreen screenshots in the container (the app's own theme, Inter instead of Segoe UI). Qt's native `windows11` style (Settings → Use Windows' own controls) is available on the Windows build but its look with this layout has not been seen on a Windows 11 screen — **[unproven]**.
+* The Windows build runner is Windows Server 2022, so the CI smoke test uses the app's own theme; nothing in CI looks at Windows 11 itself.
+
+Updates (v0.4.0) limits:
+
+* The installer is unsigned: the SHA-256 checks prove the download is the file the release lists, not who published it (see [Updates](#updates)). Signing is a later step; the updater's `verify_signature` hook is where it goes.
+* PAC/WPAD automatic proxy scripts are not evaluated; behind one, checks fail with a plain message and the releases link.
+* Only the latest non-draft, non-pre-release GitHub release is offered (no beta channel, no downgrade).
+* v0.3.x has no updater: one manual install of v0.4.0 is needed.
+* The first real in-app update from one published version to the next happens after v0.4.0 is released; CI proves the mechanism by updating the installed app to the installer it just built.
 
 Phase 6 limits and what is left:
 
@@ -826,7 +971,7 @@ Phase 2 (templating) limits:
 
 The design and implementation plan for driving this engine from plain-English requests ("remove all headers/footers", "change all font to Arial", "make the header/footer look like this template") at batch scale is in `docs/NL_SURGICAL_EDITOR_PLAN.md`: the model compiles a request into an EditSpec over a library of verified operations once per batch; the engine plans, applies and verifies it per file. Roughly 85% of v0.1.0 carries over; the plan lists what is new, phase by phase.
 
-Progress: **Phase 1 (operation library foundation) is done** — see "Operations and EditSpecs" above and the "Phase 1 status" section of the plan, which lists every place the implementation departs from the plan and why. **Phase 2 (the `apply_header_footer_template` op and V7's template reference) is done** — "Header/footer templating" above, "Phase 2 status" in the plan. **Phase 3 (profiler, dry-run planner, op catalog + EditSpec schema, `profile`/`plan-spec` CLI) is done** — "Profiles, dry runs and the op catalog" above, "Phase 3 status" in the plan. **Phase 4 (compiler, preview, `do`) is done** — "Natural-language editing" above, "Phase 4 status" in the plan. **Phase 5 (Tier B) is done, off by default** — "Tier B: generated transforms" above, "Phase 5 status" in the plan. **Phase 6 (the advisor) is done**; its real-file sweeps and the Word path need your machine — "Phase 6 status" in the plan. **Phase 7, first cut: the window** (`spec-surgeon-gui`) — "The window" above.
+Progress: **Phase 1 (operation library foundation) is done** — see "Operations and EditSpecs" above and the "Phase 1 status" section of the plan, which lists every place the implementation departs from the plan and why. **Phase 2 (the `apply_header_footer_template` op and V7's template reference) is done** — "Header/footer templating" above, "Phase 2 status" in the plan. **Phase 3 (profiler, dry-run planner, op catalog + EditSpec schema, `profile`/`plan-spec` CLI) is done** — "Profiles, dry runs and the op catalog" above, "Phase 3 status" in the plan. **Phase 4 (compiler, preview, `do`) is done** — "Natural-language editing" above, "Phase 4 status" in the plan. **Phase 5 (Tier B) is done, off by default** — "Tier B: generated transforms" above, "Phase 5 status" in the plan. **Phase 6 (the advisor) is done**; its real-file sweeps and the Word path need your machine — "Phase 6 status" in the plan. **Phase 7, first cut: the window** (`spec-surgeon-gui`) — "The window" above. **Phase 7, second cut (v0.4.0): the Qt window, remembered settings, and in-app updates** — "The window" and "Updates" above.
 
 ## Relationship to the docx-surgical-edit skill
 

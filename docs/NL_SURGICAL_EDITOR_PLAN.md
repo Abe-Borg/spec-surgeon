@@ -367,6 +367,12 @@ Needs from the engine: `profile` for the pre-flight message, `compile` returning
 
 **Status: first cut done (2026-10-13)** — `gui.py`, a single Tk window (`spec-surgeon-gui`): specs folder, optional template, results folder, request or spec file, answers, API key (session only), options (render, guarded in-place, AI-written transforms), Preview / Load spec file / Run / Open results folder / Advise on exceptions, and a log. `gui.Session` holds the logic and is tested without widgets; the real window is driven under Xvfb in the container. Abraham chose to skip the real-file sweep, the live API run and the Word check for now and start using the window; those happen through it. The `spec_surgeon/__main__.py` guard (missing until now) was added for `python -m spec_surgeon` with the process pool on Windows.
 
+**Status: second cut done (v0.4.0, 2026-10-14)** — Abraham: "the gui looks like shit … this is going to be a windows app that my users can install … auto update, and also a button … to check for updates."
+- **The window** was rebuilt in Qt 6 (PySide6-Essentials, the `gui` extra; `ui/`). It has four steps (Files → Describe the change → Preview → Run & results), Preview and Results tables with plain-English reasons, the sample before/after pages in the app, a progress bar, errors shown on the step that caused them, a collapsible activity log, light/dark themes and remembered settings (`settings.json`). The API key can be kept in Windows Credential Manager.
+- **Unchanged:** `gui.Session`, apart from keeping the last results for the tables.
+- **Updates** (`updater.py`, `ui/update_ui.py`, `installer.iss`) follow Abraham's choices: notify with one-click install, unsigned for now with SHA-256 checks against the release's `SHA256SUMS`. The app checks GitHub Releases once a day, and Help → Check for updates checks at any time. *Install now* downloads and verifies the installer, starts Setup detached and quits; Setup waits for the app mutex, installs without admin rights and reopens the app. CI performs a real in-app update of the installed app.
+- **One departure from what Abraham was shown when choosing Qt:** the default look is the app's own Windows 11-like theme on Qt's Fusion style, which looks the same on Windows 10 and 11 and in the screenshots. Qt's native `windows11` style is a Settings option. The reason is that the native style's look with this layout could not be checked in the container.
+
 ---
 
 ## 13. Test strategy
