@@ -8,7 +8,7 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 
 **Status: v0.3.0 — the desktop window and mixed-quality batch workflow are included.** The natural-language editor prototype is complete through plan Phase 6 (op library, templating, profiles and dry runs, the Claude compiler with preview and approval, Tier B generated transforms, the exception advisor), with the first-cut Phase 7 GUI, set-aside reports and retries, messy-document matching, and paragraph insertion/deletion. What remains needs your machine and your files: Word COM rendering, a read-only sweep over real project specs, and live runs of the Claude layer (all marked [unproven] below). The original v0.1.0 engine capabilities remain: two job modules, the nine-check verification suite (now extended through V10), batch orchestration, Word/LibreOffice rendering, geometry assertion, guarded in-place write-back, and the optional Claude layer.
 
-**Packaged releases:** download the wheel or source archive from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases). [v0.3.0 release notes](docs/releases/v0.3.0.md) include wheel installation instructions. The source archive includes the worked examples, documentation, and complete test fixtures. Release tags (`v<version>`) trigger tests with Tk/LibreOffice, package builds and metadata checks, a clean wheel installation, and publication of the distributions with SHA-256 checksums. Before tagging, keep `pyproject.toml` and `spec_surgeon.__version__` in sync and add `docs/releases/v<version>.md`; publication stops if any check fails.
+**Packaged releases:** download the Windows installer, wheel, or source archive from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases). [v0.3.0 release notes](docs/releases/v0.3.0.md) include installation instructions. The source archive includes the worked examples, documentation, complete test fixtures, and Windows packaging scripts. Release tags (`v<version>`) trigger tests with Tk/LibreOffice and on Windows, package builds and metadata checks, a clean wheel installation, an installed Windows app smoke test, and publication of the distributions with SHA-256 checksums. Before tagging, keep `pyproject.toml` and `spec_surgeon.__version__` in sync and add `docs/releases/v<version>.md`; publication stops if any check fails.
 
 **NL editor, Phase 1 (operation library foundation) — done.** The engine now has a composable operation library (`ops/`: `remove_header_footer`, `set_font`, `set_style_font`, `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, plus the two v0.1.0 jobs as `fix_page_numbering` and `replace_text`), hand-written **EditSpecs** executed end to end by `spec-surgeon run-spec`, a tenth check (**V10 — property assertions and residual identity**), and V1/V2/V4/V5/V7 extensions for member removal, text-scope union, every revision kind and layout-reference modes. The v0.1.0 jobs and CLI keep working unchanged (they are thin aliases now).
 
@@ -76,6 +76,12 @@ Design rules carried from the method, enforced in code:
 
 ## Install
 
+**Windows 10/11 (64-bit):** download `SpecSurgeon-<version>-Setup-x64.exe` from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases), run it, then launch **Spec Surgeon** from the Start menu. The installer includes Python, Tk, the editing engine, Word integration, and the Anthropic client; no separate Python installation or terminal commands are needed. It installs for the current user without administrator access, offers a desktop shortcut, and includes an uninstaller. Example EditSpecs are available from **Spec Surgeon → Example edit specs** in the Start menu. User documents and result folders are kept when the app is uninstalled.
+
+Microsoft Word or LibreOffice is still needed for page rendering; neither is installed by this setup program. Typed requests still need your Anthropic API key (paste it into the window); saved EditSpecs run without one. This first installer is unsigned, so Windows may show a publisher/SmartScreen prompt.
+
+**Python package / development setup:**
+
 Requires Python 3.10+ (Windows, macOS, Linux). From the project folder:
 
 ```powershell
@@ -104,7 +110,9 @@ Environment variables:
 
 ![The Spec Surgeon window after a preview](docs/gui.png)
 
-**Set up once (Windows):**
+**Set up once (Windows installer):** run the setup EXE from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases), then open **Spec Surgeon** from the Start menu. For typed requests, paste your Anthropic API key into the window. To work without an API key, choose **Load spec file…** and load an example from the Start menu's **Example edit specs** folder.
+
+**Alternative: set up from source (Windows):**
 
 1. Install Python 3.12 or newer from python.org (keep "tcl/tk and IDLE" ticked — it is by default — and tick "Add python.exe to PATH").
 2. Get this repository onto your machine (clone it, or download the ZIP from GitHub and unzip it), open a terminal in its folder and run:
@@ -748,7 +756,7 @@ Phase 3 (125 tests):
 * The Word renderer/oracle is written to the skill's rules but has not yet been exercised on a real job (the container this was built in has no Word). The LibreOffice path is exercised by the tests.
 * The pandoc oracle is used by the tests when pandoc is present, not by the engine.
 * The agent commands produce text for a human; they do not edit files.
-* The desktop GUI is included; there is no standalone installer (install with pip).
+* The desktop GUI and a standalone Windows x64 installer are included; other platforms use pip.
 
 Phase 1 (operation library) limits:
 
@@ -765,7 +773,7 @@ Window (Phase 7 first cut) limits:
 
 * One window, one job at a time; long steps run in the background and the log shows progress, but there is no cancel button (close the window to abandon a preview; a run that started finishes its files).
 * No settings are remembered between sessions (folders, key); the API key typed into the window lives only in that session's environment.
-* Tested in the Linux container under a virtual display; first use on Windows is **[unproven]** (Tk ships with the python.org installer; `os.startfile` opens the results folder).
+* Tested in the Linux container under a virtual display and by the Windows installer build's real-window Preview → Run smoke test. Word COM rendering and live Claude API calls remain **[unproven]**; the Windows runner does not have Word or API credentials.
 
 Phase 6 limits and what is left:
 

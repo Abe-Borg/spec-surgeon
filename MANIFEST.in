@@ -2,3 +2,4 @@ include CLAUDE.md requirements.txt
 recursive-include docs *.md *.png
 recursive-include examples *.json *.docx *.md *.png
 recursive-include tests *.py
+recursive-include packaging/windows *.py *.spec *.iss *.ps1

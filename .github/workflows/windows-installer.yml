@@ -1,0 +1,56 @@
+name: Publish Windows installer
+
+on:
+  push:
+    branches: [master]
+    paths:
+      - "packaging/windows/**"
+      - ".github/workflows/windows-build.yml"
+      - ".github/workflows/windows-installer.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-installer-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    uses: ./.github/workflows/windows-build.yml
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/
+      - name: Add the installer to the existing release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_VERSION: ${{ needs.build.outputs.version }}
+        run: |
+          tag="v$APP_VERSION"
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY"
+          mkdir existing-checksums
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir existing-checksums
+          installer="SpecSurgeon-$APP_VERSION-Setup-x64.exe"
+          python - "$installer" <<'PY'
+          import hashlib
+          from pathlib import Path
+          import sys
+
+          name = sys.argv[1]
+          old = Path("existing-checksums/SHA256SUMS").read_text().splitlines()
+          lines = [line for line in old if line.split()[-1] != name]
+          digest = hashlib.sha256(Path("dist", name).read_bytes()).hexdigest()
+          Path("dist/SHA256SUMS").write_text("\n".join(lines + [f"{digest}  {name}"]) + "\n")
+          PY
+          gh release upload "$tag" "dist/$installer" dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
+          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "docs/releases/$tag.md"

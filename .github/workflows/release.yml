@@ -73,8 +73,11 @@ jobs:
           name: release-assets
           path: dist/
 
+  windows:
+    uses: ./.github/workflows/windows-build.yml
+
   publish:
-    needs: build
+    needs: [build, windows]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -84,10 +87,15 @@ jobs:
         with:
           name: release-assets
           path: dist/
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-installer
+          path: dist/
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          (cd dist && sha256sum *.whl *.tar.gz *.exe > SHA256SUMS)
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
             --title "Spec Surgeon $GITHUB_REF_NAME" \
