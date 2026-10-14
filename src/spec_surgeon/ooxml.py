@@ -32,8 +32,11 @@ PPR_ORDER = [
     "sectPr", "pPrChange",
 ]
 
-# Non-visual rPr children that frequently fragment runs in messy/OCR'd specs without changing appearance.
-NOISE_RPR_LOCALS = {"lang", "noProof", "snapToGrid", "webHidden", "cs", "eastAsianLayout"}
+# Non-visual rPr children that frequently fragment runs in messy/OCR'd specs without changing appearance:
+# proofing language, "no proofing", hidden-in-web-view. NOT in this set, although they also scatter: w:cs (switches
+# the run to the complex-script font/size/weight), w:eastAsianLayout (combined/vertical East Asian text) and
+# w:snapToGrid (character pitch under a document grid) — each can change what the reader sees.
+NOISE_RPR_LOCALS = {"lang", "noProof", "webHidden"}
 INERT_RUN_CHILDREN = {W + "lastRenderedPageBreak", W + "proofErr"}
 
 
@@ -300,24 +303,35 @@ _MERGEABLE_NOISE = _MERGEABLE + tuple(INERT_RUN_CHILDREN)
 
 def merge_adjacent_runs(p: etree._Element, ignore_noise: bool = False) -> int:
     """Merge adjacent sibling runs with identical rPr under the same parent (so runs in different
-    w:ins/w:del wrappers are never merged). When ``ignore_noise`` is True, inert w:proofErr and
-    w:lastRenderedPageBreak markers are removed so they do not prevent merging, and non-visual rPr
-    noise (w:lang, w:noProof, w:webHidden, redundant w:szCs/auto color) is ignored during comparison."""
+    w:ins/w:del wrappers are never merged). When ``ignore_noise`` is True, non-visual rPr noise (w:lang,
+    w:noProof, w:webHidden, redundant w:szCs/auto color) is ignored during comparison, and the inert
+    w:proofErr / w:lastRenderedPageBreak markers that sit between (or inside) two runs that DO merge are
+    removed with the merge; markers elsewhere in the paragraph are left exactly as they were."""
     merges = 0
     allowed_tags = _MERGEABLE_NOISE if ignore_noise else _MERGEABLE
+
+    def mergeable(r) -> bool:
+        return r.tag == W + "r" and all(c.tag in allowed_tags for c in r)
+
     for parent in [p] + [el for el in p.iter() if el.tag in (W + "ins", W + "hyperlink", W + "sdtContent")]:
-        if ignore_noise:
-            for ch in list(parent):
-                if ch.tag in INERT_RUN_CHILDREN:
-                    parent.remove(ch)
         kids = list(parent)
         i = 0
         while i < len(kids) - 1:
-            a, b = kids[i], kids[i + 1]
-            if (a.tag == W + "r" and b.tag == W + "r"
-                    and all(c.tag in allowed_tags for c in a)
-                    and all(c.tag in allowed_tags for c in b)
-                    and rpr_key(a, ignore_noise=ignore_noise) == rpr_key(b, ignore_noise=ignore_noise)):
+            a = kids[i]
+            if not mergeable(a):
+                i += 1
+                continue
+            j = i + 1
+            between = []                       # inert markers separating a from the next run (noise mode only)
+            while ignore_noise and j < len(kids) and kids[j].tag in INERT_RUN_CHILDREN:
+                between.append(kids[j])
+                j += 1
+            if j >= len(kids):
+                break
+            b = kids[j]
+            if mergeable(b) and rpr_key(a, ignore_noise=ignore_noise) == rpr_key(b, ignore_noise=ignore_noise):
+                for el in between:
+                    parent.remove(el)
                 if ignore_noise:
                     for r_el in (a, b):
                         for ch in list(r_el):
@@ -331,9 +345,9 @@ def merge_adjacent_runs(p: etree._Element, ignore_noise: bool = False) -> int:
                 for c in b_content:
                     a.append(c)
                 parent.remove(b)
-                kids.pop(i + 1)
+                kids = list(parent)
                 merges += 1
-                continue
+                continue                       # a may merge with the run after b as well
             i += 1
     return merges
 

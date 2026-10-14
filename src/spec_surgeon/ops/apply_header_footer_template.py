@@ -167,7 +167,13 @@ class ApplyHeaderFooterTemplate(Op):
         "template": {"type": "string", "description": "path of the template .docx (relative paths: the spec's folder)"},
         "template_sections": {"type": "object", "description": "{\"cover\": i, \"body\": j} or {\"all\": i}"},
         "kinds": {"type": "array", "items": {"type": "string", "enum": list(KINDS)}, "default": list(KINDS)},
-        "slot_fills": {"type": "object", "description": "{slot name: {rule: literal|regex|paragraph_after, …}}"},
+        "slot_fills": {"type": "object",
+                       "description": "{slot name: fill rule}; a rule is {rule: 'literal', value} | {rule: 'regex', pattern, "
+                                      "source?, section?, occurrence?, flexible_whitespace?} | {rule: 'paragraph_after', "
+                                      "anchor_regex, source?, section?, occurrence?, flexible_whitespace?} | {rule: "
+                                      "'first_match', rules: [...]} (tried in order; use it when the batch mixes layouts). "
+                                      "Grammar and semantics: the catalog's fill_rules. Every slot of the template parts in "
+                                      "use needs a rule; a rule naming no slot is refused."},
         "slot_markers": {"type": "array", "items": {"type": "string", "enum": ["highlight", "braces"]},
                          "default": ["highlight", "braces"]},
         "highlight_colors": {"type": "array", "items": {"type": "string"}, "default": ["yellow"]},

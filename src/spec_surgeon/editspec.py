@@ -25,6 +25,7 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+from .ooxml import CELL_REV_TAGS, CONTENT_REV_TAGS, PROPERTY_REV_TAGS
 from .ops import OPS, JobException, Plan, PlanFragment, get_op, merge_fragments
 from .ops.selectors import DEFAULT_PRESERVE_FONTS
 from .package import DocxPackage
@@ -37,6 +38,10 @@ MODES = ("formatting", "content", "untracked")
 SPEC_ASSERTION_KINDS = ("effective_font",)
 EXPECT_CHECKS = ("text_diffs", "text_diffs_outside_removed_parts", "text_diffs_in_kept_parts", "members_added",
                  "members_removed", "rev_delta")
+# The revision kinds V4 counts (CLAUDE.md "Revision kinds"), derived from the transform side's tables so a kind added
+# there is accepted here: content wrappers, their paragraph-mark forms, property changes, table-cell revisions.
+REV_DELTA_KINDS = tuple(CONTENT_REV_TAGS) + tuple(t + "_mark" for t in CONTENT_REV_TAGS) + tuple(PROPERTY_REV_TAGS) \
+    + tuple(CELL_REV_TAGS)
 
 
 class SpecError(JobException):
@@ -98,9 +103,12 @@ def _check_op_against_schemas(i: int, o: Dict[str, Any]) -> None:
 
 
 def _valid_range_pred(v: Any) -> bool:
+    """``{"min": n}``, ``{"max": n}`` or both: non-negative integers (never booleans), min ≤ max."""
     if not isinstance(v, dict) or not v or set(v) - {"min", "max"}:
         return False
-    return all(isinstance(x, int) and not isinstance(x, bool) for x in v.values())
+    if not all(isinstance(x, int) and not isinstance(x, bool) and x >= 0 for x in v.values()):
+        return False
+    return not ("min" in v and "max" in v and v["min"] > v["max"])
 
 
 def _matches_expect_val(actual_val: int, exp_val: Any) -> bool:
@@ -199,13 +207,17 @@ def validate_spec(spec: Dict[str, Any]) -> None:
             if k in EXPECT_CHECKS and k != "rev_delta" and not isinstance(v, str):
                 if not (isinstance(v, int) and not isinstance(v, bool)) and not _valid_range_pred(v):
                     raise SpecError(f"op #{i} ({o['op']}): expect.{k} must be an integer, a range "
-                                    f"{{'min': ..., 'max': ...}}, or a prose string, got {v!r}", "spec")
+                                    f"{{'min': ..., 'max': ...}} (non-negative, min ≤ max), or a prose string, got {v!r}", "spec")
             if k == "rev_delta" and not isinstance(v, str):
                 if not isinstance(v, dict) or not all(
                     (isinstance(rv, int) and not isinstance(rv, bool)) or _valid_range_pred(rv) for rv in v.values()
                 ):
                     raise SpecError(f"op #{i} ({o['op']}): expect.rev_delta must map revision kinds to integers or "
-                                    f"range objects, got {v!r}", "spec")
+                                    f"range objects {{'min': ..., 'max': ...}} (non-negative, min ≤ max), got {v!r}", "spec")
+                unknown_kinds = sorted(set(v) - set(REV_DELTA_KINDS))
+                if unknown_kinds:
+                    raise SpecError(f"op #{i} ({o['op']}): expect.rev_delta names unknown revision kind(s) "
+                                    f"{unknown_kinds}; known: {list(REV_DELTA_KINDS)}", "spec")
         _check_op_against_schemas(i, o)
     review = spec.get("review") or {}
     if set(review) - {"sample_files", "geometry_reference"}:

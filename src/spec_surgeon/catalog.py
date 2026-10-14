@@ -42,7 +42,10 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     ],
     "insert_paragraph": [
         "the inserted paragraph text is the user's exact approved wording verbatim",
-        "inherits the anchor paragraph's style unless an explicit style was given",
+        "the new paragraph copies the anchor's paragraph formatting (style, indents, spacing, tabs, list numbering) "
+        "and the font formatting of the anchor's first text run, so it looks like its neighbour — give the text "
+        "without a manual number when the anchor is auto-numbered; formatting 'none' copies only the style",
+        "an explicit style replaces the inherited one",
         "tracked insertion unless untracked was requested",
     ],
     "fix_page_numbering": ["body page numbering restarts at 1 after the cover"],
@@ -52,6 +55,44 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "header/footer distances and titlePg follow the template; page margins stay",
         "pending tracked changes inside the old headers/footers are discarded and flagged by author",
     ],
+}
+
+# How a template slot gets its value (apply_header_footer_template.slot_fills). Transform: ops/slots.py; verifier:
+# verify/template.py — both implement exactly this.
+FILL_RULES = {
+    "literal": "{rule: 'literal', value: '<the user's exact approved words>'} — the only rule that places typed text; "
+               "it makes the op untracked and the words must appear verbatim in the request or the user's answers",
+    "regex": "{rule: 'regex', pattern: '<Python regex>', source?: 'document' | 'header.<default|first|even>' | "
+             "'footer.<default|first|even>' (default 'document'), section?: <int>, occurrence?: 'all' | 'first' (default "
+             "'all'), flexible_whitespace?: bool (default true), strip?: bool (default true)} — searched in the display "
+             "text of every paragraph of the source; the fill is group 1 if the pattern has groups, else the whole match; "
+             "with 'all' every match must agree (compared with whitespace collapsed), otherwise the file is set aside as "
+             "'ambiguous'",
+    "paragraph_after": "{rule: 'paragraph_after', anchor_regex: '<regex>', source?, section?, occurrence?, "
+                       "flexible_whitespace?, strip?} — the display text of the first non-blank paragraph after a paragraph "
+                       "matching anchor_regex (e.g. the title under a standalone 'SECTION 21 13 13' line); several anchors "
+                       "are fine when the paragraphs that follow them agree, or occurrence is 'first'",
+    "first_match": "{rule: 'first_match', rules: [<rule>, <rule>, …]} — tries the rules in order and uses the first that "
+                   "extracts a non-empty fill. Use it when one batch mixes layouts: e.g. [{paragraph_after on "
+                   "'^SECTION \\d{2} \\d{2} \\d{2}$'}, {regex '^SECTION\\s+\\d{2}\\s+\\d{2}\\s+\\d{2}\\s*[-–—:]\\s*(.+)$'}] "
+                   "handles both a title on its own line and an inline 'SECTION 21 13 13 – TITLE' line. A syntax error in "
+                   "any sub-rule is refused up front; a nested literal counts as a literal",
+    "whitespace": "with flexible_whitespace (default true) a pattern or anchor that fails on the raw text is retried on a "
+                  "view where tabs, non-breaking spaces and runs of spaces are one space; the fill keeps the document's "
+                  "own characters whenever the raw match succeeded. Fills are stripped of surrounding whitespace and must "
+                  "be non-empty; nothing is ever typed into a slot except a 'literal'",
+}
+
+# The op-level 'expect' entries (validated by editspec.validate_spec, checked against every file's plan).
+EXPECT_SYNTAX = {
+    "checks": "text_diffs | text_diffs_outside_removed_parts | text_diffs_in_kept_parts | members_added | "
+              "members_removed | rev_delta; any other key must hold a prose string (recorded, not checked)",
+    "value": "an exact integer, or a range {'min': n} | {'max': n} | {'min': n, 'max': n} (non-negative, min ≤ max)",
+    "rev_delta": "an object mapping revision kinds to the same value forms; kinds: ins, del, moveFrom, moveTo, "
+                 "ins_mark, del_mark, moveFrom_mark, moveTo_mark, rPrChange, pPrChange, sectPrChange, tblPrChange, "
+                 "trPrChange, tcPrChange, tblGridChange, numberingChange, cellIns, cellDel, cellMerge",
+    "use": "use a range when the batch's files legitimately differ in how many places change (e.g. text_diffs "
+           "{'min': 1}); a file whose plan falls outside the range is set aside with code 'expect', never edited",
 }
 
 SELECTOR_GRAMMAR = {
@@ -131,10 +172,15 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
         "selector_grammar": SELECTOR_GRAMMAR,
         "modes": {"formatting": "no op writes characters", "content": "an op places the user's words, tracked",
                   "untracked": "an op places the user's words untracked (or a literal template fill)"},
+        "fill_rules": FILL_RULES,
         "expect_checks": list(EXPECT_CHECKS),
+        "expect_syntax": EXPECT_SYNTAX,
         "spec_assertions": list(SPEC_ASSERTION_KINDS),
         "rules": [
             "never invent document text: replacement wording and literal fills come verbatim from the user",
+            "a batch that mixes layouts gets ONE spec: extract fills with a first_match chain, match wording with "
+            "flexible_whitespace / ignore_formatting_noise, and use ranges in expect; files the spec cannot plan on are "
+            "set aside for the next pass, never edited",
             "state every interpretation in 'assumptions'; ask in 'questions' when the request is ambiguous "
             "(nothing runs while questions are open)",
             "use only part names, style ids and section indices that appear in the profiles",

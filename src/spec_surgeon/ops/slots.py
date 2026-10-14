@@ -321,6 +321,7 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
         if occ == "first":
             value = values[0]
         else:
+            # consensus is judged on whitespace-normalized text; the fill is the first match's own characters
             normed = [_norm_ws(v).strip() if flex_ws else v for v in values]
             if len(set(normed)) > 1:
                 raise JobException(f"slot {name!r}: pattern matches different values {sorted(set(values))}", "ambiguous",
@@ -336,22 +337,24 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
         if not hits:
             raise JobException(f"slot {name!r}: anchor {rule['anchor_regex']!r} matches 0 paragraph(s); "
                                f"exactly one needed", "not-found", {"slot": name, "matches": hits})
-        candidates = []
+        candidates = []                   # the following paragraphs' own text (verbatim)
         for h in hits:
             nxt = [t for t in texts[h + 1:] if t.strip()]
             if nxt:
-                candidates.append(_norm_ws(nxt[0]).strip() if flex_ws else nxt[0])
+                candidates.append(nxt[0])
         if not candidates:
             raise JobException(f"slot {name!r}: nothing follows the anchor paragraph", "not-found", {"slot": name})
-        if len(hits) > 1 and occ != "first" and len(set(candidates)) > 1:
+        keys = [_norm_ws(c).strip() if flex_ws else c for c in candidates]
+        if len(hits) > 1 and occ != "first" and len(set(keys)) > 1:
             raise JobException(f"slot {name!r}: anchor {rule['anchor_regex']!r} matches {len(hits)} paragraph(s); "
                                f"exactly one needed", "ambiguous", {"slot": name, "matches": hits})
         value = candidates[0]
     else:
         raise JobException(f"slot {name!r}: rule must be literal | regex | paragraph_after | first_match, got {kind!r}",
                            "bad-params")
-    if flex_ws and kind != "literal" and ("\u00a0" in value or "  " in value):
-        value = _norm_ws(value)
+    # The fill keeps the document's own characters (CLAUDE.md rule 11: extracted, never typed). Whitespace
+    # normalization is used only to MATCH and to judge consensus; a match that needed the normalized view yields
+    # that view's text, because the regex group has no other source.
     if strip:
         value = value.strip()
     if not value:

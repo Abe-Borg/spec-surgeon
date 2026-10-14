@@ -6,6 +6,11 @@
 Transform+verify runs in a process pool; rendering runs through the chosen backend (Word is one
 instance, LibreOffice is N parallel profiles). Exceptions never stop the batch; they are written to
 <out>/exceptions/ and summarized in <out>/set_aside.json with a structured diagnosis for the next pass.
+
+``<out>/outputs/`` holds only files that passed every check, V9 included. An output that fails verification, or
+whose V9 guard fails afterwards (the source drifted during the run, or the in-place write-back was refused), is moved
+to ``<out>/failed/`` (kept for diagnosis, never delivered) so that copying the outputs folder can never pick up a file
+the suite rejected.
 """
 from __future__ import annotations
 
@@ -163,6 +168,22 @@ def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
                             "details": {"traceback": traceback.format_exc()}}
     res["timings"]["total"] = time.perf_counter() - t0
     return res
+
+
+# ---- failed outputs ----------------------------------------------------------------------------------
+
+def quarantine_failed_output(fr: FileResult, out_dir: Path) -> Path:
+    """Move a failed output out of outputs/ into failed/ (diagnosis only); the record keeps pointing at the file."""
+    dest_dir = Path(out_dir) / "failed"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / fr.output.name
+    if dest.exists():
+        dest.unlink()
+    fr.output.replace(dest)
+    fr.output = dest
+    if fr.record is not None:
+        fr.record.output = str(dest)
+    return dest
 
 
 # ---- V7 ----------------------------------------------------------------------------------------------
@@ -377,7 +398,10 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
         if fr.record is None or fr.output is None:
             continue
         if not fr.record.passed:
-            fr.record.set(CheckResult("V9", "Overwrite guard", "NA", "not delivered: verification failed"))
+            moved = quarantine_failed_output(fr, out_dir)
+            fr.record.set(CheckResult("V9", "Overwrite guard", "NA",
+                                      f"not delivered: verification failed; the output was moved out of outputs/ to "
+                                      f"{moved.parent.name}/{moved.name} (diagnosis only)"))
             continue
         if fr.noop:
             fr.record.set(CheckResult("V9", "Overwrite guard", "NA", "no-op: output identical to source; nothing written back"))
@@ -390,13 +414,25 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                                           f"source re-checked (size {fr.identity.size}, mtime unchanged); no Word lock file; "
                                           f"atomic replace; new md5 {new_id.md5}"))
             except guard.GuardError as e:
-                fr.record.set(CheckResult("V9", "Overwrite guard", "FAIL", str(e)))
+                # V9 failed after V1–V8/V10 passed: the output is still a copy that was never delivered — out of
+                # outputs/ it goes, like any other failed check, so the folder keeps its guarantee
+                moved = quarantine_failed_output(fr, out_dir)
+                fr.record.set(CheckResult("V9", "Overwrite guard", "FAIL",
+                                          f"{e} — not delivered; the output was moved out of outputs/ to "
+                                          f"{moved.parent.name}/{moved.name} (diagnosis only; run again once the source is "
+                                          f"closed and unchanged)"))
         else:
             d = guard.drifted(fr.identity)
-            fr.delivered_to = str(fr.output)
-            fr.record.set(CheckResult("V9", "Overwrite guard", "PASS" if not d else "FAIL",
-                                      ("source unchanged since acquisition; output written to " + str(fr.output))
-                                      if not d else f"SOURCE DRIFTED during the run: {d} — rebase before using this output"))
+            if not d:
+                fr.delivered_to = str(fr.output)
+                fr.record.set(CheckResult("V9", "Overwrite guard", "PASS",
+                                          "source unchanged since acquisition; output written to " + str(fr.output)))
+            else:
+                moved = quarantine_failed_output(fr, out_dir)
+                fr.record.set(CheckResult("V9", "Overwrite guard", "FAIL",
+                                          f"SOURCE DRIFTED during the run: {d} — the output was built from a stale source and "
+                                          f"moved out of outputs/ to {moved.parent.name}/{moved.name} (diagnosis only); run "
+                                          f"again on the current file"))
     batch.timings["deliver"] = time.perf_counter() - t_d
 
     # 6. records, exceptions, plans

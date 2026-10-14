@@ -730,6 +730,61 @@ def _deleted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     return f"deleted_paragraphs: {n} paragraph(s) ({'tracked' if tracked else 'untracked'})"
 
 
+_V_MARK_REVS = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "rPrChange"}
+
+
+def _v_inherit_ppr(anchor):
+    """This module's own reading of insert_paragraph's inherit rule for paragraph properties: the anchor's pPr
+    without sectPr / pPrChange and without revision marks or rPrChange inside its paragraph-mark rPr."""
+    ppr = anchor.find(W + "pPr")
+    if ppr is None:
+        return None
+    c = copy.deepcopy(ppr)
+    for ch in list(c):
+        if _local(ch) in ("sectPr", "pPrChange"):
+            c.remove(ch)
+    rpr = c.find(W + "rPr")
+    if rpr is not None:
+        for ch in list(rpr):
+            if ch.tag in _V_MARK_REVS:
+                rpr.remove(ch)
+        if not len(rpr) and not rpr.attrib:
+            c.remove(rpr)
+    return c if (len(c) or c.attrib) else None
+
+
+def _v_inherit_rpr(anchor, view_runs):
+    """… and for run properties: the rPr of the anchor's first live text run, without rPrChange."""
+    for r in view_runs:
+        if r.find(W + "t") is None or _has_ancestor(r, {W + "del", W + "moveFrom"}, anchor):
+            continue
+        rpr = r.find(W + "rPr")
+        if rpr is None:
+            return None
+        c = copy.deepcopy(rpr)
+        for ch in list(c):
+            if _local(ch) == "rPrChange":
+                c.remove(ch)
+        return c if (len(c) or c.attrib) else None
+    return None
+
+
+def _v_ppr_sans_mark_ins(p):
+    """The output paragraph's pPr with the tracked-insertion mark removed (what must equal the inherited pPr)."""
+    ppr = p.find(W + "pPr")
+    if ppr is None:
+        return None
+    c = copy.deepcopy(ppr)
+    rpr = c.find(W + "rPr")
+    if rpr is not None:
+        for ch in list(rpr):
+            if _local(ch) == "ins":
+                rpr.remove(ch)
+        if not len(rpr) and not rpr.attrib:
+            c.remove(rpr)
+    return c if (len(c) or c.attrib) else None
+
+
 def _inserted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     parts = ctx.scope_parts(a.get("scope", ["document"]))
     pred = (a.get("select") or {}).get("paragraphs")
@@ -737,6 +792,9 @@ def _inserted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     text = a.get("text", "")
     tracked = bool(a.get("tracked", True))
     style = a.get("style")
+    formatting = a.get("formatting", "inherit")
+    if formatting not in ("inherit", "none"):
+        raise ValueError(f"unknown formatting {formatting!r}")
     n = 0
     for part in parts:
         if part not in ctx.both:
@@ -758,6 +816,31 @@ def _inserted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             got_style = _pstyle(op)
             if got_style != want_style:
                 errs.append(f"inserted_paragraphs: {part} output block {oi} style {got_style!r} ≠ {want_style!r}")
+            # formatting, re-derived here from the SOURCE anchor
+            anchor = sv.pars[bi]
+            want_ppr = _v_inherit_ppr(anchor) if formatting == "inherit" else None
+            want_rpr = _v_inherit_rpr(anchor, sv.runs[bi]) if formatting == "inherit" else None
+            if want_style is not None:
+                if want_ppr is None:
+                    want_ppr = etree.Element(W + "pPr")
+                ps = want_ppr.find(W + "pStyle")
+                if ps is None:
+                    ps = etree.Element(W + "pStyle")
+                    want_ppr.insert(0, ps)
+                ps.set(W + "val", want_style)
+            got_ppr = _v_ppr_sans_mark_ins(op) if tracked else op.find(W + "pPr")
+            if sig(want_ppr) != sig(got_ppr):
+                errs.append(f"inserted_paragraphs: {part} output block {oi} paragraph properties are not the anchor's "
+                            f"({formatting}): {first_difference(want_ppr, got_ppr) or 'differ'}")
+            oruns = ov.runs[oi]
+            if len(oruns) != 1 or [c.tag for c in oruns[0] if c.tag != W + "rPr"] != [W + "t"]:
+                errs.append(f"inserted_paragraphs: {part} output block {oi} must hold exactly one run with one w:t, "
+                            f"has {len(oruns)} run(s)")
+            else:
+                got_rpr = oruns[0].find(W + "rPr")
+                if sig(want_rpr) != sig(got_rpr):
+                    errs.append(f"inserted_paragraphs: {part} output block {oi} run properties are not the anchor's "
+                                f"first text run's ({formatting}): {first_difference(want_rpr, got_rpr) or 'differ'}")
             if tracked:
                 mrpr = op.find(W + "pPr/" + W + "rPr")
                 ins_m = mrpr.find(W + "ins") if mrpr is not None else None
@@ -768,7 +851,8 @@ def _inserted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     errs.append(f"inserted_paragraphs: {part} output block {oi} body missing valid w:ins")
     if n != a.get("expected_anchors", -1):
         errs.append(f"inserted_paragraphs: {n} anchor(s) selected here, plan predicted {a.get('expected_anchors')}")
-    return f"inserted_paragraphs: {n} paragraph(s) {pos} anchor ({'tracked' if tracked else 'untracked'})"
+    return (f"inserted_paragraphs: {n} paragraph(s) {pos} anchor ({'tracked' if tracked else 'untracked'}, "
+            f"formatting {formatting} re-derived from the anchor)")
 
 
 def sect_prs(root) -> List[Any]:

@@ -246,16 +246,16 @@ def fill_value(src: VPackage, name: str, rule: Dict[str, Any]) -> str:
         for h in hits:
             rest = [t for t in texts[h + 1:] if t.strip()]
             if rest:
-                cands.append(_v_norm_ws(rest[0]).strip() if flex_ws else rest[0])
+                cands.append(rest[0])
         if not cands:
             raise ValueError(f"fill {name!r}: nothing follows anchor")
-        if len(hits) > 1 and occ != "first" and len(set(cands)) > 1:
+        keys = [_v_norm_ws(c).strip() if flex_ws else c for c in cands]
+        if len(hits) > 1 and occ != "first" and len(set(keys)) > 1:
             raise ValueError(f"fill {name!r}: anchor matches {len(hits)} paragraph(s) with different values")
         v = cands[0]
     else:
         raise ValueError(f"fill {name!r}: unknown rule {how!r}")
-    if flex_ws and how != "literal" and ("\u00a0" in v or "  " in v):
-        v = _v_norm_ws(v)
+    # the fill is the source's own characters; normalization serves matching and consensus only
     if rule.get("strip", True):
         v = v.strip()
     if not v:

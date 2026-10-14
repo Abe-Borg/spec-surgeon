@@ -367,7 +367,7 @@ Resolution order, lowest first: docDefaults → table style chain (inside a tabl
 
 1. `validate_spec` passes (or the spec carries `questions` → status `questions`, or `unsupported` + `proposal` → status `unsupported`);
 2. **every word an op would place is traceable** — `replace_text.replace` and every `literal` template fill must appear verbatim (whitespace-insensitive) in the request, the user's answers or project memory; otherwise the model is told to use the user's words or ask (the contract: no generated characters);
-3. a **dry plan** on one representative file per structure pattern raises no spec-level error (`spec`, `spec-mode`, `expect`, `geometry`, `conflict`, `bad-params`, `unknown-slot`, `unfilled-slot`, `slot-overlap`). File-specific refusals (`inheritance`, `even-odd`, `not-found` …) are not compile errors — the preview shows them.
+3. a **dry plan** on one representative file per structure pattern: a fatal spec-level error (`spec`, `spec-mode`, `geometry`, `conflict`, `bad-params`, `unknown-slot`, `slot-overlap`) on any file rejects the spec; every other refusal (`unfilled-slot`, `expect`, `not-found`, `inheritance`, `even-odd`, `spans-runs`, `tracked-format` …) is file-specific and is accepted as long as at least one pattern plans cleanly — the preview shows them and the batch sets those files aside. A spec that plans on none of the patterns, or an empty batch, is rejected with each file's refusal (v0.3.1).
 
 A rejected spec goes back once with the errors (as an `is_error` tool result); a second rejection fails the compile. A refusal, a cut-off answer, or ending twice without submitting also fails it. Status, spec, questions, errors, tool calls and token usage are written to `OUT/compile.json`.
 
@@ -428,7 +428,7 @@ Rules enforced before or while planning (nothing runs when one is broken):
 * unknown keys at spec or op level, unknown ops → refused (a typo must not silently change what runs);
 * each op's `select` and `params` are checked against the op's declared schema (`spec-surgeon ops` lists it): unknown keys, wrong types and values outside an enum are refused — `"occurrences": "frist"` would otherwise have behaved as `"all"`. `tracked: false` is accepted on ops that are never tracked; `tracked: true` there is refused. `replace_text` also checks its own enums, so the v0.1.0 `--params` path refuses the same typos (`bad-params`);
 * `mode` must equal what the ops imply (code `spec-mode`);
-* `expect` per op: numeric checks the plan must reproduce on each file — `text_diffs`, `text_diffs_outside_removed_parts`, `members_added`, `members_removed`, `rev_delta` (code `expect`); string values are prose, recorded in the record's judgment calls;
+* `expect` per op: numeric checks the plan must reproduce on each file — `text_diffs`, `text_diffs_outside_removed_parts`, `text_diffs_in_kept_parts`, `members_added`, `members_removed`, `rev_delta` (code `expect`); a value is an exact integer or, since v0.3.0, a range `{"min": n}` / `{"max": n}` / `{"min": n, "max": n}` (non-negative, `min ≤ max`) for batches whose files legitimately differ in how many places change; `rev_delta` maps revision kinds (`ins`, `del`, `ins_mark`, `del_mark`, `rPrChange`, `pPrChange`, …; misspelled kinds are refused) to the same forms; string values are prose, recorded in the record's judgment calls;
 * `review.geometry_reference` must agree with the ops (code `geometry`): a spec can neither drop the layout reference an op keeps nor claim one an op gives up by design (checked only where the file actually changes);
 * `applies_to.pattern_ids` (without `"or": "all"`): a file with another structure pattern is an exception (code `pattern`);
 * `assertions` (spec level) are **post-conditions only** — Phase 1 knows `effective_font` — so a spec can add V10 checks but can never exempt anything from V10's residual comparison.
@@ -474,7 +474,8 @@ Phase 2 added (`tests/test_template.py`): a fill typed into the output (V2 + V10
 <out>/
   BATCH_REPORT.md           summary table, structure patterns, exceptions, failures, flags, where to look
   batch.json                the same, machine-readable
-  outputs/<name>.docx       edited files (always written here; also copied over the source with --in-place)
+  outputs/<name>.docx       edited files that passed every check (also copied over the source with --in-place)
+  failed/<name>.docx        (v0.3.1) edited copies that FAILED verification — kept for diagnosis only, never delivered
   records/<name>.record.md  the verification record, one per file (+ .json)
   plans/<name>.plan.json    the prediction, as written before the transform ran
   exceptions/<name>.exception.json   structured diagnosis for Tier 2
@@ -545,7 +546,7 @@ Tier 3 — a request no module handles — is development: use the skill (`src/s
 3. writes a temp file in the same directory and `os.replace`s it (atomic; OneDrive sees one new version);
 4. re-acquires and records the new identity.
 
-Without `--in-place`, outputs stay in `<out>/outputs/` and V9 only confirms the sources did not move during the run. OneDrive/SharePoint version history remains the last-resort rollback.
+Without `--in-place`, outputs stay in `<out>/outputs/` and V9 only confirms the sources did not move during the run. OneDrive/SharePoint version history remains the last-resort rollback. Since v0.3.1 an output that fails any check is moved out of `outputs/` into `<out>/failed/` before delivery, and so is an output whose V9 guard fails afterwards (the source drifted during the run, or the in-place write-back was refused because the file was open in Word), so copying the outputs folder onto a project share can never pick up a file the suite rejected; the batch report, the CLI summary and the window all name the folder.
 
 ---
 
@@ -645,9 +646,12 @@ New work goes into `ops/` (a job is only an alias for the v0.1.0 CLI):
 spec-surgeon/
 ├── pyproject.toml, requirements.txt, README.md, CLAUDE.md
 ├── docs/NL_SURGICAL_EDITOR_PLAN.md   design + phased plan for the natural-language editor (Phase 1 status inside)
+├── docs/audits/                      the 2026-10-14 independent audit of v0.3.0: report, filled checklist, probe scripts
+├── docs/releases/                    release notes per version (v0.3.0, v0.3.1)
 ├── examples/jobs/*.json              ready-made --params files
 ├── examples/specs/*.json             ready-made EditSpecs (change-all-font-arial, remove-all-headers-footers,
-│                                     apply-header-footer-template)
+│                                     apply-header-footer-template, apply-header-footer-template-fallback — the
+│                                     mixed-batch example with a first_match chain and an expect range)
 ├── examples/templates/               00_00_00_TEMPLATE.docx — the fixture header/footer template (both slot conventions)
 ├── src/spec_surgeon/
 │   ├── cli.py                        command line
@@ -671,7 +675,8 @@ spec-surgeon/
 │   ├── ops/                          base.py (Op, Plan, PlanFragment, merge_fragments, JobException), selectors.py,
 │   │                                 fix_page_numbering, replace_text, remove_header_footer, set_font, set_style_font,
 │   │                                 set_doc_defaults_font, set_paragraph_props, set_page_setup,
-│   │                                 apply_header_footer_template (+ slots.py, effective.py, hf_common.py)
+│   │                                 apply_header_footer_template (+ slots.py, effective.py, hf_common.py),
+│   │                                 delete_paragraphs, insert_paragraph (v0.3.0)
 │   ├── jobs/                         base.py (Job, OpJob), page_numbering.py, tracked_replace.py — v0.1.0 aliases over ops/
 │   ├── verify/                       INDEPENDENT: reader.py, textcheck.py, xsd.py, geometry.py, suite.py, props.py (V10),
 │   │                                 template.py (V10 templating kinds)
@@ -680,7 +685,9 @@ spec-surgeon/
 │   └── skill/                        the docx-surgical-edit skill (the method; used by the agent layer)
 └── tests/                            make_fixtures.py (synthetic specs, build_rich op fixture), test_engine.py,
                                       test_ops_base.py, test_package.py, test_verifier_ext.py, test_ops.py,
-                                      test_editspec.py, test_template.py, test_independence.py
+                                      test_editspec.py, test_template.py, test_independence.py, test_planner.py,
+                                      test_compiler.py, test_codegen.py, test_advisor.py, test_gui.py,
+                                      test_adaptive_messy.py (v0.3.0), test_audit_fixes.py (v0.3.1)
 ```
 
 ---
@@ -747,6 +754,8 @@ Phase 3 (125 tests):
 `build_rich()` (`make_fixtures.py OUT_DIR --rich`) is the op fixture: a cover section with first-page and default headers/footers (a header-only logo, an image shared with the body, Jeremy's pending insertion in a header), a body section with its own default and even-page headers and a default-footer reference to the cover's footer part (shared part), a third section that inherits everything; docDefaults with theme fonts, Normal in explicit Times New Roman, Heading 1 with theme major fonts, a Courier paragraph style, a Wingdings character style, direct explicit and direct theme fonts, a direct Wingdings run, a `w:sym` run, direct-font runs inside Jeremy's insertion and Jack's deletion, a run carrying an earlier `w:rPrChange`, a paragraph mark with its own font, existing spacing and a hanging indent, a table, and an empty paragraph.
 
 ---
+
+v0.3.1 adds `tests/test_audit_fixes.py` (11 tests, 189 in total): one test per audit fix, each with its planted output defect and, where a definition is implemented on both the transform and the verifier side (inherited formatting of an inserted paragraph, the new selectors), a planted implementation defect shared by plan and apply that V10 must catch. The audit's own probe scripts under `docs/audits/probes/` reproduce every finding outside pytest.
 
 ## Known limits of the prototype
 
@@ -831,10 +840,10 @@ The skill is the method; Spec Surgeon is the engine that runs the method's Tier 
 Real discipline batches often mix clean, template-derived `.docx` specifications with heavily edited, OCR/PDF-converted, or unstyled ("all-`Normal`") files. v0.3.0 adds four capabilities so the engine can process heterogeneous batches safely without weakening V1–V10:
 
 1. **Body-aware fingerprinting and honest profiling (`fingerprint.py`, `profile.py`)**:
-   - `fingerprint(pkg)` computes `body_hygiene` (`style_regime`, `numbering_regime`, `section_anchor_shape`, `run_fragmentation_ratio`, `has_nbsp`, `has_multi_space`, `has_rPrChange_in_body`, `has_pPrChange_in_body`, `has_proof_err`). Files whose body structure diverges from standard layout get a distinct `pattern_id` so messy outliers never hide behind a clean file's pattern.
+   - `fingerprint(pkg)` computes `body_hygiene` (`style_regime`, `numbering_regime`, `section_anchor_shape`, `run_fragmentation_ratio`, `has_nbsp`, `has_multi_space`, `has_rPrChange_in_body`, `has_pPrChange_in_body`, `has_proof_err`). Files whose body *structure* diverges from the standard layout (an inline section header, a styled regime, numPr numbering) get a distinct `pattern_id`; the whitespace and fragmentation flags are descriptive only (a file whose only mess is NBSPs keeps the clean pattern and is caught at plan time by the set-aside sieve instead).
    - `profile(pkg)` preserves internal multiple spaces and non-breaking spaces (`\u00a0`) in paragraph samples instead of collapsing them, and surfaces a `hygiene` block when whitespace/structural anomalies exist.
    - `editspec.py` `expect` checks accept `{"min": ..., "max": ...}` range objects alongside exact integers.
-   - `compiler.py` accepts a valid `EditSpec` whenever at least one pattern in the batch plans cleanly, allowing Pass 1 to run on the clean majority and set aside the messy minority.
+   - `compiler.py` accepts a valid `EditSpec` whenever at least one pattern in the batch plans cleanly, allowing Pass 1 to run on the clean majority and set aside the messy minority. Since v0.3.1 every non-fatal refusal counts as pattern-sensitive, so a spec that plans on none of the patterns (or an empty batch) is rejected with each file's refusal instead of being accepted and setting every file aside.
 
 2. **Set-aside manifest and iterative "Rinse & Repeat" passes (`report.py`, `batch.py`, `cli.py`, `gui.py`)**:
    - Every batch run writes `<out_dir>/set_aside.json` (and `<out_dir>/SET_ASIDE_REPORT.md` when files are set aside) grouping untouched files by failure code and pattern with plain-English explanations.
@@ -842,10 +851,30 @@ Real discipline batches often mix clean, template-derived `.docx` specifications
    - GUI (`gui.py`): **Load set-aside files** (`Session.load_set_aside()`) narrows the active file list to the set-aside files from the previous run and pre-loads their failure reasons for the next **Preview → Run** pass.
 
 3. **Garbage-tolerant matching, noise-tolerant run coalescing, and fallback slot chains (`ooxml.py`, `ops/replace_text.py`, `ops/slots.py`, `verify/template.py`)**:
-   - `replace_text` supports `flexible_whitespace: true` (matching ASCII spaces against `[\s\u00a0]+`, hyphens against `[-–—]`, and straight/smart quotes), `ignore_formatting_noise: true` (stripping inert `w:proofErr`/`w:lastRenderedPageBreak` and ignoring non-visual `rPr` noise `w:lang`, `w:noProof`, `w:webHidden`, `w:cs`, redundant `w:szCs`/color during paragraph-local run merging), and `allow_tracked_format_split: true` (assigning unique sequential `w:id`s to split `w:rPrChange` elements).
-   - `apply_header_footer_template` (`ops/slots.py` and `verify/template.py`, independently) supports `first_match` fallback rule chains (`{"rule": "first_match", "rules": [...]}`), `flexible_whitespace` matching (default `true`), and multi-anchor consensus for `paragraph_after`.
+   - `replace_text` supports `flexible_whitespace: true` (matching ASCII spaces against `[\s\u00a0]+` — spaces, tab *characters* and NBSPs inside `w:t`, not `w:tab` elements — hyphens against `[-–—]`, and straight/smart quotes), `ignore_formatting_noise: true` (ignoring the non-visual `rPr` noise `w:lang`, `w:noProof`, `w:webHidden` and a redundant `w:szCs`/auto color during paragraph-local run merging, and dropping the inert `w:proofErr`/`w:lastRenderedPageBreak` markers between the runs it merges; since v0.3.1 `w:cs`, `w:eastAsianLayout` and `w:snapToGrid` are *not* noise, because they change the font, size or pitch the reader sees), and `allow_tracked_format_split: true` (every split fragment keeps a copy of the `w:rPrChange` with a fresh `w:id`; V4 fails on any duplicated id).
+   - `apply_header_footer_template` (`ops/slots.py` and `verify/template.py`, independently) supports `first_match` fallback rule chains (`{"rule": "first_match", "rules": [...]}`), `flexible_whitespace` matching (default `true`), and multi-anchor consensus for `paragraph_after`. Since v0.3.1 whitespace normalization serves matching and consensus only: the fill keeps the document's own characters (a non-breaking space in the title stays a non-breaking space in the header) whenever the raw match succeeded. `examples/specs/apply-header-footer-template-fallback.json` is the worked example for a mixed batch.
 
 4. **Messy-document selectors and structural paragraph operations (`ops/selectors.py`, `verify/props.py`, `ops/delete_paragraphs.py`, `ops/insert_paragraph.py`)**:
    - Paragraph selectors (implemented independently in `ops/selectors.py` and `verify/props.py`) add `has_bold`, `is_all_caps`, `after_heading_regex`, and `between_paragraphs` (`{"start_regex": "...", "end_regex": "...", "include_bounds": bool}`), plus tab/NBSP-normalized regex matching.
    - `delete_paragraphs`: tracked (runs wrapped in `w:del` with `w:delText`, paragraph mark marked with `w:pPr/w:rPr/w:del`) or untracked paragraph deletion, verified by V2, V4, V5b, V8, and V10 (`deleted_paragraphs`).
-   - `insert_paragraph`: tracked or untracked paragraph insertion `before` or `after` matched anchor paragraphs with verbatim traceability enforcement (`compiler.placed_words`), verified by V2, V4, V5b, V8, and V10 (`inserted_paragraphs`).
+   - `insert_paragraph`: tracked or untracked paragraph insertion `before` or `after` matched anchor paragraphs with verbatim traceability enforcement (`compiler.placed_words`), verified by V2, V4, V5b, V8, and V10 (`inserted_paragraphs`). Since v0.3.1 the new paragraph inherits the anchor's formatting by default (`formatting: "inherit"`): a copy of the anchor's paragraph properties (style, indents, spacing, tabs, list numbering — never its section break, `pPrChange` or paragraph-mark revisions) and of the run properties of the anchor's first text run (minus any `rPrChange`), so in a directly formatted all-`Normal` document the inserted clause looks like its neighbours; `formatting: "none"` copies only the paragraph style. V10's `inserted_paragraphs` re-derives both from the source anchor with its own code and compares.
+   - `delete_paragraphs` in tracked mode (since v0.3.1) accepts paragraphs holding bookmark anchors (Word's `_GoBack`) and proofing markers — they stay in place after the `w:del` wrapper; hyperlinks, content controls, fields and comment anchors are still refused.
+
+### Independent audit and the v0.3.1 fixes
+
+`docs/audits/2026-10-14_v0.3.0_independent_audit.md` is an independent audit of the v0.3.0 work (13 ranked findings, per-row verdicts for the author's three-tab checklist, the filled-in checklist beside it, and probe scripts under `docs/audits/probes/` that reproduce every finding). v0.3.1 applies its suggested fixes:
+
+| Finding | Fix |
+|---|---|
+| F1 V4 missed duplicate revision ids on split `rPrChange` copies that reused a source id | V4 now fails on any revision id (every kind, every text part) used more often in the output than in the source |
+| F2 the compiler gate accepted specs that plan on zero files for 22 unclassified refusal codes | every non-fatal refusal is pattern-sensitive; `planned_ok == 0` and empty batches are rejected with each file's refusal |
+| F3 failed-verification copies sat in `outputs/` beside passing ones | moved to `failed/`; the report, CLI and window say so; `verify-fail` and nine more codes have plain-English explanations |
+| F4 `w:cs` treated as non-visual noise | the noise set is `w:lang`, `w:noProof`, `w:webHidden` only |
+| F5 the compiler's catalog never described `first_match`, `occurrence`, `flexible_whitespace` or `expect` ranges | `fill_rules` and `expect_syntax` in the catalog, a real `slot_fills` description, a worked mixed-batch example |
+| F6 `insert_paragraph` copied only `pStyle` | `formatting: "inherit"` (default) copies the anchor's paragraph and run properties; V10 verifies them independently |
+| F7 tracked `delete_paragraphs` refused bookmarked paragraphs | bookmark anchors and proofing markers are inert |
+| F9 `expect` accepted `min > max`, negatives and misspelled revision kinds | refused as `spec` |
+| F10 noise merging stripped every proofing marker in the paragraph | only the markers between two runs that merge are removed |
+| F11 fills normalised NBSP to a space | fills keep the document's own characters; normalisation is for matching and consensus only |
+| F13 the v0.3.0 tests were positive-path only | `tests/test_audit_fixes.py`: every fix with its planted output defect and, where a definition lives on both sides, a planted implementation defect shared by plan and apply |
+

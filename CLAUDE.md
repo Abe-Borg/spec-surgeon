@@ -79,7 +79,9 @@ test that proves they agree.)
   `w:rPr`, as `ins_mark`… when it is (paragraph-mark revisions); `rPrChange`, `pPrChange`, `sectPrChange`,
   `tblPrChange`, `trPrChange`, `tcPrChange`, `tblGridChange`, `numberingChange`, `cellIns`, `cellDel`,
   `cellMerge` by local name. Transform side: `ooxml.revision_kind()/count_revisions()`; verifier side:
-  `verify/suite._rev_kind()`. Plans predict a delta for every kind they move (missing key = 0).
+  `verify/suite._rev_kind()`. Plans predict a delta for every kind they move (missing key = 0). V4 also fails on any
+  revision id (every kind, every text part) that occurs more often in the output than in the source — a split run
+  carrying its original `rPrChange` id on both halves is a defect even though that (part, kind, id) existed before.
 - **Selector grammar and symbol runs.** `scope`, `paragraphs` (`style_in` with the default paragraph style
   when no pStyle, `text_regex` on the block text above, `in_table`, `is_empty`, `index_range`), `runs`
   (`has_direct_font`, `font_in`, `not_in_revisions`), `sections`, `styles`. A symbol run: any explicit font
@@ -114,6 +116,16 @@ test that proves they agree.)
   `ops/effective.Resolver` (also computes cs/szCs, which are not pinned); verifier: `verify/template.Eff`.
   `tests/test_template.py::test_transform_and_verifier_effective_resolvers_agree` compares them on every
   paragraph, mark and run of three packages.
+- **Inherited formatting of an inserted paragraph** (`insert_paragraph`, `formatting: "inherit"`, the default).
+  Paragraph properties = a copy of the anchor's `w:pPr` without `w:sectPr` and `w:pPrChange`, and without the revision
+  marks (`w:ins`/`w:del`/`w:moveFrom`/`w:moveTo`) and `w:rPrChange` inside its paragraph-mark `w:rPr` (an emptied
+  `w:rPr` is dropped); an explicit `style` replaces (or adds, first) the `w:pStyle`. Run properties = a copy of the
+  `w:rPr` of the anchor's first live text run (nearest `w:p` is the anchor, not inside `w:del`/`w:moveFrom`, holds a
+  `w:t`) without `w:rPrChange`. The new paragraph holds exactly one run with one `w:t`. Transform:
+  `ops/insert_paragraph.inherited_ppr/inherited_rpr`; verifier: `verify/props._v_inherit_ppr/_v_inherit_rpr` (the
+  output's pPr is compared with its own `w:ins` mark removed). `tests/test_audit_fixes.py::
+  test_insert_paragraph_inherits_anchor_formatting_and_v10_verifies_it` plants a wrong output and a wrong shared
+  implementation.
 - **Tab rescale and text width.** Width = pgSz w − pgMar left − right − gutter. right/end stops:
   `pos + (W_target − W_template)`; center: `floor(pos × W_target / W_template + 0.5)`; others unchanged; never in
   table paragraphs. Transform: `ops/effective.rescale_tabs/text_width`; verifier: `verify/template.rescaled/_width`.
@@ -181,7 +193,10 @@ proposals and recorded in the plan's status sections.
   templated region: blank ↔ blank, else outer edge + shared words, 2 pt window, footer from the page bottom.
 - `verify/props.py` — V10: assertion kinds, independent selectors/styles/theme, residual identity.
 - `batch.py` — the pipeline; `_process_one` is the per-file worker (must stay top-level and picklable); it
-  runs a named job or an EditSpec (`spec=`).
+  runs a named job or an EditSpec (`spec=`). `outputs/` holds only files that passed every check, V9 included: an output
+  that fails verification is moved to `failed/` (`quarantine_failed_output`) before delivery, and one whose V9 guard
+  fails afterwards (drift during the run, a refused in-place write-back) is moved the same way; V9 records where it went
+  and `delivered_to` stays empty.
 - `render/` — `word_com.py` (DispatchEx only; copies only; Quit the instance you made), `libreoffice.py`.
 - `guard.py` — identity, drift, lock file, atomic write.
 - `tests/make_fixtures.py` — synthetic specs with the hard cases; `build_rich()` is the op fixture (first/even
@@ -215,7 +230,7 @@ proposals and recorded in the plan's status sections.
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window; in the Linux container `python3 -m pytest -q -s`).
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes; in the Linux container `python3 -m pytest -q -s`).
 
 ## Documentation duty
 
@@ -236,4 +251,27 @@ update this file.
 - **Selector grammar additions** (must stay identical in `ops/selectors.py` and `verify/props.py`): `has_bold`, `is_all_caps`, `after_heading_regex`, `between_paragraphs` (`start_regex`, `end_regex`, `include_bounds`), plus fallback regex matching against tab/NBSP-normalized block text (`_block_text_with_tabs` / `_v_block_text_with_tabs`).
 - **Fill rule additions** (must stay identical in `ops/slots.py` and `verify/template.py`): `first_match` (`rules` list tried in order), `flexible_whitespace` (default `True`), `occurrence` (`"all"` | `"first"`), and multi-anchor consensus in `paragraph_after`.
 - **New operations**: `delete_paragraphs` (`ops/delete_paragraphs.py`) and `insert_paragraph` (`ops/insert_paragraph.py`), backed by V10 assertion kinds `deleted_paragraphs` and `inserted_paragraphs` in `verify/props.py` and inserted-block accept-view handling in `verify/suite.py` (V8). `insert_paragraph.text` is checked by `compiler.placed_words()`.
+
+## v0.3.1 (fixes from the 2026-10-14 independent audit)
+
+`docs/audits/2026-10-14_v0.3.0_independent_audit.md` is the audit; `tests/test_audit_fixes.py` pins every fix.
+
+- **V4** fails on duplicate revision ids of every kind (see "Revision kinds" above).
+- **Compiler gate** (`compiler._dry_errors`): every non-fatal refusal is pattern-sensitive; a spec that plans on no
+  pattern, or an empty batch, is rejected. `PATTERN_SENSITIVE_CODES` is documentation only.
+- **`expect` validation**: ranges are non-negative with `min ≤ max`; `rev_delta` kinds must be in
+  `editspec.REV_DELTA_KINDS` (derived from `ooxml`'s revision tag tables).
+- **Noise set** `ooxml.NOISE_RPR_LOCALS = {lang, noProof, webHidden}`; `w:cs`, `w:eastAsianLayout`, `w:snapToGrid`
+  are visual. `merge_adjacent_runs(ignore_noise=True)` removes inert markers only between (or inside) two runs it merges.
+- **`delete_paragraphs` tracked mode** keeps `bookmarkStart`/`bookmarkEnd`/`proofErr` children in place
+  (`INERT_P_CHILDREN`); other non-run children still refuse (`structure`).
+- **`insert_paragraph` `formatting: inherit`** — a both-sides definition, listed above.
+- **Fills keep the document's characters**: `ops/slots.extract_fill` and `verify/template.fill_value` normalize
+  whitespace only to match and to judge consensus; the value is the raw text, stripped.
+- **`failed/`**: `batch.quarantine_failed_output` moves a failed output out of `outputs/`; `report.FAILURE_EXPLANATIONS`
+  covers `verify-fail`, `section-break`, `existing-revisions`, `structure`, `textbox`, `table-cell`, `toggle-ambiguous`,
+  `bad-params`, `conflict`.
+- **Catalog**: `catalog.FILL_RULES` / `EXPECT_SYNTAX` (keys `fill_rules`, `expect_syntax`), a real `slot_fills`
+  description, and `examples/specs/apply-header-footer-template-fallback.json`. Keep them in step with
+  `ops/slots.py` and `editspec.py`.
 - **Set-aside workflow**: `report.write_batch_report` writes `set_aside.json` and `SET_ASIDE_REPORT.md`; `batch.load_set_aside` loads them for `cli.cmd_retry` (`spec-surgeon retry`) and `gui.Session.load_set_aside`.

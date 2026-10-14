@@ -336,18 +336,28 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
             id_count[i] = id_count.get(i, 0) + 1
     new_elems = [e for e in out_elems if e not in src_elems]
     collide = sorted({i for _, _, i in new_elems if i is not None and id_count[i] > 1})
+    # Every revision element of every kind in every text part: an id used more often in the output than in the
+    # source is a duplicate the transform introduced. (A split run whose two halves both keep the original
+    # w:rPrChange id hides from `collide`, because that (part, kind, id) already existed in the source.)
+    src_id_count: Dict[str, int] = {}
+    for part, root in src_xml.items():
+        for _, i in _rev_elements(root):
+            if i is not None:
+                src_id_count[i] = src_id_count.get(i, 0) + 1
+    dup_all = sorted(i for i, n in id_count.items() if n > 1 and n > src_id_count.get(i, 0))
     others = [f"{k} {cnt_b.get(k, 0)}→{cnt_a.get(k, 0)} (Δ{delta[k]:+d}, predicted {pred.get(k, 0):+d})"
               for k in kinds if k not in ("ins", "del") and (delta[k] or pred.get(k, 0))]
-    rec.set(CheckResult("V4", "Revision accounting", "PASS" if (not wrong and not dup and not collide) else "FAIL",
+    rec.set(CheckResult("V4", "Revision accounting",
+                        "PASS" if (not wrong and not dup and not collide and not dup_all) else "FAIL",
                         f"w:ins {ins_b}→{ins_a} (Δ{d_ins:+d}, predicted {pred.get('ins', 0):+d}); "
                         f"w:del {del_b}→{del_a} (Δ{d_del:+d}, predicted {pred.get('del', 0):+d})"
                         + (f"; {'; '.join(others)}" if others else "")
                         + (f"; UNPREDICTED deltas {wrong}" if wrong else "")
-                        + (f"; DUPLICATE ids {dup}" if dup else "; ids unique")
+                        + (f"; DUPLICATE ids {sorted(set(dup) | set(dup_all))[:5]}" if (dup or dup_all) else "; ids unique")
                         + (f"; NEW revision ids collide {collide[:5]}" if collide else ""),
                         {"ins_before": ins_b, "ins_after": ins_a, "del_before": del_b, "del_after": del_a,
                          "counts_before": cnt_b, "counts_after": cnt_a, "unpredicted": wrong,
-                         "duplicate_ids": dup, "colliding_new_ids": collide}))
+                         "duplicate_ids": dup, "duplicate_ids_all_kinds": dup_all, "colliding_new_ids": collide}))
 
     # V5a — XSD against the source baseline (changed and added members)
     xsd_parts = sorted(set(changed) | set(added) | {"[Content_Types].xml"} | {n for n in changed if n.endswith(".rels")})

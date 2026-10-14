@@ -16,9 +16,10 @@ A submitted spec is checked before it is accepted:
   the model must ask;
 * a **dry plan** on one representative file per structure pattern: fatal spec-level failures (``spec``,
   ``spec-mode``, ``geometry``, ``conflict``, ``bad-params``, ``unknown-slot``, ``slot-overlap``) are always compile
-  errors; pattern-specific mismatches (``unfilled-slot``, ``expect``, ``not-found`` …) are accepted as long as at
-  least one pattern in the batch plans cleanly, allowing Pass 1 to process the clean majority and set aside the
-  outliers for the next pass.
+  errors; every other refusal (``unfilled-slot``, ``expect``, ``not-found``, ``spans-runs``, ``tracked-format``,
+  ``section-break`` … — anything a particular file's structure can cause) is accepted as long as at least one
+  pattern in the batch plans cleanly, allowing Pass 1 to process the clean majority and set aside the outliers
+  for the next pass; a spec that plans on no file at all (or a batch with no files) is rejected.
 A rejected spec goes back to the model once with the errors; a second rejection fails the compile.
 
 The client is injectable (``client=``) so the loop is tested without the API; the default needs the
@@ -46,6 +47,8 @@ from .profile import profile, profile_batch
 DEFAULT_MODEL = os.environ.get("SPEC_SURGEON_MODEL", "claude-opus-5-5")
 MAX_TURNS = 12
 FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "unknown-slot", "slot-overlap"}
+# The refusals that most often differ from one structure pattern to the next. Documentation only: _dry_errors treats
+# EVERY non-fatal code as pattern-sensitive, so a refusal the ops add later can never slip through the gate.
 PATTERN_SENSITIVE_CODES = {"unfilled-slot", "expect", "not-found", "ambiguous"}
 SPEC_LEVEL_CODES = FATAL_SPEC_CODES | {"unfilled-slot", "expect"}
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -267,15 +270,20 @@ class _Batch:
 def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     """Spec-level failures of a dry plan on one file per pattern.
 
-    True schema/contract mistakes (FATAL_SPEC_CODES) always reject the spec. Pattern-sensitive refusals
-    (``unfilled-slot``, ``expect``, ``not-found``, ``ambiguous``) reject the spec ONLY when zero patterns in
-    the batch plan cleanly — in a mixed batch where at least one pattern plans cleanly, minority pattern
-    refusals are left for the preview and set-aside sieve rather than blocking Pass 1.
+    True schema/contract mistakes (FATAL_SPEC_CODES) always reject the spec. Every other refusal is treated as
+    pattern-sensitive (a particular file's structure caused it) and rejects the spec ONLY when zero patterns in
+    the batch plan cleanly — in a mixed batch where at least one pattern plans cleanly, minority pattern refusals
+    are left for the preview and set-aside sieve rather than blocking Pass 1. A spec that plans on no file at all
+    is rejected with every file's refusal, so the model can fix the spec instead of the batch setting every file
+    aside; a batch with no files is rejected outright.
     """
+    reps = batch.representatives()
+    if not reps:
+        return ["the batch has no .docx files to plan on"]
     fatal_errs: List[str] = []
     pattern_errs: List[str] = []
     planned_ok = 0
-    for f in batch.representatives():
+    for f in reps:
         pkg = DocxPackage.from_path(f)
         try:
             plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
@@ -286,12 +294,12 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
         except JobException as e:
             if e.code in FATAL_SPEC_CODES:
                 fatal_errs.append(f"{f.name}: [{e.code}] {e.reason}")
-            elif e.code in PATTERN_SENSITIVE_CODES:
+            else:
                 pattern_errs.append(f"{f.name}: [{e.code}] {e.reason}")
     if fatal_errs:
         return fatal_errs
-    if planned_ok == 0 and pattern_errs:
-        return pattern_errs
+    if planned_ok == 0:
+        return ["the spec plans cleanly on none of the batch's structure patterns:"] + pattern_errs
     return []
 
 
