@@ -8,6 +8,7 @@ import io
 import json
 import ssl
 import subprocess
+import sys
 import threading
 import time
 import urllib.error
@@ -95,11 +96,12 @@ def release_with(version="9.9.9", installer_bytes=b"MZ fake installer" * 1000, s
 
 def test_versions():
     assert parse_version("v0.4.0") == (0, 4, 0) and parse_version("0.4.0") == (0, 4, 0)
-    for bad in ("v0.4.0-rc1", "v1.2", "", "vX", "0.4.0.1", None):
-        with pytest.raises((ValueError, AttributeError, TypeError)):
+    for bad in ("v0.4.0-rc1", "v1.2", "", "vX", "0.4.0.1", None, 1, 1.5, ["0.4.0"]):
+        with pytest.raises(ValueError):
             parse_version(bad)
     assert is_newer("0.10.0", "0.9.9") and is_newer("v1.0.0", "0.99.99")
     assert not is_newer("0.4.0", "0.4.0") and not is_newer("0.3.9", "0.4.0") and not is_newer("garbage", "0.1.0")
+    assert not is_newer(1, "0.4.0") and not is_newer("1.0.0", None)       # never raises
 
 
 def test_parse_the_real_v030_release():
@@ -266,6 +268,15 @@ def test_download_refusals_leave_nothing(tmp_path, case):
         assert url not in net.urls()                   # no installer byte fetched without a known, agreed hash
 
 
+def test_download_refuses_an_impossible_reported_size_before_fetching(tmp_path):
+    for size in (updater.MAX_INSTALLER_BYTES + 1, 0, -5):
+        data, routes, _ = release_with("9.9.9", size=size)
+        net = FakeNet(routes)
+        with pytest.raises(UpdateError) as e:
+            download_installer(parse_release(data), tmp_path, opener=net)
+        assert e.value.kind == "bad_release" and net.requests == [] and list(tmp_path.iterdir()) == []
+
+
 def test_download_refuses_a_release_it_cannot_prove(tmp_path):
     data, routes, _ = release_with("9.9.9")
     no_sums = {**data, "assets": [a for a in data["assets"] if a["name"] != "SHA256SUMS"]}
@@ -335,9 +346,14 @@ def test_cleanup_downloads(tmp_path):
     assert cleanup_downloads(tmp_path / "missing") == []
 
 
-def test_update_instructions_for_a_pip_copy():
+def test_update_instructions_for_a_pip_copy(tmp_path):
     text = update_instructions(parse_release(RELEASE))
-    assert "pip install -U" in text and "spec_surgeon-0.3.0-py3-none-any.whl" in text and "releases/tag/v0.3.0" in text
+    assert f'"{sys.executable}" -m pip install -U' in text            # this copy's own interpreter, any platform
+    assert "py -3" not in text
+    assert "spec_surgeon-0.3.0-py3-none-any.whl" in text and "releases/tag/v0.3.0" in text
+    (tmp_path / "python.exe").write_bytes(b"")
+    (tmp_path / "pythonw.exe").write_bytes(b"")
+    assert updater.pip_python(str(tmp_path / "pythonw.exe")) == str(tmp_path / "python.exe")
 
 
 # ---- install -----------------------------------------------------------------------------------------------

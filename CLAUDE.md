@@ -245,7 +245,7 @@ proposals and recorded in the plan's status sections.
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 249 with v0.4.0 — 248 pass and the
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0 — 251 pass and the
 Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)

@@ -87,6 +87,16 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
         return value if isinstance(value, int) and not isinstance(value, bool) else default
     if isinstance(default, str):
         return value if isinstance(value, str) else default
+    if name == "pending_update":
+        # only the keys the updater writes, with the types it writes; anything else means "no update pending"
+        if not isinstance(value, dict) or not isinstance(value.get("version"), str):
+            return default
+        out = {"version": value["version"]}
+        if isinstance(value.get("log"), str):
+            out["log"] = value["log"]
+        if isinstance(value.get("started"), (int, float)) and not isinstance(value.get("started"), bool):
+            out["started"] = float(value["started"])
+        return out
     if isinstance(default, dict):
         return dict(value) if isinstance(value, dict) else default
     return default

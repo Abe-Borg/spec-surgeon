@@ -27,6 +27,18 @@ def test_missing_wrong_types_and_unknown_keys(tmp_path):
     assert s == Settings(theme="dark")
 
 
+def test_a_hand_edited_pending_update_cannot_break_start_up(tmp_path):
+    p = tmp_path / "settings.json"
+    for bad in ({"version": 1}, {"log": "x"}, "0.5.0", [], {"version": None}):
+        p.write_text(json.dumps({"pending_update": bad}), encoding="utf-8")
+        assert load_settings(p).pending_update == {}
+    p.write_text(json.dumps({"pending_update": {"version": "0.5.0", "log": 7, "started": "yesterday", "x": 1}}),
+                 encoding="utf-8")
+    assert load_settings(p).pending_update == {"version": "0.5.0"}
+    p.write_text(json.dumps({"pending_update": {"version": "0.5.0", "log": "l.log", "started": 12}}), encoding="utf-8")
+    assert load_settings(p).pending_update == {"version": "0.5.0", "log": "l.log", "started": 12.0}
+
+
 def test_corrupt_file_is_kept_aside(tmp_path):
     p = tmp_path / "settings.json"
     p.write_text("{not json", encoding="utf-8")

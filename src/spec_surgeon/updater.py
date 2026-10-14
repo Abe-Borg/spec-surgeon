@@ -113,7 +113,9 @@ class DownloadedInstaller:
 # ---- versions ------------------------------------------------------------------------------------------
 
 def parse_version(text: str) -> Tuple[int, int, int]:
-    m = _VERSION_RE.match((text or "").strip())
+    if not isinstance(text, str):                # e.g. a hand-edited settings file holding a number
+        raise ValueError(f"not a release version: {text!r}")
+    m = _VERSION_RE.match(text.strip())
     if not m:
         raise ValueError(f"not a release version: {text!r}")
     return int(m.group(1)), int(m.group(2)), int(m.group(3))
@@ -360,13 +362,23 @@ def should_auto_check(s, now: Optional[float] = None, *, installed: Optional[boo
     return not (0 <= elapsed < CHECK_INTERVAL)       # a clock that moved backwards also checks
 
 
-def update_instructions(info: UpdateInfo) -> str:
+def pip_python(executable: Optional[str] = None) -> str:
+    """The interpreter this copy runs in (its own environment, on any platform); pythonw → python on Windows,
+    because pythonw has no console to show pip's output."""
+    exe = Path(executable or sys.executable)
+    if exe.name.lower() == "pythonw.exe" and (exe.parent / "python.exe").exists():
+        exe = exe.parent / "python.exe"
+    return str(exe)
+
+
+def update_instructions(info: UpdateInfo, executable: Optional[str] = None) -> str:
     """For a copy not installed by the setup program: how to update it by hand."""
     lines = [f"Spec Surgeon {info.version} is available.", ""]
     if info.wheel:
         lines += ["This copy was installed with pip. To update it, run:", "",
-                  f'    py -3 -m pip install -U "spec-surgeon[gui,word,agent] @ {info.wheel.url}"', ""]
-    lines += ["Or download the Windows installer from the release page:", f"    {info.html_url}"]
+                  f'    "{pip_python(executable)}" -m pip install -U "spec-surgeon[gui,word,agent] @ {info.wheel.url}"',
+                  ""]
+    lines += ["The release page (with the Windows installer):", f"    {info.html_url}"]
     return "\n".join(lines)
 
 
@@ -406,6 +418,9 @@ def download_installer(info: UpdateInfo, dest_dir: Path, *, progress: Optional[C
     if not info.can_install or inst is None or inst.name != expected_name or not INSTALLER_RE.fullmatch(inst.name):
         raise UpdateError(f"Release {info.tag} has no installer named {expected_name} with a {SUMS_NAME} file.",
                           "bad_release")
+    if inst.size is not None and not 0 < inst.size <= MAX_INSTALLER_BYTES:
+        raise UpdateError(f"The release says its installer is {inst.size} bytes — not a size any Spec Surgeon "
+                          "installer has; not downloaded.", "bad_release")
     # 1. the checksum list first — no installer byte is fetched unless its expected hash is known
     try:
         with opener(_request(info.sums.url, "application/octet-stream"), timeout) as resp:
