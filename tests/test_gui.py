@@ -433,6 +433,20 @@ def test_without_qt_the_window_explains_how_to_install_it():
     assert r.returncode == 2 and 'pip install "spec-surgeon[gui]"' in r.stderr
 
 
+def test_without_qt_a_message_box_only_when_there_is_no_console(monkeypatch, capsys):
+    """The native message box is modal: with a stream to print to it must never appear (it hung the Windows CI
+    run of the subprocess test above); only pythonw (no stderr) gets it."""
+    import sys
+    from spec_surgeon import gui, winapp
+    shown = []
+    monkeypatch.setattr(winapp, "message_box", lambda title, text: shown.append(text))
+    monkeypatch.setitem(sys.modules, "PySide6", None)
+    assert gui.main() == 2 and shown == []
+    assert 'pip install "spec-surgeon[gui]"' in capsys.readouterr().err
+    monkeypatch.setattr(sys, "stderr", None)
+    assert gui.main() == 2 and len(shown) == 1 and "spec-surgeon[gui]" in shown[0]
+
+
 def test_the_engine_and_command_line_never_load_qt():
     import subprocess
     import sys

@@ -241,9 +241,11 @@ def main(argv=None) -> int:
         import PySide6.QtWidgets  # noqa: F401 — PySide6, or a system library Qt needs (libEGL on Linux), missing
     except ImportError as e:
         msg = f"{GUI_MISSING}\n\n({e})"
-        print(msg, file=sys.stderr)
-        from .winapp import message_box
-        message_box("Spec Surgeon", msg)          # the windowed launcher has no console to print to
+        if sys.stderr is not None:
+            print(msg, file=sys.stderr)
+        else:                                      # pythonw (the windowed launcher): no console to print to
+            from .winapp import message_box
+            message_box("Spec Surgeon", msg)       # modal — never shown when a stream can take the message
         return 2
     from .ui.app import main as qt_main
     return qt_main(argv)
