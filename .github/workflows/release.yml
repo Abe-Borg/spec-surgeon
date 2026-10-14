@@ -43,7 +43,7 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y libreoffice-writer xvfb xauth pandoc
-          python -m pip install ".[dev,agent]" build twine
+          python -m pip install -e ".[dev,agent]" build twine jsonschema
       - name: Test with a display and LibreOffice
         run: |
           python -c "import tkinter; from spec_surgeon.render.libreoffice import find_soffice; assert find_soffice()"
