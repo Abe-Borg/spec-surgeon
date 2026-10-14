@@ -1,0 +1,13 @@
+# Core (required on every platform)
+lxml>=5.0
+pymupdf>=1.24
+
+# Windows only: Word as renderer and accept/reject oracle (recommended)
+pywin32>=306; sys_platform == "win32"
+
+# Optional: Tier 2/3 agent and natural-language job entry (needs ANTHROPIC_API_KEY)
+anthropic>=1.13       # optional: compiler (spec-surgeon do), advisor, Tier B codegen
+
+# Development / tests
+pytest>=8
+python-docx>=1.1

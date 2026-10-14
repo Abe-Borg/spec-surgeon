@@ -1,0 +1,30 @@
+{
+  "request": "change all font to Arial",
+  "summary": "Set the Latin and complex-script fonts to Arial on every run that carries its own font, on every style that defines a font, and in the document defaults — body, headers, footers, footnotes and endnotes. Symbol/dingbat fonts, the East Asian font slot and font sizes are left alone.",
+  "assumptions": [
+    "Symbol/Wingdings runs and styles (bullets, special characters) are left alone — changing them would change the glyphs",
+    "list numbers and bullets drawn from numbering definitions keep their own fonts",
+    "eastAsia font slot left unchanged",
+    "font size unchanged",
+    "runs inside pending tracked insertions/deletions get the new font too",
+    "whole-document formatting is applied plain, not as tracked formatting changes (decision §14.1)"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "formatting",
+  "ops": [
+    {"op": "set_font",
+     "select": {"scope": ["document", "headers", "footers", "footnotes", "endnotes"], "runs": {"has_direct_font": true}},
+     "params": {"font": "Arial", "clear_theme_fonts": true},
+     "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}},
+    {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": "Arial"},
+     "expect": {"text_diffs": 0}},
+    {"op": "set_doc_defaults_font", "params": {"font": "Arial"},
+     "expect": {"text_diffs": 0}}
+  ],
+  "assertions": [
+    {"kind": "effective_font", "value": "Arial", "slots": ["ascii", "hAnsi", "cs"],
+     "scope": ["document", "headers", "footers", "footnotes", "endnotes"], "include_paragraph_marks": true}
+  ],
+  "review": {"sample_files": 2, "geometry_reference": "none"}
+}
