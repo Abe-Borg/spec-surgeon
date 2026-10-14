@@ -23,6 +23,11 @@ def default_author() -> str:
     return os.environ.get("SPEC_SURGEON_AUTHOR") or getpass.getuser()
 
 
+# Paragraph children that carry no content and may stay in place (outside the w:del wrapper) when the paragraph's
+# runs are tracked-deleted: bookmark anchors (Word's _GoBack is in most saved files) and proofing markers.
+INERT_P_CHILDREN = (W + "bookmarkStart", W + "bookmarkEnd", W + "proofErr")
+
+
 @register
 class DeleteParagraphs(Op):
     name = "delete_paragraphs"
@@ -105,10 +110,12 @@ class DeleteParagraphs(Op):
                         raise JobException(f"{part} paragraph {bi} already carries pending revisions; accept/reject "
                                            f"them first or use untracked deletion", "existing-revisions",
                                            {"part": part, "paragraph": bi})
-                    non_r = [c for c in p if c.tag not in (W + "pPr", W + "r")]
+                    non_r = [c for c in p if c.tag not in (W + "pPr", W + "r") and c.tag not in INERT_P_CHILDREN]
                     if non_r:
                         raise JobException(f"{part} paragraph {bi} contains non-run elements "
-                                           f"{[etree.QName(c).localname for c in non_r]}; not supported in tracked mode",
+                                           f"{[etree.QName(c).localname for c in non_r]}; not supported in tracked mode "
+                                           f"(bookmarks and proofing markers are fine; hyperlinks, fields, content "
+                                           f"controls and comment anchors are not)",
                                            "structure", {"part": part, "paragraph": bi})
                     runs = p.findall(W + "r")
                     if runs:
@@ -196,7 +203,8 @@ class DeleteParagraphs(Op):
                 if not tracked:
                     p.getparent().remove(p)
                     continue
-                # Tracked: mark the paragraph mark deleted, and wrap runs in w:del with w:delText
+                # Tracked: mark the paragraph mark deleted, and wrap the runs in one w:del with w:delText; inert
+                # children (bookmark anchors, proofing markers) stay where they are, after the wrapper.
                 mrpr = mark_rpr(p, create=True)
                 del_mark = etree.Element(W + "del")
                 stamp.apply(del_mark, next_id[0]); next_id[0] += 1

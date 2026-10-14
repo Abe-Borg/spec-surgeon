@@ -6,6 +6,10 @@
 Transform+verify runs in a process pool; rendering runs through the chosen backend (Word is one
 instance, LibreOffice is N parallel profiles). Exceptions never stop the batch; they are written to
 <out>/exceptions/ and summarized in <out>/set_aside.json with a structured diagnosis for the next pass.
+
+``<out>/outputs/`` holds only files that passed every check. An output that fails verification is moved to
+``<out>/failed/`` (kept for diagnosis, never delivered) so that copying the outputs folder can never pick up a
+file the suite rejected.
 """
 from __future__ import annotations
 
@@ -163,6 +167,22 @@ def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
                             "details": {"traceback": traceback.format_exc()}}
     res["timings"]["total"] = time.perf_counter() - t0
     return res
+
+
+# ---- failed outputs ----------------------------------------------------------------------------------
+
+def quarantine_failed_output(fr: FileResult, out_dir: Path) -> Path:
+    """Move a failed output out of outputs/ into failed/ (diagnosis only); the record keeps pointing at the file."""
+    dest_dir = Path(out_dir) / "failed"
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / fr.output.name
+    if dest.exists():
+        dest.unlink()
+    fr.output.replace(dest)
+    fr.output = dest
+    if fr.record is not None:
+        fr.record.output = str(dest)
+    return dest
 
 
 # ---- V7 ----------------------------------------------------------------------------------------------
@@ -377,7 +397,10 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
         if fr.record is None or fr.output is None:
             continue
         if not fr.record.passed:
-            fr.record.set(CheckResult("V9", "Overwrite guard", "NA", "not delivered: verification failed"))
+            moved = quarantine_failed_output(fr, out_dir)
+            fr.record.set(CheckResult("V9", "Overwrite guard", "NA",
+                                      f"not delivered: verification failed; the output was moved out of outputs/ to "
+                                      f"{moved.parent.name}/{moved.name} (diagnosis only)"))
             continue
         if fr.noop:
             fr.record.set(CheckResult("V9", "Overwrite guard", "NA", "no-op: output identical to source; nothing written back"))

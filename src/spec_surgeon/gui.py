@@ -195,7 +195,9 @@ class Session:
             lines.append(line)
         lines.append(f"\nReport: {out / 'BATCH_REPORT.md'}")
         if not in_place:
-            lines.append(f"Edited copies: {out / 'outputs'} (your files were not changed)")
+            lines.append(f"Edited copies that passed every check: {out / 'outputs'} (your files were not changed)")
+        if c["FAIL"]:
+            lines.append(f"Copies that FAILED verification: {out / 'failed'} (diagnosis only — do not use them)")
         if c["EXCEPTION"] or c["FAIL"]:
             lines.append("Some files were set aside untouched — click 'Load set-aside files' to run the next pass "
                          "on only those files, or 'Advise on exceptions' for per-file advice.")

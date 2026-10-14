@@ -61,6 +61,48 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Expected Change Count Mismatch",
         "The file planned cleanly, but the number of changes differed from the spec's strict 'expect' count.",
     ),
+    "verify-fail": (
+        "Failed Verification (Not Delivered)",
+        "The edit was applied to a copy, but one or more of the V1–V10 checks failed on the result, so the copy was "
+        "moved to failed/ and nothing was delivered. Read the file's record under records/ for the failing check; "
+        "this is the engine catching a transform it could not prove, not a problem with your file.",
+    ),
+    "section-break": (
+        "Paragraph Carries a Section Break",
+        "The selected paragraph holds a section break (w:sectPr); deleting it or inserting after it would change the "
+        "document's section layout. Select a neighbouring paragraph or insert before it.",
+    ),
+    "existing-revisions": (
+        "Paragraph Already Has Pending Revisions",
+        "Tracked deletion of a paragraph that already carries someone's tracked changes would stack revisions. "
+        "Accept or reject them in Word first, or use an untracked deletion.",
+    ),
+    "structure": (
+        "Paragraph Holds Unsupported Content",
+        "The paragraph contains elements the operation does not handle in this mode (a hyperlink, content control, "
+        "comment anchor or similar). Bookmarks and proofing markers are fine.",
+    ),
+    "textbox": (
+        "Target Inside a Text Box",
+        "The selected paragraph lives inside a text box; the operation only edits body paragraphs.",
+    ),
+    "table-cell": (
+        "Would Empty a Table Cell",
+        "Deleting every paragraph of a table cell would leave invalid OOXML; keep one paragraph per cell.",
+    ),
+    "toggle-ambiguous": (
+        "Bold/Italic/Caps Set at Several Style Levels",
+        "The effective toggle property cannot be resolved without Word's XOR rule; the file needs a human look.",
+    ),
+    "bad-params": (
+        "Operation Parameters Rejected",
+        "The spec gave this operation a parameter or selector it refuses (wrong type, unknown key, missing value).",
+    ),
+    "conflict": (
+        "Two Operations Touch the Same Thing",
+        "Two operations in the spec would change the same paragraph, property or part; the engine never guesses an "
+        "order. Split them into separate passes.",
+    ),
     "pattern": (
         "Different Document Structure Pattern",
         "This file has a different structural pattern from the pattern(s) the EditSpec targeted.",
@@ -225,6 +267,8 @@ def write_batch_report(batch: "BatchResult") -> Path:
     failed = [f for f in batch.files if f.record and not f.record.passed]
     if failed:
         lines.append("## Failed verification (NOT delivered)")
+        lines.append("The edited copies of these files were moved out of `outputs/` to `failed/`. They are kept for "
+                     "diagnosis only — do not use them.")
         for f in failed:
             bad = [c for c in f.record.checks if c.status == "FAIL"]
             lines.append(f"- **{f.source.name}**: " + "; ".join(f"{c.id} {c.summary}" for c in bad))
@@ -242,7 +286,9 @@ def write_batch_report(batch: "BatchResult") -> Path:
     if batch.contact_sheet:
         lines.append(f"- First pages of every output: `{batch.contact_sheet.relative_to(out)}`")
     lines.append("- Rendered pages that changed: `render/pages/`")
-    lines.append("- Outputs: `outputs/` (or written back in place when run with `--in-place`)")
+    lines.append("- Outputs that passed every check: `outputs/` (or written back in place when run with `--in-place`)")
+    if failed:
+        lines.append("- Copies that FAILED verification (diagnosis only, never delivered): `failed/`")
     (out / "BATCH_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
     (out / "batch.json").write_text(json.dumps({
         "job": batch.job, "params": batch.params, "spec": batch.spec, "renderer": batch.renderer, "timings": batch.timings,

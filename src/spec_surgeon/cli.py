@@ -237,6 +237,8 @@ def cmd_run(args, spec=None):
             line += f"  → {f.delivered_to}"
         print(line)
     print(f"\nReport: {out_dir / 'BATCH_REPORT.md'}")
+    if c["FAIL"]:
+        print(f"Copies that FAILED verification were moved to {out_dir / 'failed'} (diagnosis only — not delivered)")
     if c["EXCEPTION"] or c["FAIL"]:
         print(f"Set-aside manifest: {out_dir / 'set_aside.json'} "
               f"(run `spec-surgeon retry \"{out_dir}\"` for the next pass on only these files)")

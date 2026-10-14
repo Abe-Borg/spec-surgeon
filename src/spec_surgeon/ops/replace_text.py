@@ -14,9 +14,9 @@ Grammar implemented (all from the paid-for lessons):
 * Field instructions and cached field results are never edited (exception → Tier 2).
 * Text inside a pending deletion is not live text and is never matched.
 * A tracked edit in a run that carries a pending tracked FORMATTING change (w:rPrChange) is an exception by
-  default (``tracked-format``); when ``allow_tracked_format_split: true``, the first split fragment keeps the
-  original ``w:rPrChange`` and subsequent split fragments drop the duplicate ``w:rPrChange`` so revision IDs
-  stay unique.
+  default (``tracked-format``); when ``allow_tracked_format_split: true``, every split fragment (and the inserted
+  run) keeps a copy of the ``w:rPrChange`` — as Word itself writes a split run — and every copy after the first
+  gets a fresh ``w:id``; the plan predicts the exact ``rPrChange`` delta and V4 fails on any duplicated id.
 * Paragraph-scoped run coalescing can optionally ignore non-visual rPr noise (``ignore_formatting_noise: true``)
   and tolerate whitespace/NBSP/dash variations (``flexible_whitespace: true``).
 """
@@ -147,7 +147,7 @@ class ReplaceText(Op):
             "flexible_whitespace": {"type": "boolean", "default": False,
                                     "description": "If true, spaces in 'find' match any run of spaces/NBSPs/tabs and '-' matches en/em-dashes."},
             "ignore_formatting_noise": {"type": "boolean", "default": False,
-                                        "description": "If true, paragraph-local run merging ignores non-visual rPr noise (w:lang, w:noProof, w:szCs) and strips w:proofErr/w:lastRenderedPageBreak."},
+                                        "description": "If true, paragraph-local run merging ignores non-visual rPr noise (w:lang, w:noProof, w:webHidden, a redundant w:szCs or auto/black color) and drops the inert w:proofErr/w:lastRenderedPageBreak markers between runs it merges. Visual differences (fonts, size, bold, w:cs …) still refuse."},
             "allow_tracked_format_split": {"type": "boolean", "default": False,
                                            "description": "If true, allow splitting a run that carries w:rPrChange by assigning fresh revision IDs to split fragments."},
             "mode": {"type": "string", "enum": ["tracked", "untracked"], "default": "tracked"},
