@@ -1,0 +1,94 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Check release version and notes
+        run: |
+          python - <<'PY'
+          import ast
+          import os
+          import pathlib
+          import tomllib
+
+          version = tomllib.loads(pathlib.Path("pyproject.toml").read_text())["project"]["version"]
+          assignments = ast.parse(pathlib.Path("src/spec_surgeon/__init__.py").read_text()).body
+          runtime_version = next(ast.literal_eval(node.value) for node in assignments
+                                 if isinstance(node, ast.Assign)
+                                 and any(isinstance(target, ast.Name) and target.id == "__version__"
+                                         for target in node.targets))
+          tag = os.environ["GITHUB_REF_NAME"]
+          assert tag == f"v{version}", (tag, version)
+          assert runtime_version == version, (runtime_version, version)
+          assert pathlib.Path(f"docs/releases/{tag}.md").is_file(), "Release notes are required"
+          PY
+      - name: Install test and build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libreoffice-writer xvfb xauth pandoc
+          python -m pip install ".[dev,agent]" build twine
+      - name: Test with a display and LibreOffice
+        run: |
+          python -c "import tkinter; from spec_surgeon.render.libreoffice import find_soffice; assert find_soffice()"
+          xvfb-run -a python -m pytest -q -s --junitxml=release-tests.xml
+      - name: Build and validate distributions
+        run: |
+          python -m build
+          python -m twine check dist/*
+          python -m venv /tmp/spec-surgeon-release-smoke
+          /tmp/spec-surgeon-release-smoke/bin/python -m pip install dist/*.whl
+          cd /tmp
+          /tmp/spec-surgeon-release-smoke/bin/spec-surgeon --help
+          /tmp/spec-surgeon-release-smoke/bin/spec-surgeon ops --catalog > /tmp/spec-surgeon-catalog.json
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum *.whl *.tar.gz > SHA256SUMS
+      - name: Save test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-test-results
+          path: release-tests.xml
+      - name: Save release assets
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-assets
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: release-assets
+          path: dist/
+      - name: Publish GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
+            --title "Spec Surgeon $GITHUB_REF_NAME" \
+            --notes-file "docs/releases/$GITHUB_REF_NAME.md"

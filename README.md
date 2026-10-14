@@ -6,7 +6,9 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 
 **Start here: the window.** `spec-surgeon-gui` opens a simple window — pick the specs folder, type what should change (or load a spec file), Preview, Run. Setup on Windows and a walkthrough: ["The window"](#the-window-gui--start-here).
 
-**Status: v0.2.0 — the natural-language editor prototype is complete through plan Phase 6** (op library, templating, profiles and dry runs, the Claude compiler with preview and approval, Tier B generated transforms, the exception advisor). What remains needs your machine and your files: Word COM rendering, a read-only sweep over real project specs, and live runs of the Claude layer (all marked [unproven] below). v0.1.0 summary, still true: **Status: working prototype (v0.1.0).** Two job modules, the full nine-check verification suite, batch orchestration, Word/LibreOffice rendering, geometry assertion, a guarded in-place write-back, and an optional Claude layer. No GUI, no installer (CLI and a library API for the GUI to call).
+**Status: v0.3.0 — the desktop window and mixed-quality batch workflow are included.** The natural-language editor prototype is complete through plan Phase 6 (op library, templating, profiles and dry runs, the Claude compiler with preview and approval, Tier B generated transforms, the exception advisor), with the first-cut Phase 7 GUI, set-aside reports and retries, messy-document matching, and paragraph insertion/deletion. What remains needs your machine and your files: Word COM rendering, a read-only sweep over real project specs, and live runs of the Claude layer (all marked [unproven] below). The original v0.1.0 engine capabilities remain: two job modules, the nine-check verification suite (now extended through V10), batch orchestration, Word/LibreOffice rendering, geometry assertion, guarded in-place write-back, and the optional Claude layer.
+
+**Packaged releases:** download the wheel or source archive from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases). [v0.3.0 release notes](docs/releases/v0.3.0.md) include wheel installation instructions. The source archive includes the worked examples, documentation, and complete test fixtures. Release tags (`v<version>`) trigger tests with Tk/LibreOffice, package builds and metadata checks, a clean wheel installation, and publication of the distributions with SHA-256 checksums. Before tagging, keep `pyproject.toml` and `spec_surgeon.__version__` in sync and add `docs/releases/v<version>.md`; publication stops if any check fails.
 
 **NL editor, Phase 1 (operation library foundation) — done.** The engine now has a composable operation library (`ops/`: `remove_header_footer`, `set_font`, `set_style_font`, `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, plus the two v0.1.0 jobs as `fix_page_numbering` and `replace_text`), hand-written **EditSpecs** executed end to end by `spec-surgeon run-spec`, a tenth check (**V10 — property assertions and residual identity**), and V1/V2/V4/V5/V7 extensions for member removal, text-scope union, every revision kind and layout-reference modes. The v0.1.0 jobs and CLI keep working unchanged (they are thin aliases now).
 
@@ -746,7 +748,7 @@ Phase 3 (125 tests):
 * The Word renderer/oracle is written to the skill's rules but has not yet been exercised on a real job (the container this was built in has no Word). The LibreOffice path is exercised by the tests.
 * The pandoc oracle is used by the tests when pandoc is present, not by the engine.
 * The agent commands produce text for a human; they do not edit files.
-* No GUI, no installer.
+* The desktop GUI is included; there is no standalone installer (install with pip).
 
 Phase 1 (operation library) limits:
 
