@@ -350,7 +350,7 @@ def rpr_selected(pred, rpr: Optional[etree._Element], revised: bool) -> bool:
     if pred in (None, "all") or pred == {}:
         return True
     if "has_direct_font" in pred and has_direct_font(rpr) != bool(pred["has_direct_font"]):
-        return True if False else False
+        return False
     if "font_in" in pred:
         wanted = {f.casefold() for f in pred["font_in"]}
         if not any(n.casefold() in wanted for n in explicit_font_names(rpr)):

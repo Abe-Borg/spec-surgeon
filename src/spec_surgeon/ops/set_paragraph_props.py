@@ -128,6 +128,7 @@ class SetParagraphProps(Op):
                 targets[part] = chosen
                 frag.intended_parts.append(part)
                 frag.touches += [(part, str(bi), "pPr") for bi in chosen]
+            frag.touches.append((part, "scope", "verify"))      # V10 re-resolves the selection over this part
         n = sum(len(v) for v in targets.values())
         frag.property_assertions.append({
             "kind": "paragraph_props", "scope": [scope] if isinstance(scope, str) else list(scope), "parts": parts,

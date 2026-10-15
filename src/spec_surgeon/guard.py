@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import stat
 import tempfile
 from dataclasses import dataclass, asdict
 from pathlib import Path
@@ -76,6 +77,13 @@ def word_lock_files(path: os.PathLike | str) -> List[str]:
     return found
 
 
+def is_read_only(path: os.PathLike | str) -> bool:
+    """The file's own write bit is off: Windows' read-only attribute (what ``stat`` reports there), or a POSIX mode
+    without owner write. Checked from the mode, not ``os.access``, so an administrator or root sees the same answer
+    as everyone else — a read-only file is the author's "do not change this", whoever runs the batch."""
+    return not (os.stat(path).st_mode & stat.S_IWRITE)
+
+
 def check_before_write(identity: Identity) -> None:
     d = drifted(identity)
     if d:
@@ -84,13 +92,22 @@ def check_before_write(identity: Identity) -> None:
     if locks:
         raise GuardError(f"{identity.path}: appears to be open in Word (lock file {locks[0]}). "
                          f"Close it, then retry. Word would otherwise overwrite the delivered file on its next save.")
+    if is_read_only(identity.path):
+        raise GuardError(f"{identity.path}: the file is read-only (its read-only attribute or permissions). Clear "
+                         f"that in the file's properties and run again, or run in copies mode.")
 
 
 def write_back(identity: Identity, data: bytes) -> Identity:
-    """Guarded, atomic overwrite in place. Returns the new identity."""
+    """Guarded, atomic overwrite in place. Returns the new identity. Every reason the write cannot happen — drift,
+    a Word lock, a read-only file, a replace the file system refuses (a lock held by another program, a permission
+    denied, a share that went away) — is a ``GuardError`` with the reason, never a raw ``OSError``: the batch records
+    it as a failed V9 for that file and carries on with the others."""
     check_before_write(identity)
     p = Path(identity.path)
-    fd, tmp = tempfile.mkstemp(prefix=".specsurgeon-", suffix=".tmp", dir=p.parent)
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".specsurgeon-", suffix=".tmp", dir=p.parent)
+    except OSError as e:
+        raise GuardError(f"{identity.path}: cannot create a temporary file beside it ({e}); nothing was written.") from e
     try:
         with os.fdopen(fd, "wb") as fh:
             fh.write(data)
@@ -99,13 +116,23 @@ def write_back(identity: Identity, data: bytes) -> Identity:
         # Re-check immediately before the swap: the window is small but not zero.
         check_before_write(identity)
         os.replace(tmp, p)
+    except GuardError:
+        _unlink_quietly(tmp)
+        raise
+    except OSError as e:
+        _unlink_quietly(tmp)
+        raise GuardError(f"{identity.path}: the file could not be replaced ({e}); the original is untouched.") from e
     except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
+        _unlink_quietly(tmp)
         raise
     return acquire(p)
+
+
+def _unlink_quietly(path: str) -> None:
+    try:
+        os.unlink(path)
+    except OSError:
+        pass
 
 
 def write_new(path: os.PathLike | str, data: bytes) -> Identity:

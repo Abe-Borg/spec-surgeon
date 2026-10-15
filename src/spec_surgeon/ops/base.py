@@ -101,7 +101,11 @@ class PlanFragment(Plan):
       * otherwise a block index (``"12"``), ``"sectPr:N"``, ``"style:<id>"``, ``"docDefaults"`` …;
       * aspect says which property family: ``text`` (run structure / characters), ``rPr`` (run properties),
         ``markRPr`` (paragraph-mark run properties), ``pPr``, ``hfref``, ``pgMar``, ``pgSz``, ``pgNumType``,
-        ``remove``, ``add``, ``rels``, ``ct`` …
+        ``remove``, ``add``, ``rels``, ``ct`` …;
+      * ``(member, "scope", "verify")`` says the op's V10 assertion re-resolves its selection over that whole
+        member (every part in a font or paragraph op's scope, whether or not it changes anything there): the
+        member must still exist, unchanged by anyone else as a whole, when the verifier runs. Two ops may verify
+        the same member (their real touches decide), but an op that removes or restructures it is a conflict.
     ``rev_ids_needed`` is how many new revision ids (w:ins/w:del/w:rPrChange/w:pPrChange …) apply() consumes;
     the merge hands each fragment a disjoint range starting at ``transform_data["first_rev_id"]``.
     """
@@ -149,8 +153,11 @@ def check_conflicts(fragments: Sequence[PlanFragment]) -> None:
     """Raise JobException(code="conflict") when two ops would touch the same thing.
 
     Rules (conservative on purpose — an order the engine had to guess is an order nobody verified):
-      1. a whole-member touch (target "*") by one op conflicts with ANY touch of that member by another op;
-      2. the same (member, target) touched by two ops conflicts when the aspects are equal, or either is "text";
+      1. a whole-member touch (target "*") by one op conflicts with ANY touch of that member by another op — a
+         ``verify`` touch included: an op whose assertion covers a member another op removes (``set_font`` over the
+         headers plus ``remove_header_footer``, say) is refused here, not left for V10 to fail on;
+      2. the same (member, target) touched by two ops conflicts when the aspects are equal, or either is "text"
+         (two ``verify`` touches of the same member are not a conflict: verifying is not changing);
       3. two ops predicting text diffs for the same (part, block) conflict (defence in depth for rule 2).
     """
     whole: Dict[str, List[Tuple[int, str]]] = {}
@@ -168,15 +175,20 @@ def check_conflicts(fragments: Sequence[PlanFragment]) -> None:
         others = sorted({i for i in any_touch.get(member, []) if i not in {o for o, _ in owners}})
         if others or len({o for o, _ in owners}) > 1:
             who = sorted({o for o, _ in owners} | set(others))
+            verifiers = sorted({f.op_index for f in fragments if f.op_index in others
+                                and all(a == "verify" for m, t, a in f.touches if m == member)})
+            hint = (f"; {[names[i] for i in verifiers]} would verify {member} without changing it — narrow its "
+                    f"scope to the parts that stay" if verifiers else
+                    "; split them into separate specs or narrow their selectors")
             raise JobException(
                 f"ops {[names[i] for i in who]} both touch {member} and at least one of them replaces, removes or "
-                f"restructures it as a whole; split them into separate specs or narrow their selectors",
+                f"restructures it as a whole" + hint,
                 "conflict", {"member": member, "ops": [names[i] for i in who]})
     for (member, target), owners in by_target.items():
         for a in range(len(owners)):
             for b in range(a + 1, len(owners)):
                 (ia, aa), (ib, ab) = owners[a], owners[b]
-                if ia == ib:
+                if ia == ib or (aa == ab == "verify"):
                     continue
                 if aa == ab or "text" in (aa, ab):
                     raise JobException(

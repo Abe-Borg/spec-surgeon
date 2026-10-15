@@ -323,14 +323,36 @@ class ApplyHeaderFooterTemplate(Op):
         unfilled = sorted(all_slot_names - set(fills_spec))
         if unfilled:
             raise JobException(f"template slot(s) {unfilled} have no fill rule", "unfilled-slot", {"slots": unfilled})
-        unknown = sorted(set(fills_spec) - all_slot_names)
+        # A rule is "unknown" only when it names a slot in NONE of the template sections the spec maps — not merely
+        # none this document happens to use: a single-section spec in a batch mapped to a cover+body template uses
+        # the cover's parts only, and the body's SECTION_NUMBER / SECTION_TITLE rules are still the batch's rules.
+        known = set(all_slot_names)
+        copied = {c["template_part"] for c in copies}
+        for j in sorted(set(ts.values())):
+            for kind in kinds:
+                for typ in TYPES:
+                    if (typ == "first" and not t_title[j]) or (typ == "even" and not t_even):
+                        continue
+                    tp = t_eff[j].get((kind, typ))
+                    if tp is None or tp in copied:
+                        continue
+                    other_root = tpkg.xml(tp)
+                    other_fields = field_runs(other_root) if reference else None
+                    for bi, p in enumerate(paragraphs(other_root)):
+                        try:
+                            known |= {s.name for s in find_slots(p, markers, colors, f"template {tp} paragraph {bi}",
+                                                                 ref_values=ref_values, in_field=other_fields)}
+                        except JobException:
+                            continue            # a part this document does not use; its own refusals are not ours
+        unknown = sorted(set(fills_spec) - known)
         if unknown and reference:
             raise JobException("the template spec's own " + ", ".join(f"{n} {ref_values[n]!r}" for n in unknown)
-                               + " appear(s) in none of its headers/footers in use; drop the rule(s) or fix them",
+                               + " appear(s) in none of the headers/footers of the template sections the spec uses; "
+                               "drop the rule(s) or fix them",
                                "unknown-slot", {"fills": unknown, "values": {n: ref_values[n] for n in unknown}})
         if unknown:
-            raise JobException(f"fill rule(s) for {unknown} name no slot in the template parts used", "unknown-slot",
-                               {"fills": unknown, "slots": sorted(all_slot_names)})
+            raise JobException(f"fill rule(s) for {unknown} name no slot in the headers/footers of the template "
+                               f"sections the spec uses", "unknown-slot", {"fills": unknown, "slots": sorted(known)})
         fills = {name: extract_fill(pkg, name, rule) for name, rule in fills_spec.items()}
         literal = sorted(n for n, r in fills_spec.items() if rule_uses_literal(r))
 
