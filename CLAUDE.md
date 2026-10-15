@@ -113,8 +113,10 @@ test that proves they agree.)
   **bounded**: each neighbour is absent, whitespace, SEP, or a non-word mark whose own far neighbour is not a word
   char (word = `isalnum()` or `_`). Matches sorted; overlap → `slot-overlap`; a touched run (non-empty display text
   overlapping) in a field (between a complex field's begin and end over the whole part, or inside `w:fldSimple`) →
-  `slot-in-field`. **Leftover**: in each located-text piece between the occurrences, consecutive `value_tokens`
-  (`\d+|[^\W\d_]+`, casefolded) concatenating to the value's → `template-value-left`. Touched runs may hold other
+  `slot-in-field`. **Leftover**: in each located-text piece between the occurrences, the value's `value_tokens`
+  (`\d+|[^\W\d_]+`, casefolded) concatenated appear in the piece's consecutive tokens concatenated, starting and
+  ending at a token edge or inside a LETTER token (never inside a digit token) → `template-value-left`
+  ("DOORHARDWARECONSULTANT" holds "DOOR HARDWARE"; "1087100-01" does not hold "08 71 00"). Touched runs may hold other
   children (no TEXT_ONLY rule for reference slots); all slots of a paragraph's touched runs must share one parent.
   **Cut** (`carve`, every marker): a run whose display text overlaps a slot becomes, in child order, one run per
   maximal stretch of non-slot content (text outside the slot + other children; empty `w:t` dropped) and one run per
@@ -123,8 +125,8 @@ test that proves they agree.)
   merged, other children by masked signature) **in order**. Transform: `ops/slots.located_text/value_pattern/bounded/
   value_tokens/value_left_in/field_runs/reference_values/reference_slots/carve`; verifier: `verify/template._v_located/
   _v_value_rx/_v_bounded/_v_tokens/_v_left_in/_v_field_runs/reference_values_of/slots_of/_run_model/_items`.
-  `tests/test_reference_template.py` compares the two locators and plants shared defects (footer missed, wrong
-  template value, loose bounds).
+  `tests/test_reference_template.py` compares the two locators and the two leftover rules (crafted and random cases)
+  and plants shared defects (footer missed, wrong template value, loose bounds, a leftover rule that never cuts a word).
 - **Fill rules.** `literal` (value verbatim), `regex` (`pattern` searched in the display text of every paragraph
   of `source` = `document` | `header.<type>` | `footer.<type>` as shown by each section or by `section`; group 1
   if any groups; ≥1 match, all equal), `paragraph_after` (exactly one paragraph matches `anchor_regex`; value =
@@ -288,8 +290,8 @@ proposals and recorded in the plan's status sections.
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 311 with template specs and font sizes —
-310 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes —
+315 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
 

@@ -175,6 +175,8 @@ def test_look_alikes_are_neither_replaced_nor_refused(tmp_path, target, extra):
     "Section 08 71 00.01 applies",        # run into a longer number
     "SECTION08 71 00",                    # run into a word
     "DOOR HARDWARE/GLAZING",              # the title run into another word
+    "DOORHARDWARECONSULTANT",             # the title glued into a longer word (Codex review on PR #4)
+    "Door Hardwares",                     # … or into its plural
 ])
 def test_a_template_value_left_in_another_form_is_refused(tmp_path, target, extra):
     tpl = write_template(tmp_path, extra_header_text=extra)
@@ -241,6 +243,21 @@ def test_transform_and_verifier_locate_the_same_slots(tmp_path):
     assert seen >= 4 * 4 + 2
 
 
+def test_transform_and_verifier_leftover_rules_agree():
+    """The leftover rule (a letter token may be cut, a digit token never) on crafted cases and 20 000 random ones."""
+    import random
+    cases = [("DOORHARDWARECONSULTANT", "DOOR HARDWARE", True), ("(408) 710-0123", "08 71 00", False),
+             ("Job 1087100-01", "08 71 00", False), ("0871001", "08 71 00", False), ("X087100", "08 71 00", True),
+             ("XAVC11", "AVC11", True), ("AVC110", "AVC11", False), ("HARDWARE CONSULTANT: DOORCO", "DOOR HARDWARE", False)]
+    for piece, value, want in cases:
+        assert tslots.value_left_in(piece, value) is vtemplate._v_left_in(piece, value) is want, (piece, value)
+    rnd = random.Random(4)
+    for _ in range(20000):
+        piece = "".join(rnd.choice("ab01 -.") for _ in range(rnd.randint(0, 12)))
+        value = "".join(rnd.choice("ab01 ") for _ in range(rnd.randint(1, 5)))
+        assert tslots.value_left_in(piece, value) == vtemplate._v_left_in(piece, value), (piece, value)
+
+
 # ---- planted defects ---------------------------------------------------------------------------------
 
 def test_the_architects_number_left_in_the_output_is_caught(template, target):
@@ -301,6 +318,28 @@ def test_a_loose_boundary_shared_by_plan_and_apply_is_caught(tmp_path, target, m
     monkeypatch.setattr(tslots, "bounded", lambda text, a, b: True)
     plan, out, rec = run(target, params(tpl))
     assert texts(out, new_part(plan, "header"))[2] == "Section 21 05 00.01 applies"
+    assert failed(rec) == ["V10"] and "another form" in rec.get("V10").summary
+
+
+def test_a_leftover_rule_that_never_cuts_a_word_shared_by_plan_and_apply_is_caught(tmp_path, target, monkeypatch):
+    """The first cut's leftover rule (whole tokens only) in plan AND apply: "DOORHARDWARECONSULTANT" passes the
+    transform and the architect's title goes into every spec. The verifier's own rule sees it (Codex review, PR #4)."""
+    def whole_tokens_only(piece, value):
+        key, toks = "".join(tslots.value_tokens(value)), tslots.value_tokens(piece)
+        for i in range(len(toks)):
+            acc = ""
+            for t in toks[i:]:
+                acc += t
+                if acc == key:
+                    return True
+                if len(acc) >= len(key) or not key.startswith(acc):
+                    break
+        return False
+    tpl = write_template(tmp_path, extra_header_text="DOORHARDWARECONSULTANT")
+    monkeypatch.setattr(tslots, "value_left_in", whole_tokens_only)
+    plan, out, rec = run(target, params(tpl))
+    assert texts(out, new_part(plan, "header"))[2] == "DOORHARDWARECONSULTANT"
+    assert rec.get("V2").status == "PASS"
     assert failed(rec) == ["V10"] and "another form" in rec.get("V10").summary
 
 

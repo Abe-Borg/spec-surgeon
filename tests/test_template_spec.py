@@ -82,6 +82,18 @@ def test_every_profile_says_what_the_body_text_is_set_in():
     assert {f["size_pt"] for f in fonts} == {9.0, 8.0, 12.0}
 
 
+def test_the_last_resort_profile_keeps_the_body_text():
+    """Codex review on PR #4: a profile cut down to identity, settings and counts kept no body font/size, which the
+    compiler needs for "match the template's font"."""
+    from spec_surgeon.profile import bound
+    from make_fixtures import build_rich
+    prof = profile(DocxPackage(build_rich(), name="rich.docx"))
+    small = bound(json.loads(json.dumps(prof)), limit=1000)
+    assert "sections" not in small and small["fonts"] == {"body_text": prof["fonts"]["body_text"]}
+    assert len(json.dumps(small, ensure_ascii=False)) <= 1000
+    assert "body text" in small["truncated"][-1]
+
+
 def test_the_catalog_carries_the_reference_rules_and_the_examples():
     cat = op_catalog()
     assert cat["reference_fills"] == REFERENCE_FILLS and "in_template" in cat["fill_rules"]

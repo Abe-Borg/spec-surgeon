@@ -27,9 +27,10 @@ placeholder; anything else overlapping is refused. Slot runs (and runs a slot bo
   end, counted over the whole part in document order, or inside ``w:fldSimple`` — Word would show the field's own
   result again on update); a template value left anywhere else in the copied parts in another form
   (``template-value-left``: in the located text between the slots of any paragraph, consecutive tokens — maximal
-  runs of digits or of letters, casefolded, never across a separator — whose concatenation equals the value's
-  tokens' concatenation: "087100", "08-71-00", "SECTION08 71 00" for "08 71 00"), because it would be copied
-  unchanged into every spec. Unlike highlight/braces slots, the runs a reference slot touches may hold other
+  runs of digits or of letters, casefolded, never across a separator — whose concatenation holds the value's
+  tokens' concatenation, starting and ending at token edges or inside letter tokens, never inside a digit token:
+  "087100", "08-71-00", "SECTION08 71 00" for "08 71 00", "DOORHARDWARECONSULTANT" for "DOOR HARDWARE"), because
+  it would be copied unchanged into every spec. Unlike highlight/braces slots, the runs a reference slot touches may hold other
   content (a tab after the title, say): it stays, in order, in runs of its own beside the slot's run (``carve``).
 
 Display text of a paragraph: its ``w:t`` (not ``w:delText``, not field instructions) whose nearest ``w:p`` is the
@@ -190,17 +191,27 @@ def value_tokens(s: str) -> List[str]:
 
 
 def value_left_in(piece: str, value: str) -> bool:
-    """True when consecutive tokens of ``piece`` concatenate to the value's tokens' concatenation."""
+    """True when the value's tokens, concatenated, appear in the concatenation of ``piece``'s consecutive tokens
+    starting at a token's start or inside a letter token, and ending at a token's end or inside a letter token: a
+    letter token may be cut ("DOORHARDWARECONSULTANT" holds "DOOR HARDWARE"), a digit token never is ("(408)
+    710-0123" and "1087100-01" do not hold "08 71 00")."""
     key = "".join(value_tokens(value))
     toks = value_tokens(piece)
-    for i in range(len(toks)):
-        acc = ""
-        for t in toks[i:]:
-            acc += t
-            if acc == key:
-                return True
-            if len(acc) >= len(key) or not key.startswith(acc):
-                break
+    if not key or not toks:
+        return False
+    flat = "".join(toks)
+    edges, digit, pos = set(), [], 0
+    for t in toks:
+        edges.add(pos)
+        digit += [t[0].isdecimal()] * len(t)
+        pos += len(t)
+    edges.add(pos)
+    i = flat.find(key)
+    while i >= 0:
+        j = i + len(key)
+        if (i in edges or not digit[i]) and (j in edges or not digit[j - 1]):
+            return True
+        i = flat.find(key, i + 1)
     return False
 
 

@@ -342,7 +342,8 @@ def etree_local(qname: str) -> str:
 def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any]:
     """Shrink until the JSON fits ``limit`` — always. Samples go first (silently), then structure, each structural
     cut recorded in ``truncated`` (what was omitted), and as a last resort only the file's identity, settings,
-    counts and the omission list remain."""
+    counts, the body text's font/size (``fonts.body_text`` — what "match the template's font" needs) and the
+    omission list remain."""
     omitted: List[str] = []
 
     def size():
@@ -395,10 +396,14 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
     prof["truncated"] = omitted
     if size() > limit:
         keep = {k: prof[k] for k in ("file", "pattern_id", "settings", "counts") if k in prof}
+        body = (prof.get("fonts") or {}).get("body_text")
         prof.clear()
         prof.update(keep)
-        prof["truncated"] = omitted + ["everything but identity, settings and counts (profile limit)"]
-        for k in ("counts", "settings"):              # an absurdly small limit: identity only
+        if body:
+            prof["fonts"] = {"body_text": body}
+        prof["truncated"] = omitted + ["everything but identity, settings, counts and the body text's font/size "
+                                       "(profile limit)"]
+        for k in ("counts", "settings", "fonts"):     # an absurdly small limit: identity only
             if size() <= limit:
                 break
             prof.pop(k, None)

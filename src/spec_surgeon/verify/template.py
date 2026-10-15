@@ -202,15 +202,25 @@ def _v_tokens(s: str) -> List[str]:
 
 
 def _v_left_in(piece: str, value: str) -> bool:
+    """The value's tokens spelled by consecutive tokens of ``piece``; the first and last may be cut inside a letter
+    token, never inside a digit token (walked token by token here)."""
     key, toks = "".join(_v_tokens(value)), _v_tokens(piece)
-    for i in range(len(toks)):
-        joined = ""
-        for t in toks[i:]:
-            joined += t
-            if joined == key:
-                return True
-            if len(joined) >= len(key) or not key.startswith(joined):
-                break
+    if not key:
+        return False
+    for i, first in enumerate(toks):
+        for a in ([0] if first[:1].isdecimal() else range(len(first))):
+            need, k, chunk = key, i, first[a:]
+            while True:
+                if len(chunk) >= len(need):
+                    if chunk.startswith(need) and (len(chunk) == len(need) or not chunk[:1].isdecimal()):
+                        return True
+                    break
+                if not need.startswith(chunk):
+                    break
+                need, k = need[len(chunk):], k + 1
+                if k == len(toks):
+                    break
+                chunk = toks[k]
     return False
 
 
