@@ -178,6 +178,7 @@ Environment variables:
 - **Appearance:** colours (follow Windows, light, dark) and Windows' own controls.
 - **Results:** the default results folder.
 - **Anthropic API key:** typed into a masked field. *Remember on this computer* saves it in Windows Credential Manager (target `Spec Surgeon/ANTHROPIC_API_KEY`); *Forget saved key* removes it. A key already set in the Windows environment (`setx`) takes precedence.
+  The installer includes the Windows time-zone support that Credential Manager needs when reading the saved key.
 - **Updates:** check automatically once a day, the last check, the skipped version (with Clear), and Check now.
 
 **What it remembers, and where:** the window keeps `%APPDATA%\Spec Surgeon\settings.json` (plain JSON you can read or delete). It holds the folders, the template, the render option, the last request, the theme, the window size, the update preferences and the update in progress. It never stores the API key, and never stores the two risky switches (write back over the originals, AI-written transforms); both are off at every start. A corrupt settings file is set aside as `settings.json.bad` and the defaults are used.
