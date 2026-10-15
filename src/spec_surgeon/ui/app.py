@@ -437,11 +437,13 @@ class MainWindow(QMainWindow):
 
     def _inputs_key(self) -> tuple:
         """Everything the preview depends on. A loaded spec counts only while no request is typed (a typed request
-        is compiled instead — ``Session``'s rule)."""
+        is compiled instead — ``Session``'s rule). The results folder is part of it: a preview is of a run that
+        writes under one results folder, and changing it afterwards must send the user back to Preview rather than
+        let Run write into the folder the preview was made for."""
         f, r, s = self.files_page, self.request_page, self.session
         request = r.request.toPlainText().strip()
         loaded = s.spec_source if (not request and s.spec is not None and s.spec_source != "compiled") else ""
-        return (f.folder.text(), f.template.text(), request, r.answers.toPlainText().strip(), loaded,
+        return (f.folder.text(), f.template.text(), f.out.text(), request, r.answers.toPlainText().strip(), loaded,
                 tuple(str(x) for x in (s.selected_files or [])))
 
     # ---- the API key ------------------------------------------------------------------------------------

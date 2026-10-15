@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence
 
 _CANDIDATES = [
     "soffice", "libreoffice",
@@ -40,8 +40,12 @@ def _convert_batch(soffice: str, files: Sequence[Path], out_dir: Path, profile_d
     subprocess.run(cmd, check=True, capture_output=True, timeout=timeout, env=env)
 
 
-def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout: int = 600) -> Dict[Path, Path]:
-    """Render each .docx to <out_dir>/<stem>.pdf. Returns {docx: pdf} for the ones that rendered."""
+def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout: int = 600,
+                log: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
+    """Render each .docx to <out_dir>/<stem>.pdf. Returns {docx: pdf} for the ones that rendered. A chunk whose
+    soffice process fails (a crash on one file, a timeout) is retried one file at a time, so one bad file costs
+    its own PDF and no other's; every failure is said on ``log``."""
+    log = log or (lambda msg: None)
     soffice = find_soffice()
     if not soffice:
         raise RuntimeError("LibreOffice (soffice) not found; set SPEC_SURGEON_SOFFICE or install LibreOffice")
@@ -54,10 +58,21 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
     base = Path(tempfile.mkdtemp(prefix="specsurgeon-lo-"))
     try:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = [ex.submit(_convert_batch, soffice, chunk, out_dir, base / f"profile{i}", timeout)
+            futs = [(chunk, ex.submit(_convert_batch, soffice, chunk, out_dir, base / f"profile{i}", timeout))
                     for i, chunk in enumerate(chunks) if chunk]
-            for f in futs:
-                f.result()
+            retry: List[Path] = []
+            for chunk, fut in futs:
+                try:
+                    fut.result()
+                except Exception as e:  # noqa: BLE001 — the chunk's process failed; find the file(s) at fault
+                    log(f"LibreOffice failed on a chunk of {len(chunk)} file(s) ({type(e).__name__}: "
+                        f"{str(e)[:200]}); retrying them one by one")
+                    retry += [f for f in chunk if not (out_dir / (f.stem + ".pdf")).exists()]
+        for k, f in enumerate(retry):
+            try:
+                _convert_batch(soffice, [f], out_dir, base / f"retry{k}", timeout)
+            except Exception as e:  # noqa: BLE001
+                log(f"{f.name}: LibreOffice could not render it: {type(e).__name__}: {str(e)[:200]}")
     finally:
         shutil.rmtree(base, ignore_errors=True)
     result = {}
@@ -65,4 +80,6 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
         pdf = out_dir / (f.stem + ".pdf")
         if pdf.exists():
             result[f] = pdf
+        else:
+            log(f"{f.name}: no PDF came out of LibreOffice")
     return result

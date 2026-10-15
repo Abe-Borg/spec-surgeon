@@ -154,6 +154,11 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Unreadable or Corrupt .docx File",
         "The file could not be opened as a valid Word document (corrupt zip or invalid XML).",
     ),
+    "unsupported-format": (
+        "Strict Open XML Document",
+        "The file is saved in Word's 'Strict Open XML Document' format, which Spec Surgeon does not read. Open it in "
+        "Word and Save As 'Word Document (*.docx)', then run again.",
+    ),
 }
 
 
@@ -305,7 +310,7 @@ def write_batch_report(batch: "BatchResult") -> Path:
         lines.append("## Exceptions (Tier 2 — route to a human, `spec-surgeon retry`, or `spec-surgeon advise`)")
         for f in exc:
             lines.append(f"- **{f.source.name}** — `{f.exception.get('code')}`: {f.exception.get('reason')}")
-            lines.append(f"  - diagnosis: `exceptions/{f.source.stem}.exception.json`")
+            lines.append(f"  - diagnosis: `exceptions/{getattr(f, 'record_stem', f.source.stem)}.exception.json`")
         lines.append("")
     failed = [f for f in batch.files if f.record and not f.record.passed]
     if failed:

@@ -91,15 +91,24 @@ def _respec_errors(spec: Any, batch: _Batch, sources: Sequence[str], pkg: DocxPa
 
 def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, answers: Sequence[str] = ()) -> Advice:
     model = model or DEFAULT_MODEL
-    client = client or _client()
     src = Path(record["source"])
     adv = Advice(source=str(src), kind="failed")
     if not src.is_file():
         adv.errors.append(f"source file not found: {src}")
         return adv
-    pkg = DocxPackage.from_path(src)
-    pid = fingerprint(pkg)["pattern_id"]
-    batch = _Batch([src], None)
+    try:
+        pkg = DocxPackage.from_path(src)
+        pid = fingerprint(pkg)["pattern_id"]
+        batch = _Batch([src], None)
+    except Exception as e:  # noqa: BLE001 — the run set this file aside because it cannot be read; say so, no model
+        exc = record.get("exception") or {}
+        adv.kind = "recommendation"
+        adv.text = (f"{src.name} cannot be opened as a Word document ({type(e).__name__}: {e}); the run set it aside "
+                    f"for the same reason ([{exc.get('code')}] {exc.get('reason')}). Open it in Word and save it again "
+                    f"as a .docx (Word Document), check that it is a Word file at all (a renamed PDF or text file "
+                    f"is not), then run the next pass on it.")
+        return adv
+    client = client or _client()          # only now: an unreadable file never needs the model (nor an API key)
     spec0 = record.get("spec") or {}
     sources = [json.dumps(spec0, ensure_ascii=False), str(spec0.get("request", "")), *answers]
     messages: List[Dict[str, Any]] = [{"role": "user", "content": json.dumps({
@@ -168,7 +177,11 @@ def advise_batch(out_dir: Path, only: Optional[str] = None, client=None, model: 
             continue
         rec = json.loads(f.read_text(encoding="utf-8"))
         log(f"advising on {Path(rec['source']).name} [{rec.get('exception', {}).get('code')}]")
-        adv = advise(rec, client=client, model=model)
+        try:
+            adv = advise(rec, client=client, model=model)
+        except Exception as e:  # noqa: BLE001 — one file's advice failing never stops the advice for the others
+            adv = Advice(source=str(rec.get("source")), kind="failed", errors=[f"{type(e).__name__}: {e}"])
+            log(f"  advice failed: {type(e).__name__}: {e}")
         stem = f.name[:-len(".exception.json")]
         (adir / f"{stem}.advice.md").write_text(adv.to_markdown(), encoding="utf-8")
         if adv.spec:

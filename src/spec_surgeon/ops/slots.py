@@ -25,7 +25,8 @@ placeholder; anything else overlapping is refused. Slot runs (and runs a slot bo
   Refused: a template value with fewer than 3 letters/digits (``template-slot``); occurrences of two names
   overlapping (``slot-overlap``); a slot in a field (``slot-in-field``: any run between a complex field's begin and
   end, counted over the whole part in document order, or inside ``w:fldSimple`` — Word would show the field's own
-  result again on update); a template value left anywhere else in the copied parts in another form
+  result again on update; the same refusal holds for a highlight or braces slot a field shows, e.g. a
+  ``{{SECTION_TITLE}}`` typed as a STYLEREF field's cached result); a template value left anywhere else in the copied parts in another form
   (``template-value-left``: in the located text between the slots of any paragraph, consecutive tokens — maximal
   runs of digits or of letters, casefolded, never across a separator — whose concatenation holds the value's
   tokens' concatenation, starting and ending at token edges or inside letter tokens, never inside a digit token:
@@ -363,6 +364,15 @@ def find_slots(p, markers: Sequence[str], colors: Sequence[str], where: str,
                                f"control…)", "slot-structure", {"where": where, "slot": s.name})
         if not s.name:
             raise JobException(f"{where}: an empty highlighted slot", "slot-structure", {"where": where})
+        # A slot shown by a field — a {{SECTION_TITLE}} typed as a STYLEREF field's result, a highlighted field
+        # result — would be filled correctly and then put back by Word's next field update (every marker; the
+        # reference branch refused its own above).
+        if s.marker != "reference" and in_field is not None and any(
+                b > a and a < s.end and s.start < b and r in in_field for t, r, a, b in segs):
+            raise JobException(f"{where}: slot {s.name!r} ({s.placeholder!r}) is shown by a field (a STYLEREF, a "
+                               f"document property…); Word would put the field's own result back when it updates "
+                               f"fields — replace the field with plain text in the template", "slot-in-field",
+                               {"where": where, "slot": s.name})
     return sorted(spans, key=lambda s: s.start)
 
 

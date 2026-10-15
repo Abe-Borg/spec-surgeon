@@ -212,7 +212,12 @@ class _Batch:
         return self._pkgs[name]
 
     def representatives(self) -> List[Path]:
-        return [self.files[p["files"][0]] for p in self.prof["patterns"]]
+        return [Path(p["paths"][0]) for p in self.prof["patterns"]]
+
+    def pattern_paths(self, pat: Dict[str, Any]) -> List[Path]:
+        """The files of one profiled pattern, as paths: the name map (``files``) cannot tell two files of one name in
+        different folders apart, so anything that visits every file of a pattern goes by path."""
+        return [Path(x) for x in pat.get("paths") or [self.files[n] for n in pat["files"] if n in self.files]]
 
     def summary(self) -> Dict[str, Any]:
         return {"files": self.prof["files"],
@@ -288,25 +293,37 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     is rejected with every file's refusal, so the model can fix the spec instead of the batch setting every file
     aside; a batch with no files is rejected outright.
     """
-    reps = batch.representatives()
-    if not reps:
+    if not batch.representatives():
         return ["the batch has no .docx files to plan on"]
     fatal_errs: List[str] = []
     pattern_errs: List[str] = []
     planned_ok = 0
-    for f in reps:
-        pkg = DocxPackage.from_path(f)
-        try:
-            plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+    for pat in batch.prof["patterns"]:
+        # The representative is one file of the pattern; a refusal that depends on the file's content (the phrase
+        # is in the second file, not the first) must not reject a spec that plans on another file of the same
+        # structure — try the pattern's other files before saying no file of it plans.
+        tried: List[str] = []
+        planned = False
+        for f in batch.pattern_paths(pat):
+            try:
+                pkg = DocxPackage.from_path(f)
+                plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+                planned = True
+                break
+            except SpecError as e:
+                return [f"[{e.code}] {e.reason}"]
+            except JobException as e:
+                if e.code in FATAL_SPEC_CODES:
+                    fatal_errs.append(f"{f.name}: [{e.code}] {e.reason}")
+                    break
+                tried.append(f"{f.name}: [{e.code}] {e.reason}")
+            except Exception as e:  # noqa: BLE001 — an unreadable file is not the spec's fault; try the next one
+                tried.append(f"{f.name}: cannot be read ({type(e).__name__}: {e})")
+        if planned:
             planned_ok += 1
-        except SpecError as e:
-            fatal_errs.append(f"[{e.code}] {e.reason}")
-            break
-        except JobException as e:
-            if e.code in FATAL_SPEC_CODES:
-                fatal_errs.append(f"{f.name}: [{e.code}] {e.reason}")
-            else:
-                pattern_errs.append(f"{f.name}: [{e.code}] {e.reason}")
+        elif tried:
+            pattern_errs.append(tried[0] + (f" (none of this pattern's {len(tried)} files plans; e.g. {tried[1]})"
+                                            if len(tried) > 1 else ""))
     if fatal_errs:
         return fatal_errs
     if planned_ok == 0:

@@ -35,7 +35,9 @@ changing any job or check. The user (Abraham) is a fire sprinkler designer; thes
 5. **Repack by member substitution** (`DocxPackage.repack`). Never pretty-print, never regex-edit XML,
    never `zip -r`. Serialize with `serialize_xml()` only.
 6. **The guard is not optional.** In-place delivery goes through `guard.write_back` and nothing else.
-   No `force` flag exists and none should be added.
+   No `force` flag exists and none should be added. `guard.drifted` compares size, mtime and md5; delivery hands the
+   guard only the bytes the suite verified (`batch.verified_bytes` re-hashes the output against the worker's
+   `output_md5`), in copies mode too.
 7. **Scripts live in the repo, not in project folders.** Scratch work goes to a temp dir. Never name a
    module after a stdlib module (`inspect.py`, `types.py`, …) — a script in the working dir shadows
    stdlib imports inside third-party libraries.
@@ -109,7 +111,9 @@ test that proves they agree.)
   the same slot only when the highlighted text is exactly that placeholder; other overlap is refused. **Display
   text** = `w:t` whose nearest `w:p` is the paragraph, outside `w:del`/`w:moveFrom`, in document order (not the
   block text above: no delText, no field instructions). Filling: split the runs a boundary cuts, collapse the
-  slot's runs into the first (it keeps its rPr minus the highlight for highlight slots), text = the fill.
+  slot's runs into the first (it keeps its rPr minus the highlight for highlight slots), text = the fill. A slot of
+  any marker whose runs lie in a field (`field_runs` / `_v_field_runs`: between a complex field's begin and end over the
+  whole part, or inside `w:fldSimple`) is refused on both sides (`slot-in-field`; the verifier raises).
   Transform: `ops/slots.py`; verifier: `verify/template.py` (`slots_of`, `display_of`, `_run_model`).
 - **Reference slots** (`slot_markers: ["reference"]`, alone). Template value per fill rule: `in_template` (non-empty
   string, stripped) else `extract_fill` on the TEMPLATE (a rule holding a literal needs `in_template`); < 3
@@ -198,7 +202,9 @@ proposals and recorded in the plan's status sections.
 ## Where things are
 
 - `package.py` — zip/rels/sections/repack. `sections()` returns `SectionInfo` with resolved header/footer part
-  names (never guessed) and `sect_pr_ordinal` to find the sectPr again.
+  names (never guessed) and `sect_pr_ordinal` to find the sectPr again. `UnsupportedFormat` (code `unsupported-format`)
+  is raised by `main_part()`/`sect_prs()` for a Strict Open XML file; `batch._process_one` and `planner.plan_file`
+  record an exception's own `code` when it has one.
 - `ooxml.py` — transform-side helpers: `live` vs `full` text views, `split_run_at_text` (carries rPr and
   non-text children), `RevisionStamp` (Word's local-time-with-Z `w:date` + `w16du:dateUtc` when the file
   uses it), `merge_adjacent_runs` (paragraph-local), `PPR_ORDER` (complete schema order — abbreviated
@@ -244,9 +250,17 @@ proposals and recorded in the plan's status sections.
   runs a named job or an EditSpec (`spec=`). `outputs/` holds only files that passed every check, V9 included: an output
   that fails verification is moved to `failed/` (`quarantine_failed_output`) before delivery, and one whose V9 guard
   fails afterwards (drift during the run, a refused in-place write-back) is moved the same way; V9 records where it went
-  and `delivered_to` stays empty.
-- `render/` — `word_com.py` (DispatchEx only; copies only; Quit the instance you made), `libreoffice.py`.
-- `guard.py` — identity, drift, lock file, read-only refusal (`is_read_only`: the file's mode, never `os.access`, so
+  and `delivered_to` stays empty. The worker verifies in memory and writes the output only after the suite ran (a
+  verifier that raises leaves nothing in `outputs/`). `output_names` gives every input an output name unique across the
+  batch, case-insensitively, never a name another input really has (records/plans/exceptions share the stem:
+  `FileResult.record_stem`); `check_inputs_outside` refuses an input under the results folder before anything is
+  created; sources that share a name are rendered from copies under their unique output name (`render/source-in/`).
+- `render/` — `word_com.py` (DispatchEx only; copies only; Quit the instance you made; `available()` needs Word
+  registered in `HKEY_CLASSES_ROOT\Word.Application`, not just pywin32), `libreoffice.py`. `render.render_pdfs` never
+  raises: a renderer that cannot run or a file it cannot convert is a `log` line and a missing PDF (V6 "render failed"
+  for that file; a warning in the preview), never a crashed batch; LibreOffice retries a failed chunk one file at a
+  time.
+- `guard.py` — identity, drift (size, mtime, then md5), lock file, read-only refusal (`is_read_only`: the file's mode, never `os.access`, so
   root/administrator see the same answer), atomic write; every reason a write-back cannot happen is a `GuardError`
   (a refused `os.replace` included), which `batch.py` records as that file's V9 failure — never a crashed batch.
 - `tests/make_fixtures.py` — synthetic specs with the hard cases; `build_rich()` is the op fixture (first/even
@@ -256,8 +270,9 @@ proposals and recorded in the plan's status sections.
   `TEMPLATE_FILLS` its fill rules; `examples/templates/00_00_00_TEMPLATE.docx` is its output (regenerate with
   `--template` when it changes). `build_reference_spec()` is a template spec (an architect's, Arial 10; options for a
   title in another case, by STYLEREF field, an extra header line) and `REFERENCE_FILLS` fit it and `build()`;
-  `build_sized()` is the font-size fixture (9 pt text, 8 pt headers, a 12 pt note, sized symbol runs). Add a case
-  here when an op grows.
+  `build_sized()` is the font-size fixture (9 pt text, 8 pt headers, a 12 pt note, sized symbol runs);
+  `build(body_footer_linked=True)` is a body section that inherits the cover's footer, `build(appendix_restart=True)` a
+  third section that restarts page numbering. Add a case here when an op grows.
 - `editspec.py` — `load_spec` resolves a relative `template` against the spec's folder; `is_template_file`.
 - `compiler.py` — the Claude tool-use loop (injectable `client`; tests use a scripted fake). Submission checks:
   `validate_spec`, `untraceable()` over `placed_words()` (add any new op that places text there), dry plan per
@@ -298,8 +313,8 @@ proposals and recorded in the plan's status sections.
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes —
-323 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 343 with the fixes from the external audit of v0.4.0 —
+342 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
 
@@ -391,6 +406,29 @@ against every template section the spec maps (a single-section spec in a cover+b
 read-only files and turns a refused replace into a V9 failure; `planner.summarize_plan` names pure tracked deletions.
 Design notes recorded there and left as they are: a `replace_text` hit inside a field refuses the file (not just the
 occurrence); a targeted paragraph selector makes `set_paragraph_props` tracked by default (§14.1).
+
+## 2026-10-15 fixes from the external audit of v0.4.0
+
+`docs/audits/2026-10-14_v0.4.0_checklist_audit.md` is the audit (another model's, at `3977ad9`);
+`docs/audits/2026-10-15_v0.4.0_external_audit_response.md` the response; `tests/test_audit2_fixes.py` pins every fix.
+Rules that came out of it, beside the batch/guard/render entries above and the slot-in-field sentence in "Slots":
+
+- `fix_page_numbering`: the cover footer must be the cover's alone — `hf_common.effective_refs` decides what every later
+  section SHOWS (default always; first with titlePg; even with evenAndOddHeaders), and a part shown by any of them is
+  `shared-part` (rule 10 forbids adding an empty part to break the link). `continuous` removes the restart of EVERY
+  section after the cover (one `section_props` assertion over all of them; more than one restart is flagged).
+- `replace_text`: complex-field depth is counted over the whole part (`field_start_depths`), as `slots.field_runs` does;
+  a paragraph inside a field that began earlier refuses `field-result`.
+- `set_paragraph_props`: a point value for a side whose direct pPr or style chain sets `beforeLines`/`afterLines` is
+  `conflict-property` unless the spec sets the lines value too.
+- `compiler._dry_errors` tries a pattern's other files after a file-specific refusal (the gate must not depend on file
+  order); `profile_batch` takes the next file of a pattern when the first will not profile (`unprofiled`); `advisor`
+  isolates every record (an unreadable file gets a readable-file recommendation, no model call); `codegen` resolves the
+  sandbox paths and turns a verifier exception into a failed trial.
+- The window's preview key includes the results folder.
+- Deferred, recorded in the response: F11 (`w:vanish` on a target's Header style — rendering on catches it), F8b (a
+  results folder reused by hand), and the Tier B "bold headings" expectation (V10 has no bold assertion kind: a design
+  limit, not a bug — stays unsupported until a verified operation exists).
 
 ## v0.4.0 additions: template specs and font sizes
 

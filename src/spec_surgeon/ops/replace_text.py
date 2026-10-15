@@ -11,7 +11,9 @@ Grammar implemented (all from the paid-for lessons):
 * Text inside a pending insertion (someone's earlier redline): nest the deletion INSIDE the
   insertion and split the original insertion around it — the structure Word itself writes — so
   accept-all yields the new wording and reject-all returns to the pre-insertion original.
-* Field instructions and cached field results are never edited (exception → Tier 2).
+* Field instructions and cached field results are never edited (exception → Tier 2). A complex field is
+  counted over the WHOLE part (``field_start_depths``): a TOC begins in one paragraph, shows its entries in the
+  paragraphs that follow and ends paragraphs later — every one of those paragraphs is inside the field.
 * Text inside a pending deletion is not live text and is never matched.
 * A tracked edit in a run that carries a pending tracked FORMATTING change (w:rPrChange) is an exception by
   default (``tracked-format``); when ``allow_tracked_format_split: true``, every split fragment (and the inserted
@@ -71,11 +73,33 @@ def _walk_runs(p: etree._Element):
         yield el
 
 
-def live_segments(p: etree._Element) -> Tuple[str, List[Segment]]:
-    """Live text (what a reader sees with changes accepted: w:t not inside w:del) and its map."""
+def field_start_depths(pars: List[etree._Element]) -> List[int]:
+    """The complex-field nesting depth at the START of every paragraph of a part (document order). A field's begin
+    and end can sit paragraphs apart (a TOC, an index); a paragraph that starts at depth > 0 lies inside such a
+    field, and ``live_segments`` must know it — counting from zero in every paragraph would miss the whole middle
+    of a multi-paragraph field. Every run of the paragraph counts, deleted ones included, as ``live_segments``
+    counts them; nested paragraphs (textboxes) have their own runs and count for themselves."""
+    out, depth = [], 0
+    for p in pars:
+        out.append(depth)
+        for run in _walk_runs(p):
+            for c in run:
+                if c.tag == W + "fldChar":
+                    t = c.get(W + "fldCharType")
+                    if t == "begin":
+                        depth += 1
+                    elif t == "end":
+                        depth = max(0, depth - 1)
+    return out
+
+
+def live_segments(p: etree._Element, start_depth: int = 0) -> Tuple[str, List[Segment]]:
+    """Live text (what a reader sees with changes accepted: w:t not inside w:del) and its map. ``start_depth`` is
+    the complex-field depth at the paragraph's start (``field_start_depths``); a paragraph inside a field that
+    began in an earlier paragraph has every run in a field."""
     segs: List[Segment] = []
     pos = 0
-    depth = 0  # field nesting depth (complex fields)
+    depth = start_depth  # field nesting depth (complex fields), continued from the paragraphs before
     for run in _walk_runs(p):
         if ancestor(run, W + "del", p) is not None:
             for c in run:
@@ -243,6 +267,7 @@ class ReplaceText(Op):
         for part in parts:
             root = pkg.xml(part)
             pars = paragraphs(root)
+            depths = field_start_depths(pars)
             for pi, p in enumerate(pars):
                 if stop:
                     break
@@ -250,7 +275,7 @@ class ReplaceText(Op):
                     btxt, _ = full_text_map(p)
                     if not paragraph_selected(para_pred, p, pi, btxt, sheet, all_pars=pars):
                         continue
-                live, segs = live_segments(p)
+                live, segs = live_segments(p, depths[pi])
                 matches = list(pattern.finditer(live))
                 if not matches:
                     continue
@@ -261,7 +286,7 @@ class ReplaceText(Op):
                 if not all(self._single_segment(segs, m.start(), m.end()) for m in matches):
                     work_p = copy.deepcopy(p)
                     merge_adjacent_runs(work_p, ignore_noise=False)
-                    live2, segs2 = live_segments(work_p)
+                    live2, segs2 = live_segments(work_p, depths[pi])
                     matches2 = list(pattern.finditer(live2))
                     if live2 == live and len(matches2) == len(matches) and \
                             all(self._single_segment(segs2, m.start(), m.end()) for m in matches2):
@@ -270,7 +295,7 @@ class ReplaceText(Op):
                     elif ignore_noise:
                         work_p = copy.deepcopy(p)
                         merge_adjacent_runs(work_p, ignore_noise=True)
-                        live3, segs3 = live_segments(work_p)
+                        live3, segs3 = live_segments(work_p, depths[pi])
                         matches3 = list(pattern.finditer(live3))
                         if live3 == live and len(matches3) == len(matches) and \
                                 all(self._single_segment(segs3, m.start(), m.end()) for m in matches3):
@@ -290,7 +315,9 @@ class ReplaceText(Op):
                     if seg.in_field:
                         raise JobException(
                             f"target {find!r} in {part} paragraph {pi} is inside a field instruction or cached "
-                            f"field result; editing a cache is not a content edit", "field-result",
+                            f"field result{' (a field that began in an earlier paragraph — a TOC or an index)' if depths[pi] else ''}; "
+                            f"editing a cache is not a content edit: Word would put the old text back when it "
+                            f"updates the field", "field-result",
                             {"part": part, "paragraph": pi, "live_text": live})
                     if mode == "tracked" and seg.run.find(W + "rPr/" + W + "rPrChange") is not None and not allow_tf_split:
                         raise JobException(

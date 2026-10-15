@@ -16,9 +16,25 @@ import shutil
 import sys
 import tempfile
 from pathlib import Path
-from typing import Dict, Optional, Sequence, Tuple
+from typing import Callable, Dict, Optional, Sequence, Tuple
 
 WD_FORMAT_PDF = 17
+WORD_PROGID_KEY = r"Word.Application\CLSID"
+
+
+def word_registered() -> bool:
+    """Word's COM server is registered on this machine (HKEY_CLASSES_ROOT\\Word.Application\\CLSID). The installed app
+    bundles pywin32 whether or not Word exists, so the imports alone say nothing about Word: without this check a
+    PC without Word would pick the Word renderer and every render would fail at DispatchEx."""
+    try:
+        import winreg
+    except ImportError:
+        return False
+    try:
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, WORD_PROGID_KEY):
+            return True
+    except OSError:
+        return False
 
 
 def available() -> bool:
@@ -29,7 +45,7 @@ def available() -> bool:
         import pythoncom  # noqa: F401
     except ImportError:
         return False
-    return True
+    return word_registered()
 
 
 class WordSession:
@@ -85,13 +101,23 @@ class WordSession:
         return out[0], out[1]
 
 
-def render_pdfs(files: Sequence[Path], out_dir: Path) -> Dict[Path, Path]:
+def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
+    """{docx: pdf} for the files Word rendered. A file Word cannot open or export is reported on ``log`` and left
+    out; the others still render. Word failing to start propagates (the caller reports it and renders nothing)."""
+    log = log or (lambda msg: None)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {}
     with WordSession() as ws:
         for f in files:
             f = Path(f)
             pdf = out_dir / (f.stem + ".pdf")
-            ws.render_pdf(f, pdf)
-            result[f] = pdf
+            try:
+                ws.render_pdf(f, pdf)
+            except Exception as e:  # noqa: BLE001 — this file's render failed; the others go on
+                log(f"{f.name}: Word could not render it: {type(e).__name__}: {e}")
+                continue
+            if pdf.exists():
+                result[f] = pdf
+            else:
+                log(f"{f.name}: Word reported no error but wrote no PDF")
     return result

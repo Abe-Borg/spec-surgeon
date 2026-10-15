@@ -4,7 +4,14 @@ From the playbook: the cover is section 1 with the {PAGE} field in its own foote
 first body section carries <w:pgNumType w:start="1"/>. Two options, exactly one applied:
 
   cover-unnumbered  delete just the paragraph containing the PAGE field from the cover footer part
-  continuous        delete <w:pgNumType w:start="1"/> from the first body section's sectPr
+  continuous        delete <w:pgNumType w:start="…"/> from every section after the cover (a restart in a later
+                    section would start the count over again; "continuous" means one count through the document)
+
+The cover footer part must be the cover's alone: a later section that shows the same part — by an explicit
+reference or by inheritance ("Link to Previous": no reference of its own, so Word shows the previous section's
+part) — would lose its page number too, and no check could tell (rule 10: the op never adds an empty part to
+break the link). ``hf_common.effective_refs`` resolves the inheritance; a part shown by any later section is
+refused as ``shared-part``.
 """
 from __future__ import annotations
 
@@ -17,6 +24,7 @@ from ..package import W, DocxPackage
 from ..ooxml import block_full_text, count_revisions, paragraph_marked_text, paragraphs
 from . import register
 from .base import BlockDiff, JobException, Op, PlanFragment
+from .hf_common import effective_refs
 
 _PAGE = re.compile(r"^\s*PAGE\b")
 
@@ -55,7 +63,8 @@ class FixPageNumbering(Op):
         "V2": "cover-unnumbered: one deleted (or cleared) footer block; continuous: zero diffs",
         "V3": "cover-unnumbered: the PAGE field's fldChar count declared",
         "V4": "revisions inside a deleted footer paragraph predicted as negative deltas and flagged",
-        "V10": "continuous: section_props assertion (pgNumType/@start removed); nothing else changes",
+        "V10": "continuous: section_props assertion (pgNumType/@start removed from every restarting section after "
+               "the cover); nothing else changes",
         "V7": "source reference; page 1 excluded for cover-unnumbered",
     }
 
@@ -70,32 +79,46 @@ class FixPageNumbering(Op):
             raise JobException("document has a single section; there is no cover/body split to fix",
                                "structure", {"sections": len(sections)})
         plan = self.fragment(select, params)
-        cover, body = sections[0], sections[1]
+        cover = sections[0]
 
         if option == "continuous":
-            if body.pg_num_start is None:
-                raise JobException("first body section has no <w:pgNumType w:start>; numbering is already "
-                                   "continuous or restarts elsewhere", "structure",
-                                   {"sections": [s.__dict__ for s in sections]})
+            # every section after the cover that restarts the count — not only the first body section: a restart
+            # left in a third section would start the numbering over again there, and the output would still PASS
+            restarting = [s for s in sections[1:] if s.pg_num_start is not None]
+            if not restarting:
+                raise JobException("no section after the cover has a <w:pgNumType w:start>; numbering is already "
+                                   "continuous", "structure", {"sections": [s.__dict__ for s in sections]})
             main = pkg.main_part()
             root = pkg.xml(main)
-            sp = DocxPackage.sect_prs(root)[body.sect_pr_ordinal]
-            pg = sp.find(W + "pgNumType")
-            other_attrs = {k: v for k, v in pg.attrib.items() if k != W + "start"}
+            sps = DocxPackage.sect_prs(root)
+            targets = []
+            for s in restarting:
+                pg = sps[s.sect_pr_ordinal].find(W + "pgNumType")
+                other_attrs = [etree.QName(k).localname for k in pg.attrib if k != W + "start"]
+                targets.append({"sect_pr_ordinal": s.sect_pr_ordinal, "remove_element": not other_attrs,
+                                "start": s.pg_num_start, "other_attrs": other_attrs})
             plan.intended_parts = [main]
-            plan.transform_data = {"sect_pr_ordinal": body.sect_pr_ordinal,
-                                   "remove_element": not other_attrs}
-            plan.touches = [(main, f"sectPr:{body.sect_pr_ordinal}", "pgNumType")]
+            plan.transform_data = {"targets": targets}
+            plan.touches = [(main, f"sectPr:{t['sect_pr_ordinal']}", "pgNumType") for t in targets]
             plan.property_assertions.append({
-                "kind": "section_props", "part": main, "sections": [body.sect_pr_ordinal],
+                "kind": "section_props", "part": main, "sections": [t["sect_pr_ordinal"] for t in targets],
                 "elements": {"pgNumType": {"remove": ["start"], "drop_if_empty": True}},
-                "expected_sections": 1})
-            if other_attrs:
-                plan.notes.append("pgNumType carries other attributes (%s); only w:start is removed, "
-                                  "the element stays." % ", ".join(etree.QName(k).localname for k in other_attrs))
-            else:
-                plan.notes.append("pgNumType carried only w:start; the element is removed.")
-            plan.notes.append("Zero legitimate text diffs in %s; body page numbers now continue from the cover." % main)
+                "expected_sections": len(targets)})
+            for t in targets:
+                if t["other_attrs"]:
+                    plan.notes.append("section %d: pgNumType restarts at %d and carries other attributes (%s); only "
+                                      "w:start is removed, the element stays."
+                                      % (t["sect_pr_ordinal"], t["start"], ", ".join(t["other_attrs"])))
+                else:
+                    plan.notes.append("section %d: pgNumType carried only w:start=%d; the element is removed."
+                                      % (t["sect_pr_ordinal"], t["start"]))
+            plan.notes.append("Zero legitimate text diffs in %s; page numbers now run continuously from the cover "
+                              "through section(s) %s." % (main, [t["sect_pr_ordinal"] for t in targets]))
+            if len(targets) > 1:
+                plan.flags.append("Page numbering restarted in %d sections after the cover (%s), not only in the first "
+                                  "body section; every restart is removed so the count runs through the whole "
+                                  "document — check that a later restart was not meant (an appendix of its own)."
+                                  % (len(targets), [t["sect_pr_ordinal"] for t in targets]))
             return plan
 
         # cover-unnumbered
@@ -107,11 +130,28 @@ class FixPageNumbering(Op):
         else:
             raise JobException("cover section has no footer of its own (inherits from nowhere — nothing to edit)",
                                "structure", {"cover": cover.__dict__})
-        shared_with = [s.index for s in sections[1:] if footer in s.footer_refs.values()]
-        if shared_with:
-            raise JobException(f"cover footer part {footer} is also referenced by section(s) {shared_with}; "
-                               f"editing it would change body pages too", "shared-part",
-                               {"footer": footer, "sections": shared_with})
+        # The part must be the cover's alone. Explicit references are in each section's footer_refs; an inherited
+        # one ("Link to Previous") is not — effective_refs resolves what every section actually shows, and a part
+        # shown on any later section's pages (default; first with titlePg; even with evenAndOddHeaders) is shared.
+        eff = effective_refs(pkg)
+        even_odd = pkg.settings_flag("evenAndOddHeaders")
+        shared: List[str] = []
+        for s in sections[1:]:
+            if footer in s.footer_refs.values():
+                shared.append(f"section {s.index} (its own reference)")
+                continue
+            for (kind, typ), part in eff[s.index].items():
+                if kind != "footer" or part != footer:
+                    continue
+                if (typ == "first" and not s.title_pg) or (typ == "even" and not even_odd):
+                    continue
+                shared.append(f"section {s.index} (inherited: no {typ} footer of its own, so Word shows the "
+                              f"previous section's — 'Link to Previous')")
+                break
+        if shared:
+            raise JobException(f"cover footer part {footer} is also shown by {'; '.join(shared)}; editing it would "
+                               f"remove the page number from those pages too (unlink the body footer in Word first)",
+                               "shared-part", {"footer": footer, "sections": shared})
         root = pkg.xml(footer)
         hits = _page_field_paragraphs(root)
         if not hits:
@@ -165,12 +205,14 @@ class FixPageNumbering(Op):
         if plan.params["option"] == "continuous":
             main = pkg.main_part()
             root = pkg.xml(main)
-            sp = DocxPackage.sect_prs(root)[td["sect_pr_ordinal"]]
-            pg = sp.find(W + "pgNumType")
-            if td["remove_element"]:
-                sp.remove(pg)
-            else:
-                del pg.attrib[W + "start"]
+            sps = DocxPackage.sect_prs(root)
+            for t in td["targets"]:
+                sp = sps[t["sect_pr_ordinal"]]
+                pg = sp.find(W + "pgNumType")
+                if t["remove_element"]:
+                    sp.remove(pg)
+                else:
+                    del pg.attrib[W + "start"]
             pkg.write_xml(main, root)
             return
         footer = td["footer"]

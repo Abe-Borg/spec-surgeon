@@ -7,16 +7,26 @@ Transform+verify runs in a process pool; rendering runs through the chosen backe
 instance, LibreOffice is N parallel profiles). Exceptions never stop the batch; they are written to
 <out>/exceptions/ and summarized in <out>/set_aside.json with a structured diagnosis for the next pass.
 
-``<out>/outputs/`` holds only files that passed every check, V9 included. An output that fails verification, or
-whose V9 guard fails afterwards (the source drifted during the run, or the in-place write-back was refused), is moved
-to ``<out>/failed/`` (kept for diagnosis, never delivered) so that copying the outputs folder can never pick up a file
-the suite rejected.
+``<out>/outputs/`` holds only files that passed every check, V9 included. The worker verifies the output in memory
+and writes it only after the suite has run (a verifier that raises leaves nothing behind but the exception record).
+An output that fails verification, or whose V9 guard fails afterwards (the source drifted during the run, or the
+in-place write-back was refused), is moved to ``<out>/failed/`` (kept for diagnosis, never delivered) so that copying
+the outputs folder can never pick up a file the suite rejected.
+
+Output identity. Every input gets an output name that is unique across the whole batch (``output_names``: inputs in
+different folders may share a file name; a name an input really has is never handed to another input; Windows
+compares names case-insensitively), and its plan, record and exception files carry the same stem. Delivery is bound
+to the bytes the suite verified: the worker records their md5 and delivery re-hashes the output file before writing
+anything, in place or not. A run never reads where it writes: an input inside the results folder is refused before
+anything is created (``check_inputs_outside``) — copies mode would otherwise overwrite it.
 """
 from __future__ import annotations
 
 import glob
+import hashlib
 import json
 import os
+import shutil
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -46,6 +56,14 @@ class FileResult:
     delivered_to: Optional[str] = None
     timings: Dict[str, float] = field(default_factory=dict)
     noop: bool = False
+    out_name: str = ""                       # the output's file name, unique across the batch (``output_names``)
+    output_md5: Optional[str] = None         # md5 of the bytes the suite verified; delivery re-checks the file
+
+    @property
+    def record_stem(self) -> str:
+        """The stem of this file's plan/record/exception files — the output name's, so two inputs that share a
+        file name never share a record either."""
+        return Path(self.out_name or self.source.name).stem
 
     @property
     def status(self) -> str:
@@ -111,6 +129,50 @@ def expand_inputs(inputs: Sequence[str]) -> List[Path]:
     return out
 
 
+def output_names(files: Sequence[Path]) -> Dict[str, str]:
+    """One output name per input, unique across the batch however the inputs are named.
+
+    An input keeps its own name when it is the first with it; a later input with the same name (another folder)
+    gets ``stem (n)suffix`` for the first n that no input really has and no earlier output took — so ``a/Spec.docx``,
+    ``b/Spec.docx`` and ``c/Spec (1).docx`` come out as ``Spec.docx``, ``Spec (2).docx`` and ``Spec (1).docx``, never
+    two outputs at one path with one of them silently replacing the other. Names compare case-insensitively (Windows
+    does). Keyed by ``str(path)``, as the worker results are."""
+    reserved = {f.name.casefold() for f in files}      # every real name, before any generated one
+    assigned: set = set()
+    out: Dict[str, str] = {}
+    for f in files:
+        key = f.name.casefold()
+        if key not in assigned:
+            name = f.name
+        else:
+            n = 1
+            while f"{f.stem} ({n}){f.suffix}".casefold() in reserved or f"{f.stem} ({n}){f.suffix}".casefold() in assigned:
+                n += 1
+            name = f"{f.stem} ({n}){f.suffix}"
+        assigned.add(name.casefold())
+        out[str(f)] = name
+    return out
+
+
+def check_inputs_outside(files: Sequence[Path], out_dir: Path) -> None:
+    """Refuse a batch whose inputs lie inside the results folder — before anything is created or written.
+
+    ``outputs/`` and ``failed/`` are written and emptied by the run; an input under the results folder (a previous
+    run's output picked as this run's input with the same results folder, say) could be overwritten by its own
+    edited copy and then moved to ``failed/`` — an input that is gone. The rule is simpler than tracking which
+    paths collide: a run never reads where it writes."""
+    root = Path(out_dir).resolve()
+    inside = []
+    for f in files:
+        r = Path(f).resolve()
+        if r == root or root in r.parents:
+            inside.append(str(f))
+    if inside:
+        raise ValueError(f"{len(inside)} input file(s) lie inside the results folder {out_dir}: "
+                         f"{[Path(x).name for x in inside[:6]]}{' …' if len(inside) > 6 else ''}. A run never writes "
+                         f"where it reads — choose a results folder outside the input folders (nothing was written).")
+
+
 # ---- worker (runs in a subprocess) ------------------------------------------------------------------
 
 def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str, out_name: Optional[str] = None,
@@ -151,26 +213,39 @@ def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
                 out_bytes = pkg.data
             else:
                 out_bytes = pkg.repack(subs)
-        out_path = Path(out_dir) / "outputs" / (out_name or src.name)
-        out_path.parent.mkdir(parents=True, exist_ok=True)
-        out_path.write_bytes(out_bytes)
-        res["output"] = str(out_path)
         res["timings"]["apply"] = time.perf_counter() - t2
 
+        # verify in memory first; the output is written only once the suite has run, so a verifier that raises
+        # leaves nothing in outputs/ (the exception record says what happened), and delivery is bound to these bytes
         t3 = time.perf_counter()
+        out_path = Path(out_dir) / "outputs" / (out_name or src.name)
         rec = run_suite(pkg.data, out_bytes, plan.to_dict(), str(src), str(out_path))
         res["record"] = rec.to_dict()
         res["timings"]["verify"] = time.perf_counter() - t3
+        out_path.parent.mkdir(parents=True, exist_ok=True)
+        out_path.write_bytes(out_bytes)
+        res["output"] = str(out_path)
+        res["output_md5"] = hashlib.md5(out_bytes).hexdigest()
     except JobException as e:  # apply-time refusal (an internal cross-check failed): never deliver
         res["exception"] = e.to_dict()
     except Exception as e:  # anything unexpected is an exception record, never a crashed batch
-        res["exception"] = {"code": "crash", "reason": f"{type(e).__name__}: {e}",
+        res["exception"] = {"code": getattr(e, "code", None) or "crash", "reason": f"{type(e).__name__}: {e}",
                             "details": {"traceback": traceback.format_exc()}}
     res["timings"]["total"] = time.perf_counter() - t0
     return res
 
 
 # ---- failed outputs ----------------------------------------------------------------------------------
+
+def verified_bytes(fr: FileResult) -> bytes:
+    """The output file's bytes, only if they are the ones the suite verified (``output_md5``); anything else —
+    the file replaced, truncated, edited since — is a GuardError, never delivered."""
+    data = fr.output.read_bytes()
+    if fr.output_md5 and hashlib.md5(data).hexdigest() != fr.output_md5:
+        raise guard.GuardError(f"{fr.output}: the output file is not the one the suite verified (its content "
+                               f"changed after verification); not delivered")
+    return data
+
 
 def quarantine_failed_output(fr: FileResult, out_dir: Path) -> Path:
     """Move a failed output out of outputs/ into failed/ (diagnosis only); the record keeps pointing at the file."""
@@ -269,9 +344,10 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
         params = {"request": spec.get("request"), "summary": spec.get("summary")}
     else:
         get_job(job_name)  # fail early on an unknown job
+    files = expand_inputs(inputs)
+    check_inputs_outside(files, out_dir)      # before anything is created: a run never writes where it reads
     for sub in ("outputs", "records", "exceptions", "plans", "render"):
         (out_dir / sub).mkdir(parents=True, exist_ok=True)
-    files = expand_inputs(inputs)
     skipped_templates: List[Path] = []
     if spec is not None:
         tlist = spec_templates(spec)
@@ -287,13 +363,7 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
     results: Dict[str, Dict[str, Any]] = {}
     log(f"{len(files)} file(s); transform+verify with {workers} worker(s)"
         + (f"; skipped the spec's template file(s) {[Path(x).name for x in batch.skipped]}" if batch.skipped else ""))
-    # unique output names even when sources in different folders share a file name
-    out_names: Dict[str, str] = {}
-    seen: Dict[str, int] = {}
-    for f in files:
-        n = seen.get(f.name, 0)
-        seen[f.name] = n + 1
-        out_names[str(f)] = f.name if n == 0 else f"{f.stem} ({n}){f.suffix}"
+    out_names = output_names(files)       # unique across the batch, whatever the inputs are called
     if workers == 1 or len(files) == 1:
         for f in files:
             results[str(f)] = _process_one(str(f), job_name, params, str(out_dir), out_names[str(f)], spec)
@@ -310,7 +380,8 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
 
     for f in files:
         r = results[str(f)]
-        fr = FileResult(source=f, timings=r.get("timings", {}), noop=r.get("noop", False))
+        fr = FileResult(source=f, timings=r.get("timings", {}), noop=r.get("noop", False),
+                        out_name=out_names[str(f)], output_md5=r.get("output_md5"))
         if r.get("identity"):
             fr.identity = guard.Identity(**r["identity"])
         fr.fingerprint = r.get("fingerprint", {})
@@ -329,8 +400,21 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
     renderable = [fr for fr in batch.files if fr.output is not None and fr.record is not None]
     if backend and renderable:
         log(f"rendering {2 * len(renderable)} PDF(s) with {backend}")
-        src_pdfs = render_mod.render_pdfs([fr.source for fr in renderable], out_dir / "render" / "source", backend, workers)
-        out_pdfs = render_mod.render_pdfs([fr.output for fr in renderable], out_dir / "render" / "output", backend, workers)
+        # a source whose name another source has too is rendered from a copy carrying its unique output name, so
+        # two sources called Spec.docx never share one Spec.pdf (V7 would compare one of them with the other's)
+        src_in: Dict[Path, Path] = {}
+        for fr in renderable:
+            if fr.out_name and fr.out_name != fr.source.name:
+                cp = out_dir / "render" / "source-in" / fr.out_name
+                cp.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copyfile(fr.source, cp)
+                src_in[cp] = fr.source
+            else:
+                src_in[fr.source] = fr.source
+        rendered = render_mod.render_pdfs(list(src_in), out_dir / "render" / "source", backend, workers, log=log)
+        src_pdfs = {src_in[k]: v for k, v in rendered.items() if k in src_in}
+        out_pdfs = render_mod.render_pdfs([fr.output for fr in renderable], out_dir / "render" / "output", backend,
+                                          workers, log=log)
         templates = sorted({(fr.plan or {}).get("geometry_template") for fr in renderable
                             if (fr.plan or {}).get("geometry_reference") == "template" and (fr.plan or {}).get("geometry_template")})
         tpl_pdfs: Dict[str, Path] = {}
@@ -339,7 +423,7 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
             hf_docs = {geom.hf_only_copy(Path(t), out_dir / "render" / "template" /
                                          f"{k:02d} {Path(t).stem} (headers-footers only).docx")[0]: str(Path(t))
                        for k, t in enumerate(templates)}
-            rendered = render_mod.render_pdfs(list(hf_docs), out_dir / "render" / "template", backend, 1)
+            rendered = render_mod.render_pdfs(list(hf_docs), out_dir / "render" / "template", backend, 1, log=log)
             tpl_pdfs = {hf_docs[k]: v for k, v in rendered.items() if k in hf_docs}
         # V7 template mode compares headers/footers-only renders of the output and the template, page for page
         out_hf: Dict[Path, Tuple[Path, int]] = {}
@@ -351,7 +435,7 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                 path, n = geom.hf_only_copy(fr.output, hf_dir / f"{Path(fr.output).stem} (headers-footers only).docx")
                 copies[path] = (fr.output, n)
             log(f"rendering {len(copies)} headers/footers-only output(s) with {backend}")
-            for k, v in render_mod.render_pdfs(list(copies), hf_dir, backend, workers).items():
+            for k, v in render_mod.render_pdfs(list(copies), hf_dir, backend, workers, log=log).items():
                 if k in copies:
                     out_hf[copies[k][0]] = (v, copies[k][1])
         pages_dir = out_dir / "render" / "pages"
@@ -408,7 +492,7 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
             continue
         if in_place:
             try:
-                new_id = guard.write_back(fr.identity, fr.output.read_bytes())
+                new_id = guard.write_back(fr.identity, verified_bytes(fr))
                 fr.delivered_to = new_id.path
                 fr.record.set(CheckResult("V9", "Overwrite guard", "PASS",
                                           f"source re-checked (size {fr.identity.size}, mtime unchanged); no Word lock file; "
@@ -425,6 +509,10 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                                           f"closed and unchanged)"))
         else:
             d = guard.drifted(fr.identity)
+            try:
+                verified_bytes(fr)                 # the copy in outputs/ is the one the suite verified
+            except (guard.GuardError, OSError) as e:
+                d = d or str(e)
             if not d:
                 fr.delivered_to = str(fr.output)
                 fr.record.set(CheckResult("V9", "Overwrite guard", "PASS",
@@ -437,9 +525,9 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                                           f"again on the current file"))
     batch.timings["deliver"] = time.perf_counter() - t_d
 
-    # 6. records, exceptions, plans
+    # 6. records, exceptions, plans — named after the output (unique across the batch), never after the source alone
     for fr in batch.files:
-        stem = fr.source.stem
+        stem = fr.record_stem
         if fr.plan is not None:
             (out_dir / "plans" / f"{stem}.plan.json").write_text(json.dumps(fr.plan, indent=2), encoding="utf-8")
         if fr.exception is not None:

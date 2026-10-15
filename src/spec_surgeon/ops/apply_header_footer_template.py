@@ -300,7 +300,7 @@ class ApplyHeaderFooterTemplate(Op):
                 if sdt.find(f"{W}sdtPr/{W}dataBinding") is not None:
                     raise JobException(f"template part {tp} has a data-bound content control", "structure")
             check_part_relationships(tpkg, tp)
-            in_field = field_runs(troot) if reference else None
+            in_field = field_runs(troot)          # every marker: a slot a field shows is refused (slot-in-field)
             per_p: Dict[int, list] = {}
             for bi, p in enumerate(paragraphs(troot)):
                 where = f"template {tp} paragraph {bi}"
@@ -337,7 +337,7 @@ class ApplyHeaderFooterTemplate(Op):
                     if tp is None or tp in copied:
                         continue
                     other_root = tpkg.xml(tp)
-                    other_fields = field_runs(other_root) if reference else None
+                    other_fields = field_runs(other_root)
                     for bi, p in enumerate(paragraphs(other_root)):
                         try:
                             known |= {s.name for s in find_slots(p, markers, colors, f"template {tp} paragraph {bi}",
