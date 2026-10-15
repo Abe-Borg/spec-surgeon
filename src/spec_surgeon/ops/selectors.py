@@ -397,6 +397,13 @@ FONT_PARAM_DOC = {
                                          "Word lets a theme attribute override an explicit name"},
     "preserve_fonts": {"type": "array", "items": {"type": "string"},
                        "description": "symbol/dingbat fonts never changed (default: Symbol, Wingdings…)"},
+    "size": {"type": "number", "description": "font size in points (whole or half points, 1–1638): w:sz. Set only where "
+                                             "a level already sets a size — a run's or style's own w:sz (styles: unless "
+                                             "only_where_defined is false); docDefaults always. w:szCs is left alone"},
+    "size_from": {"type": "array", "items": {"type": "number"},
+                  "description": "only levels whose own size (points) is one of these change — e.g. [9] with size 10 "
+                                 "turns the 9 pt text 10 pt and leaves 8 pt headers alone (docDefaults' own size is "
+                                 "10 when it sets none)"},
 }
 
 
@@ -411,10 +418,41 @@ def font_values(params: Dict[str, Any]) -> Dict[str, str]:
             if not isinstance(params[slot], str) or not params[slot].strip():
                 raise JobException(f"'{slot}' must be a non-empty font name or null", "bad-params")
             values[slot] = params[slot]
-    if not values:
-        raise JobException("no font given: set 'font' or one of ascii/hAnsi/cs/eastAsia", "bad-params")
+    if not values and params.get("size") is None:
+        raise JobException("no font or size given: set 'font' (or ascii/hAnsi/cs/eastAsia) and/or 'size'", "bad-params")
     preserve = {f.casefold() for f in params.get("preserve_fonts", DEFAULT_PRESERVE_FONTS)}
     bad = [v for v in values.values() if v.casefold() in preserve]
     if bad:
         raise JobException(f"refusing to set a preserved symbol font {bad} as a text font", "bad-params")
     return values
+
+
+def _half_points(v: Any, what: str) -> int:
+    if isinstance(v, bool) or not isinstance(v, (int, float)) or v * 2 != int(v * 2) or not 1 <= v <= 1638:
+        raise JobException(f"'{what}' must be a font size in whole or half points between 1 and 1638, got {v!r}",
+                           "bad-params")
+    return int(v * 2)
+
+
+def size_values(params: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """{"sz": half-points, "from": sorted half-points or None} from ``size`` / ``size_from`` (points), or None."""
+    if params.get("size") is None:
+        if params.get("size_from") is not None:
+            raise JobException("'size_from' needs 'size'", "bad-params")
+        return None
+    frm = params.get("size_from")
+    if frm is not None:
+        if not isinstance(frm, list) or not frm:
+            raise JobException("'size_from' must be a non-empty list of point sizes", "bad-params")
+        frm = sorted({_half_points(x, "size_from") for x in frm})
+    return {"sz": _half_points(params["size"], "size"), "from": frm}
+
+
+def size_applies(own: Optional[int], size: Optional[Dict[str, Any]], add_where_missing: bool = False) -> bool:
+    """Whether a level whose own size is ``own`` (half-points or None) gets ``size``: it must set a size of its own
+    (unless ``add_where_missing`` and no ``from`` list), listed in ``from`` when there is one."""
+    if size is None:
+        return False
+    if own is None:
+        return add_where_missing and size["from"] is None
+    return size["from"] is None or own in size["from"]

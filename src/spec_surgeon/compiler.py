@@ -15,8 +15,8 @@ A submitted spec is checked before it is accepted:
   ``literal`` template fill) must appear verbatim in the request, the user's answers or project memory — otherwise
   the model must ask;
 * a **dry plan** on one representative file per structure pattern: fatal spec-level failures (``spec``,
-  ``spec-mode``, ``geometry``, ``conflict``, ``bad-params``, ``unknown-slot``, ``slot-overlap``) are always compile
-  errors; every other refusal (``unfilled-slot``, ``expect``, ``not-found``, ``spans-runs``, ``tracked-format``,
+  ``spec-mode``, ``geometry``, ``conflict``, ``bad-params``, ``unknown-slot``, ``slot-overlap``, ``template-slot``)
+  are always compile errors; every other refusal (``unfilled-slot``, ``expect``, ``not-found``, ``spans-runs``, ``tracked-format``,
   ``section-break`` … — anything a particular file's structure can cause) is accepted as long as at least one
   pattern in the batch plans cleanly, allowing Pass 1 to process the clean majority and set aside the outliers
   for the next pass; a spec that plans on no file at all (or a batch with no files) is rejected.
@@ -42,11 +42,13 @@ from .ooxml import paragraphs
 from .ops.selectors import StyleSheet
 from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
-from .profile import profile, profile_batch
+from .profile import profile, profile_batch, template_spec_summary
 
 DEFAULT_MODEL = os.environ.get("SPEC_SURGEON_MODEL", "claude-opus-5-5")
 MAX_TURNS = 12
-FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "unknown-slot", "slot-overlap"}
+# template-slot: a reference fill rule finds no usable value in the template spec itself — the same for every file
+FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "unknown-slot", "slot-overlap",
+                    "template-slot"}
 # The refusals that most often differ from one structure pattern to the next. Documentation only: _dry_errors treats
 # EVERY non-fatal code as pattern-sensitive, so a refusal the ops add later can never slip through the gate.
 PATTERN_SENSITIVE_CODES = {"unfilled-slot", "expect", "not-found", "ambiguous"}
@@ -69,7 +71,9 @@ TOOLS = [
     {"name": "show_part_text", "description": "The paragraph texts of one part of one file (e.g. word/footer2.xml).",
      "input_schema": {"type": "object", "properties": {"file": {"type": "string"}, "part": {"type": "string"}},
                       "required": ["file", "part"]}},
-    {"name": "read_template", "description": "The profile of the template file the user attached (with its slots).",
+    {"name": "read_template", "description": "The template file the user attached: its profile, and what it offers "
+     "as a template (template_spec: prepared slots, or — an ordinary spec from another firm — its own section "
+     "number/title and where its headers/footers show them; its body text font/size).",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "ask_user", "description": "Ask the user before anything runs (ends the compile; the user's answers "
      "come back with the request). Use it when the request is ambiguous or needs words the user has not given.",
@@ -96,6 +100,12 @@ appear in the profiles or tool results.
 something else.
 - Two ops must not touch the same thing. "Change all fonts" is three ops (set_font on runs with a direct font, \
 set_style_font, set_doc_defaults_font) plus an effective_font assertion.
+- The attached template may be a TEMPLATE SPEC: an ordinary spec from the architect or another firm (read_template \
+says which). "Make the header/footer match the template spec" is apply_header_footer_template with slot_markers \
+["reference"] and the catalog's reference_fills as slot_fills (adapt them when the profiles show another layout): \
+its own section number and title are replaced by each spec's own and everything else is copied. "Match the \
+template's font" follows the catalog rule: font and size from the template spec's body_text, size_from from the \
+batch's body_text sizes. State the template's values and the sizes in assumptions.
 - mode: "formatting" unless an op places characters; "content" for tracked wording changes; "untracked" when \
 the user asked for untracked wording or a template has literal fills.
 - Finish by calling submit_editspec exactly once with the whole spec (or ask_user). Keep tool calls few.
@@ -264,7 +274,8 @@ class _Batch:
     def read_template(self):
         if not self.template:
             raise KeyError("no template was attached to this request")
-        return {"path": str(self.template), "profile": profile(DocxPackage.from_path(self.template))}
+        pkg = DocxPackage.from_path(self.template)
+        return {"path": str(self.template), "template_spec": template_spec_summary(pkg), "profile": profile(pkg)}
 
 
 def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
@@ -333,8 +344,9 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str], memory: 
                      "inspect their structure and compile an EditSpec tailored to them):\n"
                      + json.dumps(list(prior_failures)[:20], ensure_ascii=False))
     if batch.template:
-        parts.append(f"A TEMPLATE FILE IS ATTACHED: {batch.template} (use read_template; put this exact path in "
-                     f"the op's 'template' param)")
+        parts.append(f"A TEMPLATE FILE IS ATTACHED: {batch.template} — a prepared header/footer template or a "
+                     f"template spec (e.g. the architect's); call read_template to see which, and put this exact path "
+                     f"in the op's 'template' param")
     parts.append("THE BATCH (profiles per structure pattern):\n" + json.dumps(batch.summary(), ensure_ascii=False))
     return [{"role": "user", "content": "\n\n".join(parts)}]
 

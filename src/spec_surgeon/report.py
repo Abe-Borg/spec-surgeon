@@ -103,6 +103,49 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Two operations in the spec would change the same paragraph, property or part; the engine never guesses an "
         "order. Split them into separate passes.",
     ),
+    "template-slot": (
+        "Template Spec Value Not Found",
+        "A fill rule finds no usable value in the template spec itself (its own section number or title, say), so the "
+        "engine cannot tell what to replace in its header/footer. Give the rule 'in_template' text, or a rule that also "
+        "fits the template spec.",
+    ),
+    "template-value-left": (
+        "Template Spec's Own Value Left in Another Form",
+        "The template spec's header/footer shows its own section number or title in a form the engine cannot replace "
+        "safely (written differently, e.g. '087100', or run into other text); copying it would put the architect's "
+        "number or title into every spec. Fix that text in the template spec, or name it with 'in_template'.",
+    ),
+    "slot-in-field": (
+        "Template Value Shown by a Field",
+        "The template's header/footer shows the value through a Word field (e.g. STYLEREF or a document property); a "
+        "replaced field result would come back when Word updates fields. Replace the field with plain text in the "
+        "template.",
+    ),
+    "slot-in-textbox": (
+        "Template Slot Inside a Text Box",
+        "A template slot sits in a text box of the template's header/footer, which the templating op does not fill. "
+        "Move that text out of the text box in the template.",
+    ),
+    "slot-structure": (
+        "Template Slot Spans Unusual Content",
+        "A template slot runs through content the op cannot cut safely (a run holding more than text, a hyperlink or "
+        "content control boundary). Retype that placeholder as plain text in the template.",
+    ),
+    "slot-overlap": (
+        "Template Slots Overlap",
+        "Two slots of the template overlap (a highlighted span holding a {{NAME}} and other text, or two template "
+        "values sharing words), so the engine cannot tell which fill goes where.",
+    ),
+    "unknown-slot": (
+        "Fill Rule Without a Slot",
+        "A fill rule names a slot the template's headers/footers in use do not have (for a template spec: its own "
+        "value appears in none of them). Drop the rule or fix it.",
+    ),
+    "template-revisions": (
+        "Template Has Pending Tracked Changes",
+        "A header/footer part of the template carries tracked changes; they would be copied into every spec. Accept "
+        "or reject them in the template first.",
+    ),
     "pattern": (
         "Different Document Structure Pattern",
         "This file has a different structural pattern from the pattern(s) the EditSpec targeted.",

@@ -492,6 +492,18 @@ def set_rfonts(rpr: etree._Element, values: Dict[str, str], clear_theme: bool) -
             rf.attrib.pop(W + THEME_FONT_ATTR[slot], None)
 
 
+def own_size(rpr: Optional[etree._Element]) -> Optional[int]:
+    """The font size (half-points) this rPr itself sets — its w:sz/@w:val as a whole number — or None."""
+    sz = rpr.find(W + "sz") if rpr is not None else None
+    val = sz.get(W + "val") if sz is not None else None
+    return int(val) if val is not None and val.isdigit() else None
+
+
+def set_size(rpr: etree._Element, half_points: int) -> None:
+    """Set w:sz (created in schema order when absent). w:szCs (complex-script size) is left alone."""
+    get_or_add(rpr, "sz", RPR_ORDER).set(W + "val", str(half_points))
+
+
 def property_change(tag: str, snapshot_tag: str, children: Iterable[etree._Element], stamp: "RevisionStamp",
                     rev_id: int) -> etree._Element:
     """A w:rPrChange / w:pPrChange carrying a snapshot of the properties before the change."""

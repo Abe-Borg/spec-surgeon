@@ -7,7 +7,9 @@ Working notes for any Claude session touching this repository. Read before editi
 A deterministic engine for surgical .docx edits (Tier 1 of the three-tier design), plus a thin optional
 model layer. Since NL-editor Phase 1 the engine is an **operation library** (`ops/`) executed through
 **EditSpecs** (`editspec.py`, `spec-surgeon run-spec`); the v0.1.0 jobs are thin aliases over two of the ops. Phase 2
-added the header/footer templating op (`apply_header_footer_template`), the first op that adds members. The method it implements is the `docx-surgical-edit` skill bundled at
+added the header/footer templating op (`apply_header_footer_template`), the first op that adds members; v0.4.0 let
+it take a **template spec** (an ordinary spec, e.g. the architect's: `slot_markers: ["reference"]`) and gave the three
+font ops **sizes**. The method it implements is the `docx-surgical-edit` skill bundled at
 `src/spec_surgeon/skill/` — read `SKILL.md` and `references/verification-checklist.md` there before
 changing any job or check. The user (Abraham) is a fire sprinkler designer; these files go to clients;
 "I will lose my job" if content is silently lost or invented is the spec.
@@ -53,7 +55,10 @@ changing any job or check. The user (Abraham) is a fire sprinkler designer; thes
     `template_parts` assertion. A new part's content type must match its relationship type (V1 checks it).
 11. **Fills are extracted, never typed.** A template slot gets its value from the target by a declared rule
     (`regex`, `paragraph_after`) or is the user's approved wording (`literal` → the op is `untracked` and the
-    plan flags the words). V10 re-extracts every fill from the SOURCE by the same rule, independently.
+    plan flags the words). V10 re-extracts every fill from the SOURCE by the same rule, independently. A
+    reference slot (template spec) is the template's OWN value: the same rule run on the TEMPLATE, or the rule's
+    `in_template` text — V10 re-derives it the same way. Never convert a value (case, spacing, "087100" → "08 71
+    00"): a value the template shows in another form is refused (`template-value-left`), not normalised.
 12. **The template file is an input like the source.** Pinned by md5 in the plan; apply refuses a changed
     template, V10 fails on one. A batch skips input files that are a spec's template (same path or bytes).
 
@@ -100,11 +105,44 @@ test that proves they agree.)
   block text above: no delText, no field instructions). Filling: split the runs a boundary cuts, collapse the
   slot's runs into the first (it keeps its rPr minus the highlight for highlight slots), text = the fill.
   Transform: `ops/slots.py`; verifier: `verify/template.py` (`slots_of`, `display_of`, `_run_model`).
+- **Reference slots** (`slot_markers: ["reference"]`, alone). Template value per fill rule: `in_template` (non-empty
+  string, stripped) else `extract_fill` on the TEMPLATE (a rule holding a literal needs `in_template`); < 3
+  letters/digits (`value_tokens`) or a NUL → refused (`template-slot` / `bad-params`). **Located text** = display text
+  with `SEP` (`\x00`) for every child of a display run other than `w:rPr`/`w:t`, plus the display offset of each
+  position. Occurrence = a match of the value's words joined by `\s+` (IGNORECASE) in the located text that is
+  **bounded**: each neighbour is absent, whitespace, SEP, or a non-word mark whose own far neighbour is not a word
+  char (word = `isalnum()` or `_`). Matches sorted; overlap → `slot-overlap`; a touched run (non-empty display text
+  overlapping) in a field (between a complex field's begin and end over the whole part, or inside `w:fldSimple`) →
+  `slot-in-field`. **Leftover**: in each located-text piece between the occurrences, the value's `value_tokens`
+  (`\d+|[^\W\d_]+`, casefolded) concatenated appear in the piece's consecutive tokens concatenated, starting and
+  ending at a token edge or inside a LETTER token (never inside a digit token) → `template-value-left`
+  ("DOORHARDWARECONSULTANT" holds "DOOR HARDWARE"; "1087100-01" does not hold "08 71 00"). Touched runs may hold other
+  children (no TEXT_ONLY rule for reference slots); all slots of a paragraph's touched runs must share one parent.
+  **Cut** (`carve`, every marker): a run whose display text overlaps a slot becomes, in child order, one run per
+  maximal stretch of non-slot content (text outside the slot + other children; empty `w:t` dropped) and one run per
+  slot piece; the slot's first piece (the run where it starts) holds the fill, later pieces go. Verifier model:
+  `_run_model` builds the same per-run groups and compares each output run's content items (consecutive `w:t`
+  merged, other children by masked signature) **in order**. Transform: `ops/slots.located_text/value_pattern/bounded/
+  value_tokens/value_left_in/field_runs/reference_values/reference_slots/carve`; verifier: `verify/template._v_located/
+  _v_value_rx/_v_bounded/_v_tokens/_v_left_in/_v_field_runs/reference_values_of/slots_of/_run_model/_items`.
+  `tests/test_reference_template.py` compares the two locators and the two leftover rules (crafted and random cases)
+  and plants shared defects (footer missed, wrong template value, loose bounds, a leftover rule that never cuts a word).
 - **Fill rules.** `literal` (value verbatim), `regex` (`pattern` searched in the display text of every paragraph
   of `source` = `document` | `header.<type>` | `footer.<type>` as shown by each section or by `section`; group 1
   if any groups; ≥1 match, all equal), `paragraph_after` (exactly one paragraph matches `anchor_regex`; value =
   display text of the next non-blank paragraph). `strip` default true; empty → refused. Transform:
-  `ops/slots.extract_fill`; verifier: `verify/template.fill_value`.
+  `ops/slots.extract_fill`; verifier: `verify/template.fill_value`. `in_template` is only for reference slots
+  (refused otherwise) and is not part of extraction.
+- **Font size** (`size` points → `w:sz` half-points, whole/half points 1–1638; `size_from` points list). A level's own
+  size = its `w:sz/@w:val` when all digits, else none; docDefaults' own size defaults to 20. A level gets the size
+  when it has its own size and there is no `size_from` or its own size is listed — or, with `add_where_missing`
+  (`set_style_font` with `only_where_defined: false`) and no `size_from`, when it has none. `set_font`: runs/marks
+  never add a size; font goes on every selected run, or only on `has_direct_font` runs with `only_where_defined`; a
+  run that gets neither is not selected. `w:szCs` is never touched; "everything else unchanged" is checked per
+  target. Transform: `ops/selectors.size_values/size_applies`, `ooxml.own_size/set_size`; verifier:
+  `verify/props._v_own_sz/_v_size_to/_check_font_rpr`. The **effective size** of the `effective_font` post-condition
+  (`size`, `size_from`; symbol runs and `w:sym` runs exempt) exists only on the verifier side
+  (`verify/props.effective_size`). `tests/test_font_size.py` compares the rules and plants shared defects.
 - **Effective pinnable properties.** Paragraph: spacing before/after/line/lineRule, ind left/right/first
   (firstLine +v, hanging −v; start/end aliases), jc (start/end → left/right), tab stops (fold; `clear` removes).
   Run and paragraph mark: ascii/hAnsi (theme refs via the theme part), sz, color (val, themeColor, themeShade,
@@ -173,13 +211,16 @@ proposals and recorded in the plan's status sections.
   `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, `apply_header_footer_template`.
 - `ops/hf_common.py` — header/footer refs, `effective_refs` (what each section shows), `plan_removal`/
   `apply_removal` (shared by `remove_header_footer` and templating: rels, members, overrides, orphaned media,
-  revisions flagged). `ops/slots.py` — slots, display text, `apply_slot`, `expected_block_text`, `extract_fill`.
+  revisions flagged). `ops/slots.py` — slots, display text, `apply_slot`, `expected_block_text`, `extract_fill`;
+  reference slots (`located_text`, `bounded`, `reference_values`, `reference_slots`), `carve`, `mark_slots` (⟦ ⟧ for notes).
   `ops/effective.py` — `Resolver` (effective pinnable properties), `theme_fonts`, `text_width`, `rescale_tabs`.
 - `apply_header_footer_template` plan: copies keyed by (template part, template width, target width); pins are
   the diff of template-effective vs target-effective (with imported styles); `transform_data` carries pins,
   slots, rels/media maps, docPr start ids, new refs, removal plan. Apply works on a fresh parse of the template.
 - `editspec.py` — EditSpec validate → `plan_spec` → `apply_spec` (minimal Phase 1 executor; the Phase 3
-  planner grows out of it). `examples/specs/` — the two worked example specs.
+  planner grows out of it). `examples/specs/` — the worked example specs (Phase 1's two, the templating ones,
+  `match-template-spec-header-footer` and `match-template-spec-font`); `examples/templates/` — the template fixture
+  and `08 71 00 - DOOR HARDWARE (ACME).docx` (an architect's spec; `make_fixtures.py OUT --reference`).
 - `jobs/` — `OpJob` aliases (`page-numbering` → `fix_page_numbering`, `tracked-replace` → `replace_text`).
 - `verify/suite.py` — V1…V10 as a `VerificationRecord`; V6/V7/V9 are filled by `batch.py`
   (`geometry_check()` implements V7's `source | none | template` modes). V5a takes `template_baselines` for
@@ -205,7 +246,10 @@ proposals and recorded in the plan's status sections.
   runs inside revisions, an earlier rPrChange). `build_template()` is the template fixture (both slot
   conventions, fragmented placeholders, a style targets lack, a logo, a footer table, 1" margins) and
   `TEMPLATE_FILLS` its fill rules; `examples/templates/00_00_00_TEMPLATE.docx` is its output (regenerate with
-  `--template` when it changes). Add a case here when an op grows.
+  `--template` when it changes). `build_reference_spec()` is a template spec (an architect's, Arial 10; options for a
+  title in another case, by STYLEREF field, an extra header line) and `REFERENCE_FILLS` fit it and `build()`;
+  `build_sized()` is the font-size fixture (9 pt text, 8 pt headers, a 12 pt note, sized symbol runs). Add a case
+  here when an op grows.
 - `editspec.py` — `load_spec` resolves a relative `template` against the spec's folder; `is_template_file`.
 - `compiler.py` — the Claude tool-use loop (injectable `client`; tests use a scripted fake). Submission checks:
   `validate_spec`, `untraceable()` over `placed_words()` (add any new op that places text there), dry plan per
@@ -236,17 +280,18 @@ proposals and recorded in the plan's status sections.
   process call injectable). `settings.py` — `settings.json` (+ `config_dir`/`data_dir`/`updates_dir`/`logs_dir`;
   `SPEC_SURGEON_CONFIG_DIR` moves them). `winapp.py` — app mutex, AppUserModelID, message box (ctypes; no-ops off
   Windows). `credentials.py` — the API key in Windows Credential Manager (`win32cred`).
-- `profile.py` — bounded per-pattern profiles (descriptive only; no op reads them). `planner.py` — `plan_batch`
-  dry run + `summarize_plan`. `catalog.py` — `op_catalog()` (+ `COMMON_ASSUMPTIONS` per op — add one for every
-  new op) and `editspec_json_schema()`.
+- `profile.py` — bounded per-pattern profiles (descriptive only; no op reads them), incl. `fonts.body_text`;
+  `template_spec_summary()` is `read_template`'s `template_spec`. `planner.py` — `plan_batch` dry run +
+  `summarize_plan`. `catalog.py` — `op_catalog()` (+ `COMMON_ASSUMPTIONS` per op — add one for every new op;
+  `REFERENCE_FILLS`, the CSI number/title rules for template specs) and `editspec_json_schema()`.
 
 ## Adding or changing an op (or a job)
 
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0 — 251 pass and the
-Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes —
+315 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
 
@@ -328,3 +373,18 @@ update this file.
 - Packaging: `app.spec` filters Qt to what a widgets app loads (no software OpenGL, Quick/QML, PDF, TLS,
   translations); the installed smoke test (`installed_smoke.py`, `gui` and `update` modes) is the gate that nothing
   needed was dropped. Release notes in `docs/releases/v<version>.md` are what the update banner's What's new shows.
+
+## v0.4.0 additions: template specs and font sizes
+
+- `apply_header_footer_template` with `slot_markers: ["reference"]` (a both-sides definition, listed above). New refusal
+  codes: `template-slot` (fatal in `compiler.FATAL_SPEC_CODES`: the template is the same for every file),
+  `template-value-left`, `slot-in-field`; all in `report.FAILURE_EXPLANATIONS` with the older slot codes. The plan's
+  notes show every occurrence (`mark_slots`) and flag a value shown in another case/spacing. The `template_parts`
+  assertion carries `template_values`.
+- `carve` replaced the old split-at-offset isolation for every slot kind; V10's run model now compares each run's
+  content in order (it used to compare non-text children apart from the text, so a tab moved inside a run passed).
+- Font sizes (both-sides definition above); `effective_font` assertions may omit `value` and carry `size`/`size_from`
+  (`editspec.validate_spec` checks them).
+- Compiler: `read_template` returns `template_spec` (prepared slots, or own values by `REFERENCE_FILLS` + ⟦ ⟧
+  occurrences + problems, body font/size); the SYSTEM prompt and the catalog's rules say how to compose "match the
+  header/footer / font of the template spec". Window: the Files card is "Template spec (optional)"; two new chips.

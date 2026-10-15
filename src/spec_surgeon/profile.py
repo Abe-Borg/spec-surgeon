@@ -10,6 +10,11 @@ of the body. It is bounded (``MAX_PROFILE_BYTES``): long text is truncated and s
 ``profile_batch(files)`` groups files by structure pattern (fingerprint.pattern_id) and profiles one
 representative per pattern — the compiler sees one profile per pattern, not one per file.
 
+``fonts.body_text`` is what "the document's font" means to a reader: the body text's effective font and size by
+share of characters. ``template_spec_summary(pkg)`` is what a template file offers the compiler: prepared slots, or
+(an ordinary spec from another firm) its own section number/title by the catalog's ``REFERENCE_FILLS`` and every
+place its headers/footers show them, with any refusal reference slots would meet there; its body text font/size.
+
 The profile is descriptive only. Nothing in it is used to plan an edit: ops read the package themselves.
 """
 from __future__ import annotations
@@ -25,7 +30,8 @@ from .ooxml import count_revisions, paragraphs
 from .ops.effective import AmbiguousToggle, Resolver, text_width, theme_fonts
 from .ops.hf_common import KINDS, TYPES, effective_refs
 from .ops.selectors import StyleSheet
-from .ops.slots import display_text, find_slots, nearest_p
+from .ops.base import JobException
+from .ops.slots import display_text, extract_fill, field_runs, find_slots, mark_slots, nearest_p, value_tokens
 from .package import NS, W, DocxPackage
 
 MAX_PROFILE_BYTES = 6000
@@ -233,7 +239,8 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
                      "trackRevisions": pkg.settings_flag("trackRevisions")},
         "sections": sections,
         "header_footer_parts": parts_seen,
-        "fonts": {"theme": fonts, "doc_defaults": dd, "direct_in_runs": dict(direct.most_common(10))},
+        "fonts": {"theme": fonts, "doc_defaults": dd, "direct_in_runs": dict(direct.most_common(10)),
+                  "body_text": body_text_fonts(pkg)},
         "styles_in_use": styles_in_use,
         "counts": counts,
         "first_paragraphs": first,
@@ -257,6 +264,77 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
     return bound(prof)
 
 
+def body_text_fonts(pkg: DocxPackage, limit: int = 3) -> List[Dict[str, Any]]:
+    """The body text's effective (font, size) by share of characters, most used first."""
+    sheet = StyleSheet(pkg)
+    res = Resolver(sheet, theme_fonts(pkg))
+    count: Counter = Counter()
+    for p in paragraphs(pkg.xml(pkg.main_part())):
+        for r in p.iter(W + "r"):
+            if nearest_p(r) is not p or any(a.tag in (W + "del", W + "moveFrom") for a in r.iterancestors()):
+                continue
+            n = sum(len(t.text or "") for t in r.findall(W + "t"))
+            if not n:
+                continue
+            try:
+                eff = res.run(r.find(W + "rPr"), p)
+            except AmbiguousToggle:
+                continue
+            count[(eff["ascii"], int(eff["sz"]))] += n
+    total = sum(count.values()) or 1
+    return [{"font": f, "size_pt": sz / 2, "share": round(c / total, 2)} for (f, sz), c in count.most_common(limit)]
+
+
+def template_spec_summary(pkg: DocxPackage) -> Dict[str, Any]:
+    """What a template file offers the compiler (descriptive only; the op re-derives everything it uses)."""
+    from .catalog import REFERENCE_FILLS
+    secs = DocxPackage.sect_prs(pkg.xml(pkg.main_part()))
+    parts: List[str] = []
+    for shown in effective_refs(pkg, secs):
+        for part in shown.values():
+            if part and part not in parts and pkg.has(part):
+                parts.append(part)
+    prepared = []
+    for part in parts:
+        for p in paragraphs(pkg.xml(part)):
+            try:
+                prepared += [s.name for s in find_slots(p, ("highlight", "braces"), ("yellow",), part)]
+            except JobException:
+                prepared.append("(unusable)")
+    out: Dict[str, Any] = {"body_text": body_text_fonts(pkg)}
+    if prepared:
+        out["kind"] = "prepared template: use the default slot_markers"
+        out["prepared_slots"] = list(dict.fromkeys(prepared))
+        return out
+    out["kind"] = "a spec (no highlighted or {{NAME}} placeholders): use slot_markers ['reference']"
+    values: Dict[str, str] = {}
+    own: Dict[str, Any] = {}
+    for name, rule in REFERENCE_FILLS.items():
+        try:
+            values[name] = extract_fill(pkg, name, rule)
+            own[name] = values[name]
+        except JobException as e:
+            own[name] = f"(not found by reference_fills: {e.reason})"
+    out["own_values"] = own
+    usable = {n: v for n, v in values.items() if len("".join(value_tokens(v))) >= 3}
+    shown_at, problems = [], []
+    for part in parts:
+        root = pkg.xml(part)
+        in_field = field_runs(root)
+        for p in paragraphs(root):
+            try:
+                sl = find_slots(p, ["reference"], [], part, ref_values=usable, in_field=in_field)
+            except JobException as e:
+                problems.append(f"[{e.code}] {e.reason}")
+                continue
+            if sl:
+                shown_at.append(f"{part}: «{mark_slots(p, sl)}»")
+    out["shown_in_headers_footers"] = shown_at or "(none — its headers/footers do not show them)"
+    if problems:
+        out["problems"] = problems[:6]
+    return out
+
+
 def etree_local(qname: str) -> str:
     return qname.split("}", 1)[1] if "}" in qname else qname
 
@@ -264,7 +342,8 @@ def etree_local(qname: str) -> str:
 def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any]:
     """Shrink until the JSON fits ``limit`` — always. Samples go first (silently), then structure, each structural
     cut recorded in ``truncated`` (what was omitted), and as a last resort only the file's identity, settings,
-    counts and the omission list remain."""
+    counts, the body text's font/size (``fonts.body_text`` — what "match the template's font" needs) and the
+    omission list remain."""
     omitted: List[str] = []
 
     def size():
@@ -317,10 +396,14 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
     prof["truncated"] = omitted
     if size() > limit:
         keep = {k: prof[k] for k in ("file", "pattern_id", "settings", "counts") if k in prof}
+        body = (prof.get("fonts") or {}).get("body_text")
         prof.clear()
         prof.update(keep)
-        prof["truncated"] = omitted + ["everything but identity, settings and counts (profile limit)"]
-        for k in ("counts", "settings"):              # an absurdly small limit: identity only
+        if body:
+            prof["fonts"] = {"body_text": body}
+        prof["truncated"] = omitted + ["everything but identity, settings, counts and the body text's font/size "
+                                       "(profile limit)"]
+        for k in ("counts", "settings", "fonts"):     # an absurdly small limit: identity only
             if size() <= limit:
                 break
             prof.pop(k, None)

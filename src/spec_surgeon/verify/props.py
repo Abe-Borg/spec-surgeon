@@ -277,6 +277,30 @@ def effective_fonts(rpr, p, styles: Styles, theme: Theme) -> Dict[str, Optional[
     return out
 
 
+def effective_size(rpr, p, styles: Styles) -> int:
+    """Half-points a renderer uses for this run (or paragraph mark), same level order as ``effective_fonts``; 20
+    (10 pt) when no level sets w:sz."""
+    levels = [styles.doc_defaults_rpr()]
+    tbl = p
+    while tbl is not None and tbl.tag != W + "tbl":
+        tbl = tbl.getparent()
+    if tbl is not None:
+        ts = tbl.find(W + "tblPr/" + W + "tblStyle")
+        levels += [st.find(W + "rPr") for st in reversed(styles.chain(ts.get(W + "val") if ts is not None
+                                                                       else styles.default.get("table")))]
+    if p is not None:
+        levels += [st.find(W + "rPr") for st in reversed(styles.chain(_pstyle(p) or styles.default.get("paragraph")))]
+    levels += [st.find(W + "rPr") for st in reversed(styles.chain(_rstyle(rpr) or styles.default.get("character")))]
+    levels.append(rpr)
+    out = DEFAULT_SZ
+    for L in levels:
+        e = L.find(W + "sz") if L is not None else None
+        v = e.get(W + "val") if e is not None else None
+        if v is not None and v.isdigit():
+            out = int(v)
+    return out
+
+
 # ---- selector resolution (independent of ops/selectors.py) ------------------------------------------
 
 PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range",
@@ -460,30 +484,60 @@ class Ctx:
         return out
 
 
-def _check_font_rpr(S, O, a: Dict[str, Any], where: str, errs: List[str]) -> None:
-    """The selected rPr ``O`` must be the source rPr ``S`` with exactly the asserted rFonts change."""
+DEFAULT_SZ = 20          # half-points when no level sets w:sz (10 pt)
+
+
+def _v_own_sz(rpr) -> Optional[int]:
+    """The size (half-points) this rPr itself sets: w:sz/@w:val as a whole number, else None."""
+    e = rpr.find(W + "sz") if rpr is not None else None
+    v = e.get(W + "val") if e is not None else None
+    return int(v) if v is not None and v.isdigit() else None
+
+
+def _v_size_to(own: Optional[int], size: Optional[Dict[str, Any]], add_where_missing: bool = False) -> Optional[int]:
+    """The size (half-points) a level whose own size is ``own`` must end with, or None when it keeps its own."""
+    if not size:
+        return None
+    frm = size.get("from")
+    if own is None:
+        return size["sz"] if add_where_missing and frm is None else None
+    return size["sz"] if frm is None or own in frm else None
+
+
+def _check_font_rpr(S, O, a: Dict[str, Any], where: str, errs: List[str], size_to: Optional[int] = None) -> None:
+    """The selected rPr ``O`` must be the source rPr ``S`` with exactly the asserted rFonts change (none when the
+    assertion sets no font) and, when ``size_to`` is given, w:sz set to it — nothing else."""
     want = {k: v for k, v in (a.get("set") or {}).items() if v is not None}
     clear = bool(a.get("clear_theme", True))
     tracked = bool(a.get("tracked", False))
     if O is None:
         errs.append(f"{where}: no rPr in the output")
         return
-    s_attrs = dict(_rfonts(S).attrib) if _rfonts(S) is not None else {}
-    expected = dict(s_attrs)
-    for slot, val in want.items():
-        expected[W + slot] = val
-        if clear:
-            expected.pop(W + THEME_ATTR[slot], None)
-    o_rf = _rfonts(O)
-    got = dict(o_rf.attrib) if o_rf is not None else {}
-    if got != expected:
-        keys = sorted(set(got) | set(expected))
-        errs.append(f"{where}: rFonts " + ", ".join(f"{etree.QName(k).localname} {expected.get(k)!r}≠{got.get(k)!r}"
-                                                    for k in keys if got.get(k) != expected.get(k)))
-    others_s = [sig(c) for c in (S if S is not None else []) if _local(c) not in ("rFonts", "rPrChange")]
-    others_o = [sig(c) for c in O if _local(c) not in ("rFonts", "rPrChange")]
+    if want:
+        s_attrs = dict(_rfonts(S).attrib) if _rfonts(S) is not None else {}
+        expected = dict(s_attrs)
+        for slot, val in want.items():
+            expected[W + slot] = val
+            if clear:
+                expected.pop(W + THEME_ATTR[slot], None)
+        o_rf = _rfonts(O)
+        got = dict(o_rf.attrib) if o_rf is not None else {}
+        if got != expected:
+            keys = sorted(set(got) | set(expected))
+            errs.append(f"{where}: rFonts " + ", ".join(f"{etree.QName(k).localname} {expected.get(k)!r}≠{got.get(k)!r}"
+                                                        for k in keys if got.get(k) != expected.get(k)))
+    elif sig(_rfonts(S)) != sig(_rfonts(O)):
+        errs.append(f"{where}: rFonts changed by an op that sets no font")
+    skip = {"rFonts", "rPrChange"} | ({"sz"} if size_to is not None else set())
+    if size_to is not None:
+        e = O.find(W + "sz")
+        if e is None or dict(e.attrib) != {W + "val": str(size_to)}:
+            errs.append(f"{where}: w:sz is {dict(e.attrib) if e is not None else None}, expected val {size_to}")
+    others_s = [sig(c) for c in (S if S is not None else []) if _local(c) not in skip]
+    others_o = [sig(c) for c in O if _local(c) not in skip]
     if others_s != others_o:
-        errs.append(f"{where}: run properties other than rFonts changed")
+        errs.append(f"{where}: run properties other than " + ("rFonts / w:sz" if size_to is not None else "rFonts")
+                    + " changed")
     s_chg = S.find(W + "rPrChange") if S is not None else None
     o_chg = O.find(W + "rPrChange")
     if not tracked:
@@ -512,7 +566,14 @@ def _run_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     sel = a.get("select") or {}
     runs_pred, para_pred = sel.get("runs", "all"), sel.get("paragraphs")
     exclude_rev = a.get("in_revisions", "include") == "exclude"
-    n_runs = n_marks = 0
+    fonts_set = bool({k: v for k, v in (a.get("set") or {}).items() if v is not None})
+    size = a.get("size")
+    only = bool(a.get("only_where_defined", False))
+    n_runs = n_marks = n_sized = 0
+
+    def gets(rpr) -> Tuple[bool, Optional[int]]:
+        """(the font goes here, the size it must end with or None) — per property, from the SOURCE rPr."""
+        return fonts_set and (not only or _has_direct_font(rpr)), _v_size_to(_v_own_sz(rpr), size)
     for part in parts:
         if part not in ctx.both:
             errs.append(f"run_fonts: {part} missing from the output")
@@ -532,6 +593,8 @@ def _run_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     continue
                 if symbolic(rpr, p, ctx.src_styles, preserve):
                     continue
+                if gets(rpr) == (False, None):
+                    continue
                 if target_matches(runs_pred, rpr, in_rev, preserve):
                     cand_runs.append(ri)
             mark = False
@@ -539,7 +602,7 @@ def _run_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 mrpr = p.find(W + "pPr/" + W + "rPr")
                 m_rev = mrpr is not None and any(mrpr.find(W + t) is not None for t in ("ins", "del", "moveFrom", "moveTo"))
                 if not (exclude_rev and m_rev) and not symbolic(mrpr, p, ctx.src_styles, preserve) \
-                        and target_matches(runs_pred, mrpr, m_rev, preserve):
+                        and target_matches(runs_pred, mrpr, m_rev, preserve) and gets(mrpr) != (False, None):
                     mark = True
             if not cand_runs and not mark:
                 continue
@@ -553,18 +616,28 @@ def _run_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             for ri in cand_runs:
                 n_runs += 1
                 ctx.strip_runs.setdefault(part, set()).add((bi, ri))
-                _check_font_rpr(sv.runs[bi][ri].find(W + "rPr"), ov.runs[oi][ri].find(W + "rPr"), a,
-                                f"{part} block {bi} run {ri}", errs)
+                s_rpr = sv.runs[bi][ri].find(W + "rPr")
+                font_here, to = gets(s_rpr)
+                n_sized += to is not None
+                _check_font_rpr(s_rpr, ov.runs[oi][ri].find(W + "rPr"), {**a, "set": a.get("set") if font_here else {}},
+                                f"{part} block {bi} run {ri}", errs, to)
             if mark:
                 n_marks += 1
                 ctx.strip_marks.setdefault(part, set()).add(bi)
-                _check_font_rpr(p.find(W + "pPr/" + W + "rPr"), ov.pars[oi].find(W + "pPr/" + W + "rPr"), a,
-                                f"{part} block {bi} paragraph mark", errs)
+                s_rpr = p.find(W + "pPr/" + W + "rPr")
+                font_here, to = gets(s_rpr)
+                n_sized += to is not None
+                _check_font_rpr(s_rpr, ov.pars[oi].find(W + "pPr/" + W + "rPr"),
+                                {**a, "set": a.get("set") if font_here else {}}, f"{part} block {bi} paragraph mark",
+                                errs, to)
     if n_runs != a.get("expected_runs", -1):
         errs.append(f"run_fonts: {n_runs} run(s) selected here, plan predicted {a.get('expected_runs')}")
     if n_marks != a.get("expected_marks", 0 if not a.get("include_paragraph_marks", True) else -1):
         errs.append(f"run_fonts: {n_marks} paragraph mark(s) selected here, plan predicted {a.get('expected_marks')}")
-    return f"run_fonts: {n_runs} run(s) + {n_marks} mark(s) → {a.get('set')}"
+    if n_sized != a.get("expected_sized", 0):
+        errs.append(f"run_fonts: {n_sized} run(s)/mark(s) get the size here, plan predicted {a.get('expected_sized', 0)}")
+    return f"run_fonts: {n_runs} run(s) + {n_marks} mark(s) → {a.get('set')}" + \
+        (f", size {size['sz']} half-points on {n_sized}" if size else "")
 
 
 def _select_styles(styles: Styles, a: Dict[str, Any], preserve: Set[str]) -> List[str]:
@@ -585,10 +658,21 @@ def _select_styles(styles: Styles, a: Dict[str, Any], preserve: Set[str]) -> Lis
             continue
         if symbolic_style(st, styles, preserve):
             continue
-        if a.get("only_where_defined", True) and _rfonts(st.find(W + "rPr")) is None:
+        font_here, size_to = _v_style_change(st, a)
+        if not font_here and size_to is None:
             continue
         out.append(sid)
     return out
+
+
+def _v_style_change(st, a: Dict[str, Any]) -> Tuple[bool, Optional[int]]:
+    """(font set on this style, size it must end with or None) — per property, where the style defines it unless
+    only_where_defined is false."""
+    only = a.get("only_where_defined", True)
+    rpr = st.find(W + "rPr")
+    fonts = bool({k: v for k, v in (a.get("set") or {}).items() if v is not None})
+    return (fonts and (not only or _rfonts(rpr) is not None),
+            _v_size_to(_v_own_sz(rpr), a.get("size"), add_where_missing=not only))
 
 
 def _style_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
@@ -599,25 +683,41 @@ def _style_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     ids = _select_styles(ctx.src_styles, a, preserve)
     if sorted(ids) != sorted(a.get("expected_ids", [])):
         errs.append(f"style_fonts: selects {sorted(ids)} here, plan predicted {sorted(a.get('expected_ids', []))}")
+    sized = []
     for sid in ids:
         o = ctx.out_styles.by_id.get(sid)
         if o is None:
             errs.append(f"style_fonts: style {sid} missing from the output")
             continue
         ctx.strip_styles.add(sid)
-        _check_font_rpr(ctx.src_styles.by_id[sid].find(W + "rPr"), o.find(W + "rPr"), {**a, "tracked": False},
-                        f"style {sid}", errs)
-    return f"style_fonts: {len(ids)} style(s) → {a.get('set')}"
+        font_here, size_to = _v_style_change(ctx.src_styles.by_id[sid], a)
+        if size_to is not None:
+            sized.append(sid)
+        _check_font_rpr(ctx.src_styles.by_id[sid].find(W + "rPr"), o.find(W + "rPr"),
+                        {**a, "tracked": False, "set": a.get("set") if font_here else {}}, f"style {sid}", errs, size_to)
+    if a.get("size") and sorted(sized) != sorted(a.get("expected_sized", [])):
+        errs.append(f"style_fonts: size set on {sorted(sized)} here, plan predicted {sorted(a.get('expected_sized', []))}")
+    return f"style_fonts: {len(ids)} style(s) → {a.get('set')}" + (f", size on {len(sized)}" if a.get("size") else "")
 
 
 def _doc_defaults_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     if ctx.styles_part is None:
         errs.append("doc_defaults_fonts: no common styles part")
         return "doc_defaults_fonts: no styles part"
+    S, O = ctx.src_styles.doc_defaults_rpr(), ctx.out_styles.doc_defaults_rpr()
+    own = _v_own_sz(S)
+    size_to = _v_size_to(own if own is not None else DEFAULT_SZ, a.get("size"))
+    if bool(a.get("expected_sized")) != (size_to is not None):
+        errs.append(f"doc_defaults_fonts: size {'applies' if size_to is not None else 'does not apply'} here, plan "
+                    f"says {'it does' if a.get('expected_sized') else 'it does not'}")
+    fonts = bool({k: v for k, v in (a.get("set") or {}).items() if v is not None})
+    if not fonts and size_to is None:
+        if sig(S) != sig(O):
+            errs.append("doc_defaults_fonts: rPrDefault changed though nothing applies")
+        return "doc_defaults_fonts: nothing applies"
     ctx.strip_doc_defaults = True
-    _check_font_rpr(ctx.src_styles.doc_defaults_rpr(), ctx.out_styles.doc_defaults_rpr(), {**a, "tracked": False},
-                    "docDefaults/rPrDefault", errs)
-    return f"doc_defaults_fonts → {a.get('set')}"
+    _check_font_rpr(S, O, {**a, "tracked": False}, "docDefaults/rPrDefault", errs, size_to)
+    return f"doc_defaults_fonts → {a.get('set')}" + (f", size {size_to} half-points" if size_to is not None else "")
 
 
 PPR_SET_ELEMENTS = ("spacing", "ind", "jc")
@@ -930,11 +1030,26 @@ def _section_hf_refs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
 
 def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    """Post-condition: every text run and paragraph mark of the scope resolves (this module's resolvers) to
+    ``value`` on ``slots`` (preserved symbol fonts stay as they were) and/or to ``size`` (points): with ``size_from``
+    only what resolved to one of those sizes in the source, the rest keeping its size; symbol runs (a preserved
+    font in their chain, or holding a w:sym) are exempt from the size."""
     value = a.get("value")
-    slots = a.get("slots", ["ascii", "hAnsi", "cs"])
+    slots = a.get("slots", ["ascii", "hAnsi", "cs"]) if value is not None else []
     preserve = {f.casefold() for f in a.get("preserve_fonts", [])}
+    want_sz = int(a["size"] * 2) if a.get("size") is not None else None
+    frm = {int(x * 2) for x in a["size_from"]} if a.get("size_from") else None
     checked = preserved = bad = 0
     bad_examples: List[str] = []
+
+    def size_ok(es: Optional[int], eo: int) -> bool:
+        if frm is None:
+            return eo == want_sz
+        return eo == (want_sz if es in frm else es)
+
+    def exempt(rpr, p, run) -> bool:
+        return symbolic(rpr, p, ctx.out_styles, preserve) or (run is not None and run.find(W + "sym") is not None)
+
     for part in ctx.scope_parts(a.get("scope", ["document"])):
         if part not in ctx.both:
             continue
@@ -944,12 +1059,14 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             sp, op = sv.pars[bi], ov.pars[oi]
             if bi in tc:
                 had = {slot: set() for slot in slots}
+                src_sizes = set()
                 for r in sv.runs[bi]:
                     if any(c.tag in (W + "t", W + "delText") for c in r):
                         es = effective_fonts(r.find(W + "rPr"), sp, ctx.src_styles, ctx.src_theme)
                         for slot in slots:
                             if es.get(slot) and es[slot].casefold() in preserve:
                                 had[slot].add(es[slot])
+                        src_sizes.add(effective_size(r.find(W + "rPr"), sp, ctx.src_styles))
                 for k, q in enumerate(ov.runs[oi]):
                     if not any(c.tag in (W + "t", W + "delText") for c in q):
                         continue
@@ -964,35 +1081,54 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                         bad += 1
                         if len(bad_examples) < 5:
                             bad_examples.append(f"{part} block {bi} (text-edited) output run {k} {slot}: {eo.get(slot)!r}")
+                    if want_sz is not None and not exempt(q.find(W + "rPr"), op, q):
+                        zo = effective_size(q.find(W + "rPr"), op, ctx.out_styles)
+                        if not (zo == want_sz or (frm is not None and zo not in frm and zo in src_sizes)):
+                            bad += 1
+                            if len(bad_examples) < 5:
+                                bad_examples.append(f"{part} block {bi} (text-edited) output run {k} size: {zo}")
                 pairs = []
                 if a.get("include_paragraph_marks", True):
-                    pairs.append((sp.find(W + "pPr/" + W + "rPr"), op.find(W + "pPr/" + W + "rPr"), "mark"))
+                    pairs.append((sp.find(W + "pPr/" + W + "rPr"), op.find(W + "pPr/" + W + "rPr"), "mark", None))
             elif len(sv.runs[bi]) == len(ov.runs[oi]):
-                pairs = [(r.find(W + "rPr"), q.find(W + "rPr"), f"run {k}") for k, (r, q) in enumerate(zip(sv.runs[bi], ov.runs[oi]))
+                pairs = [(r.find(W + "rPr"), q.find(W + "rPr"), f"run {k}", q)
+                         for k, (r, q) in enumerate(zip(sv.runs[bi], ov.runs[oi]))
                          if any(c.tag in (W + "t", W + "delText") for c in r)]
             else:
                 pairs = []
                 errs.append(f"effective_font: {part} block {bi}: run structure changed")
             if bi not in tc and a.get("include_paragraph_marks", True):
-                pairs.append((sp.find(W + "pPr/" + W + "rPr"), op.find(W + "pPr/" + W + "rPr"), "mark"))
-            for s_rpr, o_rpr, label in pairs:
-                es = effective_fonts(s_rpr, sp, ctx.src_styles, ctx.src_theme)
-                eo = effective_fonts(o_rpr, op, ctx.out_styles, ctx.out_theme)
+                pairs.append((sp.find(W + "pPr/" + W + "rPr"), op.find(W + "pPr/" + W + "rPr"), "mark", None))
+            for s_rpr, o_rpr, label, o_run in pairs:
                 checked += 1
-                for slot in slots:
-                    src_v = es.get(slot)
-                    if src_v and src_v.casefold() in preserve:
-                        preserved += 1
-                        ok = eo.get(slot) == src_v
-                    else:
-                        ok = eo.get(slot) == value
-                    if not ok:
+                if slots:
+                    es = effective_fonts(s_rpr, sp, ctx.src_styles, ctx.src_theme)
+                    eo = effective_fonts(o_rpr, op, ctx.out_styles, ctx.out_theme)
+                    for slot in slots:
+                        src_v = es.get(slot)
+                        if src_v and src_v.casefold() in preserve:
+                            preserved += 1
+                            ok = eo.get(slot) == src_v
+                        else:
+                            ok = eo.get(slot) == value
+                        if not ok:
+                            bad += 1
+                            if len(bad_examples) < 5:
+                                bad_examples.append(f"{part} block {bi} {label} {slot}: {src_v!r}→{eo.get(slot)!r}")
+                if want_sz is not None and not exempt(o_rpr, op, o_run) \
+                        and not symbolic(s_rpr, sp, ctx.src_styles, preserve):
+                    zs = effective_size(s_rpr, sp, ctx.src_styles)
+                    zo = effective_size(o_rpr, op, ctx.out_styles)
+                    if not size_ok(zs, zo):
                         bad += 1
                         if len(bad_examples) < 5:
-                            bad_examples.append(f"{part} block {bi} {label} {slot}: {src_v!r}→{eo.get(slot)!r}")
+                            bad_examples.append(f"{part} block {bi} {label} size: {zs}→{zo} half-points")
     if bad:
         errs.append(f"effective_font: {bad} slot(s) do not resolve as asserted, e.g. {bad_examples}")
-    return f"effective_font: {checked} run(s)/mark(s) resolve to {value!r} on {slots} ({preserved} preserved symbol slot(s))"
+    what = " and ".join(x for x in (f"{value!r} on {slots}" if slots else "",
+                                    f"size {a['size']:g} pt" + (f" (from {sorted(a['size_from'])})" if frm else "")
+                                    if want_sz is not None else "") if x)
+    return f"effective_font: {checked} run(s)/mark(s) resolve to {what} ({preserved} preserved symbol slot(s))"
 
 
 KINDS = {

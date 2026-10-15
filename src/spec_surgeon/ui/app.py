@@ -41,7 +41,7 @@ RESOURCES = Path(__file__).resolve().parent / "resources"
 ICON = RESOURCES / "icon.svg"
 REPO_URL = f"https://github.com/{updater.REPO}"
 EXAMPLES = ["remove all headers and footers", "change all fonts to Arial",
-            "make the header/footer look like this template",
+            "make the header and footer match the template spec", "match the font of the template spec",
             "replace \u201cNFPA 13, 2022 Edition\u201d with \u201cNFPA 13, 2025 Edition\u201d"]
 STEPS = ["Files", "Describe the change", "Preview", "Run & results"]
 READY, ERROR = "Ready.", "Error — see the log."
@@ -612,14 +612,14 @@ class MainWindow(QMainWindow):
         return self.prompts.pick_dir("Choose a folder", start)
 
     def browse_template(self, start: str) -> str:
-        return self.prompts.pick_file("Choose the header/footer template", start, "Word documents (*.docx)")
+        return self.prompts.pick_file("Choose the template spec", start, "Word documents (*.docx)")
 
     @Slot(str)
     def _chip_picked(self, text: str) -> None:
         self.request_page.request.setPlainText(text)
         if "template" in text.lower() and not self.files_page.template.text():
-            self.request_page.info.show_message("info", "Template needed",
-                                                "Choose the header/footer template on the Files step.",
+            self.request_page.info.show_message("info", "Template spec needed",
+                                                "Choose the template spec (e.g. the architect's) on the Files step.",
                                                 [("Go to Files", self._go_files)])
 
     # ---- log, status, busy ----------------------------------------------------------------------------

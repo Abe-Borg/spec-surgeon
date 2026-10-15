@@ -389,7 +389,7 @@ def test_v9_guard_failures_are_quarantined_too(tmp_path, monkeypatch):
 
 def test_catalog_documents_fill_rules_and_expect_ranges_and_the_fallback_example_plans_on_both_layouts():
     cat = op_catalog()
-    assert set(cat["fill_rules"]) == {"literal", "regex", "paragraph_after", "first_match", "whitespace"}
+    assert set(cat["fill_rules"]) == {"literal", "regex", "paragraph_after", "first_match", "whitespace", "in_template"}
     assert "'min'" in cat["expect_syntax"]["value"] and "rPrChange" in cat["expect_syntax"]["rev_delta"]
     assert "first_match" in cat["ops"]["apply_header_footer_template"]["params"]["properties"]["slot_fills"]["description"]
     assert any("first_match" in json.dumps(e) for e in cat["worked_examples"])

@@ -6,14 +6,20 @@
   SOURCE document and the output alone:
     - the template file is the one the plan used (md5);
     - the sections referencing the part, and the template section's and target sections' text widths;
-    - the slots (yellow highlight / ``{{NAME}}``) found with this module's own detection, and every fill
-      re-extracted from the source by its declared rule (literal / regex / paragraph_after / first_match);
+    - the slots (yellow highlight / ``{{NAME}}``, or with ``slot_markers: ["reference"]`` every bounded place the
+      template's located text shows its own value of a fill rule — the rule run on the template here, or its
+      ``in_template`` text) found with this module's own detection, and every fill re-extracted from the source by
+      its declared rule (literal / regex / paragraph_after / first_match); for reference slots also: none in a field,
+      none overlapping, and no template value left elsewhere in the part in another form (digit/letter tokens
+      concatenated);
     - every block's text = the template block's text with the slots replaced by those fills;
     - the part skeleton (everything except top-level paragraph contents, drawing ids masked) identical;
     - per top-level paragraph: the paragraph properties, paragraph-mark and run properties outside the pinnable
       set identical to the template's; the effective pinnable properties (resolved here through the OUTPUT's
       styles/theme vs the TEMPLATE's) identical, tab stops rescaled by the declared rule; the run sequence equal
-      to the template's with each slot collapsed to one fill run (its highlight gone for highlight slots);
+      to the template's with each run a slot touches cut at the slot's edges and each slot collapsed to one fill
+      run (its highlight gone for highlight slots), every run's content (text and other children, in order) as
+      modelled;
     - ``wp:docPr`` ids of the part unique in the whole output.
 * ``styles_added`` — exactly the listed styles are new, each equal to the template's definition with extension
   markup removed.
@@ -139,7 +145,130 @@ def _title_pg(sp) -> bool:
 
 # ---- slots ---------------------------------------------------------------------------------------
 
-def slots_of(p, markers, colors) -> List[Dict[str, Any]]:
+REF_MIN_ALNUM = 3
+V_SEP = "\x00"      # located text: display-run content other than w:t
+
+
+def _v_located(p) -> Tuple[str, List[int]]:
+    """Display text with V_SEP for every non-text child of a display run; display offset per position (+ end)."""
+    chars: List[str] = []
+    offs: List[int] = []
+    pos = 0
+    for r in _runs_of(p):
+        q, gone = r.getparent(), False
+        while q is not None and q is not p:
+            if q.tag in (W + "del", W + "moveFrom"):
+                gone = True
+                break
+            q = q.getparent()
+        if gone:
+            continue
+        for c in r:
+            if c.tag == W + "rPr":
+                continue
+            if c.tag == W + "t":
+                txt = c.text or ""
+                chars.append(txt)
+                offs += list(range(pos, pos + len(txt)))
+                pos += len(txt)
+            else:
+                chars.append(V_SEP)
+                offs.append(pos)
+    offs.append(pos)
+    return "".join(chars), offs
+
+
+def _v_value_rx(value: str):
+    parts = [re.escape(w) for w in re.split(r"\s+", (value or "").strip()) if w]
+    return re.compile(r"\s+".join(parts), re.IGNORECASE)
+
+
+def _v_bounded(text: str, a: int, b: int) -> bool:
+    word = lambda ch: ch.isalnum() or ch == "_"
+    for i, step in ((a - 1, -1), (b, 1)):
+        if i < 0 or i >= len(text):
+            continue
+        if word(text[i]):
+            return False
+        if text[i].isspace() or text[i] == V_SEP:
+            continue
+        if 0 <= i + step < len(text) and word(text[i + step]):
+            return False
+    return True
+
+
+def _v_tokens(s: str) -> List[str]:
+    return [t.casefold() for t in re.findall(r"\d+|[^\W\d_]+", s or "")]
+
+
+def _v_left_in(piece: str, value: str) -> bool:
+    """The value's tokens spelled by consecutive tokens of ``piece``; the first and last may be cut inside a letter
+    token, never inside a digit token (walked token by token here)."""
+    key, toks = "".join(_v_tokens(value)), _v_tokens(piece)
+    if not key:
+        return False
+    for i, first in enumerate(toks):
+        for a in ([0] if first[:1].isdecimal() else range(len(first))):
+            need, k, chunk = key, i, first[a:]
+            while True:
+                if len(chunk) >= len(need):
+                    if chunk.startswith(need) and (len(chunk) == len(need) or not chunk[:1].isdecimal()):
+                        return True
+                    break
+                if not need.startswith(chunk):
+                    break
+                need, k = need[len(chunk):], k + 1
+                if k == len(toks):
+                    break
+                chunk = toks[k]
+    return False
+
+
+def _v_field_runs(root) -> Set[Any]:
+    """Runs between a complex field's begin and end (over the whole part, document order) or inside fldSimple."""
+    out: Set[Any] = set()
+    depth = 0
+    for r in root.iter(W + "r"):
+        if depth > 0 or any(a.tag == W + "fldSimple" for a in r.iterancestors()):
+            out.add(r)
+        for fc in r.findall(W + "fldChar"):
+            if fc.get(W + "fldCharType") == "begin":
+                depth += 1
+                out.add(r)
+            elif fc.get(W + "fldCharType") == "end":
+                depth = max(0, depth - 1)
+    return out
+
+
+def _v_has_literal(rule) -> bool:
+    if not isinstance(rule, dict):
+        return False
+    subs = rule["rules"] if isinstance(rule.get("rules"), list) else []
+    return rule.get("rule") == "literal" or any(_v_has_literal(r) for r in subs)
+
+
+def reference_values_of(tpl: VPackage, fills: Dict[str, Any]) -> Dict[str, str]:
+    """Each rule's template value, derived here: ``in_template`` text, else the rule run on the template."""
+    out: Dict[str, str] = {}
+    for name, rule in fills.items():
+        if isinstance(rule, dict) and "in_template" in rule:
+            v = rule["in_template"].strip() if isinstance(rule["in_template"], str) else ""
+            if not v:
+                raise ValueError(f"reference slot {name!r}: empty in_template")
+        elif _v_has_literal(rule):
+            raise ValueError(f"reference slot {name!r}: a literal fill without in_template")
+        else:
+            v = fill_value(tpl, name, rule)
+        if V_SEP in v:
+            raise ValueError(f"reference slot {name!r}: NUL in the template value")
+        if len("".join(_v_tokens(v))) < REF_MIN_ALNUM:
+            raise ValueError(f"reference slot {name!r}: template value {v!r} too short")
+        out[name] = v
+    return out
+
+
+def slots_of(p, markers, colors, ref_values: Optional[Dict[str, str]] = None,
+             in_field: Optional[Set[Any]] = None) -> List[Dict[str, Any]]:
     """[{name, start, end, highlight}] in display offsets — this module's own reading of the convention."""
     runs = _runs_of(p)
     spans: List[Dict[str, Any]] = []
@@ -149,6 +278,33 @@ def slots_of(p, markers, colors) -> List[Dict[str, Any]]:
         offs.append((pos, pos + len(t)))
         pos += len(t)
     text = display_of(p)
+    if "reference" in markers:
+        loc, loffs = _v_located(p)
+        hits = []
+        for name, value in (ref_values or {}).items():
+            for m in _v_value_rx(value).finditer(loc):
+                if _v_bounded(loc, m.start(), m.end()):
+                    hits.append((m.start(), m.end(), name))
+        hits.sort()
+        for (a1, b1, n1), (a2, b2, n2) in zip(hits, hits[1:]):
+            if a2 < b1:
+                raise ValueError(f"reference slots {n1!r} and {n2!r} overlap")
+        for a1, b1, n1 in hits:
+            spans.append({"name": n1, "start": loffs[a1], "end": loffs[b1], "highlight": False})
+        for sl in spans:
+            for r, (a, b) in zip(runs, offs):
+                if b > a and a < sl["end"] and sl["start"] < b and in_field is not None and r in in_field:
+                    raise ValueError(f"reference slot {sl['name']!r} is inside a field")
+        rest, cur = [], 0
+        for a1, b1, _ in hits:
+            rest.append(loc[cur:a1])
+            cur = b1
+        rest.append(loc[cur:])
+        left = [(n, " ".join(x.replace(V_SEP, " ").split())) for n, v in (ref_values or {}).items() for x in rest
+                if _v_left_in(x, v)]
+        if left:
+            raise ValueError(f"the template's own value(s) left in another form: {left}")
+        return spans
     if "highlight" in markers:
         group: List[int] = []
         for k in range(len(runs) + 1):
@@ -409,8 +565,20 @@ def _rpr_rest(rpr, drop_highlight=False):
     return tuple(out)
 
 
-def _content_rest(r):
-    return tuple(sig(_mask(c)) for c in r if c.tag not in (W + "rPr", W + "t"))
+def _items(r) -> Tuple[Tuple[str, Any], ...]:
+    """A run's content in order: consecutive w:t merged into ("t", text), any other child (rPr aside) by signature."""
+    out: List[Tuple[str, Any]] = []
+    for c in r:
+        if c.tag == W + "rPr":
+            continue
+        if c.tag == W + "t":
+            if out and out[-1][0] == "t":
+                out[-1] = ("t", out[-1][1] + (c.text or ""))
+            else:
+                out.append(("t", c.text or ""))
+        else:
+            out.append(("x", sig(_mask(c))))
+    return tuple(out)
 
 
 def _skeleton(root):
@@ -449,28 +617,49 @@ def _expected_block(p, slots, fills) -> str:
     return "".join(out)
 
 
-def _run_model(p, slots, fills) -> List[Tuple[Any, str, Optional[Dict[str, Any]]]]:
-    """Expected output runs: (template run, text, slot or None). Runs a slot boundary cuts are split; each slot
-    becomes one run (the first run it touches) carrying the fill."""
-    items, pos = [], 0
+def _run_model(p, slots, fills) -> List[Tuple[Any, Tuple[Tuple[str, Any], ...], Optional[Dict[str, Any]]]]:
+    """Expected output runs: (template run, content items, slot or None). A run no slot touches is unchanged. A run
+    a slot touches (its display text overlaps the slot) is cut at the slots' edges: each stretch of its other
+    content — text outside the slots and its other children, in order, empty w:t dropped — becomes one run, and each
+    slot becomes one run holding only the fill, in the run where the slot starts (its pieces in later runs go)."""
+    model, pos = [], 0
     for r in _runs_of(p):
         t = _run_display(r, p)
         a, b = pos, pos + len(t)
         pos = b
         hit = [s for s in slots if s["start"] < b and a < s["end"]] if t else []
         if not hit:
-            items.append((r, t, None))
+            model.append((r, _items(r), None))
             continue
-        cur = a
-        for s in hit:
-            if s["start"] > cur:
-                items.append((r, t[cur - a:s["start"] - a], None))
-            if s["start"] >= a:
-                items.append((r, fills[s["name"]], s))
-            cur = max(cur, min(s["end"], b))
-        if cur < b:
-            items.append((r, t[cur - a:], None))
-    return items
+        groups: List[List[Any]] = []                 # [slot or None, [items]]
+        off = a
+        for c in r:
+            if c.tag == W + "rPr":
+                continue
+            if c.tag == W + "t":
+                txt = c.text or ""
+                ca, cb = off, off + len(txt)
+                off = cb
+                cuts = sorted({ca, cb} | {x for s in hit for x in (s["start"], s["end"]) if ca < x < cb})
+                pieces = [(next((s for s in hit if s["start"] <= x and y <= s["end"]), None), ("t", txt[x - ca:y - ca]))
+                          for x, y in zip(cuts, cuts[1:])]
+            else:
+                pieces = [(None, ("x", sig(_mask(c))))]
+            for lab, item in pieces:
+                if groups and groups[-1][0] is lab:
+                    last = groups[-1][1]
+                    if item[0] == "t" and last[-1][0] == "t":
+                        last[-1] = ("t", last[-1][1] + item[1])
+                    else:
+                        last.append(item)
+                else:
+                    groups.append([lab, [item]])
+        for lab, items in groups:
+            if lab is None:
+                model.append((r, tuple(items), None))
+            elif lab["start"] >= a:
+                model.append((r, (("t", fills[lab["name"]]),), lab))
+    return model
 
 
 # ---- the kinds ------------------------------------------------------------------------------------
@@ -532,9 +721,22 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
         errs.append(f"{tag}: fills re-extracted here {fills} differ from the plan's {a.get('expected_fills')}")
     t_pars, o_pars = list(troot.iter(W + "p")), list(oroot.iter(W + "p"))
     slots: Dict[int, List[Dict[str, Any]]] = {}
+    markers = a.get("slot_markers", ["highlight", "braces"])
+    ref_values, in_field = None, None
     try:
+        if "reference" in markers:
+            if markers != ["reference"]:
+                raise ValueError("'reference' slot markers must be used alone")
+            ref_values = reference_values_of(tpl, a.get("fills") or {})
+            if ref_values != a.get("template_values"):
+                errs.append(f"{tag}: template values derived here {ref_values} differ from the plan's "
+                            f"{a.get('template_values')}")
+            in_field = _v_field_runs(troot)
         for k, p in enumerate(t_pars):
-            sl = slots_of(p, a.get("slot_markers", ["highlight", "braces"]), a.get("highlight_colors", ["yellow"]))
+            try:
+                sl = slots_of(p, markers, a.get("highlight_colors", ["yellow"]), ref_values, in_field)
+            except ValueError as e:
+                raise ValueError(f"block {k}: {e}")
             if sl:
                 if _owner_p(p) is not None:
                     errs.append(f"{tag}: slot inside a textbox paragraph")
@@ -584,17 +786,18 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
             if len(model) != len(oruns):
                 errs.append(f"{where}: {len(oruns)} run(s), expected {len(model)} (template runs, slots collapsed)")
                 continue
-            for n, ((tr, text, slot), orr) in enumerate(zip(model, oruns)):
+            for n, ((tr, items, slot), orr) in enumerate(zip(model, oruns)):
                 rw = f"{where} run {n}"
+                text = "".join(v for kind, v in items if kind == "t")
                 if _run_display(orr, op_) != text:
                     errs.append(f"{rw}: text {_run_display(orr, op_)!r}, expected {text!r}")
                 trpr, orpr = tr.find(W + "rPr"), orr.find(W + "rPr")
                 if _rpr_rest(trpr, drop_highlight=bool(slot and slot["highlight"])) != _rpr_rest(orpr):
                     errs.append(f"{rw}: run properties outside the pinnable set differ from the template's"
                                 + (" (slot highlight must go)" if slot and slot["highlight"] else ""))
-                whole = slot is None and text == _run_display(tr, tp_)
-                if (_content_rest(tr) if whole else ()) != _content_rest(orr):
-                    errs.append(f"{rw}: run content (tabs, fields, drawings…) differs from the template's")
+                if _items(orr) != items:
+                    errs.append(f"{rw}: run content (text, tabs, fields, drawings… in order) differs from the "
+                                f"template's")
                 if teff.run(trpr, tp_) != oeff.run(orpr, op_):
                     errs.append(f"{rw}: effective run properties {oeff.run(orpr, op_)} ≠ template's {teff.run(trpr, tp_)}")
     except ValueError as e:

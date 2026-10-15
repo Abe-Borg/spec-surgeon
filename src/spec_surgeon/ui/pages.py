@@ -97,9 +97,11 @@ class FilesPage(Page):
         self.set_aside = InfoBar(closable=False)
         self.content.addWidget(self.set_aside)
 
-        card = Card("Header/footer template (optional)",
-                    "Only for requests like \u201cmake the header/footer look like this template\u201d.")
-        self.template = PathPicker("file", "Optional — a .docx whose header and footer the specs should match",
+        card = Card("Template spec (optional)",
+                    "A spec from the architect (or a prepared header/footer template), for requests like \u201cmake "
+                    "the header and footer match the template spec\u201d or \u201cmatch the font of the template "
+                    "spec\u201d.")
+        self.template = PathPicker("file", "Optional — the .docx the specs should match",
                                    browse=browse_file)
         self.template_hint = label("", "Hint")
         card.add(self.template)
