@@ -174,4 +174,4 @@ def test_do_allow_codegen_end_to_end(folder, tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "passed on the samples" in out and "2 of 2 file(s) PASS" in out
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(tmp_path / "o2"), "--no-render"]) == 2
-    assert "Tier B is off" in capsys.readouterr().out
+    assert "No custom transform was written" in capsys.readouterr().out

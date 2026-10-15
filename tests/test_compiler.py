@@ -204,3 +204,36 @@ def test_do_end_to_end_with_approval(folder, tmp_path, monkeypatch, capsys):
                         lambda: FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]}))))
     assert cli_main(["do", "remove some headers", str(folder), "--out", str(tmp_path / "o3"), "--no-render"]) == 2
     assert "? Which sections?" in capsys.readouterr().out
+
+
+def test_do_talks_it_through_at_the_terminal(folder, tmp_path, monkeypatch, capsys):
+    """A person at the terminal: Claude's choices print with their exact words, '#n' picks one (wording needs a yes),
+    plain text is a reply, and the conversation is kept beside compile.json."""
+    from spec_surgeon import cli
+    fake = FakeClient(resp(tool("ask_user", {"understanding": "Remove headers and footers.",
+                                             "choices": [{"label": "Every section", "kind": "clarify"},
+                                                         {"label": "Stamp it", "kind": "alternative",
+                                                          "wording": "ISSUED FOR PERMIT"}]})),
+                      resp(tool("ask_user", {"questions": ["And the cover?"]}, "a2")),
+                      resp(tool("submit_editspec", {"spec": REMOVE}, "s3")))
+    monkeypatch.setattr(compiler_module, "_client", lambda: fake)
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    answers = iter(["#2", "n", "#1", "yes, the cover too", "n"])
+    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
+    out_dir = tmp_path / "o"
+    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out_dir), "--no-render"]) == 0
+    printed = capsys.readouterr().out
+    assert "[#2] Stamp it" in printed and "exact words: «ISSUED FOR PERMIT»" in printed and "Not run." in printed
+    assert fake.requests[1]["messages"][-1]["content"][0]["content"].startswith("The user chose: «Every section»")
+    assert fake.requests[2]["messages"][-1]["content"][0]["content"] == "The user replied: yes, the cover too"
+    saved = json.loads((out_dir / "conversation.json").read_text(encoding="utf-8"))
+    assert [e["role"] for e in saved["entries"]] == ["user", "claude", "user", "claude", "user", "claude"]
+    assert json.loads((out_dir / "compile.json").read_text(encoding="utf-8"))["status"] == "ok"
+
+
+def test_do_at_the_terminal_stops_on_an_empty_line(folder, tmp_path, monkeypatch):
+    from spec_surgeon import cli
+    monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("ask_user", {"questions": ["Which?"]}))))
+    monkeypatch.setattr(cli, "_interactive", lambda: True)
+    monkeypatch.setattr("builtins.input", lambda prompt="": "")
+    assert cli_main(["do", "remove some headers", str(folder), "--out", str(tmp_path / "o"), "--no-render"]) == 2

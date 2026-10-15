@@ -7,8 +7,9 @@
 ``SPEC_SURGEON_CONFIG_DIR`` moves all of it (settings at its root, the rest under ``data/``) — the tests use it.
 
 Plain JSON, not QSettings: the user can see and delete the file, and the updater reads it without Qt. Never stored:
-the API key (Windows Credential Manager, ``credentials``), and the safety-relevant switches (write back over the
-originals, AI-written transforms) — they are off at every start.
+the API key (Windows Credential Manager, ``credentials``), the safety-relevant switch (write back over the originals —
+off at every start), the conversation with Claude and any acknowledgement of Claude's visual check (both belong to one
+preview, never to the next start).
 """
 from __future__ import annotations
 

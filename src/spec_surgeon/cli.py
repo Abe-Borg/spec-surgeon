@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime
@@ -277,37 +278,54 @@ def cmd_do(args):
     if not files:
         print("no .docx files to work on", file=sys.stderr)
         return 2
-    print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
-    res = compile_request(args.request, files, template=templates[0] if templates else None, answers=args.answer or [],
-                          model=args.model, log=lambda m: print(m, file=sys.stderr),
-                          prior_failures=prior_failures)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "compile.json").write_text(json.dumps(res.to_dict(), indent=2, ensure_ascii=False, default=str), encoding="utf-8")
-    if res.status == "questions":
-        print("The request needs answers before anything runs:")
-        for q in res.questions:
-            print(f"  ? {q}")
-        print('Re-run with --answer "…" for each (answers are passed to the compiler verbatim).')
-        return 2
-    if res.status == "unsupported":
-        print(f"No operation can do this: {res.spec.get('unsupported')}")
-        if res.spec.get("proposal"):
-            print(f"Proposal: {res.spec['proposal']}")
-        if not args.allow_codegen:
-            print("(Tier B is off: re-run with --allow-codegen to let Claude write a one-off transform that is "
-                  "sandboxed and verified on sample files first)")
+    template = templates[0] if templates else None
+    log = lambda m: print(m, file=sys.stderr)  # noqa: E731
+    if _interactive():
+        outcome, value, conv = _chat(args, files, template, out_dir, prior_failures, log)
+        if outcome == "stop":
+            return value
+        if outcome == "codegen":
+            return _do_codegen(args, value, files, out_dir, brief=conv.brief())
+        spec = value
+    else:
+        print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
+        res = compile_request(args.request, files, template=template, answers=args.answer or [],
+                              model=args.model, log=log, prior_failures=prior_failures)
+        (out_dir / "compile.json").write_text(json.dumps(res.to_dict(), indent=2, ensure_ascii=False, default=str),
+                                              encoding="utf-8")
+        if res.status == "questions":
+            print("The request needs answers before anything runs:")
+            for q in res.questions:
+                print(f"  ? {q}")
+            print('Re-run with --answer "…" for each (answers are passed to the compiler verbatim), or run the '
+                  'command in a terminal to talk it through with Claude.')
             return 2
-        return _do_codegen(args, res.spec, files, out_dir)
-    if res.status != "ok":
-        print("Compile failed: " + "; ".join(res.errors), file=sys.stderr)
-        return 2
-    spec = res.spec
+        if res.status == "unsupported":
+            print(f"No operation can do this: {res.spec.get('unsupported')}")
+            if res.spec.get("proposal"):
+                print(f"Proposal: {res.spec['proposal']}")
+            if res.custom_transform == "outside_limits":
+                print("A one-off custom transform cannot do this safely yet"
+                      + (f" ({res.custom_transform_reason})" if res.custom_transform_reason else "")
+                      + " — it needs a new built-in operation.")
+                return 2
+            if not args.allow_codegen:
+                print("(No custom transform was written: run the command in a terminal and pick Claude's custom-"
+                      "transform choice, or re-run with --allow-codegen to accept the offer — it is sandboxed, "
+                      "verified on sample files first, and writes edited copies only.)")
+                return 2
+            return _do_codegen(args, res.spec, files, out_dir)
+        if res.status != "ok":
+            print("Compile failed: " + "; ".join(res.errors), file=sys.stderr)
+            return 2
+        spec = res.spec
     pv = make_preview(spec, [str(f) for f in files], out_dir / "preview",
                       renderer=args.renderer, do_render=not args.no_render)
     print(pv.to_text())
     print(f"\npreview: {out_dir / 'preview'}")
     approved = args.yes
-    if not approved and sys.stdin.isatty():
+    if not approved and _interactive():
         approved = input(f"\nRun this on {len(pv.batch_plan.files)} file(s)? [y/N] ").strip().lower() in ("y", "yes")
     if not approved:
         print(f"\nNot run. To run exactly this:\n  spec-surgeon run-spec \"{out_dir / 'preview' / 'spec.json'}\" "
@@ -319,6 +337,65 @@ def cmd_do(args):
     args.job = "edit-spec"
     args.params = None
     return cmd_run(args, spec=spec)
+
+
+def _interactive() -> bool:
+    """A person is at the terminal (tests replace this with False, so no prompt can block a test run)."""
+    return bool(sys.stdin is not None and sys.stdin.isatty() and sys.stdout is not None and sys.stdout.isatty())
+
+
+def _print_turn(turn) -> None:
+    if turn.understanding:
+        print(f"Claude understood: {turn.understanding}")
+    if turn.message:
+        print(f"Claude: {turn.message}")
+    for q in turn.questions:
+        print(f"  ? {q}")
+    for i, c in enumerate(turn.choices, 1):
+        print(f"  [#{i}] {c.label}" + (f"\n        exact words: «{c.wording}»" if c.wording else ""))
+
+
+def _chat(args, files, template, out_dir, prior_failures, log):
+    """Talk the request through with Claude at the terminal. Returns ("spec", spec, conv), ("codegen", the unsupported
+    spec, conv) when the user picks the custom transform, or ("stop", exit code, conv)."""
+    from .conversation import Conversation
+    print(f"talking {args.request!r} through with Claude ({args.model}) over {len(files)} file(s) …", file=sys.stderr)
+    conv = Conversation(args.request, files, template=template, model=args.model, prior_failures=prior_failures,
+                        answers=args.answer or [], work_dir=out_dir / "chat", log=log)
+    turn = conv.start()
+    while True:
+        conv.save(out_dir / "conversation.json")
+        (out_dir / "compile.json").write_text(json.dumps(conv.compile_result(turn).to_dict(), indent=2,
+                                                         ensure_ascii=False, default=str), encoding="utf-8")
+        if turn.status == "ok":
+            return "spec", turn.spec, conv
+        _print_turn(turn)
+        print(f"(Claude so far: {conv.usage.line()})")
+        try:
+            line = input("Your reply ('#n' picks a choice; an empty line stops): ").strip()
+        except EOFError:
+            line = ""
+        if not line:
+            print("Stopped — nothing was run.")
+            return "stop", 2, conv
+        m = re.fullmatch(r"#(\d+)", line)
+        if m is None:
+            turn = conv.reply(line)
+            continue
+        i = int(m.group(1))
+        if not 1 <= i <= len(turn.choices):
+            print(f"There is no choice #{i}.")
+            continue
+        choice = turn.choices[i - 1]
+        if choice.wording:
+            ok = input(f"Approve these exact words for your documents: «{choice.wording}»? [y/N] ").strip().lower()
+            if ok not in ("y", "yes"):
+                continue
+        if choice.kind == "custom_transform":
+            conv.take_app_choice(choice.id)
+            conv.save(out_dir / "conversation.json")
+            return "codegen", conv.unsupported, conv
+        turn = conv.reply(choice_id=choice.id)
 
 
 def cmd_retry(args):
@@ -342,17 +419,14 @@ def cmd_retry(args):
     return cmd_do(args)
 
 
-def _do_codegen(args, spec, files, out_dir):
+def _do_codegen(args, spec, files, out_dir, brief=None):
     """Tier B: generate an op for an unsupported request, prove it on one sample per pattern, run it after
     approval. Outputs only — never in place (a generated op becomes permanent only after human review)."""
-    from .codegen import generate_op, run_generated
-    from .profile import profile_batch
-    prof = profile_batch(files)
-    names = {f.name: f for f in files}
-    samples = [names[p["files"][0]] for p in prof["patterns"][:3]]
+    from .codegen import generate_op, pick_samples, run_generated
+    samples = pick_samples(files)
     print(f"Tier B: generating a transform, tested on {[s.name for s in samples]} …", file=sys.stderr)
     g = generate_op(args.request, spec.get("proposal") or spec.get("unsupported") or "", samples, out_dir / "codegen",
-                    model=args.model, log=lambda m: print(m, file=sys.stderr))
+                    model=args.model, log=lambda m: print(m, file=sys.stderr), brief=brief)
     for a in g.attempts:
         print(f"  attempt {a['attempt']}: " + ("PASS" if not a["problems"] else f"{len(a['problems'])} problem(s): "
                                                 + "; ".join(a["problems"][:3])))
@@ -363,7 +437,7 @@ def _do_codegen(args, spec, files, out_dir):
     if args.in_place:
         print("note: generated transforms are never delivered in place; outputs go to the output folder")
     approved = args.yes
-    if not approved and sys.stdin.isatty():
+    if not approved and _interactive():
         approved = input(f"\nRun it on {len(files)} file(s) (outputs only)? [y/N] ").strip().lower() in ("y", "yes")
     if not approved:
         print("Not run. Review the generated module before running it.")

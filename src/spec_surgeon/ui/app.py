@@ -28,6 +28,7 @@ from .. import __version__, credentials, updater, winapp
 from ..gui import Session, open_folder
 from ..settings import Settings, load_settings, logs_dir, save_settings
 from . import theme
+from .chat import cost_line, current_choices, transcript, waiting_for_user
 from .models import ROW_ROLE
 from .pages import FilesPage, PreviewPage, RequestPage, RunPage, resize_columns
 from .rows import (ProgressTracker, generated_rows, preview_counts, preview_rows, result_counts, result_rows,
@@ -344,7 +345,11 @@ class MainWindow(QMainWindow):
         for picker in (f.folder, f.template, f.out):
             picker.changed.connect(self._path_changed)
         r.request.textChanged.connect(self._inputs_changed)
-        r.answers.textChanged.connect(self._inputs_changed)
+        for view in (r.chat, p.chat):
+            view.send.connect(self.do_send)
+            view.chosen.connect(self.do_choose)
+            view.start_over.connect(self.do_start_over)
+            view.image_clicked.connect(self._open_image)
         r.chips.picked.connect(self._chip_picked)
         r.load_btn.clicked.connect(self.do_load_spec)
         r.preview_btn.clicked.connect(self.do_preview)
@@ -377,7 +382,7 @@ class MainWindow(QMainWindow):
         self.log_save.clicked.connect(self._save_log)
         self.log_clear.clicked.connect(self.log.clear)
         for seq in ("Ctrl+Return", "Ctrl+Enter", "F5"):
-            QShortcut(QKeySequence(seq), self, activated=self.do_preview)
+            QShortcut(QKeySequence(seq), self, activated=self._ctrl_enter)
         resize_columns(p.table, 3, [260, 90, 120, 300])
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn,
@@ -435,16 +440,26 @@ class MainWindow(QMainWindow):
         if f.out.text():
             s.out_root = Path(f.out.text())
 
-    def _inputs_key(self) -> tuple:
-        """Everything the preview depends on. A loaded spec counts only while no request is typed (a typed request
-        is compiled instead — ``Session``'s rule). The results folder is part of it: a preview is of a run that
-        writes under one results folder, and changing it afterwards must send the user back to Preview rather than
-        let Run write into the folder the preview was made for."""
+    def _widget_key(self) -> tuple:
+        """The inputs a preview depends on that live in the widgets. A loaded spec counts only while no request is
+        typed (a typed request is compiled instead — ``Session``'s rule). The results folder is part of it: a preview
+        is of a run that writes under one results folder, and changing it afterwards must send the user back to
+        Preview rather than let Run write into the folder the preview was made for."""
         f, r, s = self.files_page, self.request_page, self.session
         request = r.request.toPlainText().strip()
         loaded = s.spec_source if (not request and s.spec is not None and s.spec_source != "compiled") else ""
-        return (f.folder.text(), f.template.text(), f.out.text(), request, r.answers.toPlainText().strip(), loaded,
+        return (f.folder.text(), f.template.text(), f.out.text(), request, loaded,
                 tuple(str(x) for x in (s.selected_files or [])))
+
+    def _chat_key(self) -> tuple:
+        """The conversation a preview came from: which one, and how many times the user had spoken in it (a reply
+        voids the old preview)."""
+        c = self.session.conversation
+        return (c.id, c.user_turns()) if c is not None else ()
+
+    def _inputs_key(self) -> tuple:
+        """Everything the preview depends on — read from the widgets before a job, from the conversation after it."""
+        return self._widget_key() + self._chat_key()
 
     # ---- the API key ------------------------------------------------------------------------------------
     def _init_key(self) -> str:
@@ -532,6 +547,29 @@ class MainWindow(QMainWindow):
         if hasattr(self, "nav"):
             self._refresh_nav()
             self._refresh_run_state()
+            self._refresh_chat_block()
+
+    def _refresh_chat(self) -> None:
+        """Show the conversation (both views) — or hide it when there is none."""
+        s = self.session
+        for view in (self.request_page.chat, self.preview_page.chat):
+            if s.conversation is None:
+                view.hide()
+                continue
+            view.set_transcript(transcript(s.conversation), current_choices(s), cost_line(s.conversation),
+                                waiting_for_user(s))
+        self._refresh_chat_block()
+
+    def _refresh_chat_block(self) -> None:
+        s = self.session
+        c = s.conversation
+        typed = self.request_page.request.toPlainText().strip()
+        reason = ""
+        if c is not None and typed != c.request.strip():
+            reason = ("The request above is not the one this conversation is about — press Preview to start a new "
+                      "conversation, or Start over.")
+        for view in (self.request_page.chat, self.preview_page.chat):
+            view.set_blocked(reason)
 
     @Slot(str)
     def _path_changed(self, _value: str) -> None:
@@ -652,6 +690,8 @@ class MainWindow(QMainWindow):
         self.busy = on
         for b in self.job_buttons:
             b.setEnabled(not on and not self.updating)
+        for view in (self.request_page.chat, self.preview_page.chat):
+            view.set_busy(on or self.updating)
         self.busy_bar.setVisible(on)
         self.set_status(text if on else READY)
         self.busyChanged.emit(on)
@@ -661,6 +701,8 @@ class MainWindow(QMainWindow):
         self.updating = on
         for b in self.job_buttons:
             b.setEnabled(not on and not self.busy)
+        for view in (self.request_page.chat, self.preview_page.chat):
+            view.set_busy(on or self.busy)
         self._refresh_run_state()
 
     def set_checking(self, on: bool) -> None:
@@ -716,6 +758,7 @@ class MainWindow(QMainWindow):
         finally:
             self.run_page.progress_box.hide()
             self.set_busy(False)
+            self._refresh_chat()
             self._refresh_nav()
 
     @Slot(str, str)
@@ -725,6 +768,7 @@ class MainWindow(QMainWindow):
         _append_error_log(tb)
         self.run_page.progress_box.hide()
         self.set_busy(False)
+        self._refresh_chat()
         self.set_status(ERROR)
         page = getattr(self, "_job_page", None) or self.stack.currentWidget()
         if page is not self.stack.currentWidget():
@@ -737,50 +781,115 @@ class MainWindow(QMainWindow):
 
     # ---- actions ------------------------------------------------------------------------------------
     @Slot()
+    def _ctrl_enter(self) -> None:
+        """Ctrl+Enter / F5: send the reply being typed, else preview."""
+        focus = QApplication.focusWidget()
+        for view in (self.request_page.chat, self.preview_page.chat):
+            if focus is view.reply:
+                if view.send_btn.isEnabled():
+                    view._on_send()
+                return
+        self.do_preview()
+
+    @Slot()
     def do_preview(self) -> bool:
         r = self.request_page
         req = r.request.toPlainText().strip()
-        answers = [a for a in r.answers.toPlainText().splitlines() if a.strip()]
-        allow_codegen, render = r.codegen_cb.isChecked(), r.render_cb.isChecked()
+        render = r.render_cb.isChecked()
         s = self.session
         if self.busy or self.updating:
             return False
         self.sync()
-        key = self._inputs_key()          # what this preview is of; Run is enabled only while it still holds
+        wkey = self._widget_key()          # what this preview is of; Run is enabled only while it still holds
+        loaded = bool(s.spec_source and s.spec_source != "compiled" and s.spec is not None and not req)
+        continuing = not loaded and s.conversation is not None and s.conversation_matches(req)
+        if continuing and s.spec is None and s.generated is None:
+            r.info.show_message("info", "Claude is waiting for your reply",
+                                "Answer in the chat below (or pick one of Claude's choices), or Start over.")
+            self.go(1)
+            r.chat.reply.setFocus()
+            return False
 
         def fn(log):
             out = []
-            if s.spec_source and s.spec_source != "compiled" and s.spec is not None and not req:
+            if loaded:
                 out.append(f"Using the spec file {s.spec_source}.")
-            else:
-                msg = s.compile(req, answers, allow_codegen, log)
-                out.append(msg)
-                if s.questions:
-                    out += [f"  ? {x}" for x in s.questions]
+            elif not continuing:
+                out.append(s.compile(req, log))
+                if s.spec is None and s.generated is None:
                     return "\n".join(out)
+            out.append(s.make_preview(render, log))
+            if s.preview is not None:
+                out.append(f"\nPreview files: {s.out_dir / 'preview'}  — look, then press Run.")
+            return "\n".join(out)
+        return self._work("Preview", fn, on_done=lambda text: self._after_preview(text, wkey), page=self.request_page)
+
+    def _reply(self, text: str = "", choice_id: Optional[str] = None) -> bool:
+        s = self.session
+        if self.busy or self.updating or s.conversation is None:
+            return False
+        if self.request_page.request.toPlainText().strip() != s.conversation.request.strip():
+            self._refresh_chat_block()
+            return False
+        render = self.request_page.render_cb.isChecked()
+        self.sync()
+        wkey = self._widget_key()
+        page = self.stack.currentWidget()
+
+        def fn(log):
+            out = [s.reply(text, choice_id, log, render)]
             if s.spec is not None or s.generated is not None:
                 out.append(s.make_preview(render, log))
-                if s.preview is not None:
-                    out.append(f"\nPreview files: {s.out_dir / 'preview'}  — look, then press Run.")
             return "\n".join(out)
-        return self._work("Preview", fn, on_done=lambda text: self._after_preview(text, key), page=self.request_page)
 
-    def _after_preview(self, text: str, key: tuple) -> None:
+        def done(result):
+            for view in (self.request_page.chat, self.preview_page.chat):
+                view.clear_reply()
+            self._after_preview(result, wkey)
+        return self._work("Reply", fn, on_done=done, page=page if page in (self.request_page, self.preview_page)
+                          else self.request_page)
+
+    @Slot(str)
+    def do_send(self, text: str) -> bool:
+        return self._reply(text=text)
+
+    @Slot(str)
+    def do_choose(self, choice_id: str) -> bool:
+        return self._reply(choice_id=choice_id)
+
+    @Slot()
+    def do_start_over(self) -> bool:
+        s = self.session
+        if self.busy or self.updating or s.conversation is None:
+            return False
+        if not self.prompts.ask("Spec Surgeon", "Start over? The conversation with Claude is forgotten (its record "
+                                "stays in the results folder) and nothing is applied."):
+            return False
+        s.end_conversation()
+        s.remove_spec()
+        self.preview_key = None
+        self._refresh_chat()
+        self._inputs_changed()
+        self.go(1)
+        return True
+
+    def _after_preview(self, text: str, wkey: tuple) -> None:
         s, r = self.session, self.request_page
         self.write(text or "")
-        if s.questions:
-            r.questions.setText("\n".join(f"{i + 1}. {q}" for i, q in enumerate(s.questions)))
-            r.answers_card.show()
-            r.info.show_message("info", "Claude needs answers", "Answer the questions below (one per line), then "
-                                                                "press Preview again.")
+        self._refresh_chat()
+        if waiting_for_user(s):
+            turn = s.turn
+            title = {"failed": "That didn't work", "unsupported": "No built-in operation does this"}.get(
+                turn.status, "Claude needs your reply")
+            r.info.show_message("warn" if turn.status in ("failed", "unsupported") else "info", title,
+                                "See the conversation below: reply in the chat, or pick one of Claude's choices.")
             self.go(1)
             return
-        r.answers_card.setVisible(bool(r.answers.toPlainText().strip()))
         if s.preview is None and s.generated is None:
             r.info.show_message("warn", "Nothing to preview", (text or "").strip())
             self.go(1)
             return
-        self.preview_key = key
+        self.preview_key = wkey + self._chat_key()
         self._fill_preview()
         self.go(2)
 
@@ -946,8 +1055,7 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _remove_spec(self) -> None:
-        s = self.session
-        s.spec, s.spec_source, s.preview, s.generated = None, "", None, None
+        self.session.remove_spec()
         self.request_page.spec_bar.hide()
         self._inputs_changed()
 
@@ -1171,14 +1279,16 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
         "session": w.session, "window": w, "app": app, "wait": wait,
         "buttons": {"preview": r.preview_btn, "load": r.load_btn, "run": run.run_btn, "set_aside": run.set_aside_btn,
                     "open": run.open_btn, "advise": run.advise_btn, "check_updates": w.check_btn,
-                    "install_update": w.updates.banner.btn_install, "settings": w.settings_btn},
+                    "install_update": w.updates.banner.btn_install, "settings": w.settings_btn,
+                    "send": r.chat.send_btn, "start_over": r.chat.start_over_btn},
         "vars": {"folder": Var(f.folder.text, f.folder.setText), "template": Var(f.template.text, f.template.setText),
                  "out": Var(f.out.text, f.out.setText),
                  "render": Var(r.render_cb.isChecked, r.render_cb.setChecked),
                  "in_place": Var(run.inplace_rb.isChecked,
-                                 lambda on: (run.inplace_rb if on else run.copies_rb).setChecked(True)),
-                 "codegen": Var(r.codegen_cb.isChecked, r.codegen_cb.setChecked)},
-        "request": text_var(r.request), "answers": text_var(r.answers),
+                                 lambda on: (run.inplace_rb if on else run.copies_rb).setChecked(True))},
+        "request": text_var(r.request),
+        "chat": r.chat, "preview_chat": w.preview_page.chat, "reply": text_var(r.chat.reply),
+        "choices": lambda: [(b.property("choice_id"), b) for b in r.chat.choice_buttons()],
         "log": Var(w.log.toPlainText, lambda t: w.log.setPlainText(t)),
         "status": Var(w.status_lbl.text, w.set_status),
         "busy": lambda: w.busy, "banner": w.updates.banner,

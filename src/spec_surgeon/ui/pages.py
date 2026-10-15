@@ -1,7 +1,7 @@
 """The four steps of the window: Files → Describe the change → Preview → Run & results.
 
 Pages are layout only: they own their widgets and expose them; ``ui.app.MainWindow`` wires them to the engine
-(``gui.Session``). Strings other code depends on: "Answers", "Allow AI-written transforms", "Load set-aside files",
+(``gui.Session``). Strings other code depends on: "reply in the chat", "Start over", "Load set-aside files",
 "Advise on exceptions" (``Session`` messages name these controls).
 """
 from __future__ import annotations
@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QFram
                                QHeaderView, QLabel, QListWidget, QPlainTextEdit, QProgressBar, QPushButton,
                                QRadioButton, QScrollArea, QTableView, QVBoxLayout, QWidget)
 
+from .chat import ChatView
 from .models import ProblemsFilter, RowsModel
 from .rows import PREVIEW_COLUMNS, RESULT_COLUMNS
 from .widgets import (BadgeDelegate, Card, ChipRow, InfoBar, PathPicker, StatTile, label, link_button,
@@ -150,29 +151,17 @@ class RequestPage(Page):
         self.spec_bar = InfoBar(closable=False)
         self.content.addWidget(self.spec_bar)
 
-        self.answers_card = Card("Claude needs a few answers",
-                                 "Type one answer per line, in the order of the questions, then press Preview again.")
-        self.questions = label("", selectable=True)
-        self.answers_label = label("Answers (one per line)")
-        self.answers = QPlainTextEdit()
-        self.answers.setObjectName("Editor")
-        self.answers.setMinimumHeight(70)
-        self.answers.setMaximumHeight(130)
-        self.answers_card.add(self.questions)
-        self.answers_card.add(self.answers_label)
-        self.answers_card.add(self.answers)
-        self.answers_card.hide()
-        self.content.addWidget(self.answers_card)
+        self.chat = ChatView()
+        self.content.addWidget(self.chat)
 
         card = Card("Options")
         self.render_cb = QCheckBox("Render pages (Word or LibreOffice)")
         card.add(self.render_cb)
         card.add(label("Makes before/after page images for the preview and checks that page layout did not move. "
                        "Slower; needs Word or LibreOffice.", "Muted"))
-        self.codegen_cb = QCheckBox("Allow AI-written transforms")
-        card.add(self.codegen_cb)
-        card.add(label("Off by default. When no built-in operation can do the request, Claude may write a one-off "
-                       "transform. It is tested on sample files first and only ever writes edited copies.", "Muted"))
+        card.add(label("When no built-in operation can do the request, Claude says why and offers choices in the "
+                       "chat — including, when it can be done safely, a one-off transform it writes and tests on "
+                       "sample files first (edited copies only).", "Muted"))
         self.content.addWidget(card)
 
         key_row = QHBoxLayout()
@@ -248,6 +237,8 @@ class PreviewPage(Page):
         bl.addWidget(self.token_lbl)
         self.body.hide()
         self.content.addWidget(self.body)
+        self.chat = ChatView(compact=True)
+        self.content.addWidget(self.chat)
         self.finish()
 
         self.back_btn = QPushButton("\u2190  Change request")

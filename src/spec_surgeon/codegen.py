@@ -253,7 +253,7 @@ def _examples() -> str:
 
 
 def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: Path, client=None,
-                model: Optional[str] = None, max_iter: int = MAX_ITER, log=None) -> GeneratedOp:
+                model: Optional[str] = None, max_iter: int = MAX_ITER, log=None, brief: Optional[str] = None) -> GeneratedOp:
     """Generate → sandbox + verify on the samples → feed failures back, up to ``max_iter`` attempts."""
     from . import compiler, llm
     from .profile import profile
@@ -265,8 +265,10 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
     system = CODEGEN_SYSTEM.format(allowed=json.dumps({k: sorted(v) for k, v in ALLOWED_FROM.items()}),
                                    plain=sorted(ALLOWED_IMPORT), examples=_examples())
     profiles = [profile(DocxPackage.from_path(f)) for f in samples]
+    asked = (f"THE CONVERSATION WITH THE USER (what they asked, what was understood, every reply):\n{brief}"
+             if brief else f"REQUEST: {request}")
     messages: List[Dict[str, Any]] = [{"role": "user", "content":
-        f"REQUEST: {request}\n\nWHY NO EXISTING OP FITS / PROPOSAL: {proposal}\n\nSAMPLE FILE PROFILES:\n"
+        f"{asked}\n\nWHY NO EXISTING OP FITS / PROPOSAL: {proposal}\n\nSAMPLE FILE PROFILES:\n"
         + json.dumps(profiles, ensure_ascii=False)}]
     g = GeneratedOp(model=model)
     for attempt in range(1, max_iter + 1):
@@ -305,6 +307,18 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                                                       + "\n- ".join(problems)[:12000]}]})
     g.errors.append(f"no passing op after {max_iter} attempt(s)")
     return g
+
+
+def pick_samples(files: Sequence[Path]) -> List[Path]:
+    """The files a generated op is proven on: the first file of each structure pattern, up to three — by path (two
+    files may share a name in different folders)."""
+    from .profile import profile_batch
+    files = [Path(f) for f in files]
+    out: List[Path] = []
+    for pat in profile_batch(files)["patterns"][:3]:
+        paths = pat.get("paths") or []
+        out.append(Path(paths[0]) if paths else next(f for f in files if f.name == pat["files"][0]))
+    return out
 
 
 def _op_name(src: str) -> str:

@@ -3,10 +3,10 @@
     spec-surgeon-gui            (no console window on Windows; the installed app's SpecSurgeon.exe)
     spec-surgeon gui            (from a terminal)
 
-``Session`` holds everything the window does — files, compile, preview, run (with the approval-token check),
-Tier B, set-aside passes, advice — as plain calls into the engine; nothing is applied before Preview, and Run
-refuses when a file changed since the preview. It has no widgets and no Qt, so it is tested on its own and the
-command line never loads Qt.
+``Session`` holds everything the window does — files, the conversation with Claude (compile, replies, choices), preview,
+run (with the approval-token check), custom transforms, set-aside passes, advice — as plain calls into the engine;
+nothing is applied before Preview, and Run refuses when a file changed since the preview. It has no widgets and no Qt,
+so it is tested on its own and the command line never loads Qt.
 
 The window itself (PySide6 / Qt 6, v0.4.0) is the ``ui`` package: ``main()`` and ``build_window()`` below import it
 lazily and explain how to install Qt when it is missing (``pip install "spec-surgeon[gui]"``).
@@ -45,6 +45,9 @@ class Session:
     client: Any = None                            # injectable for tests
     last_batch: Any = None                        # BatchResult of the last Run (the window's results table)
     last_trials: Any = None                       # List[codegen.FileTrial] of the last AI-written-transform run
+    conversation: Any = None                      # conversation.Conversation of the current request
+    turn: Any = None                              # its last conversation.Turn
+    chat_dir: Optional[Path] = None               # where the conversation keeps its record and page renders
 
     def files(self) -> List[Path]:
         from .batch import expand_inputs
@@ -65,6 +68,7 @@ class Session:
     def reset_set_aside(self) -> None:
         self.selected_files = None
         self.prior_failures = []
+        self.end_conversation()
 
     def load_set_aside(self, source_dir: Optional[Path] = None) -> str:
         """Narrow the session to only the files that were set aside in the last run (or ``source_dir``),
@@ -80,7 +84,8 @@ class Session:
             return "All files passed in the previous run — 0 set-aside files remaining."
         self.selected_files = [Path(x["source"]) for x in items]
         self.prior_failures = list(items)
-        self.spec, self.preview, self.generated, self.questions = None, None, None, []
+        self._set_outcome()
+        self.end_conversation()
         lines = [f"Loaded {len(items)} set-aside file(s) for the next pass:"]
         for x in items:
             lines.append(f"  - {x['name']} [{x['code']}] ({x['category']}): {x['reason']}")
@@ -93,56 +98,126 @@ class Session:
         return self.out_dir
 
     # ---- steps ----
+    # ---- outcome: a spec XOR a custom transform, and what was previewed of it ----
+    def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "") -> None:
+        """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
+        old one: a reply that turns a custom transform into a spec must never leave the transform runnable, and a reply
+        that only asks a question must never leave the old spec's preview runnable."""
+        if spec is not None and generated is not None:
+            raise ValueError("a session runs either a spec or a custom transform, not both")
+        self.spec, self.generated = spec, generated
+        self.spec_source = source if spec is not None else ""
+        self.preview, self.generated_token = None, ""
+
+    def end_conversation(self) -> None:
+        self.conversation, self.turn, self.questions = None, None, []
+
     def load_spec(self, path: Path) -> Dict[str, Any]:
         from .editspec import load_spec, validate_spec
         spec = load_spec(path)
         validate_spec(spec)
-        self.spec, self.spec_source, self.preview, self.generated, self.questions = spec, str(path), None, None, []
+        self._set_outcome(spec=spec, source=str(path))
+        self.end_conversation()
         return spec
 
-    def compile(self, request: str, answers: List[str], allow_codegen: bool, log: Log) -> str:
-        """Returns a short status line; sets ``spec`` (or ``questions`` / ``generated``)."""
-        from .compiler import compile_request
+    def remove_spec(self) -> None:
+        self._set_outcome()
+
+    # ---- the conversation ----
+    def conversation_matches(self, request: str) -> bool:
+        """The current conversation is about this request, these files and this template (so Preview continues it
+        rather than starting over)."""
+        c = self.conversation
+        if c is None or c.request.strip() != (request or "").strip():
+            return False
+        try:
+            files = self.files()
+        except ValueError:
+            return False
+        return ([Path(f).resolve() for f in files] == [f.resolve() for f in c.files]
+                and (self.template.resolve() if self.template else None) == (c.template.resolve() if c.template else None))
+
+    def compile(self, request: str, log: Log) -> str:
+        """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
+        Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user."""
+        from .conversation import Conversation
         if not request.strip():
             raise ValueError("type what you want done (or load a spec file)")
         files = self.files()
-        self.spec, self.preview, self.generated, self.questions = None, None, None, []
-        log(f"Compiling the request over {len(files)} file(s)…")
-        res = compile_request(request, files, template=self.template, answers=answers, client=self.client, log=log,
-                              prior_failures=self.prior_failures or None)
-        if res.status == "questions":
-            self.questions = res.questions
-            return "The request needs answers — type them in the Answers box (one per line) and press Preview again."
-        if res.status == "unsupported":
-            reason = f"No operation can do this: {res.spec.get('unsupported')}. Proposal: {res.spec.get('proposal')}"
-            if not allow_codegen:
-                return reason + "\nTick 'Allow AI-written transforms' to let Claude write a one-off, tested transform."
-            return self._codegen(request, res.spec, files, log)
-        if res.status != "ok":
-            raise RuntimeError("Compile failed: " + "; ".join(res.errors))
-        self.spec, self.spec_source = res.spec, "compiled"
-        return "Compiled."
+        self._set_outcome()
+        self.end_conversation()
+        self.chat_dir = Path(self.out_root) / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-chat")
+        self.chat_dir.mkdir(parents=True, exist_ok=True)
+        log(f"Talking the request through with Claude over {len(files)} file(s)…")
+        self.conversation = Conversation(request, files, template=self.template, client=self.client,
+                                         prior_failures=self.prior_failures or None, work_dir=self.chat_dir, log=log)
+        return self._after_turn(self.conversation.start())
+
+    def reply(self, text: str = "", choice_id: Optional[str] = None, log: Log = lambda m: None,
+              render: bool = True) -> str:
+        """The user's next message in the conversation — typed words, a picked choice, or both."""
+        c = self.conversation
+        if c is None:
+            raise ValueError("there is no conversation yet — type a request and press Preview")
+        if not self.conversation_matches(c.request):
+            raise ValueError("the files or the template changed since this conversation started — press Start over")
+        chosen = c.choice(choice_id) if choice_id else None
+        self._set_outcome()                       # whatever was previewed before this reply is void now
+        if chosen is not None and chosen.kind == "custom_transform":
+            c.take_app_choice(chosen.id)
+            proposal = (c.unsupported or {}).get("proposal") or chosen.detail
+            try:
+                msg = self._codegen(c.request, proposal, self.files(), log, brief=c.brief())
+                c.note(f"The one-off custom transform {self.generated.name!r} passed verification on the sample "
+                       f"files; the user will review its preview.")
+            except RuntimeError as e:
+                c.note(f"No custom transform passed verification: {e}")
+                self._save_chat()
+                raise
+            self._save_chat()
+            return msg
+        return self._after_turn(c.reply(text, choice_id, client=self.client))
+
+    def _after_turn(self, turn) -> str:
+        self.turn = turn
+        self.questions = list(turn.questions)
+        self._save_chat()
+        if turn.status == "ok":
+            self._set_outcome(spec=turn.spec, source="compiled")
+            return "Compiled."
+        if turn.status == "questions":
+            return "Claude needs your answer — reply in the chat below, or pick one of its choices."
+        if turn.status == "unsupported":
+            offer = any(ch.kind == "custom_transform" for ch in turn.choices)
+            return (f"No built-in operation can do this: {turn.message}" +
+                    ("\nClaude can write a one-off custom transform for it — pick that choice in the chat." if offer else ""))
+        return f"That didn't work: {turn.message}\nReply in the chat to try again, or Start over."
+
+    def _save_chat(self) -> None:
+        if self.conversation is not None and self.chat_dir is not None:
+            try:
+                self.conversation.save(self.chat_dir / "conversation.json")
+            except OSError:
+                pass
 
     @staticmethod
     def _generated_key(g) -> Dict[str, Any]:
         return {"generated_source": g.source, "select": g.select, "params": g.params}
 
-    def _codegen(self, request: str, spec: Dict[str, Any], files: List[Path], log: Log) -> str:
-        from .codegen import generate_op
+    def _codegen(self, request: str, proposal: str, files: List[Path], log: Log, brief: Optional[str] = None) -> str:
+        from .codegen import generate_op, pick_samples
         from .preview import approval_token
-        from .profile import profile_batch
-        names = {f.name: f for f in files}
-        samples = [names[p["files"][0]] for p in profile_batch(files)["patterns"][:3]]
+        samples = pick_samples(files)
         out = self.new_out_dir()
         log(f"Writing a one-off transform, tested on {[s.name for s in samples]}…")
-        g = generate_op(request, spec.get("proposal") or spec.get("unsupported") or "", samples, out / "codegen",
-                        client=self.client, log=log)
+        g = generate_op(request, proposal or "", samples, out / "codegen", client=self.client, log=log, brief=brief)
         if not g.passed:
-            raise RuntimeError("No AI-written transform passed verification: " + "; ".join(g.errors))
-        self.generated = g
+            raise RuntimeError("No AI-written transform passed verification: " + "; ".join(g.errors or
+                               [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}" for a in g.attempts[-1:]]))
+        self._set_outcome(generated=g)
         self.generated_token = approval_token(self._generated_key(g), files)
         return (f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
-                f"It is saved at {g.path} — Run writes outputs only (never over your files).")
+                f"It is saved at {g.path} — Run writes edited copies only (never over your files).")
 
     def make_preview(self, render: bool, log: Log) -> str:
         from .preview import make_preview
@@ -155,7 +230,19 @@ class Session:
         log("Planning every file and trying the samples…")
         self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
                                     do_render=render)
+        self._note_preview()
         return self.preview.to_text()
+
+    def _note_preview(self) -> None:
+        """Tell Claude what the preview found, so a reply from the Preview page is a correction it can act on."""
+        if self.conversation is None or self.preview is None:
+            return
+        pv = self.preview
+        bp = pv.batch_plan
+        total, planned = len(bp.files), len(bp.files) - len(bp.exceptions)
+        self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + pv.to_text()[:4000],
+                               display=f"Preview made: {planned} of {total} file(s) plan cleanly.")
+        self._save_chat()
 
     def run(self, in_place: bool, render: bool, log: Log) -> str:
         from .batch import run_batch

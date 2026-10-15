@@ -75,13 +75,30 @@ TOOLS = [
      "as a template (template_spec: prepared slots, or — an ordinary spec from another firm — its own section "
      "number/title and where its headers/footers show them; its body text font/size).",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "ask_user", "description": "Ask the user before anything runs (ends the compile; the user's answers "
-     "come back with the request). Use it when the request is ambiguous or needs words the user has not given.",
-     "input_schema": {"type": "object", "properties": {"questions": {"type": "array", "items": {"type": "string"}, "minItems": 1}},
-                      "required": ["questions"]}},
-    {"name": "submit_editspec", "description": "Submit the EditSpec (the final answer). It is validated and dry-planned; "
-     "errors come back once to fix.",
-     "input_schema": {"type": "object", "properties": {"spec": {"type": "object"}}, "required": ["spec"]}},
+    {"name": "ask_user", "description": "Ask the user before anything runs; their reply comes back as this tool's "
+     "result. Use it when the request is ambiguous, needs words the user has not given, or no operation does exactly "
+     "what was asked (then say what you understood, what is missing, and offer choices).",
+     "input_schema": {"type": "object", "properties": {
+         "understanding": {"type": "string", "description": "one sentence: what you understood the user wants"},
+         "message": {"type": "string", "description": "what you need to tell the user (e.g. what no operation can "
+                                                      "do, and why) — plain words, no XML"},
+         "questions": {"type": "array", "items": {"type": "string"}},
+         "choices": {"type": "array", "items": {"type": "object", "properties": {
+             "label": {"type": "string", "description": "what picking this means, in plain words; for an "
+                                                       "alternative, say exactly how it differs from what was asked"},
+             "kind": {"type": "string", "enum": ["clarify", "alternative", "rephrase"]},
+             "wording": {"type": "string", "description": "ONLY when picking this choice would place words in the "
+                                                         "documents: those exact words (the user's pick approves "
+                                                         "them; nothing else does)"},
+             "detail": {"type": "string"}}, "required": ["label", "kind"]}}}}},
+    {"name": "submit_editspec", "description": "Submit the EditSpec. It is validated and dry-planned; errors come "
+     "back to fix. A spec that says 'unsupported' must also judge custom_transform.",
+     "input_schema": {"type": "object", "properties": {
+         "spec": {"type": "object"},
+         "custom_transform": {"type": "string", "enum": ["possible", "outside_limits"],
+                              "description": "for an unsupported spec only: could a one-off custom transform do it "
+                                             "within the catalog's custom_transform_limits?"},
+         "custom_transform_reason": {"type": "string"}}, "required": ["spec"]}},
 ]
 
 SYSTEM = """You compile a user's request about editing Word (.docx) specification files into an EditSpec — a JSON \
@@ -95,9 +112,17 @@ own words). Never invent, reword, or "improve" document text; if the user did no
 is ambiguous in a way an assumption cannot honestly cover, call ask_user instead of guessing.
 - Use only ops, selector keys and params from the catalog; use only part names, style ids and section indices that \
 appear in the profiles or tool results.
-- If no op can express the request, submit {"request", "summary", "unsupported": "<why no op fits>", \
-"proposal": "<what operation would do it>"} with no ops. Never approximate the request with an op that does \
-something else.
+- When no op can express the request exactly, do not give up and never silently approximate. If a clarification \
+could make it expressible, or a built-in op could do something close, call ask_user with "understanding" (one \
+sentence: what you understood), "message" (what no op can do, and why, in plain words) and "choices": kind \
+"clarify" for a likely meaning an op can do; kind "alternative" for the closest built-in action, its label saying \
+exactly how it differs from what was asked. A choice that would place words in the documents carries those exact \
+words in "wording" — the user's pick approves them; your own text never does. When nothing fits even after the \
+user's answers, submit {"request", "summary", "unsupported": "<why no op fits>", "proposal": "<what a one-off \
+transform would do>"} with no ops, and beside the spec set custom_transform to "possible" only when a one-off \
+transform could do it within the catalog's custom_transform_limits, else "outside_limits" with custom_transform_reason.
+- The user may reply after your spec was previewed: that reply is a correction, and the app's notes before it say \
+what the preview found. Submit a revised spec (or ask). The user's replies are approved words like the request.
 - Two ops must not touch the same thing. "Change all fonts" is three ops (set_font on runs with a direct font, \
 set_style_font, set_doc_defaults_font) plus an effective_font assertion.
 - The attached template may be a TEMPLATE SPEC: an ordinary spec from the architect or another firm (read_template \
@@ -108,10 +133,24 @@ template's font" follows the catalog rule: font and size from the template spec'
 batch's body_text sizes. State the template's values and the sizes in assumptions.
 - mode: "formatting" unless an op places characters; "content" for tracked wording changes; "untracked" when \
 the user asked for untracked wording or a template has literal fills.
-- Finish by calling submit_editspec exactly once with the whole spec (or ask_user). Keep tool calls few.
-
-OP CATALOG (ops, selector grammar, common assumptions, the EditSpec JSON schema, worked examples):
+- Finish each turn by calling submit_editspec once with the whole spec, or ask_user. Keep tool calls few.
 """
+
+CHAT_NOTE = """
+- This is a conversation: plain text without a tool call is shown to the user as your message and waits for their \
+reply.
+"""
+
+
+CHAT_TOOLS = list(TOOLS)            # the conversation's tools (Phase C adds view_pages); the advisor never gets these
+
+
+def system_prompt(chat: bool = False) -> str:
+    """The system prompt — built once per conversation and never changed during it."""
+    return (SYSTEM + (CHAT_NOTE if chat else "")
+            + "\nOP CATALOG (ops, selector grammar, common assumptions, custom_transform_limits, the EditSpec JSON schema, "
+            "worked examples):\n"
+            + json.dumps(op_catalog(), ensure_ascii=False))
 
 
 @dataclass
@@ -124,11 +163,14 @@ class CompileResult:
     model: str = DEFAULT_MODEL
     usage: Dict[str, int] = field(default_factory=dict)
     served_models: List[str] = field(default_factory=list)   # what actually answered (a refusal fallback may differ)
+    custom_transform: str = ""                    # unsupported only: "possible" | "outside_limits" | "" (not judged)
+    custom_transform_reason: str = ""
 
     def to_dict(self):
         return {"status": self.status, "spec": self.spec, "questions": self.questions, "errors": self.errors,
                 "tool_calls": self.tool_calls, "model": self.model, "served_models": self.served_models,
-                "usage": self.usage}
+                "usage": self.usage, "custom_transform": self.custom_transform,
+                "custom_transform_reason": self.custom_transform_reason}
 
 
 def _client():
@@ -209,6 +251,7 @@ class _Batch:
         self.prof = profile_batch([Path(f) for f in files])
         self.template = Path(template) if template else None
         self._pkgs: Dict[str, DocxPackage] = {}
+        self.work_dir: Optional[Path] = None      # where a conversation keeps its page renders (chat only)
 
     def pkg(self, name: str) -> DocxPackage:
         if name not in self.files:
@@ -378,83 +421,10 @@ def compile_request(request: str, files: Sequence[Path], template: Optional[Path
                     answers: Sequence[str] = (), model: Optional[str] = None, client=None,
                     memory: Optional[Dict[str, Any]] = None, log: Optional[Callable[[str], None]] = None,
                     prior_failures: Optional[Sequence[Dict[str, Any]]] = None) -> CompileResult:
-    """Request + batch → CompileResult. ``status`` is ``ok`` (a validated, dry-planned spec), ``questions`` (ask the
-    user, then call again with ``answers``), ``unsupported`` (no op fits; see spec["proposal"]) or ``failed``."""
-    model = model or DEFAULT_MODEL
-    log = log or (lambda m: None)
-    client = client or _client()
-    batch = _Batch(files, template)
-    memory = memory if memory is not None else load_project_memory([Path(f) for f in files])
-    sources = [request, *answers, memory_source(memory)]
-    system = SYSTEM + json.dumps(op_catalog(), ensure_ascii=False)
-    messages = build_messages(request, batch, answers, memory, prior_failures=prior_failures)
-    res = CompileResult(status="failed", model=model)
-    rejections = 0
-    nudged = False
-    usage = llm.Usage()
-    for _turn in range(MAX_TURNS):
-        resp = llm.call(client, model=model, system=system, tools=TOOLS, messages=messages)
-        usage.add(resp, model)
-        res.usage, res.served_models = usage.as_dict(), sorted(set(usage.served))
-        problem = llm.stop_problem(resp)
-        if problem:
-            res.errors.append(problem)
-            return res
-        content = llm.history_content(resp)
-        messages.append({"role": "assistant", "content": content})
-        uses = llm.tool_uses(content)
-        if not uses:
-            if nudged:
-                res.errors.append("the model ended without submitting a spec or asking a question")
-                return res
-            nudged = True
-            messages.append({"role": "user", "content": "Finish by calling submit_editspec (or ask_user)."})
-            continue
-        results = []
-        final: Optional[CompileResult] = None
-        for b in uses:
-            name, inp = b.name, dict(b.input or {})
-            res.tool_calls.append({"tool": name, "input": inp if name != "submit_editspec" else "(spec)"})
-            log(f"compiler: {name}")
-            if name == "ask_user":
-                qs = [q for q in inp.get("questions") or [] if isinstance(q, str) and q.strip()]
-                final = CompileResult("questions", questions=qs or ["(the model asked an empty question)"])
-                results.append({"type": "tool_result", "tool_use_id": b.id, "content": "asked"})
-                continue
-            if name == "submit_editspec":
-                spec = inp.get("spec")
-                errs = check_submission(spec, batch, sources)
-                if not errs:
-                    if spec.get("unsupported"):
-                        final = CompileResult("unsupported", spec=spec)
-                    elif spec.get("questions"):
-                        final = CompileResult("questions", spec=spec, questions=list(spec["questions"]))
-                    else:
-                        final = CompileResult("ok", spec=spec)
-                    results.append({"type": "tool_result", "tool_use_id": b.id, "content": "accepted"})
-                    continue
-                rejections += 1
-                res.errors += errs
-                if rejections > 1:
-                    res.errors.insert(0, "the spec was rejected twice")
-                    return res
-                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
-                                "content": "REJECTED — fix and call submit_editspec again:\n- " + "\n- ".join(errs)})
-                continue
-            try:
-                fn = getattr(batch, name) if name in {t["name"] for t in TOOLS} else None
-                if fn is None:
-                    raise KeyError(f"unknown tool {name}")
-                out = fn(**inp)
-                results.append({"type": "tool_result", "tool_use_id": b.id,
-                                "content": json.dumps(out, ensure_ascii=False)[:20000]})
-            except (KeyError, TypeError, ValueError, re.error) as e:
-                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True, "content": str(e)})
-        if final is not None:
-            final.model, final.usage, final.tool_calls = model, res.usage, res.tool_calls
-            final.served_models = res.served_models
-            final.errors = res.errors
-            return final
-        messages.append({"role": "user", "content": results})
-    res.errors.append(f"no spec after {MAX_TURNS} turns")
-    return res
+    """Request + batch → CompileResult, in one go (the command line without a terminal, the tests). ``status`` is
+    ``ok`` (a validated, dry-planned spec), ``questions`` (ask the user, then call again with ``answers``),
+    ``unsupported`` (no op fits; see spec["proposal"]) or ``failed``. The loop itself is conversation.Conversation."""
+    from .conversation import Conversation
+    conv = Conversation(request, files, template=template, client=client, model=model, memory=memory,
+                        prior_failures=prior_failures, answers=answers, mode="compile", log=log)
+    return conv.compile_result(conv.start())
