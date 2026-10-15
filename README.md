@@ -2,6 +2,16 @@
 
 **Latest: v0.4.1 — fixes from the hands-on sweep of v0.4.0.** A changed template now requires a new preview; conflicting header/footer and formatting operations are refused at plan time; single-section specs work in batches using a cover/body template; read-only files are set aside without stopping the batch; and preview summaries explain tracked deletions. [v0.4.1 release notes](docs/releases/v0.4.1.md) include update and installation instructions.
 
+**In the repository, not yet in a release: talk it through with Claude, Claude looks at the pages, your own library.**
+- **Claude no longer gives up when no operation fits.** It says what it understood, what is missing, and offers choices: a question, the closest built-in operation (with exactly how it differs), a rephrasing, or a one-off custom transform. You reply in a chat on the *Describe the change* and *Preview* steps, or at the terminal with `spec-surgeon do`. A word Claude suggests goes into your documents only when you pick the choice that shows those exact words.
+- **The "Allow AI-written transforms" checkbox is gone.** A custom transform is now offered as one of Claude's choices, only when no built-in operation can do the request and Claude judges it within what the engine can verify. The transform's writer gets the whole conversation, can read the sample files' XML, and its result gets a real preview (samples, before/after pages) before Run, which writes edited copies only.
+- **Claude's visual check.** With *Render pages* on, Claude looks at the before/after pages of the preview's sample files. It is advisory: it can stop Run until you have looked at what it flagged, and it can never pass anything. In the chat Claude can also look at pages of your files when it needs to see what you mean.
+- **Your library.** Save a previewed spec as a **recipe**, or a passing custom transform as **one of your operations**, under a name you choose, and use it again on another project (*Your library…*, `spec-surgeon library`, `do … --save-as NAME`).
+- **Every Claude call is streamed, with a 64,000-token output cap.** The window and the terminal show what the conversation has cost so far.
+- **The old `spec-surgeon ask` / `agent` commands are retired.** `do` and `advise` cover what they did.
+
+Details: ["Talk it through with Claude"](#talk-it-through-with-claude), ["Claude's visual check"](#claudes-visual-check), ["Your library"](#your-library), ["How Spec Surgeon calls Claude"](#how-spec-surgeon-calls-claude).
+
 Fast, provably lossless surgical edits to Word (.docx) specification files — a few files or dozens — with a mandatory verification record per file.
 
 Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transform is a deterministic Python/lxml script, the verifier is an independent script that reads only the before/after packages, the expected result is predicted *before* the transform runs, and the output is never written back unless every check passes and the source has not moved. No language model is in the per-file loop; the model's jobs are to build new job modules, to advise on exceptions, and (optionally) to turn a natural-language request into a job call.
@@ -20,7 +30,7 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 
 **NL editor, Phase 4 (compiler, preview, `do`) — done.** `spec-surgeon do "make the header/footer look like this template" "C:\…\Specs" --template T.docx` compiles the request into an EditSpec with Claude (one tool-use conversation per batch; the model reads profiles and the op catalog, never XML), checks it (validation, *the words it would place must be the user's own*, a dry plan per structure pattern), shows a preview (per-pattern plan summaries, exceptions, sample files applied and verified in memory, before/after page images), and runs the verified batch only after approval. The live API path is **[unproven]** in the development container (no credentials there); the loop is tested with a scripted client.
 
-**NL editor, Phase 5 (Tier B — generated transforms) — done, off by default.** When no op can express a request, `spec-surgeon do … --allow-codegen` lets Claude write one op module against a restricted API; it is AST-whitelisted, run in a separate isolated process on copies of one sample file per pattern, held to hard limits (formatting only), and must pass the full independent verification suite — failures go back to the model, at most three attempts. A passing op runs over the batch the same way (sandbox + verifier per file) and writes outputs only, never in place; the module is cached beside the run for a human to review and, if worth keeping, promote into `ops/` with tests.
+**NL editor, Phase 5 (Tier B — generated transforms) — done, off by default.** When no op can express a request, `spec-surgeon do … --allow-codegen` lets Claude write one op module against a restricted API; it is AST-whitelisted, run in a separate isolated process on copies of one sample file per pattern, held to hard limits (formatting only), and must pass the full independent verification suite — failures go back to the model, at most three attempts. A passing op runs over the batch the same way (sandbox + verifier per file) and writes outputs only, never in place; the module is cached beside the run for a human to review and, if worth keeping, promote into `ops/` with tests. *Since the conversation work it is no longer a switch: Claude offers it as a choice when no operation fits and the request is within what a custom transform may change, it gets a real preview, and a passing one can be saved to your library (see ["Custom transforms"](#tier-b-generated-transforms-phase-5--custom-transforms)).*
 
 **Template specs and font sizes (v0.4.0) — done.** Attach a **template spec** — an ordinary spec from the architect or any other firm, nothing highlighted, no `{{placeholders}}` — and ask "make the header and footer match the template spec": every discipline spec gets the architect's header and footer, with the architect's own section number and title replaced by each spec's own (`slot_markers: ["reference"]`: the fill rules run on the template spec itself to find its own values, then on each spec). Everything else in the architect's header and footer — firm, project, phase, logo, page number — is copied as it is, and the architect's number or title written any other way ("087100", a STYLEREF field) is refused rather than copied into every spec. Ask "match the font of the template spec": the three font ops now set **sizes** too (`size`, `size_from`, and `only_where_defined` on `set_font`), so 9 pt text becomes the template's 10 pt Arial while 8 pt headers and a 12 pt note keep their size, and the `effective_font` post-condition proves it run by run. With it come the window's *Template spec* picker and two example chips, a template-spec summary for the compiler (`read_template`: the template spec's own number and title, where its headers/footers show them, its body font and size), two worked examples and an example architect's spec. Details: ["Template specs: match the architect's spec"](#template-specs-match-the-architects-spec) and ["Font sizes"](#font-sizes-match-the-template-specs-font).
 
@@ -34,6 +44,7 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 4. [Commands](#commands)
 5. [Jobs](#jobs)
 6. [Operations and EditSpecs (NL editor, Phase 1)](#operations-and-editspecs-nl-editor-phase-1) — incl. [Header/footer templating (Phase 2)](#headerfooter-templating-phase-2), [Template specs: match the architect's spec](#template-specs-match-the-architects-spec) and [Font sizes](#font-sizes-match-the-template-specs-font)
+   - [Talk it through with Claude](#talk-it-through-with-claude) / [Claude's visual check](#claudes-visual-check) / [Your library](#your-library) / [How Spec Surgeon calls Claude](#how-spec-surgeon-calls-claude)
 7. [The verification record](#the-verification-record)
 8. [Output folder layout](#output-folder-layout)
 9. [Performance](#performance)
@@ -65,7 +76,7 @@ Three tiers of who does the work:
 | Tier | Who | When |
 |---|---|---|
 | 1 — deterministic engine | this package, no model | every file whose structure the job module understands (the common case) |
-| 2 — exceptions | a human, or `spec-surgeon agent` for a written recommendation | a file the job refuses to guess about (`exceptions/<name>.exception.json`) |
+| 2 — exceptions | a human, or `spec-surgeon advise` (the window's *Advise on exceptions*) for a written recommendation or a re-compiled spec | a file the job refuses to guess about (`exceptions/<name>.exception.json`) |
 | 3 — new job types | you + Claude, using the bundled skill | a request no job module handles yet; the result is a new module in `jobs/` |
 
 Design rules carried from the method, enforced in code:
@@ -92,7 +103,7 @@ Requires Python 3.10+ (Windows, macOS, Linux). From the project folder:
 py -3 -m pip install -e .            # core: lxml, pymupdf
 py -3 -m pip install -e ".[gui]"     # the window: PySide6 (Qt 6) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
-py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for `ask` / `agent`
+py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests (`do`, the window), `advise`
 py -3 -m pip install -e ".[dev]"     # pytest + python-docx (fixtures)
 ```
 
@@ -106,8 +117,8 @@ Environment variables:
 |---|---|
 | `SPEC_SURGEON_AUTHOR` | default tracked-change author (else the OS user name) |
 | `SPEC_SURGEON_SOFFICE` | path to `soffice` / `soffice.exe` |
-| `ANTHROPIC_API_KEY` | for typed requests (`do`, the window), `advise`, `ask` / `agent` — or enter it in the window's Settings (for one session, or remembered in Windows Credential Manager; a key set here wins) |
-| `SPEC_SURGEON_MODEL` | model for `do` (the compiler), `ask` / `agent` (default `claude-opus-5-5`) |
+| `ANTHROPIC_API_KEY` | for typed requests (`do`, `retry`, the window), Claude's visual check, custom transforms and `advise` — or enter it in the window's Settings (for one session, or remembered in Windows Credential Manager; a key set here wins) |
+| `SPEC_SURGEON_MODEL` | the model every Claude call uses — the conversation, the visual check, custom transforms, `advise` (default `claude-opus-5-5`; `--model` overrides it per command) |
 | `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own (Help → Check for updates… still works) |
 | `SPEC_SURGEON_CONFIG_DIR` | where the window keeps `settings.json`, downloaded updates and its error log (default `%APPDATA%\Spec Surgeon` and `%LOCALAPPDATA%\Spec Surgeon`); the tests use it |
 | `SPEC_SURGEON_QT_STYLE` | force a Qt style for the window (e.g. `windows11`, `fusion`) — diagnostics only |
@@ -139,13 +150,15 @@ Environment variables:
 1. **Files**
    - **Specs folder:** the folder with the .docx files. Work on a *copy* of a project folder the first few times. Drop a folder onto the field or use **Browse…**. The step counts the Word files it will process and lists them; the template file and Word's `~$` lock files are left out.
    - **Template spec (optional):** a spec from the architect or another firm (an ordinary spec — nothing to prepare), or a prepared header/footer template with highlighted / `{{NAME}}` placeholders. It is for requests like "make the header and footer match the template spec", "match the font of the template spec" or "make the header/footer look like this template". It is left out of the batch even when it sits in the specs folder (same path, or a copy with the same bytes).
-   - **Results folder:** where previews, edited copies, records and reports land. The default is `%USERPROFILE%\SpecSurgeon_out\<timestamp>`, and each preview gets its own time-stamped folder. The folders are remembered for next time. Changing the results folder after a preview sends you back to Preview: Run is enabled only while everything the preview was made of — folder, template, request, answers, results folder — is unchanged (2026-10-14 audit fixes).
+   - **Results folder:** where previews, edited copies, records and reports land. The default is `%USERPROFILE%\SpecSurgeon_out\<timestamp>`, and each preview gets its own time-stamped folder. The folders are remembered for next time. Changing the results folder after a preview sends you back to Preview: Run is enabled only while everything the preview was made of — folder, template, request, the conversation with Claude, results folder — is unchanged (2026-10-14 audit fixes).
 2. **Describe the change**
    - Type the request in plain English ("remove all headers and footers", "change all fonts to Arial", "make the header and footer match the template spec", "match the font of the template spec", "make the header/footer look like this template"), or click one of the example chips. A chip that mentions the template spec reminds you to choose one on *Files* when none is set.
    - No API key? Use **Load saved spec…** with one of `examples\specs\*.json` instead, or a spec saved from an earlier preview's `preview\spec.json`. A loaded spec shows as a strip under the request. Typing a request instead compiles a new spec, and **Remove** drops the loaded one.
-   - Options: *Render pages (Word or LibreOffice)* makes before/after page images and checks layout (slower). *Allow AI-written transforms* is off by default and explained below.
+   - **Your library…** (Ctrl+L) picks a recipe or one of your own operations you saved earlier (see ["Your library"](#your-library)).
+   - Options: *Render pages (Word or LibreOffice)* makes before/after page images, checks layout and lets Claude look at the sample pages (slower; see ["Claude's visual check"](#claudes-visual-check)).
    - A line at the bottom says where the API key comes from: your Windows environment, saved on this computer, this session only, or none.
    - Press **Preview** (or Ctrl+Enter).
+   - **Talk it through with Claude:** when Claude needs something from you, or no built-in operation fits the request, the chat card opens under the request instead of a dead end. Claude says what it understood and what is missing, and offers choices. Reply in your own words (Ctrl+Enter sends) or press a choice's **Choose** button. See ["Talk it through with Claude"](#talk-it-through-with-claude).
 3. **Preview**
    - Claude turns the request into a spec. The engine plans every file (nothing is written to your files), applies the spec to one or two sample files in memory and verifies them. With *Render pages* it also makes before/after page images.
    - The page shows:
@@ -153,12 +166,15 @@ Environment variables:
      - the spec's **assumptions to check** (and renderer warnings);
      - a table of **every file**: its pattern, *Planned* or *Exception*, and what changes or why it is refused (plain English; the tooltip has the engine's diagnosis). *Show exceptions only* filters it;
      - each **sample file** with its verification result and before/after pages (click a page to zoom: Fit, 100 %, Ctrl + mouse wheel);
+     - **Claude's visual check** of those pages, when *Render pages* is on (advisory; a finding it rates as blocking stops Run until you press **I've looked — allow Run**);
      - the approval token.
-   - If Claude needs something from you (e.g. the exact stamp wording), an **Answers** box appears on *Describe the change* with the questions. Type one answer per line and press Preview again.
-   - **Open preview folder** shows the preview files (`PREVIEW.md`, `spec.json`, samples, images).
+   - If Claude needs something from you (e.g. the exact stamp wording), its questions appear in the chat on *Describe the change*. Reply there, or pick one of its choices.
+   - The chat also sits under the preview: if the preview is not what you meant, tell Claude there ("only the body sections, not the cover"). Claude reads what the preview found and sends a revised spec, which is previewed again.
+   - **Save to library…** saves what was just previewed under a name: the spec as a recipe, or a custom transform as one of your operations.
+   - **Open preview folder** shows the preview files (`PREVIEW.md`, `spec.json`, samples, images, `visual_review.json`).
 4. **Run & results**
    - By default the edited files go to the results folder and **your files are not touched**. Choose **Write verified results back over the originals (guarded)** to have verified files written back: only files that pass every check, never a file open in Word or changed since the preview. You confirm before it starts, and the choice is never remembered.
-   - **Run** is enabled only while the preview is current. Changing the folder, the template, the request or the answers after a preview disables it ("press Preview again"). Run itself still refuses if a file — or the template spec — changed on disk since the preview (the approval token).
+   - **Run** is enabled only while the preview is current. Changing the folder, the template, the request, or replying to Claude after a preview disables it ("press Preview again"). Run itself still refuses if a file — or the template spec — changed on disk since the preview (the approval token), and while Claude's visual check has a blocking finding you have not acknowledged.
    - A progress bar counts the files as they are verified.
    - Then:
      - **PASS / FAIL / EXCEPTION tiles** and a **results table**, with *Show problems only*. Double-click a file to open its edited copy, or its verification record for a failure.
@@ -169,11 +185,11 @@ Environment variables:
 
 ![The results step after a run](docs/gui-results.png)
 
-*Allow AI-written transforms* (off by default, and off again at every start): when no built-in operation can do the request, Claude may write a one-off transform. It is tested on sample files first and only ever writes edited copies to the results folder; *Write back over the originals* is unavailable for it.
+**Custom transforms** (the *Allow AI-written transforms* checkbox of v0.4 is gone): when no built-in operation can do the request but the engine could still verify the result, one of Claude's choices is **"Have Claude write a one-off custom transform for this"**, with a **Do this** button. Claude then writes the transform from the whole conversation, tries it on one sample file per structure pattern (in a separate process, on copies, through the full verification suite) and shows a preview of it like any other: the samples with their verification result, before/after pages and Claude's visual check. Run writes edited copies to the results folder only; *Write back over the originals* is unavailable for it. If the request is outside what a custom transform may change, Claude says so and that it needs a new built-in operation instead.
 
 **Also in the window:**
 - **Errors** appear on the step that caused them, in plain words. The **Activity log**, collapsed at the bottom, holds everything the engine printed (Copy, Save…, Clear). Unexpected errors also go to `%LOCALAPPDATA%\Spec Surgeon\logs\spec-surgeon.log`.
-- **Menus:** **File** has Load saved spec… (Ctrl+O), Open results folder, Settings… (Ctrl+,) and Exit. **Help** has Check for updates…, What's new in this version (the bundled release notes), User guide, Report a problem and About (versions and folders).
+- **Menus:** **File** has Load saved spec… (Ctrl+O), Your library… (Ctrl+L), Open library folder, Open results folder, Settings… (Ctrl+,) and Exit. **Help** has Check for updates…, What's new in this version (the bundled release notes), User guide, Report a problem and About (versions and folders).
 - **Looks:** light or dark follows Windows, or choose it in Settings; the accent colour is your Windows accent; it is sharp on high-DPI screens. The app's own Windows 11-style theme is the same on Windows 10 and 11. *Settings → Use Windows' own controls* switches to Qt's native Windows 11 style instead (Windows 11 only).
 
 **Settings** (sidebar or File → Settings…):
@@ -183,9 +199,9 @@ Environment variables:
   The installer includes the Windows time-zone support that Credential Manager needs when reading the saved key.
 - **Updates:** check automatically once a day, the last check, the skipped version (with Clear), and Check now.
 
-**What it remembers, and where:** the window keeps `%APPDATA%\Spec Surgeon\settings.json` (plain JSON you can read or delete). It holds the folders, the template, the render option, the last request, the theme, the window size, the update preferences and the update in progress. It never stores the API key, and never stores the two risky switches (write back over the originals, AI-written transforms); both are off at every start. A corrupt settings file is set aside as `settings.json.bad` and the defaults are used.
+**What it remembers, and where:** the window keeps `%APPDATA%\Spec Surgeon\settings.json` (plain JSON you can read or delete). It holds the folders, the template, the render option, the last request, the theme, the window size, the update preferences and the update in progress. It never stores the API key or the conversation, and never stores the risky switch (write back over the originals), which is off at every start. A corrupt settings file is set aside as `settings.json.bad` and the defaults are used. Your library lives beside it, in `%APPDATA%\Spec Surgeon\library\` (File → Open library folder).
 
-The window is a thin layer over the library calls (`gui.Session`): everything it does is what `do`, `run-spec` and `advise` do on the command line.
+The window is a thin layer over the library calls (`gui.Session`): everything it does is what `do`, `run-spec`, `library` and `advise` do on the command line.
 
 ---
 
@@ -271,12 +287,18 @@ spec-surgeon run-spec examples\specs\match-template-spec-font.json "C:\Projects\
 Plain English (Phase 4; needs `pip install -e ".[agent]"` and `ANTHROPIC_API_KEY` or an `ant auth login` profile):
 
 ```powershell
-# compile → preview → asks "Run this on N file(s)? [y/N]" → the verified batch
+# compile → preview (+ Claude's visual check) → asks "Run this on N file(s)? [y/N]" → the verified batch
 spec-surgeon do "remove all headers and footers" "C:\Projects\AVC11\Specs" --out C:\Temp\ss-do
 
-# templating; the compiler asks for anything it would have to guess (e.g. the stamp wording) — answer and re-run
+# templating; in a terminal Claude asks for anything it would have to guess (e.g. the stamp wording) and you reply
+# right there ("#2" picks Claude's second choice; an empty line stops). Without a terminal (a script), answer and re-run:
 spec-surgeon do "make the header/footer look like this template" "C:\Projects\AVC11\Specs" --template "C:\Projects\AVC11\00 00 00 TEMPLATE.docx"
 spec-surgeon do "make the header/footer look like this template" "C:\Projects\AVC11\Specs" --template "…" --answer "stamp: ISSUED FOR CONSTRUCTION  2026-02-15"
+
+# keep what was previewed in your library under a name; use it again later (window: Your library…)
+spec-surgeon do "remove all headers and footers" "C:\Projects\AVC11\Specs" --save-as "Strip headers and footers"
+spec-surgeon library list
+spec-surgeon library show "strip headers and footers"        # prints the run-spec command for a recipe
 
 # the architect's spec as the template spec: their header/footer with each spec's own number and title; their font
 spec-surgeon do "make the header and footer match the template spec" "C:\Projects\AVC11\Specs" --template "C:\Projects\AVC11\Architect\08 71 00 - Door Hardware.docx"
@@ -301,15 +323,19 @@ spec-surgeon run-spec C:\Temp\ss-do\preview\spec.json "C:\Projects\AVC11\Specs" 
 | `spec-surgeon plan-spec SPEC.json FILES… [--json] [--per-file]` | dry run of an EditSpec: every file is fingerprinted and planned (predict first), nothing is applied or written; prints per pattern a plan summary (members removed/added, text changes, revision deltas, assertions, mode, layout reference, flags) or the exception the real run would raise. Exit 0 when every file plans, 1 when some raise |
 | `spec-surgeon run-spec SPEC.json FILES… [--out DIR] [--in-place] [--workers N] [--renderer …] [--no-render]` | execute an EditSpec: plan every op on every file (predict first), merge with conflict detection, apply, verify (V1–V10), render, deliver. Refuses (exit 2) a spec with open `questions`, `unsupported`, unknown keys or ops, and (2026-10-14 audit fixes) a batch whose inputs lie inside `--out` (a run never writes where it reads; nothing is written); exit 0 only if every file passed |
 | `spec-surgeon verify SOURCE OUTPUT --plan plan.json` | re-run the suite on any source/output pair (e.g. after a manual fix) |
-| `spec-surgeon do "request" FILES… [--template T] [--answer A]… [--out DIR] [--yes] [--in-place] [--no-render] [--model M]` | natural language end to end: compile (Claude) → preview (`OUT/preview/`: `PREVIEW.md`, `spec.json`, sample outputs, before/after images) → approval (`[y/N]` prompt, `--yes`, or later with `run-spec --approval TOKEN`) → the verified batch in `OUT/run/`. Exit 2 when the compiler asks questions (re-run with `--answer`), says unsupported, or fails |
+| `spec-surgeon do "request" FILES… [--template T] [--answer A]… [--out DIR] [--yes] [--in-place] [--no-render] [--no-review] [--ack-review] [--save-as NAME [--replace]] [--model M]` | natural language end to end: compile (Claude) → preview (`OUT/preview/`: `PREVIEW.md`, `spec.json`, sample outputs, before/after images, `visual_review.json`) → approval (`[y/N]` prompt, `--yes`, or later with `run-spec --approval TOKEN`) → the verified batch in `OUT/run/`. **In a terminal** it is a conversation: Claude's questions and choices are printed (`[#n] label`, and `exact words: «…»` for a choice that would put words in your documents); type a reply, `#n` to pick a choice (a choice with words asks you to approve them), or an empty line to stop (exit 2). **Without a terminal** (a script, a pipe): exit 2 when Claude asks questions (re-run with `--answer`), says unsupported, or fails. `OUT/conversation.json` is the record of the conversation, `OUT/compile.json` its outcome |
+| `spec-surgeon do … --no-review` / `--ack-review` | skip Claude's visual check of the sample pages (`--no-render` skips it too) / run even though the visual check flagged a blocking problem (you have looked at it). With `--yes` and no terminal, a blocking finding without `--ack-review` is exit 2 and nothing runs |
+| `spec-surgeon do … --save-as NAME [--replace]` | save the previewed spec as a recipe (or the passing custom transform as one of your operations) in your library; a name already taken is refused before anything is compiled unless `--replace` |
 | `spec-surgeon run-spec … --approval TOKEN` | run only if the spec and every file are exactly as they were when the preview computed TOKEN |
-| `spec-surgeon do … --allow-codegen` | Tier B: when the compiler answers *unsupported*, generate a transform, prove it on samples, and (after approval) run it over the batch — outputs only, never in place |
+| `spec-surgeon do … --allow-codegen` | without a terminal: accept Claude's offer of a one-off custom transform when no operation fits — generate it, prove it on samples, preview it, and (after approval) run it over the batch — edited copies only, never in place. In a terminal you pick the offer from Claude's choices instead. Claude makes the offer only when the request is within what a custom transform may change (see ["Custom transforms"](#tier-b-generated-transforms-phase-5--custom-transforms)) |
+| `spec-surgeon retry OUT_DIR [--request R] [--template T] [--answer A]… [--out DIR] [--yes] [--no-render] [--no-review] [--ack-review] [--in-place] [--allow-codegen]` | the next pass over the files a batch set aside, with their failure reasons sent to Claude (same conversation and checks as `do`) |
+| `spec-surgeon library list\|show NAME\|delete NAME [--kind recipe\|operation] [--yes]` | your library (see ["Your library"](#your-library)): list it, show one item (a recipe's `run-spec` command), delete one (asks, or `--yes`). Exit 2 for a name that is not there |
 | `spec-surgeon gui` / `spec-surgeon-gui` | the window (see "The window"; needs the `gui` extra, which the Windows installer includes — without it the command says how to install it); `spec-surgeon-gui` opens without a console window on Windows |
 | `spec-surgeon advise OUT_DIR [--file NAME] [--model M]` | for every exception a batch wrote (`OUT_DIR/exceptions/`): Claude reads the diagnosis and the file and answers with a recommendation for a human or a re-compiled spec for that file's structure pattern → `OUT_DIR/advice/<name>.advice.md` (+ `.spec.json`). Nothing is applied |
-| `spec-surgeon ask "…"` | natural-language request → job + params JSON to confirm (needs API key) |
-| `spec-surgeon agent EXCEPTION.json` | written recommendation for one exception, grounded in the skill (needs API key) |
 
 `--params` takes inline JSON or `@path\to\file.json`. On PowerShell, inline JSON is easiest with single quotes outside and double quotes inside: `--params '{"option":"continuous"}'`.
+
+`spec-surgeon ask` and `spec-surgeon agent` (the v0.1.0 model commands) are retired: `do` turns a request into a verified run (and talks it through when it needs to), and `advise` writes a recommendation or a re-compiled spec for each exception of a batch.
 
 ---
 
@@ -505,19 +531,37 @@ A **template spec** is an ordinary spec from the architect (or any other firm) u
 
 A rejected spec goes back once with the errors (as an `is_error` tool result); a second rejection fails the compile. A refusal, a cut-off answer, or ending twice without submitting also fails it. Status, spec, questions, errors, tool calls and token usage are written to `OUT/compile.json`.
 
+Since the conversation work (see ["Talk it through with Claude"](#talk-it-through-with-claude)) the loop above lives in `conversation.Conversation`; `compile_request` is a thin wrapper that runs it in one-shot mode (`mode="compile"`: no `view_pages`, a silent end is nudged once and then fails), so the non-interactive `do` and its `--answer` flow behave as before. The checks are the same in both modes, with three changes: a rejection is counted per user turn (two in one turn end that turn as `failed`, and you can still reply); a refusal, a cut-off answer (`max_tokens`) or a server pause (`pause_turn`) fails the turn and leaves the conversation as it was; and the words a spec may place are the user's own words only — the request, `--answer` lines, every reply typed in the chat, the exact words of a choice the user picked, and `PROJECT.json` (never Claude's own text, labels or summaries). `OUT/compile.json` also records the models that served the calls and the token usage with an estimated cost.
+
 **Project memory** (decision on plan §14.4: yes): a `PROJECT.json` in the specs folder — e.g. `{"stamp": "ISSUED FOR CONSTRUCTION  2026-02-15", "author": "Abraham Borg", "template": "…", "notes": ["…"]}` — is given to the compiler and counts as the user's words for the traceability check (so a stamp stated there need not be re-typed).
 
 **The preview** (`preview.py`, `make_preview(spec, inputs, out_dir)`): the batch dry plan (per-pattern summaries and exceptions); sample files — one plannable file per structure pattern, topped up to `review.sample_files` (default 2, max 3) — planned, applied and verified **in memory** with outputs written only to `preview/samples/`; source and output rendered and composed into side-by-side PNGs (`preview/images/`, page 1 and the first page whose words changed); `PREVIEW.md`, `preview.json`, `spec.json`. Rendering uses Word when available, otherwise LibreOffice **with a visible warning** (decision on §14.5: fall back, never silently). The **approval token** is a hash of the spec, of every planned file's path, size and modification time, and — since the 2026-10-15 sweep — of every template file the spec reads (path, size, modification time and content hash: the template is an input like the source); `run-spec --approval TOKEN` and the window's Run refuse when anything changed since, a re-saved or replaced template spec included.
 
-### Tier B: generated transforms (Phase 5)
+### Tier B: generated transforms (Phase 5) — custom transforms
 
-Off unless `--allow-codegen` is given (decision on plan §14.3). `codegen.py`:
+**Since the conversation work, a custom transform is an offer, not a switch.** The window's *Allow AI-written transforms* checkbox is gone. When Claude submits an *unsupported* answer it also judges whether a one-off transform could do the request **within what the engine can verify** (`custom_transform: "possible" | "outside_limits"`, against `catalog.CUSTOM_TRANSFORM_LIMITS`, which the catalog publishes as `custom_transform_limits`). Only `"possible"` makes the app add the choice *Have Claude write a one-off custom transform for this* (code builds that choice — Claude cannot offer it as one of its own choices). `"outside_limits"` tells you the request needs a new built-in operation. On the command line, a terminal conversation shows the same choice; without a terminal `--allow-codegen` accepts the offer (decision on plan §14.3 kept: nothing generated runs unless you chose it).
 
-* **`generate_op(request, proposal, samples, out_dir)`** — Claude (same model and fallback as the compiler) gets the request, the compiler's reason/proposal, the samples' profiles, the rules, the whitelist and two reference ops (`set_page_setup.py`, `set_paragraph_props.py`), and answers with `submit_op(source, select, params)`. Each submission is checked and tried on every sample; the problems (whitelist violations, sandbox errors, hard-limit violations, failing checks with their summaries) go back as an error result; at most 3 attempts.
-* **`check_source`** — imports only `from M import names` for `M` in `ALLOWED_FROM` (the `Op`/`PlanFragment`/`BlockDiff`/`JobException` interface, `DocxPackage` + namespaces + `serialize_xml`/`parse_xml`, named `ooxml` helpers, named selector helpers, `lxml.etree`, a few `typing`/`dataclasses`/`collections` names) and plain `import` of `re`, `copy`, `math`, `itertools`, `functools`, `json`; no `open`/`exec`/`eval`/`compile`/`getattr`/`setattr`/`__import__`/`globals`/`type`/…; no dunder attributes except `__init__`; no file-reading/-writing attributes (`from_path`, `write_bytes`, `read_text`, `parse`, `write`, `output_bytes`, `repack`, …); exactly one `Op` subclass with `plan` and `apply`.
+What a custom transform may change (`CUSTOM_TRANSFORM_LIMITS`, every family mapped to the V10 assertion kind that checks it):
+
+| May change | Checked by |
+|---|---|
+| run fonts and font sizes of selected text | `run_fonts` |
+| fonts and sizes defined in styles | `style_fonts` |
+| the document default font and size | `doc_defaults_fonts` |
+| paragraph spacing, indents and alignment | `paragraph_props` |
+| page size, margins and orientation of sections | `section_props` |
+| which header/footer each section shows | `section_hf_refs` |
+
+It cannot change bold, italic, underline or caps; text colour, highlight, borders or shading; numbering and lists; tables; images; fields; comments; tracked changes; or any words. It is plain (untracked) formatting only, may change only the document's text parts (body, headers, footers, footnotes, endnotes, comments) and its styles part, and writes edited copies only.
+
+`codegen.py`:
+
+* **`generate_op(request, proposal, samples, out_dir, brief=None)`** — Claude (same model, effort and fallback as the conversation) gets the **brief** — the whole conversation: your request, every reply, what Claude understood, the choices you picked — plus the proposal, the samples' profiles, the rules (with the limits above), the whitelist and three reference ops (`set_page_setup.py`, `set_paragraph_props.py`, `set_font.py`; it is told to leave out their tracked-change branches). It can read the samples before it writes: `show_xml(file, part, start, count≤20)` (the paragraphs' XML, pretty-printed, ≤30,000 characters), `find_paragraphs(file, regex, part)`, `list_styles(file)`, `show_part_text(file, part)`. It answers with `submit_op(source, select, params)`. Each submission is checked and tried on every sample; the problems (whitelist violations, sandbox errors, hard-limit violations, failing checks with their summaries) go back as an error result. At most 3 attempts and 24 calls; only the first `submit_op` of a turn is tried, and every tool call gets its answer.
+* **`check_source`** — imports only `from M import names` for `M` in `ALLOWED_FROM` (the `Op`/`PlanFragment`/`BlockDiff`/`JobException` interface, `DocxPackage` + namespaces + `serialize_xml`/`parse_xml`, named `ooxml` helpers — since the conversation work also the font-size helpers `own_size`, `set_size`, `THEME_FONT_ATTR` —, named selector helpers — also `runs_by_paragraph`, `rpr_selected`, `check_run_selector`, `is_symbol_rpr`, `in_revision`, `mark_in_revision`, `has_direct_font`, `font_values`, `size_values`, `size_applies`, `FONT_PARAM_DOC` —, `lxml.etree`, a few `typing`/`dataclasses`/`collections` names) and plain `import` of `re`, `copy`, `math`, `itertools`, `functools`, `json`; the tracked-change helpers (`RevisionStamp`, `property_change`, `max_revision_id`, `file_uses_date_utc`, `default_author`) are deliberately not whitelisted (`EXCLUDED_FROM_EXAMPLES`; a test checks every reference op's imports are whitelisted or excluded on purpose); no `open`/`exec`/`eval`/`compile`/`getattr`/`setattr`/`__import__`/`globals`/`type`/…; no dunder attributes except `__init__`; no file-reading/-writing attributes (`from_path`, `write_bytes`, `read_text`, `parse`, `write`, `output_bytes`, `repack`, …); exactly one `Op` subclass with `plan` and `apply`.
 * **`run_in_sandbox`** — `python -I -m spec_surgeon.sandbox_runner` in a temp directory with a stripped environment and a 60 s timeout, on a **copy** of the file; the runner re-checks the source, executes it with reduced builtins and an import hook admitting only the whitelisted modules, runs `plan` then `apply`, and writes `out.docx` + `plan.json`. The parent process verifies — the generated code never sees the verifier.
-* **`hard_limits`** — no text change in surviving parts (generated ops are formatting-only in this prototype), no added members, no tracked insertions/deletions added or dropped, no `settings.xml`, no `geometry_reference: none` without a reason.
-* **`run_generated(g, inputs, out_dir)`** — sandbox + hard limits + full suite per file; verified outputs to `out_dir/outputs`, records to `out_dir/records`; never in place. The module and its attempt history are saved as `generated_ops/<hash>.py` / `.history.json`.
+* **`hard_limits(plan, allowed_parts)`** — no text change in surviving parts, no added members, **no revision of any kind** added or removed (every `rev_delta` kind must be zero: plain formatting only), no `settings.xml`, no part outside the source's text parts and its styles part (`allowed_parts_of`: a change in `numbering.xml`, `docProps` or a chart could carry something no verified assertion checks, so it is refused outright), no `geometry_reference: none` without a reason.
+* **The preview** — a passing transform keeps its trials (`GeneratedOp.trials`); `preview.preview_generated` shows them like a spec's preview: each sample with its verification result and before/after pages, and Claude's visual check of those pages. The window shows it on the Preview step; the CLI prints it and writes it under `OUT/codegen/preview/`.
+* **`run_generated(g, inputs, out_dir)`** — sandbox + hard limits + full suite per file; verified outputs to `out_dir/outputs` (unique names across the batch, `batch.output_names`), records to `out_dir/records`; an input inside `out_dir` is refused before anything is written; each output is re-hashed against the hash taken when it was verified before it is delivered; never in place. The module and its history (request, proposal, brief, attempts, model, token usage) are saved as `generated_ops/<hash>.py` / `.history.json`; **Save to library…** keeps a passing one under a name (see ["Your library"](#your-library)).
 
 This is a prototype sandbox: it keeps an honest model inside the engine's API; it is **not** a security boundary against hostile code. The real limits are the separate process, copy-only inputs, the timeout, outputs-only delivery and the verifier.
 
@@ -597,6 +641,82 @@ The three font ops set the font **size** (`w:sz`) as well as the font. Sizes go 
 (`examples/specs/match-template-spec-font.json`.) The compiler takes the font and size from the template spec's `body_text` (read_template) and `size_from` from the batch's: every profile now carries `fonts.body_text`, the body text's effective font and size by share of characters (`[{"font": "Century Gothic", "size_pt": 9.0, "share": 0.65}, …]`).
 
 **Verification.** `run_fonts`, `style_fonts` and `doc_defaults_fonts` re-derive, from the source, which runs, marks and styles get the font and which get the size (and how many), and check each one: `w:rFonts` exactly as asserted (or untouched where only the size applies), `w:sz` exactly the new value where the size applies, everything else in the run properties identical — a `w:szCs` changed along fails, and so does a size given to a run or style outside `size_from`. The `effective_font` post-condition gained `size` and `size_from` (and `value` became optional): V10 resolves every text run's and paragraph mark's effective size (docDefaults → table style → paragraph style chain → character style chain → direct; 10 pt when nothing sets one) in source and output; with `size_from`, text that resolved to a listed size must now resolve to `size` and all other text must keep its size; symbol runs (a preserved font in their chain, or a `w:sym`) are exempt. Leave out `set_font` and the runs that set their own 9 pt fail it; assert "everything 10 pt" without `size_from` and the 12 pt note fails it.
+
+### Talk it through with Claude
+
+![Claude asks with choices on the Describe step](docs/gui-chat.png)
+
+Decided with Abraham on 2026-10-15: **when no operation fits, don't give up on the user.** The request may have been worded loosely, or Claude may have misread it; a short back-and-forth fixes either. So the compile step is a conversation (`conversation.py`), in the window and in a terminal.
+
+**What Claude does in a turn.** It reads the batch the same way the compiler always did (the profiles, the op catalog, the read-only tools), then either submits a spec or asks. An ask is `ask_user` with:
+- `understanding` — what it took the request to mean, in one or two sentences;
+- `message` and `questions` — what is missing or ambiguous;
+- `choices` — what you can pick instead of typing, each with a `label`, a `kind` and optional `detail`:
+  - `clarify` — one reading of an ambiguous request;
+  - `alternative` — the closest built-in operation, with a label that says exactly how it differs from what you asked;
+  - `rephrase` — a clearer wording of the request;
+  - `wording` (any kind) — exact words the choice would put into your documents.
+
+When no built-in operation can do the request, Claude submits it as *unsupported* with what it would take, and judges whether a one-off custom transform could do it within what the engine can verify. Only then does the app add the choice *Have Claude write a one-off custom transform for this* (see ["Custom transforms"](#tier-b-generated-transforms-phase-5--custom-transforms)).
+
+**What you do.** Type a reply in your own words, or pick a choice (window: **Choose** / **Do this**; terminal: `#n`). Either way the conversation continues from where it was: Claude sees your reply as the answer to its questions. A choice that carries `wording` shows those exact words ("Choosing approves these exact words"; in a terminal you are asked to approve them) — **picking it is the only way words Claude suggested can reach your documents.** Nothing Claude writes itself (its messages, understanding, labels, summaries) ever counts as your words; the traceability check still requires every word an operation would place to be in the request, your replies, an `--answer`, the wording of a choice you picked, or `PROJECT.json`. Wording with control or formatting characters (anything Unicode classes as Cc/Cf except a tab) is dropped from a choice.
+
+**After a preview.** The chat stays open under the preview. The app tells Claude what the preview found (a note with the preview's summary: files that plan, exceptions, sample results, the visual check's findings), so a reply from the Preview page is a correction it can act on ("only the body sections", "keep the cover's footer"): Claude submits a revised spec, which is previewed again. A reply voids the previous preview and anything approved from it — Run needs a new preview of the new spec. If you replied after a custom transform was previewed and Claude answers with a spec, the spec replaces the transform.
+
+**Where it shows.**
+- **Window:** the chat card on *Describe the change* (the whole transcript) and a compact one under the preview (the last six messages). Each shows Claude's messages and what it understood, your replies, the app's notes, the current choices, the pages Claude looked at (thumbnails; click to zoom), and the running cost: "Claude, this request: N tokens · ≈ $X.XX". **Start over** forgets the conversation (its record stays in the results folder). If you edit the request text, the chat is disabled until you press Preview (a new conversation) or Start over; if the files or the template changed, a reply is refused ("press Start over").
+- **Terminal** (`spec-surgeon do` / `retry` with a terminal attached): the same turns printed — `Claude understood: …`, `Claude: …`, `? question`, `[#n] label` and `exact words: «…»` — and a prompt; an empty line stops (exit 2, nothing run). Without a terminal the one-shot behaviour stays: questions → exit 2 and `--answer`.
+
+**Looking at pages.** In the chat Claude has one more tool, `view_pages(file | "template", pages)`: up to three pages of a batch file or of the template, rendered (Word or LibreOffice) and sent as images, so it can see what you mean by "the line under the header" or "like the template". It is budgeted at about 60,000 image tokens per conversation (about a dozen letter pages); after that, or without a renderer, it is told to ask you instead.
+
+**The record.** `conversation.json` (the window: `<results folder>\<timestamp>-chat\`; the CLI: `OUT\conversation.json`) holds the transcript, the choices, the words that count as yours, the models that answered and the token usage. It is a record only; nothing ever replays it.
+
+**Rules the code holds (so a failure cannot corrupt the conversation).** The message history is append-only (Opus 5.5 keeps its earlier thinking, so nothing is rewritten). Every tool call Claude makes is answered in the very next message, before any text (`check_pairing` runs before every request). A failed call — an API error, a refusal, a cut-off answer — appends nothing; you can simply reply again. At most 12 calls per turn. The system prompt and the tools are fixed for the life of a conversation (so the cache keeps working).
+
+### Claude's visual check
+
+Decided with Abraham on 2026-10-15: Claude should look at the rendered pages — but **samples only, to keep the cost down**, and sample pages may be sent to Anthropic.
+
+With *Render pages* on (CLI: unless `--no-render` or `--no-review`), every preview ends with one call: the before and after renders of each sample file's look pages (page 1 and the first page whose words changed, at most two per sample), each image labelled `NAME — page N — BEFORE/AFTER`, plus the request, what the spec does, its assumptions and the conversation so far. Claude answers with `submit_review`: a summary and findings, each `info`, `warn` or `block` with the file and page. Findings that name a file or page it was not shown keep their text and lose the name. Renderer differences (font metrics, kerning, line breaks) are not defects.
+
+**Advisory — it can stop a run, never pass one.** The engine's checks (V1–V10) decide PASS and FAIL from the XML; the visual check is not one of them and is never written into a verification record. A `block` finding stops Run until you press **I've looked — allow Run** for this very preview (a new preview needs a new look); `Session.run` checks this first, for a spec and for a custom transform alike. On the command line a blocking finding asks you in a terminal; with `--yes` and no terminal it is exit 2 unless `--ack-review`. Everything else is shown and changes nothing.
+
+**Never in the way.** No renderer, no key, an API error, a refusal or an answer without a review: the preview stands with "skipped: <why>" in place of the review. Pages are rasterised to at most 2,000 px on the long edge (≈ 4,800 image tokens a page at most). Results: `preview\visual_review.json` and the end of `PREVIEW.md`.
+
+### Your library
+
+Decided with Abraham on 2026-10-15: each user needs **their own named solutions**, beyond the built-in operations. Kept on this computer for now (sharing comes later), in `%APPDATA%\Spec Surgeon\library\` (`settings.config_dir()`; `SPEC_SURGEON_CONFIG_DIR` moves it).
+
+- **A recipe** is a previewed spec saved under a name: `recipes\<name>.json` — an ordinary EditSpec, so it previews and runs like any spec (*Load saved spec…* or `run-spec` work on it too) — and `<name>.meta.json` (name, description, when, the request). Template paths are stored as absolute paths; a pin to this batch's structure patterns (`applies_to.pattern_ids`) is dropped with a note, so the recipe can run on another project's files (it is still planned file by file).
+- **One of your operations** is a custom transform that passed verification, saved under a name: `operations\<name>\op.py` and `manifest.json` (the request and the conversation it came from, its select/params, the model, its attempts, and the SHA-256 of `op.py`). **It is never trusted more than the day it was made:** using it first re-runs it on the current batch's sample files (sandbox + the full suite) and refuses it if it does not pass there; then it is previewed (with the visual check); Run writes edited copies only. An `op.py` that changed since it was saved (the hash does not match) or no longer passes the whitelist is refused.
+
+**Window:** **Save to library…** on the Preview step saves what was just previewed (a spec as a recipe, a custom transform as one of your operations — only while the preview is current); a name already taken asks before replacing. **Your library…** (button on *Describe the change*, File menu, Ctrl+L) lists both kinds; a recipe loads like a saved spec, an operation is tried on the batch and previewed. File → **Open library folder**.
+
+**Command line:** `do … --save-as NAME [--replace]`; `spec-surgeon library list`, `library show NAME` (a recipe's `run-spec` command), `library delete NAME [--yes]`.
+
+**Names** become file names safely: letters and digits (casefolded) and hyphens, at most 60 characters, Windows device names (`CON`, `LPT1`, …) refused; every lookup is an exact match against the listing, and every path is checked to be directly inside the library folder before anything is read or deleted. "Strip Headers" and "strip headers" are the same item.
+
+Not in this round: Claude browsing your library during the conversation, and `run-op` / `run-recipe` commands (a recipe runs with `run-spec`; an operation from the window).
+
+### How Spec Surgeon calls Claude
+
+Every call goes through one module, `llm.py` (the conversation, the visual check, the custom-transform writer, the advisor):
+
+| Setting | Value | Why |
+|---|---|---|
+| Model | `claude-opus-5-5` (`SPEC_SURGEON_MODEL`, `--model`) | the most capable model; effort is tuned after the first live runs |
+| Effort | `high` | thinking is always on in Opus 5.5; no `thinking` setting is sent |
+| Output cap | 64,000 tokens per call | room for thinking plus a spec or a transform module |
+| Streaming | always (`client.beta.messages.stream`) | the SDK refuses a non-streaming request with an output cap this large |
+| Refusal fallback | on (`fallbacks="default"`, beta `server-side-fallback-2026-07-01`) | a request the model's safety filters decline is re-run on another model in the same call; the model that answered is recorded |
+| Prompt cache | 5 minutes, automatic | the system prompt (rules + the whole op catalog) and the history are read from the cache on each turn |
+| `tool_choice` / prefill | never sent | both are refused by Opus 5.5; Claude is told to finish by calling its tool |
+
+**What it costs.** Every result records the tokens per model (input, output, cache read, cache write) and an estimate in US dollars from `llm.PRICES` (Opus 5.5: $4 / $20 per million input / output tokens, $0.20 cache read, $5 cache write). The window and the terminal show the running total of the conversation; `compile.json`, `conversation.json`, the visual check, a custom transform's history and the advice record theirs. An estimate, never a bill; a model that is not in the table is shown as "price unknown".
+
+**What Claude can see and do.** Read-only tools over the batch, always: `inspect_profile`, `list_styles`, `sample_paragraphs`, `show_part_text`, `read_template`; in the chat also `view_pages`. Its answers are `ask_user` and `submit_editspec`. The custom-transform writer reads the samples' XML (`show_xml`, `find_paragraphs`, `list_styles`, `show_part_text`) and answers with `submit_op`. The visual check answers with `submit_review`; the advisor with `submit_recommendation` or `submit_editspec`. Nothing Claude produces is applied without passing the engine's checks and your approval, and Claude never edits a file itself.
+
+**What Claude does not do, by design** (decided 2026-10-15, unchanged): accept or reject tracked changes, edit document properties (`docProps`), or switch track changes on or off. Those wait for verified built-in operations.
 
 ---
 
@@ -684,10 +804,11 @@ XSD results are cached per worker by content hash, so files from one template va
 
 The engine never guesses. When a job cannot proceed deterministically on a file it raises a `JobException` with a code and details, the batch continues, and the diagnosis lands in `exceptions/<name>.exception.json` (source, job, params, fingerprint, reason, offsets, live text). Codes today: `structure`, `not-found`, `ambiguous`, `shared-part`, `spans-runs`, `field-result`, `nested-container`, `bad-params`, `crash`, and since the 2026-10-14 audit fixes `unsupported-format` (a Strict Open XML document: in Word, Save As → Word Document (*.docx), then run again). Since Phase 1 also: `conflict` (two ops in a spec overlap), `inheritance`, `tracked-format`, `theme-font`, `conflict-property` (see the operations table), `spec-mode`, `expect`, `geometry`, `pattern` (an EditSpec that does not fit the file), `internal` (an op's apply-time cross-check disagreed with its plan — never delivered); since Phase 2 `unfilled-slot`, `unknown-slot`, `slot-overlap`, `slot-structure`, `slot-in-textbox`, `template-revisions`, `even-odd`, `title-page`, `missing-style`, `toggle-ambiguous` (see "Header/footer templating"); and, before any file is read, `questions`, `unsupported`, `spec` for an unusable EditSpec. EditSpec exception records carry the whole spec.
 
-Two optional model-backed commands (install the `agent` extra and set `ANTHROPIC_API_KEY`):
+Claude's help with exceptions (install the `agent` extra and set `ANTHROPIC_API_KEY`):
 
-* `spec-surgeon ask "change FM Global to the GRC wording in all 21-series specs"` → a job + params JSON with a confidence and any questions it must ask first. It never invents replacement wording; if you did not give the exact text, it asks.
-* `spec-surgeon agent exceptions\X.exception.json` → a written recommendation grounded in the bundled skill (contract, checklist, lessons): what the structure is, whether and how the edit can be done safely, the predicted diff list and revision delta, what to verify, and the one question a human must answer first. The agent does not edit files in this prototype.
+* `spec-surgeon advise OUT_DIR` (the window's **Advise on exceptions**) → for every exception the batch wrote, Claude reads the diagnosis and the file and answers with a written recommendation for a human, or a re-compiled spec pinned to that file's structure pattern (it must pass the compiler's submission checks and plan on that file), into `OUT_DIR/advice/`. It never applies anything. The words a re-compiled spec may place are the user's own (the original request, the answers, the words the original spec placed) — never Claude's summary or assumptions.
+* **Load set-aside files** / `spec-surgeon retry OUT_DIR` → the next pass over the set-aside and failed files, with their failure reasons sent to Claude (see ["Mixed-quality batches"](#mixed-quality-batches-messy-specs-and-the-iterative-set-aside-loop-v030)).
+* `spec-surgeon ask` (request → job + params) and `spec-surgeon agent` (a recommendation for one exception) were the v0.1.0 model commands. They are retired: `do` and `advise` do their work with the operation library, the submission checks and the preview, and their small fixed output caps no longer fit a model whose thinking is always on.
 
 Tier 3 — a request no module handles — is development: use the skill (`src/spec_surgeon/skill/`) interactively on the few files in question; the deliverable is a new module in `jobs/` plus tests, and the next time that request is Tier 1.
 
@@ -757,6 +878,17 @@ s.load_spec(Path("examples/specs/remove-all-headers-footers.json"))
 print(s.make_preview(render=False, log=print))                  # the preview text; s.preview holds the object
 print(s.run(in_place=False, render=False, log=print))           # s.last_batch holds the BatchResult
 
+# a typed request is a conversation (Phase 8): compile starts it, reply continues it
+print(s.compile("make the header/footer look like this template", log=print))   # s.turn: status, message, choices
+if s.turn.status != "ok":
+    print(s.reply("the stamp is ISSUED FOR CONSTRUCTION  2026-02-15", log=print))  # typed words count as yours
+    # or: s.reply(choice_id=s.turn.choices[0].id, log=print)  — picking a choice approves its exact wording
+print(s.make_preview(render=True, log=print))                   # with render: Claude's visual check in s.preview.review
+if s.run_blocked_reason():                                      # a blocking finding: look, then acknowledge it
+    s.acknowledge_review(s.preview.token)
+s.save_recipe("Template headers")                               # your library (only while the preview is current)
+s.load_recipe("template headers"); s.use_operation("Header distance", log=print)
+
 r = updater.check_for_update()                                    # CheckResult: "update" | "current" | "none"
 if r.status == "update":
     dl = updater.download_installer(r.info, settings.updates_dir())   # name, size and SHA-256 checked
@@ -785,6 +917,15 @@ from spec_surgeon.compiler import compile_request
 from spec_surgeon.preview import make_preview
 from spec_surgeon.advisor import advise_batch
 res = compile_request("remove all headers and footers", expand_inputs([r"C:\Projects\AVC11\Specs"]))  # status: ok | questions | unsupported | failed
+# the same loop, as a conversation you can reply to (what the window and a terminal `do` use)
+from spec_surgeon.conversation import Conversation
+conv = Conversation("remove all headers and footers", expand_inputs([r"C:\Projects\AVC11\Specs"]),
+                    work_dir=Path(r"C:\Temp\ss-chat"))
+turn = conv.start()                                   # Turn: status ok | questions | unsupported | failed, spec, choices
+while turn.status == "questions":
+    turn = conv.reply(input(turn.message + "\n> "))  # or conv.reply(choice_id=turn.choices[i].id)
+print(conv.usage.line()); conv.save(Path(r"C:\Temp\ss-chat\conversation.json"))
+from spec_surgeon import library                      # your library: list_items(), find(), save_recipe(), load_operation()
 pv = make_preview(res.spec, [r"C:\Projects\AVC11\Specs"], Path(r"C:\Temp\ss-pv"))   # pv.to_text(), pv.samples, pv.token
 advice = advise_batch(Path(r"C:\Temp\ss-run1"))                     # per exception: recommendation | respec
 
@@ -837,6 +978,7 @@ spec-surgeon/
 ├── docs/releases/                    release notes per version (v0.3.0, v0.3.1, v0.4.0 — the update banner shows them)
 ├── packaging/windows/                PyInstaller spec, Inno Setup script, launchers, the installed-app smoke test,
 │                                     make_icon.py + SpecSurgeon.ico; packaging/gui_screenshot.py makes docs/gui*.png
+│                                     (--chat: docs/gui-chat.png, from a scripted client)
 ├── examples/jobs/*.json              ready-made --params files
 ├── examples/specs/*.json             ready-made EditSpecs (change-all-font-arial, remove-all-headers-footers,
 │                                     apply-header-footer-template, apply-header-footer-template-fallback — the
@@ -853,7 +995,12 @@ spec-surgeon/
 │   ├── profile.py                    per-pattern document profiles (Phase 3); body text font/size; template_spec_summary
 │   ├── planner.py                    batch dry-run planning + plan summaries (Phase 3)
 │   ├── catalog.py                    op catalog + EditSpec JSON schema (Phase 3)
-│   ├── compiler.py                   request → EditSpec with Claude: tools, submission checks (Phase 4)
+│   ├── compiler.py                   request → EditSpec with Claude: tools, submission checks (Phase 4); compile_request
+│   │                                 is a one-shot wrapper over conversation.py since Phase 8
+│   ├── llm.py                        the one place Claude is called: streamed, 64k cap, effort, fallback, usage + cost
+│   ├── conversation.py               the back-and-forth with Claude: turns, choices, the user's words, pairing (Phase 8)
+│   ├── vision.py                     page renders for Claude: view_pages, Claude's visual check of the preview (Phase 8)
+│   ├── library.py                    your library: recipes and your own operations, safe names (Phase 8)
 │   ├── preview.py                    preview, sample apply/verify/render, approval token (Phase 4)
 │   ├── codegen.py                    Tier B: whitelist, sandbox, hard limits, generate/verify loop (Phase 5)
 │   ├── sandbox_runner.py             the isolated process that runs a generated op (Phase 5)
@@ -862,7 +1009,8 @@ spec-surgeon/
 │   ├── ui/                           the Qt window (v0.4.0): app.py (MainWindow, build_window, main), pages.py (the four
 │   │                                 steps), widgets.py, models.py, rows.py (tables + progress, no Qt), theme.py,
 │   │                                 worker.py (background jobs), update_ui.py (banner, checks, install hand-off),
-│   │                                 settings_dialog.py, resources/ (icon.svg, icon-256.png)
+│   │                                 settings_dialog.py, chat.py (the conversation card, Phase 8),
+│   │                                 resources/ (icon.svg, icon-256.png)
 │   ├── updater.py                    GitHub release check, verified download, detached installer launch (no Qt)
 │   ├── settings.py                   settings.json and the app's folders (%APPDATA% / %LOCALAPPDATA%)
 │   ├── winapp.py                     Windows helpers: the app mutex, AppUserModelID, message box
@@ -870,7 +1018,6 @@ spec-surgeon/
 │   ├── ooxml.py                      transform-side helpers (text views, run surgery, revision stamps, paragraph-local merge)
 │   ├── fingerprint.py                structure fingerprint + pattern id
 │   ├── guard.py                      acquisition identity, lock-file check, atomic guarded write-back
-│   ├── agent.py                      optional Claude layer: ask / advise
 │   ├── ops/                          base.py (Op, Plan, PlanFragment, merge_fragments, JobException), selectors.py,
 │   │                                 fix_page_numbering, replace_text, remove_header_footer, set_font, set_style_font,
 │   │                                 set_doc_defaults_font, set_paragraph_props, set_page_setup,
@@ -882,7 +1029,7 @@ spec-surgeon/
 │   │                                 template.py (V10 templating kinds)
 │   ├── render/                       word_com.py, libreoffice.py
 │   ├── schemas/                      vendored ECMA-376 / ISO 29500 transitional XSDs
-│   └── skill/                        the docx-surgical-edit skill (the method; used by the agent layer)
+│   └── skill/                        the docx-surgical-edit skill (the method; `spec_surgeon.SKILL_DIR`)
 └── tests/                            make_fixtures.py (synthetic specs, build_rich op fixture), test_engine.py,
                                       test_ops_base.py, test_package.py, test_verifier_ext.py, test_ops.py,
                                       test_editspec.py, test_template.py, test_independence.py, test_planner.py,
@@ -892,7 +1039,10 @@ spec-surgeon/
                                       test_credentials.py, qt_support.py, data/ (v0.4.0),
                                       test_reference_template.py, test_font_size.py, test_template_spec.py,
                                       test_sweep_fixes.py, test_audit2_fixes.py (the 2026-10-15 sweep and audit fixes)
-                                      (v0.4.0: template specs and font sizes)
+                                      (v0.4.0: template specs and font sizes),
+                                      conftest.py (hermetic: no key, no live call, a temp config folder),
+                                      fake_claude.py (the scripted streaming client), test_llm.py,
+                                      test_conversation.py, test_vision.py, test_library.py (Phase 8)
 ```
 
 ---
@@ -1004,6 +1154,20 @@ v0.4.0 — template specs and font sizes (316 tests: 315 pass and the Credential
 
 2026-10-15 — `tests/test_sweep_fixes.py` (9 tests: the hands-on sweep's fixes) and `tests/test_audit2_fixes.py` (19 tests: the external audit's findings, each with its planted case and, where a wrong document used to PASS, the planted output V10 now rejects) — 343 tests in total, 342 pass and the Credential Manager test skips off Windows (~3 min in the container).
 
+Phase 8 — the conversation, Claude's visual check, custom transforms as an offer, your library (410 tests: 409 pass and the Credential Manager test skips off Windows). **No test calls Claude:** `tests/conftest.py` gives every test a temporary config folder (so your library and settings are never touched), removes any API key from the environment, makes `llm.client()` raise and treats the terminal as non-interactive; `tests/fake_claude.py` is the scripted client — streaming only (its `messages.create` raises, so a non-streaming call site fails the tests), recording every request exactly as it was sent:
+
+| File | Covers |
+|---|---|
+| `test_llm.py` | the settings every call is sent with (streamed, `max_tokens` 64,000, effort, refusal fallback, cache, no `thinking`, no `tool_choice`); what is kept of a response after a fallback (the declined attempt's tool calls are neither echoed nor acted on); the served model, fallback detection and usage/cost per serving model; refusal / cut-off / pause messages; and, with the real `anthropic` SDK over an offline mock transport, the request body and beta header it actually sends and that its parsed message works with `llm` |
+| `test_conversation.py` | a choice approving its exact wording; Claude's own suggested words refused until the user picks them; a reply after a preview carrying the app's note; the custom-transform choice only when Claude judged it possible (never as Claude's own choice); every failure path — API error at the start and mid-stream, refusal, `max_tokens`, `pause_turn` — appending nothing, and the next reply still pairing every tool call; tool exceptions as error results; the second rejection of a turn; the call cap; plain text as a message (chat) vs a nudge then failure (compile); invisible characters in wording; the pairing check itself; the custom-transform limits mapped to V10 kinds that exist; the record never holding the API history; the client resolved at the first call |
+| `test_vision.py` | pages rasterised small enough for many-image requests (an 11×17 page); labelled BEFORE/AFTER images and validated findings; every way the check is skipped instead of raised; no images → no call; a blocking finding stopping Run until acknowledged for this very preview (a stale token refused, a new preview not inheriting it), for a spec and for a custom transform; `view_pages` as an image tool result with its budget, and absent from the one-shot compile; with LibreOffice, a real render whose before and after pages differ |
+| `test_library.py` | names that can never leave the library (`..\..\windows`, `C:/temp/x`, `CON`, `lpt1`, blank, non-ASCII); a recipe round trip that loads, previews and runs, with pattern pins dropped and case-insensitive collisions refused; template paths stored absolute; an operation re-proven on each batch and refused when `op.py` changed; a saved operation that fails on this batch refused; only current previews saved; the CLI (`--save-as`, collisions refused before compiling, `library list/show/delete`); the window's Save to library… and Your library… buttons |
+| `test_codegen.py` | + a generated op that edits `numbering.xml` refused (text parts and styles only), every name the reference ops import whitelisted or deliberately excluded, the writer reading the XML first with every tool call answered, a turn without a submission not counted as an attempt, `run_generated` keeping the batch rules (inputs outside the results folder, unique output names, the hash re-checked) and the custom transform's preview |
+| `test_gui.py` | + `Session.reply`: a reply replacing a custom transform with a spec and voiding old previews, refused when the files changed; the real Qt window offscreen: the chat (a choice, a reply from the Preview page, Start over), replies blocked while the request text differs, Run blocked on Claude's findings until *I've looked — allow Run*, and the custom transform offered in the chat run to the end (edited copies only) |
+| `test_advisor.py` | + a re-compiled spec may not place words that were only Claude's own in the original spec; the advisor's tools are an explicit list |
+| `test_independence.py` | + `verify/` imports none of `llm`, `conversation`, `vision`, `library`, `compiler`, `codegen`, `advisor`, `preview`, `gui` |
+| `test_compiler.py`, `test_template_spec.py`, `test_adaptive_messy.py`, `test_settings.py` | moved to the streaming fake; usage now includes cache writes; the non-interactive CLI paths; the settings never hold the visual-check acknowledgement |
+
 ---
 
 ## Known limits of the prototype
@@ -1016,8 +1180,17 @@ v0.4.0 — template specs and font sizes (316 tests: 315 pass and the Credential
 * V8's accept/reject simulation is per block and does not merge paragraphs across tracked paragraph marks (no current job creates those).
 * The Word renderer/oracle is written to the skill's rules but has not yet been exercised on a real job (the container this was built in has no Word). The LibreOffice path is exercised by the tests.
 * The pandoc oracle is used by the tests when pandoc is present, not by the engine.
-* The agent commands produce text for a human; they do not edit files.
+* The advisor produces text (and re-compiled specs) for a human; it does not edit files. (The v0.1.0 `ask` / `agent` commands are retired.)
 * The desktop GUI and a standalone Windows x64 installer are included; other platforms use pip.
+
+Phase 8 (the conversation, the visual check, your library) limits:
+
+* **No live call has been made.** The development container has no API key: the conversation, the visual check, the transform writer and the advisor are tested with a scripted client, and the request body the real SDK sends is checked offline. Your first typed request is the live test; expect prompt and effort tuning after it.
+* The visual check sees only the samples' look pages (page 1 and the first page whose words changed), by design: a problem on page 14 of one file is the engine's checks' job (with rendering on, V7 compares word positions on every page the plan did not expect to change). It is advisory and can be wrong both ways.
+* `view_pages` needs a renderer; without Word or LibreOffice Claude is told to ask you instead. The page budget is an estimate from the image size.
+* A custom transform can change only the six property families in its limits; bold, colours, numbering, tables, images, fields and any words wait for verified built-in operations (the next round, with a generic `set_properties`).
+* Your library is local to one computer and one Windows user. Recipes reference template files by absolute path: moving the template breaks the recipe until it is saved again. Claude does not look in your library during a conversation (yet).
+* The cost shown is an estimate from a built-in price table; a model not in the table shows "price unknown".
 
 Phase 1 (operation library) limits:
 
@@ -1056,7 +1229,7 @@ Phase 5 limits:
 
 * Generated ops are formatting-only and can only make changes some V10 assertion kind covers (an unasserted change fails V10 by design); text-changing generated transforms are not allowed in this prototype.
 * The sandbox is not a security boundary (see above); no CPU/memory limit beyond the timeout (Windows has no `resource` module).
-* Generated ops are not registered and not usable inside EditSpecs; they run alone via `do --allow-codegen`.
+* Generated ops are not registered and not usable inside EditSpecs; they run alone — offered in the conversation (window or terminal), or `do --allow-codegen` without a terminal — or from your library as one of your operations.
 * The live Claude path is **[unproven]** here, as for the compiler.
 
 Phase 4 limits:
@@ -1088,11 +1261,12 @@ Phase 2 (templating) limits:
 
 The design and implementation plan for driving this engine from plain-English requests ("remove all headers/footers", "change all font to Arial", "make the header/footer look like this template") at batch scale is in `docs/NL_SURGICAL_EDITOR_PLAN.md`: the model compiles a request into an EditSpec over a library of verified operations once per batch; the engine plans, applies and verifies it per file. Roughly 85% of v0.1.0 carries over; the plan lists what is new, phase by phase.
 
-Progress: **Phase 1 (operation library foundation) is done** — see "Operations and EditSpecs" above and the "Phase 1 status" section of the plan, which lists every place the implementation departs from the plan and why. **Phase 2 (the `apply_header_footer_template` op and V7's template reference) is done** — "Header/footer templating" above, "Phase 2 status" in the plan. **Phase 3 (profiler, dry-run planner, op catalog + EditSpec schema, `profile`/`plan-spec` CLI) is done** — "Profiles, dry runs and the op catalog" above, "Phase 3 status" in the plan. **Phase 4 (compiler, preview, `do`) is done** — "Natural-language editing" above, "Phase 4 status" in the plan. **Phase 5 (Tier B) is done, off by default** — "Tier B: generated transforms" above, "Phase 5 status" in the plan. **Phase 6 (the advisor) is done**; its real-file sweeps and the Word path need your machine — "Phase 6 status" in the plan. **Phase 7, first cut: the window** (`spec-surgeon-gui`) — "The window" above. **Phase 7, second cut (v0.4.0): the Qt window, remembered settings, and in-app updates** — "The window" and "Updates" above.
+Progress: **Phase 1 (operation library foundation) is done** — see "Operations and EditSpecs" above and the "Phase 1 status" section of the plan, which lists every place the implementation departs from the plan and why. **Phase 2 (the `apply_header_footer_template` op and V7's template reference) is done** — "Header/footer templating" above, "Phase 2 status" in the plan. **Phase 3 (profiler, dry-run planner, op catalog + EditSpec schema, `profile`/`plan-spec` CLI) is done** — "Profiles, dry runs and the op catalog" above, "Phase 3 status" in the plan. **Phase 4 (compiler, preview, `do`) is done** — "Natural-language editing" above, "Phase 4 status" in the plan. **Phase 5 (Tier B) is done, off by default** — "Tier B: generated transforms" above, "Phase 5 status" in the plan. **Phase 6 (the advisor) is done**; its real-file sweeps and the Word path need your machine — "Phase 6 status" in the plan. **Phase 7, first cut: the window** (`spec-surgeon-gui`) — "The window" above. **Phase 7, second cut (v0.4.0): the Qt window, remembered settings, and in-app updates** — "The window" and "Updates" above. **Phase 8 (the conversation, Claude's visual check, custom transforms as an offer, your library, streamed calls; `ask`/`agent` retired)** — "Talk it through with Claude", "Claude's visual check", "Your library" and "How Spec Surgeon calls Claude" above, "Phase 8 status" in the plan (the decisions taken and what was left for later: more built-in operations, a generic `set_properties`, Claude browsing your library, sharing it).
+
 
 ## Relationship to the docx-surgical-edit skill
 
-The skill is the method; Spec Surgeon is the engine that runs the method's Tier 1 without a model. The skill's verification checklist is the engine's test suite (V1–V9 map one-to-one), its lessons are the engine's known pitfalls (most are cited in code comments where they apply), its playbooks are the backlog of job modules, and the skill itself ships inside the package so the agent layer and future development sessions work from the same text. The skill's rule "scripts are disposable" applies to one-off sessions; within this engine the transform is reused across every file of a batch by design — what is locked in is the verification suite, not any particular implementation, and a future model can rewrite a module against the same tests.
+The skill is the method; Spec Surgeon is the engine that runs the method's Tier 1 without a model. The skill's verification checklist is the engine's test suite (V1–V9 map one-to-one), its lessons are the engine's known pitfalls (most are cited in code comments where they apply), its playbooks are the backlog of job modules, and the skill itself ships inside the package (`spec_surgeon.SKILL_DIR`) so future development sessions work from the same text. The skill's rule "scripts are disposable" applies to one-off sessions; within this engine the transform is reused across every file of a batch by design — what is locked in is the verification suite, not any particular implementation, and a future model can rewrite a module against the same tests.
 
 
 ---

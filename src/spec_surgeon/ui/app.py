@@ -904,6 +904,14 @@ class MainWindow(QMainWindow):
         self.go(1)
         return True
 
+    @Slot()
+    def _show_chat_reply(self) -> None:
+        """Scroll the Describe step so Claude's latest message, its choices and the reply box are in view."""
+        r = self.request_page
+        if r.chat.isVisible():
+            r.scroll.ensureWidgetVisible(r.chat.send_btn, 0, 24)     # the chat's bottom edge: choices and reply above it
+            r.chat.reply.setFocus()
+
     def _after_preview(self, text: str, wkey: tuple) -> None:
         s, r = self.session, self.request_page
         self.write(text or "")
@@ -915,6 +923,7 @@ class MainWindow(QMainWindow):
             r.info.show_message("warn" if turn.status in ("failed", "unsupported") else "info", title,
                                 "See the conversation below: reply in the chat, or pick one of Claude's choices.")
             self.go(1)
+            QTimer.singleShot(0, self._show_chat_reply)     # after the new bubbles are laid out
             return
         if s.preview is None and s.generated is None:
             r.info.show_message("warn", "Nothing to preview", (text or "").strip())

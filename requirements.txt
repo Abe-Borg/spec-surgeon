@@ -8,8 +8,8 @@ PySide6-Essentials>=6.8,<7
 # Windows only: Word as renderer and accept/reject oracle (recommended)
 pywin32>=306; sys_platform == "win32"
 
-# Optional: Tier 2/3 agent and natural-language job entry (needs ANTHROPIC_API_KEY)
-anthropic>=1.13       # optional: compiler (spec-surgeon do), advisor, Tier B codegen
+# Optional: the Claude layer — typed requests, visual check, custom transforms, advice (needs ANTHROPIC_API_KEY)
+anthropic>=1.13       # optional: the conversation (spec-surgeon do, the window), visual check, custom transforms, advisor
 
 # Development / tests
 pytest>=8

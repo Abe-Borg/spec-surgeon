@@ -230,10 +230,15 @@ def test_the_window_chat_choice_reply_preview_and_start_over(qt, folder, tmp_pat
     ui["vars"]["folder"].set(str(folder))
     ui["vars"]["render"].set(False)
     ui["request"].set("remove the headers")
+    w.resize(1100, 640)                                       # short enough that the chat starts below the fold
+    w.show()
     ui["buttons"]["preview"].click()
     ui["wait"]()
+    qt[0].processEvents()
     choices = ui["choices"]()
     assert len(choices) == 2
+    chat = w.request_page.chat                                # scrolled to Claude's choices, the reply box and Send
+    assert not chat.reply.visibleRegion().isEmpty() and not chat.send_btn.visibleRegion().isEmpty()
     labels = [lab.text() for lab in ui["chat"].findChildren(type(w.request_page.info.text))]
     assert any("Exact words: «ISSUED FOR PERMIT»" in t and "approves these exact words" in t for t in labels)
     choices[0][1].click()                                     # "Every section"

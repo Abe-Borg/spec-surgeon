@@ -84,11 +84,11 @@ class ChatView(Card):
             self.thread.addWidget(_plain(f"… {len(entries) - len(shown)} earlier message(s) — see the Describe step",
                                          "Muted", selectable=False))
         for e in shown:
-            self.thread.addWidget(self._bubble(e))
+            self._add_now(self.thread, self._bubble(e))
         self._clear(self.choices)
         self._choice_buttons = []
         for c in choices:
-            self.choices.addWidget(self._choice_row(c))
+            self._add_now(self.choices, self._choice_row(c))
         self.cost.setText(f"Claude, this request: {cost}" if cost else "")
         self.reply.setPlaceholderText("Reply to Claude in your own words — Ctrl+Enter sends" if waiting else
                                       "Want something different? Tell Claude here — Ctrl+Enter sends")
@@ -115,6 +115,13 @@ class ChatView(Card):
         for w in [self.send_btn, self.reply, *self._choice_buttons]:
             w.setEnabled(on)
         self.start_over_btn.setEnabled(not self._busy)
+
+    @staticmethod
+    def _add_now(layout, w: QWidget) -> None:
+        """Add and show at once (a layout would show it later, from the event loop), so the window can lay the page
+        out and scroll to the reply box right after a turn."""
+        layout.addWidget(w)
+        w.show()
 
     @staticmethod
     def _clear(layout) -> None:

@@ -174,7 +174,7 @@ def save_operation(name: str, g: Any, description: str = "", replace: bool = Fal
 
 def load_recipe(name: str) -> Path:
     """The recipe's spec file (load it with ``Session.load_spec`` / ``run-spec``)."""
-    return find(name, "recipe").path
+    return _inside(find(name, "recipe").path, "recipe")
 
 
 def load_operation(name: str):

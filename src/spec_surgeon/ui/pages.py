@@ -40,6 +40,7 @@ class Page(QWidget):
         hl.addWidget(self.info)
         outer.addWidget(head)
         scroll = QScrollArea()
+        self.scroll = scroll
         scroll.setObjectName("PageScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
