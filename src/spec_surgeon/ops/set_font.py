@@ -156,6 +156,7 @@ class SetFont(Op):
                 frag.intended_parts.append(part)
                 frag.touches += [(part, str(bi), "rPr") for bi in sorted({b for b, _ in t_runs})]
                 frag.touches += [(part, str(bi), "markRPr") for bi in t_marks]
+            frag.touches.append((part, "scope", "verify"))      # V10 re-resolves the selection over this part
             n_runs += len(t_runs)
             n_marks += len(t_marks)
         if theme_blocked:

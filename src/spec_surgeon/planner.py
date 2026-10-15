@@ -48,13 +48,20 @@ def summarize_plan(plan: Plan) -> List[str]:
         lines.append(f"members removed: {_names(plan.members_removed)}")
     if plan.members_added:
         lines.append(f"members added: {_names(plan.members_added)}")
+    # a pure tracked deletion leaves the block text as it is (the words stay as w:delText): it shows up only as an
+    # accepted view, and the summary must say so rather than "no block changes text"
+    deletions = {(a["part"], a["block_index"]) for a in plan.accepted_views} - {(d.part, d.block_index) for d in plan.diffs}
     if plan.diffs:
         by_part = Counter(d.part.rsplit("/", 1)[-1] for d in kept_diffs)
         lines.append(f"text: {len(kept_diffs)} block(s) change in kept parts"
                      + (f" ({', '.join(f'{p} {n}' for p, n in by_part.most_common(4))})" if by_part else "")
                      + (f"; {len(plan.diffs) - len(kept_diffs)} block(s) go/come with removed/added parts"
                         if len(plan.diffs) != len(kept_diffs) else ""))
-    else:
+    if deletions:
+        by_part = Counter(part.rsplit("/", 1)[-1] for part, _ in deletions)
+        lines.append(f"text: {len(deletions)} block(s) get a tracked deletion (the deleted words stay visible as "
+                     f"a redline until accepted) ({', '.join(f'{p} {n}' for p, n in by_part.most_common(4))})")
+    if not plan.diffs and not deletions:
         lines.append("text: no block changes text")
     rev = {k: v for k, v in plan.rev_delta.items() if v}
     if rev:

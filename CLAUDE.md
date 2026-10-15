@@ -47,7 +47,10 @@ changing any job or check. The user (Abraham) is a fire sprinkler designer; thes
    EditSpec are post-conditions only (`effective_font`) — a spec must never be able to exempt anything from V10.
 9. **Overlapping ops are refused, never ordered by guess.** `merge_fragments` raises `conflict` when two ops
    touch the same block's text, the same property family of the same target, or anything in a member another
-   op removes/restructures. Ops declare what they touch in `touches`; keep that list honest.
+   op removes/restructures. Ops declare what they touch in `touches`; keep that list honest — including a
+   `(part, "scope", "verify")` touch for every part an op's V10 assertion re-resolves its selection over
+   (`set_font`, `set_paragraph_props`: every part in scope, changed or not), so an op that removes that part is a
+   plan-time conflict rather than a V10 failure after apply. Two `verify` touches of one member never conflict.
 10. **Never create a part to make an edit work.** E.g. `remove_header_footer` refuses (`inheritance`) rather
     than add an empty header part. Adding members is allowed only when the op's whole purpose is the added
     member and it is predicted in `members_added` — today only `apply_header_footer_template`, whose new parts
@@ -60,7 +63,10 @@ changing any job or check. The user (Abraham) is a fire sprinkler designer; thes
     `in_template` text — V10 re-derives it the same way. Never convert a value (case, spacing, "087100" → "08 71
     00"): a value the template shows in another form is refused (`template-value-left`), not normalised.
 12. **The template file is an input like the source.** Pinned by md5 in the plan; apply refuses a changed
-    template, V10 fails on one. A batch skips input files that are a spec's template (same path or bytes).
+    template, V10 fails on one; the preview's approval token (`preview.approval_token`) hashes every template
+    the spec reads (path, size, mtime, content) beside the batch files, so a template edited after the preview
+    refuses to run until it is previewed again. A batch skips input files that are a spec's template (same path
+    or bytes).
 
 ## Block-text definition (must stay identical on both sides)
 
@@ -240,7 +246,9 @@ proposals and recorded in the plan's status sections.
   fails afterwards (drift during the run, a refused in-place write-back) is moved the same way; V9 records where it went
   and `delivered_to` stays empty.
 - `render/` — `word_com.py` (DispatchEx only; copies only; Quit the instance you made), `libreoffice.py`.
-- `guard.py` — identity, drift, lock file, atomic write.
+- `guard.py` — identity, drift, lock file, read-only refusal (`is_read_only`: the file's mode, never `os.access`, so
+  root/administrator see the same answer), atomic write; every reason a write-back cannot happen is a `GuardError`
+  (a refused `os.replace` included), which `batch.py` records as that file's V9 failure — never a crashed batch.
 - `tests/make_fixtures.py` — synthetic specs with the hard cases; `build_rich()` is the op fixture (first/even
   headers, shared footer part, inheriting section, header-only and shared media, theme/explicit/symbol fonts,
   runs inside revisions, an earlier rPrChange). `build_template()` is the template fixture (both slot
@@ -290,8 +298,8 @@ proposals and recorded in the plan's status sections.
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes —
-315 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes —
+323 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
 
@@ -373,6 +381,16 @@ update this file.
 - Packaging: `app.spec` filters Qt to what a widgets app loads (no software OpenGL, Quick/QML, PDF, TLS,
   translations); the installed smoke test (`installed_smoke.py`, `gui` and `update` modes) is the gate that nothing
   needed was dropped. Release notes in `docs/releases/v<version>.md` are what the update banner's What's new shows.
+
+## 2026-10-15 hands-on sweep fixes
+
+`docs/audits/2026-10-15_v0.4.0_hands_on_sweep.md` is the sweep (Abraham's expectation list run through the engine,
+plus a read of every module); `tests/test_sweep_fixes.py` pins every fix. The approval token covers the templates
+(rule 12); font/paragraph ops carry `verify` touches (rule 9); `apply_header_footer_template` judges `unknown-slot`
+against every template section the spec maps (a single-section spec in a cover+body batch plans); the guard refuses
+read-only files and turns a refused replace into a V9 failure; `planner.summarize_plan` names pure tracked deletions.
+Design notes recorded there and left as they are: a `replace_text` hit inside a field refuses the file (not just the
+occurrence); a targeted paragraph selector makes `set_paragraph_props` tracked by default (§14.1).
 
 ## v0.4.0 additions: template specs and font sizes
 

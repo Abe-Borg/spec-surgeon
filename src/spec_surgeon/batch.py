@@ -413,9 +413,11 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                 fr.record.set(CheckResult("V9", "Overwrite guard", "PASS",
                                           f"source re-checked (size {fr.identity.size}, mtime unchanged); no Word lock file; "
                                           f"atomic replace; new md5 {new_id.md5}"))
-            except guard.GuardError as e:
+            except (guard.GuardError, OSError) as e:
                 # V9 failed after V1–V8/V10 passed: the output is still a copy that was never delivered — out of
-                # outputs/ it goes, like any other failed check, so the folder keeps its guarantee
+                # outputs/ it goes, like any other failed check, so the folder keeps its guarantee. (An OSError
+                # here is one the guard did not translate — reading the output copy, say; it is this file's
+                # failure, never the batch's.)
                 moved = quarantine_failed_output(fr, out_dir)
                 fr.record.set(CheckResult("V9", "Overwrite guard", "FAIL",
                                           f"{e} — not delivered; the output was moved out of outputs/ to "

@@ -30,10 +30,21 @@ from .planner import BatchPlan, plan_batch
 
 
 def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
+    """A hash of the spec, of every planned file's path, size and mtime, and of every template file the spec reads
+    (path, size, mtime and content hash): the template is an input like the source (CLAUDE.md rule 12), so a
+    template edited after the preview voids the approval exactly as an edited spec file does."""
+    from .editspec import spec_templates
     h = hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8"))
     for f in sorted(Path(x).resolve() for x in files):
         st = f.stat()
         h.update(f"\n{f}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8"))
+    for t in sorted(set(spec_templates(spec) if isinstance(spec, dict) else [])):
+        try:
+            st = t.stat()
+            digest = hashlib.md5(t.read_bytes()).hexdigest()
+            h.update(f"\ntemplate {t}|{st.st_size}|{st.st_mtime_ns}|{digest}".encode("utf-8"))
+        except OSError:
+            h.update(f"\ntemplate {t}|missing".encode("utf-8"))
     return h.hexdigest()[:16]
 
 
