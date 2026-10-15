@@ -11,10 +11,12 @@ installed-app smoke test drive it through ``window._spec_surgeon`` (buttons, val
 """
 from __future__ import annotations
 
+import logging
 import os
 import sys
 import time
 import traceback
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
@@ -25,6 +27,7 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, Q
                                QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import __version__, credentials, updater, winapp
+from .. import diagnostics as diag
 from ..gui import Session, open_folder
 from ..settings import Settings, load_settings, logs_dir, save_settings
 from . import theme
@@ -70,6 +73,9 @@ class Prompts:
     def pick_file(self, title: str, start: str, filter_: str) -> str:
         return QFileDialog.getOpenFileName(self.parent, title, start or str(Path.home()), filter_)[0]
 
+    def save_file(self, title: str, start: str, filter_: str) -> str:
+        return QFileDialog.getSaveFileName(self.parent, title, start or str(Path.home()), filter_)[0]
+
 
 class RecordingPrompts:
     """Answers questions from a list (default yes) and records everything it was shown."""
@@ -93,6 +99,9 @@ class RecordingPrompts:
         return self.files.pop(0) if self.files else ""
 
     def pick_file(self, title, start, filter_):
+        return self.files.pop(0) if self.files else ""
+
+    def save_file(self, title, start, filter_):
         return self.files.pop(0) if self.files else ""
 
 
@@ -311,8 +320,15 @@ class MainWindow(QMainWindow):
         self.act_whatsnew = QAction("What's new in this version", self)
         self.act_guide = QAction("User guide (online)", self)
         self.act_issue = QAction("Report a problem (online)", self)
+        self.act_logs = QAction("Open logs folder", self)
+        self.act_bundle = QAction("Save diagnostics bundle…", self)
+        self.act_bundle.setToolTip("A zip of the last run's reports, logs, traces and records and the app's own logs "
+                                   "— never the documents — for whoever diagnoses a problem")
         self.act_about = QAction("About Spec Surgeon", self)
         for a in (self.act_check, self.act_whatsnew, self.act_guide, self.act_issue):
+            m.addAction(a)
+        m.addSeparator()
+        for a in (self.act_logs, self.act_bundle):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.act_about)
@@ -355,6 +371,7 @@ class MainWindow(QMainWindow):
         run.run_btn.clicked.connect(self.do_run)
         run.open_btn.clicked.connect(self.do_open)
         run.report_btn.clicked.connect(self.do_report)
+        run.diag_btn.clicked.connect(self.do_diagnostics)
         run.failed_btn.clicked.connect(self._open_failed)
         run.set_aside_btn.clicked.connect(self.do_set_aside)
         run.advise_btn.clicked.connect(self.do_advise)
@@ -372,6 +389,8 @@ class MainWindow(QMainWindow):
         self.act_guide.triggered.connect(self._open_guide)
         self.act_issue.triggered.connect(self._open_issues)
         self.act_about.triggered.connect(self.show_about)
+        self.act_logs.triggered.connect(self.open_logs)
+        self.act_bundle.triggered.connect(self.save_bundle)
         self.log_toggle.toggled.connect(self.set_log_open)
         self.log_copy.clicked.connect(self._copy_log)
         self.log_save.clicked.connect(self._save_log)
@@ -629,6 +648,7 @@ class MainWindow(QMainWindow):
         self.log.appendPlainText(text)
         sb = self.log.verticalScrollBar()
         sb.setValue(sb.maximum())
+        diag.app_log().info(text)          # the app log keeps every activity line (Help → Open logs folder)
 
     def set_status(self, text: str) -> None:
         self.status_lbl.setText(text)
@@ -721,15 +741,17 @@ class MainWindow(QMainWindow):
     @Slot(str, str)
     def _job_failed(self, message: str, tb: str) -> None:
         self._on_done = None
-        self.write("ERROR: " + message)
-        _append_error_log(tb)
+        self.log.appendPlainText("ERROR: " + message + "\n" + "\n".join("    " + line for line in tb.rstrip().splitlines()))
+        self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
+        _append_error_log(f"{message}\n{tb}")
         self.run_page.progress_box.hide()
         self.set_busy(False)
         self.set_status(ERROR)
         page = getattr(self, "_job_page", None) or self.stack.currentWidget()
         if page is not self.stack.currentWidget():
             self.go(self.stack.indexOf(page))
-        page.info.show_message("error", "That didn't work", message, [("Show log", self._open_log)])
+        page.info.show_message("error", "That didn't work", message, [("Show log", self._open_log),
+                                                                      ("Save diagnostics…", self.save_bundle)])
 
     @Slot()
     def _open_log(self) -> None:
@@ -910,6 +932,7 @@ class MainWindow(QMainWindow):
                                  "Done" if not problems else "Done, with files set aside", msg)
         run.failed_btn.setVisible(bool(where and (where / "failed").is_dir()))
         run.report_btn.setEnabled(bool(where and (where / "BATCH_REPORT.md").exists()))
+        run.diag_btn.setEnabled(bool(where and (where / "DIAGNOSTICS.md").exists()))
         run.set_aside_btn.setEnabled(bool(problems))
         run.advise_btn.setEnabled(bool(problems))
         run.results.show()
@@ -986,6 +1009,55 @@ class MainWindow(QMainWindow):
         dlg.show()
 
     @Slot()
+    def do_diagnostics(self) -> bool:
+        """DIAGNOSTICS.md of the last run: why each file did not pass, where, how, what to do."""
+        d = self.session.last_run_dir
+        path = d / "DIAGNOSTICS.md" if d else None
+        if not path or not path.exists():
+            self.prompts.notify("Spec Surgeon", "No diagnostics yet — run first." if not d else
+                                f"The run in {d} left no DIAGNOSTICS.md (it did not finish); its log is "
+                                f"{d / 'logs' / 'run.log'}.")
+            return False
+        dlg = MarkdownDialog("Diagnostics — why files did not pass", path.read_text(encoding="utf-8"), self, base=d)
+        self._viewers.append(dlg)
+        dlg.show()
+        return True
+
+    @Slot()
+    def open_logs(self) -> None:
+        d = logs_dir()
+        try:
+            d.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            pass
+        open_folder(d)
+
+    @Slot()
+    def save_bundle(self) -> Optional[Path]:
+        """A zip for whoever diagnoses a problem: the last run's (or preview's) reports, logs, traces, records and
+        plans, and the app's own logs — never the documents."""
+        s = self.session
+        run_dir = s.last_run_dir if s.last_run_dir and Path(s.last_run_dir).exists() else s.out_dir
+        stamp = time.strftime("%Y%m%d-%H%M%S")
+        start = str((Path(run_dir) if run_dir else Path.home()) / f"spec-surgeon-diagnostics-{stamp}.zip")
+        path = self.prompts.save_file("Save a diagnostics bundle", start, "Zip (*.zip)")
+        if not path:
+            return None
+        try:
+            res = diag.make_bundle(Path(path), Path(run_dir) if run_dir else None, logs_dir(),
+                                   note=f"window; last run {s.last_run_dir}")
+        except OSError as e:
+            self.prompts.warn("Spec Surgeon", f"The bundle could not be written:\n{e}")
+            return None
+        self.write(f"Diagnostics bundle: {res['path']} — {len(res['included'])} file(s); the documents themselves "
+                   f"are never included ({res['left_out']} left out).")
+        self.prompts.notify("Spec Surgeon", f"Saved {res['path']}.\n\nIt holds the reports, logs and records of "
+                                            f"{run_dir or 'no run yet'} and the app's own logs — not the documents. "
+                                            f"Records and logs quote the paragraphs that changed or failed, so share "
+                                            f"it as you would the specs.")
+        return Path(res["path"])
+
+    @Slot()
     def do_advise(self) -> bool:
         s = self.session
 
@@ -1013,8 +1085,20 @@ class MainWindow(QMainWindow):
     @Slot(QModelIndex)
     def _open_row(self, index) -> None:
         row = index.data(ROW_ROLE)
-        if row is not None and row.open_path and Path(row.open_path).exists():
+        if row is None:
+            return
+        if row.diagnosis:
+            self.show_diagnosis(row)
+        elif row.open_path and Path(row.open_path).exists():
             QDesktopServices.openUrl(QUrl.fromLocalFile(str(row.open_path)))
+
+    def show_diagnosis(self, row) -> QWidget:
+        """Why a file did not pass — what happened, where it stopped, why, how, what to do — in the app."""
+        base = self.session.last_run_dir if row.status_col == 1 else None
+        dlg = MarkdownDialog(f"Why {row.cells[0]} did not pass", row.diagnosis, self, base=base)
+        self._viewers.append(dlg)
+        dlg.show()
+        return dlg
 
     # ---- settings, help ---------------------------------------------------------------------------------
     def auto_check_enabled(self) -> bool:
@@ -1117,14 +1201,17 @@ def _release_notes_path(version: str) -> Optional[Path]:
 
 
 def _append_error_log(text: str) -> None:
+    """An error and its traceback into the app log (``spec-surgeon.log``, rotating; set up by ``main``) — or, before
+    logging is set up, appended to the file directly."""
+    logger = diag.app_log()
+    if any(isinstance(h, RotatingFileHandler) for h in logging.getLogger("spec_surgeon").handlers):
+        logger.error(text)
+        return
     try:
         d = logs_dir()
         d.mkdir(parents=True, exist_ok=True)
-        log = d / "spec-surgeon.log"
-        if log.exists() and log.stat().st_size > 2 * 2 ** 20:
-            log.replace(d / "spec-surgeon.log.1")
-        with open(log, "a", encoding="utf-8") as f:
-            f.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} Spec Surgeon {__version__}\n{text}")
+        with open(d / diag.APP_LOG, "a", encoding="utf-8") as f:
+            f.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} Spec Surgeon {__version__}\n{text}\n")
     except OSError:
         pass
 
@@ -1190,7 +1277,7 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
 def _install_excepthook(window_ref: List[Optional[MainWindow]]) -> None:
     def hook(exc_type, exc, tb):
         text = "".join(traceback.format_exception(exc_type, exc, tb))
-        _append_error_log(text)
+        _append_error_log("UNEXPECTED ERROR in the window\n" + text)
         w = window_ref[0]
         try:
             if w is not None:
@@ -1203,15 +1290,35 @@ def _install_excepthook(window_ref: List[Optional[MainWindow]]) -> None:
     sys.excepthook = hook
 
 
+def _crash_notice(w: MainWindow, previous: List[dict]) -> None:
+    """Say once that the previous session ended without closing, and where its crash report is."""
+    last = previous[-1]
+    where = last.get("crash_log")
+    text = (f"The session started {last.get('started') or '?'} (version {last.get('version') or '?'}) did not close "
+            "normally — the program crashed, was ended from Task Manager, or Windows shut down. "
+            + (f"Python's fault handler wrote what it saw to {where}." if where else
+               "Nothing was written to its crash log; the app log may say what it was doing."))
+    w.write("Previous session ended unexpectedly: " + text)
+    w.files_page.info.show_message("warn", "Spec Surgeon closed unexpectedly last time", text,
+                                   [("Open logs folder", w.open_logs)])
+
+
 def main(argv=None) -> int:
     winapp.set_app_user_model_id()
     winapp.hold_app_mutex()
     settings = load_settings()
+    log_path = diag.setup_app_logging(logs_dir())
+    watch = diag.CrashWatch(logs_dir())
+    previous = watch.start()
+    diag.app_log().info(f"Spec Surgeon {__version__} started — {diag.environment_line(diag.environment())}"
+                        + (f"; app log {log_path}" if log_path else ""))
     app = qt_app(settings)
     ref: List[Optional[MainWindow]] = [None]
     _install_excepthook(ref)
     w = build_window(settings=settings)
     ref[0] = w
+    if previous:
+        _crash_notice(w, previous)
 
     def scheme_changed(*_):
         if w.settings.theme == "system":
@@ -1231,4 +1338,8 @@ def main(argv=None) -> int:
     w.show()
     QTimer.singleShot(0, w.updates.startup)
     QTimer.singleShot(4000, w.updates.auto_check)
-    return app.exec()
+    try:
+        return app.exec()
+    finally:
+        diag.app_log().info("Spec Surgeon closed")
+        watch.stop()                     # a clean exit: no "closed unexpectedly" at the next start

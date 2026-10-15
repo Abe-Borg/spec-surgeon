@@ -45,6 +45,8 @@ class Session:
     client: Any = None                            # injectable for tests
     last_batch: Any = None                        # BatchResult of the last Run (the window's results table)
     last_trials: Any = None                       # List[codegen.FileTrial] of the last AI-written-transform run
+    last_compile: Any = None                      # CompileResult of the last compile (its transcript: compile.json)
+    _compiled_dir: Optional[Path] = None          # the folder the last compile wrote into; its preview goes there too
 
     def files(self) -> List[Path]:
         from .batch import expand_inputs
@@ -107,9 +109,17 @@ class Session:
             raise ValueError("type what you want done (or load a spec file)")
         files = self.files()
         self.spec, self.preview, self.generated, self.questions = None, None, None, []
+        self._compiled_dir = None
         log(f"Compiling the request over {len(files)} file(s)…")
         res = compile_request(request, files, template=self.template, answers=answers, client=self.client, log=log,
                               prior_failures=self.prior_failures or None)
+        self.last_compile = res
+        # the whole exchange with the model, kept with the preview it leads to (or on its own when it leads nowhere)
+        self._compiled_dir = self.new_out_dir()
+        from .diagnostics import write_json
+        if write_json(self._compiled_dir / "compile.json", {"request": request, "answers": list(answers),
+                                                            **res.to_dict()}):
+            log(f"Compile record (the model's whole exchange): {self._compiled_dir / 'compile.json'}")
         if res.status == "questions":
             self.questions = res.questions
             return "The request needs answers — type them in the Answers box (one per line) and press Preview again."
@@ -133,7 +143,7 @@ class Session:
         from .profile import profile_batch
         names = {f.name: f for f in files}
         samples = [names[p["files"][0]] for p in profile_batch(files)["patterns"][:3]]
-        out = self.new_out_dir()
+        out = self._compiled_dir or self.new_out_dir()
         log(f"Writing a one-off transform, tested on {[s.name for s in samples]}…")
         g = generate_op(request, spec.get("proposal") or spec.get("unsupported") or "", samples, out / "codegen",
                         client=self.client, log=log)
@@ -151,10 +161,13 @@ class Session:
         if self.spec is None:
             raise ValueError("nothing to preview — type a request or load a spec file")
         files = self.files()                      # the same filtered set Run checks and runs (no template files)
-        out = self.new_out_dir()
+        out = self._compiled_dir if self._compiled_dir is not None and self.spec_source == "compiled" \
+            else self.new_out_dir()
+        self.out_dir, self._compiled_dir = out, None
         log("Planning every file and trying the samples…")
         self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
                                     do_render=render)
+        log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
         return self.preview.to_text()
 
     def run(self, in_place: bool, render: bool, log: Log) -> str:
@@ -175,8 +188,13 @@ class Session:
             raise ValueError("press Preview first — nothing runs before you have seen the preview")
         files = self.files()
         if approval_token(self.spec, files) != self.preview.token:
-            raise ValueError("a file or the spec changed since the preview — press Preview again")
+            from .preview import approval_inputs, explain_approval_change
+            what = explain_approval_change(getattr(self.preview, "token_inputs", None) or {},
+                                           approval_inputs(self.spec, files))
+            raise ValueError("a file or the spec changed since the preview — press Preview again"
+                             + ("".join(f"\n  • {w}" for w in what) if what else ""))
         out = self.out_dir / "run"
+        self.last_run_dir = out                   # set before the run: a run that stops still has its logs there
         batch = run_batch([str(f) for f in files], "edit-spec", {}, out, renderer="auto", do_render=render,
                           in_place=in_place, progress=log, spec=self.spec)
         self.last_run_dir, self.last_batch, self.last_trials = out, batch, None
@@ -186,12 +204,16 @@ class Session:
             line = f"  {f.status:<9} {f.source.name}"
             if f.exception:
                 line += f"  [{f.exception.get('code')}] {f.exception.get('reason')}"
+                if f.exception.get("kind") not in (None, "refusal"):
+                    line += f" (at {f.exception.get('stage')})"
             elif f.record and not f.record.passed:
                 line += "  " + "; ".join(f"{ch.id} FAIL" for ch in f.record.checks if ch.status == "FAIL")
             elif f.delivered_to:
                 line += f"  → written back to {f.delivered_to}" if in_place else f"  → {f.delivered_to}"
             lines.append(line)
         lines.append(f"\nReport: {out / 'BATCH_REPORT.md'}")
+        lines.append(f"Diagnostics (why, where and how, per file): {out / 'DIAGNOSTICS.md'} — log: "
+                     f"{out / 'logs' / 'run.log'}")
         if not in_place:
             lines.append(f"Edited copies that passed every check: {out / 'outputs'} (your files were not changed)")
         if c["FAIL"]:

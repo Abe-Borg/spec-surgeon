@@ -19,6 +19,7 @@
                                                              (rinse & repeat: run next pass on set-aside files only)
     spec-surgeon gui                                         (the window; also: spec-surgeon-gui)
     spec-surgeon advise OUT_DIR [--file NAME]                (Claude: per exception a recommendation or a re-compiled spec)
+    spec-surgeon diagnose OUT_DIR [--file NAME] [--bundle ZIP] (why each file failed, where and how; a zip to send)
     spec-surgeon ask "natural-language request"              (optional; needs anthropic + API key)
     spec-surgeon agent EXCEPTION.json                        (optional; written recommendation)
 """
@@ -34,7 +35,7 @@ from pathlib import Path
 from . import __version__
 from .batch import expand_inputs, load_set_aside, run_batch
 from .fingerprint import fingerprint
-from .jobs import REGISTRY, get_job, JobException
+from .jobs import REGISTRY, get_job
 from .package import DocxPackage
 
 
@@ -98,11 +99,19 @@ def cmd_run_spec(args):
         print(f"  assumption: {a}")
     if getattr(args, "approval", None):
         from .editspec import is_template_file, spec_templates
-        from .preview import approval_token
+        from .preview import approval_inputs, approval_token, explain_approval_change
         files = [f for f in expand_inputs(args.files) if not is_template_file(f, spec_templates(spec))]
         if approval_token(spec, files) != args.approval:
             print("approval token does not match: the spec or a file changed since the preview (or the file set "
                   "differs) — preview again", file=sys.stderr)
+            beside = Path(args.spec).parent / "preview.json" if not str(args.spec).lstrip().startswith("{") else None
+            try:
+                before = json.loads(beside.read_text(encoding="utf-8")).get("approval_inputs") if beside else None
+            except (OSError, ValueError, AttributeError):
+                before = None
+            if isinstance(before, dict):
+                for w in explain_approval_change(before, approval_inputs(spec, files)):
+                    print(f"  • {w}", file=sys.stderr)
             return 2
     args.job = "edit-spec"
     args.params = None
@@ -165,11 +174,17 @@ def cmd_plan_spec(args):
 
 
 def cmd_fingerprint(args):
+    from .diagnostics import exception_record
     files = expand_inputs(args.files)
     out = []
     t0 = time.perf_counter()
     for f in files:
-        fp = fingerprint(DocxPackage.from_path(f))
+        try:
+            fp = fingerprint(DocxPackage.from_path(f))
+        except Exception as e:  # noqa: BLE001 — one unreadable file is reported, the others still fingerprinted
+            exc = exception_record(e, "fingerprint")
+            print(f"{f.name}: {exc['code']} — {exc['reason']}", file=sys.stderr)
+            continue
         out.append(fp)
         if not args.json:
             secs = fp["sections"]
@@ -192,13 +207,20 @@ def cmd_plan(args):
     job = get_job(args.job)
     files = expand_inputs(args.files)
     rc = 0
+    from .diagnostics import exception_record
     for f in files:
-        pkg = DocxPackage.from_path(f)
+        stage = "open"
         try:
+            pkg = DocxPackage.from_path(f)
+            stage = "plan"
             plan = job.plan(pkg, params)
-        except JobException as e:
+        except Exception as e:  # noqa: BLE001 — a refusal, an unreadable file or the engine's own error: said per file
             rc = 2
-            print(f"\n== {f.name}: EXCEPTION [{e.code}] {e.reason}")
+            exc = exception_record(e, stage)
+            print(f"\n== {f.name}: EXCEPTION [{exc['code']}] {exc['reason']}"
+                  + (f" (at {exc['where']})" if exc.get("where") else ""))
+            if exc.get("kind") == "internal-error":
+                print(exc.get("traceback", ""), file=sys.stderr)
             continue
         print(f"\n== {f.name}: {plan.mode} job, parts {plan.intended_parts}, revision Δ ins {plan.rev_delta['ins']:+d} / del {plan.rev_delta['del']:+d}")
         for i, d in enumerate(plan.diffs, 1):
@@ -235,12 +257,17 @@ def cmd_run(args, spec=None):
         line = f"  {f.status:<9} {f.source.name}"
         if f.exception:
             line += f"  [{f.exception.get('code')}] {f.exception.get('reason')}"
+            if f.exception.get("kind") not in (None, "refusal"):
+                line += f" (at {f.exception.get('stage')})"
         elif f.record and not f.record.passed:
             line += "  " + "; ".join(f"{ch.id} FAIL" for ch in f.record.checks if ch.status == "FAIL")
         elif f.delivered_to:
             line += f"  → {f.delivered_to}"
         print(line)
     print(f"\nReport: {out_dir / 'BATCH_REPORT.md'}")
+    print(f"Log: {out_dir / 'logs' / 'run.log'} (one trace per file beside it)")
+    if c["FAIL"] or c["EXCEPTION"]:
+        print(f"Diagnostics — why each file failed, where and how: {out_dir / 'DIAGNOSTICS.md'}")
     if c["FAIL"]:
         print(f"Copies that FAILED verification were moved to {out_dir / 'failed'} (diagnosis only — not delivered)")
     if c["EXCEPTION"] or c["FAIL"]:
@@ -284,7 +311,10 @@ def cmd_do(args):
                           model=args.model, log=lambda m: print(m, file=sys.stderr),
                           prior_failures=prior_failures)
     out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "compile.json").write_text(json.dumps(res.to_dict(), indent=2, ensure_ascii=False, default=str), encoding="utf-8")
+    (out_dir / "compile.json").write_text(json.dumps({"request": args.request, "answers": args.answer or [],
+                                                      **res.to_dict()}, indent=2, ensure_ascii=False, default=str),
+                                          encoding="utf-8")
+    print(f"compile record (the model's whole exchange): {out_dir / 'compile.json'}", file=sys.stderr)
     if res.status == "questions":
         print("The request needs answers before anything runs:")
         for q in res.questions:
@@ -394,6 +424,54 @@ def cmd_advise(args):
     for a in res:
         print(f"  {a.kind:<14} {Path(a.source).name}" + (f"  ({'; '.join(a.errors)})" if a.errors else ""))
     print(f"\nAdvice: {Path(args.out_dir) / 'advice'}")
+    return 0
+
+
+def _run_folder(path: Path) -> Path:
+    """A results folder, or a `do`/window folder whose run is in run/."""
+    p = Path(path)
+    if not (p / "batch.json").exists() and not (p / "logs").is_dir() and (p / "run").is_dir():
+        return p / "run"
+    return p
+
+
+def cmd_diagnose(args):
+    """Print why each file of a run failed (DIAGNOSTICS.md, or one file's section of it); --bundle zips the run's
+    diagnostics with the app's logs — never the documents."""
+    from . import diagnostics as diag
+    from .settings import logs_dir
+    folder = _run_folder(Path(args.out_dir))
+    if not folder.is_dir():
+        print(f"no such folder: {folder}", file=sys.stderr)
+        return 2
+    text = (folder / "DIAGNOSTICS.md").read_text(encoding="utf-8") if (folder / "DIAGNOSTICS.md").exists() else None
+    if text is None:
+        print(f"{folder} has no DIAGNOSTICS.md (the run did not finish, or it is not a results folder).")
+        log = folder / diag.LOGS / diag.RUN_LOG
+        if log.exists():
+            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+            print(f"\nThe end of {log}:\n" + "\n".join(lines[-60:]))
+        unfinished = [t for t in sorted((folder / diag.LOGS).glob("*.trace.log"))
+                      if diag.last_stage(diag.read_trace(t)) != "result"]
+        for t in unfinished[:10]:
+            print(f"\n{t.name} stops at '{diag.last_stage(diag.read_trace(t))}':")
+            print("\n".join(diag.read_trace(t)[-12:]))
+    elif args.file:
+        sections = text.split("\n## ")
+        hits = [sec for sec in sections[1:] if args.file.lower() in sec.splitlines()[0].lower()]
+        if not hits:
+            print(f"no file matching {args.file!r} among the problems in {folder / 'DIAGNOSTICS.md'} (did it pass?)")
+            trace = [t for t in (folder / diag.LOGS).glob("*.trace.log") if args.file.lower() in t.name.lower()]
+            for t in trace[:3]:
+                print(f"\n{t.name}:\n" + "\n".join(diag.read_trace(t)))
+        for sec in hits:
+            print("## " + sec)
+    else:
+        print(text)
+    if args.bundle:
+        res = diag.make_bundle(Path(args.bundle), folder, logs_dir(), note="spec-surgeon diagnose")
+        print(f"\nDiagnostics bundle: {res['path']} — {len(res['included'])} file(s); "
+              f"{res['left_out']} document(s) and image(s) left out (never bundled)")
     return 0
 
 
@@ -507,6 +585,13 @@ def main(argv=None) -> int:
     p = sub.add_parser("advise", help="for each exception of a batch: a recommendation or a re-compiled spec (Claude)")
     p.add_argument("out_dir", help="a batch output folder (with exceptions/)"); p.add_argument("--file", default=None)
     p.add_argument("--model", default=None); p.set_defaults(fn=cmd_advise)
+
+    p = sub.add_parser("diagnose", help="why each file of a run failed — where it stopped, why, how; --bundle: a zip "
+                                        "of the run's diagnostics and the app's logs (no documents) to send")
+    p.add_argument("out_dir", help="a results folder (or a `do` folder with run/ in it)")
+    p.add_argument("--file", default=None, help="only the file whose name contains this")
+    p.add_argument("--bundle", default=None, help="also write a diagnostics zip here")
+    p.set_defaults(fn=cmd_diagnose)
 
     p = sub.add_parser("ask", help="natural-language request → job + params (needs anthropic + ANTHROPIC_API_KEY)")
     p.add_argument("request"); p.add_argument("--model", default=None); p.set_defaults(fn=cmd_ask)

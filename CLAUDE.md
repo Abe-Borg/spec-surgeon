@@ -245,7 +245,11 @@ proposals and recorded in the plan's status sections.
   `compare_template_bands()` pairs their pages by section (map from the spec's `template_sections`) and
   variant — never a "best page" search (a blank variant would stand in for anything) — and checks each
   templated region: blank ↔ blank, else outer edge + shared words, 2 pt window, footer from the page bottom.
-- `verify/props.py` — V10: assertion kinds, independent selectors/styles/theme, residual identity.
+- `verify/props.py` — V10: assertion kinds, independent selectors/styles/theme, residual identity. `first_difference`
+  names the paragraph (its text) or the style (its id) a difference lies in.
+- `verify/explain.py` — why a check failed, in specifics, from the check's own data and the record's predictions
+  (`failure_details`, `text_change` word diffs with ⇥ ⍽ ⏎ made visible); `VerificationRecord.failures()` and the
+  record's "WHY IT FAILED" section use it. It is verifier code: the independence rule applies to it too.
 - `batch.py` — the pipeline; `_process_one` is the per-file worker (must stay top-level and picklable); it
   runs a named job or an EditSpec (`spec=`). `outputs/` holds only files that passed every check, V9 included: an output
   that fails verification is moved to `failed/` (`quarantine_failed_output`) before delivery, and one whose V9 guard
@@ -256,10 +260,19 @@ proposals and recorded in the plan's status sections.
   `FileResult.record_stem`); `check_inputs_outside` refuses an input under the results folder before anything is
   created; sources that share a name are rendered from copies under their unique output name (`render/source-in/`).
 - `render/` — `word_com.py` (DispatchEx only; copies only; Quit the instance you made; `available()` needs Word
-  registered in `HKEY_CLASSES_ROOT\Word.Application`, not just pywin32), `libreoffice.py`. `render.render_pdfs` never
+  registered in `HKEY_CLASSES_ROOT\Word.Application`, not just pywin32; `com_error_text` for COM errors; logs Word's
+  version), `libreoffice.py` (`failure_text`: exit status + the end of stderr/stdout; `version()` read from the files
+  beside soffice, never by running it). `render_pdfs(..., log, detail)`: `detail` is the run log only. `render.render_pdfs` never
   raises: a renderer that cannot run or a file it cannot convert is a `log` line and a missing PDF (V6 "render failed"
   for that file; a warning in the preview), never a crashed batch; LibreOffice retries a failed chunk one file at a
   time.
+- `diagnostics.py` — `classify`/`exception_record` (kind, code, stage, op, `where` = the line of code via `raise_site`,
+  traceback for internal/environment/unreadable), `sniff` (what a file that will not open is), `malformed_parts`,
+  `os_error_hint` (Windows codes first), `Tracer` (per-file trace, flushed per line; `watch(crash=True)` only in a
+  pool worker), `RunLog` (run.log; a call is a progress line too, `detail`/`block` file only), `environment`,
+  `setup_app_logging`, `CrashWatch` + `com_quiet` (the window), `pid_alive` (never `os.kill` on Windows — it would
+  terminate the process; `winapp.process_alive` asks the kernel), `make_bundle`. `report.write_diagnostics` /
+  `file_diagnosis` / `exception_diagnosis` build DIAGNOSTICS.md and the window's per-file diagnosis.
 - `guard.py` — identity, drift (size, mtime, then md5), lock file, read-only refusal (`is_read_only`: the file's mode, never `os.access`, so
   root/administrator see the same answer), atomic write; every reason a write-back cannot happen is a `GuardError`
   (a refused `os.replace` included), which `batch.py` records as that file's V9 failure — never a crashed batch.
@@ -313,8 +326,8 @@ proposals and recorded in the plan's status sections.
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 343 with the fixes from the external audit of v0.4.0 —
-342 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 382 with diagnostics —
+381 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
 
@@ -429,6 +442,38 @@ Rules that came out of it, beside the batch/guard/render entries above and the s
 - Deferred, recorded in the response: F11 (`w:vanish` on a target's Header style — rendering on catches it), F8b (a
   results folder reused by hand), and the Tier B "bold headings" expectation (V10 has no bold assertion kind: a design
   limit, not a bug — stays unsupported until a verified operation exists).
+
+## Diagnostics (2026-10-15)
+
+Abraham: "Things are opaque right now. When things fail we need to be able to trace that and determine the why and
+how." README → "Diagnostics — when something fails" is the user's view; `tests/test_diagnostics.py` pins it. Rules:
+
+1. **Never call an engine failure a file problem.** `diagnostics.classify` decides: a `JobException` keeps its code
+   (`refusal`; `internal` is an internal error); `unreadable` only for a file that will not open (zip/XML errors and a
+   missing member before the transform, an OSError at acquire/open, a malformed SOURCE part found by
+   `malformed_parts` at any stage); `io-error` for any other OSError; everything else `internal-error` with the
+   traceback. Nothing records `crash` any more (it stays in `FAILURE_EXPLANATIONS` for old manifests).
+2. **Every stage is traced as it happens.** `_process_one` notes start and end of acquire, open, fingerprint, each op
+   (plan/apply via the `trace` hook of `plan_spec`/`apply_spec`), verify (with each failed check's specifics), write;
+   the parent appends render, deliver and the result line. A new stage gets its notes; a note never stops a file.
+3. **A diagnostic never stops the work it describes**: trace, log, compile record and explanation failures are
+   swallowed (`write_json`, `Tracer._raw`, `RunLog._write`, `failure_details` falls back to the summary).
+4. **The progress lines `run_batch` gives `progress` are pinned** (`ui/rows.ProgressTracker`, `test_ui_rows.py`):
+   `"N file(s); transform+verify …"` and exactly `"  done NAME"` per file. Extra lines (a problem as it happens, the
+   worker-died notice) must not match `^\s+done `.
+5. **A dying worker costs only its own file**: `BrokenProcessPool` futures are run again, each in a fresh one-process
+   pool (`_run_alone`, `attempt=2` appends to the trace); a second death is `worker-died` and its partial output is
+   removed. Never retry in the main process (a native crash there kills the run or the window).
+6. **A comparison that cannot run is a FAIL, never a skip** — a V6/V7 comparison that raises is that file's V6 FAIL
+   with the traceback (as V10's "could not evaluate"); the batch's own failure is logged (`THE BATCH STOPPED during
+   <stage>`) and DIAGNOSTICS.md written before the exception propagates.
+7. **The model's exchange is kept**: `CompileResult.transcript`, `Advice.transcript`, `codegen/history.json`. Only API
+   errors (`compiler.is_api_error`: the SDK's, httpx's, network OSErrors) become a `failed` result; a defect (a wrong
+   argument, a test script that ran out) propagates.
+8. **Bundles never carry documents** (`DOCUMENT_SUFFIXES`, `DOCUMENT_DIRS`); keep it so, and keep the README's warning
+   that records quote document text.
+9. **The approval refusal says what changed** (`preview.approval_inputs` kept in `preview.json` and on the `Preview`;
+   `explain_approval_change`). `approval_token` itself is unchanged — old tokens stay valid.
 
 ## v0.4.0 additions: template specs and font sizes
 

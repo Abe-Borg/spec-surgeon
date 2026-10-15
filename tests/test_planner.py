@@ -72,7 +72,9 @@ def test_an_unreadable_file_is_a_record_not_an_abort(folder, tmp_path):
     (d / "BROKEN.docx").write_bytes(b"PK\x03\x04 not really a zip")
     bp = plan_batch([str(d)], load_spec(SPECS / "remove-all-headers-footers.json"))
     broken = [f for f in bp.files if f.source.name == "BROKEN.docx"][0]
-    assert broken.status == "exception" and broken.exception["code"] == "crash"
+    assert broken.status == "exception" and broken.exception["code"] == "unreadable"
+    assert broken.exception["kind"] == "unreadable" and broken.exception["stage"] == "open"
+    assert "damaged or cut short" in broken.exception["reason"]           # it starts like a zip, but is not one
     assert sum(f.status == "planned" for f in bp.files) == 4
     pb = profile_batch(sorted(d.glob("*.docx")))
     assert [u["file"] for u in pb["unreadable"]] == ["BROKEN.docx"] and sum(p["count"] for p in pb["patterns"]) == 4

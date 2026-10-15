@@ -24,12 +24,19 @@ A rejected spec goes back to the model once with the errors; a second rejection 
 
 The client is injectable (``client=``) so the loop is tested without the API; the default needs the
 ``anthropic`` package and credentials (``ANTHROPIC_API_KEY`` or an ``ant auth login`` profile).
+
+Diagnostics: ``CompileResult.transcript`` is the whole exchange — what the model was given, every turn's text and tool
+calls (a submitted spec in full), every tool result and rejection with its reasons, each call's stop reason, tokens,
+time and request id. An API call that fails (no network, a bad key, an overloaded service) ends the compile as
+``failed`` with the error, its HTTP status and request id, and the transcript so far — never as an exception that
+loses it. ``spec-surgeon do`` and the window write it to ``compile.json``.
 """
 from __future__ import annotations
 
 import json
 import os
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -123,10 +130,51 @@ class CompileResult:
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     model: str = DEFAULT_MODEL
     usage: Dict[str, int] = field(default_factory=dict)
+    transcript: List[Dict[str, Any]] = field(default_factory=list)   # the whole exchange (diagnostics)
+    seconds: float = 0.0
 
     def to_dict(self):
         return {"status": self.status, "spec": self.spec, "questions": self.questions, "errors": self.errors,
-                "tool_calls": self.tool_calls, "model": self.model, "usage": self.usage}
+                "tool_calls": self.tool_calls, "model": self.model, "usage": self.usage,
+                "seconds": round(self.seconds, 2), "transcript": self.transcript}
+
+
+def block_dict(b: Any) -> Dict[str, Any]:
+    """A response content block as plain data for a transcript (the SDK's objects, or a test's stand-ins)."""
+    kind = getattr(b, "type", None) or type(b).__name__
+    out: Dict[str, Any] = {"type": kind}
+    for key in ("text", "id", "name", "input"):
+        v = getattr(b, key, None)
+        if v is not None:
+            out[key] = v if key != "input" else dict(v)
+    if kind == "thinking":
+        out["thinking"] = str(getattr(b, "thinking", "") or "")[:8000]
+    return out
+
+
+def is_api_error(e: BaseException) -> bool:
+    """An error of the API call itself — the SDK's (a bad key, a rate limit, an overloaded or unreachable service) or
+    the network's — as opposed to a defect in the caller."""
+    root = type(e).__module__.split(".")[0]
+    return root in ("anthropic", "httpx", "httpcore") or isinstance(e, (OSError, TimeoutError, ConnectionError))
+
+
+def api_error_text(e: BaseException) -> str:
+    """An API error as one line: its kind, HTTP status and request id when the SDK gives them."""
+    bits = [f"{type(e).__name__}: {str(e)[:500]}"]
+    status = getattr(e, "status_code", None)
+    if status:
+        bits.append(f"HTTP {status}")
+    rid = getattr(e, "request_id", None)
+    if not rid:
+        headers = getattr(getattr(e, "response", None), "headers", None)
+        try:
+            rid = headers.get("request-id") if headers is not None else None
+        except Exception:  # noqa: BLE001 — a header we cannot read is just not said
+            rid = None
+    if rid:
+        bits.append(f"request id {rid}")
+    return " · ".join(bits)
 
 
 def _client():
@@ -377,23 +425,44 @@ def compile_request(request: str, files: Sequence[Path], template: Optional[Path
     model = model or DEFAULT_MODEL
     log = log or (lambda m: None)
     client = client or _client()
+    t_compile = time.perf_counter()
     batch = _Batch(files, template)
     memory = memory if memory is not None else load_project_memory([Path(f) for f in files])
     sources = [request, *answers, json.dumps(memory, ensure_ascii=False)]
     system = SYSTEM + json.dumps(op_catalog(), ensure_ascii=False)
     messages = build_messages(request, batch, answers, memory, prior_failures=prior_failures)
     res = CompileResult(status="failed", model=model)
+    res.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"],
+                           "files": [str(f) for f in files], "template": str(template) if template else None})
     rejections = 0
     nudged = False
     for _turn in range(MAX_TURNS):
-        resp = client.beta.messages.create(
-            model=model, max_tokens=16000, system=system, tools=TOOLS, messages=messages,
-            output_config={"effort": "high"}, cache_control={"type": "ephemeral"},
-            betas=[FALLBACK_BETA], fallbacks="default")
+        t_call = time.perf_counter()
+        try:
+            resp = client.beta.messages.create(
+                model=model, max_tokens=16000, system=system, tools=TOOLS, messages=messages,
+                output_config={"effort": "high"}, cache_control={"type": "ephemeral"},
+                betas=[FALLBACK_BETA], fallbacks="default")
+        except Exception as e:
+            if not is_api_error(e):
+                raise                          # a defect (a wrong argument, a test's script running out) propagates
+            res.errors.append(f"the call to the model failed: {api_error_text(e)}")
+            res.transcript.append({"turn": _turn + 1, "error": api_error_text(e),
+                                   "seconds": round(time.perf_counter() - t_call, 2)})
+            log(f"compiler: the call to the model failed ({type(e).__name__})")
+            res.seconds = time.perf_counter() - t_compile
+            return res
         u = getattr(resp, "usage", None)
         for k in ("input_tokens", "output_tokens", "cache_read_input_tokens"):
             res.usage[k] = res.usage.get(k, 0) + int(getattr(u, k, 0) or 0)
         stop = getattr(resp, "stop_reason", None)
+        res.transcript.append({"turn": _turn + 1, "role": "assistant", "stop_reason": stop,
+                               "seconds": round(time.perf_counter() - t_call, 2),
+                               "request_id": getattr(resp, "_request_id", None) or getattr(resp, "id", None),
+                               "usage": {k: int(getattr(u, k, 0) or 0) for k in
+                                         ("input_tokens", "output_tokens", "cache_read_input_tokens")},
+                               "content": [block_dict(b) for b in (getattr(resp, "content", None) or [])]})
+        res.seconds = time.perf_counter() - t_compile
         if stop == "refusal":
             det = getattr(resp, "stop_details", None)
             res.errors.append(f"the model declined the request ({getattr(det, 'category', None)}: "
@@ -412,6 +481,8 @@ def compile_request(request: str, files: Sequence[Path], template: Optional[Path
                 return res
             nudged = True
             messages.append({"role": "user", "content": "Finish by calling submit_editspec (or ask_user)."})
+            res.transcript.append({"turn": _turn + 1, "role": "user",
+                                   "content": "Finish by calling submit_editspec (or ask_user)."})
             continue
         results = []
         final: Optional[CompileResult] = None
@@ -453,10 +524,15 @@ def compile_request(request: str, files: Sequence[Path], template: Optional[Path
                                 "content": json.dumps(out, ensure_ascii=False)[:20000]})
             except (KeyError, TypeError, ValueError, re.error) as e:
                 results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True, "content": str(e)})
+        res.transcript.append({"turn": _turn + 1, "role": "user", "tool_results": [
+            {"tool_use_id": r.get("tool_use_id"), "is_error": bool(r.get("is_error")),
+             "content": str(r.get("content"))[:6000]} for r in results]})
         if final is not None:
             final.model, final.usage, final.tool_calls = model, res.usage, res.tool_calls
             final.errors = res.errors
+            final.transcript, final.seconds = res.transcript, time.perf_counter() - t_compile
             return final
         messages.append({"role": "user", "content": results})
     res.errors.append(f"no spec after {MAX_TURNS} turns")
+    res.seconds = time.perf_counter() - t_compile
     return res

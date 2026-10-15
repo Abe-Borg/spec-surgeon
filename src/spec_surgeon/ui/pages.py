@@ -224,6 +224,7 @@ class PreviewPage(Page):
         self.only_problems = QCheckBox("Show exceptions only")
         top.addWidget(self.only_problems)
         top.addStretch(1)
+        top.addWidget(label("Double-click an exception to see why", "Muted", wrap=False))
         self.table_card.add(top)
         self.model = RowsModel(PREVIEW_COLUMNS)
         self.proxy = ProblemsFilter()
@@ -312,7 +313,7 @@ class RunPage(Page):
         self.only_problems = QCheckBox("Show problems only")
         top.addWidget(self.only_problems)
         top.addStretch(1)
-        top.addWidget(label("Double-click a file to open its edited copy or verification record", "Muted",
+        top.addWidget(label("Double-click a file to open its edited copy — or to see why it did not pass", "Muted",
                             wrap=False))
         card.add(top)
         self.model = RowsModel(RESULT_COLUMNS)
@@ -324,16 +325,19 @@ class RunPage(Page):
         grid.setHorizontalSpacing(8)
         self.open_btn = QPushButton("Open results folder")
         self.report_btn = QPushButton("View report")
+        self.diag_btn = QPushButton("View diagnostics")
+        self.diag_btn.setToolTip("Why each file did not pass — where it stopped, the specifics, its trace, what to do "
+                                 "(DIAGNOSTICS.md)")
         self.failed_btn = QPushButton("Open failed/ folder")
         self.set_aside_btn = QPushButton("Load set-aside files")
         self.set_aside_btn.setToolTip("Run the next pass on only the files that were set aside or failed")
         self.advise_btn = QPushButton("Advise on exceptions")
         self.advise_btn.setToolTip("Claude writes a recommendation or a corrected spec per set-aside file (advice/)")
-        for i, b in enumerate((self.open_btn, self.report_btn, self.failed_btn)):
+        for i, b in enumerate((self.open_btn, self.report_btn, self.diag_btn, self.failed_btn)):
             grid.addWidget(b, 0, i)
-        grid.addWidget(self.set_aside_btn, 0, 4)
-        grid.addWidget(self.advise_btn, 0, 5)
-        grid.setColumnStretch(3, 1)
+        grid.addWidget(self.set_aside_btn, 0, 5)
+        grid.addWidget(self.advise_btn, 0, 6)
+        grid.setColumnStretch(4, 1)
         card.add(grid)
         rl.addWidget(card)
         self.results.hide()

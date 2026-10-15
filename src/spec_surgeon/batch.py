@@ -19,25 +19,37 @@ compares names case-insensitively), and its plan, record and exception files car
 to the bytes the suite verified: the worker records their md5 and delivery re-hashes the output file before writing
 anything, in place or not. A run never reads where it writes: an input inside the results folder is refused before
 anything is created (``check_inputs_outside``) — copies mode would otherwise overwrite it.
+
+Diagnostics (``diagnostics.py``). ``<out>/logs/run.log`` has everything the run did (environment, progress, the
+renderer's messages, every file's trace, the traceback of anything unexpected — the batch's own failure included);
+``<out>/logs/<name>.trace.log`` is one file's path through the stages, written as it goes; an exception record says
+the stage, the op and the line of code where the file stopped, and whether it was a refusal, an unreadable file, an
+I/O problem or the engine's own failure (with the traceback); ``DIAGNOSTICS.md`` puts it together per file. A worker
+process that dies takes no other file's result with it: the files it held are run again, each alone in a fresh
+process, and a file that kills that one too is recorded as ``worker-died`` with the last stage its trace reached.
 """
 from __future__ import annotations
 
 import glob
 import hashlib
 import json
+import multiprocessing
 import os
 import shutil
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 
-from . import guard
+from . import __version__, guard
+from . import diagnostics as diag
 from .fingerprint import fingerprint
 from .editspec import apply_spec, is_template_file, plan_spec, spec_templates, validate_spec
-from .jobs import get_job, JobException
+from .jobs import get_job
 from .package import DocxPackage
 from .verify import run_suite, VerificationRecord, CheckResult, GEOM_TOL_PT
 from .verify import geometry as geom
@@ -58,6 +70,9 @@ class FileResult:
     noop: bool = False
     out_name: str = ""                       # the output's file name, unique across the batch (``output_names``)
     output_md5: Optional[str] = None         # md5 of the bytes the suite verified; delivery re-checks the file
+    trace_path: Optional[Path] = None        # logs/<name>.trace.log: this file's path through the pipeline
+    trace: List[str] = field(default_factory=list)       # its lines (also in run.log and DIAGNOSTICS.md)
+    render_messages: List[str] = field(default_factory=list)   # what the renderer said about this file
 
     @property
     def record_stem(self) -> str:
@@ -85,6 +100,11 @@ class BatchResult:
     timings: Dict[str, float] = field(default_factory=dict)
     renderer: Optional[str] = None
     contact_sheet: Optional[Path] = None
+    environment: Dict[str, Any] = field(default_factory=dict)   # versions, platform, renderer (diagnostics)
+    started: str = ""
+    finished: str = ""
+    log_path: Optional[Path] = None          # logs/run.log
+    stopped: Optional[str] = None            # set when the batch itself failed: the stage and the error
 
     def counts(self) -> Dict[str, int]:
         c = {"PASS": 0, "FAIL": 0, "EXCEPTION": 0, "PENDING": 0}
@@ -175,64 +195,192 @@ def check_inputs_outside(files: Sequence[Path], out_dir: Path) -> None:
 
 # ---- worker (runs in a subprocess) ------------------------------------------------------------------
 
+def _in_pool_worker() -> bool:
+    return multiprocessing.parent_process() is not None
+
+
+def _when(mtime_ns: int) -> str:
+    return datetime.fromtimestamp(mtime_ns / 1e9).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _fp_summary(fp: Dict[str, Any]) -> str:
+    parts = fp.get("parts") or {}
+    pending = sum((p.get("ins") or 0) + (p.get("del") or 0) for p in parts.values() if isinstance(p, dict))
+    return (f"pattern {fp.get('pattern_id')} · {len(fp.get('sections') or [])} section(s) · {len(parts)} text part(s)"
+            f" · track changes {'on' if fp.get('trackRevisions') else 'off'} · {pending} pending ins/del")
+
+
+def _verify_summary(rec: VerificationRecord) -> str:
+    ran = [c for c in rec.checks if c.id not in ("V6", "V7", "V9")]
+    bad = [c.id for c in ran if c.status == "FAIL"]
+    return ("PASS" if not bad else f"FAIL ({', '.join(bad)})") + " — " + " · ".join(f"{c.id} {c.status}" for c in ran)
+
+
+_FAILED_AS = {"refusal": "REFUSED", "unreadable": "UNREADABLE", "environment": "I/O ERROR",
+              "internal-error": "FAILED", "worker-died": "WORKER DIED"}
+
+
+def _note_exception(tr: "diag.Tracer", stage: str, exc: Dict[str, Any]) -> None:
+    op = f"op #{exc['op_number']} {exc.get('op')}: " if exc.get("op_number") else ""
+    tr.note(stage, f"{op}{_FAILED_AS.get(exc.get('kind'), 'FAILED')} [{exc.get('code')}] {exc.get('reason')}")
+    if exc.get("where"):
+        tr.block(f"at {exc['where']}")
+    details = {k: v for k, v in (exc.get("details") or {}).items() if k != "content"}   # content: in the reason
+    if details:
+        tr.block("details: " + diag.compact(details))
+    if exc.get("traceback") and exc.get("kind") in ("internal-error", "environment"):
+        tr.block(exc["traceback"])
+
+
 def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str, out_name: Optional[str] = None,
-                 spec: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                 spec: Optional[Dict[str, Any]] = None, attempt: int = 1) -> Dict[str, Any]:
+    """One file from acquisition to its verified output (in a pool worker, or in-process for a single file).
+
+    Every stage is written to the file's trace as it happens (``logs/<name>.trace.log``). Anything that stops the
+    file — a refusal, an unreadable file, a disk that will not write, the engine's own failure — becomes its exception
+    record with the stage, the op and the line of code (and the traceback when the engine failed), never a crashed
+    batch. ``attempt`` 2 is the same file run again alone after its first worker died; its trace is appended."""
     t0 = time.perf_counter()
     res: Dict[str, Any] = {"source": path, "timings": {}}
+    src = Path(path)
+    name = out_name or src.name
+    in_pool = _in_pool_worker()
+    tpath = diag.trace_path(Path(out_dir), name)
+    res["trace_path"] = str(tpath)
+    what = (f" — ops {', '.join(str(o.get('op')) for o in spec.get('ops', []))}" if spec is not None
+            else f" {diag.snip(json.dumps(params, ensure_ascii=False, default=str), 300)}")
+    tr = diag.Tracer(tpath, f"Spec Surgeon {__version__} — trace of {src.name}"
+                     + (" (run again, alone in a fresh process, after its first worker died)" if attempt > 1 else ""),
+                     [f"source       {src}", f"output name  {name}", f"job          {job_name}{what}",
+                      f"process      pid {os.getpid()} ({'pool worker' if in_pool else 'the main process'})"],
+                     append=attempt > 1)
+    tr.watch(crash=in_pool)
+    stage, data, t_stage = "acquire", None, t0
     try:
-        src = Path(path)
+        tr.note("acquire", "…")
         identity = guard.acquire(src)
         res["identity"] = identity.to_dict()
-        pkg = DocxPackage(src.read_bytes(), name=str(src))
+        tr.note("acquire", f"{identity.size:,} bytes · modified {_when(identity.mtime_ns)} · md5 {identity.md5} "
+                           f"[{diag.ms(t_stage)}]")
+        stage, t_stage = "open", time.perf_counter()
+        tr.note("open", "…")
+        data = src.read_bytes()
+        pkg = DocxPackage(data, name=str(src))
+        main = pkg.main_part()
+        tr.note("open", f"{len(pkg.source_names)} part(s) · main part {main} [{diag.ms(t_stage)}]")
+        stage, t_stage = "fingerprint", time.perf_counter()
+        tr.note("fingerprint", "…")
         res["fingerprint"] = fingerprint(pkg)
+        tr.note("fingerprint", _fp_summary(res["fingerprint"]) + f" [{diag.ms(t_stage)}]")
         res["timings"]["acquire+fingerprint"] = time.perf_counter() - t0
 
-        t1 = time.perf_counter()
-        try:
-            if spec is not None:
-                plan, fragments = plan_spec(pkg, spec, res["fingerprint"].get("pattern_id"))
-            else:
-                job = get_job(job_name)
-                plan = job.plan(pkg, params)
-        except JobException as e:
-            res["exception"] = e.to_dict()
-            res["timings"]["plan"] = time.perf_counter() - t1
-            return res
-        res["plan"] = plan.to_dict()
-        res["timings"]["plan"] = time.perf_counter() - t1
-
-        t2 = time.perf_counter()
+        stage, t_stage = "plan", time.perf_counter()
         if spec is not None:
-            work = apply_spec(pkg, fragments)
+            plan, fragments = plan_spec(pkg, spec, res["fingerprint"].get("pattern_id"), trace=tr.op_hook)
+        else:
+            tr.note("plan", f"job {job_name} …")
+            job = get_job(job_name)
+            plan = job.plan(pkg, params)
+        res["plan"] = plan.to_dict()
+        res["timings"]["plan"] = time.perf_counter() - t_stage
+        tr.note("plan", ("merged: " if spec is not None else f"job {job_name}: ") + diag.plan_summary(plan)
+                + f" [{diag.ms(t_stage)}]")
+
+        stage, t_stage = "apply", time.perf_counter()
+        if spec is not None:
+            work = apply_spec(pkg, fragments, trace=tr.op_hook)
             res["noop"] = not work.is_modified()
             out_bytes = work.output_bytes()
         else:
+            tr.note("apply", f"job {job_name} …")
             subs = job.apply(pkg, plan)
             if not subs:
                 res["noop"] = True
                 out_bytes = pkg.data
             else:
                 out_bytes = pkg.repack(subs)
-        res["timings"]["apply"] = time.perf_counter() - t2
+        res["timings"]["apply"] = time.perf_counter() - t_stage
+        tr.note("apply", ("no change — the output is identical to the source" if res.get("noop")
+                          else f"repacked: {len(out_bytes):,} bytes") + f" [{diag.ms(t_stage)}]")
 
         # verify in memory first; the output is written only once the suite has run, so a verifier that raises
         # leaves nothing in outputs/ (the exception record says what happened), and delivery is bound to these bytes
-        t3 = time.perf_counter()
-        out_path = Path(out_dir) / "outputs" / (out_name or src.name)
+        stage, t_stage = "verify", time.perf_counter()
+        tr.note("verify", "V1–V5, V8, V10 …")
+        out_path = Path(out_dir) / "outputs" / name
         rec = run_suite(pkg.data, out_bytes, plan.to_dict(), str(src), str(out_path))
         res["record"] = rec.to_dict()
-        res["timings"]["verify"] = time.perf_counter() - t3
+        res["timings"]["verify"] = time.perf_counter() - t_stage
+        tr.note("verify", _verify_summary(rec) + f" [{diag.ms(t_stage)}]")
+        for cid, cname, _summary, details in rec.failures():
+            tr.block(f"{cid} {cname}:")
+            tr.block("\n".join(f"  - {x}" for x in details))
+        stage, t_stage = "write", time.perf_counter()
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(out_bytes)
         res["output"] = str(out_path)
         res["output_md5"] = hashlib.md5(out_bytes).hexdigest()
-    except JobException as e:  # apply-time refusal (an internal cross-check failed): never deliver
-        res["exception"] = e.to_dict()
-    except Exception as e:  # anything unexpected is an exception record, never a crashed batch
-        res["exception"] = {"code": getattr(e, "code", None) or "crash", "reason": f"{type(e).__name__}: {e}",
-                            "details": {"traceback": traceback.format_exc()}}
-    res["timings"]["total"] = time.perf_counter() - t0
+        tr.note("write", f"outputs/{name} · md5 {res['output_md5']} [{diag.ms(t_stage)}]")
+    except Exception as e:  # a refusal, an unreadable file, a disk that will not write, the engine's own failure
+        exc = diag.exception_record(e, stage, data, tr.op)
+        res["exception"] = exc
+        key = "acquire+fingerprint" if stage in ("acquire", "open", "fingerprint") else stage
+        res["timings"].setdefault(key, time.perf_counter() - t_stage)
+        _note_exception(tr, stage, exc)
+    finally:
+        res["timings"]["total"] = time.perf_counter() - t0
+        res["trace"] = list(tr.lines)
+        tr.close()
     return res
+
+
+def _worker_died(path: Path, out_dir: Path, out_name: str, why: BaseException) -> Dict[str, Any]:
+    """The record of a file whose worker process ended abruptly twice (in the batch, then alone): the last stage its
+    trace reached, and what Python's fault handler wrote there. A partial output is removed — outputs/ only ever holds
+    verified files."""
+    tpath = diag.trace_path(out_dir, out_name)
+    lines = diag.read_trace(tpath)
+    stage = diag.last_stage(lines) or "acquire"
+    fault = diag.fault_excerpt(lines)
+    partial = Path(out_dir) / "outputs" / out_name
+    try:
+        if partial.exists():
+            partial.unlink()
+    except OSError:
+        pass
+    exc = {"code": "worker-died", "kind": "worker-died", "stage": stage,
+           "reason": f"the process working on this file ended abruptly during '{stage}' — in the batch, and again "
+                     f"when it was run alone ({type(why).__name__}); out of memory, or a crash inside a library it "
+                     f"uses (lxml, PyMuPDF)" + (f"; Python's fault handler: {fault[0]}" if fault else ""),
+           "details": {"fault_handler": fault} if fault else {}}
+    tail = diag.trace_event("result", f"WORKER DIED [{exc['code']}] at '{stage}' — the file was left untouched")
+    diag.append_trace(tpath, tail)
+    return {"source": str(path), "timings": {}, "exception": exc, "trace_path": str(tpath), "trace": lines + tail}
+
+
+def _lost_result(path: Path, out_dir: Path, out_name: str, e: BaseException) -> Dict[str, Any]:
+    """A worker finished but its result could not come back (it could not be pickled, say): the engine's failure."""
+    exc = diag.exception_record(e, "transform+verify")
+    exc.update(code="internal-error", kind="internal-error",
+               reason=f"the file's result could not be returned from its worker process: {type(e).__name__}: {e}")
+    tpath = diag.trace_path(out_dir, out_name)
+    tail = diag.trace_event("result", f"FAILED [internal-error] {exc['reason']}", exc.get("traceback", ""))
+    diag.append_trace(tpath, tail)
+    return {"source": str(path), "timings": {}, "exception": exc, "trace_path": str(tpath),
+            "trace": diag.read_trace(tpath)}
+
+
+def _run_alone(path: Path, job_name: str, params: Dict[str, Any], out_dir: Path, out_name: str,
+               spec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Run one file again in a fresh one-process pool, so a file that kills its worker is named — and the files that
+    only shared a worker with it get their results."""
+    try:
+        with ProcessPoolExecutor(max_workers=1) as ex:
+            return ex.submit(_process_one, str(path), job_name, params, str(out_dir), out_name, spec, 2).result()
+    except BrokenProcessPool as e:
+        return _worker_died(path, out_dir, out_name, e)
+    except Exception as e:  # noqa: BLE001
+        return _lost_result(path, out_dir, out_name, e)
 
 
 # ---- failed outputs ----------------------------------------------------------------------------------
@@ -333,10 +481,47 @@ def geometry_check(plan: Dict[str, Any], g: "geom.GeometryResult",
 
 # ---- the batch -------------------------------------------------------------------------------------
 
+def _run_header(batch: BatchResult, files: Sequence[Path], workers: int, renderer: str, do_render: bool,
+                in_place: bool) -> List[str]:
+    spec = batch.spec
+    what = (f"EditSpec “{spec.get('request')}” — ops {', '.join(str(o.get('op')) for o in spec.get('ops', []))}"
+            if spec is not None else f"job {batch.job} {diag.snip(json.dumps(batch.params, ensure_ascii=False), 400)}")
+    return [f"Spec Surgeon {__version__} — run log",
+            f"started      {batch.started}",
+            f"results      {batch.out_dir}",
+            f"request      {what}",
+            f"inputs       {len(files)} file(s)" + (f"; the spec's template file(s) skipped: "
+                                                    f"{[Path(x).name for x in batch.skipped]}" if batch.skipped else ""),
+            f"options      workers {workers or 'auto'} · renderer {renderer if do_render else 'off'} · "
+            f"{'write back in place (guarded)' if in_place else 'copies to outputs/'}",
+            f"environment  {diag.environment_line(batch.environment)}",
+            ""]
+
+
+def _trace(fr: FileResult, stage: str, msg: str, block: str = "") -> List[str]:
+    """Continue a file's trace from the parent process (render, delivery, the result)."""
+    lines = diag.trace_event(stage, msg, block)
+    fr.trace += lines
+    diag.append_trace(fr.trace_path, lines)
+    return lines
+
+
+def _file_messages(messages: Sequence[str], names: Sequence[str]) -> List[str]:
+    """The renderer's lines about one file: those that start with the name of the .docx it was given, and the chunk
+    failures that list it by name (never a line about a file whose name merely contains this one's)."""
+    keys = [n for n in names if n]
+    return [m for m in messages if any(m.startswith(f"{k}:") or f"'{k}'" in m for k in keys)]
+
+
 def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_dir: Path,
               workers: int = 0, renderer: str = "auto", do_render: bool = True, in_place: bool = False,
               progress=None, spec: Optional[Dict[str, Any]] = None) -> BatchResult:
-    """Run a named job (``job_name`` + ``params``) or an EditSpec (``spec``; then ``job_name`` is only a label)."""
+    """Run a named job (``job_name`` + ``params``) or an EditSpec (``spec``; then ``job_name`` is only a label).
+
+    Everything the run does goes to ``<out>/logs/run.log`` (``progress`` gets the same progress lines), each file's
+    path through the pipeline to ``<out>/logs/<name>.trace.log``, and what went wrong, file by file, to
+    ``DIAGNOSTICS.md``. When the batch itself fails, run.log ends with the stage and the traceback (and DIAGNOSTICS.md
+    says what was known) before the exception propagates."""
     out_dir = Path(out_dir)
     if spec is not None:
         validate_spec(spec)          # fail early: questions, unsupported, unknown ops — before any file is read
@@ -346,7 +531,7 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
         get_job(job_name)  # fail early on an unknown job
     files = expand_inputs(inputs)
     check_inputs_outside(files, out_dir)      # before anything is created: a run never writes where it reads
-    for sub in ("outputs", "records", "exceptions", "plans", "render"):
+    for sub in ("outputs", "records", "exceptions", "plans", "render", diag.LOGS):
         (out_dir / sub).mkdir(parents=True, exist_ok=True)
     skipped_templates: List[Path] = []
     if spec is not None:
@@ -355,10 +540,62 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
         files = [f for f in files if f not in skipped_templates]
     batch = BatchResult(out_dir=out_dir, job=job_name, params=params, spec=spec)
     batch.skipped = [str(f) for f in skipped_templates]
+    batch.environment = diag.environment()
+    batch.started = datetime.now().astimezone().isoformat(timespec="seconds")
+    batch.log_path = out_dir / diag.LOGS / diag.RUN_LOG
+    log = diag.RunLog(batch.log_path, progress, _run_header(batch, files, workers, renderer, do_render, in_place))
+    stage = "transform+verify"
     t_start = time.perf_counter()
-    log = progress or (lambda msg: None)
+    try:
+        _transform_and_verify(batch, files, job_name, params, out_dir, workers, spec, log)
+        stage = "render+geometry"
+        _render_and_compare(batch, renderer, do_render, workers, log)
+        stage = "deliver"
+        _deliver(batch, in_place, log)
+        stage = "records"
+        _write_records(batch, job_name, params, spec, log)
+        batch.timings["total"] = time.perf_counter() - t_start
+        stage = "reports"
+        batch.finished = datetime.now().astimezone().isoformat(timespec="seconds")
+        from .report import write_batch_report, write_diagnostics
+        write_batch_report(batch)
+        write_diagnostics(batch)
+        c = batch.counts()
+        log.detail(f"finished: PASS {c['PASS']} · FAIL {c['FAIL']} · EXCEPTION {c['EXCEPTION']} — "
+                   + ", ".join(f"{k} {v:.2f}s" for k, v in batch.timings.items()))
+        return batch
+    except BaseException as e:
+        batch.stopped = f"{stage}: {type(e).__name__}: {e}"
+        log.detail(f"THE BATCH STOPPED during {stage}: {type(e).__name__}: {e}")
+        log.block(traceback.format_exc())
+        try:                                    # say what is known: the files done so far and where it stopped
+            from .report import write_diagnostics
+            batch.finished = datetime.now().astimezone().isoformat(timespec="seconds")
+            write_diagnostics(batch)
+        except Exception as e2:  # noqa: BLE001 — the original error is the one that matters
+            log.detail(f"(DIAGNOSTICS.md could not be written either: {type(e2).__name__}: {e2})")
+        raise
+    finally:
+        log.close()
 
-    # 1-2. acquire, fingerprint, plan, apply, verify — in parallel
+
+def _file_done(f: Path, r: Dict[str, Any], log: "diag.RunLog") -> None:
+    log(f"  done {f.name}")                # ui/rows.ProgressTracker counts these lines — keep them exactly so
+    exc = r.get("exception")
+    if exc:
+        at = f" (at {exc.get('stage')}" + (f", op #{exc['op_number']} {exc.get('op')}" if exc.get("op_number") else "") \
+            + ")" if exc.get("kind") != "refusal" else ""
+        log(f"    EXCEPTION [{exc.get('code')}] {diag.snip(exc.get('reason'), 400)}{at}")
+    elif r.get("record") and not r["record"].get("passed", True):
+        bad = [c["id"] for c in r["record"].get("checks", []) if c.get("status") == "FAIL"]
+        log(f"    verification FAILED: {', '.join(bad)} — the copy will not be delivered")
+    log.block("\n".join(r.get("trace") or []), indent="      | ")
+
+
+def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, params: Dict[str, Any],
+                          out_dir: Path, workers: int, spec: Optional[Dict[str, Any]], log: "diag.RunLog") -> None:
+    """1-2. acquire, fingerprint, plan, apply, verify — in parallel; a worker that dies costs only its own file."""
+    t_start = time.perf_counter()
     workers = workers or max(1, min(os.cpu_count() or 2, len(files), 8))
     results: Dict[str, Dict[str, Any]] = {}
     log(f"{len(files)} file(s); transform+verify with {workers} worker(s)"
@@ -367,15 +604,29 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
     if workers == 1 or len(files) == 1:
         for f in files:
             results[str(f)] = _process_one(str(f), job_name, params, str(out_dir), out_names[str(f)], spec)
-            log(f"  done {f.name}")
+            _file_done(f, results[str(f)], log)
     else:
+        broken: List[Path] = []
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = {ex.submit(_process_one, str(f), job_name, params, str(out_dir), out_names[str(f)], spec): f
                     for f in files}
             for fut in as_completed(futs):
-                r = fut.result()
-                results[r["source"]] = r
-                log(f"  done {Path(r['source']).name}")
+                f = futs[fut]
+                try:
+                    r = fut.result()
+                except BrokenProcessPool:
+                    broken.append(f)
+                    continue
+                except Exception as e:  # noqa: BLE001 — the result could not come back: this file's record
+                    r = _lost_result(f, out_dir, out_names[str(f)], e)
+                results[str(f)] = r
+                _file_done(f, r, log)
+        if broken:
+            log(f"a worker process stopped abruptly; running its {len(broken)} unfinished file(s) again, each alone "
+                f"in a fresh process, to find the cause")
+        for f in broken:
+            results[str(f)] = _run_alone(f, job_name, params, out_dir, out_names[str(f)], spec)
+            _file_done(f, results[str(f)], log)
     batch.timings["transform+verify"] = time.perf_counter() - t_start
 
     for f in files:
@@ -391,13 +642,31 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
             fr.output = Path(r["output"])
         if r.get("record"):
             fr.record = VerificationRecord.from_dict(r["record"])
+        fr.trace_path = Path(r["trace_path"]) if r.get("trace_path") else None
+        fr.trace = list(r.get("trace") or [])
+        if fr.exception is not None and fr.trace_path is not None:
+            fr.exception["trace"] = f"{diag.LOGS}/{fr.trace_path.name}"
         batch.files.append(fr)
 
-    # 3-4. render + geometry
+
+def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, workers: int, log: "diag.RunLog") -> None:
+    """3-4. render + geometry (V6/V7). A renderer that cannot run, a file it cannot convert, or a comparison that
+    fails on one file is that file's failed V6 — with what the renderer said — never a crashed batch."""
+    out_dir = batch.out_dir
     t_r = time.perf_counter()
     backend = render_mod.pick(renderer) if do_render else None
     batch.renderer = backend
     renderable = [fr for fr in batch.files if fr.output is not None and fr.record is not None]
+    workers = workers or max(1, min(os.cpu_count() or 2, len(batch.files) or 1, 8))
+    if do_render and backend is None:
+        log.detail(f"no renderer: {render_mod.unavailable_reason(renderer)}")
+    if backend:
+        log.detail(f"renderer: {render_mod.describe(backend)}")
+    messages: List[str] = []
+
+    def rlog(msg: str) -> None:
+        messages.append(msg)
+        log(msg)
     if backend and renderable:
         log(f"rendering {2 * len(renderable)} PDF(s) with {backend}")
         # a source whose name another source has too is rendered from a copy carrying its unique output name, so
@@ -411,19 +680,27 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                 src_in[cp] = fr.source
             else:
                 src_in[fr.source] = fr.source
-        rendered = render_mod.render_pdfs(list(src_in), out_dir / "render" / "source", backend, workers, log=log)
+        rendered = render_mod.render_pdfs(list(src_in), out_dir / "render" / "source", backend, workers, log=rlog,
+                                          detail=log.detail)
         src_pdfs = {src_in[k]: v for k, v in rendered.items() if k in src_in}
         out_pdfs = render_mod.render_pdfs([fr.output for fr in renderable], out_dir / "render" / "output", backend,
-                                          workers, log=log)
+                                          workers, log=rlog, detail=log.detail)
         templates = sorted({(fr.plan or {}).get("geometry_template") for fr in renderable
                             if (fr.plan or {}).get("geometry_reference") == "template" and (fr.plan or {}).get("geometry_template")})
         tpl_pdfs: Dict[str, Path] = {}
         if templates:
             log(f"rendering {len(templates)} template(s) (headers/footers alone) with {backend}")
-            hf_docs = {geom.hf_only_copy(Path(t), out_dir / "render" / "template" /
-                                         f"{k:02d} {Path(t).stem} (headers-footers only).docx")[0]: str(Path(t))
-                       for k, t in enumerate(templates)}
-            rendered = render_mod.render_pdfs(list(hf_docs), out_dir / "render" / "template", backend, 1, log=log)
+            hf_docs: Dict[Path, str] = {}
+            for k, t in enumerate(templates):
+                try:
+                    hf_docs[geom.hf_only_copy(Path(t), out_dir / "render" / "template" /
+                                              f"{k:02d} {Path(t).stem} (headers-footers only).docx")[0]] = str(Path(t))
+                except Exception as e:  # noqa: BLE001 — its files' V7 fails for want of the reference, and says so
+                    rlog(f"{Path(t).name}: the template's headers/footers-only copy could not be made "
+                         f"({type(e).__name__}: {e})")
+                    log.block(traceback.format_exc())
+            rendered = render_mod.render_pdfs(list(hf_docs), out_dir / "render" / "template", backend, 1, log=rlog,
+                                              detail=log.detail)
             tpl_pdfs = {hf_docs[k]: v for k, v in rendered.items() if k in hf_docs}
         # V7 template mode compares headers/footers-only renders of the output and the template, page for page
         out_hf: Dict[Path, Tuple[Path, int]] = {}
@@ -432,51 +709,85 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
             hf_dir = out_dir / "render" / "output-hf"
             copies = {}
             for fr in templated:
-                path, n = geom.hf_only_copy(fr.output, hf_dir / f"{Path(fr.output).stem} (headers-footers only).docx")
-                copies[path] = (fr.output, n)
+                try:
+                    path, n = geom.hf_only_copy(fr.output, hf_dir / f"{Path(fr.output).stem} (headers-footers only).docx")
+                    copies[path] = (fr.output, n)
+                except Exception as e:  # noqa: BLE001
+                    rlog(f"{fr.output.name}: its headers/footers-only copy could not be made ({type(e).__name__}: {e})")
+                    log.block(traceback.format_exc())
             log(f"rendering {len(copies)} headers/footers-only output(s) with {backend}")
-            for k, v in render_mod.render_pdfs(list(copies), hf_dir, backend, workers, log=log).items():
+            for k, v in render_mod.render_pdfs(list(copies), hf_dir, backend, workers, log=rlog,
+                                               detail=log.detail).items():
                 if k in copies:
                     out_hf[copies[k][0]] = (v, copies[k][1])
         pages_dir = out_dir / "render" / "pages"
         for fr in renderable:
+            fr.render_messages = _file_messages(messages, [fr.source.name, fr.out_name])
             sp, op = src_pdfs.get(fr.source), out_pdfs.get(fr.output)
             if not sp or not op:
-                fr.record.set(CheckResult("V6", "Render and look", "FAIL", f"render failed ({backend})"))
+                said = fr.render_messages
+                fr.record.set(CheckResult("V6", "Render and look", "FAIL",
+                                          f"render failed ({backend})" + (f": {said[-1]}" if said else
+                                                                          ": no PDF came back and the renderer said "
+                                                                          "nothing about this file (see logs/run.log)"),
+                                          {"renderer": backend, "messages": said,
+                                           "missing": [x for x, ok in (("source", sp), ("output", op)) if not ok]}))
                 fr.record.set(CheckResult("V7", "Geometry assertion", "NA", "no render"))
+                _trace(fr, "render", f"V6 FAIL — {fr.record.get('V6').summary}")
                 continue
-            expected_pages = (fr.plan or {}).get("geometry_pages_expected_to_change", [])
-            g = geom.compare_pdfs(sp, op, expected_pages)
-            look_pages = sorted({1} | {p.page for p in g.pages if p.max_dy > GEOM_TOL_PT or p.words_only_in_out or p.words_only_in_ref})
-            pngs = geom.rasterize(op, pages_dir, look_pages[:6])
-            fr.record.set(CheckResult(
-                "V6", "Render and look", "PASS",
-                f"renderer {backend}; pages {g.ref_pages}→{g.out_pages}; rasterized pages {look_pages[:6]} → "
-                f"{pages_dir.name}/; page-count delta is not evidence of body change (XML checks are character truth)",
-                {"renderer": backend, "source_pdf": str(sp), "output_pdf": str(op), "pages": [str(p) for p in pngs]}))
-            tg = None
-            tref = (fr.plan or {}).get("geometry_template")
-            top = _template_op_params(fr.plan or {})
-            if ((fr.plan or {}).get("geometry_reference") == "template" and tref and str(Path(tref)) in tpl_pdfs
-                    and fr.output in out_hf and top is not None):
-                hf_pdf, n_sections = out_hf[fr.output]
-                tg = geom.compare_template_bands(tpl_pdfs[str(Path(tref))], hf_pdf,
-                                                 geom.template_section_map(top["template_sections"], n_sections),
-                                                 top.get("kinds", ["header", "footer"]), GEOM_TOL_PT)
-            fr.record.set(geometry_check(fr.plan or {}, g, tg))
+            try:
+                expected_pages = (fr.plan or {}).get("geometry_pages_expected_to_change", [])
+                g = geom.compare_pdfs(sp, op, expected_pages)
+                look_pages = sorted({1} | {p.page for p in g.pages if p.max_dy > GEOM_TOL_PT or p.words_only_in_out or p.words_only_in_ref})
+                pngs = geom.rasterize(op, pages_dir, look_pages[:6])
+                fr.record.set(CheckResult(
+                    "V6", "Render and look", "PASS",
+                    f"renderer {backend}; pages {g.ref_pages}→{g.out_pages}; rasterized pages {look_pages[:6]} → "
+                    f"{pages_dir.name}/; page-count delta is not evidence of body change (XML checks are character truth)",
+                    {"renderer": backend, "source_pdf": str(sp), "output_pdf": str(op), "pages": [str(p) for p in pngs]}))
+                tg = None
+                tref = (fr.plan or {}).get("geometry_template")
+                top = _template_op_params(fr.plan or {})
+                if ((fr.plan or {}).get("geometry_reference") == "template" and tref and str(Path(tref)) in tpl_pdfs
+                        and fr.output in out_hf and top is not None):
+                    hf_pdf, n_sections = out_hf[fr.output]
+                    tg = geom.compare_template_bands(tpl_pdfs[str(Path(tref))], hf_pdf,
+                                                     geom.template_section_map(top["template_sections"], n_sections),
+                                                     top.get("kinds", ["header", "footer"]), GEOM_TOL_PT)
+                fr.record.set(geometry_check(fr.plan or {}, g, tg))
+            except Exception as e:  # noqa: BLE001 — a comparison that cannot run is this file's failure, not a skip
+                tb = traceback.format_exc()
+                fr.record.set(CheckResult("V6", "Render and look", "FAIL",
+                                          f"the rendered pages could not be compared ({type(e).__name__}: {e}); the "
+                                          f"traceback is in the file's trace", {"renderer": backend, "traceback": tb}))
+                fr.record.set(CheckResult("V7", "Geometry assertion", "NA", "no comparison (V6 failed)"))
+                _trace(fr, "render", f"V6 FAIL — {fr.record.get('V6').summary}", tb)
+                log.detail(f"{fr.source.name}: the render comparison failed")
+                log.block(tb)
+                continue
+            failures = {cid: details for cid, _, _, details in fr.record.failures()}
+            for cid in ("V6", "V7"):
+                c = fr.record.get(cid)
+                _trace(fr, "render", f"{cid} {c.status} — {diag.snip(c.summary, 500)}",
+                       "\n".join(f"- {d}" for d in failures.get(cid, [])))
         try:
             batch.contact_sheet = geom.contact_sheet([out_pdfs[fr.output] for fr in renderable if fr.output in out_pdfs],
                                                     out_dir / "render" / "contact_sheet.png")
         except Exception as e:  # pragma: no cover
             log(f"contact sheet failed: {e}")
     else:
+        why = ("rendering disabled" if not do_render else
+               "no renderer available (install Word+pywin32 or LibreOffice)")
         for fr in renderable:
-            why = "rendering disabled" if not do_render else "no renderer available (install Word+pywin32 or LibreOffice)"
             fr.record.set(CheckResult("V6", "Render and look", "NA", why))
             fr.record.set(CheckResult("V7", "Geometry assertion", "NA", why))
+            _trace(fr, "render", f"V6/V7 NA — {why}")
     batch.timings["render+geometry"] = time.perf_counter() - t_r
 
-    # 5. deliver (guarded)
+
+def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog") -> None:
+    """5. deliver (guarded, V9)."""
+    out_dir = batch.out_dir
     t_d = time.perf_counter()
     for fr in batch.files:
         if fr.record is None or fr.output is None:
@@ -486,11 +797,9 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
             fr.record.set(CheckResult("V9", "Overwrite guard", "NA",
                                       f"not delivered: verification failed; the output was moved out of outputs/ to "
                                       f"{moved.parent.name}/{moved.name} (diagnosis only)"))
-            continue
-        if fr.noop:
+        elif fr.noop:
             fr.record.set(CheckResult("V9", "Overwrite guard", "NA", "no-op: output identical to source; nothing written back"))
-            continue
-        if in_place:
+        elif in_place:
             try:
                 new_id = guard.write_back(fr.identity, verified_bytes(fr))
                 fr.delivered_to = new_id.path
@@ -523,9 +832,30 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                                           f"SOURCE DRIFTED during the run: {d} — the output was built from a stale source and "
                                           f"moved out of outputs/ to {moved.parent.name}/{moved.name} (diagnosis only); run "
                                           f"again on the current file"))
+        v9 = fr.record.get("V9")
+        _trace(fr, "deliver", f"V9 {v9.status} — {v9.summary}")
+        if v9.status == "FAIL":
+            log(f"  {fr.source.name}: V9 FAIL — {diag.snip(v9.summary, 400)}")
     batch.timings["deliver"] = time.perf_counter() - t_d
 
-    # 6. records, exceptions, plans — named after the output (unique across the batch), never after the source alone
+
+def _result_line(fr: FileResult) -> str:
+    if fr.status == "PASS":
+        return ("PASS — nothing to change (the output would be identical to the source)" if fr.noop and not fr.delivered_to
+                else f"PASS — delivered to {fr.delivered_to}" if fr.delivered_to else "PASS")
+    if fr.status == "FAIL":
+        bad = [c.id for c in fr.record.checks if c.status == "FAIL"]
+        return (f"FAIL — not delivered ({', '.join(bad)} failed); the edited copy is in "
+                f"{Path(fr.output).parent.name}/{Path(fr.output).name}" if fr.output else f"FAIL ({', '.join(bad)})")
+    e = fr.exception or {}
+    return f"EXCEPTION [{e.get('code')}] at {e.get('stage', '?')} — the file was left untouched"
+
+
+def _write_records(batch: BatchResult, job_name: str, params: Dict[str, Any], spec: Optional[Dict[str, Any]],
+                   log: "diag.RunLog") -> None:
+    """6. records, exceptions, plans — named after the output (unique across the batch), never after the source
+    alone; each file's trace gets its result line."""
+    out_dir = batch.out_dir
     for fr in batch.files:
         stem = fr.record_stem
         if fr.plan is not None:
@@ -538,7 +868,6 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
         if fr.record is not None:
             (out_dir / "records" / f"{stem}.record.md").write_text(fr.record.to_markdown(), encoding="utf-8")
             (out_dir / "records" / f"{stem}.record.json").write_text(json.dumps(fr.record.to_dict(), indent=2), encoding="utf-8")
-    batch.timings["total"] = time.perf_counter() - t_start
-    from .report import write_batch_report
-    write_batch_report(batch)
-    return batch
+        line = _result_line(fr)
+        _trace(fr, "result", line)
+        log.detail(f"  {fr.source.name}: {line}")

@@ -11,22 +11,49 @@ Phase 4).
    the first page whose words moved;
 4. writes ``spec.json`` and ``PREVIEW.md`` and computes an **approval token** — a hash of the spec and of every
    planned file's path, size and mtime. ``run-spec --approval TOKEN`` refuses to run when the spec or any file
-   changed since the preview.
+   changed since the preview — and says which (``approval_inputs`` are kept in ``preview.json``;
+   ``explain_approval_change`` compares them with the files as they are now).
+
+Diagnostics: ``logs/preview.log`` has every file's plan or refusal (with the stage, the op and the line of code), each
+sample's verification with the failing checks' specifics, and what the renderer said; a sample that fails in an
+unexpected way is that sample's exception record (classified like a run's), never a lost preview.
 """
 from __future__ import annotations
 
 import hashlib
 import json
 import os
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from .editspec import apply_spec, plan_spec
 from .fingerprint import fingerprint
-from .ops import JobException
 from .package import DocxPackage
 from .planner import BatchPlan, plan_batch
+
+
+def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, Any]:
+    """What the approval token is a hash of, as data: the spec's digest, every planned file's size and mtime, and every
+    template's size, mtime and md5 — kept beside the preview so a refused run can say exactly what changed."""
+    from .editspec import spec_templates
+    spec_text = json.dumps(spec, sort_keys=True, ensure_ascii=False)
+    out: Dict[str, Any] = {"spec": hashlib.sha256(spec_text.encode("utf-8")).hexdigest()[:16], "files": {},
+                           "templates": {}}
+    for f in sorted(Path(x).resolve() for x in files):
+        try:
+            st = f.stat()
+            out["files"][str(f)] = [st.st_size, st.st_mtime_ns]
+        except OSError:
+            out["files"][str(f)] = "missing"
+    for t in sorted(set(spec_templates(spec) if isinstance(spec, dict) else [])):
+        try:
+            st = t.stat()
+            out["templates"][str(t)] = [st.st_size, st.st_mtime_ns, hashlib.md5(t.read_bytes()).hexdigest()]
+        except OSError:
+            out["templates"][str(t)] = "missing"
+    return out
 
 
 def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
@@ -46,6 +73,46 @@ def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
         except OSError:
             h.update(f"\ntemplate {t}|missing".encode("utf-8"))
     return h.hexdigest()[:16]
+
+
+def _stamp(ns: Any) -> str:
+    from datetime import datetime
+    try:
+        return datetime.fromtimestamp(int(ns) / 1e9).strftime("%Y-%m-%d %H:%M:%S")
+    except (TypeError, ValueError, OSError):
+        return "?"
+
+
+def explain_approval_change(before: Dict[str, Any], now: Dict[str, Any], limit: int = 12) -> List[str]:
+    """What changed between the preview's ``approval_inputs`` and the files as they are now, one line each — the
+    reason a run is refused, instead of "something changed"."""
+    out: List[str] = []
+    if before.get("spec") != now.get("spec"):
+        out.append("the EditSpec itself changed")
+    bf, nf = before.get("files") or {}, now.get("files") or {}
+    for f in sorted(set(nf) - set(bf)):
+        out.append(f"{Path(f).name}: a file that was not in the preview (added to the folder since)")
+    for f in sorted(set(bf) - set(nf)):
+        out.append(f"{Path(f).name}: in the preview, but no longer among the files (moved, renamed or deleted)")
+    for f in sorted(set(bf) & set(nf)):
+        a, b = bf[f], nf[f]
+        if a == b:
+            continue
+        if b == "missing" or a == "missing":
+            out.append(f"{Path(f).name}: {'missing now' if b == 'missing' else 'back again'}")
+        else:
+            out.append(f"{Path(f).name}: modified since the preview (size {a[0]:,} → {b[0]:,} bytes; saved "
+                       f"{_stamp(a[1])} → {_stamp(b[1])})")
+    bt, nt = before.get("templates") or {}, now.get("templates") or {}
+    for t in sorted(set(bt) | set(nt)):
+        a, b = bt.get(t), nt.get(t)
+        if a != b:
+            out.append(f"template {Path(t).name}: " + ("missing now" if b == "missing" or b is None else
+                                                       "changed since the preview" if a not in (None, "missing")
+                                                       else "new"))
+    if len(out) > limit:
+        out = out[:limit] + [f"… and {len(out) - limit} more change(s)"]
+    return out
 
 
 @dataclass
@@ -70,6 +137,8 @@ class Preview:
     token: str = ""
     renderer: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
+    token_inputs: Dict[str, Any] = field(default_factory=dict)   # approval_inputs at preview time
+    log_path: Optional[Path] = None                               # logs/preview.log
 
     def to_text(self) -> str:
         spec = self.batch_plan.spec
@@ -91,7 +160,8 @@ class Preview:
 
     def to_dict(self):
         return {"token": self.token, "renderer": self.renderer, "warnings": self.warnings,
-                "plan": self.batch_plan.to_dict(), "samples": [s.to_dict() for s in self.samples]}
+                "plan": self.batch_plan.to_dict(), "samples": [s.to_dict() for s in self.samples],
+                "approval_inputs": self.token_inputs, "log": "logs/preview.log"}
 
 
 def side_by_side(src_pdf: Path, out_pdf: Path, page: int, png: Path, dpi: int = 70) -> Optional[Path]:
@@ -132,57 +202,109 @@ def _pick_samples(bp: BatchPlan) -> List[Path]:
 
 def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
                  do_render: bool = True) -> Preview:
+    from . import diagnostics as diag
     from . import render as render_mod
     from .verify import run_suite
     from .verify import geometry as geom
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    bp = plan_batch(inputs, spec)
-    pv = Preview(out_dir=out_dir, batch_plan=bp)
-    for f in _pick_samples(bp):
-        sv = SampleView(source=f)
-        try:
-            pkg = DocxPackage.from_path(f)
-            plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
-            out = apply_spec(pkg, frags).output_bytes()
-            sv.output = out_dir / "samples" / f.name
-            sv.output.parent.mkdir(parents=True, exist_ok=True)
-            sv.output.write_bytes(out)
-            rec = run_suite(pkg.data, out, plan.to_dict(), str(f), str(sv.output))
-            sv.passed = rec.passed
-            sv.checks = {c.id: c.status for c in rec.checks}
-        except JobException as e:
-            sv.exception = e.to_dict()
-        pv.samples.append(sv)
-    backend = render_mod.pick(renderer) if do_render else None
-    pv.renderer = backend
-    if not do_render:
-        pv.warnings.append("rendering skipped: plan summaries and verification only")
-    elif backend is None:
-        pv.warnings.append("no renderer found (Word or LibreOffice): plan summaries and verification only")
-    elif backend != "word":
-        pv.warnings.append(f"preview rendered with {backend}; Word's layout can differ (Word is the reference on "
-                           f"your machine when installed)")
-    done = [s for s in pv.samples if s.output]
-    if backend and done:
-        rdir = out_dir / "render"
-        # a renderer failure (Word that will not start, a file LibreOffice chokes on) is a warning beside the plan
-        # summaries and verification, never a preview that dies without them
-        srcs = render_mod.render_pdfs([s.source for s in done], rdir / "source", backend, 2, log=pv.warnings.append)
-        outs = render_mod.render_pdfs([s.output for s in done], rdir / "output", backend, 2, log=pv.warnings.append)
-        for s in done:
-            sp, op = srcs.get(s.source), outs.get(s.output)
-            if not sp or not op:
-                pv.warnings.append(f"{s.source.name}: render failed")
-                continue
-            g = geom.compare_pdfs(sp, op)
-            moved = [p.page for p in g.pages if p.max_dy > 0.5 or p.words_only_in_out or p.words_only_in_ref]
-            for page in sorted({1} | set(moved[:1])):
-                img = side_by_side(sp, op, page, out_dir / "images" / f"{s.source.stem} p{page}.png")
-                if img:
-                    s.images.append(img)
-    pv.token = approval_token(spec, [f.source for f in bp.files])
-    (out_dir / "spec.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
-    (out_dir / "PREVIEW.md").write_text("```\n" + pv.to_text() + "\n```\n", encoding="utf-8")
-    (out_dir / "preview.json").write_text(json.dumps(pv.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
-    return pv
+    log = diag.RunLog(out_dir / diag.LOGS / "preview.log", None,
+                      [f"Spec Surgeon preview log — {spec.get('request')!r}",
+                       f"environment  {diag.environment_line(diag.environment())}", ""])
+    try:
+        bp = plan_batch(inputs, spec)
+        pv = Preview(out_dir=out_dir, batch_plan=bp, log_path=log.path)
+        log.detail(f"planned {len(bp.files)} file(s) in {bp.seconds:.2f}s: {len(bp.files) - len(bp.exceptions)} "
+                   f"plan cleanly, {len(bp.exceptions)} exception(s)")
+        for fpl in bp.files:
+            if fpl.status == "planned":
+                log.detail(f"  {fpl.source.name}: planned [{fpl.ms:.0f} ms] — " + " · ".join(fpl.summary))
+            else:
+                e = fpl.exception or {}
+                log.detail(f"  {fpl.source.name}: EXCEPTION [{e.get('code')}] at {e.get('stage')}"
+                           + (f", op #{e['op_number']} {e.get('op')}" if e.get("op_number") else "")
+                           + f": {e.get('reason')}" + (f" (at {e['where']})" if e.get("where") else ""))
+                if e.get("traceback") and e.get("kind") in ("internal-error", "environment"):
+                    log.block(e["traceback"])
+        for f in _pick_samples(bp):
+            sv = SampleView(source=f)
+            stage, data = "open", None
+            try:
+                data = Path(f).read_bytes()
+                pkg = DocxPackage(data, name=str(f))
+                stage = "plan"
+                plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+                stage = "apply"
+                out = apply_spec(pkg, frags).output_bytes()
+                stage = "write"
+                sv.output = out_dir / "samples" / f.name
+                sv.output.parent.mkdir(parents=True, exist_ok=True)
+                sv.output.write_bytes(out)
+                stage = "verify"
+                rec = run_suite(pkg.data, out, plan.to_dict(), str(f), str(sv.output))
+                sv.passed = rec.passed
+                sv.checks = {c.id: c.status for c in rec.checks}
+                log.detail(f"sample {f.name}: verification {'PASS' if rec.passed else 'FAIL'} — "
+                           + " · ".join(f"{c.id} {c.status}" for c in rec.checks if c.id not in ("V6", "V7", "V9")))
+                for cid, cname, _summary, details in rec.failures():
+                    log.block(f"{cid} {cname}:\n" + "\n".join(f"  - {x}" for x in details))
+            except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
+                sv.exception = diag.exception_record(e, stage, data)
+                log.detail(f"sample {f.name}: EXCEPTION [{sv.exception['code']}] at {stage}: {sv.exception['reason']}")
+                if sv.exception.get("traceback") and sv.exception.get("kind") != "refusal":
+                    log.block(sv.exception["traceback"])
+            pv.samples.append(sv)
+        backend = render_mod.pick(renderer) if do_render else None
+        pv.renderer = backend
+        if not do_render:
+            pv.warnings.append("rendering skipped: plan summaries and verification only")
+        elif backend is None:
+            pv.warnings.append("no renderer found (Word or LibreOffice): plan summaries and verification only")
+            log.detail(f"no renderer: {render_mod.unavailable_reason(renderer)}")
+        elif backend != "word":
+            pv.warnings.append(f"preview rendered with {backend}; Word's layout can differ (Word is the reference on "
+                               f"your machine when installed)")
+        if backend:
+            log.detail(f"renderer: {render_mod.describe(backend)}")
+        done = [s for s in pv.samples if s.output]
+
+        def warn(msg: str) -> None:
+            pv.warnings.append(msg)
+            log.detail(msg)
+        if backend and done:
+            rdir = out_dir / "render"
+            # a renderer failure (Word that will not start, a file LibreOffice chokes on) is a warning beside the plan
+            # summaries and verification, never a preview that dies without them
+            srcs = render_mod.render_pdfs([s.source for s in done], rdir / "source", backend, 2, log=warn,
+                                          detail=log.detail)
+            outs = render_mod.render_pdfs([s.output for s in done], rdir / "output", backend, 2, log=warn,
+                                          detail=log.detail)
+            for s in done:
+                sp, op = srcs.get(s.source), outs.get(s.output)
+                if not sp or not op:
+                    warn(f"{s.source.name}: render failed")
+                    continue
+                try:
+                    g = geom.compare_pdfs(sp, op)
+                    moved = [p.page for p in g.pages if p.max_dy > 0.5 or p.words_only_in_out or p.words_only_in_ref]
+                    for page in sorted({1} | set(moved[:1])):
+                        img = side_by_side(sp, op, page, out_dir / "images" / f"{s.source.stem} p{page}.png")
+                        if img:
+                            s.images.append(img)
+                except Exception as e:  # noqa: BLE001 — pictures are a nicety; the plan and verification stand
+                    warn(f"{s.source.name}: the before/after pictures could not be made ({type(e).__name__}: {e})")
+                    log.block(traceback.format_exc())
+        pv.token = approval_token(spec, [f.source for f in bp.files])
+        pv.token_inputs = approval_inputs(spec, [f.source for f in bp.files])
+        (out_dir / "spec.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
+        (out_dir / "PREVIEW.md").write_text("```\n" + pv.to_text() + "\n```\n", encoding="utf-8")
+        (out_dir / "preview.json").write_text(json.dumps(pv.to_dict(), indent=2, ensure_ascii=False, default=str),
+                                              encoding="utf-8")
+        log.detail(f"approval token {pv.token}")
+        return pv
+    except BaseException as e:
+        log.detail(f"THE PREVIEW STOPPED: {type(e).__name__}: {e}")
+        log.block(traceback.format_exc())
+        raise
+    finally:
+        log.close()
