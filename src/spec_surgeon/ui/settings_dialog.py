@@ -1,17 +1,17 @@
-"""Settings: appearance, default results folder, the Anthropic API key, and updates."""
+"""Settings: the default results folder and the Anthropic API key — the two things the window needs told.
+
+The look follows Windows (light/dark) and the update check runs once a day on its own, so neither is a setting
+(the GUI rework after v0.4.1 removed the Appearance and Updates panels)."""
 from __future__ import annotations
 
 import os
-import time
 
 from PySide6.QtCore import Slot
-from PySide6.QtWidgets import (QCheckBox, QComboBox, QDialog, QHBoxLayout, QLineEdit, QPushButton, QVBoxLayout)
+from PySide6.QtWidgets import QCheckBox, QDialog, QHBoxLayout, QLineEdit, QPushButton, QVBoxLayout
 
 from .. import credentials
 from ..settings import save_settings
 from .widgets import Card, PathPicker, label, primary_button
-
-THEMES = [("Follow Windows", "system"), ("Light", "light"), ("Dark", "dark")]
 
 
 class SettingsDialog(QDialog):
@@ -20,28 +20,11 @@ class SettingsDialog(QDialog):
         self.w = window
         self.setWindowTitle("Settings — Spec Surgeon")
         self.setMinimumWidth(620)
-        s = window.settings
         lay = QVBoxLayout(self)
         lay.setContentsMargins(20, 18, 20, 16)
         lay.setSpacing(12)
 
-        card = Card("Appearance")
-        self.theme = QComboBox()
-        for text, value in THEMES:
-            self.theme.addItem(text, value)
-        values = [v for _, v in THEMES]
-        self.theme.setCurrentIndex(values.index(s.theme) if s.theme in values else 0)
-        self.native = QCheckBox("Use Windows' own controls (Windows 11)")
-        self.native.setChecked(s.native_style)
-        row = QHBoxLayout()
-        row.addWidget(label("Colours", wrap=False))
-        row.addWidget(self.theme)
-        row.addStretch(1)
-        card.add(row)
-        card.add(self.native)
-        lay.addWidget(card)
-
-        card = Card("Results", "Where previews and runs go unless you choose another folder on the Files step.")
+        card = Card("Results folder", "Where previews and runs go unless you choose another folder on the Files step.")
         self.out = PathPicker("dir", browse=window.browse_dir)
         self.out.setText(window.files_page.out.text())
         card.add(self.out)
@@ -76,26 +59,8 @@ class SettingsDialog(QDialog):
         card.add(row)
         lay.addWidget(card)
 
-        card = Card("Updates")
-        self.auto = QCheckBox("Check for updates automatically (once a day)")
-        self.auto.setChecked(window.auto_check_enabled())
-        card.add(self.auto)
-        when = time.strftime("%Y-%m-%d %H:%M", time.localtime(s.last_update_check)) if s.last_update_check \
-            else "never"
-        card.add(label(f"Last automatic check: {when}", "Muted"))
-        row = QHBoxLayout()
-        self.skipped_lbl = label(f"Skipped version: {s.skipped_version}" if s.skipped_version else
-                                 "No version skipped", "Muted")
-        self.clear_skip = QPushButton("Clear")
-        self.clear_skip.setEnabled(bool(s.skipped_version))
-        self.clear_skip.clicked.connect(self._clear_skip)
-        self.check_now = QPushButton("Check now")
-        self.check_now.clicked.connect(self._check_now)
-        row.addWidget(self.skipped_lbl, 1)
-        row.addWidget(self.clear_skip)
-        row.addWidget(self.check_now)
-        card.add(row)
-        lay.addWidget(card)
+        lay.addWidget(label("The window follows Windows' light or dark mode, and checks for updates once a day on "
+                            "its own (Help → Check for updates… checks right away).", "Muted"))
 
         row = QHBoxLayout()
         row.addStretch(1)
@@ -106,7 +71,6 @@ class SettingsDialog(QDialog):
         row.addWidget(cancel)
         row.addWidget(save)
         lay.addLayout(row)
-        self._skip_cleared = False
         self.accepted.connect(self.apply)
 
     @Slot(bool)
@@ -125,23 +89,8 @@ class SettingsDialog(QDialog):
         self.w.refresh_key_label()
 
     @Slot()
-    def _clear_skip(self) -> None:
-        self._skip_cleared = True
-        self.skipped_lbl.setText("No version skipped")
-        self.clear_skip.setEnabled(False)
-
-    @Slot()
-    def _check_now(self) -> None:
-        self.w.updates.manual_check()
-
-    @Slot()
     def apply(self) -> None:
         s = self.w.settings
-        s.theme = self.theme.currentData() or "system"
-        s.native_style = self.native.isChecked()
-        s.auto_check_updates = self.auto.isChecked()
-        if self._skip_cleared:
-            s.skipped_version = ""
         if self.out.text():
             self.w.files_page.out.setText(self.out.text())
             s.out_root = self.out.text()
@@ -160,6 +109,5 @@ class SettingsDialog(QDialog):
                 and self.w.key_origin == "session":
             credentials.save(os.environ[credentials.ENV])
             self.w.key_origin = "saved"
-        self.w.apply_theme()
         self.w.refresh_key_label()
         save_settings(s)

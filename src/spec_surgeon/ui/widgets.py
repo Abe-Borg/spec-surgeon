@@ -1,15 +1,16 @@
-"""Building blocks of the window: cards, path pickers (drag-and-drop), chips, stat tiles, info bars, status badges,
-image and Markdown viewers. Look comes from ``theme`` (object names); behaviour lives here."""
+"""Building blocks of the window: cards, path pickers (drag-and-drop), the drop zone, chips, stat tiles, info bars,
+empty states, status badges, the step rail's delegate, link labels, image and Markdown viewers. Look comes from
+``theme`` (object names and tokens); behaviour lives here."""
 from __future__ import annotations
 
 from pathlib import Path
 from typing import Callable, List, Optional
 
-from PySide6.QtCore import QPoint, QRect, QSize, Qt, QTimer, Signal, Slot
-from PySide6.QtGui import QColor, QFont, QPainter, QPixmap
-from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QPushButton, QScrollArea,
-                               QSizePolicy, QStyle, QStyledItemDelegate, QStyleOptionViewItem, QTextBrowser, QVBoxLayout,
-                               QWidget)
+from PySide6.QtCore import QPoint, QRect, QRectF, QSize, Qt, QTimer, Signal, Slot
+from PySide6.QtGui import QColor, QFont, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (QApplication, QDialog, QFrame, QHBoxLayout, QLabel, QLayout, QLineEdit, QPushButton,
+                               QScrollArea, QSizePolicy, QStyle, QStyledItemDelegate, QStyleOptionViewItem,
+                               QTextBrowser, QVBoxLayout, QWidget)
 
 from . import theme
 
@@ -28,6 +29,42 @@ def label(text: str = "", name: str = "", wrap: bool = True, selectable: bool = 
     lab.setWordWrap(wrap)
     if selectable:
         lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+    return lab
+
+
+def eyebrow(text: str) -> QLabel:
+    """The small capitals line above a page title ("STEP 2 OF 4"); colour from the theme, letters from here."""
+    lab = QLabel(text.upper())
+    lab.setObjectName("Eyebrow")
+    f = QFont(QApplication.font())
+    f.setPointSizeF(8.5)
+    f.setBold(True)
+    f.setLetterSpacing(QFont.SpacingType.AbsoluteSpacing, 1.2)
+    lab.setFont(f)
+    return lab
+
+
+def pill(text: str = "", tone: str = "") -> QLabel:
+    """A small rounded status label (key status, counts)."""
+    lab = QLabel(text)
+    lab.setObjectName("Pill")
+    lab.setProperty("tone", tone)
+    return lab
+
+
+def set_pill(lab: QLabel, text: str, tone: str = "") -> None:
+    lab.setText(text)
+    lab.setProperty("tone", tone)
+    repolish(lab)
+
+
+def link_label(text: str, url: str) -> QLabel:
+    """A clickable link that opens in the browser (or the mail program for ``mailto:``)."""
+    lab = QLabel(f'<a href="{url}">{text}</a>')
+    lab.setOpenExternalLinks(True)
+    lab.setTextInteractionFlags(Qt.TextInteractionFlag.TextBrowserInteraction)
+    lab.setToolTip(url)
+    lab.setCursor(Qt.CursorShape.PointingHandCursor)
     return lab
 
 
@@ -54,7 +91,7 @@ class Card(QFrame):
         super().__init__(parent)
         self.setObjectName("Card")
         self.body = QVBoxLayout(self)
-        self.body.setContentsMargins(18, 16, 18, 16)
+        self.body.setContentsMargins(20, 16, 20, 18)
         self.body.setSpacing(8)
         if title:
             self.title = label(title, "CardTitle")
@@ -78,7 +115,7 @@ class InfoBar(QFrame):
         super().__init__(parent)
         self.setObjectName("InfoBar")
         lay = QHBoxLayout(self)
-        lay.setContentsMargins(12, 8, 8, 8)
+        lay.setContentsMargins(12, 9, 8, 9)
         lay.setSpacing(10)
         self.title = label("", "InfoTitle", wrap=False)
         self.text = label("", selectable=True)
@@ -119,6 +156,45 @@ class InfoBar(QFrame):
     def _close(self):
         self.hide()
         self.closed.emit()
+
+
+class EmptyState(QFrame):
+    """What a step shows before it has anything: a title, a sentence, and the button that leads to the right step."""
+
+    def __init__(self, title: str, text: str, button: str = "", parent=None):
+        super().__init__(parent)
+        self.setObjectName("EmptyState")
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(48, 28, 48, 28)
+        lay.setSpacing(6)
+        # no layout-level alignment: a word-wrapped label needs the full width to report its height correctly
+        self.title = label(title, "EmptyTitle")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.text = label(text, "Muted")
+        self.text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        lay.addWidget(self.title)
+        lay.addWidget(self.text)
+        self.button: Optional[QPushButton] = None
+        if button:
+            self.button = QPushButton(button)
+            self.button.setCursor(Qt.CursorShape.PointingHandCursor)
+            lay.addSpacing(8)
+            lay.addWidget(self.button, 0, Qt.AlignmentFlag.AlignHCenter)
+
+
+def _dropped_local_path(event, kind: str, suffix: str) -> Optional[Path]:
+    """The first dropped local path that fits: a folder (a dropped file picks its folder) or a file with ``suffix``."""
+    md = event.mimeData()
+    if not md.hasUrls():
+        return None
+    for url in md.urls():
+        if url.isLocalFile():
+            p = Path(url.toLocalFile())
+            if kind == "dir" and p.is_file():
+                p = p.parent
+            if (kind == "dir" and p.is_dir()) or (kind == "file" and p.is_file() and p.suffix.lower() == suffix):
+                return p
+    return None
 
 
 class PathPicker(QWidget):
@@ -164,23 +240,8 @@ class PathPicker(QWidget):
             if chosen:
                 self.setText(chosen)
 
-    def _accepts(self, path: Path) -> bool:
-        if self.kind == "dir":
-            return path.is_dir()
-        return path.is_file() and path.suffix.lower() == self.suffix
-
     def _dropped_path(self, event) -> Optional[Path]:
-        md = event.mimeData()
-        if not md.hasUrls():
-            return None
-        for url in md.urls():
-            if url.isLocalFile():
-                p = Path(url.toLocalFile())
-                if self.kind == "dir" and p.is_file():
-                    p = p.parent                      # dropping a spec file picks its folder
-                if self._accepts(p):
-                    return p
-        return None
+        return _dropped_local_path(event, self.kind, self.suffix)
 
     def dragEnterEvent(self, event):
         if self._dropped_path(event) is not None:
@@ -190,6 +251,51 @@ class PathPicker(QWidget):
         p = self._dropped_path(event)
         if p is not None:
             self.setText(str(p))
+            event.acceptProposedAction()
+
+
+class DropZone(QFrame):
+    """A big dashed target for the specs folder: drop the folder (or any .docx in it) here, or press Browse….
+    Shown while no folder is chosen; ``dropped`` carries the folder's path."""
+    dropped = Signal(str)
+    browse = Signal()
+
+    def __init__(self, title: str, text: str, parent=None):
+        super().__init__(parent)
+        self.setObjectName("DropZone")
+        self.setAcceptDrops(True)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(48, 22, 48, 22)
+        lay.setSpacing(4)
+        self.title = label(title, "DropTitle")
+        self.title.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.text = label(text, "Muted")
+        self.text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.button = QPushButton("Browse for the folder…")
+        self.button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.button.clicked.connect(self.browse)
+        lay.addWidget(self.title)
+        lay.addWidget(self.text)
+        lay.addSpacing(8)
+        lay.addWidget(self.button, 0, Qt.AlignmentFlag.AlignHCenter)
+
+    def _set_active(self, on: bool) -> None:
+        self.setProperty("active", "true" if on else "false")
+        repolish(self)
+
+    def dragEnterEvent(self, event):
+        if _dropped_local_path(event, "dir", ".docx") is not None:
+            self._set_active(True)
+            event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self._set_active(False)
+
+    def dropEvent(self, event):
+        self._set_active(False)
+        p = _dropped_local_path(event, "dir", ".docx")
+        if p is not None:
+            self.dropped.emit(str(p))
             event.acceptProposedAction()
 
 
@@ -277,9 +383,11 @@ class ChipRow(QWidget):
 
 
 class StatTile(QFrame):
+    """A number with a caption; the tone colours the number and the tile's top edge."""
+
     def __init__(self, caption: str, parent=None):
         super().__init__(parent)
-        self.setObjectName("Card")
+        self.setObjectName("StatTile")
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 12, 16, 12)
         lay.setSpacing(0)
@@ -291,10 +399,14 @@ class StatTile(QFrame):
     def set(self, value, tone: str = "") -> None:
         self.value.setText(str(value))
         self.value.setProperty("tone", tone)
+        self.setProperty("tone", tone)
         repolish(self.value)
+        repolish(self)
 
 
 BADGE_ROLE = Qt.ItemDataRole.UserRole + 1
+STEP_STATE_ROLE = Qt.ItemDataRole.UserRole + 11      # "done" | "current" | "todo"
+STEP_STATUS_ROLE = Qt.ItemDataRole.UserRole + 12     # the line under the step's title
 
 
 class BadgeDelegate(QStyledItemDelegate):
@@ -333,6 +445,89 @@ class BadgeDelegate(QStyledItemDelegate):
     def sizeHint(self, option, index):
         s = super().sizeHint(option, index)
         return QSize(s.width() + 24, max(s.height(), 30))
+
+
+class StepDelegate(QStyledItemDelegate):
+    """Paints one step of the sidebar: a numbered circle on a vertical rail (green check when done, accent when
+    current, outlined when still to do), the step's title and a one-line status under it."""
+
+    ROW_HEIGHT = 60
+    CIRCLE = 24
+    LEFT = 16
+    TEXT_LEFT = 54
+
+    def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
+        t = theme.current or theme.tokens(False, theme.FALLBACK_ACCENT)
+        r = option.rect
+        state = index.data(STEP_STATE_ROLE) or "todo"
+        status = index.data(STEP_STATUS_ROLE) or ""
+        title = index.data(Qt.ItemDataRole.DisplayRole) or ""
+        number = index.row() + 1
+        last = index.row() == index.model().rowCount() - 1
+        painter.save()
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        hovered = bool(option.state & QStyle.StateFlag.State_MouseOver)
+        if state == "current" or hovered:
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(t.sidebar_selected if state == "current" else t.sidebar_hover))
+            painter.drawRoundedRect(r.adjusted(6, 2, -6, -2), 8, 8)
+        cx = r.x() + self.LEFT + self.CIRCLE / 2
+        cy = r.center().y() + 0.5
+        half = self.CIRCLE / 2
+        rail = QPen(QColor(t.rail), 2)
+        painter.setPen(rail)
+        if index.row() > 0:
+            painter.drawLine(QPoint(int(cx), r.top()), QPoint(int(cx), int(cy - half - 4)))
+        if not last:
+            painter.drawLine(QPoint(int(cx), int(cy + half + 4)), QPoint(int(cx), r.bottom() + 1))
+        circle = QRectF(cx - half, cy - half, self.CIRCLE, self.CIRCLE)
+        num_font = QFont(option.font)
+        num_font.setBold(True)
+        num_font.setPointSizeF(8.5)
+        painter.setFont(num_font)
+        if state == "done":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(t.ok_fg))
+            painter.drawEllipse(circle)
+            check = QPen(QColor("#FFFFFF"), 2.2)
+            check.setCapStyle(Qt.PenCapStyle.RoundCap)
+            check.setJoinStyle(Qt.PenJoinStyle.RoundJoin)
+            painter.setPen(check)
+            painter.drawPolyline([QPoint(int(cx - 5), int(cy)), QPoint(int(cx - 1.5), int(cy + 3.5)),
+                                  QPoint(int(cx + 5.5), int(cy - 4))])
+        elif state == "current":
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(t.accent))
+            painter.drawEllipse(circle)
+            painter.setPen(QColor(t.accent_text))
+            painter.drawText(circle, Qt.AlignmentFlag.AlignCenter, str(number))
+        else:
+            painter.setPen(QPen(QColor(t.sidebar_muted), 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(circle)
+            painter.drawText(circle, Qt.AlignmentFlag.AlignCenter, str(number))
+        title_font = QFont(option.font)
+        title_font.setWeight(QFont.Weight.DemiBold if state == "current" else QFont.Weight.Medium)
+        painter.setFont(title_font)
+        painter.setPen(QColor(t.sidebar_text if state != "todo" else t.sidebar_muted))
+        text_x = r.x() + self.TEXT_LEFT
+        text_w = r.right() - text_x - 10
+        fm = painter.fontMetrics()
+        title_rect = QRect(text_x, r.y() + 10, text_w, fm.height())
+        painter.drawText(title_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         fm.elidedText(title, Qt.TextElideMode.ElideRight, text_w))
+        status_font = QFont(option.font)
+        status_font.setPointSizeF(max(7.5, option.font.pointSizeF() - 1))
+        painter.setFont(status_font)
+        painter.setPen(QColor(t.sidebar_muted))
+        fm = painter.fontMetrics()
+        status_rect = QRect(text_x, title_rect.bottom() + 3, text_w, fm.height())
+        painter.drawText(status_rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
+                         fm.elidedText(status, Qt.TextElideMode.ElideRight, text_w))
+        painter.restore()
+
+    def sizeHint(self, option, index):
+        return QSize(max(option.rect.width(), 160), self.ROW_HEIGHT)
 
 
 class Thumb(QWidget):
@@ -452,6 +647,26 @@ class MarkdownDialog(QDialog):
         if base is not None:
             self.browser.setSearchPaths([str(base)])
         self.browser.setMarkdown(markdown)
+        lay.addWidget(self.browser, 1)
+        close = QPushButton("Close")
+        close.clicked.connect(self.accept)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(close)
+        lay.addLayout(row)
+
+
+class TextDialog(QDialog):
+    """Shows plain text (the license) inside the app, in a monospaced box that can be selected and copied."""
+
+    def __init__(self, title: str, text: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.resize(720, 560)
+        lay = QVBoxLayout(self)
+        self.browser = QTextBrowser()
+        self.browser.setFont(theme.mono_font(10))
+        self.browser.setPlainText(text)
         lay.addWidget(self.browser, 1)
         close = QPushButton("Close")
         close.clicked.connect(self.accept)

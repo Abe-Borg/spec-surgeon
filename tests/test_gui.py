@@ -261,8 +261,7 @@ def test_update_banner_skip_and_manual_check(qt, tmp_path, monkeypatch):
     from spec_surgeon.settings import Settings, load_settings
     monkeypatch.delenv("SPEC_SURGEON_NO_UPDATE_CHECK")
     checker = _checker(["update"])
-    w, ui = window(qt, Session(out_root=tmp_path / "out"), settings=Settings(auto_check_updates=True),
-                   checker=checker)
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), settings=Settings(), checker=checker)
     assert ui["banner"].isHidden()
     assert w.updates.auto_check() is True
     ui["wait"]()
@@ -421,6 +420,105 @@ def test_closing_during_a_job_asks_first(qt, tmp_path):
     assert w.isVisible() and prompts_.shown[-1][0] == "ask"
     gate.set()
     ui["wait"]()
+
+
+# ---- the rework after v0.4.1: the rail, the guided steps, Settings, Help, About ------------------------------
+
+def test_the_rail_shows_where_each_step_stands(qt, folder, tmp_path):
+    from spec_surgeon.ui.widgets import STEP_STATE_ROLE, STEP_STATUS_ROLE
+    s = Session(out_root=tmp_path / "out")
+    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    w, ui = window(qt, s)
+    rail = lambda: [(w.nav.item(i).data(STEP_STATE_ROLE), w.nav.item(i).data(STEP_STATUS_ROLE)) for i in range(4)]
+    assert not ui["buttons"]["next"].isEnabled() and "docx" in w.files_page.next_hint.text()
+    assert not w.files_page.drop.isHidden() and w.files_page.file_list.isHidden()
+    assert rail()[0] == ("current", "Pick the specs folder")
+    assert rail()[2] == ("todo", "Check before anything runs")
+    ui["vars"]["folder"].set(str(folder))
+    w._refresh_files()
+    assert ui["buttons"]["next"].isEnabled() and w.files_page.next_hint.text() == ""
+    assert w.files_page.drop.isHidden() and w.files_page.file_list.count() == 2
+    assert rail()[0] == ("current", "2 Word files ready")
+    assert rail()[1][0] == "done" and "remove-all-headers-footers.json" in rail()[1][1]
+    assert "Ctrl+Enter" in w.request_page.preview_hint.text()
+    ui["vars"]["render"].set(False)
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert rail()[0][0] == "done" and rail()[2] == ("current", "2 plan cleanly · 0 set aside")
+    assert w.preview_page.continue_btn.isEnabled() and w.preview_page.continue_hint.text() == ""
+    ui["request"].set("change all fonts to Arial")
+    assert rail()[2] == ("current", "Changed since the preview — preview again")
+    assert "Preview again" in w.preview_page.continue_hint.text()
+    ui["request"].set("")
+    ui["buttons"]["run"].click()
+    ui["wait"](120)
+    assert rail()[3] == ("current", "2 passed · no problems") and w.run_page.empty.isHidden()
+
+
+def test_settings_is_down_to_the_results_folder_and_the_key(qt, tmp_path):
+    from spec_surgeon.ui.settings_dialog import SettingsDialog
+    w, ui = window(qt, Session(out_root=tmp_path / "out"))
+    dlg = SettingsDialog(w)
+    assert hasattr(dlg, "out") and hasattr(dlg, "key") and hasattr(dlg, "remember")
+    assert not any(hasattr(dlg, n) for n in ("theme", "native", "auto", "check_now", "clear_skip"))
+    from spec_surgeon.ui.widgets import Card
+    assert [c.title.text() for c in dlg.findChildren(Card) if hasattr(c, "title")] == \
+        ["Results folder", "Anthropic API key"]
+    dlg.out.setText(str(tmp_path / "Elsewhere"))
+    dlg.apply()
+    assert ui["vars"]["out"].get() == str(tmp_path / "Elsewhere")
+
+
+def test_help_has_no_report_a_problem_and_the_sidebar_has_the_three_buttons(qt, tmp_path):
+    from PySide6.QtWidgets import QMenu
+    w, ui = window(qt, Session(out_root=tmp_path / "out"))
+    help_menu = [m for m in w.menuBar().findChildren(QMenu) if m.title() == "&Help"][0]
+    texts = [a.text() for a in help_menu.actions() if not a.isSeparator()]
+    assert texts == ["Check for updates…", "What's new in this version", "User guide (online)", "Open logs folder",
+                     "Save diagnostics bundle…", "About Spec Surgeon"]               # + the two diagnostics entries
+    assert not hasattr(w, "act_issue")
+    assert [b.text() for b in (w.settings_btn, w.check_btn, w.about_btn)] == \
+        ["Settings", "Check for updates", "About Spec Surgeon"]
+
+
+def test_about_says_who_made_it_the_license_and_how_to_reach_him(qt, tmp_path):
+    from spec_surgeon import __version__, about
+    from spec_surgeon.ui.about_dialog import AboutDialog
+    w, ui = window(qt, Session(out_root=tmp_path / "out"))
+    ui["buttons"]["about"].click()
+    dlg = w._viewers[-1]
+    assert isinstance(dlg, AboutDialog)
+    assert dlg.name.text() == "Spec Surgeon" and __version__ in dlg.version.text()
+    plain = dlg.body.toPlainText()
+    assert about.COPYRIGHT_LINE in plain and about.LICENSE_NAME in plain and about.AUTHOR in plain
+    for line in about.LICENSE_SUMMARY:
+        assert line in plain
+    assert f'href="mailto:{about.EMAIL}"' in dlg.html and about.EMAIL in plain
+    assert f'href="{about.GITHUB_URL}"' in dlg.html and f'href="{about.LINKEDIN_URL}"' in dlg.html
+    for name, lic, url in about.THIRD_PARTY:
+        assert f'href="{url}"' in dlg.html and lic in plain
+    assert "Settings:" in plain
+    dlg.show_license()
+    assert dlg._viewers[-1].browser.toPlainText().strip() == about.LICENSE_TEXT.strip()
+    text = w.about_text()
+    for value in (about.EMAIL, about.GITHUB_URL, about.LINKEDIN_URL, about.LICENSE_NAME, "Settings:"):
+        assert value in text
+    dlg.close()
+
+
+def test_the_update_check_needs_no_setting(qt, tmp_path, monkeypatch):
+    """Once a day, on its own: nothing to turn on, and the only off switch is the environment variable."""
+    from spec_surgeon.settings import Settings
+    monkeypatch.delenv("SPEC_SURGEON_NO_UPDATE_CHECK")
+    checker = _checker(["current"])
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), settings=Settings(), checker=checker)
+    assert w.updates.auto_check() is True
+    ui["wait"]()
+    assert checker.calls == [(False, "")] and w.settings.last_update_check > 0
+    assert w.updates.auto_check() is False                       # not again today
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    w.settings.last_update_check = 0
+    assert w.updates.auto_check() is False
 
 
 # ---- Qt stays inside the window --------------------------------------------------------------------------------

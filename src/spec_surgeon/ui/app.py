@@ -1,5 +1,6 @@
-"""The Spec Surgeon window: steps on the left (Files → Describe the change → Preview → Run & results), the step on
-the right, an update banner above it and a collapsible activity log below.
+"""The Spec Surgeon window: the four steps on a dark rail at the left (Files → Describe the change → Preview →
+Run & results), each with a check mark once it is done and a line saying where it stands; the current step on the
+right with its action bar; an update banner above it and a collapsible activity log below.
 
 Every action is a plain call into ``gui.Session`` on a background thread (``worker.start_job``); nothing is applied
 before Preview, and Run refuses when a file changed since the preview (approval token) — the window also disables
@@ -20,33 +21,37 @@ from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Callable, List, Optional
 
-from PySide6.QtCore import QByteArray, QModelIndex, QRect, QSize, Qt, QTimer, QUrl, Signal, Slot
-from PySide6.QtGui import QAction, QColor, QDesktopServices, QFont, QIcon, QKeySequence, QPainter, QPixmap, QShortcut
+from PySide6.QtCore import QByteArray, QModelIndex, QSize, Qt, QTimer, QUrl, Signal, Slot
+from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
                                QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import __version__, credentials, updater, winapp
+from .. import __version__, about, credentials, winapp
 from .. import diagnostics as diag
 from ..gui import Session, open_folder
 from ..settings import Settings, load_settings, logs_dir, save_settings
 from . import theme
+from .about_dialog import AboutDialog, about_text
 from .models import ROW_ROLE
 from .pages import FilesPage, PreviewPage, RequestPage, RunPage, resize_columns
 from .rows import (ProgressTracker, generated_rows, preview_counts, preview_rows, result_counts, result_rows,
                    written_back)
 from .settings_dialog import SettingsDialog
 from .update_ui import UpdateController
-from .widgets import ImageViewer, MarkdownDialog, Thumb, label, repolish
+from .widgets import (STEP_STATE_ROLE, STEP_STATUS_ROLE, ImageViewer, MarkdownDialog, StepDelegate, Thumb, label,
+                      repolish, set_pill)
 from .worker import Bridge, start_job
 
 RESOURCES = Path(__file__).resolve().parent / "resources"
 ICON = RESOURCES / "icon.svg"
-REPO_URL = f"https://github.com/{updater.REPO}"
+REPO_URL = about.GITHUB_URL
 EXAMPLES = ["remove all headers and footers", "change all fonts to Arial",
             "make the header and footer match the template spec", "match the font of the template spec",
             "replace \u201cNFPA 13, 2022 Edition\u201d with \u201cNFPA 13, 2025 Edition\u201d"]
 STEPS = ["Files", "Describe the change", "Preview", "Run & results"]
+STEP_HINTS = ["Pick the specs folder", "Say what should change", "Check before anything runs", "Apply and verify"]
+NO_RESULTS = {"PASS": 0, "FAIL": 0, "EXCEPTION": 0}
 READY, ERROR = "Ready.", "Error — see the log."
 
 
@@ -122,41 +127,6 @@ def app_icon() -> QIcon:
     return icon
 
 
-def _step_icon(n: int, state: str, size: int = 22) -> QIcon:
-    """A numbered circle: done (green ✓), current (accent), todo (outline)."""
-    t = theme.current or theme.tokens(False, theme.FALLBACK_ACCENT)
-    dpr = 2
-    pm = QPixmap(size * dpr, size * dpr)
-    pm.setDevicePixelRatio(dpr)
-    pm.fill(Qt.GlobalColor.transparent)
-    p = QPainter(pm)
-    p.setRenderHint(QPainter.RenderHint.Antialiasing)
-    rect = QRect(1, 1, size - 2, size - 2)
-    font = QFont(QApplication.font())
-    font.setBold(True)
-    font.setPointSizeF(8)
-    p.setFont(font)
-    if state == "done":
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(t.ok_fg))
-        p.drawEllipse(rect)
-        p.setPen(QColor("#FFFFFF"))
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, "✓")
-    elif state == "current":
-        p.setPen(Qt.PenStyle.NoPen)
-        p.setBrush(QColor(t.accent))
-        p.drawEllipse(rect)
-        p.setPen(QColor(t.accent_text))
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(n))
-    else:
-        p.setPen(QColor(t.muted))
-        p.setBrush(Qt.BrushStyle.NoBrush)
-        p.drawEllipse(rect)
-        p.drawText(rect, Qt.AlignmentFlag.AlignCenter, str(n))
-    p.end()
-    return QIcon(pm)
-
-
 class MainWindow(QMainWindow):
     busyChanged = Signal(bool)
 
@@ -173,10 +143,12 @@ class MainWindow(QMainWindow):
         self.tracker: Optional[ProgressTracker] = None
         self._on_done: Optional[Callable[[Any], None]] = None
         self._viewers: List[QWidget] = []
+        self._files_count = 0
+        self._result_counts = dict(NO_RESULTS)
         self.key_origin = self._init_key()
         self.setWindowTitle(f"Spec Surgeon {__version__}")
         self.setWindowIcon(app_icon())
-        self.setMinimumSize(860, 540)          # every step scrolls; fits a 1366×768 laptop at 125 % scaling
+        self.setMinimumSize(900, 560)          # every step scrolls; fits a 1366×768 laptop at 125 % scaling
         screen = QApplication.primaryScreen()
         avail = screen.availableGeometry() if screen is not None else None
         self.resize(min(1280, int(avail.width() * 0.9)) if avail else 1280,
@@ -201,11 +173,6 @@ class MainWindow(QMainWindow):
         h.setContentsMargins(0, 0, 0, 0)
         h.setSpacing(0)
         h.addWidget(self._sidebar())
-        line = QFrame()
-        line.setFrameShape(QFrame.Shape.VLine)
-        line.setObjectName("Divider")
-        line.setStyleSheet("QFrame#Divider { color: palette(mid); }")
-        h.addWidget(line)
         right = QWidget()
         right.setObjectName("Content")
         rv = QVBoxLayout(right)
@@ -214,7 +181,7 @@ class MainWindow(QMainWindow):
         banner_box = QWidget()
         banner_box.setObjectName("Content")
         bl = QVBoxLayout(banner_box)
-        bl.setContentsMargins(32, 14, 32, 0)
+        bl.setContentsMargins(36, 14, 36, 0)
         bl.addWidget(self.updates.banner)
         banner_box.setVisible(True)
         rv.addWidget(banner_box)
@@ -241,13 +208,14 @@ class MainWindow(QMainWindow):
     def _sidebar(self) -> QWidget:
         side = QWidget()
         side.setObjectName("Sidebar")
-        side.setFixedWidth(232)
+        side.setFixedWidth(258)
         v = QVBoxLayout(side)
-        v.setContentsMargins(14, 18, 14, 14)
+        v.setContentsMargins(14, 20, 14, 14)
         v.setSpacing(6)
         head = QHBoxLayout()
+        head.setSpacing(10)
         logo = QLabel()
-        logo.setPixmap(app_icon().pixmap(QSize(34, 34)))
+        logo.setPixmap(app_icon().pixmap(QSize(36, 36)))
         head.addWidget(logo)
         name = QVBoxLayout()
         name.setSpacing(0)
@@ -255,24 +223,39 @@ class MainWindow(QMainWindow):
         name.addWidget(label(f"Version {__version__}", "Version", wrap=False))
         head.addLayout(name, 1)
         v.addLayout(head)
-        v.addSpacing(16)
+        v.addSpacing(18)
+        v.addWidget(label("Four steps", "SideHeading", wrap=False))
         self.nav = QListWidget()
         self.nav.setObjectName("StepNav")
-        self.nav.setIconSize(QSize(22, 22))
+        self.nav.setItemDelegate(StepDelegate(self.nav))
+        self.nav.setMouseTracking(True)
+        self.nav.viewport().setAttribute(Qt.WidgetAttribute.WA_Hover, True)
         self.nav.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        for i, step in enumerate(STEPS):
-            item = QListWidgetItem(_step_icon(i + 1, "todo"), "  " + step)
-            item.setSizeHint(QSize(0, 42))
+        self.nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.nav.setCursor(Qt.CursorShape.PointingHandCursor)
+        for step, hint in zip(STEPS, STEP_HINTS):
+            item = QListWidgetItem(step)
+            item.setData(STEP_STATE_ROLE, "todo")
+            item.setData(STEP_STATUS_ROLE, hint)
+            item.setToolTip(f"Go to {step}")
             self.nav.addItem(item)
-        self.nav.setFixedHeight(42 * len(STEPS) + 16)
+        self.nav.setFixedHeight(StepDelegate.ROW_HEIGHT * len(STEPS) + 8)
         v.addWidget(self.nav)
         v.addStretch(1)
+        divider = QFrame()
+        divider.setObjectName("SidebarDivider")
+        v.addWidget(divider)
+        v.addSpacing(4)
         self.settings_btn = QPushButton("Settings")
-        self.settings_btn.setObjectName("NavButton")
+        self.settings_btn.setToolTip("Results folder and Anthropic API key (Ctrl+,)")
         self.check_btn = QPushButton("Check for updates")
-        self.check_btn.setObjectName("NavButton")
-        v.addWidget(self.settings_btn)
-        v.addWidget(self.check_btn)
+        self.check_btn.setToolTip("Spec Surgeon also checks once a day on its own")
+        self.about_btn = QPushButton("About Spec Surgeon")
+        self.about_btn.setToolTip("Version, license, and how to reach the author")
+        for b in (self.settings_btn, self.check_btn, self.about_btn):
+            b.setObjectName("NavButton")
+            b.setCursor(Qt.CursorShape.PointingHandCursor)
+            v.addWidget(b)
         return side
 
     def _log_panel(self) -> QWidget:
@@ -319,13 +302,12 @@ class MainWindow(QMainWindow):
         self.act_check = QAction("Check for updates…", self)
         self.act_whatsnew = QAction("What's new in this version", self)
         self.act_guide = QAction("User guide (online)", self)
-        self.act_issue = QAction("Report a problem (online)", self)
         self.act_logs = QAction("Open logs folder", self)
         self.act_bundle = QAction("Save diagnostics bundle…", self)
         self.act_bundle.setToolTip("A zip of the last run's reports, logs, traces and records and the app's own logs "
                                    "— never the documents — for whoever diagnoses a problem")
         self.act_about = QAction("About Spec Surgeon", self)
-        for a in (self.act_check, self.act_whatsnew, self.act_guide, self.act_issue):
+        for a in (self.act_check, self.act_whatsnew, self.act_guide):
             m.addAction(a)
         m.addSeparator()
         for a in (self.act_logs, self.act_bundle):
@@ -367,6 +349,7 @@ class MainWindow(QMainWindow):
         r.key_btn.clicked.connect(self.open_settings)
         r.render_cb.toggled.connect(self._inputs_changed)
         p.open_btn.clicked.connect(self._open_preview_folder)
+        p.empty.button.clicked.connect(self._go_request)
         p.only_problems.toggled.connect(p.proxy.set_only_problems)
         run.run_btn.clicked.connect(self.do_run)
         run.open_btn.clicked.connect(self.do_open)
@@ -380,6 +363,7 @@ class MainWindow(QMainWindow):
         p.table.doubleClicked.connect(self._open_row)
         self.settings_btn.clicked.connect(self.open_settings)
         self.check_btn.clicked.connect(self.updates.manual_check)
+        self.about_btn.clicked.connect(self.show_about)
         self.act_load.triggered.connect(self.do_load_spec)
         self.act_open.triggered.connect(self.do_open)
         self.act_settings.triggered.connect(self.open_settings)
@@ -387,7 +371,6 @@ class MainWindow(QMainWindow):
         self.act_check.triggered.connect(self.updates.manual_check)
         self.act_whatsnew.triggered.connect(self.show_whats_new)
         self.act_guide.triggered.connect(self._open_guide)
-        self.act_issue.triggered.connect(self._open_issues)
         self.act_about.triggered.connect(self.show_about)
         self.act_logs.triggered.connect(self.open_logs)
         self.act_bundle.triggered.connect(self.save_bundle)
@@ -482,8 +465,11 @@ class MainWindow(QMainWindow):
                 "none": "No Anthropic API key — typed requests need one; saved specs don't."}[self.key_origin]
 
     def refresh_key_label(self) -> None:
-        self.request_page.key_label.setText(self.key_status_text())
-        self.request_page.key_btn.setText("Change…" if self.key_origin != "none" else "Set API key…")
+        r = self.request_page
+        r.key_label.setText(self.key_status_text())
+        r.key_btn.setText("Change…" if self.key_origin != "none" else "Set API key…")
+        set_pill(r.key_pill, "API key" if self.key_origin != "none" else "No API key",
+                 "ok" if self.key_origin != "none" else "warn")
 
     # ---- navigation ------------------------------------------------------------------------------------
     def go(self, index: int) -> None:
@@ -519,32 +505,78 @@ class MainWindow(QMainWindow):
         return has and self.preview_key == self._inputs_key()
 
     def _refresh_nav(self) -> None:
+        """The rail: a check mark for every step that is done, and under each title where it stands."""
         s = self.session
-        done = [bool(self._files_ok), bool(self.request_page.request.toPlainText().strip()
-                                           or (s.spec is not None and s.spec_source)),
-                self._preview_current(), s.last_batch is not None or s.last_trials is not None]
+        request = " ".join(self.request_page.request.toPlainText().split())
+        loaded = s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled"
+        current = self._preview_current()
+        has_preview = s.generated is not None or (s.preview is not None and s.spec is not None)
+        ran = s.last_batch is not None or s.last_trials is not None
+        done = [bool(self._files_ok), bool(request or loaded), current, ran]
+        if self._files_ok:
+            n = self._files_count
+            files = f"{n} Word file{'s' if n != 1 else ''} ready"
+            if self.files_page.template.text() and not self.files_page.template.edit.property("invalid") == "true":
+                files += " · template set"
+        else:
+            files = STEP_HINTS[0]
+        if request:
+            describe = f"\u201c{request}\u201d"
+        elif loaded:
+            describe = f"Saved spec: {Path(s.spec_source).name}"
+        else:
+            describe = STEP_HINTS[1]
+        if current and s.generated is not None:
+            preview = "AI-written transform, verified on samples"
+        elif current:
+            c = preview_counts(s.preview)
+            preview = f"{c['planned']} plan cleanly · {c['exceptions']} set aside"
+        elif has_preview:
+            preview = "Changed since the preview — preview again"
+        else:
+            preview = STEP_HINTS[2]
+        if ran:
+            c = self._result_counts
+            problems = c["FAIL"] + c["EXCEPTION"]
+            results = f"{c['PASS']} passed" + (f" · {problems} with problems" if problems else " · no problems")
+        else:
+            results = STEP_HINTS[3]
         cur = self.stack.currentIndex()
-        for i in range(len(STEPS)):
+        for i, status in enumerate((files, describe, preview, results)):
             state = "current" if i == cur else ("done" if done[i] else "todo")
-            self.nav.item(i).setIcon(_step_icon(i + 1, state))
+            item = self.nav.item(i)
+            item.setData(STEP_STATE_ROLE, state)
+            item.setData(STEP_STATUS_ROLE, status)
+        self.nav.viewport().update()
 
     def _refresh_run_state(self) -> None:
-        run = self.run_page
+        run, p, r, s = self.run_page, self.preview_page, self.request_page, self.session
         current = self._preview_current()
         run.run_btn.setEnabled(current and not self.busy and not self.updating)
         if self.busy:
-            run.run_hint.setText("")
-        elif not (self.session.preview or self.session.generated):
-            run.run_hint.setText("Preview first — nothing runs before you have seen the preview.")
+            hint = ""
+        elif not (s.preview or s.generated):
+            hint = "Preview first — nothing runs before you have seen the preview."
         elif not current:
-            run.run_hint.setText("Something changed since the preview — press Preview again.")
+            hint = "Something changed since the preview — press Preview again."
         else:
-            run.run_hint.setText("")
-        generated = self.session.generated is not None
+            hint = ""
+        run.run_hint.setText(hint)
+        p.continue_hint.setText("Preview first" if not (s.preview or s.generated) else
+                                ("Something changed — press Preview again" if not current else ""))
+        generated = s.generated is not None
         run.inplace_rb.setEnabled(not generated)
         if generated:
             run.copies_rb.setChecked(True)
-        self.preview_page.continue_btn.setEnabled(current)
+        p.continue_btn.setEnabled(current)
+        request = r.request.toPlainText().strip()
+        loaded = s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled"
+        if not self._files_ok:
+            r.preview_hint.setText("Choose the specs folder first (step 1)")
+        elif not (request or loaded):
+            r.preview_hint.setText("Type a request or load a saved spec")
+        else:
+            r.preview_hint.setText("Ctrl+Enter")
 
     @Slot()
     def _inputs_changed(self, *args) -> None:
@@ -554,6 +586,8 @@ class MainWindow(QMainWindow):
 
     @Slot(str)
     def _path_changed(self, _value: str) -> None:
+        f = self.files_page
+        f.drop.setVisible(not f.folder.text() and self.session.selected_files is None)   # at once, not after the timer
         self._files_timer.start()
         self._inputs_changed()
 
@@ -567,18 +601,22 @@ class MainWindow(QMainWindow):
         folder, tpl = f.folder.text(), f.template.text()
         f.file_list.clear()
         self._files_ok = False
+        self._files_count = 0
+        ready_hint = "Choose a folder with .docx files to continue"
         if s.selected_files is not None:
             names = [p.name for p in s.selected_files]
             f.set_hint(f.folder_hint, f"Set-aside pass: {len(names)} file(s) from the last run", "ok")
             f.file_list.addItems(names)
             f.file_list.setVisible(bool(names))
             self._files_ok = bool(names)
+            self._files_count = len(names)
         elif not folder:
-            f.set_hint(f.folder_hint, "Choose the folder with the .docx specs.")
+            f.set_hint(f.folder_hint, "")
             f.file_list.hide()
             f.folder.set_invalid(False)
         elif not Path(folder).is_dir():
             f.set_hint(f.folder_hint, "Folder not found.", "error")
+            ready_hint = "That folder was not found"
             f.folder.set_invalid(True)
             f.file_list.hide()
         else:
@@ -589,6 +627,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 files = []
                 f.set_hint(f.folder_hint, f"Cannot read the folder: {e}", "error")
+                ready_hint = "That folder cannot be read"
             else:
                 if files:
                     f.set_hint(f.folder_hint, f"{len(files)} Word file(s) ready" +
@@ -596,9 +635,13 @@ class MainWindow(QMainWindow):
                                    t.parent == Path(folder).resolve() for t in templates) else ""), "ok")
                 else:
                     f.set_hint(f.folder_hint, "No .docx files in this folder.", "error")
+                    ready_hint = "No .docx files in that folder"
             f.file_list.addItems([p.name for p in files[:500]])
             f.file_list.setVisible(bool(files))
             self._files_ok = bool(files)
+            self._files_count = len(files)
+        f.drop.setVisible(not folder and s.selected_files is None)
+        f.folder_hint.setVisible(bool(f.folder_hint.text()))
         if not tpl:
             f.set_hint(f.template_hint, "")
             f.template.set_invalid(False)
@@ -608,7 +651,10 @@ class MainWindow(QMainWindow):
         else:
             f.set_hint(f.template_hint, "Template file not found (it must be a .docx).", "error")
             f.template.set_invalid(True)
+        f.template_hint.setVisible(bool(f.template_hint.text()))
+        f.set_ready(self._files_ok, ready_hint)
         self._refresh_nav()
+        self._refresh_run_state()
 
     def _show_set_aside(self) -> None:
         bar = self.files_page.set_aside
@@ -750,6 +796,8 @@ class MainWindow(QMainWindow):
         page = getattr(self, "_job_page", None) or self.stack.currentWidget()
         if page is not self.stack.currentWidget():
             self.go(self.stack.indexOf(page))
+        if page is self.run_page and self.run_page.results.isHidden():
+            self.run_page.empty.show()
         page.info.show_message("error", "That didn't work", message, [("Show log", self._open_log),
                                                                       ("Save diagnostics…", self.save_bundle)])
 
@@ -833,7 +881,7 @@ class MainWindow(QMainWindow):
         p.request_lbl.setText(f"“{spec.get('request') or ''}”")
         p.summary_lbl.setText(spec.get("summary") or "")
         c = preview_counts(pv)
-        p.t_files.set(c["files"])
+        p.t_files.set(c["files"], "accent")
         p.t_planned.set(c["planned"], "ok" if c["planned"] else "")
         p.t_exceptions.set(c["exceptions"], "warn" if c["exceptions"] else "")
         p.t_patterns.set(c["patterns"])
@@ -907,6 +955,7 @@ class MainWindow(QMainWindow):
             return False
         s = self.session
         self.run_page.results.hide()
+        self.run_page.empty.hide()
         return self._work("Run", lambda log: s.run(in_place, render, log), on_done=self._after_run, track=True,
                           page=self.run_page)
 
@@ -917,6 +966,7 @@ class MainWindow(QMainWindow):
         run.model.set_rows(rows)
         run.only_problems.setChecked(False)
         c = result_counts(rows)
+        self._result_counts = dict(c)
         run.t_pass.set(c["PASS"], "ok" if c["PASS"] else "")
         run.t_fail.set(c["FAIL"], "error" if c["FAIL"] else "")
         run.t_exc.set(c["EXCEPTION"], "warn" if c["EXCEPTION"] else "")
@@ -935,6 +985,7 @@ class MainWindow(QMainWindow):
         run.diag_btn.setEnabled(bool(where and (where / "DIAGNOSTICS.md").exists()))
         run.set_aside_btn.setEnabled(bool(problems))
         run.advise_btn.setEnabled(bool(problems))
+        run.empty.hide()
         run.results.show()
         self.go(3)
 
@@ -1101,10 +1152,6 @@ class MainWindow(QMainWindow):
         return dlg
 
     # ---- settings, help ---------------------------------------------------------------------------------
-    def auto_check_enabled(self) -> bool:
-        v = self.settings.auto_check_updates
-        return self.updates.installed() if v is None else v
-
     @Slot()
     def open_settings(self) -> None:
         dlg = SettingsDialog(self)
@@ -1112,9 +1159,10 @@ class MainWindow(QMainWindow):
         dlg.open()
 
     def apply_theme(self) -> None:
+        """Restyle for the current light/dark scheme (Windows switched, or at start)."""
         app = QApplication.instance()
         if app is not None:
-            theme.apply(app, self.settings.theme, self.settings.native_style)
+            theme.apply(app)
             self._refresh_nav()
 
     def release_notes_text(self) -> str:
@@ -1135,23 +1183,15 @@ class MainWindow(QMainWindow):
     def _open_guide(self) -> None:
         QDesktopServices.openUrl(QUrl(f"{REPO_URL}#readme"))
 
-    @Slot()
-    def _open_issues(self) -> None:
-        QDesktopServices.openUrl(QUrl(f"{REPO_URL}/issues"))
-
     def about_text(self) -> str:
-        from PySide6 import __version__ as pyside_version
-        from ..settings import config_dir, data_dir
-        install = Path(sys.executable).resolve().parent if getattr(sys, "frozen", False) else Path(__file__).parents[1]
-        return (f"Spec Surgeon {__version__}\n"
-                "Provably lossless surgical edits to Word specifications.\n\n"
-                f"Qt for Python {pyside_version}, Python {sys.version.split()[0]}\n"
-                f"Installed in: {install}\nSettings: {config_dir()}\nDownloads and logs: {data_dir()}\n\n"
-                f"{REPO_URL}")
+        return about_text()
 
     @Slot()
     def show_about(self) -> None:
-        self.prompts.notify("About Spec Surgeon", self.about_text())
+        dlg = AboutDialog(self)
+        dlg.setWindowIcon(app_icon())
+        self._viewers.append(dlg)
+        dlg.open()
 
     @Slot()
     def _copy_log(self) -> None:
@@ -1221,12 +1261,11 @@ def qt_app(settings: Optional[Settings] = None) -> QApplication:
     if app is None:
         QApplication.setHighDpiScaleFactorRoundingPolicy(Qt.HighDpiScaleFactorRoundingPolicy.PassThrough)
         app = QApplication(sys.argv[:1])
-    app.setApplicationName("Spec Surgeon")
-    app.setOrganizationName("Abraham Borg")
+    app.setApplicationName(about.APP_NAME)
+    app.setOrganizationName(about.AUTHOR)
     app.setApplicationVersion(__version__)
     app.setWindowIcon(app_icon())
-    st = settings or Settings()
-    theme.apply(app, st.theme, st.native_style)
+    theme.apply(app)
     return app
 
 
@@ -1258,7 +1297,8 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
         "session": w.session, "window": w, "app": app, "wait": wait,
         "buttons": {"preview": r.preview_btn, "load": r.load_btn, "run": run.run_btn, "set_aside": run.set_aside_btn,
                     "open": run.open_btn, "advise": run.advise_btn, "check_updates": w.check_btn,
-                    "install_update": w.updates.banner.btn_install, "settings": w.settings_btn},
+                    "install_update": w.updates.banner.btn_install, "settings": w.settings_btn,
+                    "about": w.about_btn, "next": f.next_btn},
         "vars": {"folder": Var(f.folder.text, f.folder.setText), "template": Var(f.template.text, f.template.setText),
                  "out": Var(f.out.text, f.out.setText),
                  "render": Var(r.render_cb.isChecked, r.render_cb.setChecked),
@@ -1321,8 +1361,7 @@ def main(argv=None) -> int:
         _crash_notice(w, previous)
 
     def scheme_changed(*_):
-        if w.settings.theme == "system":
-            w.apply_theme()
+        w.apply_theme()                       # the window follows Windows' light/dark setting
     try:
         app.styleHints().colorSchemeChanged.connect(scheme_changed)
     except AttributeError:

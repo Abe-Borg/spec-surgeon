@@ -1,8 +1,12 @@
 """The four steps of the window: Files → Describe the change → Preview → Run & results.
 
 Pages are layout only: they own their widgets and expose them; ``ui.app.MainWindow`` wires them to the engine
-(``gui.Session``). Strings other code depends on: "Answers", "Allow AI-written transforms", "Load set-aside files",
-"Advise on exceptions" (``Session`` messages name these controls).
+(``gui.Session``). Every step has the same shape — a header ("STEP n OF 4", title, one sentence, the step's
+message strip), a scrolling body of cards, and an action bar at the foot with Back on the left and the one primary
+button on the right, next to a hint that says what is still missing when that button is off.
+
+Strings other code depends on: "Answers", "Allow AI-written transforms", "Load set-aside files", "Advise on
+exceptions" (``Session`` messages name these controls).
 """
 from __future__ import annotations
 
@@ -15,23 +19,27 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QFram
 
 from .models import ProblemsFilter, RowsModel
 from .rows import PREVIEW_COLUMNS, RESULT_COLUMNS
-from .widgets import (BadgeDelegate, Card, ChipRow, InfoBar, PathPicker, StatTile, label, link_button,
-                      primary_button, repolish)
+from .widgets import (BadgeDelegate, Card, ChipRow, DropZone, EmptyState, InfoBar, PathPicker, StatTile, eyebrow,
+                      label, link_button, pill, primary_button, repolish)
+
+STEP_COUNT = 4
 
 
 class Page(QWidget):
-    def __init__(self, title: str, subtitle: str, parent=None):
+    def __init__(self, number: int, title: str, subtitle: str, parent=None):
         super().__init__(parent)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
         head = QWidget()
-        head.setObjectName("Content")
+        head.setObjectName("PageHeader")
         hl = QVBoxLayout(head)
-        hl.setContentsMargins(32, 24, 32, 8)
-        hl.setSpacing(2)
+        hl.setContentsMargins(36, 22, 36, 6)
+        hl.setSpacing(3)
+        self.eyebrow = eyebrow(f"Step {number} of {STEP_COUNT}")
         self.title = label(title, "PageTitle")
         self.subtitle = label(subtitle, "Muted")
+        hl.addWidget(self.eyebrow)
         hl.addWidget(self.title)
         hl.addWidget(self.subtitle)
         self.info = InfoBar()
@@ -45,15 +53,15 @@ class Page(QWidget):
         body = QWidget()
         body.setObjectName("PageBody")
         self.content = QVBoxLayout(body)
-        self.content.setContentsMargins(32, 8, 32, 16)
+        self.content.setContentsMargins(36, 10, 36, 20)
         self.content.setSpacing(14)
         scroll.setWidget(body)
         outer.addWidget(scroll, 1)
         foot = QWidget()
-        foot.setObjectName("Content")
+        foot.setObjectName("Footer")
         self.footer = QHBoxLayout(foot)
-        self.footer.setContentsMargins(32, 10, 32, 16)
-        self.footer.setSpacing(8)
+        self.footer.setContentsMargins(36, 12, 36, 12)
+        self.footer.setSpacing(10)
         outer.addWidget(foot)
 
     def finish(self) -> None:
@@ -78,19 +86,38 @@ def _table(model: RowsModel, proxy: ProblemsFilter) -> QTableView:
     return t
 
 
+def _table_hint(text: str) -> QLabel:
+    """The line beside a table's filter: right-aligned, and wrapping rather than widening the page in a narrow
+    window (one line at the usual size, two at the 900 px minimum)."""
+    lab = label(text, "Muted")
+    lab.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    return lab
+
+
+def _hint(text: str = "") -> QLabel:
+    lab = label(text, "Muted", wrap=False)
+    lab.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+    return lab
+
+
 class FilesPage(Page):
     def __init__(self, browse_dir, browse_file, parent=None):
-        super().__init__("Choose the files",
+        super().__init__(1, "Choose the files",
                          "Pick the folder with the Word specs. Nothing in it changes until you run — and by default "
                          "not even then: edited copies go to the results folder.", parent)
-        card = Card("Specs folder", "Every .docx in this folder (not its subfolders). Drop a folder here or browse.")
+        card = Card("Specs folder", "Every .docx in this folder (not its subfolders).")
         self.folder = PathPicker("dir", r"e.g. C:\Projects\…\Specifications", browse=browse_dir)
+        self.drop = DropZone("Drop the specs folder here",
+                             "Drag the folder (or any .docx in it) from Explorer, or browse for it.")
+        self.drop.dropped.connect(self.folder.setText)
+        self.drop.browse.connect(self.folder._on_browse)
         self.folder_hint = label("", "Hint")
         self.file_list = QListWidget()
         self.file_list.setMaximumHeight(170)
         self.file_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.file_list.hide()
         card.add(self.folder)
+        card.add(self.drop)
         card.add(self.folder_hint)
         card.add(self.file_list)
         self.content.addWidget(card)
@@ -100,7 +127,7 @@ class FilesPage(Page):
         card = Card("Template spec (optional)",
                     "A spec from the architect (or a prepared header/footer template), for requests like \u201cmake "
                     "the header and footer match the template spec\u201d or \u201cmatch the font of the template "
-                    "spec\u201d.")
+                    "spec\u201d. Leave it empty for anything else.")
         self.template = PathPicker("file", "Optional — the .docx the specs should match",
                                    browse=browse_file)
         self.template_hint = label("", "Hint")
@@ -115,7 +142,10 @@ class FilesPage(Page):
         self.content.addWidget(card)
         self.finish()
         self.footer.addStretch(1)
+        self.next_hint = _hint()
+        self.footer.addWidget(self.next_hint)
         self.next_btn = primary_button("Next: describe the change  \u2192")
+        self.next_btn.setEnabled(False)
         self.footer.addWidget(self.next_btn)
 
     def set_hint(self, widget: QLabel, text: str, state: str = "") -> None:
@@ -123,22 +153,32 @@ class FilesPage(Page):
         widget.setProperty("state", state)
         repolish(widget)
 
+    def set_ready(self, ok: bool, hint: str = "") -> None:
+        """Next is enabled only once the folder holds Word files; the hint says what is missing."""
+        self.next_btn.setEnabled(ok)
+        self.next_hint.setText("" if ok else hint)
+
 
 class RequestPage(Page):
     def __init__(self, parent=None):
-        super().__init__("Describe the change",
+        super().__init__(2, "Describe the change",
                          "Say it in plain English — Claude turns it into an edit spec, and the engine previews it on "
-                         "every file before anything runs. Or load a saved spec (no API key needed).", parent)
+                         "every file before anything runs. No API key? Load a saved spec instead.", parent)
         card = Card("What should change?")
         self.request = QPlainTextEdit()
         self.request.setObjectName("Editor")
         self.request.setPlaceholderText("e.g.  change all fonts to Arial")
-        self.request.setMinimumHeight(96)
-        self.request.setMaximumHeight(120)
+        self.request.setMinimumHeight(104)
+        self.request.setMaximumHeight(140)
         card.add(self.request)
-        card.add(label("Examples — click one to use it:", "Muted"))
+        card.add(label("Try one of these:", "Muted"))
         self.chips = ChipRow()
         card.add(self.chips)
+        self.content.addWidget(card)
+
+        card = Card("Or use a saved spec", "An edit spec file (.json) runs without an API key: an example from the "
+                                          "Start menu's Example edit specs, or the spec.json saved in an earlier "
+                                          "preview folder.")
         row = QHBoxLayout()
         self.load_btn = QPushButton("Load saved spec\u2026")
         self.load_btn.setToolTip("Use an EditSpec (.json) — e.g. one from the Start menu's Example edit specs, or the "
@@ -146,9 +186,9 @@ class RequestPage(Page):
         row.addWidget(self.load_btn)
         row.addStretch(1)
         card.add(row)
-        self.content.addWidget(card)
         self.spec_bar = InfoBar(closable=False)
-        self.content.addWidget(self.spec_bar)
+        card.add(self.spec_bar)
+        self.content.addWidget(card)
 
         self.answers_card = Card("Claude needs a few answers",
                                  "Type one answer per line, in the order of the questions, then press Preview again.")
@@ -173,21 +213,24 @@ class RequestPage(Page):
         card.add(self.codegen_cb)
         card.add(label("Off by default. When no built-in operation can do the request, Claude may write a one-off "
                        "transform. It is tested on sample files first and only ever writes edited copies.", "Muted"))
-        self.content.addWidget(card)
-
         key_row = QHBoxLayout()
+        key_row.setSpacing(10)
+        self.key_pill = pill("API key")
         self.key_label = label("", "Muted", wrap=False)
         self.key_btn = link_button("Set API key\u2026")
+        key_row.addWidget(self.key_pill)
         key_row.addWidget(self.key_label)
         key_row.addWidget(self.key_btn)
         key_row.addStretch(1)
-        self.content.addLayout(key_row)
+        card.add(key_row)
+        self.content.addWidget(card)
         self.finish()
 
         self.back_btn = QPushButton("\u2190  Files")
         self.footer.addWidget(self.back_btn)
         self.footer.addStretch(1)
-        self.footer.addWidget(label("Ctrl+Enter", "Muted", wrap=False))
+        self.preview_hint = _hint("Ctrl+Enter")
+        self.footer.addWidget(self.preview_hint)
         self.preview_btn = primary_button("Preview")
         self.preview_btn.setToolTip("Plan every file and try the change on samples — nothing is written to your files")
         self.footer.addWidget(self.preview_btn)
@@ -195,9 +238,11 @@ class RequestPage(Page):
 
 class PreviewPage(Page):
     def __init__(self, parent=None):
-        super().__init__("Preview", "What will change in every file, and the change tried on sample files. Nothing "
-                                    "has been written to your files.", parent)
-        self.empty = label("Nothing previewed yet. Describe the change and press Preview.", "Muted")
+        super().__init__(3, "Preview", "What will change in every file, and the change tried on sample files. Nothing "
+                                       "has been written to your files.", parent)
+        self.empty = EmptyState("Nothing previewed yet",
+                                "Describe the change (or load a saved spec) and press Preview. The plan for every "
+                                "file and the verified sample files appear here.", "Go to Describe the change")
         self.content.addWidget(self.empty)
         self.body = QWidget()
         bl = QVBoxLayout(self.body)
@@ -223,8 +268,8 @@ class PreviewPage(Page):
         top = QHBoxLayout()
         self.only_problems = QCheckBox("Show exceptions only")
         top.addWidget(self.only_problems)
-        top.addStretch(1)
-        top.addWidget(label("Double-click an exception to see why", "Muted", wrap=False))
+        top.addWidget(_table_hint("Hover a row for the engine's diagnosis; double-click to open the file or see why "
+                                  "it was refused"), 1)
         self.table_card.add(top)
         self.model = RowsModel(PREVIEW_COLUMNS)
         self.proxy = ProblemsFilter()
@@ -256,6 +301,8 @@ class PreviewPage(Page):
         self.footer.addWidget(self.back_btn)
         self.footer.addWidget(self.open_btn)
         self.footer.addStretch(1)
+        self.continue_hint = _hint()
+        self.footer.addWidget(self.continue_hint)
         self.continue_btn = primary_button("Continue to Run  \u2192")
         self.footer.addWidget(self.continue_btn)
 
@@ -269,8 +316,8 @@ class PreviewPage(Page):
 
 class RunPage(Page):
     def __init__(self, parent=None):
-        super().__init__("Run & results", "Apply the previewed change to every file; each file is verified on its "
-                                          "own and only files that pass every check are delivered.", parent)
+        super().__init__(4, "Run & results", "Apply the previewed change to every file; each file is verified on its "
+                                             "own and only files that pass every check are delivered.", parent)
         card = Card("Where should the results go?")
         self.copies_rb = QRadioButton("Save edited copies to the results folder (your files are not changed)")
         self.inplace_rb = QRadioButton("Write verified results back over the originals (guarded)")
@@ -295,6 +342,11 @@ class RunPage(Page):
         self.progress_box.hide()
         self.content.addWidget(self.progress_box)
 
+        self.empty = EmptyState("No results yet",
+                                "Press Run to apply the previewed change to every file. Each file is verified on its "
+                                "own; the results and every verification record land here.")
+        self.content.addWidget(self.empty)
+
         self.results = QWidget()
         rl = QVBoxLayout(self.results)
         rl.setContentsMargins(0, 0, 0, 0)
@@ -312,9 +364,7 @@ class RunPage(Page):
         top = QHBoxLayout()
         self.only_problems = QCheckBox("Show problems only")
         top.addWidget(self.only_problems)
-        top.addStretch(1)
-        top.addWidget(label("Double-click a file to open its edited copy — or to see why it did not pass", "Muted",
-                            wrap=False))
+        top.addWidget(_table_hint("Double-click a file to open its edited copy — or to see why it did not pass"), 1)
         card.add(top)
         self.model = RowsModel(RESULT_COLUMNS)
         self.proxy = ProblemsFilter()
@@ -347,7 +397,7 @@ class RunPage(Page):
         self.back_btn = QPushButton("\u2190  Preview")
         self.footer.addWidget(self.back_btn)
         self.footer.addStretch(1)
-        self.run_hint = label("", "Muted", wrap=False)
+        self.run_hint = _hint()
         self.footer.addWidget(self.run_hint)
         self.run_btn = primary_button("Run")
         self.footer.addWidget(self.run_btn)

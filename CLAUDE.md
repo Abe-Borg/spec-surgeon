@@ -297,17 +297,26 @@ proposals and recorded in the plan's status sections.
   files, or run in place; never relax a hard limit to make a generated op pass.
 - `advisor.py` — exception record → recommendation or re-compiled spec (pinned to the file's pattern; must pass
   `compiler.check_submission` and plan on that file). Writes `advice/`; never applies anything.
+- `about.py` — who made it, the links (GitHub, LinkedIn, email), the license text and its plain-words summary, the
+  third-party licenses: the single source for the About box (`ui/about_dialog.py`), the installer (`installer.iss`:
+  `AppCopyright`, `AppContact`, `LicenseFile`, the welcome-page links), `pyproject.toml` and `updater.REPO`.
+  `tests/test_about.py` pins them to each other and to the `LICENSE` file (MIT, © 2026 Abraham Borg). No Qt.
 - `gui.py` — the window's logic and entry point (`spec-surgeon-gui` / `spec-surgeon gui`). `Session` holds all logic
   (files, compile, preview, run with the approval-token check, Tier B, set-aside, advise; `last_batch`/`last_trials`
   keep the results for the tables) and is what most tests drive. No Qt here: `main()`/`build_window()` import
   `ui/` lazily and explain `pip install "spec-surgeon[gui]"` when PySide6 is missing (exit 2).
-- `ui/` — the Qt window (PySide6-Essentials ≥ 6.8, v0.4.0). `app.py`: `MainWindow` (all wiring), `build_window`
-  (test hook `window._spec_surgeon`: buttons, `Var` values, `wait()`), `Prompts`/`RecordingPrompts` (every dialog
-  goes through `prompts` — a modal dialog hangs an offscreen test), `qt_app`, `main`. `pages.py` the four steps
-  (layout only), `widgets.py`, `models.py`, `rows.py` (tables + `ProgressTracker`; **no Qt**, it parses
-  `run_batch`'s `"N file(s); transform+verify"` / `"  done NAME"` lines — `test_ui_rows.py` pins them),
-  `theme.py` (Fusion + own palette/QSS by default; `windows11` only via Settings), `worker.py`, `update_ui.py`,
-  `settings_dialog.py`, `resources/icon.svg` (source of `packaging/windows/SpecSurgeon.ico` via `make_icon.py`).
+- `ui/` — the Qt window (PySide6-Essentials ≥ 6.8, v0.4.0; reworked 2026-10-15). `app.py`: `MainWindow` (all wiring),
+  `build_window` (test hook `window._spec_surgeon`: buttons incl. `next`/`about`, `Var` values, `wait()`),
+  `Prompts`/`RecordingPrompts` (every dialog goes through `prompts` — a modal dialog hangs an offscreen test), `qt_app`,
+  `main`. `pages.py` the four steps (layout only: header with "STEP n OF 4", cards, an action bar with the primary
+  button and a hint label — `next_hint`, `preview_hint`, `continue_hint`, `run_hint`; `empty` states), `widgets.py`
+  (`Card`, `PathPicker`, `DropZone`, `EmptyState`, `StatTile`, `InfoBar`, `BadgeDelegate`, `StepDelegate` — paints
+  the rail from `STEP_STATE_ROLE`/`STEP_STATUS_ROLE`, `pill`, `link_label`, `TextDialog`), `models.py`, `rows.py`
+  (tables + `ProgressTracker`; **no Qt**, it parses `run_batch`'s `"N file(s); transform+verify"` / `"  done NAME"`
+  lines — `test_ui_rows.py` pins them), `theme.py` (Fusion + own palette/QSS; follows Windows light/dark,
+  `SPEC_SURGEON_THEME` forces one, `SPEC_SURGEON_QT_STYLE` forces a style for diagnosis), `worker.py`, `update_ui.py`,
+  `settings_dialog.py` (results folder + API key, nothing else), `about_dialog.py` (rich-text body from `about.py`),
+  `resources/icon.svg` (source of `packaging/windows/SpecSurgeon.ico` via `make_icon.py`).
   **Qt rules:** PySide6 is imported at module level only inside `ui/` (never `ui/__init__.py` or `ui/rows.py`) —
   the CLI, `Session` and pool workers must load without Qt (`test_gui.py` checks both ways). Background work runs
   on a daemon thread (`worker.start_job`); its signals connect only to `@Slot` methods of GUI-thread QObjects, never
@@ -326,8 +335,8 @@ proposals and recorded in the plan's status sections.
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 383 with diagnostics —
-382 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics —
+394 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
 
@@ -347,12 +356,16 @@ end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4,
    checker/downloader/launcher. The real chain is proven on Windows by `validate_installer.ps1` (update mode).
 6. The API key never goes into `settings.json`; the write-back and AI-written-transform switches are never
    persisted.
+7. **The daily check has no setting.** `updater.should_auto_check(settings)` is once a day for every copy (installed or
+   pip); `SPEC_SURGEON_NO_UPDATE_CHECK` is the only off switch (tests and screenshots set it). Do not add a switch
+   back — Abraham asked (2026-10-15) that the user never has to think about it.
 
 ## Documentation duty
 
 Any implementation change: update README.md (don't shorten it — add). Dependency change: update
 `requirements.txt` and `pyproject.toml` together. Change to the rules above or to the block-text definition:
-update this file.
+update this file. Name, links, email, license: change `about.py` only (and `LICENSE` with it) — `tests/test_about.py`
+tells you every other place that must follow.
 
 ## Environment notes
 
@@ -409,6 +422,30 @@ update this file.
 - Packaging: `app.spec` filters Qt to what a widgets app loads (no software OpenGL, Quick/QML, PDF, TLS,
   translations); the installed smoke test (`installed_smoke.py`, `gui` and `update` modes) is the gate that nothing
   needed was dropped. Release notes in `docs/releases/v<version>.md` are what the update banner's What's new shows.
+
+## 2026-10-15 GUI rework, license and About (after v0.4.1)
+
+Abraham's ask: the window looked bland and was not intuitive; Settings carried panels nobody needs; pick a license.
+What changed (`tests/test_gui.py` "the rework after v0.4.1" block, `tests/test_about.py`, `tests/test_packaging.py`):
+
+- **Look and flow.** A dark navy rail with the four steps (`StepDelegate`: numbered circles on a line, green check when
+  done, accent when current, a status line under each — files ready, the request, "N plan cleanly · M set aside",
+  "N passed"); "STEP n OF 4" headers; white cards; an action bar per step whose primary button is disabled with a hint
+  beside it until the step can go on (Files: a folder with .docx files; Preview: a current preview); a dashed drop
+  zone on Files while no folder is chosen; empty states on Preview and Run; stat tiles with a toned top edge; the
+  API-key pill. `theme.Tokens` gained the `sidebar*`/`rail`/`selection` colours; the look follows Windows light/dark
+  only (`SPEC_SURGEON_THEME` for screenshots: `packaging/gui_screenshot.py` writes `docs/gui-files.png`, `gui.png`,
+  `gui-results.png`; look at them before changing layout).
+- **Removed:** Settings → Appearance and Settings → Updates (and the `theme`, `native_style`, `auto_check_updates`
+  settings — an old `settings.json` still loads), Help → Report a problem. Help: Check for updates…, What's new, User
+  guide, About. The rail's foot: Settings, Check for updates, About Spec Surgeon.
+- **About** (`ui/about_dialog.py`): author, © line, email, GitHub, LinkedIn, the MIT summary + full text, the
+  third-party components, this copy's folders, Copy details. Values from `about.py` only.
+- **License:** MIT (`LICENSE`, `pyproject.toml` `license = "MIT"` with `license-files`, `setuptools>=77` for PEP 639).
+  The installer shows it (`LicenseFile`), names the author (`AppCopyright`, `AppContact`, `BeveledLabel`), shows the
+  welcome page again (`DisableWelcomePage=no`) with the MIT summary and clickable GitHub/LinkedIn links
+  (`InitializeWizard`), and ships `LICENSE.txt` beside the app; `app.spec` carries `LegalCopyright`. Silent installs
+  (the in-app update, CI) are unchanged: Inno skips the license and welcome pages in silent mode.
 
 ## 2026-10-15 hands-on sweep fixes
 
