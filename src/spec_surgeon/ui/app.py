@@ -71,14 +71,35 @@ class Prompts:
     def pick_file(self, title: str, start: str, filter_: str) -> str:
         return QFileDialog.getOpenFileName(self.parent, title, start or str(Path.home()), filter_)[0]
 
+    def ask_text(self, title: str, label_: str, default: str = "") -> str:
+        from PySide6.QtWidgets import QInputDialog
+        text, ok = QInputDialog.getText(self.parent, title, label_, text=default)
+        return text.strip() if ok else ""
+
+    def pick_item(self, title: str, label_: str, items: List[str]) -> str:
+        from PySide6.QtWidgets import QInputDialog
+        item, ok = QInputDialog.getItem(self.parent, title, label_, items, 0, False)
+        return item if ok else ""
+
 
 class RecordingPrompts:
     """Answers questions from a list (default yes) and records everything it was shown."""
 
-    def __init__(self, answers: Optional[List[bool]] = None, files: Optional[List[str]] = None):
+    def __init__(self, answers: Optional[List[bool]] = None, files: Optional[List[str]] = None,
+                 texts: Optional[List[str]] = None, items: Optional[List[str]] = None):
         self.answers = list(answers or [])
         self.files = list(files or [])
+        self.texts = list(texts or [])
+        self.items = list(items or [])
         self.shown: List[tuple] = []
+
+    def ask_text(self, title, label_, default=""):
+        self.shown.append(("ask_text", title, label_))
+        return self.texts.pop(0) if self.texts else ""
+
+    def pick_item(self, title, label_, items):
+        self.shown.append(("pick_item", title, "\n".join(items)))
+        return self.items.pop(0) if self.items else ""
 
     def ask(self, title, text):
         self.shown.append(("ask", title, text))
@@ -300,10 +321,12 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         m = mb.addMenu("&File")
         self.act_load = QAction("Load saved spec…", self, shortcut=QKeySequence("Ctrl+O"))
+        self.act_library = QAction("Your library…", self, shortcut=QKeySequence("Ctrl+L"))
+        self.act_library_folder = QAction("Open library folder", self)
         self.act_open = QAction("Open results folder", self)
         self.act_settings = QAction("Settings…", self, shortcut=QKeySequence("Ctrl+,"))
         self.act_exit = QAction("Exit", self, shortcut=QKeySequence("Ctrl+Q"))
-        for a in (self.act_load, self.act_open, self.act_settings):
+        for a in (self.act_load, self.act_library, self.act_library_folder, self.act_open, self.act_settings):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.act_exit)
@@ -370,6 +393,10 @@ class MainWindow(QMainWindow):
         self.settings_btn.clicked.connect(self.open_settings)
         self.check_btn.clicked.connect(self.updates.manual_check)
         self.act_load.triggered.connect(self.do_load_spec)
+        self.act_library.triggered.connect(self.do_library)
+        self.act_library_folder.triggered.connect(self._open_library_folder)
+        r.library_btn.clicked.connect(self.do_library)
+        p.save_btn.clicked.connect(self.do_save_to_library)
         self.act_open.triggered.connect(self.do_open)
         self.act_settings.triggered.connect(self.open_settings)
         self.act_exit.triggered.connect(self.close)
@@ -387,7 +414,7 @@ class MainWindow(QMainWindow):
         resize_columns(p.table, 3, [260, 90, 120, 300])
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn,
-                            p.review_ack_btn, self.act_load]
+                            p.review_ack_btn, r.library_btn, p.save_btn, self.act_load, self.act_library]
 
     # ---- values ---------------------------------------------------------------------------------------
     def _load_values(self, fresh: bool) -> None:
@@ -1125,6 +1152,89 @@ class MainWindow(QMainWindow):
         self.request_page.spec_bar.hide()
         self._inputs_changed()
 
+    # ---- your library ----
+    @Slot()
+    def do_library(self) -> bool:
+        from ..library import find, list_items
+        if self.busy or self.updating:
+            return False
+        items = list_items()
+        if not items:
+            self.prompts.notify("Your library", "Your library is empty. Save a previewed spec as a recipe, or a custom "
+                                "transform as one of your operations, with “Save to library…” on the Preview step.")
+            return False
+        labels = [i.label() + (f" — {i.description}" if i.description else "") for i in items]
+        picked = self.prompts.pick_item("Your library", "Use a saved recipe or one of your operations:", labels)
+        if not picked:
+            return False
+        item = items[labels.index(picked)]
+        s = self.session
+        if item.kind == "recipe":
+            try:
+                spec = s.load_recipe(item.name)
+            except Exception as e:
+                self.prompts.warn("Spec Surgeon", f"Cannot use this recipe:\n{e}")
+                return False
+            self.request_page.request.blockSignals(True)
+            self.request_page.request.clear()
+            self.request_page.request.blockSignals(False)
+            self.write(f"\nLoaded recipe {item.name!r}: {spec.get('request')!r} — {spec.get('summary')}\nPress Preview.")
+            self._show_loaded_spec()
+            self._refresh_chat()
+            self._inputs_changed()
+            self.go(1)
+            return True
+        render = self.request_page.render_cb.isChecked()
+        self.sync()
+        wkey = self._widget_key()
+        name = item.name
+
+        def fn(log):
+            return s.use_operation(name, log, render) + "\n" + s.make_preview(render, log)
+        return self._work("Use your operation", fn, on_done=lambda text: self._after_preview(text, wkey),
+                          page=self.request_page)
+
+    @Slot()
+    def do_save_to_library(self) -> bool:
+        from ..library import LibraryError
+        s = self.session
+        if self.busy or self.updating or not self._preview_current():
+            return False
+        if s.generated is not None:
+            kind, default = "operation", s.generated.name.replace("_", " ")
+        else:
+            kind, default = "recipe", (s.spec or {}).get("request") or ""
+        title = "Save as my operation" if kind == "operation" else "Save as recipe"
+        name = self.prompts.ask_text(title, "Name (you pick it from Your library later):", default[:60])
+        if not name:
+            return False
+
+        def save(replace: bool):
+            if kind == "operation":
+                return s.save_operation(name, replace=replace), []
+            return s.save_recipe(name, replace=replace)
+        try:
+            try:
+                item, notes = save(replace=False)
+            except LibraryError as e:
+                if "already has" not in str(e) or not self.prompts.ask("Spec Surgeon", f"{e}\n\nReplace it?"):
+                    raise
+                item, notes = save(replace=True)
+        except ValueError as e:                    # LibraryError is a ValueError
+            if "already has" not in str(e):
+                self.prompts.warn("Spec Surgeon", str(e))
+            return False
+        self.write(f"Saved to your library: {item.label()} ({item.path})" + "".join(f"\nNote: {n}" for n in notes))
+        self.preview_page.info.show_message("ok", "Saved to your library", item.label() + "".join(f" — {n}" for n in notes))
+        return True
+
+    @Slot()
+    def _open_library_folder(self) -> None:
+        from ..library import library_dir
+        d = library_dir()
+        d.mkdir(parents=True, exist_ok=True)
+        open_folder(d)
+
     @Slot()
     def do_set_aside(self) -> bool:
         s = self.session
@@ -1347,7 +1457,8 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
                     "open": run.open_btn, "advise": run.advise_btn, "check_updates": w.check_btn,
                     "install_update": w.updates.banner.btn_install, "settings": w.settings_btn,
                     "send": r.chat.send_btn, "start_over": r.chat.start_over_btn,
-                    "review_ack": w.preview_page.review_ack_btn},
+                    "review_ack": w.preview_page.review_ack_btn, "library": r.library_btn,
+                    "save_to_library": w.preview_page.save_btn},
         "vars": {"folder": Var(f.folder.text, f.folder.setText), "template": Var(f.template.text, f.template.setText),
                  "out": Var(f.out.text, f.out.setText),
                  "render": Var(r.render_cb.isChecked, r.render_cb.setChecked),

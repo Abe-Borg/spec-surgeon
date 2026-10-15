@@ -145,6 +145,10 @@ class RequestPage(Page):
         self.load_btn.setToolTip("Use an EditSpec (.json) — e.g. one from the Start menu's Example edit specs, or the "
                                  "spec.json saved in an earlier preview folder")
         row.addWidget(self.load_btn)
+        self.library_btn = QPushButton("Your library\u2026")
+        self.library_btn.setToolTip("Your saved recipes (specs) and your own operations (custom transforms that "
+                                    "passed) — reuse them on another batch")
+        row.addWidget(self.library_btn)
         row.addStretch(1)
         card.add(row)
         self.content.addWidget(card)
@@ -260,8 +264,12 @@ class PreviewPage(Page):
 
         self.back_btn = QPushButton("\u2190  Change request")
         self.open_btn = QPushButton("Open preview folder")
+        self.save_btn = QPushButton("Save to library\u2026")
+        self.save_btn.setToolTip("Save this spec as a recipe — or this custom transform as one of your operations — "
+                                 "to reuse on other batches")
         self.footer.addWidget(self.back_btn)
         self.footer.addWidget(self.open_btn)
+        self.footer.addWidget(self.save_btn)
         self.footer.addStretch(1)
         self.continue_btn = primary_button("Continue to Run  \u2192")
         self.footer.addWidget(self.continue_btn)

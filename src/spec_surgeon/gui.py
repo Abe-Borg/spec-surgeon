@@ -229,6 +229,55 @@ class Session:
         return (f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
                 f"It is saved at {g.path} — Run writes edited copies only (never over your files).")
 
+    # ---- your library ----
+    def load_recipe(self, name: str) -> Dict[str, Any]:
+        from .library import load_recipe
+        return self.load_spec(load_recipe(name))
+
+    def use_operation(self, name: str, log: Log, render: bool = False) -> str:
+        """Run one of your saved operations on this batch: first on its sample files (sandbox + the full suite — it
+        must pass here, not only where it was made), then its preview; Run writes edited copies only."""
+        from .codegen import pick_samples, trial
+        from .library import load_operation
+        from .preview import approval_token, preview_generated
+        g = load_operation(name)
+        files = self.files()
+        self._set_outcome()
+        self.end_conversation()
+        samples = pick_samples(files)
+        out = self.new_out_dir()
+        log(f"Trying your operation {name!r} on {[f.name for f in samples]}…")
+        trials = [trial(g.source, f, g.select, g.params, out / "library-trial" / f"{i:02d}") for i, f in enumerate(samples)]
+        bad = [f"{t.source.name}: {'; '.join(t.problems[:2])}" for t in trials if not t.passed]
+        if bad:
+            raise RuntimeError(f"your operation {name!r} does not pass on these files — " + " | ".join(bad))
+        g.passed, g.trials = True, trials
+        self._set_outcome(generated=g)
+        self.generated_token = approval_token(self._generated_key(g), files)
+        self.generated_preview = preview_generated(g, out / "preview", "auto", render)
+        if render and self.visual_check:
+            self._visual_check(self.generated_preview, f"YOUR SAVED OPERATION {name!r} for: {g.request}\n"
+                                                      f"WHAT IT DOES: {g.proposal}", out / "preview", log)
+        return (f"Your operation {name!r} passed verification on {len(samples)} sample file(s) of this batch. "
+                f"Run writes edited copies only (never over your files).")
+
+    def save_recipe(self, name: str, description: str = "", replace: bool = False):
+        """Save the previewed spec (only while its preview is current) as a recipe."""
+        from .library import save_recipe
+        from .preview import approval_token
+        if self.spec is None or self.preview is None or approval_token(self.spec, self.files()) != self.preview.token:
+            raise ValueError("preview the spec first — only a spec whose preview is current can be saved")
+        return save_recipe(name, self.spec, description, replace)
+
+    def save_operation(self, name: str, description: str = "", replace: bool = False):
+        """Save the custom transform (only one that passed on this batch's samples and is still current)."""
+        from .library import save_operation
+        from .preview import approval_token
+        g = self.generated
+        if g is None or not g.passed or approval_token(self._generated_key(g), self.files()) != self.generated_token:
+            raise ValueError("only a custom transform that passed on the current files can be saved — preview again")
+        return save_operation(name, g, description, replace)
+
     def make_preview(self, render: bool, log: Log) -> str:
         from .preview import make_preview
         if self.generated is not None:

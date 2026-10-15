@@ -18,6 +18,8 @@
     spec-surgeon retry OUT_DIR [--request "..."] [--template T] [--answer A]... [--out DIR] [--yes] [--no-render]
                                [--no-review] [--ack-review] [--in-place] [--allow-codegen]
                                                              (rinse & repeat: run next pass on set-aside files only)
+    spec-surgeon library list|show NAME|delete NAME [--kind recipe|operation] [--yes]
+                                                             (your saved recipes and operations)
     spec-surgeon gui                                         (the window; also: spec-surgeon-gui)
     spec-surgeon advise OUT_DIR [--file NAME]                (Claude: per exception a recommendation or a re-compiled spec)
 """
@@ -279,6 +281,17 @@ def cmd_do(args):
     if not files:
         print("no .docx files to work on", file=sys.stderr)
         return 2
+    if getattr(args, "save_as", None):
+        from .library import LibraryError, list_items, slug
+        try:
+            taken = [i for i in list_items() if i.slug == slug(args.save_as)]
+        except LibraryError as e:
+            print(f"--save-as: {e}", file=sys.stderr)
+            return 2
+        if taken and not getattr(args, "replace", False):
+            print(f"--save-as: your library already has {taken[0].label()!r} — choose another name or pass --replace",
+                  file=sys.stderr)
+            return 2
     out_dir.mkdir(parents=True, exist_ok=True)
     template = templates[0] if templates else None
     log = lambda m: print(m, file=sys.stderr)  # noqa: E731
@@ -327,6 +340,10 @@ def cmd_do(args):
         _visual_check(pv, spec, out_dir / "preview", args)
     print(pv.to_text())
     print(f"\npreview: {out_dir / 'preview'}")
+    if getattr(args, "save_as", None):
+        from .library import save_recipe
+        item, notes = save_recipe(args.save_as, spec, replace=getattr(args, "replace", False))
+        print(f"Saved to your library: {item.label()} ({item.path})" + "".join(f"\nnote: {n}" for n in notes))
     blocking = pv.review.blocking() if pv.review is not None else []
     if blocking and not getattr(args, "ack_review", False):
         print(f"\nClaude's visual check flagged {len(blocking)} problem(s) it rates as blocking (see above).")
@@ -471,6 +488,10 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
         write_preview_files(gp)
     print(gp.to_text())
     print(f"\npreview: {gp.out_dir}")
+    if getattr(args, "save_as", None):
+        from .library import save_operation
+        item = save_operation(args.save_as, g, replace=getattr(args, "replace", False))
+        print(f"Saved to your library: {item.label()} ({item.path})")
     if args.in_place:
         print("note: generated transforms are never delivered in place; outputs go to the output folder")
     blocking = gp.review.blocking() if gp.review is not None else []
@@ -493,6 +514,47 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
         if not r.passed:
             print(f"  FAIL {r.source.name}: " + "; ".join(r.problems[:2]))
     return 0 if ok == len(results) else 1
+
+
+def cmd_library(args):
+    """Your library: list it, show one item, delete one (recipes and your own operations; local to this computer)."""
+    from .library import LibraryError, delete, find, library_dir, list_items
+    if args.action == "list":
+        items = list_items(args.kind)
+        if not items:
+            print("Your library is empty — save a previewed spec or a custom transform (window: Save to library…; "
+                  "command line: do … --save-as NAME).")
+        for i in items:
+            print(f"{i.label():<52} saved {i.saved_at or '?'}" + (f"  — {i.description}" if i.description else ""))
+        print(f"\n(library folder: {library_dir()})")
+        return 0
+    if not args.name:
+        print(f"library {args.action}: which one? (spec-surgeon library list)", file=sys.stderr)
+        return 2
+    try:
+        item = find(args.name, args.kind)
+        if args.action == "show":
+            print(f"{item.label()}\n  saved:   {item.saved_at}\n  request: {item.request}\n  path:    {item.path}")
+            if item.description:
+                print(f"  about:   {item.description}")
+            if item.kind == "recipe":
+                print(f"\nrun it:   spec-surgeon run-spec \"{item.path}\" FILES…")
+            else:
+                print("\nuse it from the window (Your library…): it is tried on the batch's samples first, then "
+                      "previewed; Run writes edited copies only")
+            return 0
+        if not args.yes:
+            if not _interactive():
+                print(f"Pass --yes to delete {item.label()!r}.", file=sys.stderr)
+                return 2
+            if input(f"Delete {item.label()!r}? [y/N] ").strip().lower() not in ("y", "yes"):
+                return 2
+        delete(item.name, item.kind)
+        print(f"Deleted {item.label()}.")
+        return 0
+    except LibraryError as e:
+        print(str(e), file=sys.stderr)
+        return 2
 
 
 def cmd_gui(args):
@@ -585,6 +647,10 @@ def main(argv=None) -> int:
                    help="skip Claude's visual check of the rendered sample pages (--no-render skips it too)")
     p.add_argument("--ack-review", action="store_true",
                    help="run even when Claude's visual check flagged a blocking problem (you have looked at it)")
+    p.add_argument("--save-as", default=None, metavar="NAME",
+                   help="save the previewed spec as a recipe (or the passing custom transform as one of your "
+                        "operations) in your library under NAME")
+    p.add_argument("--replace", action="store_true", help="with --save-as: replace an item of the same name")
     p.add_argument("--allow-codegen", action="store_true",
                    help="without a terminal: accept Claude's offer of a one-off custom transform when no operation "
                         "fits (sandboxed, verified on samples first, edited copies only); in a terminal pick it from "
@@ -607,6 +673,12 @@ def main(argv=None) -> int:
     p.add_argument("--ack-review", action="store_true", help="run even when Claude's visual check flagged a problem")
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)
+
+    p = sub.add_parser("library", help="your library of saved recipes (specs) and operations (custom transforms)")
+    p.add_argument("action", choices=["list", "show", "delete"]); p.add_argument("name", nargs="?", default=None)
+    p.add_argument("--kind", choices=["recipe", "operation"], default=None)
+    p.add_argument("--yes", action="store_true", help="delete without asking")
+    p.set_defaults(fn=cmd_library)
 
     p = sub.add_parser("verify", help="re-run the verification suite on a source/output pair")
     p.add_argument("source"); p.add_argument("output"); p.add_argument("--plan", required=True); p.set_defaults(fn=cmd_verify)
