@@ -1,6 +1,8 @@
 """The window: its logic (``gui.Session``) end to end with a scripted client, and the real Qt window (offscreen)
-driven through its buttons — preview and run, stale previews, questions, errors, updates (check, skip, install
-hand-off, post-update banners), what it remembers, and that Qt never leaks into the engine or the command line."""
+driven through its buttons — preview and run, stale previews, the chat (Claude's questions and choices, replies, a
+custom transform, Start over), the visual check's findings gate, the rail and the step hints, errors, updates (check,
+skip, install hand-off, post-update banners), Settings, Help and About, what it remembers, and that Qt never leaks into
+the engine or the command line."""
 from __future__ import annotations
 
 import json
@@ -71,7 +73,7 @@ def test_questions_and_unsupported(folder, tmp_path):
                 client=FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]}))))
     msg = s.compile("remove some headers", lambda m: None)
     assert "reply in the chat" in msg and s.questions == ["Which sections?"] and s.spec is None
-    assert (s.chat_dir / "conversation.json").is_file()
+    assert (s.chat_dir / "conversation.json").is_file() and (s.chat_dir / "compile.json").is_file()
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
     s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported})))
     msg = s.compile("x", lambda m: None)
@@ -212,6 +214,14 @@ def test_the_window_shows_claude_s_questions(qt, folder, tmp_path):
     texts = [lab.text() for lab in ui["chat"].findChildren(type(w.request_page.info.text))]
     assert any("Which sections?" in t for t in texts) and any(t == "remove some headers" for t in texts)
     assert not ui["buttons"]["run"].isEnabled()
+    from spec_surgeon.ui.widgets import STEP_STATUS_ROLE
+    assert w.nav.item(1).data(STEP_STATUS_ROLE) == "Waiting for your reply"
+    w._refresh_files()                                        # the folder check runs on a 250 ms timer
+    assert "waiting for your reply" in w.request_page.preview_hint.text()
+    from PySide6.QtWidgets import QCheckBox                   # the chat replaced the Answers box and the codegen switch
+    assert "answers" not in ui and "codegen" not in ui["vars"] and "codegen" not in ui["buttons"]
+    assert not any(hasattr(w.request_page, n) for n in ("answers_card", "answers_label", "questions", "codegen_cb"))
+    assert not [c.text() for c in w.findChildren(QCheckBox) if "AI-written" in c.text()]
     # Preview again while Claude waits: nothing is recompiled (no second scripted turn is needed)
     assert w.do_preview() is False and "waiting for your reply" in w.request_page.info.title.text()
 
@@ -255,9 +265,11 @@ def test_the_window_chat_choice_reply_preview_and_start_over(qt, folder, tmp_pat
     assert last[-1]["text"] == "The user replied: keep the cover footer"
     assert w.preview_key != key_before and ui["buttons"]["run"].isEnabled()
     assert ui["preview_chat"].reply.toPlainText() == ""
+    assert w.preview_page.save_btn.parentWidget() is not w.preview_page.continue_btn.parentWidget()
     ui["buttons"]["start_over"].click()
     assert s.conversation is None and s.spec is None and ui["chat"].isHidden()
     assert not ui["buttons"]["run"].isEnabled()
+    assert w.preview_page.body.isHidden() and not w.preview_page.empty.isHidden()
 
 
 def test_the_window_blocks_replies_to_a_different_request(qt, folder, tmp_path):
@@ -357,8 +369,7 @@ def test_update_banner_skip_and_manual_check(qt, tmp_path, monkeypatch):
     from spec_surgeon.settings import Settings, load_settings
     monkeypatch.delenv("SPEC_SURGEON_NO_UPDATE_CHECK")
     checker = _checker(["update"])
-    w, ui = window(qt, Session(out_root=tmp_path / "out"), settings=Settings(auto_check_updates=True),
-                   checker=checker)
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), settings=Settings(), checker=checker)
     assert ui["banner"].isHidden()
     assert w.updates.auto_check() is True
     ui["wait"]()
@@ -518,6 +529,105 @@ def test_closing_during_a_job_asks_first(qt, tmp_path):
     ui["wait"]()
 
 
+# ---- the rework after v0.4.1: the rail, the guided steps, Settings, Help, About ------------------------------
+
+def test_the_rail_shows_where_each_step_stands(qt, folder, tmp_path):
+    from spec_surgeon.ui.widgets import STEP_STATE_ROLE, STEP_STATUS_ROLE
+    s = Session(out_root=tmp_path / "out")
+    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    w, ui = window(qt, s)
+    rail = lambda: [(w.nav.item(i).data(STEP_STATE_ROLE), w.nav.item(i).data(STEP_STATUS_ROLE)) for i in range(4)]
+    assert not ui["buttons"]["next"].isEnabled() and "docx" in w.files_page.next_hint.text()
+    assert not w.files_page.drop.isHidden() and w.files_page.file_list.isHidden()
+    assert rail()[0] == ("current", "Pick the specs folder")
+    assert rail()[2] == ("todo", "Check before anything runs")
+    ui["vars"]["folder"].set(str(folder))
+    w._refresh_files()
+    assert ui["buttons"]["next"].isEnabled() and w.files_page.next_hint.text() == ""
+    assert w.files_page.drop.isHidden() and w.files_page.file_list.count() == 2
+    assert rail()[0] == ("current", "2 Word files ready")
+    assert rail()[1][0] == "done" and "remove-all-headers-footers.json" in rail()[1][1]
+    assert "Ctrl+Enter" in w.request_page.preview_hint.text()
+    ui["vars"]["render"].set(False)
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert rail()[0][0] == "done" and rail()[2] == ("current", "2 plan cleanly · 0 set aside")
+    assert w.preview_page.continue_btn.isEnabled() and w.preview_page.continue_hint.text() == ""
+    ui["request"].set("change all fonts to Arial")
+    assert rail()[2] == ("current", "Changed since the preview — preview again")
+    assert "Preview again" in w.preview_page.continue_hint.text()
+    ui["request"].set("")
+    ui["buttons"]["run"].click()
+    ui["wait"](120)
+    assert rail()[3] == ("current", "2 passed · no problems") and w.run_page.empty.isHidden()
+
+
+def test_settings_is_down_to_the_results_folder_and_the_key(qt, tmp_path):
+    from spec_surgeon.ui.settings_dialog import SettingsDialog
+    w, ui = window(qt, Session(out_root=tmp_path / "out"))
+    dlg = SettingsDialog(w)
+    assert hasattr(dlg, "out") and hasattr(dlg, "key") and hasattr(dlg, "remember")
+    assert not any(hasattr(dlg, n) for n in ("theme", "native", "auto", "check_now", "clear_skip"))
+    from spec_surgeon.ui.widgets import Card
+    assert [c.title.text() for c in dlg.findChildren(Card) if hasattr(c, "title")] == \
+        ["Results folder", "Anthropic API key"]
+    dlg.out.setText(str(tmp_path / "Elsewhere"))
+    dlg.apply()
+    assert ui["vars"]["out"].get() == str(tmp_path / "Elsewhere")
+
+
+def test_help_has_no_report_a_problem_and_the_sidebar_has_the_three_buttons(qt, tmp_path):
+    from PySide6.QtWidgets import QMenu
+    w, ui = window(qt, Session(out_root=tmp_path / "out"))
+    help_menu = [m for m in w.menuBar().findChildren(QMenu) if m.title() == "&Help"][0]
+    texts = [a.text() for a in help_menu.actions() if not a.isSeparator()]
+    assert texts == ["Check for updates…", "What's new in this version", "User guide (online)", "Open logs folder",
+                     "Save diagnostics bundle…", "About Spec Surgeon"]               # + the two diagnostics entries
+    assert not hasattr(w, "act_issue")
+    assert [b.text() for b in (w.settings_btn, w.check_btn, w.about_btn)] == \
+        ["Settings", "Check for updates", "About Spec Surgeon"]
+
+
+def test_about_says_who_made_it_the_license_and_how_to_reach_him(qt, tmp_path):
+    from spec_surgeon import __version__, about
+    from spec_surgeon.ui.about_dialog import AboutDialog
+    w, ui = window(qt, Session(out_root=tmp_path / "out"))
+    ui["buttons"]["about"].click()
+    dlg = w._viewers[-1]
+    assert isinstance(dlg, AboutDialog)
+    assert dlg.name.text() == "Spec Surgeon" and __version__ in dlg.version.text()
+    plain = dlg.body.toPlainText()
+    assert about.COPYRIGHT_LINE in plain and about.LICENSE_NAME in plain and about.AUTHOR in plain
+    for line in about.LICENSE_SUMMARY:
+        assert line in plain
+    assert f'href="mailto:{about.EMAIL}"' in dlg.html and about.EMAIL in plain
+    assert f'href="{about.GITHUB_URL}"' in dlg.html and f'href="{about.LINKEDIN_URL}"' in dlg.html
+    for name, lic, url in about.THIRD_PARTY:
+        assert f'href="{url}"' in dlg.html and lic in plain
+    assert "Settings:" in plain
+    dlg.show_license()
+    assert dlg._viewers[-1].browser.toPlainText().strip() == about.LICENSE_TEXT.strip()
+    text = w.about_text()
+    for value in (about.EMAIL, about.GITHUB_URL, about.LINKEDIN_URL, about.LICENSE_NAME, "Settings:"):
+        assert value in text
+    dlg.close()
+
+
+def test_the_update_check_needs_no_setting(qt, tmp_path, monkeypatch):
+    """Once a day, on its own: nothing to turn on, and the only off switch is the environment variable."""
+    from spec_surgeon.settings import Settings
+    monkeypatch.delenv("SPEC_SURGEON_NO_UPDATE_CHECK")
+    checker = _checker(["current"])
+    w, ui = window(qt, Session(out_root=tmp_path / "out"), settings=Settings(), checker=checker)
+    assert w.updates.auto_check() is True
+    ui["wait"]()
+    assert checker.calls == [(False, "")] and w.settings.last_update_check > 0
+    assert w.updates.auto_check() is False                       # not again today
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    w.settings.last_update_check = 0
+    assert w.updates.auto_check() is False
+
+
 # ---- Qt stays inside the window --------------------------------------------------------------------------------
 
 def test_without_qt_the_window_explains_how_to_install_it():
@@ -592,11 +702,18 @@ def test_the_window_blocks_run_on_claude_s_findings_until_acknowledged(qt, folde
     assert not p.review_card.isHidden() and "Logo squashed." in p.review_lbl.text()
     assert "advisory" in p.review_card.helper.text().lower() and "PASS" not in p.review_lbl.text()
     assert not ui["buttons"]["run"].isEnabled() and "visual check flagged" in w.run_page.run_hint.text()
+    assert "visual check flagged" in w.run_page.run_hint.toolTip()          # the full reason
+    assert "Look at Claude's findings" in w.preview_page.continue_hint.text()
+    from spec_surgeon.ui.widgets import STEP_STATUS_ROLE
+    w._refresh_nav()
+    assert w.nav.item(2).data(STEP_STATUS_ROLE) == "Look at Claude's findings before Run"
     assert w.do_run() is False
+    assert "visual check flagged" in w.run_page.info.text.text()
     assert not ui["buttons"]["review_ack"].isHidden()
     ui["buttons"]["review_ack"].click()
     assert ui["buttons"]["run"].isEnabled() and ui["buttons"]["review_ack"].isHidden()
     assert "Acknowledged" in p.review_bar.title.text()
+    assert w.run_page.run_hint.text() == "" and w.preview_page.continue_hint.text() == ""
 
 
 def test_the_window_runs_the_custom_transform_offered_in_the_chat(qt, folder, tmp_path):

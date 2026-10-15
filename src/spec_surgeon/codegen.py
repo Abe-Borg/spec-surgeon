@@ -21,6 +21,10 @@ Claude the whole conversation as its brief, read-only tools to look at the sampl
 A passing op is saved (``generated_ops/<hash>.py`` + ``.history.json`` beside the batch's records) — a cache, not
 a registered op: promotion into ``ops/`` is a human decision, with tests. ``run_generated`` applies it to a batch
 the same way (sandbox per file, verifier per file); outputs go to the output folder only — never in place.
+
+``codegen/history.json`` is the diagnosis of every attempt, passing or not: the submitted source, its problems and
+trials, and the whole exchange with the model (``GeneratedOp.transcript``), re-written after every turn and on every
+way out. An API error (``llm.is_api_error``) ends the generation as a recorded failure; anything else propagates.
 """
 from __future__ import annotations
 
@@ -127,6 +131,14 @@ class SandboxResult:
     error: Optional[str] = None
     code: Optional[str] = None
     seconds: float = 0.0
+    traceback: str = ""                 # the generated code's traceback, from inside the sandbox
+    stderr: str = ""                    # what the sandbox process printed (a crash, an import error)
+    returncode: Optional[int] = None
+
+
+def _tail(text: str, n: int = 15) -> str:
+    lines = [x for x in (text or "").rstrip().splitlines() if x.strip()]
+    return "\n".join(lines[-n:])
 
 
 def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict[str, Any], workdir: Path,
@@ -142,18 +154,24 @@ def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict
                    encoding="utf-8")
     env = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONIOENCODING")}
     try:
-        subprocess.run([sys.executable, "-I", "-m", "spec_surgeon.sandbox_runner", str(req)], cwd=str(workdir),
-                       env=env, timeout=timeout, capture_output=True, check=False)
-    except subprocess.TimeoutExpired:
+        proc = subprocess.run([sys.executable, "-I", "-m", "spec_surgeon.sandbox_runner", str(req)], cwd=str(workdir),
+                              env=env, timeout=timeout, capture_output=True, check=False)
+    except subprocess.TimeoutExpired as e:
+        err = (e.stderr or b"").decode("utf-8", "replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
         return SandboxResult(False, error=f"timed out after {timeout}s", code="timeout",
-                             seconds=time.perf_counter() - t0)
+                             seconds=time.perf_counter() - t0, stderr=_tail(err))
+    stderr = (proc.stderr or b"").decode("utf-8", "replace") if isinstance(proc.stderr, bytes) else str(proc.stderr or "")
+    (workdir / "sandbox-stderr.txt").write_text(stderr, encoding="utf-8")
     res_path = workdir / "result.json"
     if not res_path.is_file():
-        return SandboxResult(False, error="the sandbox process died without a result", code="crash",
-                             seconds=time.perf_counter() - t0)
+        return SandboxResult(False, error=f"the sandbox process died without a result (exit code {proc.returncode})"
+                             + (f"; it printed: {_tail(stderr, 6)}" if stderr.strip() else ""), code="crash",
+                             seconds=time.perf_counter() - t0, stderr=_tail(stderr, 40), returncode=proc.returncode)
     res = json.loads(res_path.read_text(encoding="utf-8"))
     if not res.get("ok"):
-        return SandboxResult(False, error=res.get("error"), code=res.get("code"), seconds=time.perf_counter() - t0)
+        return SandboxResult(False, error=res.get("error"), code=res.get("code"), seconds=time.perf_counter() - t0,
+                             traceback=res.get("traceback") or "", stderr=_tail(stderr, 40),
+                             returncode=proc.returncode)
     return SandboxResult(True, output=workdir / "out.docx",
                          plan=json.loads((workdir / "plan.json").read_text(encoding="utf-8")),
                          seconds=time.perf_counter() - t0)
@@ -219,7 +237,9 @@ def trial(source: str, f: Path, select, params, workdir: Path) -> FileTrial:
     from .verify import run_suite
     sb = run_in_sandbox(source, f, select, params, workdir)
     if not sb.ok:
-        return FileTrial(f, False, [f"[{sb.code or 'error'}] {sb.error}"])
+        where = _tail(sb.traceback, 12)
+        return FileTrial(f, False, [f"[{sb.code or 'error'}] {sb.error}"
+                                    + (f"\n(traceback, last lines:)\n{where}" if where else "")])
     try:
         limits = hard_limits(sb.plan, allowed_parts_of(f))
     except Exception as e:  # noqa: BLE001 — a plan the engine cannot even read is a failed trial, with the reason
@@ -253,6 +273,8 @@ class GeneratedOp:
     request: str = ""
     proposal: str = ""
     brief: str = ""
+    transcript: List[Dict[str, Any]] = field(default_factory=list)   # the exchange with the model (diagnostics)
+    seconds: float = 0.0
 
 
 CODEGEN_SYSTEM = """You write ONE Python module: an operation (an `Op` subclass) for a deterministic .docx editing \
@@ -339,7 +361,6 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
     from .profile import profile
     from .package import DocxPackage
     log = log or (lambda m: None)
-    client = client or compiler._client()
     model = model or compiler.DEFAULT_MODEL
     out_dir = Path(out_dir)
     system = system_prompt()
@@ -351,23 +372,48 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
         f"{asked}\n\nWHY NO EXISTING OP FITS / PROPOSAL: {proposal}\n\nSAMPLE FILES (for the tools): "
         f"{[Path(f).name for f in samples]}\n\nSAMPLE FILE PROFILES:\n" + json.dumps(profiles, ensure_ascii=False)}]
     g = GeneratedOp(model=model, request=request, proposal=proposal or "", brief=brief or "")
+    g.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"],
+                         "samples": [str(f) for f in samples]})
+    t_all = time.perf_counter()
+
+    def done() -> GeneratedOp:                     # every way out keeps codegen/history.json
+        g.seconds = time.perf_counter() - t_all
+        _save_history(g, out_dir)
+        return g
+
+    def client_now():
+        nonlocal client
+        if client is None:
+            client = compiler._client()
+        return client
     calls = 0
     while len(g.attempts) < max_iter and calls < MAX_CALLS:
         calls += 1
-        resp = llm.call(client, model=model, system=system, tools=CODEGEN_TOOLS, messages=messages)
+        t_call = time.perf_counter()
+        try:
+            resp = llm.call(client_now(), model=model, system=system, tools=CODEGEN_TOOLS, messages=messages)
+        except Exception as e:  # noqa: BLE001 — classified below
+            if not llm.is_api_error(e):
+                raise                          # a defect (a wrong argument, a test's script running out) propagates
+            g.errors.append(llm.failure_text(e, "the call to the model failed"))
+            g.transcript.append(llm.error_entry(calls, e, time.perf_counter() - t_call))
+            return done()
         g.usage.add(resp, model)
+        g.transcript.append(llm.response_entry(calls, resp, time.perf_counter() - t_call))
         problem = llm.stop_problem(resp)
         if problem:
             g.errors.append(f"model stopped: {problem}")
-            return g
+            return done()
         content = llm.history_content(resp)
         uses = llm.tool_uses(content)
         if not content:
             g.errors.append("the model returned an empty answer")
-            return g
+            return done()
         messages.append({"role": "assistant", "content": content})
         if not uses:
-            messages.append({"role": "user", "content": "Call submit_op with the module source."})
+            nudge = "Call submit_op with the module source."
+            messages.append({"role": "user", "content": nudge})
+            g.transcript.append({"turn": calls, "role": "user", "content": nudge})
             continue
         results: List[Dict[str, Any]] = []
         submitted = False
@@ -388,13 +434,14 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                         t = trial(src, Path(f), select, params, out_dir / "sandbox" / f"attempt{attempt}" / f"{i:02d}")
                         trials.append(t)
                         problems += [f"{Path(f).name}: {p}" for p in t.problems]
-                g.attempts.append({"attempt": attempt, "problems": problems, "trials": [t.to_dict() for t in trials]})
+                g.attempts.append({"attempt": attempt, "problems": problems, "trials": [t.to_dict() for t in trials],
+                                   "source": src, "select": select, "params": params})
                 log(f"codegen attempt {attempt}: {'PASS' if not problems else f'{len(problems)} problem(s)'}")
                 if not problems:
                     g.source, g.select, g.params, g.passed, g.trials = src, select, params, True, trials
                     g.name = _op_name(src)
                     g.path = save_generated(g, out_dir)
-                    return g
+                    return done()                  # after the result is set: the history says it passed
                 results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
                                 "content": ("FAILED — fix and submit again:\n- " + "\n- ".join(problems))[:12000]})
                 continue
@@ -408,9 +455,24 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                 results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
                                 "content": f"{type(e).__name__}: {e}"[:2000]})
         messages.append({"role": "user", "content": results})
+        g.transcript.append(llm.results_entry(calls, results))
+        g.seconds = time.perf_counter() - t_all
+        _save_history(g, out_dir)                  # every attempt kept as it happens
     g.errors.append(f"no passing op after {len(g.attempts)} attempt(s)" if len(g.attempts) >= max_iter else
                     f"no passing op after {calls} calls ({len(g.attempts)} attempt(s))")
-    return g
+    return done()
+
+
+def _save_history(g: GeneratedOp, out_dir: Path) -> None:
+    """Every attempt — the source the model submitted, the whitelist and sandbox problems, each sample's verification
+    — and the whole exchange in ``codegen/history.json``, passing or not (the diagnosis of a transform that never
+    passed). A history that cannot be written never stops the work (``diagnostics.write_json``)."""
+    from .diagnostics import write_json
+    write_json(Path(out_dir) / "history.json", {"passed": g.passed, "name": g.name, "errors": g.errors,
+                                                "request": g.request, "proposal": g.proposal, "brief": g.brief,
+                                                "model": g.model, "usage": g.usage.to_dict(),
+                                                "seconds": round(g.seconds, 2), "attempts": g.attempts,
+                                                "transcript": g.transcript})
 
 
 def pick_samples(files: Sequence[Path]) -> List[Path]:

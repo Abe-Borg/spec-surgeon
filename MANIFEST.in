@@ -1,4 +1,4 @@
-include CLAUDE.md requirements.txt
+include LICENSE CLAUDE.md requirements.txt
 recursive-include docs *.md *.png
 recursive-include examples *.json *.docx *.md *.png
 recursive-include tests *.py *.json

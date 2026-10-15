@@ -9,7 +9,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from fake_claude import FakeClient, raise_on_enter, resp, text, tool
+from fake_claude import FakeClient, api_error, raise_on_enter, resp, text, tool
 from make_fixtures import build
 from spec_surgeon import vision
 from spec_surgeon.gui import Session
@@ -78,6 +78,7 @@ def test_the_visual_check_sends_labelled_before_and_after_pages_and_validates_fi
 @pytest.mark.parametrize("client, why", [
     (lambda: (_ for _ in ()).throw(RuntimeError("no key")), "not available"),
     (lambda: FakeClient(raise_on_enter(RuntimeError("503"))), "request to Claude failed"),
+    (lambda: FakeClient(raise_on_enter(api_error("Overloaded", 503, "req_3"))), "HTTP 503 · request id req_3"),
     (lambda: FakeClient(resp(text("Looks fine to me."), stop="end_turn")), "without a review"),
     (lambda: FakeClient(resp(text("x"), stop="refusal", details=SimpleNamespace(category="cyber", explanation=""))),
      "declined"),
@@ -85,6 +86,23 @@ def test_the_visual_check_sends_labelled_before_and_after_pages_and_validates_fi
 def test_the_visual_check_is_skipped_never_raised(tmp_path, client, why):
     rv = review_samples("r", [sample(tmp_path)], tmp_path / "review", client)
     assert rv.skipped and why in rv.skipped and rv.blocking() == []
+
+
+def test_the_visual_check_keeps_its_exchange_without_the_page_images(tmp_path):
+    fake = FakeClient(resp(tool("submit_review", {"summary": "Fine.", "findings": []})))
+    rv = review_samples("r", [sample(tmp_path)], tmp_path / "review", lambda: fake)
+    assert not rv.skipped and [e.get("role") for e in rv.transcript] == ["user", "assistant"]
+    assert [b["type"] for b in rv.transcript[0]["content"]] == ["text", "image", "text", "image", "text"]
+    assert rv.transcript[0]["content"][1] == {"type": "image"} and rv.transcript[1]["content"][0]["name"] == "submit_review"
+    saved = json.loads(vision.save_review(rv, tmp_path).read_text(encoding="utf-8"))
+    sent = fake.requests[0]["messages"][0]["content"][1]["source"]["data"]
+    assert saved["transcript"] == rv.transcript and saved["seconds"] >= 0
+    assert "base64" not in json.dumps(saved) and sent[:40] not in json.dumps(saved)
+    defect = review_samples("r", [sample(tmp_path)], tmp_path / "r2", lambda: FakeClient(raise_on_enter(KeyError("x"))))
+    assert "request to Claude failed" in defect.skipped and "Traceback" in defect.transcript[-1]["traceback"]
+    api = review_samples("r", [sample(tmp_path)], tmp_path / "r3",
+                         lambda: FakeClient(raise_on_enter(api_error("Overloaded", 529))))
+    assert "traceback" not in api.transcript[-1] and api.transcript[-1]["error"].endswith("HTTP 529")
 
 
 def test_no_images_no_call(tmp_path):
@@ -135,8 +153,25 @@ def test_view_pages_in_the_conversation_is_an_image_tool_result_with_a_budget(fo
     second = fake.requests[2]["messages"][-1]["content"][0]
     assert second["is_error"] and "page budget" in second["content"]
     assert t.status == "ok" and len(t.images) == 2 and all(Path(p).is_file() for p in t.images)
+    looked = [e for e in c.exchange if e.get("tool_results") and e["tool_results"][0]["tool_use_id"] == "v1"]
+    assert looked and looked[0]["tool_results"][0]["content"].count("[image]") == 2
+    assert "iVBOR" not in json.dumps(c.exchange, default=str)                       # page images never reach a record
     one_shot = Conversation("x", sorted(folder.glob("*.docx")), client=FakeClient(), mode="compile")
     assert "view_pages" not in [tool_["name"] for tool_ in one_shot.tools]
+
+
+def test_the_visual_check_rewrite_keeps_the_approval_inputs(tmp_path):
+    from spec_surgeon.preview import make_preview, write_preview_files
+    d = tmp_path / "in"
+    d.mkdir()
+    (d / "21 00 00 – A.docx").write_bytes(build("21 00 00", "A"))
+    pv = make_preview(REMOVE, [str(d)], tmp_path / "pv", do_render=False)
+    pv.review = SimpleNamespace(to_text=lambda: "VISUAL CHECK: fine", to_dict=lambda: {"verdict": "ok"})
+    write_preview_files(pv)
+    data = json.loads((tmp_path / "pv" / "preview.json").read_text(encoding="utf-8"))
+    assert data["approval_inputs"]["files"] and data["visual_review"] == {"verdict": "ok"}
+    assert data["log"] == "logs/preview.log"
+    assert "VISUAL CHECK: fine" in (tmp_path / "pv" / "PREVIEW.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.skipif(not (shutil.which("soffice") or shutil.which("libreoffice")), reason="LibreOffice not installed")

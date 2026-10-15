@@ -49,7 +49,12 @@ class Session:
     visual_check: bool = True                     # Claude reviews the rendered sample pages of each preview
     conversation: Any = None                      # conversation.Conversation of the current request
     turn: Any = None                              # its last conversation.Turn
-    chat_dir: Optional[Path] = None               # where the conversation keeps its record and page renders
+    chat_dir: Optional[Path] = None               # the session folder holding the conversation's records
+                                                  # (conversation.json, compile.json); it follows each new folder
+    last_compile: Any = None                      # CompileResult view of the conversation's last turn (compile.json)
+    _compiled_dir: Optional[Path] = None          # the session folder the next preview or custom transform goes into
+                                                  # (the compile record sits beside its preview); None once used
+    generated_inputs: Dict[str, Any] = field(default_factory=dict)   # approval_inputs beside generated_token
 
     def files(self) -> List[Path]:
         from .batch import expand_inputs
@@ -110,9 +115,11 @@ class Session:
         self.spec, self.generated = spec, generated
         self.spec_source = source if spec is not None else ""
         self.preview, self.generated_token, self.generated_preview = None, "", None
+        self.generated_inputs = {}
 
     def end_conversation(self) -> None:
         self.conversation, self.turn, self.questions = None, None, []
+        self._compiled_dir = None                 # a loaded spec or saved operation never previews into its folder
 
     def load_spec(self, path: Path) -> Dict[str, Any]:
         from .editspec import load_spec, validate_spec
@@ -141,19 +148,29 @@ class Session:
 
     def compile(self, request: str, log: Log) -> str:
         """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
-        Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user."""
+        Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user. It opens the session
+        folder (``out_dir``): conversation.json and compile.json there after every turn, and the first preview or
+        custom transform beside them (``_session_dir``)."""
         from .conversation import Conversation
         if not request.strip():
             raise ValueError("type what you want done (or load a spec file)")
         files = self.files()
         self._set_outcome()
         self.end_conversation()
-        self.chat_dir = Path(self.out_root) / (datetime.now().strftime("%Y%m%d-%H%M%S") + "-chat")
-        self.chat_dir.mkdir(parents=True, exist_ok=True)
+        out = self.out_dir = self._next_session_dir()   # the session folder: conversation.json and compile.json,
+        self.chat_dir = self._compiled_dir = out        # then preview/, codegen/ and run/ beside them (bundle_root)
         log(f"Talking the request through with Claude over {len(files)} file(s)…")
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
-                                         prior_failures=self.prior_failures or None, work_dir=self.chat_dir, log=log)
-        return self._after_turn(self.conversation.start())
+                                         prior_failures=self.prior_failures or None, work_dir=out / "chat", log=log)
+        try:
+            turn = self.conversation.start()
+        except Exception:
+            self._save_chat()                     # what was said before a defect stopped it, for the diagnosis
+            raise
+        msg = self._after_turn(turn)
+        if (out / "compile.json").is_file():
+            log(f"Compile record (the model's whole exchange): {out / 'compile.json'}")
+        return msg
 
     def reply(self, text: str = "", choice_id: Optional[str] = None, log: Log = lambda m: None,
               render: bool = False) -> str:
@@ -164,6 +181,9 @@ class Session:
         if not self.conversation_matches(c.request):
             raise ValueError("the files or the template changed since this conversation started — press Start over")
         chosen = c.choice(choice_id) if choice_id else None
+        if self._compiled_dir is None:            # a preview or custom transform used the folder: its records stay
+            self.chat_dir = self._compiled_dir = self._next_session_dir()   # as they were; this reply's go here
+            log(f"The conversation continues in {self.chat_dir} (conversation.json, compile.json)")
         self._set_outcome()                       # whatever was previewed before this reply is void now
         if chosen is not None and chosen.kind == "custom_transform":
             c.take_app_choice(chosen.id)
@@ -178,9 +198,17 @@ class Session:
                 c.note(f"No custom transform passed verification: {e}")
                 self._save_chat()
                 raise
+            except Exception:
+                self._save_chat()                 # a defect propagates; what was said is kept for the diagnosis
+                raise
             self._save_chat()
             return msg
-        return self._after_turn(c.reply(text, choice_id, client=self.client))
+        try:
+            turn = c.reply(text, choice_id, client=self.client)
+        except Exception:
+            self._save_chat()
+            raise
+        return self._after_turn(turn)
 
     def _after_turn(self, turn) -> str:
         self.turn = turn
@@ -198,11 +226,48 @@ class Session:
         return f"That didn't work: {turn.message}\nReply in the chat to try again, or Start over."
 
     def _save_chat(self) -> None:
-        if self.conversation is not None and self.chat_dir is not None:
-            try:
-                self.conversation.save(self.chat_dir / "conversation.json")
-            except OSError:
-                pass
+        """conversation.json and compile.json (the request, the answers and the outcome of the conversation's last turn
+        with the model's whole exchange) in the current session folder; a record that cannot be written never stops
+        the work."""
+        c = self.conversation
+        if c is None or self.chat_dir is None:
+            return
+        try:
+            c.save(self.chat_dir / "conversation.json")
+        except OSError:
+            pass
+        if c.turn is not None:
+            from .diagnostics import write_json
+            self.last_compile = c.compile_result(c.turn)
+            write_json(self.chat_dir / "compile.json", {"request": c.request, "answers": list(c.answers),
+                                                        **self.last_compile.to_dict()})
+
+    def _session_dir(self) -> Path:
+        """The folder the next preview or custom transform goes into: the conversation's folder while nothing has used
+        it yet, else a new one (a loaded spec or saved operation: a new results folder). The conversation's records
+        follow it, so every session folder holds the exchange that led to its preview and run (diagnostics.bundle_root
+        bundles them together); once used, a folder's records are frozen (``reply`` opens the next folder before
+        anything more is said)."""
+        if self.conversation is None:
+            out = self.new_out_dir()
+        else:
+            out = self._compiled_dir if self._compiled_dir is not None else self._next_session_dir()
+        self.out_dir, self._compiled_dir = out, None
+        if self.conversation is not None and self.chat_dir != out:
+            self.chat_dir = out
+            self._save_chat()
+        return out
+
+    def _next_session_dir(self) -> Path:
+        """A new session folder for a conversation's records — never one that exists, even within the same second, so
+        the records beside a preview or run are never overwritten by a later turn or another conversation. It does not
+        move ``out_dir`` (a reply leaves it on the last preview until the next one)."""
+        stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
+        out, n = Path(self.out_root) / stamp, 2
+        while out.exists():
+            out, n = Path(self.out_root) / f"{stamp}-{n}", n + 1
+        out.mkdir(parents=True, exist_ok=True)
+        return out
 
     @staticmethod
     def _generated_key(g) -> Dict[str, Any]:
@@ -211,9 +276,9 @@ class Session:
     def _codegen(self, request: str, proposal: str, files: List[Path], log: Log, brief: Optional[str] = None,
                  render: bool = False) -> str:
         from .codegen import generate_op, pick_samples
-        from .preview import approval_token, preview_generated
+        from .preview import approval_inputs, approval_token, preview_generated
         samples = pick_samples(files)
-        out = self.new_out_dir()
+        out = self._session_dir()                 # beside the conversation's records: codegen/history.json, preview/
         log(f"Writing a one-off transform, tested on {[s.name for s in samples]}…")
         g = generate_op(request, proposal or "", samples, out / "codegen", client=self.client, log=log, brief=brief)
         if not g.passed:
@@ -221,7 +286,9 @@ class Session:
                                [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}" for a in g.attempts[-1:]]))
         self._set_outcome(generated=g)
         self.generated_token = approval_token(self._generated_key(g), files)
+        self.generated_inputs = approval_inputs(self._generated_key(g), files)
         self.generated_preview = preview_generated(g, out / "preview", "auto", render)
+        log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
         if render and self.visual_check:
             intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {request}", f"WHAT IT SHOULD DO: {proposal}"]
                                + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
@@ -239,7 +306,7 @@ class Session:
         must pass here, not only where it was made), then its preview; Run writes edited copies only."""
         from .codegen import pick_samples, trial
         from .library import load_operation
-        from .preview import approval_token, preview_generated
+        from .preview import approval_inputs, approval_token, preview_generated
         g = load_operation(name)
         files = self.files()
         self._set_outcome()
@@ -254,7 +321,9 @@ class Session:
         g.passed, g.trials = True, trials
         self._set_outcome(generated=g)
         self.generated_token = approval_token(self._generated_key(g), files)
+        self.generated_inputs = approval_inputs(self._generated_key(g), files)
         self.generated_preview = preview_generated(g, out / "preview", "auto", render)
+        log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
         if render and self.visual_check:
             self._visual_check(self.generated_preview, f"YOUR SAVED OPERATION {name!r} for: {g.request}\n"
                                                       f"WHAT IT DOES: {g.proposal}", out / "preview", log)
@@ -287,10 +356,11 @@ class Session:
         if self.spec is None:
             raise ValueError("nothing to preview — type a request or load a spec file")
         files = self.files()                      # the same filtered set Run checks and runs (no template files)
-        out = self.new_out_dir()
+        out = self._session_dir()                 # beside the conversation's records (a loaded spec: a new folder)
         log("Planning every file and trying the samples…")
         self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
                                     do_render=render)
+        log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
         if render and self.visual_check:
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
@@ -360,9 +430,12 @@ class Session:
         if self.generated is not None:
             from .codegen import run_generated
             files = self.files()
-            if approval_token(self._generated_key(self.generated), files) != self.generated_token:
+            key = self._generated_key(self.generated)
+            if approval_token(key, files) != self.generated_token:
+                from .preview import approval_inputs, explain_approval_change
+                what = explain_approval_change(self.generated_inputs or {}, approval_inputs(key, files))
                 raise ValueError("a file changed (or the folder changed) since the AI-written transform was tested — "
-                                 "press Preview again")
+                                 "press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
             out = (self.out_dir or self.new_out_dir()) / "run"
             res = run_generated(self.generated, [str(f) for f in files], out, log=log)
             self.last_run_dir, self.last_trials, self.last_batch = out, res, None
@@ -372,8 +445,13 @@ class Session:
             raise ValueError("press Preview first — nothing runs before you have seen the preview")
         files = self.files()
         if approval_token(self.spec, files) != self.preview.token:
-            raise ValueError("a file or the spec changed since the preview — press Preview again")
+            from .preview import approval_inputs, explain_approval_change
+            what = explain_approval_change(getattr(self.preview, "token_inputs", None) or {},
+                                           approval_inputs(self.spec, files))
+            raise ValueError("a file or the spec changed since the preview — press Preview again"
+                             + ("".join(f"\n  • {w}" for w in what) if what else ""))
         out = self.out_dir / "run"
+        self.last_run_dir = out                   # set before the run: a run that stops still has its logs there
         batch = run_batch([str(f) for f in files], "edit-spec", {}, out, renderer="auto", do_render=render,
                           in_place=in_place, progress=log, spec=self.spec)
         self.last_run_dir, self.last_batch, self.last_trials = out, batch, None
@@ -383,12 +461,16 @@ class Session:
             line = f"  {f.status:<9} {f.source.name}"
             if f.exception:
                 line += f"  [{f.exception.get('code')}] {f.exception.get('reason')}"
+                if f.exception.get("kind") not in (None, "refusal"):
+                    line += f" (at {f.exception.get('stage')})"
             elif f.record and not f.record.passed:
                 line += "  " + "; ".join(f"{ch.id} FAIL" for ch in f.record.checks if ch.status == "FAIL")
             elif f.delivered_to:
                 line += f"  → written back to {f.delivered_to}" if in_place else f"  → {f.delivered_to}"
             lines.append(line)
         lines.append(f"\nReport: {out / 'BATCH_REPORT.md'}")
+        lines.append(f"Diagnostics (why, where and how, per file): {out / 'DIAGNOSTICS.md'} — log: "
+                     f"{out / 'logs' / 'run.log'}")
         if not in_place:
             lines.append(f"Edited copies that passed every check: {out / 'outputs'} (your files were not changed)")
         if c["FAIL"]:

@@ -6,6 +6,8 @@
 ;   OutputBaseFilename  == spec_surgeon.updater.INSTALLER_NAME
 ;   AppMutexName        == spec_surgeon.winapp.APP_MUTEX
 ;   AppUserModelID      == spec_surgeon.winapp.AUMID
+;   AppCopyright, AppContact, LicenseFile and the links on the welcome page == spec_surgeon.about
+;     (COPYRIGHT, EMAIL, the LICENSE file at the repository root, GITHUB_URL, LINKEDIN_URL)
 
 [Setup]
 AppId={{97A6079B-7F70-4F32-A691-12624B86E88C}
@@ -14,8 +16,14 @@ AppVersion={#AppVersion}
 AppVerName=Spec Surgeon {#AppVersion}
 AppPublisher=Abraham Borg
 AppPublisherURL=https://github.com/Abe-Borg/spec-surgeon
-AppSupportURL=https://github.com/Abe-Borg/spec-surgeon/issues
+AppSupportURL=https://github.com/Abe-Borg/spec-surgeon
 AppUpdatesURL=https://github.com/Abe-Borg/spec-surgeon/releases
+AppContact=abrahamborg@gmail.com
+AppCopyright=Copyright (c) 2026 Abraham Borg
+; The MIT License (the LICENSE file at the repository root); the wizard shows it and asks for agreement.
+LicenseFile={#SourcePath}..\..\LICENSE
+; The welcome page carries the license summary and the author's GitHub and LinkedIn links (InitializeWizard).
+DisableWelcomePage=no
 DefaultDirName={localappdata}\Programs\Spec Surgeon
 DefaultGroupName=Spec Surgeon
 DisableProgramGroupPage=yes
@@ -47,8 +55,13 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 ; runtime of 0.3.x) must not linger, since Qt loads every plugin it finds in its folders.
 Type: filesandordirs; Name: "{app}\_internal"
 
+[Messages]
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nSpec Surgeon is free, open-source software by Abraham Borg, released under the MIT License: use it, change it and share it as you like, keep the copyright notice with it, and note that it comes as is, without warranty. The full text is on the next page.%n%nIt is recommended that you close all other applications before continuing.
+BeveledLabel=Spec Surgeon  -  Copyright (c) 2026 Abraham Borg  -  MIT License
+
 [Files]
 Source: "*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
+Source: "{#SourcePath}..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Spec Surgeon"; Filename: "{app}\SpecSurgeon.exe"; WorkingDir: "{userdocs}"; AppUserModelID: "AbrahamBorg.SpecSurgeon"
@@ -69,10 +82,49 @@ Type: filesandordirs; Name: "{localappdata}\Spec Surgeon\updates"
 const
   AppMutexName = 'SpecSurgeon-97A6079B-7F70-4F32-A691-12624B86E88C';
   WaitForAppMs = 60000;
+  GitHubUrl = 'https://github.com/Abe-Borg/spec-surgeon';
+  LinkedInUrl = 'https://www.linkedin.com/in/abrahamborg/';
 
 function ShouldRelaunch(): Boolean;
 begin
   Result := WizardSilent() and (ExpandConstant('{param:RELAUNCH|0}') = '1');
+end;
+
+procedure OpenUrl(const Url: String);
+var
+  ErrorCode: Integer;
+begin
+  ShellExec('open', Url, '', '', SW_SHOWNORMAL, ewNoWait, ErrorCode);
+end;
+
+procedure LinkClick(Sender: TObject);
+begin
+  OpenUrl(TNewStaticText(Sender).Hint);
+end;
+
+function AddLink(const Caption, Url: String; Top: Integer): TNewStaticText;
+begin
+  Result := TNewStaticText.Create(WizardForm);
+  Result.Parent := WizardForm.WelcomePage;
+  Result.Left := WizardForm.WelcomeLabel2.Left;
+  Result.Top := Top;
+  Result.Width := WizardForm.WelcomeLabel2.Width;
+  Result.Caption := Caption;
+  Result.Hint := Url;
+  Result.Cursor := crHand;
+  Result.Font.Color := clBlue;
+  Result.Font.Style := [fsUnderline];
+  Result.OnClick := @LinkClick;
+end;
+
+procedure InitializeWizard();
+var
+  Top: Integer;
+begin
+  { The author's links under the welcome text; a click opens the page in the default browser. }
+  Top := WizardForm.WelcomeLabel2.Top + WizardForm.WelcomeLabel2.Height + ScaleY(10);
+  AddLink('GitHub: github.com/Abe-Borg/spec-surgeon', GitHubUrl, Top);
+  AddLink('LinkedIn: linkedin.com/in/abrahamborg', LinkedInUrl, Top + ScaleY(18));
 end;
 
 function InitializeSetup(): Boolean;

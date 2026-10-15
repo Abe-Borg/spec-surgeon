@@ -9,7 +9,9 @@
 Claude never grades. The engine's checks (V1–V10) decide PASS/FAIL from the XML; the visual check is not a check in
 the verification record, can add a reason to stop and can never pass anything — not a file, not a preview, not a run.
 It samples (never every page of every file) to keep the cost down. Nothing here raises into a preview: a renderer that
-cannot run, a missing key or an API error is a ``skipped`` review with the reason.
+cannot run, a missing key or an API error is a ``skipped`` review with the reason (``llm.failure_text``: its kind, HTTP
+status and request id); any other exception of the call is skipped the same way, with its traceback kept in
+``VisualReview.transcript`` (visual_review.json) — the exchange as plain data, without the page images.
 """
 from __future__ import annotations
 
@@ -17,6 +19,8 @@ import base64
 import hashlib
 import json
 import struct
+import time
+import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -129,13 +133,16 @@ class VisualReview:
     usage: llm.Usage = field(default_factory=llm.Usage)
     model: str = ""
     pages_sent: int = 0
+    seconds: float = 0.0
+    transcript: List[Dict[str, Any]] = field(default_factory=list)   # the exchange, without the page images
 
     def blocking(self) -> List[Dict[str, Any]]:
         return [f for f in self.findings if f.get("severity") == "block"]
 
     def to_dict(self) -> Dict[str, Any]:
         return {"findings": self.findings, "summary": self.summary, "skipped": self.skipped, "model": self.model,
-                "pages_sent": self.pages_sent, "usage": self.usage.to_dict()}
+                "pages_sent": self.pages_sent, "usage": self.usage.to_dict(),
+                "seconds": round(self.seconds, 2), "transcript": self.transcript}
 
     def to_text(self) -> str:
         head = "CLAUDE'S VISUAL CHECK (advisory — not a verification; it can stop a run, never pass one):"
@@ -150,6 +157,14 @@ class VisualReview:
         if self.usage.calls:
             out.append(f"   Claude: {self.usage.line()}")
         return "\n".join(out)
+
+
+def _record(rv: VisualReview, make: Callable[[], Dict[str, Any]]) -> None:
+    """One transcript entry; a record that cannot be made never stops the review (it never raises: rule 15)."""
+    try:
+        rv.transcript.append(make())
+    except Exception as e:  # noqa: BLE001
+        rv.transcript.append({"record_error": f"{type(e).__name__}: {e}"[:300]})
 
 
 def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_factory: Callable[[], Any],
@@ -190,12 +205,23 @@ def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_f
                     "\n\nReview the pages above and call submit_review."})
     rv.pages_sent = len(labelled)
     log(f"Claude's visual check: {len(labelled)} page image(s) of {len(sent)} sample file(s)…")
+    _record(rv, lambda: {"turn": 0, "role": "user", "content": llm.transcript_content(content)})
+    t = time.perf_counter()
     try:
         resp = llm.call(client, model=model, system=REVIEW_SYSTEM, tools=REVIEW_TOOLS,
                         messages=[{"role": "user", "content": content}])
-    except Exception as e:  # noqa: BLE001
-        rv.skipped = f"the request to Claude failed ({type(e).__name__}: {e})"
+    except Exception as e:  # noqa: BLE001 — advisory: never raises (rule 15); a defect keeps its traceback
+        rv.seconds = time.perf_counter() - t
+        try:
+            rv.skipped = llm.failure_text(e)
+            tb = "" if llm.is_api_error(e) else traceback.format_exc()[-4000:]
+        except Exception:  # noqa: BLE001 — an exception that cannot even be described is still only a skip
+            rv.skipped, tb = f"the request to Claude failed ({type(e).__name__})", ""
+        failure = e
+        _record(rv, lambda: {**llm.error_entry(1, failure, rv.seconds), **({"traceback": tb} if tb else {})})
         return rv
+    rv.seconds = time.perf_counter() - t
+    _record(rv, lambda: llm.response_entry(1, resp, rv.seconds))
     rv.usage.add(resp, model)
     problem = llm.stop_problem(resp)
     if problem:

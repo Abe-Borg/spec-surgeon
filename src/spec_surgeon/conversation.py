@@ -9,7 +9,9 @@ own words or by picking one of the choices Claude offered — and the same conve
 What makes it safe:
 
 * **Append-only history.** ``messages`` is only ever appended to (the model's thinking blocks are tied to the exact
-  history that produced them). A failed call appends nothing; the next reply simply adds the user's new text.
+  history that produced them). A failed call appends nothing; the next reply simply adds the user's new text. An API
+  error (``llm.is_api_error``) ends the turn as ``failed`` with its kind, HTTP status and request id; anything else is a
+  defect and propagates — it appends nothing either, so the history still pairs.
 * **Every tool call is answered.** Each ``tool_use`` gets exactly one ``tool_result`` in the very next user message
   (``check_pairing`` runs before every request). Results the app cannot give yet — the answer to ``ask_user``, what
   the preview of an accepted spec showed — wait in ``pending`` and go out first in the next user message.
@@ -22,10 +24,17 @@ What makes it safe:
 ``mode="compile"`` is the one-shot behaviour ``compiler.compile_request`` keeps (a plain-text answer gets one nudge,
 then fails); ``mode="chat"`` (the window, the interactive command line) treats Claude's plain text as a message to the
 user and offers the ``view_pages`` tool.
+
+Two records, never read back to rebuild the history: ``entries`` is what the user saw (the chat); ``exchange`` is the
+model exchange for diagnostics (``llm.response_entry`` / ``results_entry`` / ``error_entry``: every request as sent,
+every answer with its stop reason, serving model, tokens, time and request id, every tool result — page images left
+out). Both go into conversation.json; ``compile_result`` hands ``exchange`` on as ``CompileResult.transcript``
+(compile.json).
 """
 from __future__ import annotations
 
 import json
+import time
 import unicodedata
 import uuid
 from dataclasses import dataclass, field
@@ -38,6 +47,10 @@ from . import compiler, llm
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")
 APP_CHOICE_KINDS = ("custom_transform",)
 MAX_CALLS_PER_TURN = compiler.MAX_TURNS
+NUDGE = "Finish by calling submit_editspec (or ask_user)."
+# the tool result an accepted spec gets (the user's next message, if any, says what the preview found)
+ACCEPTED_RESULT = ("accepted — the app shows it to the user; their next message (if any) follows with what the preview "
+                   "found")
 
 
 class ProtocolError(RuntimeError):
@@ -181,6 +194,11 @@ class Conversation:
         self._choice_n = 0
         self._ask_ids: List[str] = []
         self.started = False
+        # diagnostics: every request, answer, tool result and failed call as it happened (conversation.json, and
+        # CompileResult.transcript → compile.json); time spent with Claude and the tools — never waiting for the user
+        self.exchange: List[Dict[str, Any]] = []
+        self.seconds = 0.0
+        self.calls = 0
 
     # ---- public ----
     def start(self) -> Turn:
@@ -190,6 +208,9 @@ class Conversation:
         self.messages = compiler.build_messages(self.request, self.batch, self.answers, self.memory,
                                                 prior_failures=self.prior_failures or None)
         self.entries.append(Entry("user", self.request))
+        self.exchange.append({"turn": 0, "role": "user", "content": self.messages[0]["content"],
+                              "files": [str(f) for f in self.files],
+                              "template": str(self.template) if self.template else None})
         return self._advance()
 
     def choice(self, choice_id: str) -> Choice:
@@ -270,7 +291,8 @@ class Conversation:
         return {"id": self.id, "request": self.request, "files": [str(f) for f in self.files],
                 "template": str(self.template) if self.template else None, "model": self.model, "mode": self.mode,
                 "entries": [e.to_dict() for e in self.entries], "turn": self.turn.to_dict() if self.turn else None,
-                "unsupported": self.unsupported, "tool_calls": self.tool_calls, "usage": self.usage.to_dict()}
+                "unsupported": self.unsupported, "tool_calls": self.tool_calls, "usage": self.usage.to_dict(),
+                "calls": self.calls, "seconds": round(self.seconds, 2), "exchange": self.exchange}
 
     def save(self, path: Path) -> Path:
         """conversation.json — a record for the user and the batch folder. Never read back to rebuild the history."""
@@ -291,7 +313,8 @@ class Conversation:
                                      tool_calls=list(self.tool_calls), model=self.model, usage=self.usage.as_dict(),
                                      served_models=sorted(set(self.usage.served)),
                                      custom_transform=turn.custom_transform,
-                                     custom_transform_reason=turn.custom_transform_reason)
+                                     custom_transform_reason=turn.custom_transform_reason,
+                                     transcript=list(self.exchange), seconds=self.seconds)
         return res
 
     # ---- the loop ----
@@ -317,6 +340,7 @@ class Conversation:
         if not blocks:
             raise ValueError("nothing to send")
         self.messages.append({"role": "user", "content": blocks})
+        self.exchange.append({"turn": self.calls, "role": "user", "content": llm.transcript_content(blocks)})
         self.pending, self.notes, self._ask_ids = [], [], []
 
     def _fail(self, why: str, errors: Optional[List[str]] = None) -> Turn:
@@ -351,18 +375,37 @@ class Conversation:
             return {"type": "tool_result", "tool_use_id": tid, "is_error": True, "content": f"{type(e).__name__}: {e}"[:2000]}
 
     def _advance(self) -> Turn:
+        t0 = time.perf_counter()
+        try:
+            return self._advance_calls()
+        finally:
+            self.seconds += time.perf_counter() - t0
+
+    def _record_results(self, ordered: List[Dict[str, Any]], pending: bool) -> None:
+        extra = {"pending": True} if pending else {}       # pending: sent first in the next user message
+        self.exchange.append(llm.results_entry(self.calls, ordered, **extra))
+
+    def _advance_calls(self) -> Turn:
         rejections: List[str] = []                # the errors of every rejected submission in this user turn
         rejected = 0
         images: List[str] = []
         nudged = False
         for call in range(MAX_CALLS_PER_TURN):
             check_pairing(self.messages)
+            self.calls += 1
+            t_call = time.perf_counter()
             try:
                 resp = llm.call(self._client_now(), model=self.model, system=self.system, tools=self.tools,
                                 messages=self.messages)
-            except Exception as e:  # noqa: BLE001 — an API or network error: nothing is appended; the user can retry
-                return self._fail(f"the request to Claude failed ({type(e).__name__}: {e})", rejections)
+            except Exception as e:  # noqa: BLE001 — classified below
+                if not llm.is_api_error(e):
+                    raise                  # a defect (a wrong argument, a test's script running out) propagates
+                # an API or network error, or Claude not installed: nothing is appended; the user can retry
+                self.exchange.append(llm.error_entry(self.calls, e, time.perf_counter() - t_call))
+                self.log(f"Claude: the call failed ({type(e).__name__})")
+                return self._fail(llm.failure_text(e), rejections)
             self.usage.add(resp, self.model)
+            self.exchange.append(llm.response_entry(self.calls, resp, time.perf_counter() - t_call))
             problem = llm.stop_problem(resp)
             if problem:
                 return self._fail(problem, rejections)
@@ -379,7 +422,8 @@ class Conversation:
                     why = "the model ended without submitting a spec or asking a question"
                     return self._fail(why + (f": {said[:500]}" if said else ""), rejections)
                 nudged = True
-                self.messages.append({"role": "user", "content": "Finish by calling submit_editspec (or ask_user)."})
+                self.messages.append({"role": "user", "content": NUDGE})
+                self.exchange.append({"turn": self.calls, "role": "user", "content": NUDGE})
                 continue
             self.messages.append({"role": "assistant", "content": content})
             results: Dict[str, Dict[str, Any]] = {}
@@ -407,9 +451,7 @@ class Conversation:
                                             "content": "REJECTED — fix and call submit_editspec again:\n- " + "\n- ".join(errs)}
                         continue
                     accepted = (b, spec, inp)
-                    results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b),
-                                        "content": "accepted — the app shows it to the user; their next message (if "
-                                                   "any) follows with what the preview found"}
+                    results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "content": ACCEPTED_RESULT}
                     continue
                 results[_bid(b)] = self._dispatch(b, name, inp, images)
             ordered = [dict(results[_bid(b)]) for b in uses]
@@ -419,20 +461,25 @@ class Conversation:
                         if r["tool_use_id"] == _bid(accepted[0]):
                             r["content"] = "not taken: you asked the user in the same turn — resubmit after their reply"
                 self.pending, self._ask_ids = ordered, [_bid(b) for b, _ in asks]
+                self._record_results(ordered, pending=True)
                 return self._finish(self._ask_turn(asks, rejections, images))
             if accepted is not None:
                 self.pending = ordered
+                self._record_results(ordered, pending=True)
                 return self._finish(self._spec_turn(accepted[1], accepted[2], rejections, images))
             if rejected > 1:
                 for r in ordered:
                     if str(r.get("content", "")).startswith("REJECTED"):
                         r["content"] += "\n(rejected twice — the user decides what happens next)"
                 self.pending = ordered
+                self._record_results(ordered, pending=True)
                 return self._fail("the spec was rejected twice", rejections)
             if call == MAX_CALLS_PER_TURN - 1:
                 self.pending = ordered
+                self._record_results(ordered, pending=True)
                 break
             self.messages.append({"role": "user", "content": ordered})
+            self._record_results(ordered, pending=False)
         return self._fail(f"no spec after {MAX_CALLS_PER_TURN} calls", rejections)
 
     # ---- turns ----

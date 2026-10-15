@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from .editspec import is_template_file, plan_spec, spec_templates, validate_spec
 from .fingerprint import fingerprint
-from .ops import JobException, Plan
+from .ops import Plan
 from .package import DocxPackage
 
 
@@ -135,21 +135,28 @@ class BatchPlan:
 
 
 def plan_file(path: Path, spec: Dict[str, Any]) -> FilePlan:
-    """One file's dry plan. Any failure — a refusal, or a file that cannot even be read (truncated zip, not a
-    .docx) — is that file's exception record; it never aborts the batch (as in a real run: code ``crash``)."""
+    """One file's dry plan. Any failure — a refusal, a file that cannot even be read (truncated zip, not a .docx), or
+    the engine's own error — is that file's exception record, classified as a run would (``unreadable``,
+    ``internal-error`` …, with the stage, the op and the line of code); it never aborts the batch."""
+    from .diagnostics import exception_record
     t0 = time.perf_counter()
     pid = None
+    stage, data, op = "open", None, None
     try:
-        pkg = DocxPackage.from_path(path)
+        data = Path(path).read_bytes()
+        pkg = DocxPackage(data, name=str(path))
+        pkg.main_part()
+        stage = "fingerprint"
         pid = fingerprint(pkg)["pattern_id"]
-        plan, _ = plan_spec(pkg, spec, pid)
+        stage = "plan"
+
+        def hook(phase, number, name, state, fragment=None):
+            nonlocal op
+            op = (number, name) if state == "start" else None
+        plan, _ = plan_spec(pkg, spec, pid, trace=hook)
         fp = FilePlan(Path(path), pid, "planned", summarize_plan(plan), plan.to_dict())
-    except JobException as e:
-        fp = FilePlan(Path(path), pid, "exception", exception=e.to_dict())
-    except Exception as e:  # noqa: BLE001 — unreadable or unexpected: recorded, not raised
-        fp = FilePlan(Path(path), pid, "exception",
-                      exception={"code": getattr(e, "code", None) or "crash", "reason": f"{type(e).__name__}: {e}",
-                                 "details": {}})
+    except Exception as e:  # noqa: BLE001 — a refusal, unreadable or unexpected: recorded, not raised
+        fp = FilePlan(Path(path), pid, "exception", exception=exception_record(e, stage, data, op))
     fp.ms = (time.perf_counter() - t0) * 1000
     return fp
 

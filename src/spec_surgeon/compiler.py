@@ -24,6 +24,14 @@ A rejected spec goes back to the model once with the errors; a second rejection 
 
 The client is injectable (``client=``) so the loop is tested without the API; the default needs the
 ``anthropic`` package and credentials (``ANTHROPIC_API_KEY`` or an ``ant auth login`` profile).
+
+Diagnostics: ``CompileResult.transcript`` is the whole exchange (``conversation.Conversation.exchange``, also in
+``conversation.json``) — what the model was given, every call's text and tool calls (a submitted spec in full), every
+tool result and rejection with its reasons, each call's stop reason, serving model, tokens, time and request id; page
+images never go in. An API call that fails (no network, a bad key, an overloaded service, Claude not installed) ends
+the TURN as ``failed`` with the error, its HTTP status and request id, and the exchange so far; anything else is a
+defect and propagates (``llm.is_api_error`` decides; ``is_api_error``, ``api_error_text`` and ``block_dict`` are
+re-exported here). ``spec-surgeon do`` and the window write it to ``compile.json``.
 """
 from __future__ import annotations
 
@@ -45,6 +53,7 @@ from .profile import profile, profile_batch, template_spec_summary
 
 from . import llm
 from .llm import DEFAULT_MODEL, FALLBACK_BETA  # noqa: F401 — re-exported (cli, codegen, advisor, tests)
+from .llm import api_error_text, block_dict, is_api_error  # noqa: F401 — re-exported (master's diagnostics names)
 
 MAX_TURNS = 12
 # template-slot: a reference fill rule finds no usable value in the template spec itself — the same for every file
@@ -175,12 +184,15 @@ class CompileResult:
     served_models: List[str] = field(default_factory=list)   # what actually answered (a refusal fallback may differ)
     custom_transform: str = ""                    # unsupported only: "possible" | "outside_limits" | "" (not judged)
     custom_transform_reason: str = ""
+    transcript: List[Dict[str, Any]] = field(default_factory=list)   # the model exchange (Conversation.exchange)
+    seconds: float = 0.0                          # time with Claude and the tools, never waiting for the user
 
     def to_dict(self):
         return {"status": self.status, "spec": self.spec, "questions": self.questions, "errors": self.errors,
                 "tool_calls": self.tool_calls, "model": self.model, "served_models": self.served_models,
                 "usage": self.usage, "custom_transform": self.custom_transform,
-                "custom_transform_reason": self.custom_transform_reason}
+                "custom_transform_reason": self.custom_transform_reason,
+                "seconds": round(self.seconds, 2), "transcript": self.transcript}
 
 
 def _client():

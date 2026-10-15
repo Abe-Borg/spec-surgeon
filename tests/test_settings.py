@@ -12,7 +12,7 @@ from spec_surgeon.settings import Settings, load_settings, save_settings
 def test_round_trip(tmp_path):
     p = tmp_path / "settings.json"
     s = Settings(folder=r"C:\Projects\21 – Fire\Specs", out_root="D:/out", render=False, skipped_version="0.5.0",
-                 auto_check_updates=False, last_update_check=123.5, pending_update={"version": "0.5.0"})
+                 last_update_check=123.5, pending_update={"version": "0.5.0"})
     save_settings(s, p)
     assert load_settings(p) == s
     assert not list(tmp_path.glob("*.tmp"))
@@ -22,9 +22,17 @@ def test_missing_wrong_types_and_unknown_keys(tmp_path):
     p = tmp_path / "settings.json"
     assert load_settings(p) == Settings()
     p.write_text(json.dumps({"folder": 5, "render": "yes", "last_update_check": True, "auto_check_updates": "on",
-                             "pending_update": [], "surprise": 1, "theme": "dark"}), encoding="utf-8")
+                             "pending_update": [], "surprise": 1, "theme": "dark", "log_open": True}), encoding="utf-8")
     s = load_settings(p)
-    assert s == Settings(theme="dark")
+    assert s == Settings(log_open=True)
+
+
+def test_the_look_and_the_update_check_are_not_settings():
+    """The GUI rework after v0.4.1 removed the Appearance and Updates panels: the window follows Windows' light/dark
+    setting and checks for updates once a day without being told to. A settings.json from v0.4.x still loads."""
+    names = {f.name for f in dataclasses.fields(Settings)}
+    assert not names & {"theme", "native_style", "auto_check_updates"}
+    assert {"last_update_check", "skipped_version", "pending_update", "last_run_version"} <= names
 
 
 def test_a_hand_edited_pending_update_cannot_break_start_up(tmp_path):

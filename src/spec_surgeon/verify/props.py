@@ -75,7 +75,9 @@ def _name(el) -> str:
 
 
 def first_difference(a, b, path="") -> Optional[str]:
-    """Where two trees first differ (same significance rules as sig()), or None."""
+    """Where two trees first differ (same significance rules as sig()), or None. The place is said twice: as a path
+    of child positions, and as a reader finds it — the text of the paragraph it is in (the first tree's), or the id of
+    the style."""
     if a is None or b is None:
         return None if a is b else f"{path}: element present on one side only"
     here = f"{path}/{_name(a)}"
@@ -87,22 +89,36 @@ def first_difference(a, b, path="") -> Optional[str]:
         ka, kb = dict(a.attrib), dict(b.attrib)
         keys = sorted(set(ka) | set(kb))
         diff = [f"{etree.QName(k).localname}: {ka.get(k)!r}→{kb.get(k)!r}" for k in keys if ka.get(k) != kb.get(k)]
-        return f"{here}: attributes {', '.join(diff)}"
+        return _where(a, f"{here}: attributes {', '.join(diff)}")
     ta, tb = a.text or "", b.text or ""
     if a.tag not in TEXT_TAGS:
         ta, tb = ta.strip(), tb.strip()
     if ta != tb:
-        return f"{here}: text {ta!r}→{tb!r}"
+        return _where(a, f"{here}: text {ta!r}→{tb!r}")
     ca, cb = list(a), list(b)
     for i in range(min(len(ca), len(cb))):
         d = first_difference(ca[i], cb[i], f"{here}[{i}]")
         if d:
-            return d
+            return _where(a, d)
     if len(ca) != len(cb):
         extra = cb[len(ca):] if len(cb) > len(ca) else ca[len(cb):]
         names = [_name(e) for e in extra]
-        return f"{here}: {len(ca)}→{len(cb)} children ({'added' if len(cb) > len(ca) else 'removed'} {names[:5]})"
+        return _where(a, f"{here}: {len(ca)}→{len(cb)} children ({'added' if len(cb) > len(ca) else 'removed'} "
+                         f"{names[:5]})")
     return None
+
+
+def _where(el, msg: str) -> str:
+    """``msg`` with the innermost paragraph's text or style's id it lies in (added once, by the innermost one)."""
+    if " (in paragraph " in msg or " (in an empty paragraph)" in msg or " (in style " in msg:
+        return msg
+    if el.tag == W + "p":
+        text = " ".join("".join(t.text or "" for t in el.iter(W + "t", W + "delText")).split())
+        return f"{msg} (in paragraph “{text[:79] + '…' if len(text) > 80 else text}”)" if text else \
+            f"{msg} (in an empty paragraph)"
+    if el.tag == W + "style":
+        return f"{msg} (in style {el.get(W + 'styleId')!r})"
+    return msg
 
 
 def _nearest_p(el):

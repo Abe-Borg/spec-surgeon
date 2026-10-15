@@ -1,9 +1,11 @@
-"""Regenerate the README screenshots (docs/gui.png — Preview, docs/gui-results.png — Run & results) from the real
-window, offscreen, on synthetic fire-protection specs. No API key needed (it uses the example spec).
+"""Regenerate the README screenshots (docs/gui-files.png — the first step, docs/gui.png — Preview,
+docs/gui-results.png — Run & results) from the real window, offscreen, on synthetic fire-protection specs. No API key
+needed (it uses the example spec).
 
     python packaging/gui_screenshot.py            (needs: pip install -e ".[gui,dev]")
     python packaging/gui_screenshot.py --chat     docs/gui-chat.png — the conversation with Claude on the Describe
                                                   step, from a scripted client (tests/fake_claude.py; no network)
+    SPEC_SURGEON_THEME=dark SPEC_SURGEON_SCREENSHOT_SUFFIX=-dark python packaging/gui_screenshot.py   (the dark look)
 
 The screenshots show the app's own theme as Linux renders it; fonts differ slightly from Windows (Segoe UI).
 """
@@ -43,14 +45,14 @@ def settle(app, seconds: float = 0.5) -> None:
         time.sleep(0.02)
 
 
-def chat_screenshot(work: Path, folder: Path) -> None:
+def chat_screenshot(work: Path, folder: Path, suffix: str = "") -> None:
     from fake_claude import FakeClient, resp, tool
     from spec_surgeon.gui import Session, build_window
     from spec_surgeon.settings import Settings
     from spec_surgeon.ui.app import RecordingPrompts
     s = Session(out_root=work / "Results",
                 client=FakeClient(resp(tool("ask_user", CHAT_ASK, "a1"), inp=18400, out=950)))
-    w = build_window(s, settings=Settings(theme="light"), prompts=RecordingPrompts())
+    w = build_window(s, settings=Settings(), prompts=RecordingPrompts())   # the look: SPEC_SURGEON_THEME (main)
     ui = w._spec_surgeon
     ui["vars"]["folder"].set(str(folder))
     ui["vars"]["render"].set(False)
@@ -61,7 +63,7 @@ def chat_screenshot(work: Path, folder: Path) -> None:
     ui["wait"](120)
     ui["reply"].set("headers and footers too, but leave the cover title alone")
     settle(ui["app"])
-    w.grab().save(str(ROOT / "docs" / "gui-chat.png"))
+    w.grab().save(str(ROOT / "docs" / f"gui-chat{suffix}.png"))
     w.force_close = True
     w.close()
 
@@ -74,34 +76,38 @@ def main() -> int:
         work = Path(tmp)
         os.environ["SPEC_SURGEON_CONFIG_DIR"] = str(work / "config")
         os.environ["SPEC_SURGEON_NO_UPDATE_CHECK"] = "1"
+        os.environ.setdefault("SPEC_SURGEON_THEME", "light")          # SPEC_SURGEON_THEME=dark for the dark look
         folder = work / "Project" / "Specifications"
         folder.mkdir(parents=True)
         for number, title in SPECS:
             (folder / f"{number} – {title}.docx").write_bytes(build(number, title))
+        suffix = os.environ.get("SPEC_SURGEON_SCREENSHOT_SUFFIX", "")
         if "--chat" in sys.argv[1:]:
-            chat_screenshot(work, folder)
-            print("wrote docs/gui-chat.png")
+            chat_screenshot(work, folder, suffix)
+            print(f"wrote docs/gui-chat{suffix}.png")
             return 0
         from spec_surgeon.gui import Session, build_window
         from spec_surgeon.settings import Settings
         from spec_surgeon.ui.app import RecordingPrompts
         s = Session(out_root=work / "Results")
         s.load_spec(ROOT / "examples" / "specs" / "remove-all-headers-footers.json")
-        w = build_window(s, settings=Settings(theme="light"), prompts=RecordingPrompts())
+        w = build_window(s, settings=Settings(), prompts=RecordingPrompts())
         ui = w._spec_surgeon
-        ui["vars"]["folder"].set(str(folder))
-        ui["vars"]["render"].set(False)
         w.resize(1280, 840)
         w.show()
+        ui["wait"](30)
+        w.grab().save(str(ROOT / "docs" / f"gui-files{suffix}.png"))
+        ui["vars"]["folder"].set(str(folder))
+        ui["vars"]["render"].set(False)
         ui["buttons"]["preview"].click()
         ui["wait"](120)
-        w.grab().save(str(ROOT / "docs" / "gui.png"))
+        w.grab().save(str(ROOT / "docs" / f"gui{suffix}.png"))
         ui["buttons"]["run"].click()
         ui["wait"](300)
-        w.grab().save(str(ROOT / "docs" / "gui-results.png"))
+        w.grab().save(str(ROOT / "docs" / f"gui-results{suffix}.png"))
         w.force_close = True
         w.close()
-    print("wrote docs/gui.png and docs/gui-results.png")
+    print(f"wrote docs/gui-files{suffix}.png, docs/gui{suffix}.png and docs/gui-results{suffix}.png")
     return 0
 
 

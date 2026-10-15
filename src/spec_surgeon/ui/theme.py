@@ -1,10 +1,11 @@
-"""The window's look: a Windows 11-like light/dark theme on Qt's Fusion style, the same on every Windows version
+"""The window's look: Spec Surgeon's own light/dark theme on Qt's Fusion style, the same on every Windows version
 (and in the screenshots and tests, which run on Linux).
 
-- Colours follow Windows' light/dark setting (or Settings → Appearance), and the accent is the Windows accent
-  colour when Qt reports one.
-- Settings → Appearance → "Windows native controls" switches to Qt's own ``windows11`` style (Windows 11 only)
-  with only the layout rules below (cards, titles, badges); ``SPEC_SURGEON_QT_STYLE`` forces any Qt style.
+- Colours follow Windows' light/dark setting; the accent is the Windows accent colour when Qt reports one.
+  ``SPEC_SURGEON_THEME=light|dark`` forces a scheme (screenshots, tests). ``SPEC_SURGEON_QT_STYLE`` forces a Qt
+  style — diagnostics only: the controls below are drawn for Fusion, another style gets only the layout rules.
+- A dark navy sidebar carries the four steps (``widgets.StepDelegate`` paints the rail from these tokens); the
+  content area is light with white cards, a white action bar at the foot of every step, and status pills.
 - Fonts: Segoe UI Variable / Segoe UI on Windows; Cascadia Mono / Consolas for the activity log.
 """
 from __future__ import annotations
@@ -19,7 +20,8 @@ from PySide6.QtGui import QColor, QFont, QFontDatabase, QGuiApplication, QPalett
 from PySide6.QtWidgets import QApplication, QStyleFactory
 
 STYLE_ENV = "SPEC_SURGEON_QT_STYLE"
-FALLBACK_ACCENT = "#0F6CBD"
+THEME_ENV = "SPEC_SURGEON_THEME"
+FALLBACK_ACCENT = "#1F6FEB"
 UI_FONTS = ("Segoe UI Variable Text", "Segoe UI", "Inter", "Noto Sans", "DejaVu Sans")
 MONO_FONTS = ("Cascadia Mono", "Consolas", "DejaVu Sans Mono", "Liberation Mono")
 
@@ -30,14 +32,14 @@ class Tokens:
     accent: str
     accent_text: str
     window: str
-    surface: str          # cards
-    surface_alt: str      # table alternate rows, nav hover
+    surface: str          # cards, the action bar, the log
+    surface_alt: str      # table alternate rows, chips, drop zone
     border: str
     input_bg: str
     input_border: str
     text: str
     muted: str
-    nav_selected: str
+    selection: str        # table selection
     ok_fg: str
     ok_bg: str
     err_fg: str
@@ -46,20 +48,32 @@ class Tokens:
     warn_bg: str
     info_fg: str
     info_bg: str
+    sidebar: str          # the step rail
+    sidebar_text: str
+    sidebar_muted: str
+    sidebar_hover: str
+    sidebar_selected: str
+    sidebar_border: str
+    rail: str             # the line joining the step circles
 
 
 def tokens(dark: bool, accent: str) -> Tokens:
+    accent_text = "#000000" if QColor(accent).lightness() > 160 else "#FFFFFF"
     if dark:
-        return Tokens(True, accent, "#000000" if QColor(accent).lightness() > 150 else "#FFFFFF",
-                      window="#202020", surface="#2B2B2B", surface_alt="#323232", border="#3A3A3A",
-                      input_bg="#2D2D2D", input_border="#454545", text="#FFFFFF", muted="#C5C5C5",
-                      nav_selected="#2D2D2D", ok_fg="#6CCB5F", ok_bg="#393D1B", err_fg="#FF99A4", err_bg="#442726",
-                      warn_fg="#FCE100", warn_bg="#433519", info_fg="#99EBFF", info_bg="#1F3347")
-    return Tokens(False, accent, "#FFFFFF" if QColor(accent).lightness() < 170 else "#000000",
-                  window="#F3F3F3", surface="#FFFFFF", surface_alt="#F7F7F7", border="#E5E5E5",
-                  input_bg="#FFFFFF", input_border="#D1D1D1", text="#1B1B1B", muted="#5F5F5F",
-                  nav_selected="#E9E9E9", ok_fg="#0F7B0F", ok_bg="#DFF6DD", err_fg="#C42B1C", err_bg="#FDE7E9",
-                  warn_fg="#8A5300", warn_bg="#FFF4CE", info_fg="#0F548C", info_bg="#EBF3FC")
+        return Tokens(True, accent, accent_text,
+                      window="#171B21", surface="#1F252D", surface_alt="#262D36", border="#313A45",
+                      input_bg="#1A2027", input_border="#3D4754", text="#EEF2F7", muted="#9FACBC",
+                      selection="#2A3542", ok_fg="#5BD47F", ok_bg="#17311F", err_fg="#FF8F86", err_bg="#3B1D1B",
+                      warn_fg="#F5C451", warn_bg="#3A2D12", info_fg="#8FBFFF", info_bg="#1B2E4A",
+                      sidebar="#10141A", sidebar_text="#EEF2F7", sidebar_muted="#8794A5", sidebar_hover="#1A2028",
+                      sidebar_selected="#232B35", sidebar_border="#1F2730", rail="#303A47")
+    return Tokens(False, accent, accent_text,
+                  window="#F4F6F9", surface="#FFFFFF", surface_alt="#F1F4F8", border="#DFE4EB",
+                  input_bg="#FFFFFF", input_border="#C6CFDA", text="#172033", muted="#5B6878",
+                  selection="#E6ECF5", ok_fg="#167C3D", ok_bg="#DDF5E4", err_fg="#B42318", err_bg="#FDE4E1",
+                  warn_fg="#8A5A00", warn_bg="#FFF1C9", info_fg="#1D4F91", info_bg="#E3EEFB",
+                  sidebar="#1B2431", sidebar_text="#F3F6FA", sidebar_muted="#9AA8BA", sidebar_hover="#26303F",
+                  sidebar_selected="#2D3A4B", sidebar_border="#2A3544", rail="#3B4858")
 
 
 _platform_palette: Optional[QPalette] = None
@@ -90,15 +104,15 @@ def _system_accent() -> str:
     return c.name()
 
 
-def _is_dark(scheme: str) -> bool:
-    if scheme == "dark":
-        return True
-    if scheme == "light":
-        return False
+def scheme() -> str:
+    """``light`` or ``dark``: the environment's choice (``SPEC_SURGEON_THEME``) when it names one, else Windows'."""
+    forced = os.environ.get(THEME_ENV, "").strip().lower()
+    if forced in ("light", "dark"):
+        return forced
     try:
-        return QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark
+        return "dark" if QGuiApplication.styleHints().colorScheme() == Qt.ColorScheme.Dark else "light"
     except AttributeError:
-        return False
+        return "light"
 
 
 def _palette(t: Tokens) -> QPalette:
@@ -139,44 +153,69 @@ def _palette(t: Tokens) -> QPalette:
 def _layout_qss(t: Tokens) -> str:
     """Rules that only target the window's own named widgets (safe on any style)."""
     return f"""
-QWidget#Content, QWidget#PageBody {{ background: {t.window}; }}
+QWidget#Content, QWidget#PageBody, QWidget#PageHeader {{ background: {t.window}; }}
 QScrollArea#PageScroll {{ background: transparent; border: none; }}
-QFrame#Card {{ background: {t.surface}; border: 1px solid {t.border}; border-radius: 8px; }}
+QWidget#Footer {{ background: {t.surface}; border-top: 1px solid {t.border}; }}
+QWidget#Footer QLabel {{ background: transparent; }}
+QFrame#Card {{ background: {t.surface}; border: 1px solid {t.border}; border-radius: 10px; }}
 QFrame#Card QLabel {{ background: transparent; }}
-QLabel#PageTitle {{ font-size: 20pt; font-weight: 600; }}
-QLabel#CardTitle {{ font-size: 11.5pt; font-weight: 600; }}
+QFrame#StatTile {{ background: {t.surface}; border: 1px solid {t.border}; border-top: 3px solid {t.input_border};
+    border-radius: 10px; }}
+QFrame#StatTile[tone="ok"] {{ border-top-color: {t.ok_fg}; }}
+QFrame#StatTile[tone="error"] {{ border-top-color: {t.err_fg}; }}
+QFrame#StatTile[tone="warn"] {{ border-top-color: {t.warn_fg}; }}
+QFrame#StatTile[tone="accent"] {{ border-top-color: {t.accent}; }}
+QFrame#StatTile QLabel {{ background: transparent; }}
+QLabel#Eyebrow {{ color: {t.accent}; }}
+QLabel#PageTitle {{ font-size: 19pt; font-weight: 600; }}
+QLabel#CardTitle {{ font-size: 11pt; font-weight: 600; }}
 QLabel#Muted, QLabel#Hint {{ color: {t.muted}; }}
 QLabel#Hint[state="ok"] {{ color: {t.ok_fg}; }}
 QLabel#Hint[state="error"] {{ color: {t.err_fg}; }}
-QLabel#AppName {{ font-size: 13pt; font-weight: 600; }}
-QLabel#Version {{ color: {t.muted}; font-size: 8.5pt; }}
 QLabel#StatValue {{ font-size: 20pt; font-weight: 600; }}
 QLabel#StatValue[tone="ok"] {{ color: {t.ok_fg}; }}
 QLabel#StatValue[tone="error"] {{ color: {t.err_fg}; }}
 QLabel#StatValue[tone="warn"] {{ color: {t.warn_fg}; }}
 QLabel#StatLabel {{ color: {t.muted}; }}
-QFrame#InfoBar {{ border-radius: 6px; border: 1px solid {t.border}; background: {t.info_bg}; }}
-QFrame#InfoBar[tone="ok"] {{ background: {t.ok_bg}; }}
-QFrame#InfoBar[tone="error"] {{ background: {t.err_bg}; }}
-QFrame#InfoBar[tone="warn"] {{ background: {t.warn_bg}; }}
+QFrame#InfoBar {{ border-radius: 6px; border: 1px solid {t.border}; border-left: 4px solid {t.info_fg};
+    background: {t.info_bg}; }}
+QFrame#InfoBar[tone="ok"] {{ background: {t.ok_bg}; border-left-color: {t.ok_fg}; }}
+QFrame#InfoBar[tone="error"] {{ background: {t.err_bg}; border-left-color: {t.err_fg}; }}
+QFrame#InfoBar[tone="warn"] {{ background: {t.warn_bg}; border-left-color: {t.warn_fg}; }}
 QFrame#InfoBar QLabel {{ background: transparent; }}
 QLabel#InfoTitle {{ font-weight: 600; }}
-QFrame#Banner {{ background: {t.info_bg}; border: 1px solid {t.border}; border-radius: 8px; }}
+QFrame#Banner {{ background: {t.info_bg}; border: 1px solid {t.border}; border-left: 4px solid {t.accent};
+    border-radius: 8px; }}
 QFrame#Banner QLabel {{ background: transparent; }}
-QWidget#Sidebar {{ background: {t.window}; }}
+QFrame#EmptyState {{ background: {t.surface}; border: 1px dashed {t.input_border}; border-radius: 10px; }}
+QFrame#EmptyState QLabel {{ background: transparent; }}
+QLabel#EmptyTitle {{ font-size: 12pt; font-weight: 600; }}
+QFrame#DropZone {{ background: {t.surface_alt}; border: 2px dashed {t.input_border}; border-radius: 10px; }}
+QFrame#DropZone[active="true"] {{ background: {t.info_bg}; border-color: {t.accent}; }}
+QFrame#DropZone QLabel {{ background: transparent; }}
+QLabel#DropTitle {{ font-size: 11pt; font-weight: 600; }}
+QWidget#Sidebar {{ background: {t.sidebar}; }}
+QWidget#Sidebar QLabel {{ color: {t.sidebar_text}; background: transparent; }}
+QLabel#AppName {{ font-size: 13pt; font-weight: 600; }}
+QLabel#Version {{ color: {t.sidebar_muted}; font-size: 8.5pt; }}
+QLabel#SideHeading {{ color: {t.sidebar_muted}; font-size: 8pt; font-weight: 600; }}
+QFrame#SidebarDivider {{ background: {t.sidebar_border}; border: none; max-height: 1px; min-height: 1px; }}
 QListWidget#StepNav {{ background: transparent; border: none; outline: none; }}
-QListWidget#StepNav::item {{ padding: 9px 10px; margin: 2px 0; border-radius: 6px; color: {t.text}; }}
-QListWidget#StepNav::item:hover {{ background: {t.surface_alt}; }}
-QListWidget#StepNav::item:selected {{ background: {t.nav_selected}; color: {t.text};
-    border-left: 3px solid {t.accent}; }}
-QPushButton#Chip {{ border: 1px solid {t.input_border}; border-radius: 13px; padding: 4px 12px;
-    background: {t.surface}; }}
-QPushButton#Chip:hover {{ border-color: {t.accent}; color: {t.accent}; }}
-QPushButton#NavButton {{ text-align: left; padding: 7px 10px; border: none; border-radius: 6px;
-    background: transparent; }}
-QPushButton#NavButton:hover {{ background: {t.surface_alt}; }}
+QPushButton#NavButton {{ color: {t.sidebar_text}; text-align: left; padding: 8px 12px; border: none;
+    border-radius: 6px; background: transparent; }}
+QPushButton#NavButton:hover {{ background: {t.sidebar_hover}; }}
+QPushButton#NavButton:pressed {{ background: {t.sidebar_selected}; }}
+QPushButton#NavButton:disabled {{ color: {t.sidebar_muted}; background: transparent; }}
+QPushButton#Chip {{ border: 1px solid {t.input_border}; border-radius: 14px; padding: 5px 13px;
+    background: {t.surface_alt}; color: {t.text}; }}
+QPushButton#Chip:hover {{ border-color: {t.accent}; color: {t.accent}; background: {t.info_bg}; }}
 QPushButton#LinkButton {{ border: none; background: transparent; color: {t.accent}; padding: 0; }}
 QPushButton#LinkButton:hover {{ text-decoration: underline; }}
+QLabel#Pill {{ border-radius: 10px; padding: 3px 10px; font-size: 8.5pt; font-weight: 600;
+    background: {t.surface_alt}; color: {t.muted}; }}
+QLabel#Pill[tone="ok"] {{ background: {t.ok_bg}; color: {t.ok_fg}; }}
+QLabel#Pill[tone="warn"] {{ background: {t.warn_bg}; color: {t.warn_fg}; }}
+QLabel#Pill[tone="info"] {{ background: {t.info_bg}; color: {t.info_fg}; }}
 QFrame#LogPanel {{ background: {t.surface}; border-top: 1px solid {t.border}; }}
 QPushButton#LogToggle {{ border: none; background: transparent; font-weight: 600; text-align: left;
     padding: 6px 4px; }}
@@ -193,34 +232,38 @@ QFrame#ChatMsg QLabel {{ background: transparent; }}
 QLabel#ChatWho {{ font-weight: 600; font-size: 8.5pt; color: {t.muted}; }}
 QFrame#ChoiceRow {{ border-radius: 6px; border: 1px solid {t.input_border}; background: {t.surface}; }}
 QFrame#ChoiceRow QLabel {{ background: transparent; }}
+QDialog#About QLabel#AboutName {{ font-size: 16pt; font-weight: 600; }}
+QTextBrowser#AboutBody {{ background: transparent; border: none; }}
 QStatusBar {{ background: {t.window}; border-top: 1px solid {t.border}; }}
 QStatusBar QLabel {{ padding: 0 6px; }}
 """
 
 
 def _control_qss(t: Tokens) -> str:
-    """The Fluent-like controls (Fusion only; the native style draws its own)."""
+    """The Fluent-like controls (Fusion only; another style draws its own)."""
     return f"""
-QPushButton {{ background: {t.surface}; border: 1px solid {t.input_border}; border-radius: 5px;
+QPushButton {{ background: {t.surface}; border: 1px solid {t.input_border}; border-radius: 6px;
     padding: 6px 16px; min-height: 20px; }}
-QPushButton:hover {{ background: {t.surface_alt}; }}
+QPushButton:hover {{ background: {t.surface_alt}; border-color: {t.muted}; }}
 QPushButton:pressed {{ background: {t.border}; }}
 QPushButton:disabled {{ color: {t.muted}; background: {t.window}; border-color: {t.border}; }}
 QPushButton#Primary {{ background: {t.accent}; color: {t.accent_text}; border: 1px solid {t.accent};
     font-weight: 600; padding: 7px 22px; }}
-QPushButton#Primary:hover {{ background: {QColor(t.accent).lighter(110).name()}; }}
+QPushButton#Primary:hover {{ background: {QColor(t.accent).lighter(112).name()};
+    border-color: {QColor(t.accent).lighter(112).name()}; }}
 QPushButton#Primary:pressed {{ background: {QColor(t.accent).darker(115).name()}; }}
 QPushButton#Primary:disabled {{ background: {t.border}; color: {t.muted}; border-color: {t.border}; }}
 QLineEdit, QPlainTextEdit#Editor, QComboBox, QSpinBox {{ background: {t.input_bg}; border: 1px solid {t.input_border};
-    border-bottom: 1px solid {t.muted}; border-radius: 5px; padding: 5px 8px; selection-background-color: {t.accent};
-    selection-color: {t.accent_text}; }}
-QLineEdit:focus, QPlainTextEdit#Editor:focus, QComboBox:focus {{ border-bottom: 2px solid {t.accent}; }}
-QLineEdit[invalid="true"] {{ border-bottom: 2px solid {t.err_fg}; }}
+    border-radius: 6px; padding: 6px 9px; selection-background-color: {t.accent}; selection-color: {t.accent_text}; }}
+QLineEdit:focus, QPlainTextEdit#Editor:focus, QComboBox:focus {{ border: 1px solid {t.accent}; }}
+QLineEdit[invalid="true"] {{ border: 1px solid {t.err_fg}; }}
+QListWidget {{ background: {t.input_bg}; border: 1px solid {t.border}; border-radius: 6px; padding: 2px; }}
+QListWidget::item {{ padding: 3px 6px; }}
 QTableView {{ background: {t.surface}; alternate-background-color: {t.surface_alt}; border: 1px solid {t.border};
-    border-radius: 6px; gridline-color: transparent; selection-background-color: {t.nav_selected};
+    border-radius: 6px; gridline-color: transparent; selection-background-color: {t.selection};
     selection-color: {t.text}; }}
 QHeaderView::section {{ background: {t.surface}; color: {t.muted}; border: none;
-    border-bottom: 1px solid {t.border}; padding: 6px 8px; font-weight: 600; }}
+    border-bottom: 1px solid {t.border}; padding: 7px 8px; font-weight: 600; }}
 QProgressBar {{ border: none; border-radius: 3px; background: {t.border}; max-height: 6px; text-align: center; }}
 QProgressBar::chunk {{ background: {t.accent}; border-radius: 3px; }}
 QScrollBar:vertical {{ background: transparent; width: 10px; margin: 2px; }}
@@ -231,8 +274,8 @@ QScrollBar::handle:horizontal {{ background: {t.input_border}; border-radius: 3p
 QScrollBar::add-line, QScrollBar::sub-line {{ width: 0; height: 0; }}
 QScrollBar::add-page, QScrollBar::sub-page {{ background: transparent; }}
 QToolTip {{ background: {t.surface}; color: {t.text}; border: 1px solid {t.border}; padding: 4px; }}
-QMenuBar {{ background: {t.window}; }}
-QMenuBar::item {{ padding: 4px 10px; background: transparent; border-radius: 4px; }}
+QMenuBar {{ background: {t.window}; border-bottom: 1px solid {t.border}; }}
+QMenuBar::item {{ padding: 5px 10px; background: transparent; border-radius: 4px; }}
 QMenuBar::item:selected {{ background: {t.surface_alt}; }}
 QMenu {{ background: {t.surface}; border: 1px solid {t.border}; padding: 4px; }}
 QMenu::item {{ padding: 6px 24px 6px 18px; border-radius: 4px; }}
@@ -243,23 +286,17 @@ QSplitter::handle {{ background: {t.border}; }}
 """
 
 
-def apply(app: QApplication, scheme: str = "system", native: bool = False) -> Tokens:
-    """(Re)style the whole application. ``scheme``: system | light | dark. Safe to call again (e.g. when Windows
-    switches between light and dark)."""
+def apply(app: QApplication) -> Tokens:
+    """(Re)style the whole application for the current scheme (Windows' light/dark, or ``SPEC_SURGEON_THEME``).
+    Safe to call again, e.g. when Windows switches between light and dark."""
     global _platform_palette, current
     if _platform_palette is None:
         _platform_palette = QPalette(QGuiApplication.palette())
-    try:
-        app.styleHints().setColorScheme({"dark": Qt.ColorScheme.Dark, "light": Qt.ColorScheme.Light}
-                                        .get(scheme, Qt.ColorScheme.Unknown))
-    except AttributeError:
-        pass
     keys = {k.lower(): k for k in QStyleFactory.keys()}
     forced = os.environ.get(STYLE_ENV, "").strip().lower()
-    win11 = sys.platform.startswith("win") and sys.getwindowsversion().build >= 22000 and "windows11" in keys
-    style = forced if forced in keys else ("windows11" if native and win11 else "fusion")
+    style = forced if forced in keys else "fusion"
     app.setStyle(keys.get(style, "Fusion"))
-    t = tokens(_is_dark(scheme), _system_accent())
+    t = tokens(scheme() == "dark", _system_accent())
     family = _first_family(UI_FONTS)
     font = QFont(family) if family else QFont(app.font())
     font.setPointSizeF(10.0)

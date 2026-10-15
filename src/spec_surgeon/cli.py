@@ -22,6 +22,7 @@
                                                              (your saved recipes and operations)
     spec-surgeon gui                                         (the window; also: spec-surgeon-gui)
     spec-surgeon advise OUT_DIR [--file NAME]                (Claude: per exception a recommendation or a re-compiled spec)
+    spec-surgeon diagnose OUT_DIR [--file NAME] [--bundle ZIP] (why each file failed, where and how; a zip to send)
 """
 from __future__ import annotations
 
@@ -36,7 +37,7 @@ from pathlib import Path
 from . import __version__
 from .batch import expand_inputs, load_set_aside, run_batch
 from .fingerprint import fingerprint
-from .jobs import REGISTRY, get_job, JobException
+from .jobs import REGISTRY, get_job
 from .package import DocxPackage
 
 
@@ -100,11 +101,19 @@ def cmd_run_spec(args):
         print(f"  assumption: {a}")
     if getattr(args, "approval", None):
         from .editspec import is_template_file, spec_templates
-        from .preview import approval_token
+        from .preview import approval_inputs, approval_token, explain_approval_change
         files = [f for f in expand_inputs(args.files) if not is_template_file(f, spec_templates(spec))]
         if approval_token(spec, files) != args.approval:
             print("approval token does not match: the spec or a file changed since the preview (or the file set "
                   "differs) — preview again", file=sys.stderr)
+            beside = Path(args.spec).parent / "preview.json" if not str(args.spec).lstrip().startswith("{") else None
+            try:
+                before = json.loads(beside.read_text(encoding="utf-8")).get("approval_inputs") if beside else None
+            except (OSError, ValueError, AttributeError):
+                before = None
+            if isinstance(before, dict):
+                for w in explain_approval_change(before, approval_inputs(spec, files)):
+                    print(f"  • {w}", file=sys.stderr)
             return 2
     args.job = "edit-spec"
     args.params = None
@@ -167,11 +176,17 @@ def cmd_plan_spec(args):
 
 
 def cmd_fingerprint(args):
+    from .diagnostics import exception_record
     files = expand_inputs(args.files)
     out = []
     t0 = time.perf_counter()
     for f in files:
-        fp = fingerprint(DocxPackage.from_path(f))
+        try:
+            fp = fingerprint(DocxPackage.from_path(f))
+        except Exception as e:  # noqa: BLE001 — one unreadable file is reported, the others still fingerprinted
+            exc = exception_record(e, "fingerprint")
+            print(f"{f.name}: {exc['code']} — {exc['reason']}", file=sys.stderr)
+            continue
         out.append(fp)
         if not args.json:
             secs = fp["sections"]
@@ -194,13 +209,20 @@ def cmd_plan(args):
     job = get_job(args.job)
     files = expand_inputs(args.files)
     rc = 0
+    from .diagnostics import exception_record
     for f in files:
-        pkg = DocxPackage.from_path(f)
+        stage = "open"
         try:
+            pkg = DocxPackage.from_path(f)
+            stage = "plan"
             plan = job.plan(pkg, params)
-        except JobException as e:
+        except Exception as e:  # noqa: BLE001 — a refusal, an unreadable file or the engine's own error: said per file
             rc = 2
-            print(f"\n== {f.name}: EXCEPTION [{e.code}] {e.reason}")
+            exc = exception_record(e, stage)
+            print(f"\n== {f.name}: EXCEPTION [{exc['code']}] {exc['reason']}"
+                  + (f" (at {exc['where']})" if exc.get("where") else ""))
+            if exc.get("kind") == "internal-error":
+                print(exc.get("traceback", ""), file=sys.stderr)
             continue
         print(f"\n== {f.name}: {plan.mode} job, parts {plan.intended_parts}, revision Δ ins {plan.rev_delta['ins']:+d} / del {plan.rev_delta['del']:+d}")
         for i, d in enumerate(plan.diffs, 1):
@@ -237,12 +259,17 @@ def cmd_run(args, spec=None):
         line = f"  {f.status:<9} {f.source.name}"
         if f.exception:
             line += f"  [{f.exception.get('code')}] {f.exception.get('reason')}"
+            if f.exception.get("kind") not in (None, "refusal"):
+                line += f" (at {f.exception.get('stage')})"
         elif f.record and not f.record.passed:
             line += "  " + "; ".join(f"{ch.id} FAIL" for ch in f.record.checks if ch.status == "FAIL")
         elif f.delivered_to:
             line += f"  → {f.delivered_to}"
         print(line)
     print(f"\nReport: {out_dir / 'BATCH_REPORT.md'}")
+    print(f"Log: {out_dir / 'logs' / 'run.log'} (one trace per file beside it)")
+    if c["FAIL"] or c["EXCEPTION"]:
+        print(f"Diagnostics — why each file failed, where and how: {out_dir / 'DIAGNOSTICS.md'}")
     if c["FAIL"]:
         print(f"Copies that FAILED verification were moved to {out_dir / 'failed'} (diagnosis only — not delivered)")
     if c["EXCEPTION"] or c["FAIL"]:
@@ -255,6 +282,7 @@ def cmd_do(args):
     """Natural language end to end: compile (Claude) → preview (dry plan + sample apply/verify/render) → approval →
     the verified batch. Nothing touches a source before approval; --in-place delivery is guarded as always."""
     from .compiler import compile_request
+    from .diagnostics import write_json
     from .editspec import is_template_file
     from .preview import make_preview
     out_dir = Path(args.out) if args.out else Path.cwd() / "SpecSurgeon_out" / datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -306,8 +334,9 @@ def cmd_do(args):
         print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
         res = compile_request(args.request, files, template=template, answers=args.answer or [],
                               model=args.model, log=log, prior_failures=prior_failures)
-        (out_dir / "compile.json").write_text(json.dumps(res.to_dict(), indent=2, ensure_ascii=False, default=str),
-                                              encoding="utf-8")
+        if write_json(out_dir / "compile.json", {"request": args.request, "answers": args.answer or [],
+                                                 **res.to_dict()}):
+            print(f"compile record (the model's whole exchange): {out_dir / 'compile.json'}", file=sys.stderr)
         if res.status == "questions":
             print("The request needs answers before anything runs:")
             for q in res.questions:
@@ -399,16 +428,41 @@ def _print_turn(turn) -> None:
 
 def _chat(args, files, template, out_dir, prior_failures, log):
     """Talk the request through with Claude at the terminal. Returns ("spec", spec, conv), ("codegen", the unsupported
-    spec, conv) when the user picks the custom transform, or ("stop", exit code, conv)."""
+    spec, conv) when the user picks the custom transform, or ("stop", exit code, conv). OUT/conversation.json and
+    OUT/compile.json are re-written after every turn (a record that cannot be written never stops the conversation),
+    and saved before a defect propagates."""
     from .conversation import Conversation
+    from .diagnostics import write_json
     print(f"talking {args.request!r} through with Claude ({args.model}) over {len(files)} file(s) …", file=sys.stderr)
     conv = Conversation(args.request, files, template=template, model=args.model, prior_failures=prior_failures,
                         answers=args.answer or [], work_dir=out_dir / "chat", log=log)
+
+    def save(turn=None):
+        try:
+            conv.save(out_dir / "conversation.json")
+        except OSError:
+            pass
+        if turn is not None:
+            return write_json(out_dir / "compile.json", {"request": args.request, "answers": args.answer or [],
+                                                         **conv.compile_result(turn).to_dict()})
+        return None
+
+    try:
+        return _talk(conv, save, out_dir)
+    except Exception:
+        save()                                    # what was said before a defect stopped it, for the diagnosis
+        raise
+
+
+def _talk(conv, save, out_dir):
+    """_chat's loop: one turn of Claude's, then the user's reply or choice, until a spec, a custom transform or stop."""
     turn = conv.start()
+    told = False
     while True:
-        conv.save(out_dir / "conversation.json")
-        (out_dir / "compile.json").write_text(json.dumps(conv.compile_result(turn).to_dict(), indent=2,
-                                                         ensure_ascii=False, default=str), encoding="utf-8")
+        if save(turn) and not told:
+            print(f"compile record (the model's whole exchange): {out_dir / 'compile.json'}; the conversation: "
+                  f"{out_dir / 'conversation.json'}", file=sys.stderr)
+            told = True
         if turn.status == "ok":
             return "spec", turn.spec, conv
         _print_turn(turn)
@@ -435,7 +489,7 @@ def _chat(args, files, template, out_dir, prior_failures, log):
                 continue
         if choice.kind == "custom_transform":
             conv.take_app_choice(choice.id)
-            conv.save(out_dir / "conversation.json")
+            save()
             return "codegen", conv.unsupported, conv
         turn = conv.reply(choice_id=choice.id)
 
@@ -472,6 +526,9 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     for a in g.attempts:
         print(f"  attempt {a['attempt']}: " + ("PASS" if not a["problems"] else f"{len(a['problems'])} problem(s): "
                                                 + "; ".join(a["problems"][:3])))
+    if (out_dir / "codegen" / "history.json").is_file():
+        print(f"Tier B history (every attempt, the model's exchange): {out_dir / 'codegen' / 'history.json'}",
+              file=sys.stderr)
     if not g.passed:
         print("No generated transform passed verification: " + "; ".join(g.errors))
         return 2
@@ -572,6 +629,54 @@ def cmd_advise(args):
     for a in res:
         print(f"  {a.kind:<14} {Path(a.source).name}" + (f"  ({'; '.join(a.errors)})" if a.errors else ""))
     print(f"\nAdvice: {Path(args.out_dir) / 'advice'}")
+    return 0
+
+
+def _run_folder(path: Path) -> Path:
+    """A results folder, or a `do`/window folder whose run is in run/."""
+    p = Path(path)
+    if not (p / "batch.json").exists() and not (p / "logs").is_dir() and (p / "run").is_dir():
+        return p / "run"
+    return p
+
+
+def cmd_diagnose(args):
+    """Print why each file of a run failed (DIAGNOSTICS.md, or one file's section of it); --bundle zips the run's
+    diagnostics with the app's logs — never the documents."""
+    from . import diagnostics as diag
+    from .settings import logs_dir
+    folder = _run_folder(Path(args.out_dir))
+    if not folder.is_dir():
+        print(f"no such folder: {folder}", file=sys.stderr)
+        return 2
+    text = (folder / "DIAGNOSTICS.md").read_text(encoding="utf-8") if (folder / "DIAGNOSTICS.md").exists() else None
+    if text is None:
+        print(f"{folder} has no DIAGNOSTICS.md (the run did not finish, or it is not a results folder).")
+        log = folder / diag.LOGS / diag.RUN_LOG
+        if log.exists():
+            lines = log.read_text(encoding="utf-8", errors="replace").splitlines()
+            print(f"\nThe end of {log}:\n" + "\n".join(lines[-60:]))
+        unfinished = [t for t in sorted((folder / diag.LOGS).glob("*.trace.log"))
+                      if diag.last_stage(diag.read_trace(t)) != "result"]
+        for t in unfinished[:10]:
+            print(f"\n{t.name} stops at '{diag.last_stage(diag.read_trace(t))}':")
+            print("\n".join(diag.read_trace(t)[-12:]))
+    elif args.file:
+        sections = text.split("\n## ")
+        hits = [sec for sec in sections[1:] if args.file.lower() in sec.splitlines()[0].lower()]
+        if not hits:
+            print(f"no file matching {args.file!r} among the problems in {folder / 'DIAGNOSTICS.md'} (did it pass?)")
+            trace = [t for t in (folder / diag.LOGS).glob("*.trace.log") if args.file.lower() in t.name.lower()]
+            for t in trace[:3]:
+                print(f"\n{t.name}:\n" + "\n".join(diag.read_trace(t)))
+        for sec in hits:
+            print("## " + sec)
+    else:
+        print(text)
+    if args.bundle:
+        res = diag.make_bundle(Path(args.bundle), folder, logs_dir(), note="spec-surgeon diagnose")
+        print(f"\nDiagnostics bundle: {res['path']} — {len(res['included'])} file(s); "
+              f"{res['left_out']} document(s) and image(s) left out (never bundled)")
     return 0
 
 
@@ -689,7 +794,12 @@ def main(argv=None) -> int:
     p.add_argument("out_dir", help="a batch output folder (with exceptions/)"); p.add_argument("--file", default=None)
     p.add_argument("--model", default=None); p.set_defaults(fn=cmd_advise)
 
-
+    p = sub.add_parser("diagnose", help="why each file of a run failed — where it stopped, why, how; --bundle: a zip "
+                                        "of the run's diagnostics and the app's logs (no documents) to send")
+    p.add_argument("out_dir", help="a results folder (or a `do` or window session folder with run/ in it)")
+    p.add_argument("--file", default=None, help="only the file whose name contains this")
+    p.add_argument("--bundle", default=None, help="also write a diagnostics zip here")
+    p.set_defaults(fn=cmd_diagnose)
 
     args = ap.parse_args(argv)
     if getattr(args, "model", None) is None and hasattr(args, "model"):

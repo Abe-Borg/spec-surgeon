@@ -6,7 +6,9 @@ record). Every Claude call in the app streams (``llm.call``, max_tokens 64000: t
 that large), so ``create`` raises — a call site left on the old path fails here exactly as it would against the SDK.
 
 A scripted item may be ``raise_on_enter(exc)`` (an HTTP error when the stream opens) or ``raise_on_final(exc)`` (the
-stream drops mid-way); the request is still recorded, because it was sent.
+stream drops mid-way); the request is still recorded, because it was sent. ``api_error(...)`` makes an exception that
+is an API error the way ``llm.is_api_error`` sees one (the SDK's, or its HTTP stack's with ``module="httpx2"``) —
+script failures with it; a plain ``RuntimeError``/``AssertionError`` is a defect and propagates.
 """
 from __future__ import annotations
 
@@ -85,3 +87,15 @@ class FakeClient:
         if not self.responses:
             raise AssertionError("the code asked Claude for more turns than were scripted")
         return _Stream(self.responses.pop(0))
+
+
+def api_error(message="Overloaded", status=None, request_id=None, module="anthropic._exceptions"):
+    """An exception that is an API error the way ``llm.is_api_error`` sees one (its class lives in the SDK's module, or
+    its HTTP stack's), with the SDK's ``status_code`` / ``request_id`` when given."""
+    cls = type("APIStatusError" if status else "APIConnectionError", (Exception,), {"__module__": module})
+    e = cls(message)
+    if status:
+        e.status_code = status
+    if request_id:
+        e.request_id = request_id
+    return e

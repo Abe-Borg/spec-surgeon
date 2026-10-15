@@ -5,7 +5,10 @@ What is pinned here: every tool call is answered in the very next user message o
 spec + later reply, rejections, the call cap, tool exceptions, API errors, refusals, fallbacks); the history is
 append-only and the system prompt and tools never change mid-conversation; only the user's own words and the exact
 wording of a choice they picked become approved words; choices are built by code (Claude cannot offer the custom
-transform itself); the custom-transform limits name only property families the verifier can check."""
+transform itself); the custom-transform limits name only property families the verifier can check; an API error (or
+Claude not installed) is a failed turn with its HTTP status and request id while a defect propagates, and either way
+nothing is appended; the exchange record (``exchange``, compile.json's transcript) holds every request, answer and
+tool result and never stops a turn."""
 from __future__ import annotations
 
 import copy
@@ -14,11 +17,12 @@ from pathlib import Path
 
 import pytest
 
-from fake_claude import (FakeClient, fallback, raise_on_enter, raise_on_final, resp, text, thinking, tool)
+from fake_claude import (FakeClient, api_error, fallback, raise_on_enter, raise_on_final, resp, text, thinking, tool)
 from make_fixtures import build
 from spec_surgeon import compiler as compiler_module
+from spec_surgeon import llm
 from spec_surgeon.catalog import CUSTOM_TRANSFORM_LIMITS
-from spec_surgeon.conversation import Conversation, ProtocolError, check_pairing
+from spec_surgeon.conversation import ACCEPTED_RESULT, Conversation, ProtocolError, check_pairing
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
@@ -132,14 +136,15 @@ def test_unsupported_offers_the_custom_transform_only_when_claude_judged_it_poss
         outside.reply(choice_id="c99")
 
 
-@pytest.mark.parametrize("failure", [raise_on_enter(RuntimeError("503 overloaded")),
-                                     raise_on_final(RuntimeError("stream dropped"))])
+@pytest.mark.parametrize("failure", [raise_on_enter(api_error("503 overloaded", status=503, request_id="req_1")),
+                                     raise_on_final(api_error("peer closed connection", module="httpx2"))])
 def test_a_failed_call_appends_nothing_and_the_next_reply_still_pairs(folder, failure):
     fake = FakeClient(ask(questions=["Which sections?"]), failure, submit(REMOVE, "s2"))
     c = conv(folder, fake)
     c.start()
     t = c.reply("all of them")
     assert t.status == "failed" and "request to Claude failed" in t.message
+    assert c.exchange[-1]["error"] == t.message.split("failed: ", 1)[1]               # kept for the diagnosis
     assert c.messages[-1]["role"] == "user"                                            # the answer was sent; nothing more
     t2 = c.reply("try again please")
     assert t2.status == "ok"
@@ -147,6 +152,40 @@ def test_a_failed_call_appends_nothing_and_the_next_reply_still_pairs(folder, fa
             if isinstance(b, dict) and b.get("type") == "tool_result"]
     assert [b["tool_use_id"] for b in sent] == ["a1"]                                  # answered once, never re-sent
     assert_well_formed(fake)
+
+
+def test_an_api_error_says_its_status_and_request_id():
+    e = api_error("Overloaded", status=529, request_id="req_01ABC")
+    assert llm.failure_text(e) == "the request to Claude failed: APIStatusError: Overloaded · HTTP 529 · request id req_01ABC"
+
+
+def test_a_defect_in_the_call_propagates_and_the_history_still_pairs(folder):
+    fake = FakeClient(ask(questions=["Which sections?"]), raise_on_enter(RuntimeError("a defect")), submit(REMOVE, "s2"))
+    c = conv(folder, fake)
+    c.start()
+    with pytest.raises(RuntimeError, match="a defect"):
+        c.reply("all of them")
+    assert c.messages[-1]["role"] == "user"                                            # nothing was appended
+    assert c.reply("try again please").status == "ok"
+    assert_well_formed(fake)
+
+
+def test_claude_not_installed_is_a_failed_turn_and_an_unscripted_client_still_fails_loudly(folder, monkeypatch):
+    files = sorted(folder.glob("*.docx"))
+    unscripted = Conversation("remove all headers and footers", files)
+    with pytest.raises(RuntimeError, match="no live Claude calls"):                    # conftest: not an API error
+        unscripted.start()
+
+    def missing():
+        raise llm.ClaudeUnavailable('install the Claude layer (pip install "spec-surgeon[agent]")')
+    monkeypatch.setattr(compiler_module, "_client", missing)
+    c = Conversation("remove all headers and footers", files)
+    t = c.start()
+    assert t.status == "failed" and t.message.startswith("Claude is not available: install the Claude layer")
+    assert len(c.messages) == 1 and "ClaudeUnavailable" in c.exchange[-1]["error"]
+    fake = FakeClient(submit(REMOVE))
+    monkeypatch.setattr(compiler_module, "_client", lambda: fake)                     # installed now: the next reply works
+    assert c.reply("try again").status == "ok" and len(fake.requests) == 1
 
 
 def test_tool_exceptions_become_error_results(folder, monkeypatch):
@@ -250,6 +289,42 @@ def test_the_record_holds_the_transcript_and_usage_never_the_history(folder, tmp
     saved = json.loads(c.save(tmp_path / "conversation.json").read_text(encoding="utf-8"))
     assert saved["entries"][0]["text"] == "remove all headers and footers" and "messages" not in saved
     assert saved["usage"]["calls"] == 1 and saved["usage"]["served_models"] == ["claude-opus-5-5"]
+    assert saved["calls"] == 1 and [e["role"] for e in saved["exchange"]] == ["user", "assistant", "user"]
+
+
+def test_the_exchange_records_every_call_the_pending_results_and_the_reply_as_sent(folder, tmp_path):
+    fake = FakeClient(resp(text("Let me ask."), tool("ask_user", {"questions": ["Which sections?"]}, "a1")),
+                      submit(REMOVE, "s2"))
+    c = conv(folder, fake)
+    c.start()
+    t = c.reply("all of them")
+    assert t.status == "ok"
+    ex = c.exchange
+    assert [(e["turn"], e.get("role"), bool(e.get("pending"))) for e in ex] == [
+        (0, "user", False), (1, "assistant", False), (1, "user", True), (1, "user", False), (2, "assistant", False),
+        (2, "user", True)]
+    assert ex[0]["content"].startswith("REQUEST:") and ex[0]["files"] == [str(f) for f in c.files]
+    first = ex[1]
+    assert first["stop_reason"] == "tool_use" and first["model"] == "claude-opus-5-5" and first["usage"]["input_tokens"] == 100
+    assert [b["type"] for b in first["content"]] == ["text", "tool_use"] and first["content"][1]["id"] == "a1"
+    assert ex[2]["tool_results"] == [{"tool_use_id": "a1", "is_error": False, "content": "(waiting for the user)"}]
+    sent = ex[3]["content"]                                   # the user's message as sent: their words in the result
+    assert sent[0]["type"] == "tool_result" and sent[0]["content"] == "The user replied: all of them"
+    assert ex[5]["tool_results"][0]["content"] == ACCEPTED_RESULT
+    res = c.compile_result(t)
+    assert res.transcript == ex and res.seconds == c.seconds >= 0 and res.to_dict()["transcript"] == ex
+    saved = json.loads(c.save(tmp_path / "conversation.json").read_text(encoding="utf-8"))
+    assert saved["exchange"] == json.loads(json.dumps(ex, default=str)) and "messages" not in saved
+
+
+def test_a_block_the_record_cannot_read_never_stops_the_turn(folder):
+    from types import SimpleNamespace
+    odd = SimpleNamespace(type="text", text="Looking.", input=5)          # an input that is not a mapping
+    c = conv(folder, FakeClient(resp(odd, tool("submit_editspec", {"spec": REMOVE}, "s1"))))
+    t = c.start()
+    assert t.status == "ok"
+    blocks = c.exchange[1]["content"]
+    assert blocks[0]["type"] == "text" and "record_error" in blocks[0] and blocks[1]["id"] == "s1"
 
 
 def test_the_client_is_resolved_when_the_first_call_is_made(folder, monkeypatch):

@@ -151,6 +151,9 @@ def test_generate_feeds_failures_back_then_runs_the_batch(folder, tmp_path):
     feedback = fake.requests[1]["messages"][-1]["content"][0]
     assert feedback["is_error"] and "V10 FAIL" in feedback["content"]
     assert g.path.is_file() and json.loads(g.path.with_suffix(".history.json").read_text())["name"] == g.name
+    history = json.loads((tmp_path / "cg" / "history.json").read_text(encoding="utf-8"))   # every attempt, kept
+    assert history["passed"] is True and history["name"] == "set_header_distance"          # (Codex review on #10)
+    assert [a["source"] for a in history["attempts"]] == [UNASSERTED_OP, GOOD_OP]
     before = {f: f.read_bytes() for f in files}
     results = run_generated(g, [str(folder)], tmp_path / "run")
     assert [r.passed for r in results] == [True, True]
@@ -163,6 +166,8 @@ def test_generate_gives_up_after_three_attempts(folder, tmp_path):
     g = generate_op("x", "y", sorted(folder.glob("*.docx"))[:1], tmp_path / "cg",
                     client=FakeClient(bad("a"), bad("b"), bad("c")))
     assert not g.passed and "after 3 attempt" in g.errors[0]
+    history = json.loads((tmp_path / "cg" / "history.json").read_text(encoding="utf-8"))
+    assert history["passed"] is False and len(history["attempts"]) == 3 and "after 3 attempt" in history["errors"][0]
 
 
 def test_do_allow_codegen_end_to_end(folder, tmp_path, monkeypatch, capsys):
@@ -247,6 +252,33 @@ def test_a_turn_without_a_submission_is_not_an_attempt(folder, tmp_path):
     assert g.passed and len(g.attempts) == 1
 
 
+def test_the_history_keeps_the_exchange_and_an_api_error_is_a_recorded_failure(folder, tmp_path, monkeypatch):
+    from fake_claude import api_error, raise_on_final
+    from spec_surgeon import llm
+    f = sorted(folder.glob("*.docx"))[:1]
+    fake = FakeClient(resp(tool("submit_op", {"source": "import os\n"}, "a1")),
+                      raise_on_final(api_error("Overloaded", 529, "req_9")))
+    g = generate_op("x", "y", f, tmp_path / "cg", client=fake)
+    assert not g.passed and g.errors == ["the call to the model failed: APIStatusError: Overloaded · HTTP 529 · request id req_9"]
+    h = json.loads((tmp_path / "cg" / "history.json").read_text(encoding="utf-8"))
+    assert h["passed"] is False and h["errors"] == g.errors and [a["source"] for a in h["attempts"]] == ["import os\n"]
+    assert [e.get("role") for e in h["transcript"]] == ["user", "assistant", "user", None]
+    assert h["transcript"][0]["content"].startswith("REQUEST: x") and h["transcript"][0]["samples"] == [str(f[0])]
+    assert h["transcript"][2]["tool_results"][0]["tool_use_id"] == "a1" and h["transcript"][2]["tool_results"][0]["is_error"]
+    assert h["transcript"][-1]["error"].startswith("APIStatusError: Overloaded")
+    assert h["usage"]["calls"] == 1 and h["model"] == g.model and h["request"] == "x" and h["proposal"] == "y"
+    with pytest.raises(AssertionError, match="more turns than were scripted"):        # a defect propagates
+        generate_op("x", "y", f, tmp_path / "cg2", client=FakeClient())
+
+    def missing():
+        raise llm.ClaudeUnavailable("install the Claude layer")
+    monkeypatch.setattr(compiler_module, "_client", missing)
+    g = generate_op("x", "y", f, tmp_path / "cg3")
+    assert not g.passed and g.errors == ["Claude is not available: install the Claude layer"]
+    h = json.loads((tmp_path / "cg3" / "history.json").read_text(encoding="utf-8"))
+    assert h["transcript"][-1]["error"].startswith("ClaudeUnavailable")
+
+
 def test_run_generated_keeps_the_batch_rules(folder, tmp_path, monkeypatch):
     fake = FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
     g = generate_op("x", "y", sorted(folder.glob("*.docx"))[:1], tmp_path / "cg", client=fake)
@@ -280,3 +312,6 @@ def test_the_custom_transform_has_a_preview(folder, tmp_path):
     assert [s.passed for s in gp.samples] == [True, True] and all(s.output.is_file() for s in gp.samples)
     assert all(s.checks["V10"] == "PASS" for s in gp.samples)
     assert "custom transform" in gp.to_text() and (tmp_path / "pv" / "PREVIEW.md").is_file()
+    log = (tmp_path / "pv" / "logs" / "preview.log").read_text(encoding="utf-8")
+    assert "one-off custom transform" in log and log.count("verification PASS") == 2
+    assert json.loads((tmp_path / "pv" / "preview.json").read_text(encoding="utf-8"))["log"] == "logs/preview.log"
