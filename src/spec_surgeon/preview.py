@@ -193,7 +193,60 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
     return backend
 
 
-def write_preview_files(pv: "Preview") -> None:
+@dataclass
+class GeneratedPreview:
+    """What the user sees of a one-off custom transform before Run: its sample files (tested in the sandbox and
+    verified), their before/after renders and Claude's visual check — the same as a spec's preview minus the per-file
+    plan table (a generated op is proven per file only when it runs)."""
+    out_dir: Path
+    name: str
+    samples: List[SampleView] = field(default_factory=list)
+    renderer: Optional[str] = None
+    warnings: List[str] = field(default_factory=list)
+    review: Any = None
+    review_ack: str = ""
+
+    def to_text(self) -> str:
+        out = [f"PREVIEW — one-off custom transform {self.name!r} (AI-written, tested on sample files)"]
+        out += [f"WARNING: {w}" for w in self.warnings]
+        out.append("SAMPLES (run in the sandbox and verified; sources untouched):")
+        for s in self.samples:
+            failed = [k for k, v in s.checks.items() if v == "FAIL"]
+            out.append(f"   {s.source.name}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
+                       + (f"; images: {[i.name for i in s.images]}" if s.images else ""))
+        if self.review is not None:
+            out += ["", self.review.to_text()]
+        return "\n".join(out)
+
+    def to_dict(self):
+        return {"name": self.name, "renderer": self.renderer, "warnings": self.warnings,
+                "samples": [s.to_dict() for s in self.samples],
+                "visual_review": self.review.to_dict() if self.review is not None else None}
+
+
+def preview_generated(g: Any, out_dir: Path, renderer: str = "auto", do_render: bool = True) -> GeneratedPreview:
+    """The custom transform's preview, from the trials that made it pass: outputs copied out of the sandbox under names
+    unique across the samples, rendered beside their sources."""
+    from .batch import output_names
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    gp = GeneratedPreview(out_dir=out_dir, name=getattr(g, "name", "") or "generated")
+    trials = list(getattr(g, "trials", None) or [])
+    names = output_names([Path(t.source) for t in trials])
+    for t in trials:
+        sv = SampleView(source=Path(t.source), passed=bool(t.passed),
+                        checks={c.id: c.status for c in t.record.checks} if t.record is not None else {})
+        if t.output and Path(t.output).is_file():
+            sv.output = out_dir / "samples" / names[str(t.source)]
+            sv.output.parent.mkdir(parents=True, exist_ok=True)
+            sv.output.write_bytes(Path(t.output).read_bytes())
+        gp.samples.append(sv)
+    gp.renderer = render_samples(gp.samples, out_dir, renderer, do_render, gp.warnings)
+    write_preview_files(gp)
+    return gp
+
+
+def write_preview_files(pv: Any) -> None:
     """PREVIEW.md and preview.json beside the samples (rewritten when Claude's visual check arrives)."""
     (pv.out_dir / "PREVIEW.md").write_text("```\n" + pv.to_text() + "\n```\n", encoding="utf-8")
     (pv.out_dir / "preview.json").write_text(json.dumps(pv.to_dict(), indent=2, ensure_ascii=False, default=str),

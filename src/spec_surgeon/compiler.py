@@ -335,6 +335,38 @@ class _Batch:
             raise KeyError(f"{file} has no part {part!r}; text parts: {pkg.text_parts()}")
         return [display_text(p)[:200] for p in paragraphs(pkg.xml(part))][:80]
 
+    def show_xml(self, file: str, part: str = "", start: int = 0, count: int = 10):
+        """The transform writer's eyes (never the compiler's): pretty-printed XML of paragraphs [start, start+count) of
+        one part — every w:p of the part in document order. Capped at 20 paragraphs / 30,000 characters."""
+        from lxml import etree
+        pkg = self.pkg(file)
+        part = part or pkg.main_part()
+        if not pkg.has(part):
+            raise KeyError(f"{file} has no part {part!r}; text parts: {pkg.text_parts()}")
+        pars = paragraphs(pkg.xml(part))
+        start, count = max(0, int(start or 0)), min(max(1, int(count or 10)), 20)
+        xml = "\n".join(f"<!-- paragraph {i} -->\n" + etree.tostring(p, pretty_print=True, encoding="unicode")
+                        for i, p in enumerate(pars[start:start + count], start))
+        return {"file": file, "part": part, "paragraphs_in_part": len(pars), "start": start, "xml": xml[:30000]}
+
+    def find_paragraphs(self, file: str, regex: str, part: str = ""):
+        pkg = self.pkg(file)
+        part = part or pkg.main_part()
+        if not pkg.has(part):
+            raise KeyError(f"{file} has no part {part!r}; text parts: {pkg.text_parts()}")
+        sheet = StyleSheet(pkg)
+        rx = re.compile(regex)
+        out = []
+        for i, p in enumerate(paragraphs(pkg.xml(part))):
+            t = display_text(p)
+            if rx.search(t):
+                ps = p.find(f"{W}pPr/{W}pStyle")
+                out.append({"index": i, "style": ps.get(W + "val") if ps is not None else sheet.defaults.get("paragraph"),
+                            "text": t[:200]})
+                if len(out) >= 40:
+                    break
+        return out
+
     def view_pages(self, file: str, pages: Optional[Sequence[int]] = None):
         """Rendered pages as image blocks (the conversation sends them as the tool result). Budgeted per conversation."""
         from . import vision

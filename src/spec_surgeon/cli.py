@@ -459,13 +459,32 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
         print("No generated transform passed verification: " + "; ".join(g.errors))
         return 2
     print(f"generated op {g.name!r} passed on the samples: {g.path} (select {g.select}, params {g.params})")
+    from . import compiler, vision
+    from .preview import preview_generated, write_preview_files
+    gp = preview_generated(g, out_dir / "codegen" / "preview", renderer=args.renderer, do_render=not args.no_render)
+    if not args.no_render and not getattr(args, "no_review", False):
+        intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {args.request}",
+                            f"WHAT IT SHOULD DO: {spec.get('proposal') or ''}"] + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
+        gp.review = vision.review_samples(intent, gp.samples, gp.out_dir, compiler._client, model=args.model,
+                                          log=lambda m: print(m, file=sys.stderr))
+        vision.save_review(gp.review, gp.out_dir)
+        write_preview_files(gp)
+    print(gp.to_text())
+    print(f"\npreview: {gp.out_dir}")
     if args.in_place:
         print("note: generated transforms are never delivered in place; outputs go to the output folder")
-    approved = args.yes
+    blocking = gp.review.blocking() if gp.review is not None else []
+    if blocking and not getattr(args, "ack_review", False) and args.yes and not _interactive():
+        print(f"\nNot run: Claude's visual check flagged {len(blocking)} blocking problem(s); look at the pages, then "
+              f"re-run with --ack-review to run anyway.")
+        return 2
+    approved = args.yes and (not blocking or getattr(args, "ack_review", False))
     if not approved and _interactive():
-        approved = input(f"\nRun it on {len(files)} file(s) (outputs only)? [y/N] ").strip().lower() in ("y", "yes")
+        q = (f"\nYou have looked at Claude's findings and want to run it on {len(files)} file(s) (edited copies "
+             f"only)? [y/N] " if blocking else f"\nRun it on {len(files)} file(s) (edited copies only)? [y/N] ")
+        approved = input(q).strip().lower() in ("y", "yes")
     if not approved:
-        print("Not run. Review the generated module before running it.")
+        print("Not run. Review the generated module and its preview before running it.")
         return 0
     results = run_generated(g, [str(f) for f in files], out_dir / "run", log=lambda m: print(m, file=sys.stderr))
     ok = sum(1 for r in results if r.passed)

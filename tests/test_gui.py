@@ -592,3 +592,31 @@ def test_the_window_blocks_run_on_claude_s_findings_until_acknowledged(qt, folde
     ui["buttons"]["review_ack"].click()
     assert ui["buttons"]["run"].isEnabled() and ui["buttons"]["review_ack"].isHidden()
     assert "Acknowledged" in p.review_bar.title.text()
+
+
+def test_the_window_runs_the_custom_transform_offered_in_the_chat(qt, folder, tmp_path):
+    unsupported = {"request": "r", "summary": "Set the header distance.", "unsupported": "no op sets it alone",
+                   "proposal": "set_header_distance"}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                      resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    s = Session(out_root=tmp_path / "out", client=fake)
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    ui["request"].set("put the header 0.625 in from the top")
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert "No built-in operation" in w.request_page.info.title.text()
+    (cid, button), = ui["choices"]()
+    assert button.text() == "Do this"
+    button.click()
+    ui["wait"]()
+    p = w.preview_page
+    assert w.stack.currentWidget() is p and not p.generated_card.isHidden() and not p.samples_card.isHidden()
+    assert p.samples.count() == 1 and ui["buttons"]["run"].isEnabled()                # one sample per pattern
+    assert not w.run_page.inplace_rb.isEnabled()                            # custom transforms write copies only
+    before = {f: f.read_bytes() for f in folder.glob("*.docx")}
+    ui["buttons"]["run"].click()
+    ui["wait"]()
+    assert ui["results_model"].badges() == ["pass", "pass"]
+    assert {f: f.read_bytes() for f in folder.glob("*.docx")} == before

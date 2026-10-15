@@ -156,7 +156,7 @@ class Session:
         return self._after_turn(self.conversation.start())
 
     def reply(self, text: str = "", choice_id: Optional[str] = None, log: Log = lambda m: None,
-              render: bool = True) -> str:
+              render: bool = False) -> str:
         """The user's next message in the conversation — typed words, a picked choice, or both."""
         c = self.conversation
         if c is None:
@@ -169,9 +169,11 @@ class Session:
             c.take_app_choice(chosen.id)
             proposal = (c.unsupported or {}).get("proposal") or chosen.detail
             try:
-                msg = self._codegen(c.request, proposal, self.files(), log, brief=c.brief())
+                msg = self._codegen(c.request, proposal, self.files(), log, brief=c.brief(), render=render)
+                gp = self.generated_preview
                 c.note(f"The one-off custom transform {self.generated.name!r} passed verification on the sample "
-                       f"files; the user will review its preview.")
+                       f"files; the user reviews its preview.\n" + (gp.to_text()[:4000] if gp is not None else ""),
+                       display=f"Custom transform {self.generated.name!r} passed verification on the sample files.")
             except RuntimeError as e:
                 c.note(f"No custom transform passed verification: {e}")
                 self._save_chat()
@@ -206,9 +208,10 @@ class Session:
     def _generated_key(g) -> Dict[str, Any]:
         return {"generated_source": g.source, "select": g.select, "params": g.params}
 
-    def _codegen(self, request: str, proposal: str, files: List[Path], log: Log, brief: Optional[str] = None) -> str:
+    def _codegen(self, request: str, proposal: str, files: List[Path], log: Log, brief: Optional[str] = None,
+                 render: bool = False) -> str:
         from .codegen import generate_op, pick_samples
-        from .preview import approval_token
+        from .preview import approval_token, preview_generated
         samples = pick_samples(files)
         out = self.new_out_dir()
         log(f"Writing a one-off transform, tested on {[s.name for s in samples]}…")
@@ -218,13 +221,20 @@ class Session:
                                [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}" for a in g.attempts[-1:]]))
         self._set_outcome(generated=g)
         self.generated_token = approval_token(self._generated_key(g), files)
+        self.generated_preview = preview_generated(g, out / "preview", "auto", render)
+        if render and self.visual_check:
+            intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {request}", f"WHAT IT SHOULD DO: {proposal}"]
+                               + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
+            self._visual_check(self.generated_preview, intent, out / "preview", log)
         return (f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
                 f"It is saved at {g.path} — Run writes edited copies only (never over your files).")
 
     def make_preview(self, render: bool, log: Log) -> str:
         from .preview import make_preview
         if self.generated is not None:
-            return "AI-written transform ready (see above). Press Run to apply it to every file (outputs only)."
+            gp = self.generated_preview
+            return ((gp.to_text() + "\n\n") if gp is not None else "") + \
+                "AI-written transform ready. Press Run to apply it to every file (edited copies only)."
         if self.spec is None:
             raise ValueError("nothing to preview — type a request or load a spec file")
         files = self.files()                      # the same filtered set Run checks and runs (no template files)
@@ -252,8 +262,7 @@ class Session:
         client = self.client
         pv.review = vision.review_samples(intent, pv.samples, folder, lambda: client or compiler._client(), log=log)
         vision.save_review(pv.review, folder)
-        if hasattr(pv, "batch_plan"):
-            write_preview_files(pv)
+        write_preview_files(pv)
 
     def _current_review(self):
         """(the preview object that carries the visual check, the token it was made for)."""

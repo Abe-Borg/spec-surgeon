@@ -909,8 +909,13 @@ class MainWindow(QMainWindow):
             p.tiles.hide()
             p.notes.hide()
             p.table_card.hide()
-            p.samples_card.hide()
             p.generated_card.show()
+            gp = s.generated_preview
+            p.samples_card.setVisible(gp is not None)
+            for sample in (gp.samples if gp is not None else []):
+                p.samples.addWidget(self._sample_widget(sample))
+            if gp is not None and gp.warnings:
+                p.notes.show_message("warn", "Check these", "\n".join(f"\u2022 {w}" for w in gp.warnings))
             p.generated_lbl.setText(f"{g.name} passed verification on its sample files. It is saved at {g.path}.\n"
                                     "Run writes edited copies to the results folder only — never over your files.")
             p.token_lbl.setText("")
