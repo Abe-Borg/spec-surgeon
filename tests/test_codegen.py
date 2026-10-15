@@ -148,6 +148,9 @@ def test_generate_feeds_failures_back_then_runs_the_batch(folder, tmp_path):
     feedback = fake.requests[1]["messages"][-1]["content"][0]
     assert feedback["is_error"] and "V10 FAIL" in feedback["content"]
     assert g.path.is_file() and json.loads(g.path.with_suffix(".history.json").read_text())["name"] == g.name
+    history = json.loads((tmp_path / "cg" / "history.json").read_text(encoding="utf-8"))   # every attempt, kept
+    assert history["passed"] is True and history["name"] == "set_header_distance"          # (Codex review on #10)
+    assert [a["source"] for a in history["attempts"]] == [UNASSERTED_OP, GOOD_OP]
     before = {f: f.read_bytes() for f in files}
     results = run_generated(g, [str(folder)], tmp_path / "run")
     assert [r.passed for r in results] == [True, True]
@@ -160,6 +163,8 @@ def test_generate_gives_up_after_three_attempts(folder, tmp_path):
     g = generate_op("x", "y", sorted(folder.glob("*.docx"))[:1], tmp_path / "cg",
                     client=FakeClient(bad("a"), bad("b"), bad("c")))
     assert not g.passed and "after 3 attempt" in g.errors[0]
+    history = json.loads((tmp_path / "cg" / "history.json").read_text(encoding="utf-8"))
+    assert history["passed"] is False and len(history["attempts"]) == 3 and "after 3 attempt" in history["errors"][0]
 
 
 def test_do_allow_codegen_end_to_end(folder, tmp_path, monkeypatch, capsys):

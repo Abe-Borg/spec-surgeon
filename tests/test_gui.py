@@ -474,7 +474,8 @@ def test_help_has_no_report_a_problem_and_the_sidebar_has_the_three_buttons(qt, 
     w, ui = window(qt, Session(out_root=tmp_path / "out"))
     help_menu = [m for m in w.menuBar().findChildren(QMenu) if m.title() == "&Help"][0]
     texts = [a.text() for a in help_menu.actions() if not a.isSeparator()]
-    assert texts == ["Check for updates…", "What's new in this version", "User guide (online)", "About Spec Surgeon"]
+    assert texts == ["Check for updates…", "What's new in this version", "User guide (online)", "Open logs folder",
+                     "Save diagnostics bundle…", "About Spec Surgeon"]               # + the two diagnostics entries
     assert not hasattr(w, "act_issue")
     assert [b.text() for b in (w.settings_btn, w.check_btn, w.about_btn)] == \
         ["Settings", "Check for updates", "About Spec Surgeon"]

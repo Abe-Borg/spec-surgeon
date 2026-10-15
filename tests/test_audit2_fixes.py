@@ -142,7 +142,10 @@ def test_a_verifier_crash_leaves_nothing_in_outputs(tmp_path, monkeypatch):
     monkeypatch.setattr(batch_mod, "run_suite", boom)
     b = run_batch([str(f)], "edit-spec", {}, tmp_path / "out", workers=1, renderer="none", do_render=False, spec=REPLACE)
     fr = b.files[0]
-    assert fr.status == "EXCEPTION" and fr.exception["code"] == "crash" and "injected" in fr.exception["reason"]
+    # the engine's own failure, said as such (never "a corrupt file"): the stage, the line of code, the traceback
+    assert fr.status == "EXCEPTION" and fr.exception["code"] == "internal-error" and "injected" in fr.exception["reason"]
+    assert fr.exception["kind"] == "internal-error" and fr.exception["stage"] == "verify"
+    assert "injected verifier crash" in fr.exception["traceback"] and fr.exception["where"].startswith("batch.py:")
     assert not list((tmp_path / "out" / "outputs").iterdir()) and not (tmp_path / "out" / "failed").exists()
 
 
@@ -370,7 +373,8 @@ def test_advice_survives_an_unreadable_file(tmp_path, monkeypatch):
     out = tmp_path / "out"
     b = run_batch([str(folder)], "edit-spec", {}, out, workers=1, renderer="none", do_render=False,
                   spec=NUMBER("continuous"))
-    assert [f.exception["code"] for f in b.files] == ["crash", "structure"]
+    assert [f.exception["code"] for f in b.files] == ["unreadable", "structure"]
+    assert b.files[0].exception["stage"] == "open" and "plain text file" in b.files[0].exception["reason"]
     rec = {"source": str(folder / "A text.docx"), "exception": b.files[0].exception, "spec": NUMBER("continuous")}
     adv = advise(rec, client=object())                                         # no model call for an unreadable file
     assert adv.kind == "recommendation" and "cannot be opened" in adv.text and not adv.errors

@@ -18,6 +18,7 @@ class Row:
     tooltip: str = ""
     open_path: Optional[Path] = None   # what a double-click opens
     status_col: int = 2
+    diagnosis: str = ""           # Markdown: why it did not pass, where, how — a double-click shows it (before open_path)
 
     @property
     def is_problem(self) -> bool:
@@ -31,10 +32,11 @@ def preview_rows(preview: Any) -> List[Row]:
         pattern = (f.pattern_id or "?")[:8]
         if f.status == "exception":
             exc = f.exception or {}
-            from ..report import explain_failure
+            from ..report import exception_diagnosis, explain_failure
             category, explanation = explain_failure(exc.get("code", ""), exc.get("reason", ""))
             rows.append(Row([name, pattern, "Exception", f"{category}: {exc.get('reason', '')}"], "exception",
-                            tooltip=f"[{exc.get('code')}] {explanation}", open_path=Path(f.source)))
+                            tooltip=f"[{exc.get('code')}] {explanation}", open_path=Path(f.source),
+                            diagnosis=exception_diagnosis(exc, name, heading="#")))
         else:
             first = f.summary[0].strip() if f.summary else "planned"
             rows.append(Row([name, pattern, "Planned", first], "planned",
@@ -49,7 +51,7 @@ def preview_counts(preview: Any) -> dict:
 
 
 def result_rows(batch: Any) -> List[Row]:
-    from ..report import explain_failure
+    from ..report import explain_failure, file_diagnosis
     rows = []
     out_dir = Path(batch.out_dir)
     for f in batch.files:
@@ -60,13 +62,15 @@ def result_rows(batch: Any) -> List[Row]:
             exc = f.exception or {}
             category, explanation = explain_failure(exc.get("code", ""), exc.get("reason", ""))
             rows.append(Row([name, "Exception", f"{category}: {exc.get('reason', '')}", "— (left untouched)"],
-                            "exception", tooltip=f"[{exc.get('code')}] {explanation}", open_path=None, status_col=1))
+                            "exception", tooltip=f"[{exc.get('code')}] {explanation}", open_path=None, status_col=1,
+                            diagnosis=file_diagnosis(f, heading="#")))
         elif f.status == "FAIL":
             failed = [c for c in f.record.checks if c.status == "FAIL"]
             detail = "Failed " + ", ".join(c.id for c in failed) + " — the copy is in failed/ (do not use it)"
             rows.append(Row([name, "FAIL", detail, output.name if output else ""], "fail",
                             tooltip="\n".join(f"{c.id} {c.name}: {c.summary}" for c in failed),
-                            open_path=record_md if record_md.exists() else output, status_col=1))
+                            open_path=record_md if record_md.exists() else output, status_col=1,
+                            diagnosis=file_diagnosis(f, heading="#")))
         elif f.status == "PASS":
             if written_back(f):
                 detail, where = "Verified and written back over the original", str(f.delivered_to)
@@ -98,7 +102,9 @@ def generated_rows(trials: Any) -> List[Row]:
                             "pass", open_path=Path(t.output) if t.output else None, status_col=1))
         else:
             rows.append(Row([name, "FAIL", "; ".join(t.problems)[:300] or "failed verification", ""], "fail",
-                            tooltip="\n".join(t.problems), status_col=1))
+                            tooltip="\n".join(t.problems), status_col=1,
+                            diagnosis="\n".join([f"# {name} — the AI-written transform failed here", ""]
+                                                + [f"- {x}" for x in t.problems or ["failed verification"]])))
     return rows
 
 

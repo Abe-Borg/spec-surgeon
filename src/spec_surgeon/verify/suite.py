@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from .reader import VPackage, W
 from .textcheck import blocks, diff_blocks, accept_view, reject_view, view_texts
 from .props import check_properties
+from .explain import explain_record
 from . import xsd as _xsd
 
 GEOM_TOL_PT = 0.5
@@ -61,6 +62,11 @@ class VerificationRecord:
                 return
         self.checks.append(result)
 
+    def failures(self) -> List[tuple]:
+        """``(id, name, summary, [specifics…])`` for every failed check — which part, block and text, what was
+        predicted and what was found (``explain.failure_details``)."""
+        return explain_record(self.checks, self)
+
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d["passed"] = self.passed
@@ -89,8 +95,13 @@ class VerificationRecord:
                  f"Predicted member removals: {self.predicted_members_removed or 'none'}; additions: {self.predicted_members_added or 'none'}",
                  f"Property assertions (V10): " + (", ".join(f"{a.get('kind')}" + (f" [#{a['op_index'] + 1} {a.get('op')}]" if 'op_index' in a else '')
                                                             for a in self.property_assertions) or "none — no property change predicted"),
-                 f"Geometry reference (V7): {self.geometry_reference}",
-                 "", "Predicted diff list (written before the transform ran):"]
+                 f"Geometry reference (V7): {self.geometry_reference}"]
+        if not self.passed:
+            lines += ["", "WHY IT FAILED (each failed check, in specifics; the checks below have the numbers)"]
+            for cid, name, _summary, details in self.failures():
+                lines.append(f"  {cid} {name}")
+                lines += [f"    - {x}" for x in details]
+        lines += ["", "Predicted diff list (written before the transform ran):"]
         if not self.predicted_diffs:
             lines.append("  (none — zero legitimate text diffs)")
         for i, d in enumerate(self.predicted_diffs, 1):
@@ -232,6 +243,12 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
     changed = sorted(n for n in hb if n in ha and hb[n] != ha[n])
     expected_order = [n for n in src.names if n not in set(pred_removed)] + pred_added
     order_ok = out.names == expected_order
+    order_detail = None
+    if not order_ok:
+        k = next((i for i, (x, y) in enumerate(zip(out.names, expected_order)) if x != y),
+                 min(len(out.names), len(expected_order)))
+        order_detail = {"position": k, "expected": expected_order[k] if k < len(expected_order) else None,
+                        "found": out.names[k] if k < len(out.names) else None}
     unexpected = sorted(set(changed) - intended)
     members_ok = added == sorted(pred_added) and removed == sorted(set(pred_removed))
     new_problems = out.integrity_problems() - src.integrity_problems()
@@ -255,7 +272,7 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
                         + (f"; NEW integrity problems {new_problems[:3]}" if new_problems else "; no new dangling rels/overrides/untyped members")
                         + (f"; ORPHANED (still present, no longer referenced) {orphaned[:5]}" if orphaned else ""),
                         {"changed": changed, "added": added, "removed": removed, "unexpected": unexpected,
-                         "integrity": new_problems, "orphaned": orphaned}))
+                         "integrity": new_problems, "orphaned": orphaned, "order": order_detail}))
 
     # V2/V3 — text preservation and structural children over the UNION of source and output text parts
     src_tp, out_tp = src.text_parts(), out.text_parts()
@@ -280,7 +297,8 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
                             and {k: v for k, v in d["struct_after"].items() if v} == ch.struct_after]
                 if not declared:
                     struct_changes.append({"part": part, "block": ch.before_index,
-                                           "before": ch.struct_before, "after": ch.struct_after})
+                                           "before": ch.struct_before, "after": ch.struct_after,
+                                           "text": (ch.before or "")[:160]})
     expected = sorted((d["part"], d.get("before"), d.get("after")) for d in plan.get("diffs", []))
     actual = sorted((c["part"], c["before"], c["after"]) for c in actual_text_changes)
     v2_ok = expected == actual
@@ -417,7 +435,8 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
                             + "; V2's enumerated list is the complete account of text changes"
                             + ("" if untracked_expected else " (formatting job: zero text diffs expected)")
                             + (f"; {prop_new} tracked property change(s) added (predicted {prop_pred})" if (prop_new or prop_pred) else ""),
-                            {"new_revision_ids": new_ids, "new_property_changes": prop_new}))
+                            {"new_revision_ids": new_ids, "new_property_changes": prop_new,
+                             "predicted_property_changes": prop_pred, "v2_ok": v2_ok}))
     grammar_set = set()
     for part in out_xml:
         grammar_set |= set(_grammar_errors(out_xml[part], part))

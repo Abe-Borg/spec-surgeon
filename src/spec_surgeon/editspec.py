@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .ooxml import CELL_REV_TAGS, CONTENT_REV_TAGS, PROPERTY_REV_TAGS
 from .ops import OPS, JobException, Plan, PlanFragment, get_op, merge_fragments
@@ -274,9 +274,11 @@ def _check_expect(i: int, o: Dict[str, Any], frag: PlanFragment, plan_notes: Lis
                                {"op": o["op"], "check": k, "expected": v, "planned": actual[k]})
 
 
-def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] = None) -> Tuple[Plan, List[PlanFragment]]:
+def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] = None,
+              trace: Optional[Callable[..., None]] = None) -> Tuple[Plan, List[PlanFragment]]:
     """Predict-first for a whole spec on one file. Raises JobException (the file's exception record) when the
-    spec cannot be planned deterministically on it."""
+    spec cannot be planned deterministically on it. ``trace(phase, number, op, state, fragment=None)`` is told when
+    each op starts and finishes (the file's diagnostic trace, ``diagnostics.Tracer.op_hook``)."""
     validate_spec(spec)
     applies = spec.get("applies_to") or {}
     if applies.get("pattern_ids") and applies.get("or") != "all":
@@ -289,12 +291,17 @@ def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] 
     frags: List[PlanFragment] = []
     expect_notes: List[str] = []
     for i, o in enumerate(spec["ops"], 1):
+        if trace:
+            trace("plan", i, o["op"], "start")
         try:
             frag = get_op(o["op"]).plan(pkg, o.get("select") or {}, _op_params(o))
         except JobException as e:
-            raise JobException(f"op #{i} ({o['op']}): {e.reason}", e.code, {**e.details, "op": o["op"], "op_number": i})
+            raise JobException(f"op #{i} ({o['op']}): {e.reason}", e.code,
+                               {**e.details, "op": o["op"], "op_number": i}) from e
         _check_expect(i, o, frag, expect_notes)
         frags.append(frag)
+        if trace:
+            trace("plan", i, o["op"], "done", frag)
     plan = merge_fragments(frags, job="edit-spec", params={"request": spec["request"], "summary": spec["summary"]})
     if plan.mode != spec["mode"]:
         raise JobException(f"the spec says mode {spec['mode']!r} but its ops make it {plan.mode!r} "
@@ -319,9 +326,15 @@ def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] 
     return plan, frags
 
 
-def apply_spec(pkg: DocxPackage, fragments: List[PlanFragment]) -> DocxPackage:
-    """Apply the planned fragments in spec order on a working copy (each op reads the state the previous left)."""
+def apply_spec(pkg: DocxPackage, fragments: List[PlanFragment],
+               trace: Optional[Callable[..., None]] = None) -> DocxPackage:
+    """Apply the planned fragments in spec order on a working copy (each op reads the state the previous left).
+    ``trace`` as for ``plan_spec``."""
     work = pkg.copy()
-    for f in fragments:
+    for i, f in enumerate(fragments, 1):
+        if trace:
+            trace("apply", i, f.op, "start")
         get_op(f.op).apply(work, f)
+        if trace:
+            trace("apply", i, f.op, "done")
     return work

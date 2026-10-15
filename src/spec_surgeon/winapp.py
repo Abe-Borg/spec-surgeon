@@ -92,6 +92,43 @@ def other_instances_running() -> bool:
             hold_app_mutex()
 
 
+_PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+_STILL_ACTIVE = 259
+_ERROR_INVALID_PARAMETER = 87
+_ERROR_ACCESS_DENIED = 5
+
+
+def process_alive(pid: int) -> Optional[bool]:
+    """Whether process ``pid`` is running, asked of the kernel (``os.kill(pid, 0)`` would terminate it on Windows):
+    True/False, or None when it cannot be told (and off Windows)."""
+    if not _is_windows():
+        return None
+    try:
+        import ctypes
+        from ctypes import wintypes
+        k = ctypes.WinDLL("kernel32", use_last_error=True)
+        k.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        k.OpenProcess.restype = wintypes.HANDLE
+        k.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        k.GetExitCodeProcess.restype = wintypes.BOOL
+        k.CloseHandle.argtypes = [wintypes.HANDLE]
+        h = k.OpenProcess(_PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+        if not h:
+            err = ctypes.get_last_error()
+            if err == _ERROR_INVALID_PARAMETER:
+                return False                       # no such process
+            return True if err == _ERROR_ACCESS_DENIED else None
+        try:
+            code = wintypes.DWORD()
+            if not k.GetExitCodeProcess(h, ctypes.byref(code)):
+                return None
+            return code.value == _STILL_ACTIVE
+        finally:
+            k.CloseHandle(h)
+    except (OSError, AttributeError):
+        return None
+
+
 def set_app_user_model_id(aumid: str = AUMID) -> bool:
     if not _is_windows():
         return False

@@ -37,15 +37,41 @@ def word_registered() -> bool:
         return False
 
 
-def available() -> bool:
-    if sys.platform != "win32":
-        return False
+def pywin32_present() -> bool:
     try:
         import win32com.client  # noqa: F401
         import pythoncom  # noqa: F401
     except ImportError:
         return False
+    return True
+
+
+def available() -> bool:
+    if sys.platform != "win32":
+        return False
+    if not pywin32_present():
+        return False
     return word_registered()
+
+
+def com_error_text(e: BaseException) -> Optional[str]:
+    """A COM error (``pywintypes.com_error``) as one readable line: the HRESULT in hex, its text, and the description
+    Word gave (``excepinfo``) — e.g. ``COM error 0x80020009 (Exception occurred.): Microsoft Word: This file could not
+    be found.`` None for any other exception."""
+    if type(e).__name__ != "com_error":
+        return None
+    args = getattr(e, "args", ()) or ()
+    hresult = getattr(e, "hresult", args[0] if len(args) > 0 else None)
+    text = getattr(e, "strerror", args[1] if len(args) > 1 else "")
+    info = getattr(e, "excepinfo", args[2] if len(args) > 2 else None)
+    out = f"COM error 0x{int(hresult) & 0xFFFFFFFF:08X}" if isinstance(hresult, int) else "COM error"
+    if text:
+        out += f" ({text})"
+    if isinstance(info, (tuple, list)) and len(info) > 2 and (info[1] or info[2]):
+        out += ": " + ": ".join(str(x).strip() for x in (info[1], info[2]) if x)
+        if len(info) > 5 and isinstance(info[5], int) and info[5]:
+            out += f" [scode 0x{info[5] & 0xFFFFFFFF:08X}]"
+    return out
 
 
 class WordSession:
@@ -101,23 +127,34 @@ class WordSession:
         return out[0], out[1]
 
 
-def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
-    """{docx: pdf} for the files Word rendered. A file Word cannot open or export is reported on ``log`` and left
-    out; the others still render. Word failing to start propagates (the caller reports it and renders nothing)."""
+def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[str], None]] = None,
+                detail: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
+    """{docx: pdf} for the files Word rendered. A file Word cannot open or export is reported on ``log`` — with the
+    COM error's code and Word's own description — and left out; the others still render. Word failing to start
+    propagates (the caller reports it and renders nothing). ``detail`` gets Word's version and each file's time."""
+    from ..diagnostics import com_quiet
+    import time
     log = log or (lambda msg: None)
+    detail = detail or (lambda msg: None)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {}
-    with WordSession() as ws:
+    with com_quiet(), WordSession() as ws:
+        try:
+            detail(f"Word {ws.app.Version} (build {ws.app.Build}) started for {len(files)} file(s)")
+        except Exception:  # noqa: BLE001 — the version is a nicety
+            pass
         for f in files:
             f = Path(f)
             pdf = out_dir / (f.stem + ".pdf")
+            t = time.perf_counter()
             try:
                 ws.render_pdf(f, pdf)
             except Exception as e:  # noqa: BLE001 — this file's render failed; the others go on
-                log(f"{f.name}: Word could not render it: {type(e).__name__}: {e}")
+                log(f"{f.name}: Word could not render it: {com_error_text(e) or f'{type(e).__name__}: {e}'}")
                 continue
             if pdf.exists():
                 result[f] = pdf
+                detail(f"Word: {f.name} → {pdf.name} in {time.perf_counter() - t:.1f}s")
             else:
                 log(f"{f.name}: Word reported no error but wrote no PDF")
     return result

@@ -19,12 +19,15 @@ other (``run-spec``), after a human reads the advice.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from .catalog import op_catalog
-from .compiler import DEFAULT_MODEL, FALLBACK_BETA, TOOLS, _Batch, _client, check_submission
+from .compiler import (DEFAULT_MODEL, FALLBACK_BETA, TOOLS, _Batch, _client, api_error_text, block_dict,
+                       check_submission, is_api_error)
+from .diagnostics import write_json
 from .editspec import plan_spec
 from .fingerprint import fingerprint
 from .ops import JobException
@@ -62,6 +65,7 @@ class Advice:
     spec: Optional[Dict[str, Any]] = None
     errors: List[str] = field(default_factory=list)
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    transcript: List[Dict[str, Any]] = field(default_factory=list)   # the exchange with the model (diagnostics)
 
     def to_markdown(self) -> str:
         out = [f"# Advice — {Path(self.source).name}", "", f"**{self.kind}**", ""]
@@ -117,11 +121,23 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
         "user_answers": list(answers), "profile": batch.prof["patterns"][0]["profile"]}, ensure_ascii=False)}]
     system = ADVISOR_SYSTEM + json.dumps(op_catalog(examples=False), ensure_ascii=False)
     rejected = False
-    for _ in range(10):
-        resp = client.beta.messages.create(model=model, max_tokens=16000, system=system, tools=ADVISOR_TOOLS,
-                                           messages=messages, output_config={"effort": "high"},
-                                           cache_control={"type": "ephemeral"}, betas=[FALLBACK_BETA],
-                                           fallbacks="default")
+    adv.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"]})
+    for turn in range(10):
+        t = time.perf_counter()
+        try:
+            resp = client.beta.messages.create(model=model, max_tokens=16000, system=system, tools=ADVISOR_TOOLS,
+                                               messages=messages, output_config={"effort": "high"},
+                                               cache_control={"type": "ephemeral"}, betas=[FALLBACK_BETA],
+                                               fallbacks="default")
+        except Exception as e:
+            if not is_api_error(e):
+                raise
+            adv.errors.append(f"the call to the model failed: {api_error_text(e)}")
+            adv.transcript.append({"turn": turn + 1, "error": api_error_text(e)})
+            return adv
+        adv.transcript.append({"turn": turn + 1, "role": "assistant", "stop_reason": getattr(resp, "stop_reason", None),
+                               "seconds": round(time.perf_counter() - t, 2),
+                               "content": [block_dict(b) for b in (getattr(resp, "content", None) or [])]})
         if getattr(resp, "stop_reason", None) in ("refusal", "max_tokens"):
             adv.errors.append(f"model stopped: {resp.stop_reason}")
             return adv
@@ -160,6 +176,8 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
                                 "content": json.dumps(out, ensure_ascii=False)[:20000]})
             except (AttributeError, KeyError, TypeError, ValueError) as e:
                 results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True, "content": str(e)})
+        adv.transcript.append({"role": "user", "tool_results": [
+            {"is_error": bool(r.get("is_error")), "content": str(r.get("content"))[:6000]} for r in results]})
         messages.append({"role": "user", "content": results})
     adv.errors.append("no advice after 10 turns")
     return adv
@@ -184,6 +202,9 @@ def advise_batch(out_dir: Path, only: Optional[str] = None, client=None, model: 
             log(f"  advice failed: {type(e).__name__}: {e}")
         stem = f.name[:-len(".exception.json")]
         (adir / f"{stem}.advice.md").write_text(adv.to_markdown(), encoding="utf-8")
+        if adv.transcript:
+            write_json(adir / f"{stem}.transcript.json", {"source": adv.source, "kind": adv.kind,
+                                                          "errors": adv.errors, "transcript": adv.transcript})
         if adv.spec:
             (adir / f"{stem}.spec.json").write_text(json.dumps(adv.spec, indent=2, ensure_ascii=False), encoding="utf-8")
         results.append(adv)

@@ -1,12 +1,18 @@
 """LibreOffice headless renderer. Batch-converts many files per process (amortizes startup) and runs
 several processes side by side, each with its own user profile (LibreOffice serializes on a shared
-profile)."""
+profile).
+
+What LibreOffice says is kept: a chunk that fails is reported with its exit status and the end of its stderr/stdout
+(not just "Command … returned non-zero exit status"), and a file that comes out without a PDF is reported with what
+the process printed — LibreOffice exits 0 even when it could not load a file."""
 from __future__ import annotations
 
+import configparser
 import os
 import shutil
 import subprocess
 import tempfile
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
@@ -30,22 +36,76 @@ def find_soffice() -> Optional[str]:
     return None
 
 
-def _convert_batch(soffice: str, files: Sequence[Path], out_dir: Path, profile_dir: Path, timeout: int) -> None:
+def version(soffice: Optional[str] = None) -> Optional[str]:
+    """LibreOffice's version from the files beside soffice (``version.ini`` on Windows, ``versionrc`` elsewhere) —
+    read, not run, so asking costs no process start."""
+    exe = soffice or find_soffice()
+    if not exe:
+        return None
+    try:
+        here = Path(exe).resolve().parent
+    except OSError:
+        return None
+    for name in ("version.ini", "versionrc", "../Resources/versionrc"):
+        f = here / name
+        if not f.is_file():
+            continue
+        cp = configparser.ConfigParser(interpolation=None, strict=False)
+        try:
+            cp.read_string(f.read_text(encoding="utf-8", errors="replace"))
+        except (configparser.Error, OSError):
+            continue
+        sec = cp["Version"] if cp.has_section("Version") else None
+        if sec is None:
+            continue
+        for key in ("MsiProductVersion", "ProductVersion"):
+            if sec.get(key):
+                return sec[key]
+        if sec.get("buildid"):
+            return f"build {sec['buildid']}"
+    return None
+
+
+def _convert_batch(soffice: str, files: Sequence[Path], out_dir: Path, profile_dir: Path, timeout: int):
     profile_dir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
     env.setdefault("SAL_USE_VCLPLUGIN", "svp")
     cmd = [soffice, "--headless", "--norestore", "--nologo",
            f"-env:UserInstallation={profile_dir.resolve().as_uri()}",
            "--convert-to", "pdf", "--outdir", str(out_dir)] + [str(f) for f in files]
-    subprocess.run(cmd, check=True, capture_output=True, timeout=timeout, env=env)
+    return subprocess.run(cmd, check=True, capture_output=True, timeout=timeout, env=env)
+
+
+def _tail(raw, n: int = 6) -> str:
+    """The last lines a process printed, decoded leniently."""
+    if not raw:
+        return ""
+    text = raw.decode("utf-8", errors="replace") if isinstance(raw, bytes) else str(raw)
+    lines = [x.rstrip() for x in text.strip().splitlines() if x.strip()]
+    return " | ".join(lines[-n:])
+
+
+def failure_text(e: BaseException) -> str:
+    """Why a soffice run failed: the exit status or timeout, and the end of what it printed."""
+    if isinstance(e, subprocess.TimeoutExpired):
+        out = _tail(getattr(e, "stderr", None)) or _tail(getattr(e, "output", None))
+        return f"timed out after {e.timeout:.0f}s" + (f"; it printed: {out}" if out else "")
+    if isinstance(e, subprocess.CalledProcessError):
+        err, out = _tail(e.stderr), _tail(e.output)
+        return (f"exit status {e.returncode}" + (f"; stderr: {err}" if err else "") + (f"; stdout: {out}" if out else "")
+                + ("" if err or out else "; it printed nothing"))
+    return f"{type(e).__name__}: {str(e)[:300]}"
 
 
 def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout: int = 600,
-                log: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
+                log: Optional[Callable[[str], None]] = None,
+                detail: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
     """Render each .docx to <out_dir>/<stem>.pdf. Returns {docx: pdf} for the ones that rendered. A chunk whose
     soffice process fails (a crash on one file, a timeout) is retried one file at a time, so one bad file costs
-    its own PDF and no other's; every failure is said on ``log``."""
+    its own PDF and no other's; every failure is said on ``log``, with what soffice printed; ``detail`` gets each
+    run's command summary, time and output."""
     log = log or (lambda msg: None)
+    detail = detail or (lambda msg: None)
     soffice = find_soffice()
     if not soffice:
         raise RuntimeError("LibreOffice (soffice) not found; set SPEC_SURGEON_SOFFICE or install LibreOffice")
@@ -56,23 +116,35 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
     workers = max(1, min(workers, len(files)))
     chunks = [files[i::workers] for i in range(workers)]
     base = Path(tempfile.mkdtemp(prefix="specsurgeon-lo-"))
+    said: Dict[Path, str] = {}                      # file → what its (last) soffice run printed
+    reported: set = set()                           # files whose failure has been said already
+
+    def run(chunk: List[Path], profile: Path):
+        t = time.perf_counter()
+        done = _convert_batch(soffice, chunk, out_dir, profile, timeout)
+        printed = " ".join(x for x in (_tail(getattr(done, "stdout", None)), _tail(getattr(done, "stderr", None))) if x)
+        for f in chunk:
+            said[f] = printed
+        detail(f"LibreOffice: {len(chunk)} file(s) → {out_dir.name}/ in {time.perf_counter() - t:.1f}s"
+               + (f"; it printed: {printed}" if printed else ""))
+        return done
     try:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = [(chunk, ex.submit(_convert_batch, soffice, chunk, out_dir, base / f"profile{i}", timeout))
-                    for i, chunk in enumerate(chunks) if chunk]
+            futs = [(chunk, ex.submit(run, chunk, base / f"profile{i}")) for i, chunk in enumerate(chunks) if chunk]
             retry: List[Path] = []
             for chunk, fut in futs:
                 try:
                     fut.result()
                 except Exception as e:  # noqa: BLE001 — the chunk's process failed; find the file(s) at fault
-                    log(f"LibreOffice failed on a chunk of {len(chunk)} file(s) ({type(e).__name__}: "
-                        f"{str(e)[:200]}); retrying them one by one")
+                    log(f"LibreOffice failed on a chunk of {len(chunk)} file(s) ({failure_text(e)}); retrying them "
+                        f"one by one: {[f.name for f in chunk][:8]}")
                     retry += [f for f in chunk if not (out_dir / (f.stem + ".pdf")).exists()]
         for k, f in enumerate(retry):
             try:
-                _convert_batch(soffice, [f], out_dir, base / f"retry{k}", timeout)
+                run([f], base / f"retry{k}")
             except Exception as e:  # noqa: BLE001
-                log(f"{f.name}: LibreOffice could not render it: {type(e).__name__}: {str(e)[:200]}")
+                reported.add(f)
+                log(f"{f.name}: LibreOffice could not render it: {failure_text(e)}")
     finally:
         shutil.rmtree(base, ignore_errors=True)
     result = {}
@@ -80,6 +152,7 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
         pdf = out_dir / (f.stem + ".pdf")
         if pdf.exists():
             result[f] = pdf
-        else:
-            log(f"{f.name}: no PDF came out of LibreOffice")
+        elif f not in reported:
+            log(f"{f.name}: no PDF came out of LibreOffice" + (f"; it printed: {said[f]}" if said.get(f) else
+                                                                " and it printed nothing"))
     return result

@@ -4,10 +4,12 @@ from __future__ import annotations
 import json
 from collections import Counter
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Tuple
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
 if TYPE_CHECKING:  # pragma: no cover
-    from .batch import BatchResult
+    from .batch import BatchResult, FileResult
+
+LOGS = "logs"
 
 FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "not-found": (
@@ -150,9 +152,35 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Different Document Structure Pattern",
         "This file has a different structural pattern from the pattern(s) the EditSpec targeted.",
     ),
+    "unreadable": (
+        "Not a Readable Word Document",
+        "The file could not be opened as a Word (.docx) document — it is damaged or empty, password-protected, an old "
+        ".doc or another kind of file saved under a .docx name, or the disk would not give it back (a OneDrive file "
+        "that is online only, say). It was left untouched. The reason says what its bytes look like; open it in Word "
+        "and save it as a Word Document (*.docx), or make sure it is fully downloaded, then run again.",
+    ),
+    "internal-error": (
+        "Spec Surgeon Hit an Internal Error",
+        "Something unexpected went wrong inside Spec Surgeon while working on this file — a defect in the program, not "
+        "a problem with your file. The file was left untouched. DIAGNOSTICS.md and the file's trace (logs/) show the "
+        "stage and the line of code; please send the diagnostics bundle (window: Help → Save diagnostics bundle…).",
+    ),
+    "worker-died": (
+        "The Process Working on This File Stopped",
+        "The background process working on this file ended abruptly — out of memory, or a crash inside a library it "
+        "uses — and did so again when the file was run alone. The file was left untouched; its trace (logs/) shows the "
+        "last stage it reached and what Python's fault handler saw.",
+    ),
+    "io-error": (
+        "A File or Folder Could Not Be Read or Written",
+        "Spec Surgeon could not read a file the run needs (the template, say) or write to the results folder — "
+        "permissions, a full disk, a path too long for Windows, or a file held open by another program. The reason "
+        "names the path and the system's error.",
+    ),
     "crash": (
-        "Unreadable or Corrupt .docx File",
-        "The file could not be opened as a valid Word document (corrupt zip or invalid XML).",
+        "Unexpected Error (recorded by an older version)",
+        "Spec Surgeon 0.4.1 and earlier used this code both for files it could not open and for its own unexpected "
+        "errors; the reason says which. Newer versions record 'unreadable' or 'internal-error' instead.",
     ),
     "unsupported-format": (
         "Strict Open XML Document",
@@ -180,10 +208,12 @@ def build_set_aside_manifest(batch: "BatchResult") -> Dict[str, Any]:
         if f.status == "PASS":
             continue
         pid = f.fingerprint.get("pattern_id", "?")
+        stage = None
         if f.exception:
             code = f.exception.get("code", "exception")
             reason = f.exception.get("reason", "")
             details = f.exception.get("details", {})
+            stage = f.exception.get("stage")
         elif f.record and not f.record.passed:
             code = "verify-fail"
             bad = [c for c in f.record.checks if c.status == "FAIL"]
@@ -207,6 +237,8 @@ def build_set_aside_manifest(batch: "BatchResult") -> Dict[str, Any]:
             "explanation": expl,
             "details": details,
             "body_hygiene": f.fingerprint.get("body_hygiene", {}),
+            **({"stage": stage} if stage else {}),
+            **({"trace": f"logs/{Path(f.trace_path).name}"} if getattr(f, "trace_path", None) else {}),
         })
     templates = []
     if batch.spec:
@@ -328,6 +360,10 @@ def write_batch_report(batch: "BatchResult") -> Path:
             lines.append(f"- {f.source.name}: {fl}")
         lines.append("")
     lines.append("## Where to look")
+    lines.append("- **Why a file failed, where and how: `DIAGNOSTICS.md`** (every file that did not pass, with its stage, "
+                 "the specifics, its trace and what to do next)")
+    lines.append("- Everything the run did, timestamped: `logs/run.log`; one file's path through the pipeline: "
+                 "`logs/<name>.trace.log`")
     lines.append(f"- Per-file verification records: `records/<name>.record.md` (the enumerated diff list and every check with its numbers)")
     if manifest["files"]:
         lines.append(f"- Set-aside manifest for next pass: `set_aside.json` and `SET_ASIDE_REPORT.md`")
@@ -342,8 +378,224 @@ def write_batch_report(batch: "BatchResult") -> Path:
         "job": batch.job, "params": batch.params, "spec": batch.spec, "renderer": batch.renderer, "timings": batch.timings,
         "counts": c,
         "set_aside_count": manifest["set_aside_count"],
+        "started": getattr(batch, "started", ""), "finished": getattr(batch, "finished", ""),
+        "environment": getattr(batch, "environment", {}), "log": f"{LOGS}/run.log",
         "files": [{"source": str(f.source), "status": f.status, "pattern_id": f.fingerprint.get("pattern_id"),
                    "output": str(f.output) if f.output else None, "delivered_to": f.delivered_to,
-                   "exception": f.exception, "timings": f.timings} for f in batch.files],
-    }, indent=2), encoding="utf-8")
+                   "exception": f.exception, "timings": f.timings,
+                   "trace": f"{LOGS}/{Path(f.trace_path).name}" if getattr(f, "trace_path", None) else None}
+                  for f in batch.files],
+    }, indent=2, default=str), encoding="utf-8")
     return out / "BATCH_REPORT.md"
+
+
+# ---- DIAGNOSTICS.md: why each file that did not pass failed, where, and how -------------------------------------------
+
+STAGE_TEXT = {
+    "acquire": "reading the file from disk",
+    "open": "opening it as a Word package",
+    "fingerprint": "reading its structure",
+    "plan": "planning the edit (predict first, nothing changed yet)",
+    "apply": "applying the edit to a copy",
+    "verify": "verifying the edited copy",
+    "write": "writing the verified copy to outputs/",
+    "render": "rendering the pages and comparing them",
+    "deliver": "delivering it (the overwrite guard)",
+    "transform+verify": "editing and verifying",
+}
+KIND_TEXT = {
+    "refusal": "the engine refused to guess on this file's structure and left it untouched",
+    "unreadable": "the file could not be opened as a Word document; it was left untouched",
+    "environment": "a file or folder the run needs could not be read or written; nothing was delivered for this file",
+    "internal-error": "Spec Surgeon itself failed — a defect in the program, not a problem with the file; the file was "
+                      "left untouched",
+    "worker-died": "the process working on this file stopped abruptly, twice; the file was left untouched",
+}
+CHECK_STAGE = {"V6": "render", "V7": "render", "V9": "deliver"}
+
+
+def _code(text: str, lang: str = "") -> List[str]:
+    return [f"```{lang}", *str(text).rstrip("\n").splitlines(), "```"]
+
+
+def _detail_lines(details: Dict[str, Any], skip=("op", "op_number", "traceback", "content")) -> List[str]:
+    from .diagnostics import compact
+    out = []
+    for k, v in (details or {}).items():
+        if k in skip or v in (None, "", [], {}):
+            continue
+        out.append(f"  - {k}: " + (str(v) if isinstance(v, (str, int, float)) else compact(v, 500)))
+    return out
+
+
+def exception_diagnosis(exc: Dict[str, Any], name: str, stem: Optional[str] = None,
+                        trace: Sequence[str] = (), heading: str = "##", number: Optional[int] = None) -> str:
+    """One set-aside file, in Markdown: what happened, where, why, what to do, what to read — and how it got there."""
+    code = exc.get("code", "exception")
+    category, explanation = FAILURE_EXPLANATIONS.get(code, ("Refused for Safety", "The engine refused to guess on "
+                                                            "this file's structure and left it untouched."))
+    kind = exc.get("kind") or ("internal-error" if code in ("crash",) else "refusal")
+    stage = exc.get("stage")
+    where = (f"{STAGE_TEXT.get(stage, stage)} (`{stage}`)" if stage else "before or while planning")
+    if exc.get("op_number"):
+        where += f", op #{exc['op_number']} `{exc.get('op')}`"
+    if exc.get("where"):
+        where += f" — at `{exc['where']}`"
+    lines = [f"{heading} {f'{number}. ' if number else ''}{name} — {category} (`{code}`)", "",
+             f"- **What happened:** {KIND_TEXT.get(kind, KIND_TEXT['refusal'])}.",
+             f"- **Where it stopped:** {where}",
+             f"- **Why:** {exc.get('reason', '')}"]
+    if exc.get("hint"):
+        lines.append(f"- **What the system said it means:** {exc['hint']}")
+    det = _detail_lines(exc.get("details") or {})
+    if det:
+        lines += ["- **Details:**", *det]
+    lines.append(f"- **What to do:** {explanation}")
+    if stem:
+        reads = [f"`exceptions/{stem}.exception.json`"] + ([f"`{exc['trace']}`"] if exc.get("trace") else [])
+        lines.append("- **Read next:** " + " · ".join(reads))
+    if exc.get("traceback") and kind in ("internal-error", "environment", "worker-died"):
+        lines += ["", "**Traceback** (for whoever fixes it):", "", *_code(exc["traceback"])]
+    if trace:
+        lines += ["", "**How it got there** (the file's trace):", "", *_code("\n".join(trace))]
+    return "\n".join(lines)
+
+
+def file_diagnosis(f: "FileResult", heading: str = "##", number: Optional[int] = None) -> str:
+    """One file that did not pass (or passed: then a short note), in Markdown — the section DIAGNOSTICS.md has for it
+    and what the window shows when the file's row is opened."""
+    name, stem = f.source.name, f.record_stem
+    if f.exception:
+        return exception_diagnosis(f.exception, name, stem, f.trace, heading, number)
+    rec = f.record
+    if rec is None:
+        return "\n".join([f"{heading} {f'{number}. ' if number else ''}{name} — not finished", "",
+                          "- **What happened:** the run stopped before this file was done.", *(
+                              ["", "**How far it got** (the file's trace):", "", *_code("\n".join(f.trace))]
+                              if f.trace else [])])
+    failures = rec.failures()
+    if not failures:
+        where = f.delivered_to or (str(f.output) if f.output else "")
+        return "\n".join([f"{heading} {f'{number}. ' if number else ''}{name} — PASS", "",
+                          "- Every check passed" + (f"; delivered to `{where}`." if where else "."),
+                          f"- Record: `records/{stem}.record.md`" + (f" · trace: `logs/{Path(f.trace_path).name}`"
+                                                                    if f.trace_path else "")])
+    ids = [c for c, *_ in failures]
+    stages = sorted({CHECK_STAGE.get(c, "verify") for c in ids}, key=list(STAGE_TEXT).index)
+    if ids == ["V9"]:
+        happened = ("every check passed, but delivery was refused (the source changed during the run, or the file "
+                    "could not be written back); nothing was delivered")
+        meaning = ("Not an editing problem: close the file in Word, make sure nobody is changing it, and run again "
+                   "(it is quick).")
+    elif set(ids) <= {"V6", "V7"} and rec.get("V6") is not None and rec.get("V6").status == "FAIL":
+        happened = ("the edit verified, but its pages could not be rendered or compared, so its layout could not be "
+                    "checked; nothing was delivered")
+        meaning = ("Usually the renderer, not the edit: the renderer's own words are below and in logs/run.log. Run "
+                   "again (or without rendering if the layout check is not needed).")
+    else:
+        happened = (f"the edit was applied to a copy and the independent verifier rejected it ({', '.join(ids)}); "
+                    "nothing was delivered")
+        meaning = FAILURE_EXPLANATIONS["verify-fail"][1]
+    out_rel = (f"`{Path(f.output).parent.name}/{Path(f.output).name}`" if f.output else "")
+    lines = [f"{heading} {f'{number}. ' if number else ''}{name} — Failed verification (not delivered)", "",
+             f"- **What happened:** {happened}.",
+             "- **Where it stopped:** " + "; ".join(f"{STAGE_TEXT[s]} (`{s}`)" for s in stages),
+             "- **Why:**"]
+    for cid, cname, summary, details in failures:
+        lines.append(f"  - **{cid} {cname}** — {summary if len(summary) <= 400 else summary[:399] + '…'}")
+        lines += [f"    - {d}" for d in details if d != summary]
+    lines.append(f"- **What this means:** {meaning}")
+    reads = [f"`records/{stem}.record.md`", f"`plans/{stem}.plan.json`"]
+    if f.trace_path:
+        reads.append(f"`logs/{Path(f.trace_path).name}`")
+    if out_rel:
+        reads.append(f"the rejected copy {out_rel} (diagnosis only — never use it)")
+    lines.append("- **Read next:** " + " · ".join(reads))
+    if f.trace:
+        lines += ["", "**How it got there** (the file's trace):", "", *_code("\n".join(f.trace))]
+    return "\n".join(lines)
+
+
+def _short_why(f: "FileResult") -> str:
+    if f.exception:
+        return str(f.exception.get("reason", ""))
+    if f.record is not None:
+        bad = [c for c in f.record.checks if c.status == "FAIL"]
+        return "; ".join(f"{c.id}: {c.summary}" for c in bad)
+    return "not finished"
+
+
+def _cell(text: str, n: int = 160) -> str:
+    t = " ".join(str(text).split()).replace("|", "\\|")
+    return t if len(t) <= n else t[:n - 1] + "…"
+
+
+def write_diagnostics(batch: "BatchResult") -> Path:
+    """``DIAGNOSTICS.md``: the run (when, what, which program on which computer, which renderer), and for every file
+    that did not pass — what happened, where it stopped, why in specifics, what to do, what to read, and its trace."""
+    from .diagnostics import environment_line
+    from . import render as render_mod
+    out = batch.out_dir
+    c = batch.counts()
+    problems = [f for f in batch.files if f.status != "PASS"]
+    kinds = Counter((f.exception or {}).get("kind") or ("refusal" if f.exception else "verify") for f in problems)
+    internal = [f for f in problems if (f.exception or {}).get("kind") in ("internal-error", "worker-died")
+                or (f.exception or {}).get("code") == "crash"]
+    total = (batch.timings or {}).get("total")
+    request = (f"EditSpec “{batch.spec.get('request')}” — ops "
+               + ", ".join(f"`{o.get('op')}`" for o in batch.spec.get("ops", []))
+               if batch.spec is not None else f"job `{batch.job}` with `{json.dumps(batch.params, ensure_ascii=False)}`")
+    split = ", ".join(f"{label} {kinds[k]}" for k, label in (
+        ("refusal", "refused"), ("unreadable", "unreadable"), ("environment", "I/O problems"),
+        ("internal-error", "internal errors"), ("worker-died", "workers died"), ("verify", "failed verification"))
+        if kinds.get(k))
+    lines = ["# Spec Surgeon — diagnostics", "",
+             "Every file that did not pass: what happened, where it stopped, why (in specifics), what to do, what to "
+             "read next, and how it got there. Everything the run did is in `logs/run.log`; each file's own path "
+             "through the pipeline is in `logs/<name>.trace.log`.", "",
+             f"- **Run:** {getattr(batch, 'started', '') or '?'} → {getattr(batch, 'finished', '') or '?'}"
+             + (f" ({total:.1f} s)" if isinstance(total, (int, float)) else "") + f" — results in `{out}`",
+             f"- **Request:** {request}",
+             f"- **Result:** {len(batch.files)} file(s): PASS {c['PASS']} · FAIL {c['FAIL']} · EXCEPTION "
+             f"{c['EXCEPTION']}" + (f" ({split})" if split else ""),
+             f"- **Program:** {environment_line(getattr(batch, 'environment', None) or {})}",
+             f"- **Renderer:** {render_mod.describe(batch.renderer) if batch.renderer else 'none (V6/V7 not run)'}"]
+    if batch.skipped:
+        lines.append("- **Not processed** (the spec's own template): " + ", ".join(f"`{Path(x).name}`" for x in batch.skipped))
+    lines.append("")
+    if getattr(batch, "stopped", None):
+        lines += [f"> **The batch itself stopped** — {batch.stopped}. The files below are the ones it had reached; "
+                  f"`logs/run.log` ends with the traceback. This is a defect in Spec Surgeon: please send the "
+                  f"diagnostics bundle.", ""]
+    if internal:
+        lines += [f"> **Spec Surgeon itself failed on {len(internal)} file(s)** — a defect in the program, not in your "
+                  f"files. Send the diagnostics bundle (window: Help → Save diagnostics bundle…; command line: "
+                  f"`spec-surgeon diagnose \"{out}\" --bundle diagnostics.zip`) with a word about what you ran.", ""]
+    if not problems and not getattr(batch, "stopped", None):
+        lines += ["**No problems: every file passed every check.**", ""]
+    if problems:
+        lines += ["## Summary", "", "| # | File | Outcome | Stopped at | Why |", "|---|---|---|---|---|"]
+        for i, f in enumerate(problems, 1):
+            e = f.exception or {}
+            outcome = (f"EXCEPTION `{e.get('code')}`" if f.exception else
+                       f"FAIL {', '.join(c.id for c in f.record.checks if c.status == 'FAIL')}" if f.record else
+                       "not finished")
+            stage = e.get("stage") or ("—" if not f.record else
+                                       ", ".join(sorted({CHECK_STAGE.get(c.id, "verify") for c in f.record.checks
+                                                         if c.status == "FAIL"})))
+            lines.append(f"| {i} | {_cell(f.source.name, 80)} | {outcome} | {stage} | {_cell(_short_why(f))} |")
+        lines.append("")
+        for i, f in enumerate(problems, 1):
+            lines += [file_diagnosis(f, "##", i), ""]
+    t = batch.timings or {}
+    if t:
+        lines += ["## Timing", "", "- " + " · ".join(f"{k} {v:.2f} s" for k, v in t.items())]
+        slow = sorted((f for f in batch.files if f.timings.get("total")), key=lambda f: -f.timings["total"])[:5]
+        if slow:
+            lines.append("- Slowest files (editing and verifying): " + "; ".join(
+                f"{f.source.name} {f.timings['total']:.2f} s ("
+                + ", ".join(f"{k} {v:.2f}" for k, v in f.timings.items() if k != "total") + ")" for f in slow))
+        lines.append("")
+    path = out / "DIAGNOSTICS.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path

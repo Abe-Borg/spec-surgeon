@@ -36,18 +36,19 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 6. [Operations and EditSpecs (NL editor, Phase 1)](#operations-and-editspecs-nl-editor-phase-1) — incl. [Header/footer templating (Phase 2)](#headerfooter-templating-phase-2), [Template specs: match the architect's spec](#template-specs-match-the-architects-spec) and [Font sizes](#font-sizes-match-the-template-specs-font)
 7. [The verification record](#the-verification-record)
 8. [Output folder layout](#output-folder-layout)
-9. [Performance](#performance)
-10. [Exceptions and the agent layer (Tier 2/3)](#exceptions-and-the-agent-layer-tier-23)
-11. [Renderers](#renderers)
-12. [The overwrite guard](#the-overwrite-guard)
-13. [Library API (for a GUI)](#library-api-for-a-gui)
-14. [Adding a job module](#adding-a-job-module) / [Adding an op](#adding-an-op)
-15. [Project layout](#project-layout)
-16. [Tests](#tests)
-17. [Known limits of the prototype](#known-limits-of-the-prototype)
-18. [Roadmap — natural-language editing](#roadmap--natural-language-editing)
-19. [Relationship to the docx-surgical-edit skill](#relationship-to-the-docx-surgical-edit-skill)
-20. [License](#license)
+9. [Diagnostics — when something fails](#diagnostics--when-something-fails)
+10. [Performance](#performance)
+11. [Exceptions and the agent layer (Tier 2/3)](#exceptions-and-the-agent-layer-tier-23)
+12. [Renderers](#renderers)
+13. [The overwrite guard](#the-overwrite-guard)
+14. [Library API (for a GUI)](#library-api-for-a-gui)
+15. [Adding a job module](#adding-a-job-module) / [Adding an op](#adding-an-op)
+16. [Project layout](#project-layout)
+17. [Tests](#tests)
+18. [Known limits of the prototype](#known-limits-of-the-prototype)
+19. [Roadmap — natural-language editing](#roadmap--natural-language-editing)
+20. [Relationship to the docx-surgical-edit skill](#relationship-to-the-docx-surgical-edit-skill)
+21. [License](#license)
 
 ---
 
@@ -167,9 +168,9 @@ Environment variables:
    - **Run** is enabled only while the preview is current. Changing the folder, the template, the request or the answers after a preview disables it ("press Preview again"). Run itself still refuses if a file — or the template spec — changed on disk since the preview (the approval token).
    - A progress bar counts the files as they are verified.
    - Then:
-     - **PASS / FAIL / EXCEPTION tiles** and a **results table**, with *Show problems only*. Double-click a file to open its edited copy, or its verification record for a failure.
-     - **Open results folder** has `BATCH_REPORT.md`, `outputs\`, `records\` (one verification record per file), `failed\` and `render\`.
-     - **View report** shows `BATCH_REPORT.md` in the app; **Open failed/ folder** appears when something failed.
+     - **PASS / FAIL / EXCEPTION tiles** and a **results table**, with *Show problems only*. Double-click a file that passed to open its edited copy; double-click a file that failed or was set aside to see **why**, in the app: what happened, where it stopped (the stage, the op, the line of code), why in specifics (which paragraph, which characters, what the renderer said), what to do, which files to read, and the file's trace (see [Diagnostics](#diagnostics--when-something-fails)). On the Preview step, double-click an *Exception* row for the same.
+     - **Open results folder** has `BATCH_REPORT.md`, `DIAGNOSTICS.md`, `outputs\`, `records\` (one verification record per file), `logs\` (the run's log and one trace per file), `failed\` and `render\`.
+     - **View report** shows `BATCH_REPORT.md` in the app; **View diagnostics** shows `DIAGNOSTICS.md` (every file that did not pass, in specifics, with its trace); **Open failed/ folder** appears when something failed.
      - **Load set-aside files** narrows the next pass to the files that were set aside or failed, with their failure reasons sent to Claude.
      - **Advise on exceptions:** for files the engine refused, Claude writes a recommendation or a corrected spec into `advice\`.
 
@@ -178,8 +179,9 @@ Environment variables:
 *Allow AI-written transforms* (off by default, and off again at every start): when no built-in operation can do the request, Claude may write a one-off transform. It is tested on sample files first and only ever writes edited copies to the results folder; *Write back over the originals* is unavailable for it.
 
 **Also in the window:**
-- **Errors** appear on the step that caused them, in plain words. The **Activity log**, collapsed at the bottom, holds everything the engine printed (Copy, Save…, Clear). Unexpected errors also go to `%LOCALAPPDATA%\Spec Surgeon\logs\spec-surgeon.log`.
-- **Menus:** **File** has Load saved spec… (Ctrl+O), Open results folder, Settings… (Ctrl+,) and Exit. **Help** has Check for updates…, What's new in this version (the bundled release notes), User guide (online) and About Spec Surgeon. The foot of the rail has the three buttons you use most: **Settings**, **Check for updates** and **About Spec Surgeon**.
+- **Errors** appear on the step that caused them, in plain words, with **Show log** and **Save diagnostics…** beside them. The **Activity log**, collapsed at the bottom, holds everything the engine printed — and, for an error, its full traceback (Copy, Save…, Clear). Every activity line and every error is also kept in the app log, `%LOCALAPPDATA%\Spec Surgeon\logs\spec-surgeon.log` (rotating, 4 × 2 MB), so what happened yesterday can still be read.
+- **If the window closed unexpectedly** (a crash, Task Manager, a power cut), the next start says so on the Files step, with the crash report Python's fault handler wrote to `logs\crash-<time>-<pid>.log` (the stack where it stopped) — **Open logs folder** is beside it.
+- **Menus:** **File** has Load saved spec… (Ctrl+O), Open results folder, Settings… (Ctrl+,) and Exit. **Help** has Check for updates…, What's new in this version (the bundled release notes), User guide (online), **Open logs folder**, **Save diagnostics bundle…** (a zip of the last run's reports, logs, traces and records and the app's own logs — never the documents — to send to whoever diagnoses a problem) and About Spec Surgeon. The foot of the rail has the three buttons you use most: **Settings**, **Check for updates** and **About Spec Surgeon**.
 - **Looks:** the app's own theme — a dark navy rail, a light content area with white cards, status pills and an action bar per step — follows Windows' light or dark setting on its own; there is no appearance setting to get wrong. The accent colour is your Windows accent, the rendering is sharp on high-DPI screens, and the look is the same on Windows 10 and 11. `SPEC_SURGEON_THEME=light|dark` forces a scheme (the screenshots use it).
 - **About** (Help → About Spec Surgeon, or the rail): the version; who made it — © 2026 Abraham Borg — with his email (abrahamborg@gmail.com), GitHub and LinkedIn links; the MIT License in three plain sentences and **Read the full license**; the open-source components the app ships with and their licenses; and where this copy keeps its files. **Copy details** puts all of it on the clipboard for an email.
 
@@ -312,6 +314,7 @@ spec-surgeon run-spec C:\Temp\ss-do\preview\spec.json "C:\Projects\AVC11\Specs" 
 | `spec-surgeon run-spec … --approval TOKEN` | run only if the spec and every file are exactly as they were when the preview computed TOKEN |
 | `spec-surgeon do … --allow-codegen` | Tier B: when the compiler answers *unsupported*, generate a transform, prove it on samples, and (after approval) run it over the batch — outputs only, never in place |
 | `spec-surgeon gui` / `spec-surgeon-gui` | the window (see "The window"; needs the `gui` extra, which the Windows installer includes — without it the command says how to install it); `spec-surgeon-gui` opens without a console window on Windows |
+| `spec-surgeon diagnose OUT_DIR [--file NAME] [--bundle ZIP]` | why each file of a run did not pass: prints `DIAGNOSTICS.md` (or, with `--file`, the section of the file whose name contains NAME — or that file's trace when it passed). For a run that never finished it prints the end of `logs/run.log` and every trace that stops before its result. `--bundle` also writes a zip of the run's reports, logs, traces, records, plans, exceptions and compile/preview records plus the app's own logs — never the documents (sources, edited or failed copies, PDFs, page images). OUT_DIR may be a `do` folder (its `run/` is used) |
 | `spec-surgeon advise OUT_DIR [--file NAME] [--model M]` | for every exception a batch wrote (`OUT_DIR/exceptions/`): Claude reads the diagnosis and the file and answers with a recommendation for a human or a re-compiled spec for that file's structure pattern → `OUT_DIR/advice/<name>.advice.md` (+ `.spec.json`). Nothing is applied |
 | `spec-surgeon ask "…"` | natural-language request → job + params JSON to confirm (needs API key) |
 | `spec-surgeon agent EXCEPTION.json` | written recommendation for one exception, grounded in the skill (needs API key) |
@@ -641,7 +644,12 @@ Phase 2 added (`tests/test_template.py`): a fill typed into the output (V2 + V10
 ```
 <out>/
   BATCH_REPORT.md           summary table, structure patterns, exceptions, failures, flags, where to look
-  batch.json                the same, machine-readable
+  DIAGNOSTICS.md            every file that did not pass: what happened, where it stopped, why in specifics, what to
+                            do, what to read, and its trace — plus the run, the program's versions and the timings
+  batch.json                the same, machine-readable (+ environment, start/finish, each file's trace)
+  logs/run.log              everything the run did, timestamped: environment, progress, the renderer's own output,
+                            every file's trace, the traceback of anything unexpected (the batch's own failure too)
+  logs/<name>.trace.log     one file's path through the pipeline, stage by stage, written as it happens
   outputs/<name>.docx       edited files that passed every check (also copied over the source with --in-place);
                             <name> is unique across the batch (see below)
   failed/<name>.docx        (v0.3.1) edited copies that FAILED verification — kept for diagnosis only, never delivered
@@ -655,9 +663,119 @@ Phase 2 added (`tests/test_template.py`): a fill typed into the output (V2 + V10
                             so two sources called Spec.docx never share one Spec.pdf
 ```
 
+A `do` run (and the window) puts the run in `<out>/run/` beside `<out>/compile.json` (the request, the answers and
+the model's whole exchange) and `<out>/preview/` (with `preview/logs/preview.log`).
+
 Default `--out` is `.\SpecSurgeon_out\<timestamp>`.
 
 Since the 2026-10-14 audit fixes `<name>` is the **output name**, unique across the batch (`batch.output_names`): an input keeps its own name when it is the first with it; a later input with the same name (another folder) gets `name (n).docx` for the first `n` no input really has and no earlier output took, so `a\Spec.docx`, `b\Spec.docx` and `c\Spec (1).docx` come out as `Spec.docx`, `Spec (2).docx` and `Spec (1).docx` — never one output written over another and delivered as the wrong file. Names compare case-insensitively (Windows does). `records/`, `plans/` and `exceptions/` carry the same stem. An input that lies **inside the results folder** is refused before anything is created ("a run never writes where it reads": copies mode would otherwise overwrite it with its own edited copy), and the worker verifies the output in memory before writing it, so a verifier that raises leaves nothing in `outputs/`.
+
+---
+
+## Diagnostics — when something fails
+
+Every run says, for every file that did not pass, **where it stopped, why, and how it got there** — in the window
+(double-click the file, or **View diagnostics**), in `DIAGNOSTICS.md`, and from the command line
+(`spec-surgeon diagnose OUT_DIR`).
+
+**What happened — the kind of failure.** An exception record (`exceptions/<name>.exception.json`) now says which of
+these it is, and the code says it precisely:
+
+| Kind | Codes | Meaning |
+|---|---|---|
+| refusal | `not-found`, `structure`, `inheritance`, `unfilled-slot`, … (see [Exceptions](#exceptions-and-the-agent-layer-tier-23)) | the engine declined to guess on this file's structure and left it untouched — the design working |
+| unreadable | `unreadable`, `unsupported-format` | the file is not a Word document the engine can open — and the reason says what its bytes are: empty (0 bytes: an interrupted copy, a OneDrive placeholder never downloaded), an OLE compound file (**a password-protected document, or an old Word 97–2003 .doc renamed .docx**), a PDF, an RTF, an HTML page, a damaged or truncated zip, a plain text file, a part that is not well-formed XML (named), or a file the disk would not give back (with what Windows' error means: online-only OneDrive file, held open exclusively by another program, a path over 260 characters, access denied) |
+| environment | `io-error` | a file or folder the run needs (the template, the results folder) could not be read or written — permissions, a full disk, a path too long |
+| internal error | `internal-error` (and `internal`, an op's apply-time cross-check) | **Spec Surgeon itself failed — a defect in the program, never your file.** The record has the traceback. Before this change such a failure was recorded as `crash` and explained as "Unreadable or Corrupt .docx File" |
+| worker died | `worker-died` | the process working on the file ended abruptly (out of memory, a crash inside lxml or PyMuPDF) — and again when the file was run alone in a fresh process; the other files that shared its worker were run again and got their own results |
+
+**Where it stopped.** Every exception record carries `stage` (`acquire`, `open`, `fingerprint`, `plan`, `apply`,
+`verify`, `write`), the op that was running (`op`, `op_number`) and `where` — the line of Spec Surgeon's code that
+refused or failed (`ops/replace_text.py:211 in plan`; an op's refusal re-raised by the EditSpec planner still points
+at the op). A failed verification says which checks failed and at which step (verify, render, deliver).
+
+**Why, in specifics.** A verification record (`records/<name>.record.md`) now opens with **WHY IT FAILED** — each
+failed check with its specifics, read from the check's own data (`verify/explain.py`, on the verifier's side):
+
+- V1: the member that changed though the plan predicted no change, the member added or removed unpredicted (or
+  predicted and missing), where the member order changed, each integrity problem, each orphan;
+- V2: the part, the block and the text — word-diff style, `…common[-removed-]{+added+}common…`, with tabs,
+  non-breaking spaces and line breaks made visible (⇥ ⍽ ⏎) — and, when the output changed a block differently from
+  the prediction, the output **against the prediction** (`use GR[-C-]{+X+}`);
+- V3: the block, its text and which structural counts moved (`tab 2→1`); V4: the revision kind and its delta against
+  the prediction, duplicate and colliding ids; V5a: each new schema error per part; V5b/V8: the reject-all /
+  accept-all text that differs, as a word diff; V5c: each grammar error; V7: each page and region that moved and by
+  how much; V10: every error — and a V10 "unpredicted change" now names **the paragraph it is in by its text**
+  (`(in paragraph “SECTION 21 05 00”)`) or the style by its id, not only an XML path;
+- V6: what the renderer said about this file — LibreOffice's exit status and the end of its stderr/stdout (it used to
+  be "render failed"), Word's COM error code and its own description.
+
+**How it got there — the trace.** `logs/<name>.trace.log` is one file's path through the pipeline, one timestamped
+line per event, written and flushed as it happens:
+
+```
+16:41:23.245  acquire     …
+16:41:23.248  acquire     39,610 bytes · modified 2026-10-13 09:12:44 · md5 541741e6… [3 ms]
+16:41:23.257  open        20 part(s) · main part word/document.xml [9 ms]
+16:41:23.263  fingerprint pattern b20e6c1da8 · 2 section(s) · 4 text part(s) · track changes on · 2 pending ins/del [6 ms]
+16:41:23.263  plan        op #1 replace_text …
+16:41:23.272  plan        op #1 replace_text: text: 4 block(s) change in kept parts (document.xml 4) · revisions: del +4, ins +5 · … [8 ms]
+16:41:23.287  apply       op #1 replace_text: done [15 ms]
+16:41:23.588  verify      PASS — V1 PASS · V2 PASS · V3 PASS · V4 PASS · V5a PASS · V5b PASS · V5c PASS · V8 PASS · V10 PASS [301 ms]
+16:41:23.591  write       outputs/21 05 00 – COMMON WORK RESULTS.docx · md5 c0ccb89a… [0 ms]
+16:41:27.100  render      V6 PASS — renderer libreoffice; pages 3→3 …
+16:41:27.400  deliver     V9 PASS — source unchanged since acquisition; output written to …
+16:41:27.402  result      PASS — delivered to …\outputs\21 05 00 – COMMON WORK RESULTS.docx
+```
+
+A refusal adds `REFUSED [code] reason`, the line of code and the details; an internal error adds its traceback; a
+failed verification adds every failed check's specifics. Because each line is written as it happens, a worker that
+died or hung still leaves the last stage it reached — and in a pool worker Python's fault handler writes the stack of
+a hard crash into the trace, and a file still running after 5 minutes gets a stack dump of where it is (every 5
+minutes, without stopping it).
+
+**The run as a whole.** `logs/run.log` starts with the run (request, inputs, options) and the environment (Spec
+Surgeon, Python, Windows version, lxml/libxml2, PyMuPDF, Qt, anthropic, pywin32), then every progress line with its
+time, each file's trace as it finishes, the renderer (which one, its version and path — or why there is none: Word not
+installed, pywin32 missing, soffice not found), everything the renderer printed, each file's result, the timings —
+and, when the batch itself fails, `THE BATCH STOPPED during <stage>` with the traceback (`DIAGNOSTICS.md` is still
+written with what was known). A problem also shows in the progress as it happens (`    EXCEPTION [unreadable] … (at
+open)`), in the window's activity log and on the command line.
+
+**Robustness that serves the diagnosis.** A worker process that dies no longer takes the batch down: its unfinished
+files are run again, each alone in a fresh process, so the one that kills its worker is named (`worker-died`, with
+the last stage of its trace) and the others get their results; a partial output is removed. A rendered-page
+comparison that fails on one file (a PDF PyMuPDF cannot read, say) is that file's V6 FAIL with the traceback in its
+trace, not a crashed batch. A failed preview sample is that sample's exception record, not a lost preview.
+
+**Preview and approval.** `preview/logs/preview.log` has every file's plan or refusal (with the stage, the op and the
+line of code), each sample's verification with the failing checks' specifics, and what the renderer said. When Run
+refuses because something changed since the preview, it now says **what** changed: "21 05 00.docx: modified since the
+preview (size 39,610 → 39,702 bytes; saved 09:12:44 → 10:03:15)", a file added to or gone from the folder, the
+template changed, the spec changed — in the window, and from `run-spec --approval` when the preview's `preview.json`
+sits beside the spec (as `do` writes it).
+
+**The model's side.** The compile (`compile.json`, written by `do` and now also by the window, beside the preview it
+leads to) holds the whole exchange: what the model was given, every turn's text and tool calls (a submitted spec in
+full), every tool result and every rejection with its reasons, each call's stop reason, tokens, time and request id.
+An API call that fails — no network, a bad or expired key, a rate limit, an overloaded service — ends the compile with
+the error, its HTTP status and request id, instead of an exception that lost the exchange. The advisor writes
+`advice/<name>.transcript.json`; Tier B writes `codegen/history.json` for every attempt (the source the model
+submitted, the whitelist and sandbox problems, each sample's verification) whether or not one passed, and a generated
+op that fails in the sandbox hands back its traceback (to the model, which can now see the line, and to you), with
+`sandbox-stderr.txt` and the exit code when the process died.
+
+**The window's own logs.** `%LOCALAPPDATA%\Spec Surgeon\logs\spec-surgeon.log` keeps every activity line and
+every error with its traceback (rotating); a session that ends without closing is reported at the next start with
+its `crash-<time>-<pid>.log`. Word automation (COM) produces first-chance exceptions that Windows' fault handler would
+log as "Windows fatal exception" although they are handled, so the crash log is paused while Word renders.
+
+**Sending it to someone.** **Help → Save diagnostics bundle…** (or `spec-surgeon diagnose OUT_DIR --bundle diag.zip`)
+zips the last run's reports, logs, traces, records, plans, exceptions, set-aside manifest and compile/preview
+records, the app's own logs and an `environment.json` — **never the documents** (no source, edited or failed copy,
+PDF or page image). Under `results/` the zip mirrors the results folder; for a `do` or window session (whose run is in
+`<session>\run`) that is the whole session: `compile.json`, `preview\`, `codegen\` and `run\`. Records, plans and logs do quote document text (the paragraphs that changed or failed), so share
+the bundle the way you would share the specs.
 
 ---
 
@@ -689,7 +807,7 @@ XSD results are cached per worker by content hash, so files from one template va
 
 ## Exceptions and the agent layer (Tier 2/3)
 
-The engine never guesses. When a job cannot proceed deterministically on a file it raises a `JobException` with a code and details, the batch continues, and the diagnosis lands in `exceptions/<name>.exception.json` (source, job, params, fingerprint, reason, offsets, live text). Codes today: `structure`, `not-found`, `ambiguous`, `shared-part`, `spans-runs`, `field-result`, `nested-container`, `bad-params`, `crash`, and since the 2026-10-14 audit fixes `unsupported-format` (a Strict Open XML document: in Word, Save As → Word Document (*.docx), then run again). Since Phase 1 also: `conflict` (two ops in a spec overlap), `inheritance`, `tracked-format`, `theme-font`, `conflict-property` (see the operations table), `spec-mode`, `expect`, `geometry`, `pattern` (an EditSpec that does not fit the file), `internal` (an op's apply-time cross-check disagreed with its plan — never delivered); since Phase 2 `unfilled-slot`, `unknown-slot`, `slot-overlap`, `slot-structure`, `slot-in-textbox`, `template-revisions`, `even-odd`, `title-page`, `missing-style`, `toggle-ambiguous` (see "Header/footer templating"); and, before any file is read, `questions`, `unsupported`, `spec` for an unusable EditSpec. EditSpec exception records carry the whole spec.
+The engine never guesses. When a job cannot proceed deterministically on a file it raises a `JobException` with a code and details, the batch continues, and the diagnosis lands in `exceptions/<name>.exception.json` (source, job, params, fingerprint, reason, offsets, live text — and, since the diagnostics work, `kind`, `stage`, `op`/`op_number`, `where` (the line of code), `trace` (the file's trace) and, for an internal error, `traceback`; see [Diagnostics](#diagnostics--when-something-fails)). Codes today: `structure`, `not-found`, `ambiguous`, `shared-part`, `spans-runs`, `field-result`, `nested-container`, `bad-params`, `unreadable` (the file cannot be opened as a Word document; the reason says what its bytes are), `internal-error` (Spec Surgeon's own failure, with its traceback), `io-error` (a file or folder the run needs could not be read or written), `worker-died` (the process working on the file ended abruptly, twice) — these four replace `crash`, which v0.4.1 and earlier used both for unreadable files and for internal errors —, and since the 2026-10-14 audit fixes `unsupported-format` (a Strict Open XML document: in Word, Save As → Word Document (*.docx), then run again). Since Phase 1 also: `conflict` (two ops in a spec overlap), `inheritance`, `tracked-format`, `theme-font`, `conflict-property` (see the operations table), `spec-mode`, `expect`, `geometry`, `pattern` (an EditSpec that does not fit the file), `internal` (an op's apply-time cross-check disagreed with its plan — never delivered); since Phase 2 `unfilled-slot`, `unknown-slot`, `slot-overlap`, `slot-structure`, `slot-in-textbox`, `template-revisions`, `even-odd`, `title-page`, `missing-style`, `toggle-ambiguous` (see "Header/footer templating"); and, before any file is read, `questions`, `unsupported`, `spec` for an unusable EditSpec. EditSpec exception records carry the whole spec.
 
 Two optional model-backed commands (install the `agent` extra and set `ANTHROPIC_API_KEY`):
 
@@ -709,6 +827,8 @@ Tier 3 — a request no module handles — is development: use the skill (`src/s
 | none | | V6/V7 N/A |
 
 A renderer failure is never a crashed batch or a lost preview (2026-10-14 audit fixes): a Word that will not start, a file Word cannot export, a LibreOffice process that dies on a chunk (its files are retried one at a time) — each is reported in the log, that file's V6 reads "render failed" (so the output goes to `failed/` like any other failed check), and a preview shows the warning beside its plan summaries and verification.
+
+Since the diagnostics work the render failure says **why**: LibreOffice's exit status (or timeout) and the end of what it printed on stderr/stdout — it used to be "Command '[…]' returned non-zero exit status 1", the command line cut at 200 characters — and, when soffice exits 0 without a PDF (it does that when it cannot load a file), what it printed; Word's COM error as its HRESULT, its text and Word's own description (`COM error 0x80020009 (Exception occurred.): Microsoft Word: …`). V6 quotes the message for that file and keeps them all in its data. `logs/run.log` records which renderer ran, its version (LibreOffice's from the `version.ini`/`versionrc` beside soffice — read, not run; Word's when the instance starts), each conversion's time and output, and — when there is none — why (Word not installed, pywin32 missing, soffice not found).
 
 ---
 
@@ -750,6 +870,8 @@ batch = run_batch([r"C:\Projects\AVC11\Specs"], "page-numbering", {"option": "co
 for fr in batch.files:
     print(fr.source.name, fr.status, fr.record.to_markdown() if fr.record else fr.exception)
 ```
+
+Each `FileResult` also carries `trace_path` and `trace` (its lines) and, for a set-aside file, an `exception` with `kind`, `stage`, `where` and (internal errors) `traceback`; `BatchResult` carries `environment`, `started`/`finished`, `log_path` and `stopped`. `report.file_diagnosis(fr)` is one file's diagnosis in Markdown (what the window shows), `report.write_diagnostics(batch)` writes `DIAGNOSTICS.md`, `VerificationRecord.failures()` lists each failed check's specifics, and `diagnostics.make_bundle(dest, run_dir, app_logs)` writes the bundle.
 
 `run_batch` uses a process pool; a GUI entry point must sit under `if __name__ == "__main__":` on Windows. Progress is a callback; the GUI can drive a progress bar from it (the window does: `ui/rows.ProgressTracker` reads its `"N file(s); transform+verify …"` and `"  done NAME"` lines). The parameter form for a job is its `params_schema` (JSON-schema-like) on the job class.
 
@@ -853,8 +975,11 @@ spec-surgeon/
 │                                     "08 71 00 - DOOR HARDWARE (ACME).docx" — an architect's spec used as a template spec
 ├── src/spec_surgeon/
 │   ├── cli.py                        command line
-│   ├── batch.py                      orchestration (pool, render, deliver, records, report)
-│   ├── report.py                     BATCH_REPORT.md / batch.json
+│   ├── batch.py                      orchestration (pool, render, deliver, records, report); per-file traces,
+│   │                                 the run log, a dying worker's files run again alone
+│   ├── report.py                     BATCH_REPORT.md / batch.json / set_aside.json / DIAGNOSTICS.md
+│   ├── diagnostics.py                failure classification, the per-file trace and the run log, the environment,
+│   │                                 the app log and crash watch, the diagnostics bundle
 │   ├── package.py                    DocxPackage: zip, rels, sections, working overlay (members, rels, content types), repack-by-substitution
 │   ├── editspec.py                   EditSpec load/validate → plan every op → merge → apply (Phase 1 executor)
 │   ├── profile.py                    per-pattern document profiles (Phase 3); body text font/size; template_spec_summary
@@ -889,7 +1014,7 @@ spec-surgeon/
 │   │                                 delete_paragraphs, insert_paragraph (v0.3.0)
 │   ├── jobs/                         base.py (Job, OpJob), page_numbering.py, tracked_replace.py — v0.1.0 aliases over ops/
 │   ├── verify/                       INDEPENDENT: reader.py, textcheck.py, xsd.py, geometry.py, suite.py, props.py (V10),
-│   │                                 template.py (V10 templating kinds)
+│   │                                 template.py (V10 templating kinds), explain.py (why a check failed, in specifics)
 │   ├── render/                       word_com.py, libreoffice.py
 │   ├── schemas/                      vendored ECMA-376 / ISO 29500 transitional XSDs
 │   └── skill/                        the docx-surgical-edit skill (the method; used by the agent layer)
@@ -902,7 +1027,7 @@ spec-surgeon/
                                       test_credentials.py, qt_support.py, data/ (v0.4.0), test_about.py,
                                       test_reference_template.py, test_font_size.py, test_template_spec.py,
                                       test_sweep_fixes.py, test_audit2_fixes.py (the 2026-10-15 sweep and audit fixes)
-                                      (v0.4.0: template specs and font sizes)
+                                      (v0.4.0: template specs and font sizes), test_diagnostics.py (diagnostics)
 ```
 
 ---
@@ -1012,9 +1137,22 @@ v0.4.0 — template specs and font sizes (316 tests: 315 pass and the Credential
 
 `build_reference_spec()` (`make_fixtures.py OUT_DIR --reference` — it wrote `examples/templates/08 71 00 - DOOR HARDWARE (ACME).docx`) is an architect's spec: one section, 1" side margins, Normal Arial 10 pt, a header "ACME ARCHITECTS ⇥ AVC11 DATA CENTER – 100% CONSTRUCTION DOCUMENTS" / "SECTION 08 71 00 – DOOR HARDWARE" (options: the title in another case, shown by a STYLEREF field, an extra header line) and a footer "DOOR HARDWARE ⇥ 08 71 00 - {PAGE}" with the title and number in one run around the tab; `REFERENCE_FILLS` fit it and `build()`. `build_sized()` is a 9 pt discipline spec with 8 pt Header/Footer/SpecNote styles, runs that set their own 9 pt (one with a direct font and a `w:szCs`), a 12 pt note, a direct Wingdings run and a `w:sym` run at 9 pt, a paragraph mark at 9 pt and a 9 pt Wingdings character style.
 
-2026-10-15 — `tests/test_sweep_fixes.py` (9 tests: the hands-on sweep's fixes) and `tests/test_audit2_fixes.py` (19 tests: the external audit's findings, each with its planted case and, where a wrong document used to PASS, the planted output V10 now rejects) — 343 tests in total, 342 pass and the Credential Manager test skips off Windows (~3 min in the container).
+2026-10-15 — `tests/test_sweep_fixes.py` (9 tests: the hands-on sweep's fixes) and `tests/test_audit2_fixes.py` (19 tests: the external audit's findings, each with its planted case and, where a wrong document used to PASS, the planted output V10 now rejects) — 344 tests in total, 343 pass and the Credential Manager test skips off Windows (~3 min in the container).
 
 2026-10-15 (after v0.4.1) — the GUI rework, the license and the About box: `tests/test_about.py` (5 tests: the LICENSE file, `about.py`, `pyproject.toml`, the installer script and the EXE version info agree on the license, the copyright holder and the links), five window tests (the rail's states and status lines with the Next/Preview/Continue hints, Settings down to two cards, the Help menu and the rail's buttons, the About box's content and license text, the daily update check needing no setting), a settings test (the look and the update check are not settings; a v0.4.x file still loads) and an installer test (license page, copyright line, welcome-page links) — 356 tests in total, 355 pass and the Credential Manager test skips off Windows (~3 min in the container).
+
+2026-10-15 — diagnostics, `tests/test_diagnostics.py` (39 tests; with the GUI rework above, 395 in total, 394 pass and the Credential Manager test skips off Windows, ~3 min in the container):
+
+| Covers | |
+|---|---|
+| what kind of failure | nine unreadable files each said for what they are (empty, encrypted/old .doc, PDF, RTF, a cut-short zip, an HTML page, zeros, plain text, unknown bytes); a part cut short named as not well-formed; OS errors at acquire (unreadable, with the meaning of the code: gone, OneDrive online-only, path too long) and later (`io-error`); a refusal with its op and line of code and no traceback; an op that raises `KeyError` recorded as `internal-error` at `apply`, op #1, with its traceback — never as a corrupt file — and DIAGNOSTICS.md saying Spec Surgeon itself failed |
+| the trace and the run log | every stage of a file in order (acquire … write, render, deliver, result) in its trace and in run.log, the environment header, the progress lines unchanged (`  done NAME`), a problem shown as it happens, batch.json's environment and trace paths, DIAGNOSTICS.md with "No problems" |
+| a worker that dies | a worker killing its own process on one file of three (`os._exit` in the pool, under fork and spawn): that file `worker-died`, the other two PASS, every file's `done` line, no partial output |
+| rendering | LibreOffice's exit status and stderr in the failure text, a timeout with what it printed; a failed render's V6 quoting LibreOffice; a page comparison that raises → that file's V6 FAIL with the traceback, not a crashed batch; a batch whose delivery breaks → run.log ends with `THE BATCH STOPPED during deliver` and the traceback, DIAGNOSTICS.md says so |
+| the record's specifics | word diffs (`the [-FM Global-]{+GRC+} rules`, tabs and NBSP visible); V2 pairing a prediction with what the output has (`GR[-C-]{+X+}`); a planted bold run named by its paragraph's text in the record, the trace and DIAGNOSTICS.md; V10 differences named by paragraph text and style id |
+| preview and approval | a sample whose verifier raises recorded as that sample's `internal-error`, the preview log with an empty file's refusal; Run refused with "modified since the preview (size …)" and "a file that was not in the preview"; `run-spec --approval` saying the same from `preview.json` |
+| the model's exchange | the compile transcript (the request, each turn's blocks, usage, tool results); an API error as a `failed` compile with its HTTP status and request id; a defect propagating; the window's compile record beside its preview; a generated op's traceback from the sandbox |
+| bundle, CLI, crash watch, window | the bundle with reports, logs, records and app logs and no document, PDF or image; a session's bundle holding its compile record and preview beside the run (and Tier B's `history.json` saying a passing transform passed — `test_codegen.py`); `diagnose --file … --bundle …` and a run without DIAGNOSTICS.md; the crash watch reporting a dead session (and a stale marker with our pid) once, never its own, and leaving nothing after a clean exit; `pid_alive`; the app log; the window's diagnosis on a double-click (results and preview), View diagnostics, Save diagnostics bundle, and a failed job's traceback in the activity log |
 
 ---
 
