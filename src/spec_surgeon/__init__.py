@@ -10,4 +10,4 @@ or ``spec_surgeon.ooxml`` — the verifier reads only the before/after packages,
 transform cannot hide behind the same bug in the check.
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"
