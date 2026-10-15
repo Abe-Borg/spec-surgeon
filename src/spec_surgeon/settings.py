@@ -8,7 +8,10 @@
 
 Plain JSON, not QSettings: the user can see and delete the file, and the updater reads it without Qt. Never stored:
 the API key (Windows Credential Manager, ``credentials``), and the safety-relevant switches (write back over the
-originals, AI-written transforms) — they are off at every start.
+originals, AI-written transforms) — they are off at every start. Not settings at all (since the GUI rework after
+v0.4.1): the look (the window follows Windows' light/dark setting; ``SPEC_SURGEON_THEME`` forces one for screenshots)
+and the automatic update check (once a day, always; ``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an
+older ``settings.json`` still holds for them (``theme``, ``native_style``, ``auto_check_updates``) are ignored.
 """
 from __future__ import annotations
 
@@ -61,11 +64,8 @@ class Settings:
     out_root: str = ""
     render: bool = True
     request_draft: str = ""
-    theme: str = "system"                         # system | light | dark
-    native_style: bool = False                    # Qt's windows11 style instead of the app's own theme
     window_geometry: str = ""                     # hex of QWidget.saveGeometry()
     log_open: bool = False
-    auto_check_updates: Optional[bool] = None     # None → this build's default (on when installed, off for pip/source)
     last_update_check: float = 0.0                # epoch seconds of the last automatic attempt (success or not)
     skipped_version: str = ""
     pending_update: Dict[str, Any] = field(default_factory=dict)   # {"version", "log", "started"} while installing
@@ -77,8 +77,6 @@ _FIELDS = {f.name: f for f in dataclasses.fields(Settings)}
 
 def _coerce(name: str, value: Any, default: Any) -> Any:
     """The stored value when it has the field's type, else the default (a hand-edited file never crashes the app)."""
-    if name == "auto_check_updates":
-        return value if value is None or isinstance(value, bool) else default
     if isinstance(default, bool):
         return value if isinstance(value, bool) else default
     if isinstance(default, float):

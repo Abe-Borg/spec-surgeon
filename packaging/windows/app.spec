@@ -25,6 +25,7 @@ version_file.write_text(f'''VSVersionInfo(
     StringStruct('CompanyName', 'Abraham Borg'),
     StringStruct('FileDescription', 'Spec Surgeon'),
     StringStruct('FileVersion', '{version}'),
+    StringStruct('LegalCopyright', 'Copyright (c) 2026 Abraham Borg. MIT License.'),
     StringStruct('ProductName', 'Spec Surgeon'),
     StringStruct('ProductVersion', '{version}')
   ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]

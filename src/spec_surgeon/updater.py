@@ -36,7 +36,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-REPO = "Abe-Borg/spec-surgeon"
+from . import about
+
+REPO = about.GITHUB_REPO                       # "Abe-Borg/spec-surgeon"
 API_LATEST = "https://api.github.com/repos/{repo}/releases/latest"
 RELEASES_PAGE = "https://github.com/{repo}/releases/latest"
 RELEASES_LIST = "https://github.com/{repo}/releases"
@@ -347,15 +349,10 @@ def check_for_update(*, current: Optional[str] = None, skipped: str = "", manual
     return CheckResult("update", current, info, skipped=is_skipped)
 
 
-def should_auto_check(s, now: Optional[float] = None, *, installed: Optional[bool] = None) -> bool:
-    """Once a day at most; never when turned off (Settings, or ``SPEC_SURGEON_NO_UPDATE_CHECK``). Unset means on
-    for the installed app and off for a pip/source copy."""
+def should_auto_check(s, now: Optional[float] = None) -> bool:
+    """Once a day at most, for every copy (installed or pip): the user has nothing to set up or remember. The only
+    off switch is ``SPEC_SURGEON_NO_UPDATE_CHECK`` (tests, screenshots, locked-down machines)."""
     if os.environ.get(NO_CHECK_ENV):
-        return False
-    enabled = s.auto_check_updates
-    if enabled is None:
-        enabled = is_installed_build() if installed is None else installed
-    if not enabled:
         return False
     now = time.time() if now is None else now
     elapsed = now - (s.last_update_check or 0.0)
