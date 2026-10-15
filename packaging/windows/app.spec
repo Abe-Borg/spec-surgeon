@@ -36,8 +36,9 @@ datas += copy_metadata("anthropic", recursive=True)
 pdf_datas, pdf_binaries, pdf_imports = collect_all("pymupdf")
 datas += pdf_datas
 hiddenimports = pdf_imports + collect_submodules("anthropic")
-hiddenimports += ["pythoncom", "pywintypes", "win32com.client", "win32cred", "spec_surgeon.sandbox_runner",
+hiddenimports += ["pythoncom", "pywintypes", "win32com.client", "win32cred", "win32timezone", "spec_surgeon.sandbox_runner",
                   "spec_surgeon.ui.app", "PySide6.QtSvg"]
+# CredRead constructs LastWritten through a dynamic win32timezone import; without it a saved key cannot be read.
 excludes = ["pytest", "docx", "jsonschema", "tkinter", "_tkinter",
             "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuickWidgets", "PySide6.QtOpenGL",
             "PySide6.QtOpenGLWidgets", "PySide6.QtNetwork", "PySide6.QtPdf", "PySide6.QtDesigner"]
