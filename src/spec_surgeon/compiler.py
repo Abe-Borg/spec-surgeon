@@ -28,7 +28,6 @@ The client is injectable (``client=``) so the loop is tested without the API; th
 from __future__ import annotations
 
 import json
-import os
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -44,7 +43,9 @@ from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
 from .profile import profile, profile_batch, template_spec_summary
 
-DEFAULT_MODEL = os.environ.get("SPEC_SURGEON_MODEL", "claude-opus-5-5")
+from . import llm
+from .llm import DEFAULT_MODEL, FALLBACK_BETA  # noqa: F401 — re-exported (cli, codegen, advisor, tests)
+
 MAX_TURNS = 12
 # template-slot: a reference fill rule finds no usable value in the template spec itself — the same for every file
 FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "unknown-slot", "slot-overlap",
@@ -53,7 +54,6 @@ FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "
 # EVERY non-fatal code as pattern-sensitive, so a refusal the ops add later can never slip through the gate.
 PATTERN_SENSITIVE_CODES = {"unfilled-slot", "expect", "not-found", "ambiguous"}
 SPEC_LEVEL_CODES = FATAL_SPEC_CODES | {"unfilled-slot", "expect"}
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 TOOLS = [
     {"name": "inspect_profile", "description": "The full profile of one structure pattern of the batch (sections, "
@@ -123,19 +123,17 @@ class CompileResult:
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     model: str = DEFAULT_MODEL
     usage: Dict[str, int] = field(default_factory=dict)
+    served_models: List[str] = field(default_factory=list)   # what actually answered (a refusal fallback may differ)
 
     def to_dict(self):
         return {"status": self.status, "spec": self.spec, "questions": self.questions, "errors": self.errors,
-                "tool_calls": self.tool_calls, "model": self.model, "usage": self.usage}
+                "tool_calls": self.tool_calls, "model": self.model, "served_models": self.served_models,
+                "usage": self.usage}
 
 
 def _client():
-    try:
-        import anthropic
-    except ImportError as e:  # pragma: no cover
-        raise RuntimeError("pip install anthropic (and set ANTHROPIC_API_KEY or run `ant auth login`) to compile "
-                           "natural-language requests") from e
-    return anthropic.Anthropic()
+    """The Claude client every caller resolves at call time (tests replace this name with a scripted fake)."""
+    return llm.client()
 
 
 def load_project_memory(inputs: Sequence[Path]) -> Dict[str, Any]:
@@ -157,6 +155,12 @@ def load_project_memory(inputs: Sequence[Path]) -> Dict[str, Any]:
             except ValueError:
                 pass
     return {}
+
+
+def memory_source(memory: Dict[str, Any]) -> str:
+    """PROJECT.json as a source of approved words — without the path it was read from (a folder name is not wording
+    the user approved for the documents)."""
+    return json.dumps({k: v for k, v in (memory or {}).items() if k != "_path"}, ensure_ascii=False)
 
 
 def _norm(s: str) -> str:
@@ -191,8 +195,10 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
 
 
 def untraceable(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
-    hay = _norm("\n".join(sources))
-    return [w for w in placed_words(spec) if _norm(w) not in hay]
+    """The words the spec would place that appear verbatim (whitespace-normalised) in none of the sources. Each source
+    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next."""
+    hay = [_norm(s) for s in sources if s]
+    return [w for w in placed_words(spec) if not any(_norm(w) in h for h in hay)]
 
 
 class _Batch:
@@ -379,33 +385,24 @@ def compile_request(request: str, files: Sequence[Path], template: Optional[Path
     client = client or _client()
     batch = _Batch(files, template)
     memory = memory if memory is not None else load_project_memory([Path(f) for f in files])
-    sources = [request, *answers, json.dumps(memory, ensure_ascii=False)]
+    sources = [request, *answers, memory_source(memory)]
     system = SYSTEM + json.dumps(op_catalog(), ensure_ascii=False)
     messages = build_messages(request, batch, answers, memory, prior_failures=prior_failures)
     res = CompileResult(status="failed", model=model)
     rejections = 0
     nudged = False
+    usage = llm.Usage()
     for _turn in range(MAX_TURNS):
-        resp = client.beta.messages.create(
-            model=model, max_tokens=16000, system=system, tools=TOOLS, messages=messages,
-            output_config={"effort": "high"}, cache_control={"type": "ephemeral"},
-            betas=[FALLBACK_BETA], fallbacks="default")
-        u = getattr(resp, "usage", None)
-        for k in ("input_tokens", "output_tokens", "cache_read_input_tokens"):
-            res.usage[k] = res.usage.get(k, 0) + int(getattr(u, k, 0) or 0)
-        stop = getattr(resp, "stop_reason", None)
-        if stop == "refusal":
-            det = getattr(resp, "stop_details", None)
-            res.errors.append(f"the model declined the request ({getattr(det, 'category', None)}: "
-                              f"{getattr(det, 'explanation', '')})")
+        resp = llm.call(client, model=model, system=system, tools=TOOLS, messages=messages)
+        usage.add(resp, model)
+        res.usage, res.served_models = usage.as_dict(), sorted(set(usage.served))
+        problem = llm.stop_problem(resp)
+        if problem:
+            res.errors.append(problem)
             return res
-        if stop == "max_tokens":
-            res.errors.append("the model's answer was cut off (max_tokens)")
-            return res
-        messages.append({"role": "assistant", "content": resp.content})
-        if stop == "pause_turn":
-            continue
-        uses = [b for b in resp.content if getattr(b, "type", "") == "tool_use"]
+        content = llm.history_content(resp)
+        messages.append({"role": "assistant", "content": content})
+        uses = llm.tool_uses(content)
         if not uses:
             if nudged:
                 res.errors.append("the model ended without submitting a spec or asking a question")
@@ -455,6 +452,7 @@ def compile_request(request: str, files: Sequence[Path], template: Optional[Path
                 results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True, "content": str(e)})
         if final is not None:
             final.model, final.usage, final.tool_calls = model, res.usage, res.tool_calls
+            final.served_models = res.served_models
             final.errors = res.errors
             return final
         messages.append({"role": "user", "content": results})

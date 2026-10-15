@@ -21,32 +21,7 @@ SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
 
 
-def tool(name, inp, tid="t1"):
-    return SimpleNamespace(type="tool_use", id=tid, name=name, input=inp)
-
-
-def text(t):
-    return SimpleNamespace(type="text", text=t)
-
-
-def resp(*blocks, stop="tool_use"):
-    return SimpleNamespace(content=list(blocks), stop_reason=stop, stop_details=None,
-                           usage=SimpleNamespace(input_tokens=100, output_tokens=20, cache_read_input_tokens=0))
-
-
-class FakeClient:
-    """client.beta.messages.create(**kw) returns the scripted responses in order and records every request."""
-
-    def __init__(self, *responses):
-        self.responses = list(responses)
-        self.requests = []
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
-
-    def _create(self, **kw):
-        self.requests.append(copy.deepcopy({k: v for k, v in kw.items() if k != "system"}) | {"system": kw.get("system")})
-        if not self.responses:
-            raise AssertionError("the compiler asked for more turns than scripted")
-        return self.responses.pop(0)
+from fake_claude import FakeClient, resp, text, tool  # noqa: F401 — re-exported for the other test modules
 
 
 @pytest.fixture
@@ -69,12 +44,31 @@ def test_compile_inspects_then_submits(folder):
     assert res.status == "ok" and res.spec == REMOVE, res.errors
     assert [c["tool"] for c in res.tool_calls] == ["inspect_profile", "submit_editspec"]
     first = fake.requests[0]
-    assert first["model"] == "claude-opus-5-5" and first["fallbacks"] == "default"
+    assert first["model"] == "claude-opus-5-5" and first["fallbacks"] == "default" and first["max_tokens"] == 64000
     assert "OP CATALOG" in first["system"] and "apply_header_footer_template" in first["system"]
     assert "remove all headers and footers" in first["messages"][0]["content"]
     result = fake.requests[1]["messages"][-1]["content"][0]
     assert result["type"] == "tool_result" and "21 00 00" in result["content"]          # the profile came back
     assert res.usage["input_tokens"] == 200
+    assert res.served_models == ["claude-opus-5-5"] and res.to_dict()["served_models"] == ["claude-opus-5-5"]
+
+
+def test_traceable_words_come_from_one_source_each_and_never_from_the_memory_path():
+    spec = {"ops": [{"op": "replace_text", "params": {"find": "a", "replace": "ISSUED FOR PERMIT"}}]}
+    assert untraceable(spec, ["ISSUED FOR", "PERMIT"]) == ["ISSUED FOR PERMIT"]      # not stitched across sources
+    assert untraceable(spec, ["the stamp: ISSUED FOR  PERMIT"]) == []                  # whitespace-normalised
+    mem = {"stamp": "ISSUED", "_path": "C:/ISSUED FOR PERMIT/PROJECT.json"}
+    assert "ISSUED FOR PERMIT" not in compiler_module.memory_source(mem)
+
+
+def test_the_legacy_ask_and_agent_commands_are_retired(capsys):
+    for cmd in (["ask", "x"], ["agent", "x.json"]):
+        with pytest.raises(SystemExit):
+            cli_main(cmd)
+    import importlib.util
+    assert importlib.util.find_spec("spec_surgeon.agent") is None
+    from spec_surgeon import SKILL_DIR
+    assert (SKILL_DIR / "SKILL.md").is_file()
 
 
 def test_a_rejected_spec_goes_back_once(folder):

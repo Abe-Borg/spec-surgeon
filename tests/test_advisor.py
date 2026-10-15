@@ -73,6 +73,26 @@ def test_respec_may_not_introduce_new_words(batch_out):
     assert "never gave them verbatim" in fake.requests[1]["messages"][-1]["content"][0]["content"]
 
 
+def test_respec_may_not_place_claude_s_own_words_from_the_original_spec(batch_out):
+    """The original spec's summary, assumptions and proposal are Claude's text, not the user's: a respec may not place
+    them. Only the request, the words the approved spec placed and the user's answers count."""
+    rec = _record(batch_out)
+    rec["spec"] = {**(rec.get("spec") or {}), "request": "remove the cover footer",
+                   "assumptions": ["Replace FM Global with Owner's Insurer"]}
+    sneaky = {"request": "r", "summary": "s", "mode": "content", "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
+              "params": {"find": "FM Global", "replace": "Owner's Insurer", "tracked": True, "author": "x"}}]}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": sneaky})), resp(text("Ask the user for the words."), stop="end_turn"))
+    adv = advise(rec, client=fake)
+    assert "never gave them verbatim" in fake.requests[1]["messages"][-1]["content"][0]["content"]
+    assert adv.kind == "recommendation" and adv.usage.calls == 2 and adv.model == "claude-opus-5-5"
+
+
+def test_the_advisor_tools_are_an_explicit_list():
+    from spec_surgeon.advisor import ADVISOR_TOOLS
+    assert [t["name"] for t in ADVISOR_TOOLS] == ["inspect_profile", "list_styles", "sample_paragraphs", "show_part_text",
+                                                 "submit_recommendation", "submit_editspec"]
+
+
 def test_advise_batch_and_cli(batch_out, monkeypatch, capsys):
     monkeypatch.setattr(compiler_module, "_client",
                         lambda: FakeClient(resp(tool("submit_recommendation", {"text": "Accept or fix first."}))))

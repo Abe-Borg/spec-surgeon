@@ -19,8 +19,6 @@
                                                              (rinse & repeat: run next pass on set-aside files only)
     spec-surgeon gui                                         (the window; also: spec-surgeon-gui)
     spec-surgeon advise OUT_DIR [--file NAME]                (Claude: per exception a recommendation or a re-compiled spec)
-    spec-surgeon ask "natural-language request"              (optional; needs anthropic + API key)
-    spec-surgeon agent EXCEPTION.json                        (optional; written recommendation)
 """
 from __future__ import annotations
 
@@ -405,21 +403,6 @@ def cmd_verify(args):
     return 0 if rec.passed else 1
 
 
-def cmd_ask(args):
-    from .agent import ask
-    res = ask(args.request, model=args.model)
-    print(json.dumps(res, indent=2))
-    if res.get("job") and not res.get("questions"):
-        print("\nTo run:\n  spec-surgeon run %s <files> --params '%s'" % (res["job"], json.dumps(res["params"])))
-    return 0
-
-
-def cmd_agent(args):
-    from .agent import advise
-    print(advise(Path(args.exception), model=args.model))
-    return 0
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="spec-surgeon", description=f"Spec Surgeon {__version__} — surgical, verified .docx edits at any scale.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -508,11 +491,7 @@ def main(argv=None) -> int:
     p.add_argument("out_dir", help="a batch output folder (with exceptions/)"); p.add_argument("--file", default=None)
     p.add_argument("--model", default=None); p.set_defaults(fn=cmd_advise)
 
-    p = sub.add_parser("ask", help="natural-language request → job + params (needs anthropic + ANTHROPIC_API_KEY)")
-    p.add_argument("request"); p.add_argument("--model", default=None); p.set_defaults(fn=cmd_ask)
 
-    p = sub.add_parser("agent", help="written recommendation for one exception (needs anthropic + ANTHROPIC_API_KEY)")
-    p.add_argument("exception"); p.add_argument("--model", default=None); p.set_defaults(fn=cmd_agent)
 
     args = ap.parse_args(argv)
     if getattr(args, "model", None) is None and hasattr(args, "model"):

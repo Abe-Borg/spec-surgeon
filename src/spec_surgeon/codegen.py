@@ -34,6 +34,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from .llm import Usage
+
 ALLOWED_FROM: Dict[str, set] = {
     "spec_surgeon.ops.base": {"Op", "PlanFragment", "BlockDiff", "JobException"},
     "spec_surgeon.package": {"W", "NS", "R", "DocxPackage", "serialize_xml", "parse_xml"},
@@ -203,6 +205,8 @@ class GeneratedOp:
     params: Dict[str, Any] = field(default_factory=dict)
     attempts: List[Dict[str, Any]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    model: str = ""
+    usage: Usage = field(default_factory=Usage)
 
 
 CODEGEN_SYSTEM = """You write ONE Python module: an operation (an `Op` subclass) for a deterministic .docx editing \
@@ -251,12 +255,12 @@ def _examples() -> str:
 def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: Path, client=None,
                 model: Optional[str] = None, max_iter: int = MAX_ITER, log=None) -> GeneratedOp:
     """Generate → sandbox + verify on the samples → feed failures back, up to ``max_iter`` attempts."""
-    from .compiler import DEFAULT_MODEL, FALLBACK_BETA, _client
+    from . import compiler, llm
     from .profile import profile
     from .package import DocxPackage
     log = log or (lambda m: None)
-    client = client or _client()
-    model = model or DEFAULT_MODEL
+    client = client or compiler._client()
+    model = model or compiler.DEFAULT_MODEL
     out_dir = Path(out_dir)
     system = CODEGEN_SYSTEM.format(allowed=json.dumps({k: sorted(v) for k, v in ALLOWED_FROM.items()}),
                                    plain=sorted(ALLOWED_IMPORT), examples=_examples())
@@ -264,17 +268,17 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
     messages: List[Dict[str, Any]] = [{"role": "user", "content":
         f"REQUEST: {request}\n\nWHY NO EXISTING OP FITS / PROPOSAL: {proposal}\n\nSAMPLE FILE PROFILES:\n"
         + json.dumps(profiles, ensure_ascii=False)}]
-    g = GeneratedOp()
+    g = GeneratedOp(model=model)
     for attempt in range(1, max_iter + 1):
-        resp = client.beta.messages.create(model=model, max_tokens=16000, system=system, tools=CODEGEN_TOOLS,
-                                           messages=messages, output_config={"effort": "high"},
-                                           cache_control={"type": "ephemeral"}, betas=[FALLBACK_BETA],
-                                           fallbacks="default")
-        if getattr(resp, "stop_reason", None) in ("refusal", "max_tokens"):
-            g.errors.append(f"model stopped: {resp.stop_reason}")
+        resp = llm.call(client, model=model, system=system, tools=CODEGEN_TOOLS, messages=messages)
+        g.usage.add(resp, model)
+        problem = llm.stop_problem(resp)
+        if problem:
+            g.errors.append(f"model stopped: {problem}")
             return g
-        messages.append({"role": "assistant", "content": resp.content})
-        uses = [b for b in resp.content if getattr(b, "type", "") == "tool_use" and b.name == "submit_op"]
+        content = llm.history_content(resp)
+        messages.append({"role": "assistant", "content": content})
+        uses = [b for b in llm.tool_uses(content) if b.name == "submit_op"]
         if not uses:
             messages.append({"role": "user", "content": "Call submit_op with the module source."})
             g.attempts.append({"attempt": attempt, "problems": ["no submission"]})
@@ -321,6 +325,7 @@ def save_generated(g: GeneratedOp, out_dir: Path) -> Path:
     p = d / f"{h}.py"
     p.write_text(g.source, encoding="utf-8")
     (d / f"{h}.history.json").write_text(json.dumps({"name": g.name, "select": g.select, "params": g.params,
+                                                     "model": g.model, "usage": g.usage.to_dict(),
                                                      "attempts": g.attempts}, indent=2, default=str), encoding="utf-8")
     return p
 

@@ -23,14 +23,17 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from . import llm
 from .catalog import op_catalog
-from .compiler import DEFAULT_MODEL, FALLBACK_BETA, TOOLS, _Batch, _client, check_submission
+from .compiler import DEFAULT_MODEL, TOOLS, _Batch, _client, check_submission, placed_words
 from .editspec import plan_spec
 from .fingerprint import fingerprint
 from .ops import JobException
 from .package import DocxPackage
 
-ADVISOR_TOOLS = [t for t in TOOLS if t["name"] not in ("ask_user", "read_template", "submit_editspec")] + [
+# An explicit allowlist: a tool added to the compiler (or its chat) never reaches the advisor by accident.
+ADVISOR_READ_TOOLS = ("inspect_profile", "list_styles", "sample_paragraphs", "show_part_text")
+ADVISOR_TOOLS = [t for t in TOOLS if t["name"] in ADVISOR_READ_TOOLS] + [
     {"name": "submit_recommendation", "description": "A written recommendation for a human (final answer).",
      "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
     {"name": "submit_editspec", "description": "A re-compiled EditSpec for this file's structure pattern (final "
@@ -62,6 +65,8 @@ class Advice:
     spec: Optional[Dict[str, Any]] = None
     errors: List[str] = field(default_factory=list)
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    model: str = ""
+    usage: llm.Usage = field(default_factory=llm.Usage)
 
     def to_markdown(self) -> str:
         out = [f"# Advice — {Path(self.source).name}", "", f"**{self.kind}**", ""]
@@ -72,6 +77,9 @@ class Advice:
                     "```json", json.dumps(self.spec, indent=2, ensure_ascii=False), "```"]
         if self.errors:
             out += ["", "Errors: " + "; ".join(self.errors)]
+        if self.usage.calls:
+            served = ", ".join(sorted(set(self.usage.served))) or self.model
+            out += ["", f"Claude ({served}): {self.usage.line()}"]
         return "\n".join(out)
 
 
@@ -92,7 +100,7 @@ def _respec_errors(spec: Any, batch: _Batch, sources: Sequence[str], pkg: DocxPa
 def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, answers: Sequence[str] = ()) -> Advice:
     model = model or DEFAULT_MODEL
     src = Path(record["source"])
-    adv = Advice(source=str(src), kind="failed")
+    adv = Advice(source=str(src), kind="failed", model=model)
     if not src.is_file():
         adv.errors.append(f"source file not found: {src}")
         return adv
@@ -110,7 +118,9 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
         return adv
     client = client or _client()          # only now: an unreadable file never needs the model (nor an API key)
     spec0 = record.get("spec") or {}
-    sources = [json.dumps(spec0, ensure_ascii=False), str(spec0.get("request", "")), *answers]
+    # Only words the user approved: the original request, the words the original spec places (the user approved that
+    # spec) and the user's answers — never Claude's own summary, assumptions or proposal.
+    sources = [*placed_words(spec0), str(spec0.get("request", "")), *answers]
     messages: List[Dict[str, Any]] = [{"role": "user", "content": json.dumps({
         "file": src.name, "structure_pattern": pid, "exception": record.get("exception"),
         "original_spec": spec0 or {"job": record.get("job"), "params": record.get("params")},
@@ -118,17 +128,17 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
     system = ADVISOR_SYSTEM + json.dumps(op_catalog(examples=False), ensure_ascii=False)
     rejected = False
     for _ in range(10):
-        resp = client.beta.messages.create(model=model, max_tokens=16000, system=system, tools=ADVISOR_TOOLS,
-                                           messages=messages, output_config={"effort": "high"},
-                                           cache_control={"type": "ephemeral"}, betas=[FALLBACK_BETA],
-                                           fallbacks="default")
-        if getattr(resp, "stop_reason", None) in ("refusal", "max_tokens"):
-            adv.errors.append(f"model stopped: {resp.stop_reason}")
+        resp = llm.call(client, model=model, system=system, tools=ADVISOR_TOOLS, messages=messages)
+        adv.usage.add(resp, model)
+        problem = llm.stop_problem(resp)
+        if problem:
+            adv.errors.append(f"model stopped: {problem}")
             return adv
-        messages.append({"role": "assistant", "content": resp.content})
-        uses = [b for b in resp.content if getattr(b, "type", "") == "tool_use"]
+        content = llm.history_content(resp)
+        messages.append({"role": "assistant", "content": content})
+        uses = llm.tool_uses(content)
         if not uses:
-            texts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
+            texts = [t for t in llm.texts(content) if t.strip()]
             if texts:                                    # a plain answer counts as a recommendation
                 adv.kind, adv.text = "recommendation", "\n".join(texts)
                 return adv
@@ -155,11 +165,14 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
                                 "content": "REJECTED:\n- " + "\n- ".join(errs)})
                 continue
             try:
+                if b.name not in ADVISOR_READ_TOOLS:
+                    raise KeyError(f"unknown tool {b.name}")
                 out = getattr(batch, b.name)(**inp)
                 results.append({"type": "tool_result", "tool_use_id": b.id,
                                 "content": json.dumps(out, ensure_ascii=False)[:20000]})
-            except (AttributeError, KeyError, TypeError, ValueError) as e:
-                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True, "content": str(e)})
+            except Exception as e:  # noqa: BLE001 — every tool call gets an answer, or the next request is refused
+                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
+                                "content": f"{type(e).__name__}: {e}"[:2000]})
         messages.append({"role": "user", "content": results})
     adv.errors.append("no advice after 10 turns")
     return adv
