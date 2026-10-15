@@ -26,11 +26,14 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "set_font": [
         "Symbol/Wingdings runs (bullets, special characters) are left alone — changing them changes the glyphs",
         "the eastAsia font slot is unchanged unless asked",
-        "font size is unchanged",
+        "font size is unchanged unless a size was asked; a size goes only on runs that set their own size (the rest "
+        "follows its styles), and with size_from only on the listed sizes — e.g. 9 pt text becomes 10 pt while 8 pt "
+        "headers and a 12 pt note keep their size; the complex-script size is left alone",
         "runs inside pending tracked changes are included unless 'leave revisions alone' was asked",
     ],
-    "set_style_font": ["only styles that already name a font change; the others inherit it"],
-    "set_doc_defaults_font": ["the document default font changes, so inheriting text follows"],
+    "set_style_font": ["only styles that already name a font (or set a size) change; the others inherit it"],
+    "set_doc_defaults_font": ["the document default font (and size) changes, so inheriting text follows; with size_from "
+                              "its size changes only when it is one of those sizes"],
     "set_paragraph_props": ["values merge into existing spacing/indents; unspecified attributes stay"],
     "set_page_setup": ["margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given"],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
@@ -54,6 +57,11 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "each fill is extracted from each document by a stated rule (or fallback rule chain), never typed",
         "header/footer distances and titlePg follow the template; page margins stay",
         "pending tracked changes inside the old headers/footers are discarded and flagged by author",
+        "with a template SPEC (slot_markers ['reference']): the template spec's own section number and title — found "
+        "by the same rules run on it — are replaced in its headers/footers by each spec's own; everything else there "
+        "(firm, project, phase, logo, page numbers) is copied as it is",
+        "a template spec's own number or title written another way in its headers/footers, or shown by a field, is "
+        "refused rather than copied into every spec",
     ],
 }
 
@@ -77,6 +85,12 @@ FILL_RULES = {
                    "'^SECTION \\d{2} \\d{2} \\d{2}$'}, {regex '^SECTION\\s+\\d{2}\\s+\\d{2}\\s+\\d{2}\\s*[-–—:]\\s*(.+)$'}] "
                    "handles both a title on its own line and an inline 'SECTION 21 13 13 – TITLE' line. A syntax error in "
                    "any sub-rule is refused up front; a nested literal counts as a literal",
+    "in_template": "slot_markers ['reference'] only: {…rule…, in_template: '<the template spec's own words>'} — the "
+                   "text in the template spec's headers/footers this rule's fill replaces. Optional for extracting "
+                   "rules (default: the rule run on the template spec itself); required for a literal, e.g. {rule: "
+                   "'literal', value: 'ISSUED FOR PERMIT', in_template: '100% CONSTRUCTION DOCUMENTS'}. Every bounded, "
+                   "case-insensitive occurrence of the value in the copied parts is replaced; the value must have at "
+                   "least 3 letters/digits",
     "whitespace": "with flexible_whitespace (default true) a pattern or anchor that fails on the raw text is retried on a "
                   "view where tabs, non-breaking spaces and runs of spaces are one space; the fill keeps the document's "
                   "own characters whenever the raw match succeeded. Fills are stripped of surrounding whitespace and must "
@@ -93,6 +107,18 @@ EXPECT_SYNTAX = {
                  "trPrChange, tcPrChange, tblGridChange, numberingChange, cellIns, cellDel, cellMerge",
     "use": "use a range when the batch's files legitimately differ in how many places change (e.g. text_diffs "
            "{'min': 1}); a file whose plan falls outside the range is set aside with code 'expect', never edited",
+}
+
+# The usual identity of a CSI spec, as fill rules — for slot_markers ['reference'] the same rules give the template
+# spec's own values (read_template shows them and where its headers/footers show them) and each spec's own.
+REFERENCE_FILLS = {
+    "SECTION_NUMBER": {"rule": "regex", "source": "document",
+                       "pattern": r"^SECTION\s+(\d{2}\s?\d{2}\s?\d{2}(?:\.\d{2})?)\b"},
+    "SECTION_TITLE": {"rule": "first_match", "rules": [
+        {"rule": "paragraph_after", "source": "document",
+         "anchor_regex": r"^SECTION\s+\d{2}\s?\d{2}\s?\d{2}(?:\.\d{2})?\s*$"},
+        {"rule": "regex", "source": "document",
+         "pattern": r"^SECTION\s+\d{2}\s?\d{2}\s?\d{2}(?:\.\d{2})?\s*[-–—:]\s*(.+)$"}]},
 }
 
 SELECTOR_GRAMMAR = {
@@ -173,6 +199,7 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
         "modes": {"formatting": "no op writes characters", "content": "an op places the user's words, tracked",
                   "untracked": "an op places the user's words untracked (or a literal template fill)"},
         "fill_rules": FILL_RULES,
+        "reference_fills": REFERENCE_FILLS,
         "expect_checks": list(EXPECT_CHECKS),
         "expect_syntax": EXPECT_SYNTAX,
         "spec_assertions": list(SPEC_ASSERTION_KINDS),
@@ -186,6 +213,13 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
             "use only part names, style ids and section indices that appear in the profiles",
             "if no op can express the request, return 'unsupported' and a 'proposal' instead of ops",
             "two ops must not touch the same thing (the engine refuses overlapping ops)",
+            "a TEMPLATE SPEC (an ordinary spec from the architect or another firm — no highlights, no {{placeholders}}) "
+            "is used with apply_header_footer_template slot_markers ['reference'] and reference_fills (adapted when "
+            "read_template shows another layout); a prepared template keeps the default markers",
+            "'match the template's font' is set_font {runs: 'all', only_where_defined: true, font, size, size_from} + "
+            "set_style_font {styles: 'all', font, size, size_from} + set_doc_defaults_font {font, size, size_from} + "
+            "an effective_font assertion {value, size, size_from}: font and size from the template spec's body_text, "
+            "size_from the batch's body text sizes (profiles: fonts.body_text) — other sizes (headers, notes) stay",
         ],
         "editspec_schema": editspec_json_schema(),
     }

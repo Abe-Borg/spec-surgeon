@@ -464,7 +464,10 @@ def main(argv=None) -> int:
     p = sub.add_parser("do", help="natural-language request → EditSpec (Claude) → preview → approve → verified run")
     p.add_argument("request"); p.add_argument("files", nargs="*")
     p.add_argument("--from-set-aside", default=None, help="load set-aside files and diagnostics from a prior output dir")
-    p.add_argument("--template", default=None, help="template .docx for header/footer templating requests")
+    p.add_argument("--template", default=None,
+                   help="template spec (e.g. the architect's) or prepared header/footer template .docx the request "
+                        "refers to — \"make the header and footer match the template spec\", \"match the font of "
+                        "the template spec\"; left out of the batch")
     p.add_argument("--answer", action="append", help="answer to a question the compiler asked (repeatable)")
     p.add_argument("--out", default=None, help="output directory (default ./SpecSurgeon_out/<timestamp>)")
     p.add_argument("--yes", action="store_true", help="approve without asking (after the preview is written)")
@@ -480,7 +483,7 @@ def main(argv=None) -> int:
     p = sub.add_parser("retry", help="rinse & repeat: run next pass on set-aside files from a previous output folder")
     p.add_argument("out_dir", help="a previous batch output folder containing set_aside.json")
     p.add_argument("--request", default=None, help="override the original natural-language request")
-    p.add_argument("--template", default=None, help="override the template .docx")
+    p.add_argument("--template", default=None, help="override the template spec / template .docx")
     p.add_argument("--answer", action="append", help="answer to a question the compiler asked (repeatable)")
     p.add_argument("--out", default=None, help="output directory for this pass (default ./SpecSurgeon_out/<timestamp>)")
     p.add_argument("--yes", action="store_true", help="approve without asking (after the preview is written)")

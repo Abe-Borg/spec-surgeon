@@ -20,6 +20,8 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 
 **NL editor, Phase 5 (Tier B — generated transforms) — done, off by default.** When no op can express a request, `spec-surgeon do … --allow-codegen` lets Claude write one op module against a restricted API; it is AST-whitelisted, run in a separate isolated process on copies of one sample file per pattern, held to hard limits (formatting only), and must pass the full independent verification suite — failures go back to the model, at most three attempts. A passing op runs over the batch the same way (sandbox + verifier per file) and writes outputs only, never in place; the module is cached beside the run for a human to review and, if worth keeping, promote into `ops/` with tests.
 
+**Template specs and font sizes (v0.4.0) — done.** Attach a **template spec** — an ordinary spec from the architect or any other firm, nothing highlighted, no `{{placeholders}}` — and ask "make the header and footer match the template spec": every discipline spec gets the architect's header and footer, with the architect's own section number and title replaced by each spec's own (`slot_markers: ["reference"]`: the fill rules run on the template spec itself to find its own values, then on each spec). Everything else in the architect's header and footer — firm, project, phase, logo, page number — is copied as it is, and the architect's number or title written any other way ("087100", a STYLEREF field) is refused rather than copied into every spec. Ask "match the font of the template spec": the three font ops now set **sizes** too (`size`, `size_from`, and `only_where_defined` on `set_font`), so 9 pt text becomes the template's 10 pt Arial while 8 pt headers and a 12 pt note keep their size, and the `effective_font` post-condition proves it run by run. With it come the window's *Template spec* picker and two example chips, a template-spec summary for the compiler (`read_template`: the template spec's own number and title, where its headers/footers show them, its body font and size), two worked examples and an example architect's spec. Details: ["Template specs: match the architect's spec"](#template-specs-match-the-architects-spec) and ["Font sizes"](#font-sizes-match-the-template-specs-font).
+
 ---
 
 ## Contents
@@ -29,7 +31,7 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 3. [Quick start](#quick-start)
 4. [Commands](#commands)
 5. [Jobs](#jobs)
-6. [Operations and EditSpecs (NL editor, Phase 1)](#operations-and-editspecs-nl-editor-phase-1) — incl. [Header/footer templating (Phase 2)](#headerfooter-templating-phase-2)
+6. [Operations and EditSpecs (NL editor, Phase 1)](#operations-and-editspecs-nl-editor-phase-1) — incl. [Header/footer templating (Phase 2)](#headerfooter-templating-phase-2), [Template specs: match the architect's spec](#template-specs-match-the-architects-spec) and [Font sizes](#font-sizes-match-the-template-specs-font)
 7. [The verification record](#the-verification-record)
 8. [Output folder layout](#output-folder-layout)
 9. [Performance](#performance)
@@ -134,10 +136,10 @@ Environment variables:
 
 1. **Files**
    - **Specs folder:** the folder with the .docx files. Work on a *copy* of a project folder the first few times. Drop a folder onto the field or use **Browse…**. The step counts the Word files it will process and lists them; the template file and Word's `~$` lock files are left out.
-   - **Header/footer template (optional):** only for "make the header/footer look like this template".
+   - **Template spec (optional):** a spec from the architect or another firm (an ordinary spec — nothing to prepare), or a prepared header/footer template with highlighted / `{{NAME}}` placeholders. It is for requests like "make the header and footer match the template spec", "match the font of the template spec" or "make the header/footer look like this template". It is left out of the batch even when it sits in the specs folder (same path, or a copy with the same bytes).
    - **Results folder:** where previews, edited copies, records and reports land. The default is `%USERPROFILE%\SpecSurgeon_out\<timestamp>`, and each preview gets its own time-stamped folder. The folders are remembered for next time.
 2. **Describe the change**
-   - Type the request in plain English ("remove all headers and footers", "change all fonts to Arial", "make the header/footer look like this template"), or click one of the example chips.
+   - Type the request in plain English ("remove all headers and footers", "change all fonts to Arial", "make the header and footer match the template spec", "match the font of the template spec", "make the header/footer look like this template"), or click one of the example chips. A chip that mentions the template spec reminds you to choose one on *Files* when none is set.
    - No API key? Use **Load saved spec…** with one of `examples\specs\*.json` instead, or a spec saved from an earlier preview's `preview\spec.json`. A loaded spec shows as a strip under the request. Typing a request instead compiles a new spec, and **Remove** drops the loaded one.
    - Options: *Render pages (Word or LibreOffice)* makes before/after page images and checks layout (slower). *Allow AI-written transforms* is off by default and explained below.
    - A line at the bottom says where the API key comes from: your Windows environment, saved on this computer, this session only, or none.
@@ -254,6 +256,13 @@ spec-surgeon run-spec examples\specs\remove-all-headers-footers.json "C:\Project
 # "make the header/footer look like this template" (edit the spec's template path and slot_fills first);
 # the template file itself is skipped if it sits in the folder being processed
 spec-surgeon run-spec examples\specs\apply-header-footer-template.json "C:\Projects\AVC11\Specs" --out C:\Temp\ss-template
+
+# "make the header and footer match the template spec": the architect's spec as the template (point the spec's
+# "template" at your architect's spec; the example uses examples\templates\08 71 00 - DOOR HARDWARE (ACME).docx)
+spec-surgeon run-spec examples\specs\match-template-spec-header-footer.json "C:\Projects\AVC11\Specs" --out C:\Temp\ss-arch
+
+# "match the font of the template spec" (Arial 10 for the 9 pt text; edit font/size/size_from to your template and specs)
+spec-surgeon run-spec examples\specs\match-template-spec-font.json "C:\Projects\AVC11\Specs" --out C:\Temp\ss-arch-font
 ```
 
 Plain English (Phase 4; needs `pip install -e ".[agent]"` and `ANTHROPIC_API_KEY` or an `ant auth login` profile):
@@ -265,6 +274,10 @@ spec-surgeon do "remove all headers and footers" "C:\Projects\AVC11\Specs" --out
 # templating; the compiler asks for anything it would have to guess (e.g. the stamp wording) — answer and re-run
 spec-surgeon do "make the header/footer look like this template" "C:\Projects\AVC11\Specs" --template "C:\Projects\AVC11\00 00 00 TEMPLATE.docx"
 spec-surgeon do "make the header/footer look like this template" "C:\Projects\AVC11\Specs" --template "…" --answer "stamp: ISSUED FOR CONSTRUCTION  2026-02-15"
+
+# the architect's spec as the template spec: their header/footer with each spec's own number and title; their font
+spec-surgeon do "make the header and footer match the template spec" "C:\Projects\AVC11\Specs" --template "C:\Projects\AVC11\Architect\08 71 00 - Door Hardware.docx"
+spec-surgeon do "match the font of the template spec" "C:\Projects\AVC11\Specs" --template "C:\Projects\AVC11\Architect\08 71 00 - Door Hardware.docx"
 
 # run later exactly what the preview showed (refused if the spec or any file changed since)
 spec-surgeon run-spec C:\Temp\ss-do\preview\spec.json "C:\Projects\AVC11\Specs" --approval 3f9a0c1d2e4b5a69
@@ -363,14 +376,14 @@ validate spec ─► plan every op on the SOURCE ─► merge fragments ─► a
 | Op | Mode | Select | Params | What it does | Predicted / asserted |
 |---|---|---|---|---|---|
 | `remove_header_footer` | formatting | `sections` (`all` \| [i]), `kinds` (header, footer), `types` (default, first, even) | — | removes the selected `headerReference`/`footerReference` elements, then every part no longer referenced: the part, its `.rels`, its content-type override, its relationship in `document.xml.rels`, and media nothing else uses | `members_removed` exact; every block of a removed part a predicted deletion; revisions inside removed parts as negative deltas, **flagged by name**; `section_hf_refs` assertion; V7 against the source render (body must not move) |
-| `set_font` | formatting | `scope`, `runs` (`all` \| `{has_direct_font, font_in, not_in_revisions}`), `paragraphs` (predicates) | `font` (ascii+hAnsi+cs) or per-slot `ascii`/`hAnsi`/`cs`/`eastAsia`; `clear_theme_fonts` (true); `preserve_fonts`; `skip_sym_runs` (true); `in_revisions` (include \| exclude); `include_paragraph_marks` (true); `tracked`; `author` | sets `w:rFonts` on the selected runs and paragraph marks; never touches **symbol runs** (see below) | `run_fonts` assertion with the predicted run/mark counts; tracked: `+n w:rPrChange` |
-| `set_style_font` | formatting | `styles`: `all` \| `all-paragraph-and-character` \| `{ids}` \| `{types}` | font params; `only_where_defined` (true) | sets `w:rFonts` in style definitions — by default only styles that already define a font (others inherit); symbol styles left alone | `style_fonts` assertion with the exact style-id list; `styles.xml` only |
-| `set_doc_defaults_font` | formatting | — | font params | sets `docDefaults/rPrDefault/rPr/rFonts` (created in schema order when absent) | `doc_defaults_fonts` assertion |
+| `set_font` | formatting | `scope`, `runs` (`all` \| `{has_direct_font, font_in, not_in_revisions}`), `paragraphs` (predicates) | `font` (ascii+hAnsi+cs) or per-slot `ascii`/`hAnsi`/`cs`/`eastAsia`; `size` (pt), `size_from` (pt list); `only_where_defined` (false); `clear_theme_fonts` (true); `preserve_fonts`; `skip_sym_runs` (true); `in_revisions` (include \| exclude); `include_paragraph_marks` (true); `tracked`; `author` | sets `w:rFonts` on the selected runs and paragraph marks (only on those with a direct font when `only_where_defined`) and `w:sz` on those that set their own size ([Font sizes](#font-sizes-match-the-template-specs-font)); never touches **symbol runs** (see below) | `run_fonts` assertion with the predicted run/mark/sized counts; tracked: `+n w:rPrChange` |
+| `set_style_font` | formatting | `styles`: `all` \| `all-paragraph-and-character` \| `{ids}` \| `{types}` | font params; `size`, `size_from`; `only_where_defined` (true) | sets `w:rFonts` and/or `w:sz` in style definitions — by default each only where the style already defines it (others inherit); symbol styles left alone | `style_fonts` assertion with the exact style-id list and the styles that get the size; `styles.xml` only |
+| `set_doc_defaults_font` | formatting | — | font params; `size`, `size_from` | sets `docDefaults/rPrDefault/rPr/rFonts` and/or `w:sz` (created in schema order when absent; with `size_from` the size only when its own size is listed) | `doc_defaults_fonts` assertion |
 | `set_paragraph_props` | formatting | `scope`, `paragraphs` | `spacing` {before, after, line, lineRule, beforeLines, afterLines}, `ind` {left, right, start, end, firstLine, hanging}, `jc`; `tracked`; `author` | merges values into existing `w:spacing`/`w:ind` (a style's `before="240"` survives), complete pPr schema order (section-break paragraphs keep their `w:sectPr` last); `firstLine` and `hanging` replace each other | `paragraph_props` assertion; tracked: `+n w:pPrChange` with the old pPr as snapshot |
 | `set_page_setup` | formatting | `sections` | `margins` {top, right, bottom, left, header, footer, gutter} (twips), `size` {w, h}, `orientation` | merges into `w:pgMar` / `w:pgSz`; orientation sets `w:orient` and swaps w/h when they disagree (margins are not rotated) | one `section_props` assertion per section |
 | `replace_text` | content \| untracked | `scope` | as the `tracked-replace` job (+ `tracked` bool) | v0.1.0 tracked-replace | as today |
 | `fix_page_numbering` | formatting | — | `option` | v0.1.0 page-numbering | as today + `section_props` for `continuous` |
-| `apply_header_footer_template` | formatting, or untracked with a `literal` fill | `sections: "all"` only | `template`, `template_sections`, `slot_fills`; `kinds`, `slot_markers`, `highlight_colors`, `rescale_tabs`, `align_header_footer_distance`, `align_title_page`, `import_missing_styles` (see below) | copies the template's header/footer parts in as new parts (+ rels, media), fills their slots from the document's own content, rescales tabs, pins the template's look, imports missing styles, removes the old parts | `members_removed`/`members_added` exact; old parts' blocks predicted deletions, new parts' blocks predicted insertions with the filled text; `hf_template_refs`, one `template_parts` per copy, `styles_added`, `section_props` for aligned distances; V5a against the template's baseline; V7 against the template render |
+| `apply_header_footer_template` | formatting, or untracked with a `literal` fill | `sections: "all"` only | `template`, `template_sections`, `slot_fills`; `kinds`, `slot_markers` (`highlight`/`braces`, or `["reference"]` for a [template spec](#template-specs-match-the-architects-spec)), `highlight_colors`, `rescale_tabs`, `align_header_footer_distance`, `align_title_page`, `import_missing_styles` (see below) | copies the template's header/footer parts in as new parts (+ rels, media), fills their slots from the document's own content, rescales tabs, pins the template's look, imports missing styles, removes the old parts | `members_removed`/`members_added` exact; old parts' blocks predicted deletions, new parts' blocks predicted insertions with the filled text; `hf_template_refs`, one `template_parts` per copy, `styles_added`, `section_props` for aligned distances; V5a against the template's baseline; V7 against the template render |
 
 Exceptions the new ops raise (never a guess): `inheritance` (a removal would leave a selected section still *showing* a header/footer through inheritance from an earlier section, or would change what an unselected section shows — an empty replacement part would be needed and the op never creates one; first-page parts count only where `titlePg` is on, even-page parts only with `evenAndOddHeaders`, and an invisible inheritance change is flagged instead), `structure` (a header part carrying something other than images/hyperlinks; a section without `w:pgMar` when margins are set; no styles part), `tracked-format` (a tracked change on a run/paragraph that already carries someone's `w:rPrChange`/`w:pPrChange`, or on a paragraph mark that is itself a pending revision), `theme-font` (explicit font with `clear_theme_fonts: false` where a theme attribute would override it), `conflict-property` (spacing before/after on an "auto" paragraph; `left` on an indent written with `start`), `not-found`, `bad-params`, `conflict`.
 
@@ -400,7 +413,7 @@ Exceptions the new ops raise (never a guess): `inheritance` (a removal would lea
 
 * `highlight` — a maximal sequence of consecutive runs whose direct `w:highlight` is in `highlight_colors` (default `yellow`). Name: `NAME` when the highlighted text, stripped, is `{{NAME}}`; otherwise the stripped highlighted text itself (`"XX XX XX"`, `"ISSUED FOR PERMIT"`) — rsid churn that split it over several runs is fine.
 * `braces` — every `{{NAME}}` (letters, digits, underscore) in the paragraph's display text, wherever the run boundaries fall (`{{SECTION_` + `NUMBER}}` in two runs is one slot), also inside a run with other text and inside table cells.
-* A `{{NAME}}` inside a highlight span is the same slot only when the highlighted text is exactly that placeholder; any other overlap is refused (`slot-overlap`). Runs a slot covers or cuts through may hold only `w:rPr` and `w:t` (`slot-structure`); slots inside textboxes are refused (`slot-in-textbox`).
+* A `{{NAME}}` inside a highlight span is the same slot only when the highlighted text is exactly that placeholder; any other overlap is refused (`slot-overlap`). Runs a slot covers or cuts through may hold only `w:rPr` and `w:t` (`slot-structure`); slots inside textboxes are refused (`slot-in-textbox`). (Reference slots of a [template spec](#template-specs-match-the-architects-spec) may sit in runs that also hold a tab or a field character; those are cut around the value.)
 * **Display text** of a paragraph: its `w:t` whose nearest `w:p` is that paragraph, outside `w:del`/`w:moveFrom`, in document order (no field instructions, no deleted text). Slot offsets and fill extraction use it.
 * Filling a slot: runs a slot boundary cuts are split (properties carried), the slot's runs collapse into the first one, which receives the fill and — for a highlight slot — loses its highlight. Everything else in the run (its character style, bold…) stays.
 
@@ -433,19 +446,59 @@ Resolution order, lowest first: docDefaults → table style chain (inside a tabl
 
 **EditSpec `expect`** gained `text_diffs_in_kept_parts` (predicted text changes in parts that exist before and after — 0 for templating: all text changes are whole old parts out, whole new parts in).
 
+### Template specs: match the architect's spec
+
+A **template spec** is an ordinary spec from the architect (or any other firm) used as the header/footer template: nothing in it is highlighted and it has no `{{placeholders}}` — its own section number and title are simply typed into its header and footer. With `slot_markers: ["reference"]` the same op treats *those values* as the slots:
+
+```json
+{"op": "apply_header_footer_template", "select": {"sections": "all"},
+ "params": {
+   "template": "../templates/08 71 00 - DOOR HARDWARE (ACME).docx",
+   "template_sections": {"all": 0},
+   "slot_markers": ["reference"],
+   "slot_fills": {
+     "SECTION_NUMBER": {"rule": "regex", "source": "document",
+                        "pattern": "^SECTION\\s+(\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\.\\d{2})?)\\b"},
+     "SECTION_TITLE":  {"rule": "first_match", "rules": [
+        {"rule": "paragraph_after", "source": "document", "anchor_regex": "^SECTION\\s+\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\.\\d{2})?\\s*$"},
+        {"rule": "regex", "source": "document", "pattern": "^SECTION\\s+\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\.\\d{2})?\\s*[-–—:]\\s*(.+)$"}]}}}}
+```
+
+(`examples/specs/match-template-spec-header-footer.json` with `examples/templates/08 71 00 - DOOR HARDWARE (ACME).docx`; the two rules are the catalog's `reference_fills`.) On the architect's spec "SECTION 08 71 00 – DOOR HARDWARE" with a footer "DOOR HARDWARE ⇥ 08 71 00 - {PAGE}", every fire-protection spec gets the architect's header and footer reading "SECTION 21 13 13 – WET-PIPE SPRINKLER SYSTEMS" and "WET-PIPE SPRINKLER SYSTEMS ⇥ 21 13 13 - {PAGE}"; the firm and project line, the phase, the logo, the tab stops and the PAGE field are the architect's, as they are.
+
+**How the values are found.**
+
+1. **The template spec's own values.** Each fill rule is run on the template spec itself (the same `extract_fill` as on every target) — here "08 71 00" and "DOOR HARDWARE". A rule can name the template's text directly with `in_template` instead; a `literal` fill needs it (e.g. `{"rule": "literal", "value": "ISSUED FOR PERMIT", "in_template": "100% CONSTRUCTION DOCUMENTS"}` replaces the architect's phase with your approved words and makes the op `untracked`, as any literal does). A rule that finds nothing in the template spec is refused (`template-slot`), and so is a value with fewer than 3 letters/digits (too short to locate safely).
+2. **Where the header/footer shows them.** In every paragraph of every copied part, an occurrence of a value is its words in order with any whitespace between them, in any case, in the paragraph's **located text**: the display text with a separator wherever a run holds something other than text (a tab, a break, a drawing, a field character). An occurrence never spans a separator, and it must stand on its own: the character on each side is absent, whitespace, a separator, or a mark that does not itself touch a letter or digit. So "08 71 00" is found in "SECTION 08 71 00 – …" and after a tab, but not inside "08 71 00.01", "SECTION08 71 00" or "08 71 00/DOOR".
+3. **Each spec's own values** come from the same rules run on that spec, as with any template.
+
+**What is refused instead of copied** (these files go to clients; the architect's number must never end up in a fire-protection spec):
+
+* `template-value-left` — the template spec's own value appears anywhere else in the copied parts *in another form*: the text between the found occurrences, cut into runs of digits and runs of letters (case ignored, never across a separator), contains consecutive pieces that spell the value ("087100", "08-71-00", "SECTION08 71 00", "08 71 00.01" for "08 71 00"). Copying it would put the architect's number into every spec. A phone number like "(408) 710-0123" or a job number "1087100-01" does not spell it and is copied as it is.
+* `slot-in-field` — the value is shown by a Word field (any run between a field's begin and end, or inside a simple field — e.g. a STYLEREF of the title): a replaced field result would come back the next time Word updates fields.
+* `slot-overlap` — occurrences of two values share words; `slot-in-textbox` — a value inside a text box; `slot-structure` — an occurrence across runs in different containers (a hyperlink, a content control); `unknown-slot` — a value that appears in none of the copied headers/footers (drop the rule or fix it).
+
+**What the preview shows.** The plan's notes list the template spec's own values, the fill for this spec, and every paragraph holding an occurrence with the occurrences in ⟦ ⟧ — `word/header1.xml: «SECTION ⟦08 71 00⟧ – ⟦DOOR HARDWARE⟧»` — so a value found inside a longer phrase (a title that also starts another line) is visible before anything runs. When the header shows the value in another case or spacing than the template's own value ("Door Hardware" for "DOOR HARDWARE"), it is still found, and the plan flags that each spec's value is placed as that spec writes it.
+
+**Filling.** A run that holds the value and other content (the title, a tab, then the number) is cut at the value's edges: the value's text becomes a run of its own holding the fill, and everything else in the run — its other text, the tab, a field character — stays, in order, in runs of their own with the same properties. Everything else is the general templating behaviour above: tab rescaling, pins, style import, old parts removed, header/footer distances and titlePg following the template.
+
+**Verification.** V10's `template_parts` re-derives all of it from the template file, the source and the output alone (`verify/template.py`, which shares no code with the op): it runs each rule on the template itself (or takes its `in_template` text) and requires the plan's template values; locates the occurrences with its own located text, word bounds and field detection; refuses a value left in another form; re-extracts every fill from the source; and compares every run of every paragraph — text and other content **in order** — with its own model of the cut (V10 used to compare a run's non-text children apart from its text; it now compares the sequence, for every templating mode). V1, V2, V5a and V7 (the template's headers/footers rendered alone, page for page) apply as for any template.
+
+**The compiler** recognizes a template spec: `read_template` returns, beside the template's profile, a `template_spec` summary — whether it is a prepared template (its slots) or a spec, its own section number and title by the catalog's `reference_fills`, every header/footer paragraph showing them (⟦ ⟧-marked), anything reference slots would refuse there, and its body text font and size. The system prompt tells the model to use `slot_markers: ["reference"]` with those rules for a template spec, and a rule that finds nothing in the template spec (`template-slot`) is a compile error, sent back to the model once.
+
 ### Profiles, dry runs and the op catalog (Phase 3)
 
-* **`profile.py`** — `profile(pkg)` describes one file for the compiler (and for you): per section the page size, margins, text width, section type, titlePg, page numbering and which header/footer part each type *shows* (and whether the section references it itself or inherits it); per header/footer part its text (tabs shown as ⇥), fields, template slots (both conventions; a slot the op would refuse is listed as unusable), drawings, tables, pending revisions; the paragraph styles in use with count, effective font/size (resolved with `ops/effective.py`), bold/caps, alignment, spacing and a sample; theme fonts, docDefaults, the direct fonts in runs; counts (paragraphs, empty ones, tables, drawings, textboxes, numbered paragraphs, pending revisions, notes/comments parts); the first body paragraphs. `bound()` keeps it under `MAX_PROFILE_BYTES` (6000) — always: samples go first, then structure, each structural cut listed in `truncated`, and as a last resort only identity, settings and counts remain. `profile_batch(files)` groups files by structure pattern (one package open at a time) and profiles one representative each; files that cannot be read are listed under `unreadable`. The profile is descriptive only — no op reads it.
+* **`profile.py`** — `profile(pkg)` describes one file for the compiler (and for you): per section the page size, margins, text width, section type, titlePg, page numbering and which header/footer part each type *shows* (and whether the section references it itself or inherits it); per header/footer part its text (tabs shown as ⇥), fields, template slots (both conventions; a slot the op would refuse is listed as unusable), drawings, tables, pending revisions; the paragraph styles in use with count, effective font/size (resolved with `ops/effective.py`), bold/caps, alignment, spacing and a sample; theme fonts, docDefaults, the direct fonts in runs, and `body_text` — the body text's effective font and size by share of characters (v0.4.0); counts (paragraphs, empty ones, tables, drawings, textboxes, numbered paragraphs, pending revisions, notes/comments parts); the first body paragraphs. `bound()` keeps it under `MAX_PROFILE_BYTES` (6000) — always: samples go first, then structure, each structural cut listed in `truncated`, and as a last resort only identity, settings and counts remain. `profile_batch(files)` groups files by structure pattern (one package open at a time) and profiles one representative each; files that cannot be read are listed under `unreadable`. The profile is descriptive only — no op reads it.
 * **`planner.py`** — `plan_batch(inputs, spec)` validates the spec, skips the spec's template files, and plans the spec on every file (`plan_spec`, predict first); each file gets `summarize_plan()` lines or its exception. `BatchPlan.to_text()` / `to_dict()` are what `plan-spec` prints and what the preview (Phase 4) shows. Planning is fast (≈ 3–35 ms per file) and runs in-process; a file that cannot even be read is its own `crash` exception record, never an abort of the batch.
 * **`catalog.py`** — `op_catalog()` (ops with mode, description, select/params schemas, verification profile and the **common assumptions** a compiled spec should state for each; the selector grammar; modes; expect checks; the rules a compiler must follow; the worked examples from `examples/specs/`) and `editspec_json_schema()` (Appendix A of the plan with every op's own select/params schema attached as `oneOf`, unknown keys refused). `validate_spec` stays the authority — it also checks what a schema cannot (mode vs ops, expect vs plan, geometry reference vs ops).
 
 ### Natural-language editing: compile, preview, approve (Phase 4)
 
-**The compiler** (`compiler.py`, `compile_request(request, files, template=None, answers=(), model=None, client=None)`) runs one tool-use conversation with Claude (default `claude-opus-5-5`, effort `high`, server-side refusal fallback on, the system prompt — rules + the whole op catalog — cached). The model gets the request, the user's earlier answers, project memory, the template's path, and the batch summary (up to four pattern profiles inline). Read-only tools: `inspect_profile(pattern_id)`, `list_styles(file)`, `sample_paragraphs(file, style?, regex?, n?)`, `show_part_text(file, part)`, `read_template()`. It ends with `ask_user(questions)` (the compile returns `questions`; nothing runs) or `submit_editspec(spec)`. A submitted spec is accepted only when:
+**The compiler** (`compiler.py`, `compile_request(request, files, template=None, answers=(), model=None, client=None)`) runs one tool-use conversation with Claude (default `claude-opus-5-5`, effort `high`, server-side refusal fallback on, the system prompt — rules + the whole op catalog — cached). The model gets the request, the user's earlier answers, project memory, the template's path, and the batch summary (up to four pattern profiles inline). Read-only tools: `inspect_profile(pattern_id)`, `list_styles(file)`, `sample_paragraphs(file, style?, regex?, n?)`, `show_part_text(file, part)`, `read_template()` (since v0.4.0 with a `template_spec` summary: a prepared template's slots, or a template spec's own number/title, where they show and what would be refused, and its body font/size). It ends with `ask_user(questions)` (the compile returns `questions`; nothing runs) or `submit_editspec(spec)`. A submitted spec is accepted only when:
 
 1. `validate_spec` passes (or the spec carries `questions` → status `questions`, or `unsupported` + `proposal` → status `unsupported`);
 2. **every word an op would place is traceable** — `replace_text.replace` and every `literal` template fill must appear verbatim (whitespace-insensitive) in the request, the user's answers or project memory; otherwise the model is told to use the user's words or ask (the contract: no generated characters);
-3. a **dry plan** on one representative file per structure pattern: a fatal spec-level error (`spec`, `spec-mode`, `geometry`, `conflict`, `bad-params`, `unknown-slot`, `slot-overlap`) on any file rejects the spec; every other refusal (`unfilled-slot`, `expect`, `not-found`, `inheritance`, `even-odd`, `spans-runs`, `tracked-format` …) is file-specific and is accepted as long as at least one pattern plans cleanly — the preview shows them and the batch sets those files aside. A spec that plans on none of the patterns, or an empty batch, is rejected with each file's refusal (v0.3.1).
+3. a **dry plan** on one representative file per structure pattern: a fatal spec-level error (`spec`, `spec-mode`, `geometry`, `conflict`, `bad-params`, `unknown-slot`, `slot-overlap`, and since v0.4.0 `template-slot` — a reference fill rule that finds nothing in the template spec, the same for every file) on any file rejects the spec; every other refusal (`unfilled-slot`, `expect`, `not-found`, `inheritance`, `even-odd`, `spans-runs`, `tracked-format` …) is file-specific and is accepted as long as at least one pattern plans cleanly — the preview shows them and the batch sets those files aside. A spec that plans on none of the patterns, or an empty batch, is rejected with each file's refusal (v0.3.1).
 
 A rejected spec goes back once with the errors (as an `is_error` tool result); a second rejection fails the compile. A refusal, a cut-off answer, or ending twice without submitting also fails it. Status, spec, questions, errors, tool calls and token usage are written to `OUT/compile.json`.
 
@@ -514,6 +567,33 @@ Rules enforced before or while planning (nothing runs when one is broken):
 `examples/specs/change-all-font-arial.json` and `examples/specs/remove-all-headers-footers.json` are the two worked examples from the plan, ready to run.
 
 **"Change all fonts" is three ops plus a post-condition.** `set_font` on runs that carry their own font, `set_style_font` on every style that defines one, `set_doc_defaults_font` at the bottom of the chain — and the `effective_font` assertion proves the composition: V10 resolves every run's and paragraph mark's *effective* font (docDefaults → table style → paragraph style chain → character style chain → direct formatting, theme attributes through `theme1.xml`) in source and output and requires every non-symbol slot to be Arial and every symbol slot unchanged. Leave out `set_font` and V10 fails on the runs that still say "Arial Narrow". Blocks whose text a `replace_text` in the same spec edits are checked too: their runs cannot be paired after the split, so every output text run of such a block must resolve to the asserted font, or to a preserved symbol font that block already had.
+
+### Font sizes: match the template spec's font
+
+The three font ops set the font **size** (`w:sz`) as well as the font. Sizes go only where a level already sets one, so a style's or the document's size keeps governing text that inherits it:
+
+| Op | `size` (points, whole or half) goes to | Notes |
+|---|---|---|
+| `set_font` | selected runs and paragraph marks that carry their own `w:sz` (listed in `size_from` when given) | with no font given, only those runs are selected; `only_where_defined: true` puts the **font** only on runs that carry a direct font too (the `has_direct_font` runs), so one op handles both |
+| `set_style_font` | selected styles that define `w:sz` (listed in `size_from` when given) | per property: a style gets the font where it defines one and the size where it defines one; `only_where_defined: false` sets the size on every selected style (unless `size_from` is given) |
+| `set_doc_defaults_font` | `docDefaults/rPrDefault` | its own size is its `w:sz`, or 10 pt when it sets none; with `size_from` it changes only when that size is listed |
+
+`size_from` (a list of point sizes) is what makes "match the template spec's font" safe: `{"size": 10, "size_from": [9]}` turns the 9 pt text 10 pt and leaves the 8 pt headers and footers, a 12 pt note and the 26 pt title as they are. The complex-script size (`w:szCs`) is left alone, as the East Asian font slot is; symbol runs and symbol styles are never touched. A size must be whole or half points between 1 and 1638 (`bad-params`).
+
+```json
+"ops": [
+  {"op": "set_font", "select": {"scope": ["document", "headers", "footers", "footnotes", "endnotes"], "runs": "all"},
+   "params": {"font": "Arial", "size": 10, "size_from": [9], "only_where_defined": true}},
+  {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": "Arial", "size": 10, "size_from": [9]}},
+  {"op": "set_doc_defaults_font", "params": {"font": "Arial", "size": 10, "size_from": [9]}}],
+"assertions": [
+  {"kind": "effective_font", "value": "Arial", "slots": ["ascii", "hAnsi", "cs"], "size": 10, "size_from": [9],
+   "scope": ["document", "headers", "footers", "footnotes", "endnotes"], "include_paragraph_marks": true}]
+```
+
+(`examples/specs/match-template-spec-font.json`.) The compiler takes the font and size from the template spec's `body_text` (read_template) and `size_from` from the batch's: every profile now carries `fonts.body_text`, the body text's effective font and size by share of characters (`[{"font": "Century Gothic", "size_pt": 9.0, "share": 0.65}, …]`).
+
+**Verification.** `run_fonts`, `style_fonts` and `doc_defaults_fonts` re-derive, from the source, which runs, marks and styles get the font and which get the size (and how many), and check each one: `w:rFonts` exactly as asserted (or untouched where only the size applies), `w:sz` exactly the new value where the size applies, everything else in the run properties identical — a `w:szCs` changed along fails, and so does a size given to a run or style outside `size_from`. The `effective_font` post-condition gained `size` and `size_from` (and `value` became optional): V10 resolves every text run's and paragraph mark's effective size (docDefaults → table style → paragraph style chain → character style chain → direct; 10 pt when nothing sets one) in source and output; with `size_from`, text that resolved to a listed size must now resolve to `size` and all other text must keep its size; symbol runs (a preserved font in their chain, or a `w:sym`) are exempt. Leave out `set_font` and the runs that set their own 9 pt fail it; assert "everything 10 pt" without `size_from` and the 12 pt note fails it.
 
 ---
 
@@ -747,15 +827,17 @@ spec-surgeon/
 ├── examples/jobs/*.json              ready-made --params files
 ├── examples/specs/*.json             ready-made EditSpecs (change-all-font-arial, remove-all-headers-footers,
 │                                     apply-header-footer-template, apply-header-footer-template-fallback — the
-│                                     mixed-batch example with a first_match chain and an expect range)
-├── examples/templates/               00_00_00_TEMPLATE.docx — the fixture header/footer template (both slot conventions)
+│                                     mixed-batch example with a first_match chain and an expect range;
+│                                     match-template-spec-header-footer and match-template-spec-font — a template spec)
+├── examples/templates/               00_00_00_TEMPLATE.docx — the fixture header/footer template (both slot conventions);
+│                                     "08 71 00 - DOOR HARDWARE (ACME).docx" — an architect's spec used as a template spec
 ├── src/spec_surgeon/
 │   ├── cli.py                        command line
 │   ├── batch.py                      orchestration (pool, render, deliver, records, report)
 │   ├── report.py                     BATCH_REPORT.md / batch.json
 │   ├── package.py                    DocxPackage: zip, rels, sections, working overlay (members, rels, content types), repack-by-substitution
 │   ├── editspec.py                   EditSpec load/validate → plan every op → merge → apply (Phase 1 executor)
-│   ├── profile.py                    per-pattern document profiles (Phase 3)
+│   ├── profile.py                    per-pattern document profiles (Phase 3); body text font/size; template_spec_summary
 │   ├── planner.py                    batch dry-run planning + plan summaries (Phase 3)
 │   ├── catalog.py                    op catalog + EditSpec JSON schema (Phase 3)
 │   ├── compiler.py                   request → EditSpec with Claude: tools, submission checks (Phase 4)
@@ -779,7 +861,8 @@ spec-surgeon/
 │   ├── ops/                          base.py (Op, Plan, PlanFragment, merge_fragments, JobException), selectors.py,
 │   │                                 fix_page_numbering, replace_text, remove_header_footer, set_font, set_style_font,
 │   │                                 set_doc_defaults_font, set_paragraph_props, set_page_setup,
-│   │                                 apply_header_footer_template (+ slots.py, effective.py, hf_common.py),
+│   │                                 apply_header_footer_template (+ slots.py — incl. reference slots and carve —,
+│   │                                 effective.py, hf_common.py),
 │   │                                 delete_paragraphs, insert_paragraph (v0.3.0)
 │   ├── jobs/                         base.py (Job, OpJob), page_numbering.py, tracked_replace.py — v0.1.0 aliases over ops/
 │   ├── verify/                       INDEPENDENT: reader.py, textcheck.py, xsd.py, geometry.py, suite.py, props.py (V10),
@@ -793,7 +876,9 @@ spec-surgeon/
                                       test_compiler.py, test_codegen.py, test_advisor.py, test_gui.py,
                                       test_adaptive_messy.py (v0.3.0), test_audit_fixes.py (v0.3.1),
                                       test_updater.py, test_settings.py, test_ui_rows.py, test_packaging.py,
-                                      test_credentials.py, qt_support.py, data/ (v0.4.0)
+                                      test_credentials.py, qt_support.py, data/ (v0.4.0),
+                                      test_reference_template.py, test_font_size.py, test_template_spec.py
+                                      (v0.4.0: template specs and font sizes)
 ```
 
 ---
@@ -892,8 +977,21 @@ On Windows, `packaging/windows/validate_installer.ps1` (run by the build) instal
 
 It then reinstalls and uninstalls as before.
 
+v0.4.0 — template specs and font sizes (311 tests: 310 pass and the Credential Manager test skips off Windows, ~110 s in the container):
+
+| File | Covers |
+|---|---|
+| `test_reference_template.py` | a template spec (`build_reference_spec()`) applied to `build()` targets with `slot_markers: ["reference"]`: each spec's own number and title in the architect's header and footer, the firm line run for run, the footer's tab and PAGE field kept in order around the filled runs, the plan's template values and ⟦ ⟧ notes; several specs each getting their own values; a title written in another case found and flagged; `in_template` with a literal (untracked); look-alikes neither replaced nor refused (a phone number, longer job numbers, the title's words in another phrase); refusals — the value left in another form (no spaces, hyphens, run into a longer number, run into a word, the title run into another word), the value shown by a STYLEREF field, a literal without `in_template`, an empty or too-short `in_template`, a rule that finds nothing in the template spec, a value shown nowhere, overlapping values, mixed markers, `in_template` without reference slots; the transform's and the verifier's locators agreeing on every paragraph of four template variants; planted defects — the architect's number left in an output, a tab moved inside its run, the footer's occurrences missed by plan and apply alike, a wrong template value shared by plan and apply, word bounds ignored by plan and apply alike ("08 71 00.01" → "21 05 00.01"), a carve that drops the tab — and a run holding several `w:t` around a tab cut exactly as the verifier models it |
+| `test_font_size.py` | "match the template's font" on `build_sized()`: Arial 10 for the 9 pt text while 8 pt headers, a 12 pt note, symbol runs and symbol styles keep their size; `w:szCs` left alone; no direct font added to a run that only had a size; size-only `set_font` selecting only runs with their own size; `only_where_defined` per property on styles; docDefaults left alone when its size is not listed; bad sizes refused; the post-condition's size validated; the transform's and the verifier's size rules agreeing; planted defects — a size outside `size_from` changed in the output, `w:szCs` changed along, a header style resized, `size_from` ignored by plan and apply alike, sizes added to styles by plan and apply alike — and the effective-size post-condition catching an incomplete composition and an over-broad assertion |
+| `test_template_spec.py` | what `read_template` tells the compiler (own values and ⟦ ⟧ occurrences, the refusals reference slots would meet, a prepared template's slots), `fonts.body_text` in every profile, the catalog's `reference_fills` / `in_template` / worked examples, both worked examples through `run_batch` (the template spec in the specs folder skipped), and the compiler loop with a scripted client: a template spec read and a reference spec accepted; a rule that finds nothing in the template spec rejected as `template-slot` and fixed on the second submission |
+| `test_audit_fixes.py` | + `in_template` among the catalog's documented fill-rule keys |
+
+`build_reference_spec()` (`make_fixtures.py OUT_DIR --reference` — it wrote `examples/templates/08 71 00 - DOOR HARDWARE (ACME).docx`) is an architect's spec: one section, 1" side margins, Normal Arial 10 pt, a header "ACME ARCHITECTS ⇥ AVC11 DATA CENTER – 100% CONSTRUCTION DOCUMENTS" / "SECTION 08 71 00 – DOOR HARDWARE" (options: the title in another case, shown by a STYLEREF field, an extra header line) and a footer "DOOR HARDWARE ⇥ 08 71 00 - {PAGE}" with the title and number in one run around the tab; `REFERENCE_FILLS` fit it and `build()`. `build_sized()` is a 9 pt discipline spec with 8 pt Header/Footer/SpecNote styles, runs that set their own 9 pt (one with a direct font and a `w:szCs`), a 12 pt note, a direct Wingdings run and a `w:sym` run at 9 pt, a paragraph mark at 9 pt and a 9 pt Wingdings character style.
+
 ## Known limits of the prototype
 
+* **Template specs** (`slot_markers: ["reference"]`): a value the architect's header/footer shows in another form ("087100", hyphens, run into other text), through a field (STYLEREF, a document property) or in a text box is refused, not converted — fix the template spec (or name the exact text with `in_template`). An occurrence is replaced wherever its words stand on their own, also inside a longer phrase ("DOOR HARDWARE SCHEDULE" for the title "DOOR HARDWARE"): check the ⟦ ⟧ notes in the preview. Each spec's value is placed as that spec writes it — a spec whose number is "210500" gets "210500" where the architect wrote "08 71 00". Text in DrawingML shapes (`a:t`, WordArt, charts) is not searched.
+* **Font sizes:** the size goes only where a run, style or docDefaults sets one; list-number sizes in `numbering.xml`, the complex-script size (`w:szCs`) and conditional table-style formatting are not changed or modelled. The effective-size post-condition does not model `tblStylePr` either.
 * Two job modules. Header/footer templating is now an op (`apply_header_footer_template`, Phase 2, run through EditSpecs); numbering conversion is described in the skill's playbooks but not yet implemented.
 * `tracked-replace` edits text whose run sits directly under the paragraph, a hyperlink, an sdt content, or a `w:ins`; a target inside an insertion that wraps a hyperlink/sdt is an exception. Paragraph-mark revisions (deleting whole paragraphs tracked) are not implemented.
 * V8's accept/reject simulation is per block and does not merge paragraphs across tracked paragraph marks (no current job creates those).

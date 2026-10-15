@@ -14,7 +14,9 @@ Usage:  python tests/make_fixtures.py OUT_DIR [--count N] [--rich | --template]
 section, header-only and shared media, theme + explicit fonts, symbol runs/styles, runs inside revisions.
 
 ``build_template()`` (``--template``) is the Phase 2 header/footer template (both slot conventions); ``TEMPLATE_FILLS``
-are its fill rules. ``build()``'s keyword options make templating targets: ``footer_revision`` (Jeremy's pending
+are its fill rules. ``build_reference_spec()`` (``--reference``) is an ordinary spec from another firm used as a
+template spec (reference slots); ``REFERENCE_FILLS`` fit it and build() targets. ``build_sized()`` is the size fixture
+of the font ops (9 pt text, 8 pt headers, a 12 pt note, symbol runs with sizes). ``build()``'s keyword options make templating targets: ``footer_revision`` (Jeremy's pending
 insertion in the body footer), ``side_margin_twips``, ``header_distance_twips``, ``footer_distance_twips``,
 ``body_picture`` (a drawing whose id the template's logo must not reuse).
 """
@@ -453,6 +455,140 @@ def build_template() -> bytes:
     return buf.getvalue()
 
 
+def _styleref_field(paragraph, result: str):
+    """A STYLEREF field whose cached result shows ``result`` (an architect's header showing the title by field)."""
+    r1 = paragraph.add_run()
+    fc = OxmlElement("w:fldChar"); fc.set(qn("w:fldCharType"), "begin"); r1._r.append(fc)
+    r2 = paragraph.add_run()
+    it = OxmlElement("w:instrText"); it.set(qn("xml:space"), "preserve"); it.text = ' STYLEREF "Title" '; r2._r.append(it)
+    r3 = paragraph.add_run()
+    fc = OxmlElement("w:fldChar"); fc.set(qn("w:fldCharType"), "separate"); r3._r.append(fc)
+    paragraph.add_run(result)
+    r5 = paragraph.add_run()
+    fc = OxmlElement("w:fldChar"); fc.set(qn("w:fldCharType"), "end"); r5._r.append(fc)
+
+
+def build_reference_spec(section_number: str = "08 71 00", title: str = "DOOR HARDWARE", *,
+                         header_title: str | None = None, title_by_field: bool = False,
+                         extra_header_text: str = "", number_body: str | None = None,
+                         body_font: str = "Arial", body_size: float = 10) -> bytes:
+    """An ordinary spec from another firm, used as the TEMPLATE SPEC (reference slots): nothing is highlighted and
+    there are no {{placeholders}} — its own section number and title are simply typed into its header and footer.
+
+    * single section, 1-inch side margins (text width 9360; build() targets have 8640), Normal Arial 10 pt
+      (``body_font``/``body_size``), Header 8 pt;
+    * header: "ACME ARCHITECTS<tab>AVC11 DATA CENTER – 100% CONSTRUCTION DOCUMENTS" and
+      "SECTION 08 71 00 – DOOR HARDWARE" (``header_title`` changes how the title is written there, ``title_by_field``
+      shows it through a STYLEREF field, ``extra_header_text`` adds a third line);
+    * footer: "DOOR HARDWARE<tab>08 71 00 - <PAGE>";
+    * body: "SECTION 08 71 00" (or ``number_body``), the title, then PART 1 - GENERAL.
+    """
+    from docx.shared import Inches
+    doc = Document()
+    styles = doc.styles
+    styles["Normal"].font.name = body_font; styles["Normal"].font.size = Pt(body_size)
+    styles["Header"].font.size = Pt(8)
+    s0 = doc.sections[0]
+    s0.left_margin = s0.right_margin = Inches(1)
+    h = s0.header; h.is_linked_to_previous = False
+    p = h.paragraphs[0]
+    p.add_run("ACME ARCHITECTS\tAVC11 DATA CENTER – 100% CONSTRUCTION DOCUMENTS")
+    p = h.add_paragraph()
+    p.add_run(f"SECTION {section_number} – ")
+    if title_by_field:
+        _styleref_field(p, header_title or title)
+    else:
+        p.add_run(header_title or title)
+    if extra_header_text:
+        h.add_paragraph(extra_header_text)
+    f = s0.footer; f.is_linked_to_previous = False
+    p = f.paragraphs[0]
+    p.add_run(f"{title}\t{section_number} - ")
+    _page_field(p)
+    doc.add_paragraph(f"SECTION {number_body or section_number}")
+    doc.add_paragraph(title)
+    doc.add_paragraph("PART 1 - GENERAL")
+    doc.add_paragraph("1.1\tSUMMARY")
+    doc.add_paragraph("A.\tSection includes door hardware for swinging doors.")
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
+# Fill rules that fit build() targets AND build_reference_spec() (the template spec's own values come from the same
+# rules run on the template itself).
+REFERENCE_FILLS = {
+    "SECTION_NUMBER": {"rule": "regex", "source": "document", "pattern": r"^SECTION\s+(\d{2}\s?\d{2}\s?\d{2})\b"},
+    "SECTION_TITLE": {"rule": "paragraph_after", "source": "document", "anchor_regex": r"^SECTION\s+\d{2}\s?\d{2}\s?\d{2}$"},
+}
+
+
+def _sz(run_or_rpr, half_points: int, cs: bool = False):
+    """Direct w:sz (and w:szCs) on a python-docx run, or on an rPr element."""
+    rpr = run_or_rpr._r.get_or_add_rPr() if hasattr(run_or_rpr, "_r") else run_or_rpr
+    for tag in ("w:sz",) + (("w:szCs",) if cs else ()):
+        el = OxmlElement(tag); el.set(qn("w:val"), str(half_points)); rpr.append(el)
+
+
+def build_sized(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS") -> bytes:
+    """A discipline spec set in 9 pt with 8 pt headers — the size cases of the font ops ("match the template's font:
+    Arial 10"):
+
+    * docDefaults 9 pt; Normal Century Gothic 9 pt; Heading 1 9 pt bold; Header/Footer 8 pt; a SpecNote style 8 pt;
+      a BulletSymbol character style (Wingdings, 9 pt);
+    * body runs with their own size: "UL listed" (Arial Narrow, 9 pt with a w:szCs 9 pt), "pasted at 9 pt" (no direct
+      font), "deliberately 12 pt", a direct Wingdings "§" at 9 pt, a w:sym run at 9 pt; a paragraph mark at 9 pt; a
+      plain run inheriting 9 pt; a table;
+    * header: the section line with a direct 8 pt run; footer: page number.
+    """
+    from docx.enum.style import WD_STYLE_TYPE
+    doc = Document()
+    styles = doc.styles
+    sroot = styles.element
+    dd = sroot.find(qn("w:docDefaults")).find(qn("w:rPrDefault")).find(qn("w:rPr"))
+    for old in dd.findall(qn("w:sz")) + dd.findall(qn("w:szCs")):
+        dd.remove(old)
+    _sz(dd, 18)
+    styles["Normal"].font.name = "Century Gothic"; styles["Normal"].font.size = Pt(9)
+    styles["Heading 1"].font.size = Pt(9); styles["Heading 1"].font.bold = True
+    styles["Header"].font.size = Pt(8); styles["Footer"].font.size = Pt(8)
+    note = styles.add_style("SpecNote", WD_STYLE_TYPE.PARAGRAPH)
+    note.base_style = styles["Normal"]; note.font.size = Pt(8)
+    bullet = styles.add_style("BulletSymbol", WD_STYLE_TYPE.CHARACTER)
+    bullet.font.name = "Wingdings"; bullet.font.size = Pt(9)
+    s0 = doc.sections[0]
+    h = s0.header; h.is_linked_to_previous = False
+    hp = h.paragraphs[0]; hp.style = styles["Header"]
+    _sz(hp.add_run(f"SECTION {section_number}"), 16)
+    f = s0.footer; f.is_linked_to_previous = False
+    fp = f.paragraphs[0]; fp.style = styles["Footer"]
+    fp.add_run(f"{section_number} - ")
+    _page_field(fp)
+    doc.add_paragraph(f"SECTION {section_number}")
+    doc.add_paragraph(title)
+    doc.add_paragraph("PART 1 - GENERAL", style="Heading 1")
+    p = doc.add_paragraph()
+    p.add_run("A.\tSprinklers shall be ")
+    ul = p.add_run("UL listed"); _rfonts(ul, ascii="Arial Narrow", hAnsi="Arial Narrow"); _sz(ul, 18, cs=True)
+    p.add_run(" per NFPA 13 (2025).")
+    p = doc.add_paragraph()
+    _sz(p.add_run("B.\tText pasted at 9 pt."), 18)
+    _sz(p.add_run(" A note deliberately 12 pt."), 24)
+    p = doc.add_paragraph()
+    b = p.add_run("l"); b.style = "BulletSymbol"
+    dingbat = p.add_run("§"); _rfonts(dingbat, ascii="Wingdings", hAnsi="Wingdings"); _sz(dingbat, 18)
+    sym_run = p.add_run()
+    sym = OxmlElement("w:sym"); sym.set(qn("w:font"), "Symbol"); sym.set(qn("w:char"), "F0B7"); sym_run._r.append(sym)
+    _sz(sym_run, 18)
+    p.add_run("\tC.\tPlain text inheriting 9 pt.")
+    p = doc.add_paragraph("D.\tParagraph mark at 9 pt.")
+    mark = OxmlElement("w:rPr"); _sz(mark, 18); p._p.get_or_add_pPr().append(mark)
+    doc.add_paragraph("NOTE: coordinate with the Owner's insurer.", style="SpecNote")
+    t = doc.add_table(rows=1, cols=2)
+    t.cell(0, 0).text = "Pressure"; t.cell(0, 1).text = "175 psi"
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
 SPECS = [
     ("21 05 00", "COMMON WORK RESULTS FOR FIRE SUPPRESSION"),
     ("21 10 00", "WATER-BASED FIRE-SUPPRESSION SYSTEMS"),
@@ -471,8 +607,13 @@ def main(argv=None):
     ap.add_argument("--count", type=int, default=len(SPECS))
     ap.add_argument("--rich", action="store_true", help="build the NL-editor op fixture (build_rich) instead")
     ap.add_argument("--template", action="store_true", help="write the header/footer template fixture only")
+    ap.add_argument("--reference", action="store_true", help="write the template-spec fixture (an architect's spec) only")
     args = ap.parse_args(argv)
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
+    if args.reference:
+        (out / "08 71 00 - DOOR HARDWARE (ACME).docx").write_bytes(build_reference_spec())
+        print(f"wrote {out / '08 71 00 - DOOR HARDWARE (ACME).docx'}")
+        return
     if args.template:
         (out / "00_00_00_TEMPLATE.docx").write_bytes(build_template())
         print(f"wrote {out / '00_00_00_TEMPLATE.docx'}")

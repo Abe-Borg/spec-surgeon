@@ -13,6 +13,25 @@ A braces placeholder inside a highlight span is the same slot only when the high
 placeholder; anything else overlapping is refused. Slot runs (and runs a slot boundary cuts through) may hold only
 ``w:rPr`` and ``w:t``; slots may not sit in nested (textbox) paragraphs.
 
+* ``reference`` (used alone) — the template is an ordinary spec (e.g. the architect's), not a prepared template. Each
+  fill rule NAME → rule also has a **template value**: the rule's ``in_template`` text when given, else the value
+  the rule extracts from the TEMPLATE document itself (``extract_fill`` on the template; a rule containing a literal
+  needs ``in_template``). Values are looked for in a paragraph's **located text**: its display text with a separator
+  (``SEP``) wherever a display run holds anything other than ``w:rPr``/``w:t`` (a tab, break, drawing, field
+  character…). An occurrence is a match of ``value_pattern`` (the value's words in order, whitespace between them,
+  case-insensitive; never across a separator) that is ``bounded``: on each side the next character is absent,
+  whitespace, a separator, or a mark that does not itself touch a letter/digit/underscore on its far side ("08 71
+  00" in "08 71 00.01", "SECTION08 71 00" or "08 71 00/DOOR" is not an occurrence). Every occurrence is a slot NAME.
+  Refused: a template value with fewer than 3 letters/digits (``template-slot``); occurrences of two names
+  overlapping (``slot-overlap``); a slot in a field (``slot-in-field``: any run between a complex field's begin and
+  end, counted over the whole part in document order, or inside ``w:fldSimple`` — Word would show the field's own
+  result again on update); a template value left anywhere else in the copied parts in another form
+  (``template-value-left``: in the located text between the slots of any paragraph, consecutive tokens — maximal
+  runs of digits or of letters, casefolded, never across a separator — whose concatenation equals the value's
+  tokens' concatenation: "087100", "08-71-00", "SECTION08 71 00" for "08 71 00"), because it would be copied
+  unchanged into every spec. Unlike highlight/braces slots, the runs a reference slot touches may hold other
+  content (a tab after the title, say): it stays, in order, in runs of its own beside the slot's run (``carve``).
+
 Display text of a paragraph: its ``w:t`` (not ``w:delText``, not field instructions) whose nearest ``w:p`` is the
 paragraph, outside ``w:del``/``w:moveFrom``, in document order. Fill extraction reads it; slot offsets use it.
 
@@ -41,7 +60,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from lxml import etree
 
 from ..package import W, DocxPackage
-from ..ooxml import paragraphs, set_text, split_run_at_text
+from ..ooxml import clone_run_shell, paragraphs, set_text
 from .base import JobException
 from .hf_common import KINDS, TYPES, effective_refs
 
@@ -102,9 +121,194 @@ def _highlighted(run, colors) -> bool:
     return hl is not None and hl.get(W + "val") in colors
 
 
-def find_slots(p, markers: Sequence[str], colors: Sequence[str], where: str) -> List[Slot]:
+REFERENCE_MIN_ALNUM = 3
+SEP = "\x00"        # in located text: any display-run content other than w:t (never a character of real text)
+
+
+def _deleted(r, p) -> bool:
+    q = r.getparent()
+    while q is not None and q is not p:
+        if q.tag in (W + "del", W + "moveFrom"):
+            return True
+        q = q.getparent()
+    return False
+
+
+def located_text(p) -> Tuple[str, List[int]]:
+    """(located text, display offset of each of its positions and of its end) — see the module docstring."""
+    out: List[str] = []
+    offs: List[int] = []
+    pos = 0
+    for r in paragraph_runs(p):
+        if _deleted(r, p):
+            continue
+        for c in r:
+            if c.tag == W + "rPr":
+                continue
+            if c.tag == W + "t":
+                s = c.text or ""
+                out.append(s)
+                offs.extend(range(pos, pos + len(s)))
+                pos += len(s)
+            else:
+                out.append(SEP)
+                offs.append(pos)
+    offs.append(pos)
+    return "".join(out), offs
+
+
+def value_pattern(value: str):
+    """How a template value is found in located text: its words in order, whitespace between them, any case."""
+    words = [re.escape(w) for w in re.split(r"\s+", (value or "").strip()) if w]
+    return re.compile(r"\s+".join(words), re.IGNORECASE)
+
+
+def _wordch(c: str) -> bool:
+    return c.isalnum() or c == "_"
+
+
+def bounded(text: str, a: int, b: int) -> bool:
+    """``text[a:b]`` stands on its own: on each side the next character is absent, whitespace, a separator, or a
+    mark whose own far neighbour is not a letter, digit or underscore."""
+    for i, step in ((a - 1, -1), (b, 1)):
+        if not 0 <= i < len(text):
+            continue
+        c = text[i]
+        if _wordch(c):
+            return False
+        if c.isspace() or c == SEP:
+            continue
+        j = i + step
+        if 0 <= j < len(text) and _wordch(text[j]):
+            return False
+    return True
+
+
+def value_tokens(s: str) -> List[str]:
+    """Maximal runs of digits or of letters, casefolded (how a template value is recognised in another form)."""
+    return [t.casefold() for t in re.findall(r"\d+|[^\W\d_]+", s or "")]
+
+
+def value_left_in(piece: str, value: str) -> bool:
+    """True when consecutive tokens of ``piece`` concatenate to the value's tokens' concatenation."""
+    key = "".join(value_tokens(value))
+    toks = value_tokens(piece)
+    for i in range(len(toks)):
+        acc = ""
+        for t in toks[i:]:
+            acc += t
+            if acc == key:
+                return True
+            if len(acc) >= len(key) or not key.startswith(acc):
+                break
+    return False
+
+
+def shown(text: str) -> str:
+    """Located text for a message: separators as spaces, whitespace collapsed."""
+    return " ".join(text.replace(SEP, " ").split())
+
+
+def mark_slots(p, slots: Sequence["Slot"]) -> str:
+    """The paragraph's text for a person, each slot in ⟦ ⟧ (``shown`` form)."""
+    text, offs = located_text(p)
+    starts, ends = {s.start for s in slots}, {s.end for s in slots}
+    return shown("".join(("⟦" if ch != SEP and offs[i] in starts else "") + ch
+                         + ("⟧" if ch != SEP and offs[i] + 1 in ends else "") for i, ch in enumerate(text)))
+
+
+def field_runs(root) -> set:
+    """Runs inside a field: between a complex field's begin and end (counted over the whole part in document
+    order) or inside w:fldSimple."""
+    inside, depth = set(), 0
+    for r in root.iter(W + "r"):
+        if depth > 0 or any(a.tag == W + "fldSimple" for a in r.iterancestors()):
+            inside.add(r)
+        for fc in r.findall(W + "fldChar"):
+            kind = fc.get(W + "fldCharType")
+            if kind == "begin":
+                depth += 1
+                inside.add(r)
+            elif kind == "end":
+                depth = max(0, depth - 1)
+    return inside
+
+
+def reference_values(tpkg: DocxPackage, fills_spec: Dict[str, Any]) -> Dict[str, str]:
+    """Each fill rule's template value: its ``in_template`` text, else what the rule extracts from the template."""
+    out: Dict[str, str] = {}
+    for name, rule in fills_spec.items():
+        if not isinstance(rule, dict):
+            raise JobException(f"slot {name!r}: fill rule must be an object", "bad-params")
+        if "in_template" in rule:
+            v = rule["in_template"]
+            if not isinstance(v, str) or not v.strip():
+                raise JobException(f"slot {name!r}: 'in_template' must be the template's own non-empty text",
+                                   "bad-params")
+            v = v.strip()
+        elif rule_uses_literal(rule):
+            raise JobException(f"slot {name!r}: with reference slots a literal fill needs 'in_template' — the "
+                               f"template spec's own words it replaces", "bad-params")
+        else:
+            try:
+                v = extract_fill(tpkg, name, rule)
+            except JobException as e:
+                if e.code == "bad-params":
+                    raise
+                raise JobException(f"slot {name!r}: the rule finds no value in the template spec itself "
+                                   f"({e.reason}); give 'in_template' or a rule that also fits the template",
+                                   "template-slot", {"slot": name})
+        if SEP in v:
+            raise JobException(f"slot {name!r}: the template value holds a NUL character", "bad-params")
+        if len("".join(value_tokens(v))) < REFERENCE_MIN_ALNUM:
+            raise JobException(f"slot {name!r}: the template value {v!r} is too short to locate safely",
+                               "template-slot", {"slot": name, "value": v})
+        out[name] = v
+    return out
+
+
+def reference_slots(p, where: str, ref_values: Dict[str, str], in_field: Optional[set]) -> List[Slot]:
+    """Every bounded occurrence of a template value in the paragraph's located text (module docstring), with the
+    refusals that go with it: overlap, inside a field, the value left elsewhere in another form."""
+    text, offs = located_text(p)
+    found: List[Tuple[int, int, Slot]] = []
+    for name, value in ref_values.items():
+        for m in value_pattern(value).finditer(text):
+            if bounded(text, m.start(), m.end()):
+                found.append((m.start(), m.end(), Slot(name, "reference", offs[m.start()], offs[m.end()], m.group(0))))
+    found.sort(key=lambda f: (f[0], f[1]))
+    for (a1, b1, s1), (a2, b2, s2) in zip(found, found[1:]):
+        if a2 < b1:
+            raise JobException(f"{where}: the template values of {s1.name!r} and {s2.name!r} overlap in "
+                               f"{shown(text[a1:max(b1, b2)])!r}", "slot-overlap", {"where": where, "text": shown(text)})
+    if in_field is not None:
+        _, segs = display_segments(p)
+        for _, _, s in found:
+            if any(b > a and a < s.end and s.start < b and r in in_field for t, r, a, b in segs):
+                raise JobException(f"{where}: {s.name} ({s.placeholder!r}) is shown by a field; its result would come "
+                                   f"back when Word updates fields — not filled", "slot-in-field",
+                                   {"where": where, "slot": s.name})
+    pieces, cur = [], 0
+    for a, b, _ in found:
+        pieces.append(text[cur:a])
+        cur = b
+    pieces.append(text[cur:])
+    for name, value in ref_values.items():
+        for piece in pieces:
+            if value_left_in(piece, value):
+                raise JobException(f"{where}: the template spec's own {name} {value!r} also appears in "
+                                   f"{shown(piece)!r} in a form that can't be replaced safely (written differently, or "
+                                   f"run into other text) — it would be copied unchanged into every spec",
+                                   "template-value-left", {"where": where, "slot": name, "text": shown(piece)})
+    return [s for _, _, s in found]
+
+
+def find_slots(p, markers: Sequence[str], colors: Sequence[str], where: str,
+               ref_values: Optional[Dict[str, str]] = None, in_field: Optional[set] = None) -> List[Slot]:
     text, segs = display_segments(p)
     spans: List[Slot] = []
+    if "reference" in markers:
+        spans = reference_slots(p, where, ref_values or {}, in_field)
     if "highlight" in markers:
         cur: List[Any] = []
         def flush():
@@ -137,38 +341,82 @@ def find_slots(p, markers: Sequence[str], colors: Sequence[str], where: str) -> 
                                    {"where": where, "text": text})
             spans.append(Slot(m.group(1), "braces", m.start(), m.end(), m.group(0)))
     for s in spans:
-        for t, r, a, b in segs:
-            if a < s.end and s.start < b and any(c.tag not in TEXT_ONLY for c in r):
-                raise JobException(f"{where}: slot {s.name!r} runs through a run holding more than text "
-                                   f"({[etree.QName(c).localname for c in r if c.tag not in TEXT_ONLY]})",
-                                   "slot-structure", {"where": where, "slot": s.name})
+        if s.marker != "reference":          # a reference slot never holds a separator; carve keeps what's beside it
+            for t, r, a, b in segs:
+                if a < s.end and s.start < b and any(c.tag not in TEXT_ONLY for c in r):
+                    raise JobException(f"{where}: slot {s.name!r} runs through a run holding more than text "
+                                       f"({[etree.QName(c).localname for c in r if c.tag not in TEXT_ONLY]})",
+                                       "slot-structure", {"where": where, "slot": s.name})
+        if len({id(r.getparent()) for t, r, a, b in segs if b > a and a < s.end and s.start < b}) > 1:
+            raise JobException(f"{where}: slot {s.name!r} spans runs in different containers (a hyperlink, a content "
+                               f"control…)", "slot-structure", {"where": where, "slot": s.name})
         if not s.name:
             raise JobException(f"{where}: an empty highlighted slot", "slot-structure", {"where": where})
     return sorted(spans, key=lambda s: s.start)
 
 
+def carve(p, start: int, end: int) -> List[Any]:
+    """Cut the runs that display text [start, end) touches (display runs whose text overlaps it) so that the range
+    is exactly the w:t text of whole runs holding nothing but w:rPr and w:t. A touched run's other content — its
+    text outside the range and its other children, in order — stays in runs of its own (one per stretch between the
+    range's pieces), each with a copy of the run's attributes and properties; empty w:t elements of a touched run
+    are dropped. Returns the runs holding the range, in order. The verifier's ``_run_model`` states the same."""
+    spans, pos = [], 0
+    for r in paragraph_runs(p):
+        if _deleted(r, p):
+            continue
+        n = sum(len(t.text or "") for t in r.findall(W + "t"))
+        spans.append((r, pos, pos + n))
+        pos += n
+    inside: List[Any] = []
+    for r, ra, rb in spans:
+        if not (rb > ra and ra < end and start < rb):
+            continue
+        groups: List[List[Any]] = []            # [is_inside, [elements]]
+
+        def add(flag: bool, el) -> None:
+            if groups and groups[-1][0] == flag:
+                groups[-1][1].append(el)
+            else:
+                groups.append([flag, [el]])
+        off = ra
+        for c in [c for c in r if c.tag != W + "rPr"]:
+            if c.tag != W + "t":
+                add(False, c)
+                continue
+            text = c.text or ""
+            a, b = off, off + len(text)
+            off = b
+            if not text:
+                continue
+            cuts = sorted({a, b} | {x for x in (start, end) if a < x < b})
+            if len(cuts) == 2:
+                add(start <= a and b <= end, c)
+                continue
+            for x, y in zip(cuts, cuts[1:]):
+                piece = etree.Element(c.tag)
+                set_text(piece, text[x - a:y - a])
+                add(start <= x and y <= end, piece)
+        if len(groups) == 1 and groups[0][0] and all(c.tag in TEXT_ONLY for c in r):
+            inside.append(r)
+            continue
+        parent = r.getparent()
+        idx = parent.index(r)
+        parent.remove(r)
+        for k, (flag, els) in enumerate(groups):
+            nr = clone_run_shell(r)
+            for el in els:
+                nr.append(el)
+            parent.insert(idx + k, nr)
+            if flag:
+                inside.append(nr)
+    return inside
+
+
 def apply_slot(p, slot: Slot, fill: str, remove_highlight: bool) -> None:
-    """Replace the slot's text with ``fill`` in one run: runs a boundary cuts through are split (rPr carried),
-    the slot's runs collapse into the first one, whose highlight goes when the slot is a highlight slot."""
-    def isolate(offset: int) -> None:
-        """Split the run whose w:t straddles ``offset`` so that a run boundary falls exactly there."""
-        _, segs = display_segments(p)
-        for t, r, a, b in segs:
-            if a < offset < b:
-                pieces = [x for x in split_run_at_text(r, t, 0, offset - a) if x is not None]
-                parent = r.getparent()
-                idx = parent.index(r)
-                parent.remove(r)
-                for k, x in enumerate(pieces):
-                    parent.insert(idx + k, x)
-                return
-    isolate(slot.start)
-    isolate(slot.end)
-    _, segs = display_segments(p)
-    runs: List[Any] = []
-    for t, r, a, b in segs:
-        if slot.start <= a and b <= slot.end and b > a and r not in runs:
-            runs.append(r)
+    """Replace the slot's text with ``fill`` in one run: the touched runs are carved (``carve``), the slot's runs
+    collapse into the first one, whose highlight goes when the slot is a highlight slot."""
+    runs = carve(p, slot.start, slot.end)
     if not runs:
         raise JobException(f"internal: slot {slot.name!r} lost its runs", "internal")
     parent = runs[0].getparent()

@@ -27,7 +27,7 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .ooxml import CELL_REV_TAGS, CONTENT_REV_TAGS, PROPERTY_REV_TAGS
 from .ops import OPS, JobException, Plan, PlanFragment, get_op, merge_fragments
-from .ops.selectors import DEFAULT_PRESERVE_FONTS
+from .ops.selectors import DEFAULT_PRESERVE_FONTS, size_values
 from .package import DocxPackage
 
 SPEC_KEYS = {"request", "summary", "assumptions", "questions", "applies_to", "mode", "review", "ops",
@@ -230,6 +230,15 @@ def validate_spec(spec: Dict[str, Any]) -> None:
     for a in spec.get("assertions") or []:
         if not isinstance(a, dict) or a.get("kind") not in SPEC_ASSERTION_KINDS:
             raise SpecError(f"spec-level assertions are post-conditions only ({SPEC_ASSERTION_KINDS}); got {a!r}", "spec")
+        if a["kind"] == "effective_font":
+            if a.get("value") is None and a.get("size") is None:
+                raise SpecError("an effective_font assertion needs 'value' (a font name) and/or 'size' (points)", "spec")
+            if a.get("value") is not None and (not isinstance(a["value"], str) or not a["value"].strip()):
+                raise SpecError("effective_font 'value' must be a font name", "spec")
+            try:
+                size_values({"size": a.get("size"), "size_from": a.get("size_from")})
+            except JobException as e:
+                raise SpecError(f"effective_font: {e.reason}", "spec")
 
 
 def _op_params(o: Dict[str, Any]) -> Dict[str, Any]:

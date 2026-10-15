@@ -1,0 +1,63 @@
+{
+  "request": "make the header and footer match the template spec",
+  "summary": "Give every section the template spec's header and footer. The template spec's own section number (08 71 00) and title (DOOR HARDWARE) are replaced by each spec's own — the number from its 'SECTION nn nn nn' line, the title from the paragraph after it (or after a dash on the same line); everything else in its header and footer (firm, project, phase, page number) is copied as it is. Tab stops are rescaled to each section's text width and the template's look is pinned; the old headers/footers are removed; body text is untouched.",
+  "assumptions": [
+    "the template is an ordinary spec (no placeholders): wherever its header/footer shows its own section number '08 71 00' or title 'DOOR HARDWARE', each spec's own goes (slot_markers ['reference'])",
+    "a spec's section number is the 'nn nn nn' after SECTION at the start of its first lines; its title is the next paragraph, or the text after a dash on the SECTION line",
+    "every section (cover and body) gets the template spec's one header and footer",
+    "header/footer distances and titlePg follow the template; page margins stay as they are",
+    "pending tracked changes inside the old headers/footers are discarded with them and flagged by name"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "apply_header_footer_template",
+      "select": {
+        "sections": "all"
+      },
+      "params": {
+        "template": "../templates/08 71 00 - DOOR HARDWARE (ACME).docx",
+        "template_sections": {
+          "all": 0
+        },
+        "slot_markers": [
+          "reference"
+        ],
+        "slot_fills": {
+          "SECTION_NUMBER": {
+            "rule": "regex",
+            "source": "document",
+            "pattern": "^SECTION\\s+(\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\.\\d{2})?)\\b"
+          },
+          "SECTION_TITLE": {
+            "rule": "first_match",
+            "rules": [
+              {
+                "rule": "paragraph_after",
+                "source": "document",
+                "anchor_regex": "^SECTION\\s+\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\.\\d{2})?\\s*$"
+              },
+              {
+                "rule": "regex",
+                "source": "document",
+                "pattern": "^SECTION\\s+\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\.\\d{2})?\\s*[-–—:]\\s*(.+)$"
+              }
+            ]
+          }
+        }
+      },
+      "expect": {
+        "text_diffs_in_kept_parts": 0,
+        "members_added": "the template spec's header/footer parts (+ rels)"
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "template"
+  }
+}

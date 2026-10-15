@@ -46,7 +46,8 @@ from .effective import AmbiguousToggle, Resolver, rescale_tabs, text_width, them
 from .hf_common import (FOOTER_CT, HEADER_CT, KINDS, TYPES, apply_removal, check_part_relationships, effective_refs,
                         plan_removal, refs)
 from .selectors import StyleSheet
-from .slots import apply_slot, expected_block_text, extract_fill, find_slots, nearest_p, paragraph_runs, rule_uses_literal
+from .slots import (apply_slot, expected_block_text, extract_fill, field_runs, find_slots, mark_slots, nearest_p,
+                    paragraph_runs, reference_values, rule_uses_literal)
 
 WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
 KEEP_NS = {NS["w"], NS["r"], "http://www.w3.org/XML/1998/namespace"}
@@ -173,9 +174,16 @@ class ApplyHeaderFooterTemplate(Op):
                                       "anchor_regex, source?, section?, occurrence?, flexible_whitespace?} | {rule: "
                                       "'first_match', rules: [...]} (tried in order; use it when the batch mixes layouts). "
                                       "Grammar and semantics: the catalog's fill_rules. Every slot of the template parts in "
-                                      "use needs a rule; a rule naming no slot is refused."},
-        "slot_markers": {"type": "array", "items": {"type": "string", "enum": ["highlight", "braces"]},
-                         "default": ["highlight", "braces"]},
+                                      "use needs a rule; a rule naming no slot is refused. With slot_markers ['reference'] "
+                                      "a rule may carry in_template: the template spec's own text it replaces (required "
+                                      "for a literal)."},
+        "slot_markers": {"type": "array", "items": {"type": "string", "enum": ["highlight", "braces", "reference"]},
+                         "default": ["highlight", "braces"],
+                         "description": "highlight/braces: a prepared template's placeholders. ['reference'] (alone): "
+                                        "the template is an ordinary spec (e.g. the architect's); each fill rule is "
+                                        "also run on the template itself (or names 'in_template' text) and every "
+                                        "place its header/footer shows that value is a slot — the template's own "
+                                        "section number/title become each spec's own"},
         "highlight_colors": {"type": "array", "items": {"type": "string"}, "default": ["yellow"]},
         "rescale_tabs": {"type": "boolean", "default": True},
         "align_header_footer_distance": {"type": "boolean", "default": True,
@@ -214,8 +222,15 @@ class ApplyHeaderFooterTemplate(Op):
         align_title = bool(params.get("align_title_page", True))
         import_missing = bool(params.get("import_missing_styles", True))
         fills_spec = params.get("slot_fills") or {}
-        if not kinds or set(kinds) - set(KINDS) or not markers or set(markers) - {"highlight", "braces"}:
-            raise JobException("kinds ⊆ header/footer and slot_markers ⊆ highlight/braces, non-empty", "bad-params")
+        reference = markers == ["reference"]
+        if not kinds or set(kinds) - set(KINDS) or not markers or \
+                (not reference and set(markers) - {"highlight", "braces"}):
+            raise JobException("kinds ⊆ header/footer, and slot_markers ⊆ highlight/braces or exactly ['reference']",
+                               "bad-params")
+        if not reference and any(isinstance(r, dict) and "in_template" in r for r in fills_spec.values()):
+            raise JobException("'in_template' belongs to slot_markers ['reference'] (a template spec); a prepared "
+                               "template's slots are its highlighted / {{NAME}} placeholders", "bad-params")
+        ref_values = reference_values(tpkg, fills_spec) if reference else None
 
         tsect = DocxPackage.sect_prs(tpkg.xml(tpkg.main_part()))
         main = pkg.main_part()
@@ -268,6 +283,9 @@ class ApplyHeaderFooterTemplate(Op):
         # ---- template parts: structure, slots ----
         slots_by_copy: List[Dict[int, list]] = []
         all_slot_names: set = set()
+        shown_in: List[str] = []                 # reference slots: each paragraph holding one, slots in ⟦ ⟧
+        case_noted: set = set()
+        frag_flags: List[str] = []
         for c in copies:
             tp = c["template_part"]
             troot = tpkg.xml(tp)
@@ -282,20 +300,34 @@ class ApplyHeaderFooterTemplate(Op):
                 if sdt.find(f"{W}sdtPr/{W}dataBinding") is not None:
                     raise JobException(f"template part {tp} has a data-bound content control", "structure")
             check_part_relationships(tpkg, tp)
+            in_field = field_runs(troot) if reference else None
             per_p: Dict[int, list] = {}
             for bi, p in enumerate(paragraphs(troot)):
-                sl = find_slots(p, markers, colors, f"template {tp} paragraph {bi}")
+                where = f"template {tp} paragraph {bi}"
+                sl = find_slots(p, markers, colors, where, ref_values=ref_values, in_field=in_field)
                 if sl and nearest_p(p) is not None:
                     raise JobException(f"template {tp}: slot {sl[0].name!r} is inside a textbox; not handled",
                                        "slot-in-textbox", {"part": tp})
                 if sl:
                     per_p[bi] = sl
                     all_slot_names |= {s.name for s in sl}
+                    if reference:
+                        shown_in.append(f"{tp}: «{mark_slots(p, sl)}»")
+                        for s_ in sl:
+                            if s_.placeholder != ref_values[s_.name] and s_.name not in case_noted:
+                                case_noted.add(s_.name)
+                                frag_flags.append(f"the template spec shows its own {s_.name} as {s_.placeholder!r} "
+                                                  f"(its value: {ref_values[s_.name]!r}); each spec's own value is "
+                                                  f"placed there as that spec writes it")
             slots_by_copy.append(per_p)
         unfilled = sorted(all_slot_names - set(fills_spec))
         if unfilled:
             raise JobException(f"template slot(s) {unfilled} have no fill rule", "unfilled-slot", {"slots": unfilled})
         unknown = sorted(set(fills_spec) - all_slot_names)
+        if unknown and reference:
+            raise JobException("the template spec's own " + ", ".join(f"{n} {ref_values[n]!r}" for n in unknown)
+                               + " appear(s) in none of its headers/footers in use; drop the rule(s) or fix them",
+                               "unknown-slot", {"fills": unknown, "values": {n: ref_values[n] for n in unknown}})
         if unknown:
             raise JobException(f"fill rule(s) for {unknown} name no slot in the template parts used", "unknown-slot",
                                {"fills": unknown, "slots": sorted(all_slot_names)})
@@ -481,7 +513,8 @@ class ApplyHeaderFooterTemplate(Op):
                 "kind": "template_parts", "part": c["part"], "template": str(Path(tpath).resolve()),
                 "template_md5": tmd5, "template_part": c["template_part"], "template_section": c["template_section"],
                 "target_sections": c["target_sections"], "rescale_tabs": rescale, "slot_markers": markers,
-                "highlight_colors": colors, "fills": fills_spec, "expected_fills": fills})
+                "highlight_colors": colors, "fills": fills_spec, "expected_fills": fills,
+                **({"template_values": ref_values} if reference else {})})
         if imported:
             frag.property_assertions.append({"kind": "styles_added", "styles_part": styles_part, "ids": list(imported),
                                              "template": str(Path(tpath).resolve()), "template_md5": tmd5})
@@ -512,6 +545,11 @@ class ApplyHeaderFooterTemplate(Op):
                               + (f", tabs {c['template_width']}→{c['target_width']}" if c['template_width'] != c['target_width'] else "")
                               for c in copies))
         frag.notes.append("fills: " + "; ".join(f"{n} = {fills[n]!r} ({fills_spec[n].get('rule')})" for n in sorted(fills)))
+        if reference:
+            frag.notes.append("template spec (reference slots): its own " + ", ".join(
+                f"{n} {ref_values[n]!r} → {fills[n]!r}" for n in sorted(ref_values)) + "; replaced at ⟦ ⟧ in "
+                + "; ".join(dict.fromkeys(shown_in)) + "; everything else in its headers/footers is copied as it is")
+            frag.flags.extend(frag_flags)
         frag.notes.append(f"{n_pins} property value(s) pinned so the copies render as in the template"
                           + (f"; styles imported: {list(imported)}" if imported else "; no styles imported"))
         frag.notes.append(f"old parts removed: {rp.parts_gone or 'none'}; media removed: {rp.media or 'none'}")
