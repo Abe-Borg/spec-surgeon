@@ -148,7 +148,8 @@ def plan_file(path: Path, spec: Dict[str, Any]) -> FilePlan:
         fp = FilePlan(Path(path), pid, "exception", exception=e.to_dict())
     except Exception as e:  # noqa: BLE001 — unreadable or unexpected: recorded, not raised
         fp = FilePlan(Path(path), pid, "exception",
-                      exception={"code": "crash", "reason": f"{type(e).__name__}: {e}", "details": {}})
+                      exception={"code": getattr(e, "code", None) or "crash", "reason": f"{type(e).__name__}: {e}",
+                                 "details": {}})
     fp.ms = (time.perf_counter() - t0) * 1000
     return fp
 

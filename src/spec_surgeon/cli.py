@@ -221,8 +221,12 @@ def cmd_run(args, spec=None):
     out_dir = Path(args.out) if args.out else Path.cwd() / "SpecSurgeon_out" / datetime.now().strftime("%Y%m%d-%H%M%S")
     def progress(msg):
         print(msg, file=sys.stderr, flush=True)
-    batch = run_batch(args.files, args.job, params, out_dir, workers=args.workers, renderer=args.renderer,
-                      do_render=not args.no_render, in_place=args.in_place, progress=progress, spec=spec)
+    try:
+        batch = run_batch(args.files, args.job, params, out_dir, workers=args.workers, renderer=args.renderer,
+                          do_render=not args.no_render, in_place=args.in_place, progress=progress, spec=spec)
+    except ValueError as e:          # refused before anything was written (an input inside the results folder)
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
     c = batch.counts()
     print(f"\n{len(batch.files)} file(s): PASS {c['PASS']}  FAIL {c['FAIL']}  EXCEPTION {c['EXCEPTION']}   "
           f"({batch.timings['total']:.1f}s total: " + ", ".join(f"{k} {v:.2f}s" for k, v in batch.timings.items() if k != "total")

@@ -83,6 +83,8 @@ def _header(section, stamp: str):
 
 def _set_pgnum_start(section, start: int):
     sp = section._sectPr
+    for old in sp.findall(qn("w:pgNumType")):     # add_section copies the previous sectPr, restart included
+        sp.remove(old)
     pg = OxmlElement("w:pgNumType")
     pg.set(qn("w:start"), str(start))
     cols = sp.find(qn("w:cols"))
@@ -95,7 +97,11 @@ def _set_pgnum_start(section, start: int):
 def build(section_number: str, title: str, stamp: str = "ISSUED FOR CONSTRUCTION  2026-01-01",
           with_cover_page_field: bool = True, single_section: bool = False, footer_revision: bool = False,
           side_margin_twips: int | None = None, header_distance_twips: int | None = None,
-          footer_distance_twips: int | None = None, body_picture: bool = False) -> bytes:
+          footer_distance_twips: int | None = None, body_picture: bool = False,
+          body_footer_linked: bool = False, appendix_restart: bool = False) -> bytes:
+    """``body_footer_linked``: the body section has no footer of its own ("Link to Previous"), so Word shows the
+    cover's footer — and its PAGE field — on every body page. ``appendix_restart``: a third section (an appendix)
+    that restarts page numbering at 1 again, like the body section does."""
     doc = Document()
     st = doc.styles["Normal"]; st.font.name = "Arial"; st.font.size = Pt(10)
 
@@ -117,7 +123,10 @@ def build(section_number: str, title: str, stamp: str = "ISSUED FOR CONSTRUCTION
     if not single_section:
         body = doc.add_section(WD_SECTION.NEW_PAGE)
         body.header.is_linked_to_previous = True
-        _footer(body, section_number)
+        if body_footer_linked:
+            body.footer.is_linked_to_previous = True      # no footerReference: the cover's footer part is shown
+        else:
+            _footer(body, section_number)
         if footer_revision:                     # Jeremy's pending insertion in the body footer
             body.footer.paragraphs[0].add_run("INS: (rev)")
         _set_pgnum_start(body, 1)
@@ -157,6 +166,11 @@ def build(section_number: str, title: str, stamp: str = "ISSUED FOR CONSTRUCTION
     p.add_run(" for FM Global coordination.")
     for i in range(1, 30):
         doc.add_paragraph(f"{i + 1}.01\tArticle {i} body text for {section_number}. " * 3)
+    if appendix_restart and not single_section:
+        appendix = doc.add_section(WD_SECTION.NEW_PAGE)   # headers/footers linked to previous; its own restart
+        _set_pgnum_start(appendix, 1)
+        doc.add_paragraph("APPENDIX A - HYDRAULIC CALCULATIONS")
+        doc.add_paragraph("Attached.")
 
     settings = doc.settings.element
     tr = OxmlElement("w:trackRevisions")

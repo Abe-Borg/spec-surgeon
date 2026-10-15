@@ -9,8 +9,9 @@
     - the slots (yellow highlight / ``{{NAME}}``, or with ``slot_markers: ["reference"]`` every bounded place the
       template's located text shows its own value of a fill rule — the rule run on the template here, or its
       ``in_template`` text) found with this module's own detection, and every fill re-extracted from the source by
-      its declared rule (literal / regex / paragraph_after / first_match); for reference slots also: none in a field,
-      none overlapping, and no template value left elsewhere in the part in another form (digit/letter tokens
+      its declared rule (literal / regex / paragraph_after / first_match); no slot of any marker in a field (between
+      a complex field's begin and end over the whole part, or inside fldSimple); for reference slots also: none
+      overlapping, and no template value left elsewhere in the part in another form (digit/letter tokens
       concatenated);
     - every block's text = the template block's text with the slots replaced by those fills;
     - the part skeleton (everything except top-level paragraph contents, drawing ids masked) identical;
@@ -329,6 +330,11 @@ def slots_of(p, markers, colors, ref_values: Optional[Dict[str, str]] = None,
             if any(s["start"] < m.end() and m.start() < s["end"] for s in spans):
                 raise ValueError(f"placeholder {m.group(0)} overlaps a highlighted slot")
             spans.append({"name": m.group(1), "start": m.start(), "end": m.end(), "highlight": False})
+    if in_field is not None:                    # every marker: a slot a field shows is not a slot the op may fill
+        for sl in spans:
+            for r, (a, b) in zip(runs, offs):
+                if b > a and a < sl["end"] and sl["start"] < b and r in in_field:
+                    raise ValueError(f"slot {sl['name']!r} is inside a field")
     return sorted(spans, key=lambda s: s["start"])
 
 
@@ -722,7 +728,7 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
     t_pars, o_pars = list(troot.iter(W + "p")), list(oroot.iter(W + "p"))
     slots: Dict[int, List[Dict[str, Any]]] = {}
     markers = a.get("slot_markers", ["highlight", "braces"])
-    ref_values, in_field = None, None
+    ref_values, in_field = None, _v_field_runs(troot)
     try:
         if "reference" in markers:
             if markers != ["reference"]:
@@ -731,7 +737,6 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
             if ref_values != a.get("template_values"):
                 errs.append(f"{tag}: template values derived here {ref_values} differ from the plan's "
                             f"{a.get('template_values')}")
-            in_field = _v_field_runs(troot)
         for k, p in enumerate(t_pars):
             try:
                 sl = slots_of(p, markers, a.get("highlight_colors", ["yellow"]), ref_values, in_field)

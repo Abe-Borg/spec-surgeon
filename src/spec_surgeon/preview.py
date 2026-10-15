@@ -166,8 +166,10 @@ def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, ren
     done = [s for s in pv.samples if s.output]
     if backend and done:
         rdir = out_dir / "render"
-        srcs = render_mod.render_pdfs([s.source for s in done], rdir / "source", backend, 2)
-        outs = render_mod.render_pdfs([s.output for s in done], rdir / "output", backend, 2)
+        # a renderer failure (Word that will not start, a file LibreOffice chokes on) is a warning beside the plan
+        # summaries and verification, never a preview that dies without them
+        srcs = render_mod.render_pdfs([s.source for s in done], rdir / "source", backend, 2, log=pv.warnings.append)
+        outs = render_mod.render_pdfs([s.output for s in done], rdir / "output", backend, 2, log=pv.warnings.append)
         for s in done:
             sp, op = srcs.get(s.source), outs.get(s.output)
             if not sp or not op:

@@ -36,6 +36,18 @@ CT = "{%s}" % NS["ct"]
 CT_PART = "[Content_Types].xml"
 
 REL_TYPE_BASE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
+STRICT_NS_PREFIX = "http://purl.oclc.org/ooxml/"       # ISO/IEC 29500 Strict: every namespace moves here
+
+
+class UnsupportedFormat(ValueError):
+    """A .docx this engine does not read: ISO Strict Open XML (Word's "Strict Open XML Document (*.docx)" save
+    format), whose parts use other namespaces for everything. ``code`` is what a batch records for the file."""
+    code = "unsupported-format"
+
+    def __init__(self, what: str):
+        super().__init__(f"{what}: this is a Strict Open XML document (ISO/IEC 29500 Strict), which Spec Surgeon "
+                         f"does not read. In Word, File → Save As → 'Word Document (*.docx)' (not 'Strict Open XML "
+                         f"Document'), then run again.")
 HEADER_REL = REL_TYPE_BASE + "header"
 FOOTER_REL = REL_TYPE_BASE + "footer"
 FOOTNOTES_REL = REL_TYPE_BASE + "footnotes"
@@ -351,10 +363,15 @@ class DocxPackage:
 
     def main_part(self) -> str:
         """Resolve the main document part from the package rels (it is almost always word/document.xml,
-        but the rule is: resolve, never assume)."""
+        but the rule is: resolve, never assume). A Strict Open XML package (its officeDocument relationship type
+        under the ISO namespace) is refused here, with a message that says what to do, rather than failing on
+        some missing element deep inside."""
         root = self.xml("_rels/.rels")
         for rel in root.findall(REL + "Relationship"):
-            if rel.get("Type", "").endswith("/officeDocument"):
+            rtype = rel.get("Type", "")
+            if rtype.endswith("/officeDocument"):
+                if rtype.startswith(STRICT_NS_PREFIX):
+                    raise UnsupportedFormat(self.name)
                 return rel.get("Target").lstrip("/")
         return "word/document.xml"
 
@@ -393,6 +410,10 @@ class DocxPackage:
     def sect_prs(root: etree._Element) -> List[etree._Element]:
         """Every sectPr in document order: those inside paragraph pPr, then the body-level final one."""
         body = root.find(W + "body")
+        if body is None:
+            if etree.QName(root).namespace and etree.QName(root).namespace.startswith(STRICT_NS_PREFIX):
+                raise UnsupportedFormat("the main document part")
+            raise ValueError("the main document part has no w:body")
         out = []
         for p in body.iter(W + "p"):
             ppr = p.find(W + "pPr")

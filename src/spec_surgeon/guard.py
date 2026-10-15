@@ -48,7 +48,9 @@ def acquire(path: os.PathLike | str) -> Identity:
 
 
 def drifted(identity: Identity) -> Optional[str]:
-    """None if unchanged, else a human-readable description of what moved."""
+    """None if unchanged, else a human-readable description of what moved. Size and mtime first (cheap), then the
+    content itself: a sync tool or an editor that restores the timestamp can leave an edited file of the same
+    size, and the md5 recorded at acquisition is what the plan was made from."""
     p = Path(identity.path)
     if not p.exists():
         return "source file no longer exists"
@@ -56,6 +58,8 @@ def drifted(identity: Identity) -> Optional[str]:
     if st.st_size != identity.size or st.st_mtime_ns != identity.mtime_ns:
         return (f"size/mtime changed since acquisition "
                 f"({identity.size}→{st.st_size} bytes, mtime {identity.mtime_ns}→{st.st_mtime_ns})")
+    if _md5_file(p) != identity.md5:
+        return f"content changed since acquisition (same size and mtime, md5 {identity.md5} → {_md5_file(p)})"
     return None
 
 

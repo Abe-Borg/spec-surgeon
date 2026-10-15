@@ -54,7 +54,7 @@ def result_rows(batch: Any) -> List[Row]:
     out_dir = Path(batch.out_dir)
     for f in batch.files:
         name = Path(f.source).name
-        record_md = out_dir / "records" / f"{Path(f.source).stem}.record.md"
+        record_md = out_dir / "records" / f"{getattr(f, 'record_stem', Path(f.source).stem)}.record.md"
         output = Path(f.output) if f.output else None
         if f.status == "EXCEPTION":
             exc = f.exception or {}

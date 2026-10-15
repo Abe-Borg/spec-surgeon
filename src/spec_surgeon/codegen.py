@@ -115,10 +115,10 @@ def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict
                    timeout: int = SANDBOX_TIMEOUT) -> SandboxResult:
     """plan + apply of the generated op on a COPY of ``docx`` in a separate isolated process."""
     t0 = time.perf_counter()
-    workdir = Path(workdir)
+    workdir = Path(workdir).resolve()          # the sandbox runs with cwd=workdir: every path it gets is absolute
     workdir.mkdir(parents=True, exist_ok=True)
     copy_path = workdir / "source.docx"
-    shutil.copyfile(docx, copy_path)
+    shutil.copyfile(Path(docx).resolve(), copy_path)
     req = workdir / "request.json"
     req.write_text(json.dumps({"source": source, "docx": str(copy_path), "select": select, "params": params}),
                    encoding="utf-8")
@@ -177,10 +177,18 @@ def trial(source: str, f: Path, select, params, workdir: Path) -> FileTrial:
     sb = run_in_sandbox(source, f, select, params, workdir)
     if not sb.ok:
         return FileTrial(f, False, [f"[{sb.code or 'error'}] {sb.error}"])
-    limits = hard_limits(sb.plan)
+    try:
+        limits = hard_limits(sb.plan)
+    except Exception as e:  # noqa: BLE001 — a plan the engine cannot even read is a failed trial, with the reason
+        return FileTrial(f, False, [f"the generated op's plan is malformed ({type(e).__name__}: {e})"], sb.output)
     if limits:
         return FileTrial(f, False, limits, sb.output)
-    rec = run_suite(Path(f).read_bytes(), sb.output.read_bytes(), sb.plan, str(f), str(sb.output))
+    try:
+        rec = run_suite(Path(f).read_bytes(), sb.output.read_bytes(), sb.plan, str(f), str(sb.output))
+    except Exception as e:  # noqa: BLE001 — an output the suite cannot read (a part removed, a broken zip): FAIL
+        return FileTrial(f, False, [f"the verifier could not check the output at all ({type(e).__name__}: {e}); "
+                                    f"the generated op produced a package the suite cannot read — a removed or "
+                                    f"broken part?"], sb.output)
     fails = [f"{c.id} FAIL: {c.summary[:600]}" for c in rec.checks if c.status == "FAIL"]
     return FileTrial(f, rec.passed, fails, sb.output, rec)
 

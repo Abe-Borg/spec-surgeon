@@ -98,9 +98,18 @@ def _part_view(pkg: DocxPackage, part: str) -> Dict[str, Any]:
     return view
 
 
+def _int(v, default=None):
+    """An attribute's integer, or ``default`` when it is missing or not a number (a file Word tolerates must not
+    stop the profile — the profile is descriptive, and the file still fingerprints and plans)."""
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return default
+
+
 def _section(pkg: DocxPackage, i: int, sp, shown, own) -> Dict[str, Any]:
     sz, mar = sp.find(W + "pgSz"), sp.find(W + "pgMar")
-    g = lambda el, k: int(el.get(W + k)) if el is not None and el.get(W + k) not in (None, "") else None
+    g = lambda el, k: _int(el.get(W + k)) if el is not None and el.get(W + k) not in (None, "") else None
     typ = sp.find(W + "type")
     title = sp.find(W + "titlePg")
     pg = sp.find(W + "pgNumType")
@@ -140,7 +149,7 @@ def _style_entry(sheet: StyleSheet, res: Resolver, sid: str, count: int, sample_
     try:
         eff = res.run(None, sample_p)
         e["font"] = eff["ascii"] if eff["ascii"] == eff["hAnsi"] else f"{eff['ascii']} / {eff['hAnsi']}"
-        e["size_pt"] = int(eff["sz"]) / 2
+        e["size_pt"] = _int(eff["sz"], 0) / 2
         if eff["b"]:
             e["bold"] = True
         if eff["caps"]:
@@ -151,7 +160,7 @@ def _style_entry(sheet: StyleSheet, res: Resolver, sid: str, count: int, sample_
     if para["jc"] != "left":
         e["jc"] = para["jc"]
     if para["before"] != "0" or para["after"] != "0":
-        e["spacing_twips"] = {"before": int(para["before"]), "after": int(para["after"])}
+        e["spacing_twips"] = {"before": _int(para["before"], 0), "after": _int(para["after"], 0)}
     txt = display_text(sample_p)
     if txt.strip():
         e["sample"] = _clip(txt, 70)
@@ -215,7 +224,7 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         if rf is not None:
             dd["fonts"] = {etree_local(k): v for k, v in rf.attrib.items()}
         if sz is not None:
-            dd["size_pt"] = int(sz.get(W + "val")) / 2
+            dd["size_pt"] = _int(sz.get(W + "val"), 0) / 2
 
     counts = {
         "paragraphs": len(body),
@@ -280,7 +289,7 @@ def body_text_fonts(pkg: DocxPackage, limit: int = 3) -> List[Dict[str, Any]]:
                 eff = res.run(r.find(W + "rPr"), p)
             except AmbiguousToggle:
                 continue
-            count[(eff["ascii"], int(eff["sz"]))] += n
+            count[(eff["ascii"], _int(eff["sz"], 0))] += n
     total = sum(count.values()) or 1
     return [{"font": f, "size_pt": sz / 2, "share": round(c / total, 2)} for (f, sz), c in count.most_common(limit)]
 
@@ -433,8 +442,24 @@ def profile_batch(files: Sequence[Path]) -> Dict[str, Any]:
         groups.setdefault(pid, []).append(Path(f))
     patterns = []
     for pid, fs in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
-        rep = DocxPackage.from_path(fs[0])            # only the representative is reopened
-        patterns.append({"pattern_id": pid, "count": len(fs), "files": [f.name for f in fs], "profile": profile(rep)})
+        # the representative is the first file of the pattern that profiles; a file whose XML the profiler cannot
+        # read (a margin that is not a number…) is listed as unprofiled and the next file stands in for the pattern
+        names = [f.name for f in fs]
+        prof, unprofiled = None, []
+        for f in fs:
+            try:
+                prof = profile(DocxPackage.from_path(f))      # only the representative is reopened
+                if f.name != names[0]:
+                    names = [f.name] + [n for n in names if n != f.name]
+                break
+            except Exception as e:  # noqa: BLE001
+                unprofiled.append(f"{f.name}: {type(e).__name__}: {e}")
+        entry: Dict[str, Any] = {"pattern_id": pid, "count": len(fs), "files": names,
+                                 "profile": prof if prof is not None else
+                                 {"error": "no file of this pattern could be profiled", "files": unprofiled[:3]}}
+        if unprofiled:
+            entry["unprofiled"] = unprofiled
+        patterns.append(entry)
     out: Dict[str, Any] = {"files": len(files), "patterns": patterns}
     if unreadable:
         out["unreadable"] = unreadable

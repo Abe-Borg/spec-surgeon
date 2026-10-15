@@ -112,6 +112,24 @@ class SetParagraphProps(Op):
                         raise JobException(f"{part} paragraph {bi}: spacing {side} is 'auto' "
                                            f"({side}Autospacing); the value would be ignored", "conflict-property",
                                            {"part": part, "paragraph": bi})
+                    # a spacing given in lines (beforeLines/afterLines, hundredths of a line) wins over the point
+                    # value: "6 pt after" written beside afterLines="200" is two lines after, with a PASS — refused
+                    # unless the spec sets the lines value too (or the user clears it in Word first)
+                    if side in sv and f"{side}Lines" not in sv:
+                        lines_at = None
+                        if sp is not None and sp.get(W + side + "Lines") not in (None, ""):
+                            lines_at = f"the paragraph itself ({side}Lines={sp.get(W + side + 'Lines')})"
+                        else:
+                            for st in sheet.lineage(sheet.paragraph_style_id(p)):
+                                ssp = st.find(W + "pPr/" + W + "spacing")
+                                if ssp is not None and ssp.get(W + side + "Lines") not in (None, ""):
+                                    lines_at = f"style {st.get(W + 'styleId')!r} ({side}Lines={ssp.get(W + side + 'Lines')})"
+                                    break
+                        if lines_at:
+                            raise JobException(f"{part} paragraph {bi}: spacing {side} is set in lines on {lines_at}; "
+                                               f"Word uses the line value and would ignore the point value — clear "
+                                               f"{side}Lines in Word first, or set {side}Lines in this spec as well",
+                                               "conflict-property", {"part": part, "paragraph": bi})
                 iv = values.get("ind", {})
                 if ind is not None:
                     for a, b in (("left", "start"), ("right", "end"), ("start", "left"), ("end", "right")):
