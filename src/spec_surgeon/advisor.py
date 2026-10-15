@@ -91,7 +91,6 @@ def _respec_errors(spec: Any, batch: _Batch, sources: Sequence[str], pkg: DocxPa
 
 def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, answers: Sequence[str] = ()) -> Advice:
     model = model or DEFAULT_MODEL
-    client = client or _client()
     src = Path(record["source"])
     adv = Advice(source=str(src), kind="failed")
     if not src.is_file():
@@ -109,6 +108,7 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
                     f"as a .docx (Word Document), check that it is a Word file at all (a renamed PDF or text file "
                     f"is not), then run the next pass on it.")
         return adv
+    client = client or _client()          # only now: an unreadable file never needs the model (nor an API key)
     spec0 = record.get("spec") or {}
     sources = [json.dumps(spec0, ensure_ascii=False), str(spec0.get("request", "")), *answers]
     messages: List[Dict[str, Any]] = [{"role": "user", "content": json.dumps({

@@ -26,6 +26,7 @@ from make_fixtures import _styleref_field, build
 from spec_surgeon import batch as batch_mod
 from spec_surgeon import guard
 from spec_surgeon import render as render_mod
+from spec_surgeon import advisor as advisor_module
 from spec_surgeon.advisor import advise, advise_batch
 from spec_surgeon.batch import FileResult, check_inputs_outside, output_names, run_batch, verified_bytes
 from spec_surgeon.codegen import run_in_sandbox, trial
@@ -332,6 +333,14 @@ def test_the_compile_gate_tries_every_file_of_a_pattern_before_rejecting(tmp_pat
     nowhere = _spec("content", [{"op": "replace_text", "params": {"find": "NFPA 99", "replace": "NFPA 13 (2025)"}}])
     errs = check_submission(nowhere, _Batch([tmp_path / "A.docx", tmp_path / "B.docx"], None), ["NFPA 13 (2025)"])
     assert errs and "none of this pattern's 2 files plans" in errs[1]
+    # two folders, one file name: the gate goes by path, so the file the name map shadows is still tried
+    for d in ("a", "b"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "a" / "Spec.docx").write_bytes(build("21 00 14", "INDIA"))                        # has NFPA 13
+    (tmp_path / "b" / "Spec.docx").write_bytes(_rewrite(build("21 00 13", "HOTEL"), "word/document.xml", nfpa14))
+    b = _Batch([tmp_path / "a" / "Spec.docx", tmp_path / "b" / "Spec.docx"], None)
+    assert b.prof["patterns"][0]["paths"] == [str(tmp_path / "a" / "Spec.docx"), str(tmp_path / "b" / "Spec.docx")]
+    assert check_submission(spec, b, ["NFPA 13 (2025)"]) == []
 
 
 # ---- F14. a file the profiler cannot read -------------------------------------------------------------------------
@@ -353,7 +362,7 @@ def test_profile_batch_takes_the_next_file_when_the_first_cannot_be_profiled(tmp
 
 # ---- F15. advice and an unreadable file ---------------------------------------------------------------------------
 
-def test_advice_survives_an_unreadable_file(tmp_path):
+def test_advice_survives_an_unreadable_file(tmp_path, monkeypatch):
     folder = tmp_path / "in"
     folder.mkdir()
     (folder / "A text.docx").write_text("not a docx", encoding="utf-8")
@@ -365,6 +374,12 @@ def test_advice_survives_an_unreadable_file(tmp_path):
     rec = {"source": str(folder / "A text.docx"), "exception": b.files[0].exception, "spec": NUMBER("continuous")}
     adv = advise(rec, client=object())                                         # no model call for an unreadable file
     assert adv.kind == "recommendation" and "cannot be opened" in adv.text and not adv.errors
+
+    def no_client():                                                           # no API key, no anthropic package
+        raise RuntimeError("no API key")
+    monkeypatch.setattr(advisor_module, "_client", no_client)
+    adv = advise(rec)                                                          # … and none is built for it either
+    assert adv.kind == "recommendation" and "cannot be opened" in adv.text
     fake = FakeClient(resp(tool("submit_recommendation", {"text": "One section: nothing to make continuous."})))
     advs = advise_batch(out, client=fake)
     assert [a.kind for a in advs] == ["recommendation", "recommendation"]       # the second one still got advice

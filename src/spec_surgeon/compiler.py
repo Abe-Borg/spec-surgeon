@@ -212,7 +212,12 @@ class _Batch:
         return self._pkgs[name]
 
     def representatives(self) -> List[Path]:
-        return [self.files[p["files"][0]] for p in self.prof["patterns"]]
+        return [Path(p["paths"][0]) for p in self.prof["patterns"]]
+
+    def pattern_paths(self, pat: Dict[str, Any]) -> List[Path]:
+        """The files of one profiled pattern, as paths: the name map (``files``) cannot tell two files of one name in
+        different folders apart, so anything that visits every file of a pattern goes by path."""
+        return [Path(x) for x in pat.get("paths") or [self.files[n] for n in pat["files"] if n in self.files]]
 
     def summary(self) -> Dict[str, Any]:
         return {"files": self.prof["files"],
@@ -299,10 +304,7 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
         # structure — try the pattern's other files before saying no file of it plans.
         tried: List[str] = []
         planned = False
-        for name in pat["files"]:
-            f = batch.files.get(name)
-            if f is None:
-                continue
+        for f in batch.pattern_paths(pat):
             try:
                 pkg = DocxPackage.from_path(f)
                 plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])

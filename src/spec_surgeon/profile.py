@@ -444,17 +444,20 @@ def profile_batch(files: Sequence[Path]) -> Dict[str, Any]:
     for pid, fs in sorted(groups.items(), key=lambda kv: (-len(kv[1]), kv[0])):
         # the representative is the first file of the pattern that profiles; a file whose XML the profiler cannot
         # read (a margin that is not a number…) is listed as unprofiled and the next file stands in for the pattern
-        names = [f.name for f in fs]
+        order = list(fs)
         prof, unprofiled = None, []
         for f in fs:
             try:
                 prof = profile(DocxPackage.from_path(f))      # only the representative is reopened
-                if f.name != names[0]:
-                    names = [f.name] + [n for n in names if n != f.name]
+                if f is not order[0]:
+                    order = [f] + [x for x in order if x is not f]
                 break
             except Exception as e:  # noqa: BLE001
                 unprofiled.append(f"{f.name}: {type(e).__name__}: {e}")
-        entry: Dict[str, Any] = {"pattern_id": pid, "count": len(fs), "files": names,
+        # ``files`` are the names the model's tools address files by; ``paths`` the actual files, in the same order
+        # (two folders can hold a file of the same name — by name alone one of them would shadow the other)
+        entry: Dict[str, Any] = {"pattern_id": pid, "count": len(fs), "files": [f.name for f in order],
+                                 "paths": [str(f) for f in order],
                                  "profile": prof if prof is not None else
                                  {"error": "no file of this pattern could be profiled", "files": unprofiled[:3]}}
         if unprofiled:
