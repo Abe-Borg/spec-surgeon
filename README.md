@@ -47,6 +47,7 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 17. [Known limits of the prototype](#known-limits-of-the-prototype)
 18. [Roadmap — natural-language editing](#roadmap--natural-language-editing)
 19. [Relationship to the docx-surgical-edit skill](#relationship-to-the-docx-surgical-edit-skill)
+20. [License](#license)
 
 ---
 
@@ -110,13 +111,14 @@ Environment variables:
 | `SPEC_SURGEON_MODEL` | model for `do` (the compiler), `ask` / `agent` (default `claude-opus-5-5`) |
 | `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own (Help → Check for updates… still works) |
 | `SPEC_SURGEON_CONFIG_DIR` | where the window keeps `settings.json`, downloaded updates and its error log (default `%APPDATA%\Spec Surgeon` and `%LOCALAPPDATA%\Spec Surgeon`); the tests use it |
-| `SPEC_SURGEON_QT_STYLE` | force a Qt style for the window (e.g. `windows11`, `fusion`) — diagnostics only |
+| `SPEC_SURGEON_THEME` | `light` or `dark`: force the window's colour scheme instead of following Windows (the screenshots use it) |
+| `SPEC_SURGEON_QT_STYLE` | force a Qt style for the window (e.g. `windows11`, `fusion`) — diagnostics only; the theme's controls are drawn for Fusion |
 
 ---
 
 ## The window (GUI) — start here
 
-![The Spec Surgeon window after a preview](docs/gui.png)
+![The first step: choose the files](docs/gui-files.png)
 
 **Set up once (Windows installer):** run the setup EXE from [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases), then open **Spec Surgeon** from the Start menu. For typed requests, enter your Anthropic API key in **Settings** (the *Set API key…* link on the *Describe the change* step opens it). To work without an API key, choose **Load saved spec…** and load an example from the Start menu's **Example edit specs** folder. After that the app updates itself (see [Updates](#updates)).
 
@@ -134,18 +136,18 @@ Environment variables:
    ```
 4. Start it: press Win+R, type `spec-surgeon-gui`, Enter (or run `spec-surgeon gui` in a terminal). To pin it, make a desktop shortcut to `spec-surgeon-gui.exe` in Python's `Scripts` folder (`py -3 -c "import sys,os; print(os.path.join(sys.prefix,'Scripts'))"` prints where it is). A copy installed this way is not updated in-app: the update banner tells you the `pip install -U …` command instead.
 
-**Use it** — four steps down the left side; each shows a check mark when it is done, and you can click any of them:
+**Use it** — four steps on the dark rail at the left. Each step gets a green check mark when it is done and a line under its name saying where it stands (how many Word files are ready, the request or the saved spec, how many files plan cleanly, how many passed); click any step to go there. Every step ends in an action bar: Back on the left, the one button that moves you on at the right, and beside it a hint saying what is still missing while that button is off (the 2026-10-15 GUI rework).
 
 1. **Files**
-   - **Specs folder:** the folder with the .docx files. Work on a *copy* of a project folder the first few times. Drop a folder onto the field or use **Browse…**. The step counts the Word files it will process and lists them; the template file and Word's `~$` lock files are left out.
+   - **Specs folder:** the folder with the .docx files. Work on a *copy* of a project folder the first few times. Drop the folder (or any .docx in it) onto the dashed drop zone or the field, or use **Browse…**. The step counts the Word files it will process and lists them; the template file and Word's `~$` lock files are left out. **Next** is enabled once the folder holds Word files; until then the hint beside it says why not.
    - **Template spec (optional):** a spec from the architect or another firm (an ordinary spec — nothing to prepare), or a prepared header/footer template with highlighted / `{{NAME}}` placeholders. It is for requests like "make the header and footer match the template spec", "match the font of the template spec" or "make the header/footer look like this template". It is left out of the batch even when it sits in the specs folder (same path, or a copy with the same bytes).
    - **Results folder:** where previews, edited copies, records and reports land. The default is `%USERPROFILE%\SpecSurgeon_out\<timestamp>`, and each preview gets its own time-stamped folder. The folders are remembered for next time. Changing the results folder after a preview sends you back to Preview: Run is enabled only while everything the preview was made of — folder, template, request, answers, results folder — is unchanged (2026-10-14 audit fixes).
 2. **Describe the change**
    - Type the request in plain English ("remove all headers and footers", "change all fonts to Arial", "make the header and footer match the template spec", "match the font of the template spec", "make the header/footer look like this template"), or click one of the example chips. A chip that mentions the template spec reminds you to choose one on *Files* when none is set.
    - No API key? Use **Load saved spec…** with one of `examples\specs\*.json` instead, or a spec saved from an earlier preview's `preview\spec.json`. A loaded spec shows as a strip under the request. Typing a request instead compiles a new spec, and **Remove** drops the loaded one.
    - Options: *Render pages (Word or LibreOffice)* makes before/after page images and checks layout (slower). *Allow AI-written transforms* is off by default and explained below.
-   - A line at the bottom says where the API key comes from: your Windows environment, saved on this computer, this session only, or none.
-   - Press **Preview** (or Ctrl+Enter).
+   - A pill at the bottom of *Options* says where the API key comes from: your Windows environment, saved on this computer, this session only (green), or none (amber) — with a link to set it.
+   - Press **Preview** (or Ctrl+Enter). The hint beside the button says when the specs folder is still missing or nothing has been typed or loaded.
 3. **Preview**
    - Claude turns the request into a spec. The engine plans every file (nothing is written to your files), applies the spec to one or two sample files in memory and verifies them. With *Render pages* it also makes before/after page images.
    - The page shows:
@@ -156,6 +158,10 @@ Environment variables:
      - the approval token.
    - If Claude needs something from you (e.g. the exact stamp wording), an **Answers** box appears on *Describe the change* with the questions. Type one answer per line and press Preview again.
    - **Open preview folder** shows the preview files (`PREVIEW.md`, `spec.json`, samples, images).
+   - Before the first preview the step shows what to do and a button back to *Describe the change*; **Continue to Run** is off until the preview is current, with the reason beside it.
+
+   ![The Preview step](docs/gui.png)
+
 4. **Run & results**
    - By default the edited files go to the results folder and **your files are not touched**. Choose **Write verified results back over the originals (guarded)** to have verified files written back: only files that pass every check, never a file open in Word or changed since the preview. You confirm before it starts, and the choice is never remembered.
    - **Run** is enabled only while the preview is current. Changing the folder, the template, the request or the answers after a preview disables it ("press Preview again"). Run itself still refuses if a file — or the template spec — changed on disk since the preview (the approval token).
@@ -173,17 +179,18 @@ Environment variables:
 
 **Also in the window:**
 - **Errors** appear on the step that caused them, in plain words. The **Activity log**, collapsed at the bottom, holds everything the engine printed (Copy, Save…, Clear). Unexpected errors also go to `%LOCALAPPDATA%\Spec Surgeon\logs\spec-surgeon.log`.
-- **Menus:** **File** has Load saved spec… (Ctrl+O), Open results folder, Settings… (Ctrl+,) and Exit. **Help** has Check for updates…, What's new in this version (the bundled release notes), User guide, Report a problem and About (versions and folders).
-- **Looks:** light or dark follows Windows, or choose it in Settings; the accent colour is your Windows accent; it is sharp on high-DPI screens. The app's own Windows 11-style theme is the same on Windows 10 and 11. *Settings → Use Windows' own controls* switches to Qt's native Windows 11 style instead (Windows 11 only).
+- **Menus:** **File** has Load saved spec… (Ctrl+O), Open results folder, Settings… (Ctrl+,) and Exit. **Help** has Check for updates…, What's new in this version (the bundled release notes), User guide (online) and About Spec Surgeon. The foot of the rail has the three buttons you use most: **Settings**, **Check for updates** and **About Spec Surgeon**.
+- **Looks:** the app's own theme — a dark navy rail, a light content area with white cards, status pills and an action bar per step — follows Windows' light or dark setting on its own; there is no appearance setting to get wrong. The accent colour is your Windows accent, the rendering is sharp on high-DPI screens, and the look is the same on Windows 10 and 11. `SPEC_SURGEON_THEME=light|dark` forces a scheme (the screenshots use it).
+- **About** (Help → About Spec Surgeon, or the rail): the version; who made it — © 2026 Abraham Borg — with his email (abrahamborg@gmail.com), GitHub and LinkedIn links; the MIT License in three plain sentences and **Read the full license**; the open-source components the app ships with and their licenses; and where this copy keeps its files. **Copy details** puts all of it on the clipboard for an email.
 
-**Settings** (sidebar or File → Settings…):
-- **Appearance:** colours (follow Windows, light, dark) and Windows' own controls.
-- **Results:** the default results folder.
+**Settings** (rail or File → Settings…) holds the two things the window must be told:
+- **Results folder:** the default results folder.
 - **Anthropic API key:** typed into a masked field. *Remember on this computer* saves it in Windows Credential Manager (target `Spec Surgeon/ANTHROPIC_API_KEY`); *Forget saved key* removes it. A key already set in the Windows environment (`setx`) takes precedence.
   The installer includes the Windows time-zone support that Credential Manager needs when reading the saved key.
-- **Updates:** check automatically once a day, the last check, the skipped version (with Clear), and Check now.
 
-**What it remembers, and where:** the window keeps `%APPDATA%\Spec Surgeon\settings.json` (plain JSON you can read or delete). It holds the folders, the template, the render option, the last request, the theme, the window size, the update preferences and the update in progress. It never stores the API key, and never stores the two risky switches (write back over the originals, AI-written transforms); both are off at every start. A corrupt settings file is set aside as `settings.json.bad` and the defaults are used.
+That is all. The Appearance and Updates panels of v0.4.x are gone: the look follows Windows, and the update check runs once a day on its own (see [Updates](#updates)).
+
+**What it remembers, and where:** the window keeps `%APPDATA%\Spec Surgeon\settings.json` (plain JSON you can read or delete). It holds the folders, the template, the render option, the last request, the window size, whether the activity log is open, when it last checked for updates, a version you chose to skip, and the update in progress. It never stores the API key, and never stores the two risky switches (write back over the originals, AI-written transforms); both are off at every start. A corrupt settings file is set aside as `settings.json.bad` and the defaults are used; keys a v0.4.x file still holds for the removed settings (`theme`, `native_style`, `auto_check_updates`) are ignored.
 
 The window is a thin layer over the library calls (`gui.Session`): everything it does is what `do`, `run-spec` and `advise` do on the command line.
 
@@ -195,7 +202,7 @@ The installed app keeps itself up to date from this repository's [GitHub Release
 
 **How it works:**
 
-1. **Check.** About four seconds after the window opens, and at most once a day, it asks GitHub for the newest published release. Drafts and pre-releases are never offered. **Help → Check for updates…** (or the sidebar's *Check for updates*) checks at any time and always reports: "you're up to date", the update banner, or why it couldn't check.
+1. **Check.** About four seconds after the window opens, and at most once a day, it asks GitHub for the newest published release — every copy, installed or pip, with nothing to turn on. Drafts and pre-releases are never offered. **Help → Check for updates…** (or the rail's *Check for updates*) checks at any time and always reports: "you're up to date", the update banner, or why it couldn't check.
 2. **Offer.** A banner above the page shows the new version with **What's new** (the release notes), **Install now**, **Later** (until the next start) and **Skip this version** (no more automatic offers for that version; a manual check still shows it).
 3. **Download.** *Install now* is unavailable while a Preview or Run is in progress, and refuses while another Spec Surgeon window or `spec-surgeon.exe` command is open. It downloads `SpecSurgeon-<version>-Setup-x64.exe` into `%LOCALAPPDATA%\Spec Surgeon\updates\`, with a progress bar and Cancel.
 4. **Install.** The window starts Setup detached (`/SILENT … /RELAUNCH=1`) and closes. Setup shows its progress window, waits for every Spec Surgeon process to exit (up to 60 s, using the app's named mutex), installs over the same folder without administrator rights, and reopens Spec Surgeon.
@@ -215,7 +222,7 @@ The installed app keeps itself up to date from this repository's [GitHub Release
 
 **Networks:** the app uses the Windows certificate store, so a company's HTTPS-inspection certificate that Windows trusts works. Proxies set in Windows (or `HTTPS_PROXY`) are used; automatic proxy scripts (PAC/WPAD) are not evaluated. Behind one, the check fails with "Couldn't reach GitHub" and a link to the releases page, where the installer can be downloaded by hand.
 
-**Turning it off:** Settings → Updates → *Check for updates automatically*, or set `SPEC_SURGEON_NO_UPDATE_CHECK=1`. Manual checks still work.
+**Turning it off:** set `SPEC_SURGEON_NO_UPDATE_CHECK=1`. There is no setting for it — the daily check is meant to be forgotten about — and manual checks still work.
 
 **Copies installed with pip** (from source) are not updated in-app. The banner's Install now shows the `"<this copy's python>" -m pip install -U "spec-surgeon[gui,word,agent] @ <wheel URL>"` command and the release page. The command names the interpreter the window is running in, so it updates the same environment on Windows, macOS or Linux (`pythonw.exe` becomes `python.exe`).
 
@@ -831,7 +838,7 @@ New work goes into `ops/` (a job is only an alias for the v0.1.0 CLI):
 
 ```
 spec-surgeon/
-├── pyproject.toml, requirements.txt, README.md, CLAUDE.md
+├── pyproject.toml, requirements.txt, README.md, CLAUDE.md, LICENSE (MIT)
 ├── docs/NL_SURGICAL_EDITOR_PLAN.md   design + phased plan for the natural-language editor (Phase 1 status inside)
 ├── docs/audits/                      the 2026-10-14 independent audit of v0.3.0: report, filled checklist, probe scripts
 ├── docs/releases/                    release notes per version (v0.3.0, v0.3.1, v0.4.0 — the update banner shows them)
@@ -859,10 +866,13 @@ spec-surgeon/
 │   ├── sandbox_runner.py             the isolated process that runs a generated op (Phase 5)
 │   ├── advisor.py                    exception → recommendation or re-compiled spec (Phase 6)
 │   ├── gui.py                        the window's logic (Session) and entry point; no Qt (Phase 7)
-│   ├── ui/                           the Qt window (v0.4.0): app.py (MainWindow, build_window, main), pages.py (the four
-│   │                                 steps), widgets.py, models.py, rows.py (tables + progress, no Qt), theme.py,
+│   ├── about.py                      who made it, the links, the license text and summary — one source for About,
+│   │                                 the installer, the package metadata (no Qt)
+│   ├── ui/                           the Qt window (v0.4.0, reworked 2026-10-15): app.py (MainWindow, build_window, main),
+│   │                                 pages.py (the four steps), widgets.py (cards, drop zone, step rail delegate, …),
+│   │                                 models.py, rows.py (tables + progress, no Qt), theme.py (follows Windows light/dark),
 │   │                                 worker.py (background jobs), update_ui.py (banner, checks, install hand-off),
-│   │                                 settings_dialog.py, resources/ (icon.svg, icon-256.png)
+│   │                                 settings_dialog.py (results folder, API key), about_dialog.py, resources/
 │   ├── updater.py                    GitHub release check, verified download, detached installer launch (no Qt)
 │   ├── settings.py                   settings.json and the app's folders (%APPDATA% / %LOCALAPPDATA%)
 │   ├── winapp.py                     Windows helpers: the app mutex, AppUserModelID, message box
@@ -889,7 +899,7 @@ spec-surgeon/
                                       test_compiler.py, test_codegen.py, test_advisor.py, test_gui.py,
                                       test_adaptive_messy.py (v0.3.0), test_audit_fixes.py (v0.3.1),
                                       test_updater.py, test_settings.py, test_ui_rows.py, test_packaging.py,
-                                      test_credentials.py, qt_support.py, data/ (v0.4.0),
+                                      test_credentials.py, qt_support.py, data/ (v0.4.0), test_about.py,
                                       test_reference_template.py, test_font_size.py, test_template_spec.py,
                                       test_sweep_fixes.py, test_audit2_fixes.py (the 2026-10-15 sweep and audit fixes)
                                       (v0.4.0: template specs and font sizes)
@@ -1004,6 +1014,8 @@ v0.4.0 — template specs and font sizes (316 tests: 315 pass and the Credential
 
 2026-10-15 — `tests/test_sweep_fixes.py` (9 tests: the hands-on sweep's fixes) and `tests/test_audit2_fixes.py` (19 tests: the external audit's findings, each with its planted case and, where a wrong document used to PASS, the planted output V10 now rejects) — 343 tests in total, 342 pass and the Credential Manager test skips off Windows (~3 min in the container).
 
+2026-10-15 (after v0.4.1) — the GUI rework, the license and the About box: `tests/test_about.py` (5 tests: the LICENSE file, `about.py`, `pyproject.toml`, the installer script and the EXE version info agree on the license, the copyright holder and the links), five window tests (the rail's states and status lines with the Next/Preview/Continue hints, Settings down to two cards, the Help menu and the rail's buttons, the About box's content and license text, the daily update check needing no setting), a settings test (the look and the update check are not settings; a v0.4.x file still loads) and an installer test (license page, copyright line, welcome-page links) — 356 tests in total, 355 pass and the Credential Manager test skips off Windows (~3 min in the container).
+
 ---
 
 ## Known limits of the prototype
@@ -1033,9 +1045,9 @@ Phase 1 (operation library) limits:
 Window (Phase 7) limits:
 
 * One window, one job at a time; long steps run in the background and the progress bar and log show progress, but there is no cancel button (close the window to abandon a preview — it asks first; a run that started finishes its files).
-* ~~No settings are remembered between sessions (folders, key); the API key typed into the window lives only in that session's environment.~~ Since v0.4.0 the folders, request, render option, theme and window size are remembered (`settings.json`), and the key can be remembered in Windows Credential Manager (Settings). The risky switches are deliberately never remembered.
+* ~~No settings are remembered between sessions (folders, key); the API key typed into the window lives only in that session's environment.~~ Since v0.4.0 the folders, request, render option and window size are remembered (`settings.json`), and the key can be remembered in Windows Credential Manager (Settings). The risky switches are deliberately never remembered.
 * Tested in the Linux container offscreen (Qt) and by the Windows installer build's real-window Preview → Run smoke test and in-app update test. Word COM rendering and live Claude API calls remain **[unproven]**; the Windows runner does not have Word or API credentials.
-* The look was checked from offscreen screenshots in the container (the app's own theme, Inter instead of Segoe UI). Qt's native `windows11` style (Settings → Use Windows' own controls) is available on the Windows build but its look with this layout has not been seen on a Windows 11 screen — **[unproven]**.
+* The look was checked from offscreen screenshots in the container (the app's own theme, Inter instead of Segoe UI), in light and dark. The native `windows11` style option of v0.4.x went with the Appearance panel; `SPEC_SURGEON_QT_STYLE` can still force a Qt style for diagnosis, and its look with this layout is **[unproven]**.
 * The Windows build runner is Windows Server 2022, so the CI smoke test uses the app's own theme; nothing in CI looks at Windows 11 itself.
 
 Updates (v0.4.0) limits:
@@ -1089,6 +1101,16 @@ Phase 2 (templating) limits:
 The design and implementation plan for driving this engine from plain-English requests ("remove all headers/footers", "change all font to Arial", "make the header/footer look like this template") at batch scale is in `docs/NL_SURGICAL_EDITOR_PLAN.md`: the model compiles a request into an EditSpec over a library of verified operations once per batch; the engine plans, applies and verifies it per file. Roughly 85% of v0.1.0 carries over; the plan lists what is new, phase by phase.
 
 Progress: **Phase 1 (operation library foundation) is done** — see "Operations and EditSpecs" above and the "Phase 1 status" section of the plan, which lists every place the implementation departs from the plan and why. **Phase 2 (the `apply_header_footer_template` op and V7's template reference) is done** — "Header/footer templating" above, "Phase 2 status" in the plan. **Phase 3 (profiler, dry-run planner, op catalog + EditSpec schema, `profile`/`plan-spec` CLI) is done** — "Profiles, dry runs and the op catalog" above, "Phase 3 status" in the plan. **Phase 4 (compiler, preview, `do`) is done** — "Natural-language editing" above, "Phase 4 status" in the plan. **Phase 5 (Tier B) is done, off by default** — "Tier B: generated transforms" above, "Phase 5 status" in the plan. **Phase 6 (the advisor) is done**; its real-file sweeps and the Word path need your machine — "Phase 6 status" in the plan. **Phase 7, first cut: the window** (`spec-surgeon-gui`) — "The window" above. **Phase 7, second cut (v0.4.0): the Qt window, remembered settings, and in-app updates** — "The window" and "Updates" above.
+
+## License
+
+Spec Surgeon is free software under the [MIT License](LICENSE) — Copyright © 2026 Abraham Borg. In short: use it, copy it, change it and share it, for any purpose, including commercially; keep the copyright notice and the license text with every copy or substantial part of it; it comes as is, without warranty of any kind, so check every delivered file yourself. The full text is in `LICENSE`, in the window's About box (Help → About Spec Surgeon), and on the installer's license page; the installer's welcome page and Windows' Apps & features entry name the author, the license and the links.
+
+The installed app bundles open-source components under their own licenses: Python (PSF), Qt for Python / Qt 6 (LGPL-3.0), lxml (BSD-3-Clause), PyMuPDF/MuPDF (AGPL-3.0), the Anthropic Python SDK (MIT), pywin32 (PSF-style) and PyInstaller's bootloader (GPL-2.0-or-later with the bootloader exception). Their licenses apply to those components; the About box lists them with links. PyMuPDF is AGPL-3.0 (Artifex also sells a commercial license), so the installer carries an AGPL component, and the source of everything in it — this repository and MuPDF's — is available; anyone building a closed-source product on this code would need a commercial MuPDF license or another PDF renderer.
+
+Contact: Abraham Borg — abrahamborg@gmail.com · [GitHub](https://github.com/Abe-Borg/spec-surgeon) · [LinkedIn](https://www.linkedin.com/in/abrahamborg/). `src/spec_surgeon/about.py` is the single source of these facts (name, links, license text and summary); `tests/test_about.py` keeps the LICENSE file, `pyproject.toml`, the installer script and the PyInstaller version info in step with it.
+
+---
 
 ## Relationship to the docx-surgical-edit skill
 

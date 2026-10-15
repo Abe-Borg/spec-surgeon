@@ -179,7 +179,7 @@ class UpdateController(QObject):
     # ---- checks ----
     @Slot()
     def auto_check(self) -> bool:
-        if not updater.should_auto_check(self.settings, installed=self.installed()):
+        if not updater.should_auto_check(self.settings):
             return False
         self.settings.last_update_check = time.time()
         self._save()

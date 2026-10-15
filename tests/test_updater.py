@@ -209,21 +209,20 @@ def test_check_for_update_and_skipped_versions():
 
 
 def test_should_auto_check(monkeypatch):
+    """Once a day, for every copy — installed or pip — with ``SPEC_SURGEON_NO_UPDATE_CHECK`` the only off switch
+    (the GUI rework after v0.4.1 removed the setting: the user has nothing to turn on)."""
     monkeypatch.delenv(updater.NO_CHECK_ENV, raising=False)
     now = 1_800_000_000.0
-    assert should_auto_check(Settings(auto_check_updates=True), now)
-    assert not should_auto_check(Settings(auto_check_updates=False), now)
-    assert not should_auto_check(Settings(auto_check_updates=True, last_update_check=now - 23 * 3600), now)
-    assert should_auto_check(Settings(auto_check_updates=True, last_update_check=now - 25 * 3600), now)
-    assert should_auto_check(Settings(auto_check_updates=True, last_update_check=now + 3600), now)   # clock went back
-    assert should_auto_check(Settings(), now, installed=True)
-    assert not should_auto_check(Settings(), now, installed=False)
-    assert not should_auto_check(Settings(), now)              # a source checkout is not an installed build
+    assert should_auto_check(Settings(), now)
+    assert not should_auto_check(Settings(last_update_check=now - 23 * 3600), now)
+    assert should_auto_check(Settings(last_update_check=now - 25 * 3600), now)
+    assert should_auto_check(Settings(last_update_check=now + 3600), now)   # clock went back
     monkeypatch.setenv(updater.NO_CHECK_ENV, "1")
-    assert not should_auto_check(Settings(auto_check_updates=True), now)
+    assert not should_auto_check(Settings(), now)
 
 
 # ---- download ----------------------------------------------------------------------------------------------
+
 
 def test_download_happy_path(tmp_path):
     payload = bytes(range(256)) * 3000                 # > one chunk, so progress is reported more than once
