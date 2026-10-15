@@ -766,7 +766,8 @@ log as "Windows fatal exception" although they are handled, so the crash log is 
 **Sending it to someone.** **Help → Save diagnostics bundle…** (or `spec-surgeon diagnose OUT_DIR --bundle diag.zip`)
 zips the last run's reports, logs, traces, records, plans, exceptions, set-aside manifest and compile/preview
 records, the app's own logs and an `environment.json` — **never the documents** (no source, edited or failed copy,
-PDF or page image). Records, plans and logs do quote document text (the paragraphs that changed or failed), so share
+PDF or page image). Under `results/` the zip mirrors the results folder; for a `do` or window session (whose run is in
+`<session>\run`) that is the whole session: `compile.json`, `preview\`, `codegen\` and `run\`. Records, plans and logs do quote document text (the paragraphs that changed or failed), so share
 the bundle the way you would share the specs.
 
 ---
@@ -1128,7 +1129,7 @@ v0.4.0 — template specs and font sizes (316 tests: 315 pass and the Credential
 
 2026-10-15 — `tests/test_sweep_fixes.py` (9 tests: the hands-on sweep's fixes) and `tests/test_audit2_fixes.py` (19 tests: the external audit's findings, each with its planted case and, where a wrong document used to PASS, the planted output V10 now rejects) — 344 tests in total, 343 pass and the Credential Manager test skips off Windows (~3 min in the container).
 
-2026-10-15 — diagnostics, `tests/test_diagnostics.py` (38 tests; 382 in total, 381 pass and the Credential Manager test skips off Windows, ~2.5 min in the container):
+2026-10-15 — diagnostics, `tests/test_diagnostics.py` (39 tests; 383 in total, 382 pass and the Credential Manager test skips off Windows, ~2.5 min in the container):
 
 | Covers | |
 |---|---|
@@ -1139,7 +1140,7 @@ v0.4.0 — template specs and font sizes (316 tests: 315 pass and the Credential
 | the record's specifics | word diffs (`the [-FM Global-]{+GRC+} rules`, tabs and NBSP visible); V2 pairing a prediction with what the output has (`GR[-C-]{+X+}`); a planted bold run named by its paragraph's text in the record, the trace and DIAGNOSTICS.md; V10 differences named by paragraph text and style id |
 | preview and approval | a sample whose verifier raises recorded as that sample's `internal-error`, the preview log with an empty file's refusal; Run refused with "modified since the preview (size …)" and "a file that was not in the preview"; `run-spec --approval` saying the same from `preview.json` |
 | the model's exchange | the compile transcript (the request, each turn's blocks, usage, tool results); an API error as a `failed` compile with its HTTP status and request id; a defect propagating; the window's compile record beside its preview; a generated op's traceback from the sandbox |
-| bundle, CLI, crash watch, window | the bundle with reports, logs, records and app logs and no document, PDF or image; `diagnose --file … --bundle …` and a run without DIAGNOSTICS.md; the crash watch reporting a dead session (and a stale marker with our pid) once, never its own, and leaving nothing after a clean exit; `pid_alive`; the app log; the window's diagnosis on a double-click (results and preview), View diagnostics, Save diagnostics bundle, and a failed job's traceback in the activity log |
+| bundle, CLI, crash watch, window | the bundle with reports, logs, records and app logs and no document, PDF or image; a session's bundle holding its compile record and preview beside the run (and Tier B's `history.json` saying a passing transform passed — `test_codegen.py`); `diagnose --file … --bundle …` and a run without DIAGNOSTICS.md; the crash watch reporting a dead session (and a stale marker with our pid) once, never its own, and leaving nothing after a clean exit; `pid_alive`; the app log; the window's diagnosis on a double-click (results and preview), View diagnostics, Save diagnostics bundle, and a failed job's traceback in the activity log |
 
 ---
 

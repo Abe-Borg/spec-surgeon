@@ -326,8 +326,8 @@ proposals and recorded in the plan's status sections.
 Follow README → "Adding an op" (new work goes into `ops/`; jobs are aliases). Every new grammar needs a
 planted-defect test proving the verifier catches a wrong implementation of it — ideally a wrong output AND a
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
-end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 382 with diagnostics —
-381 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
+end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 383 with diagnostics —
+382 pass and the Windows-only Credential Manager test skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
 
@@ -471,7 +471,8 @@ how." README → "Diagnostics — when something fails" is the user's view; `tes
    errors (`compiler.is_api_error`: the SDK's, httpx's, network OSErrors) become a `failed` result; a defect (a wrong
    argument, a test script that ran out) propagates.
 8. **Bundles never carry documents** (`DOCUMENT_SUFFIXES`, `DOCUMENT_DIRS`); keep it so, and keep the README's warning
-   that records quote document text.
+   that records quote document text. A session's `run/` is bundled with its session (`bundle_root`: compile.json,
+   preview/, codegen/ beside it), mirrored under `results/`.
 9. **The approval refusal says what changed** (`preview.approval_inputs` kept in `preview.json` and on the `Preview`;
    `explain_approval_change`). `approval_token` itself is unchanged — old tokens stay valid.
 

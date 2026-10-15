@@ -316,12 +316,13 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
         g.attempts.append({"attempt": attempt, "problems": problems, "trials": [t.to_dict() for t in trials]})
         log(f"codegen attempt {attempt}: {'PASS' if not problems else f'{len(problems)} problem(s)'}")
         g.attempts[-1]["source"] = src
-        _save_history(g, out_dir)
         if not problems:
             g.source, g.select, g.params, g.passed = src, select, params, True
             g.name = _op_name(src)
             g.path = save_generated(g, out_dir)
+            _save_history(g, out_dir)            # after the result is set: the history says it passed
             return g
+        _save_history(g, out_dir)
         messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": b.id, "is_error": True,
                                                       "content": "FAILED — fix and submit again:\n- "
                                                       + "\n- ".join(problems)[:12000]}]})

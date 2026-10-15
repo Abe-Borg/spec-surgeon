@@ -475,10 +475,38 @@ def test_the_bundle_holds_the_diagnostics_never_the_documents(tmp_path):
     res = diag.make_bundle(tmp_path / "bundle.zip", out, app_logs)
     with zipfile.ZipFile(res["path"]) as z:
         names = z.namelist()
-    assert "run/DIAGNOSTICS.md" in names and "run/logs/run.log" in names and "run/BATCH_REPORT.md" in names
-    assert any(n.startswith("run/records/") for n in names) and "app-logs/spec-surgeon.log" in names
+    assert "results/DIAGNOSTICS.md" in names and "results/logs/run.log" in names and "results/BATCH_REPORT.md" in names
+    assert any(n.startswith("results/records/") for n in names) and "app-logs/spec-surgeon.log" in names
     assert "environment.json" in names and "README.txt" in names and "app-logs/session-1.json" not in names
     assert not [n for n in names if n.lower().endswith((".docx", ".pdf", ".png"))] and res["left_out"] >= 1
+
+
+def test_a_sessions_bundle_holds_its_compile_and_preview_beside_the_run(tmp_path, capsys):
+    """Codex review on #10: a `do` or window session keeps its run in <session>/run beside compile.json, preview/ and
+    codegen/ — the bundle of that run folder is the whole session's."""
+    from spec_surgeon.cli import main as cli_main
+    from spec_surgeon.gui import Session
+    from test_compiler import FakeClient, resp, tool
+    d = _folder(tmp_path, ["A"])
+    spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
+    s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
+    s.compile("remove all headers and footers", [], False, lambda m: None)
+    s.make_preview(render=False, log=lambda m: None)
+    s.run(False, False, lambda m: None)
+    assert s.last_run_dir.name == "run" and diag.bundle_root(s.last_run_dir) == s.out_dir.resolve()
+    res = diag.make_bundle(tmp_path / "session.zip", s.last_run_dir)
+    with zipfile.ZipFile(res["path"]) as z:
+        names = z.namelist()
+    assert {"results/compile.json", "results/preview/logs/preview.log", "results/preview/preview.json",
+            "results/run/DIAGNOSTICS.md", "results/run/logs/run.log"} <= set(names)
+    assert not [n for n in names if n.lower().endswith((".docx", ".pdf", ".png"))]
+    assert cli_main(["diagnose", str(s.out_dir), "--bundle", str(tmp_path / "cli.zip")]) == 0    # a `do` folder: run/
+    capsys.readouterr()
+    with zipfile.ZipFile(tmp_path / "cli.zip") as z:
+        assert "results/compile.json" in z.namelist() and "results/run/DIAGNOSTICS.md" in z.namelist()
+    plain = tmp_path / "plain" / "run"                       # a results folder merely called run: itself, nothing else
+    plain.mkdir(parents=True)
+    assert diag.bundle_root(plain) == plain.resolve()
 
 
 def test_diagnose_prints_why_and_writes_a_bundle(tmp_path, capsys):
@@ -600,8 +628,9 @@ def test_the_window_shows_why_a_file_did_not_pass(qt, tmp_path):
     assert w.run_page.diag_btn.isEnabled() and w.do_diagnostics() is True
     assert "Spec Surgeon — diagnostics" in w._viewers[-1].browser.toPlainText()
     bundle = w.save_bundle()
-    with zipfile.ZipFile(bundle) as z:
-        assert bundle == tmp_path / "bundle.zip" and "run/DIAGNOSTICS.md" in z.namelist()
+    with zipfile.ZipFile(bundle) as z:              # the session: its preview beside the run (Codex review on #10)
+        assert bundle == tmp_path / "bundle.zip" and "results/run/DIAGNOSTICS.md" in z.namelist()
+        assert "results/preview/logs/preview.log" in z.namelist()
     assert any(kind == "notify" and "not the documents" in text for kind, _, text in prompts.shown)
 
 

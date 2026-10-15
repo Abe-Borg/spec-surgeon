@@ -734,14 +734,28 @@ MAX_BUNDLED_FILE = 25 * 2 ** 20
 
 BUNDLE_README = """Spec Surgeon diagnostics bundle
 
-In here: the run's reports (BATCH_REPORT.md, DIAGNOSTICS.md, SET_ASIDE_REPORT.md), its logs (logs/run.log and one
-trace per file), the verification records, plans and exception records, the preview and compile records when there
-are any, and the application's own logs (app-logs/). environment.json describes the computer and the program.
+In here, under results/ (the results folder's own layout; for a `do` or window session that is compile.json,
+preview/, codegen/ and run/): the run's reports (BATCH_REPORT.md, DIAGNOSTICS.md, SET_ASIDE_REPORT.md), its logs
+(logs/run.log and one trace per file), the verification records, plans and exception records, the compile record
+(the model's whole exchange), the preview's log and records, the Tier B history — and, under app-logs/, the
+application's own logs. environment.json describes the computer and the program.
 
 Not in here: the documents — no source file, edited copy, failed copy, rendered PDF or page image. The records, plans
 and logs do quote document text (the paragraphs that changed or failed): share this bundle the way you would share
 the specs themselves.
 """
+
+
+SESSION_MARKERS = ("compile.json", "preview", "codegen")
+
+
+def bundle_root(folder: Path) -> Path:
+    """The folder a bundle mirrors. A `do` or window session keeps its run in ``<session>/run`` beside the compile
+    record, the preview and the Tier B history; given that ``run`` folder, the whole session is bundled."""
+    f = Path(folder).resolve()
+    if f.name == "run" and any((f.parent / m).exists() for m in SESSION_MARKERS):
+        return f.parent
+    return f
 
 
 def _bundled(p: Path, root: Path) -> bool:
@@ -752,9 +766,9 @@ def _bundled(p: Path, root: Path) -> bool:
 
 def make_bundle(dest: Path, run_dir: Optional[Path] = None, app_logs: Optional[Path] = None,
                 note: str = "") -> Dict[str, Any]:
-    """Zip the diagnostics of a run (``run_dir``: reports, logs, records, plans, exceptions, set-aside, preview and
-    compile records) and the app's logs into ``dest`` — never the documents. Returns what went in and what was left
-    out."""
+    """Zip the diagnostics of a run (``run_dir``: reports, logs, records, plans, exceptions, set-aside — with, for a
+    session's ``run`` folder, the session's compile record, preview and Tier B history beside it; ``bundle_root``)
+    and the app's logs into ``dest`` — never the documents. Returns what went in and what was left out."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".part")
@@ -762,14 +776,14 @@ def make_bundle(dest: Path, run_dir: Optional[Path] = None, app_logs: Optional[P
     left_out = 0
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         if run_dir is not None and Path(run_dir).is_dir():
-            root = Path(run_dir).resolve()
+            root = bundle_root(Path(run_dir))
             for p in sorted(root.rglob("*")):
                 if not p.is_file() or p.resolve() in (dest.resolve(), tmp.resolve()):
                     continue
                 if not _bundled(p, root) or p.stat().st_size > MAX_BUNDLED_FILE:
                     left_out += 1
                     continue
-                arc = "run/" + p.relative_to(root).as_posix()
+                arc = "results/" + p.relative_to(root).as_posix()
                 z.write(p, arc)
                 included.append(arc)
         if app_logs is not None and Path(app_logs).is_dir():
@@ -780,7 +794,9 @@ def make_bundle(dest: Path, run_dir: Optional[Path] = None, app_logs: Optional[P
                     z.write(p, arc)
                     included.append(arc)
         manifest = {"made": datetime.now().astimezone().isoformat(timespec="seconds"), "note": note,
-                    "run_dir": str(run_dir) if run_dir else None, "app_logs": str(app_logs) if app_logs else None,
+                    "run_dir": str(run_dir) if run_dir else None,
+                    "results": str(bundle_root(Path(run_dir))) if run_dir else None,
+                    "app_logs": str(app_logs) if app_logs else None,
                     "included": included, "documents_left_out": left_out, "environment": environment()}
         z.writestr("environment.json", json.dumps(manifest, indent=2, ensure_ascii=False))
         z.writestr("README.txt", BUNDLE_README)
