@@ -139,10 +139,20 @@ the user asked for untracked wording or a template has literal fills.
 CHAT_NOTE = """
 - This is a conversation: plain text without a tool call is shown to the user as your message and waits for their \
 reply.
+- view_pages shows you rendered pages (of a batch file or the template) when what the user means depends on how the \
+pages look; the profiles cannot show you lines, boxes, logos or layout.
 """
 
 
-CHAT_TOOLS = list(TOOLS)            # the conversation's tools (Phase C adds view_pages); the advisor never gets these
+VIEW_PAGES_TOOL = {
+    "name": "view_pages", "description": "See pages of a batch file (or of the attached template) as rendered images "
+    "— when the request is about how something looks (a line, a logo, a box, 'like the template') or you need the "
+    "layout. Up to 3 pages per call; images cost, so look only when it helps.",
+    "input_schema": {"type": "object", "properties": {
+        "file": {"type": "string", "description": "a file name from the profiles, or \"template\""},
+        "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 3}},
+        "required": ["file"]}}
+CHAT_TOOLS = list(TOOLS) + [VIEW_PAGES_TOOL]   # the conversation's tools; the advisor never gets these
 
 
 def system_prompt(chat: bool = False) -> str:
@@ -324,6 +334,34 @@ class _Batch:
         if not pkg.has(part):
             raise KeyError(f"{file} has no part {part!r}; text parts: {pkg.text_parts()}")
         return [display_text(p)[:200] for p in paragraphs(pkg.xml(part))][:80]
+
+    def view_pages(self, file: str, pages: Optional[Sequence[int]] = None):
+        """Rendered pages as image blocks (the conversation sends them as the tool result). Budgeted per conversation."""
+        from . import vision
+        if self.work_dir is None:
+            raise KeyError("page images are not available here")
+        if file == "template":
+            if not self.template:
+                raise KeyError("no template was attached to this request")
+            path = self.template
+        else:
+            if file not in self.files:
+                raise KeyError(f"no file {file!r} in this batch; files: {sorted(self.files)[:12]}")
+            path = self.files[file]
+        wanted = sorted({int(n) for n in (pages or [1]) if int(n) >= 1})[:3] or [1]
+        pngs = vision.page_pngs(path, wanted, Path(self.work_dir) / "pages")
+        if not pngs:
+            raise ValueError(f"{file} has no page {wanted}")
+        cost = sum(vision.est_tokens(p) for p in pngs)
+        used = getattr(self, "_image_tokens", 0)
+        if used + cost > vision.VIEW_BUDGET_TOKENS:
+            raise ValueError(f"the page budget of this conversation is used up ({used} of "
+                             f"{vision.VIEW_BUDGET_TOKENS} image tokens) — ask the user to describe what they mean")
+        self._image_tokens = used + cost
+        blocks: List[Dict[str, Any]] = []
+        for png in pngs:
+            blocks += [{"type": "text", "text": f"{file} — page {png.stem[1:]}"}, vision.image_block(png)]
+        return {"_content_blocks": blocks, "_images": pngs}
 
     def read_template(self):
         if not self.template:

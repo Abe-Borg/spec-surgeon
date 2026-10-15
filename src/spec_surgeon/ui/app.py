@@ -356,6 +356,7 @@ class MainWindow(QMainWindow):
         r.key_btn.clicked.connect(self.open_settings)
         r.render_cb.toggled.connect(self._inputs_changed)
         p.open_btn.clicked.connect(self._open_preview_folder)
+        p.review_ack_btn.clicked.connect(self.do_ack_review)
         p.only_problems.toggled.connect(p.proxy.set_only_problems)
         run.run_btn.clicked.connect(self.do_run)
         run.open_btn.clicked.connect(self.do_open)
@@ -386,7 +387,7 @@ class MainWindow(QMainWindow):
         resize_columns(p.table, 3, [260, 90, 120, 300])
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn,
-                            self.act_load]
+                            p.review_ack_btn, self.act_load]
 
     # ---- values ---------------------------------------------------------------------------------------
     def _load_values(self, fresh: bool) -> None:
@@ -527,13 +528,16 @@ class MainWindow(QMainWindow):
     def _refresh_run_state(self) -> None:
         run = self.run_page
         current = self._preview_current()
-        run.run_btn.setEnabled(current and not self.busy and not self.updating)
+        blocked = self.session.run_blocked_reason() if current else ""
+        run.run_btn.setEnabled(current and not blocked and not self.busy and not self.updating)
         if self.busy:
             run.run_hint.setText("")
         elif not (self.session.preview or self.session.generated):
             run.run_hint.setText("Preview first — nothing runs before you have seen the preview.")
         elif not current:
             run.run_hint.setText("Something changed since the preview — press Preview again.")
+        elif blocked:
+            run.run_hint.setText(blocked)
         else:
             run.run_hint.setText("")
         generated = self.session.generated is not None
@@ -910,6 +914,7 @@ class MainWindow(QMainWindow):
             p.generated_lbl.setText(f"{g.name} passed verification on its sample files. It is saved at {g.path}.\n"
                                     "Run writes edited copies to the results folder only — never over your files.")
             p.token_lbl.setText("")
+            self._fill_review()
             return
         pv = s.preview
         spec = pv.batch_plan.spec
@@ -937,6 +942,7 @@ class MainWindow(QMainWindow):
             p.samples.addWidget(label("No sample could be tried (every file was set aside).", "Muted"))
         p.token_lbl.setText(f"Approval token {pv.token} — Run refuses if any file or the spec changes before it "
                             "runs.")
+        self._fill_review()
 
     def _sample_widget(self, sample) -> QWidget:
         w = QWidget()
@@ -972,6 +978,57 @@ class MainWindow(QMainWindow):
                               "pages).", "Muted"))
         return w
 
+    def _fill_review(self) -> None:
+        """Claude's visual check of the current preview (spec or custom transform) — findings, never a PASS."""
+        s, p = self.session, self.preview_page
+        pv, token = s._current_review()
+        rv = getattr(pv, "review", None) if pv is not None else None
+        if rv is None:
+            p.review_card.hide()
+            return
+        p.review_card.show()
+        lines = []
+        if rv.skipped:
+            lines.append(f"Skipped: {rv.skipped}")
+        else:
+            if rv.summary:
+                lines.append(rv.summary)
+            for f in rv.findings:
+                where = " ".join(x for x in (f.get("file") or "", f"p.{f['page']}" if f.get("page") else "") if x)
+                lines.append(f"[{f['severity']}] {where + ': ' if where else ''}{f['text']}")
+            if not rv.findings:
+                lines.append("No findings.")
+            if rv.usage.calls:
+                lines.append(f"Claude: {rv.usage.line()}")
+        p.review_lbl.setText("\n".join(lines))
+        blocking = rv.blocking()
+        acked = bool(blocking) and getattr(pv, "review_ack", "") == token
+        if blocking and not acked:
+            p.review_bar.show_message("warn", "Look before you run",
+                                      f"Claude flagged {len(blocking)} problem(s) it rates as blocking. Look at the "
+                                      f"pages above; Run stays off until you acknowledge them (or change the request).")
+        elif acked:
+            p.review_bar.show_message("info", "Acknowledged", "You have looked at Claude's findings for this preview.")
+        else:
+            p.review_bar.hide()
+        p.review_ack_btn.setVisible(bool(blocking) and not acked)
+
+    @Slot()
+    def do_ack_review(self) -> bool:
+        s = self.session
+        if self.busy or self.updating or not self._preview_current():
+            return False
+        pv, token = s._current_review()
+        try:
+            s.acknowledge_review(token)
+        except ValueError as e:
+            self.preview_page.info.show_message("warn", "Preview again", str(e))
+            return False
+        self.write("Claude's visual-check findings acknowledged for this preview.")
+        self._fill_review()
+        self._refresh_run_state()
+        return True
+
     @Slot(str)
     def _open_image(self, path: str) -> None:
         viewer = ImageViewer(Path(path), self)
@@ -985,6 +1042,10 @@ class MainWindow(QMainWindow):
         if not self._preview_current():
             self.run_page.info.show_message("warn", "Preview first", self.run_page.run_hint.text() or
                                             "Press Preview before Run.")
+            return False
+        blocked = self.session.run_blocked_reason()
+        if blocked:
+            self.run_page.info.show_message("warn", "Look at Claude's findings first", blocked)
             return False
         in_place = self.run_page.inplace_rb.isChecked()
         render = self.request_page.render_cb.isChecked()
@@ -1280,7 +1341,8 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
         "buttons": {"preview": r.preview_btn, "load": r.load_btn, "run": run.run_btn, "set_aside": run.set_aside_btn,
                     "open": run.open_btn, "advise": run.advise_btn, "check_updates": w.check_btn,
                     "install_update": w.updates.banner.btn_install, "settings": w.settings_btn,
-                    "send": r.chat.send_btn, "start_over": r.chat.start_over_btn},
+                    "send": r.chat.send_btn, "start_over": r.chat.start_over_btn,
+                    "review_ack": w.preview_page.review_ack_btn},
         "vars": {"folder": Var(f.folder.text, f.folder.setText), "template": Var(f.template.text, f.template.setText),
                  "out": Var(f.out.text, f.out.setText),
                  "render": Var(r.render_cb.isChecked, r.render_cb.setChecked),

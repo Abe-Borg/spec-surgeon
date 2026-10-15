@@ -567,3 +567,28 @@ def test_pyside6_is_imported_only_by_the_ui_package():
                     not (rel.startswith("ui/") and rel not in ("ui/__init__.py", "ui/rows.py")):
                 offenders.append(rel)
     assert offenders == []
+
+
+def test_the_window_blocks_run_on_claude_s_findings_until_acknowledged(qt, folder, tmp_path):
+    from spec_surgeon.vision import VisualReview
+    s = Session(out_root=tmp_path / "out")
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert ui["buttons"]["run"].isEnabled()
+    s.preview.review = VisualReview(summary="Looked at page 1.",
+                                    findings=[{"severity": "block", "file": "x.docx", "page": 1, "text": "Logo squashed."}])
+    w._fill_preview()
+    w._refresh_run_state()
+    p = w.preview_page
+    assert not p.review_card.isHidden() and "Logo squashed." in p.review_lbl.text()
+    assert "advisory" in p.review_card.helper.text().lower() and "PASS" not in p.review_lbl.text()
+    assert not ui["buttons"]["run"].isEnabled() and "visual check flagged" in w.run_page.run_hint.text()
+    assert w.do_run() is False
+    assert not ui["buttons"]["review_ack"].isHidden()
+    ui["buttons"]["review_ack"].click()
+    assert ui["buttons"]["run"].isEnabled() and ui["buttons"]["review_ack"].isHidden()
+    assert "Acknowledged" in p.review_bar.title.text()

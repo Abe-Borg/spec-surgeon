@@ -56,10 +56,14 @@ class SampleView:
     checks: Dict[str, str] = field(default_factory=dict)
     images: List[Path] = field(default_factory=list)
     exception: Optional[Dict[str, Any]] = None
+    source_pdf: Optional[Path] = None             # the renders (for Claude's visual check)
+    output_pdf: Optional[Path] = None
+    look_pages: List[int] = field(default_factory=list)   # page 1 and the first page whose words moved
 
     def to_dict(self):
         return {"source": str(self.source), "output": str(self.output) if self.output else None, "passed": self.passed,
-                "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception}
+                "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception,
+                "look_pages": self.look_pages}
 
 
 @dataclass
@@ -70,6 +74,8 @@ class Preview:
     token: str = ""
     renderer: Optional[str] = None
     warnings: List[str] = field(default_factory=list)
+    review: Any = None                            # vision.VisualReview — Claude's visual check (advisory)
+    review_ack: str = ""                          # the token whose blocking findings the user acknowledged
 
     def to_text(self) -> str:
         spec = self.batch_plan.spec
@@ -86,12 +92,16 @@ class Preview:
             failed = [k for k, v in s.checks.items() if v == "FAIL"]
             out.append(f"   {s.source.name}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
                        + (f"; images: {[i.name for i in s.images]}" if s.images else ""))
+        if self.review is not None:
+            out.append("")
+            out.append(self.review.to_text())
         out.append(f"\napproval token: {self.token}")
         return "\n".join(out)
 
     def to_dict(self):
         return {"token": self.token, "renderer": self.renderer, "warnings": self.warnings,
-                "plan": self.batch_plan.to_dict(), "samples": [s.to_dict() for s in self.samples]}
+                "plan": self.batch_plan.to_dict(), "samples": [s.to_dict() for s in self.samples],
+                "visual_review": self.review.to_dict() if self.review is not None else None}
 
 
 def side_by_side(src_pdf: Path, out_pdf: Path, page: int, png: Path, dpi: int = 70) -> Optional[Path]:
@@ -130,11 +140,69 @@ def _pick_samples(bp: BatchPlan) -> List[Path]:
     return picks
 
 
+def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_render: bool,
+                   warnings: List[str]) -> Optional[str]:
+    """Render each sample's source and output (Word, else LibreOffice), compose before/after images of page 1 and of
+    the first page whose words moved, and keep the PDFs and those page numbers on the sample (Claude's visual check
+    reads them). Never raises: a renderer that cannot run is a warning beside the plan summaries and verification.
+    Returns the renderer used, or None."""
+    import shutil
+    from . import render as render_mod
+    from .verify import geometry as geom
+    backend = render_mod.pick(renderer) if do_render else None
+    if not do_render:
+        warnings.append("rendering skipped: plan summaries and verification only")
+    elif backend is None:
+        warnings.append("no renderer found (Word or LibreOffice): plan summaries and verification only")
+    elif backend != "word":
+        warnings.append(f"preview rendered with {backend}; Word's layout can differ (Word is the reference on "
+                        f"your machine when installed)")
+    done = [s for s in samples if s.output]
+    if not (backend and done):
+        return backend
+    rdir = Path(out_dir) / "render"
+    # renderers name a PDF after its file's stem: samples whose names collide are rendered from numbered copies
+    stems = [s.source.stem.casefold() for s in done]
+    unique = [s.source.stem if stems.count(s.source.stem.casefold()) == 1 else f"{i:02d} {s.source.stem}"
+              for i, s in enumerate(done)]
+
+    def staged(path: Path, side: str, name: str) -> Path:
+        if path.stem == name:
+            return path
+        copy = rdir / "staged" / side / f"{name}{path.suffix}"
+        copy.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(path, copy)
+        return copy
+    src_in = [staged(s.source, "source", n) for s, n in zip(done, unique)]
+    out_in = [staged(s.output, "output", n) for s, n in zip(done, unique)]
+    srcs = render_mod.render_pdfs(src_in, rdir / "source", backend, 2, log=warnings.append)
+    outs = render_mod.render_pdfs(out_in, rdir / "output", backend, 2, log=warnings.append)
+    for s, a, b, name in zip(done, src_in, out_in, unique):
+        sp, op = srcs.get(a), outs.get(b)
+        if not sp or not op:
+            warnings.append(f"{s.source.name}: render failed")
+            continue
+        s.source_pdf, s.output_pdf = Path(sp), Path(op)
+        g = geom.compare_pdfs(sp, op)
+        moved = [p.page for p in g.pages if p.max_dy > 0.5 or p.words_only_in_out or p.words_only_in_ref]
+        s.look_pages = sorted({1} | set(moved[:1]))
+        for page in s.look_pages:
+            img = side_by_side(sp, op, page, Path(out_dir) / "images" / f"{name} p{page}.png")
+            if img:
+                s.images.append(img)
+    return backend
+
+
+def write_preview_files(pv: "Preview") -> None:
+    """PREVIEW.md and preview.json beside the samples (rewritten when Claude's visual check arrives)."""
+    (pv.out_dir / "PREVIEW.md").write_text("```\n" + pv.to_text() + "\n```\n", encoding="utf-8")
+    (pv.out_dir / "preview.json").write_text(json.dumps(pv.to_dict(), indent=2, ensure_ascii=False, default=str),
+                                             encoding="utf-8")
+
+
 def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
                  do_render: bool = True) -> Preview:
-    from . import render as render_mod
     from .verify import run_suite
-    from .verify import geometry as geom
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     bp = plan_batch(inputs, spec)
@@ -154,35 +222,8 @@ def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, ren
         except JobException as e:
             sv.exception = e.to_dict()
         pv.samples.append(sv)
-    backend = render_mod.pick(renderer) if do_render else None
-    pv.renderer = backend
-    if not do_render:
-        pv.warnings.append("rendering skipped: plan summaries and verification only")
-    elif backend is None:
-        pv.warnings.append("no renderer found (Word or LibreOffice): plan summaries and verification only")
-    elif backend != "word":
-        pv.warnings.append(f"preview rendered with {backend}; Word's layout can differ (Word is the reference on "
-                           f"your machine when installed)")
-    done = [s for s in pv.samples if s.output]
-    if backend and done:
-        rdir = out_dir / "render"
-        # a renderer failure (Word that will not start, a file LibreOffice chokes on) is a warning beside the plan
-        # summaries and verification, never a preview that dies without them
-        srcs = render_mod.render_pdfs([s.source for s in done], rdir / "source", backend, 2, log=pv.warnings.append)
-        outs = render_mod.render_pdfs([s.output for s in done], rdir / "output", backend, 2, log=pv.warnings.append)
-        for s in done:
-            sp, op = srcs.get(s.source), outs.get(s.output)
-            if not sp or not op:
-                pv.warnings.append(f"{s.source.name}: render failed")
-                continue
-            g = geom.compare_pdfs(sp, op)
-            moved = [p.page for p in g.pages if p.max_dy > 0.5 or p.words_only_in_out or p.words_only_in_ref]
-            for page in sorted({1} | set(moved[:1])):
-                img = side_by_side(sp, op, page, out_dir / "images" / f"{s.source.stem} p{page}.png")
-                if img:
-                    s.images.append(img)
+    pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings)
     pv.token = approval_token(spec, [f.source for f in bp.files])
     (out_dir / "spec.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
-    (out_dir / "PREVIEW.md").write_text("```\n" + pv.to_text() + "\n```\n", encoding="utf-8")
-    (out_dir / "preview.json").write_text(json.dumps(pv.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    write_preview_files(pv)
     return pv

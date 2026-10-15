@@ -12,10 +12,11 @@
                                                              (execute a hand-written EditSpec end to end)
     spec-surgeon verify SOURCE OUTPUT --plan plan.json       (re-run the suite standalone)
     spec-surgeon do "request" [FILES...] [--from-set-aside DIR] [--template T] [--answer A]... [--out DIR] [--yes]
-                                         [--no-render] [--in-place]
-                                                             (natural language: compile → preview → approve → run)
+                                         [--no-render] [--no-review] [--ack-review] [--in-place] [--allow-codegen]
+                                                             (natural language: talk it through with Claude in a
+                                                              terminal → preview (+ Claude's visual check) → approve → run)
     spec-surgeon retry OUT_DIR [--request "..."] [--template T] [--answer A]... [--out DIR] [--yes] [--no-render]
-                               [--in-place] [--allow-codegen]
+                               [--no-review] [--ack-review] [--in-place] [--allow-codegen]
                                                              (rinse & repeat: run next pass on set-aside files only)
     spec-surgeon gui                                         (the window; also: spec-surgeon-gui)
     spec-surgeon advise OUT_DIR [--file NAME]                (Claude: per exception a recommendation or a re-compiled spec)
@@ -322,21 +323,45 @@ def cmd_do(args):
         spec = res.spec
     pv = make_preview(spec, [str(f) for f in files], out_dir / "preview",
                       renderer=args.renderer, do_render=not args.no_render)
+    if not args.no_render and not getattr(args, "no_review", False):
+        _visual_check(pv, spec, out_dir / "preview", args)
     print(pv.to_text())
     print(f"\npreview: {out_dir / 'preview'}")
-    approved = args.yes
+    blocking = pv.review.blocking() if pv.review is not None else []
+    if blocking and not getattr(args, "ack_review", False):
+        print(f"\nClaude's visual check flagged {len(blocking)} problem(s) it rates as blocking (see above).")
+        if args.yes and not _interactive():
+            print("Not run: look at the pages in the preview folder; re-run with --ack-review to run anyway.")
+            return 2
+    approved = args.yes and (not blocking or getattr(args, "ack_review", False))
     if not approved and _interactive():
-        approved = input(f"\nRun this on {len(pv.batch_plan.files)} file(s)? [y/N] ").strip().lower() in ("y", "yes")
+        question = (f"\nYou have looked at Claude's findings and want to run this on {len(pv.batch_plan.files)} "
+                    f"file(s)? [y/N] " if blocking else f"\nRun this on {len(pv.batch_plan.files)} file(s)? [y/N] ")
+        approved = input(question).strip().lower() in ("y", "yes")
     if not approved:
         print(f"\nNot run. To run exactly this:\n  spec-surgeon run-spec \"{out_dir / 'preview' / 'spec.json'}\" "
               + " ".join(f'"{f}"' for f in files) + f" --approval {pv.token}"
               + (" --in-place" if args.in_place else ""))
+        if blocking:
+            print("(running that command means you have looked at Claude's visual-check findings above)")
         return 0
     args.out = str(out_dir / "run")
     args.files = [str(f) for f in files]          # exactly the previewed files (an unreferenced --template excluded)
     args.job = "edit-spec"
     args.params = None
     return cmd_run(args, spec=spec)
+
+
+def _visual_check(pv, spec, folder, args) -> None:
+    """Claude's visual check of the preview samples (advisory; never raises; can only add a reason to stop)."""
+    from . import compiler, vision
+    from .preview import write_preview_files
+    intent = "\n".join([f"REQUEST: {spec.get('request') or args.request}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
+                       + [f"ASSUMPTION: {a}" for a in spec.get("assumptions") or []])
+    pv.review = vision.review_samples(intent, pv.samples, folder, compiler._client, model=args.model,
+                                      log=lambda m: print(m, file=sys.stderr))
+    vision.save_review(pv.review, folder)
+    write_preview_files(pv)
 
 
 def _interactive() -> bool:
@@ -537,8 +562,14 @@ def main(argv=None) -> int:
     p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--model", default=None)
+    p.add_argument("--no-review", action="store_true",
+                   help="skip Claude's visual check of the rendered sample pages (--no-render skips it too)")
+    p.add_argument("--ack-review", action="store_true",
+                   help="run even when Claude's visual check flagged a blocking problem (you have looked at it)")
     p.add_argument("--allow-codegen", action="store_true",
-                   help="Tier B: if no op fits, let Claude write a one-off transform, verified on samples first")
+                   help="without a terminal: accept Claude's offer of a one-off custom transform when no operation "
+                        "fits (sandboxed, verified on samples first, edited copies only); in a terminal pick it from "
+                        "the choices instead")
     p.set_defaults(fn=cmd_do)
 
     p = sub.add_parser("retry", help="rinse & repeat: run next pass on set-aside files from a previous output folder")
@@ -553,6 +584,8 @@ def main(argv=None) -> int:
     p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--model", default=None)
+    p.add_argument("--no-review", action="store_true", help="skip Claude's visual check of the sample pages")
+    p.add_argument("--ack-review", action="store_true", help="run even when Claude's visual check flagged a problem")
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)
 

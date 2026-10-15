@@ -228,6 +228,23 @@ class PreviewPage(Page):
         self.samples_card.add(self.samples)
         bl.addWidget(self.samples_card)
 
+        self.review_card = Card("Claude's visual check",
+                                "Advisory — not a verification. Claude looked at the before/after pages of the "
+                                "samples: it can stop a run, never pass one. The engine's checks are above.")
+        self.review_lbl = label("", selectable=True)
+        self.review_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self.review_card.add(self.review_lbl)
+        self.review_bar = InfoBar(closable=False)
+        self.review_card.add(self.review_bar)
+        ack_row = QHBoxLayout()
+        ack_row.addStretch(1)
+        self.review_ack_btn = QPushButton("I\u2019ve looked \u2014 allow Run")
+        self.review_ack_btn.setToolTip("You have looked at Claude's findings for this preview; Run is allowed for it")
+        ack_row.addWidget(self.review_ack_btn)
+        self.review_card.add(ack_row)
+        self.review_card.hide()
+        bl.addWidget(self.review_card)
+
         self.generated_card = Card("AI-written transform")
         self.generated_lbl = label("", selectable=True)
         self.generated_card.add(self.generated_lbl)

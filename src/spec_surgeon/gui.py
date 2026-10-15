@@ -37,6 +37,7 @@ class Session:
     out_dir: Optional[Path] = None
     preview: Any = None
     generated: Any = None                         # Tier B op, when the request needed one
+    generated_preview: Any = None                 # preview.GeneratedPreview: its samples, renders, visual check
     last_run_dir: Optional[Path] = None
     questions: List[str] = field(default_factory=list)
     generated_token: str = ""                     # approval token of the files a generated transform was tested on
@@ -45,6 +46,7 @@ class Session:
     client: Any = None                            # injectable for tests
     last_batch: Any = None                        # BatchResult of the last Run (the window's results table)
     last_trials: Any = None                       # List[codegen.FileTrial] of the last AI-written-transform run
+    visual_check: bool = True                     # Claude reviews the rendered sample pages of each preview
     conversation: Any = None                      # conversation.Conversation of the current request
     turn: Any = None                              # its last conversation.Turn
     chat_dir: Optional[Path] = None               # where the conversation keeps its record and page renders
@@ -107,7 +109,7 @@ class Session:
             raise ValueError("a session runs either a spec or a custom transform, not both")
         self.spec, self.generated = spec, generated
         self.spec_source = source if spec is not None else ""
-        self.preview, self.generated_token = None, ""
+        self.preview, self.generated_token, self.generated_preview = None, "", None
 
     def end_conversation(self) -> None:
         self.conversation, self.turn, self.questions = None, None, []
@@ -230,8 +232,53 @@ class Session:
         log("Planning every file and trying the samples…")
         self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
                                     do_render=render)
+        if render and self.visual_check:
+            self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
         return self.preview.to_text()
+
+    # ---- Claude's visual check: advisory, can stop a run, never passes one ----
+    def _intent(self) -> str:
+        spec = self.spec or {}
+        lines = [f"REQUEST: {spec.get('request') or ''}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
+        lines += [f"ASSUMPTION: {a}" for a in spec.get("assumptions") or []]
+        if self.conversation is not None:
+            lines.append("THE CONVERSATION:\n" + self.conversation.brief())
+        return "\n".join(lines)
+
+    def _visual_check(self, pv, intent: str, folder: Path, log: Log) -> None:
+        from . import compiler, vision
+        from .preview import write_preview_files
+        client = self.client
+        pv.review = vision.review_samples(intent, pv.samples, folder, lambda: client or compiler._client(), log=log)
+        vision.save_review(pv.review, folder)
+        if hasattr(pv, "batch_plan"):
+            write_preview_files(pv)
+
+    def _current_review(self):
+        """(the preview object that carries the visual check, the token it was made for)."""
+        if self.generated is not None:
+            return self.generated_preview, self.generated_token
+        if self.preview is not None:
+            return self.preview, self.preview.token
+        return None, ""
+
+    def run_blocked_reason(self) -> str:
+        """Why Run must wait for the user: Claude's visual check found something it rates as blocking, and the user
+        has not acknowledged it for this very preview."""
+        pv, token = self._current_review()
+        rv = getattr(pv, "review", None) if pv is not None else None
+        if rv is None or not rv.blocking() or getattr(pv, "review_ack", "") == token:
+            return ""
+        return (f"Claude's visual check flagged {len(rv.blocking())} problem(s) on the sample pages — look at them on the "
+                f"Preview step and press \u201cI've looked \u2014 allow Run\u201d, or change the request.")
+
+    def acknowledge_review(self, token: str) -> None:
+        """The user has looked at the blocking findings of the preview made with ``token`` (and only that one)."""
+        pv, current = self._current_review()
+        if pv is None or not token or token != current:
+            raise ValueError("that preview is not the current one — press Preview again")
+        pv.review_ack = token
 
     def _note_preview(self) -> None:
         """Tell Claude what the preview found, so a reply from the Preview page is a correction it can act on."""
@@ -240,13 +287,18 @@ class Session:
         pv = self.preview
         bp = pv.batch_plan
         total, planned = len(bp.files), len(bp.files) - len(bp.exceptions)
-        self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + pv.to_text()[:4000],
-                               display=f"Preview made: {planned} of {total} file(s) plan cleanly.")
+        flagged = len(pv.review.blocking()) if pv.review is not None else 0
+        self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + pv.to_text()[:6000],
+                               display=f"Preview made: {planned} of {total} file(s) plan cleanly." +
+                                       (f" Claude's visual check flagged {flagged} problem(s)." if flagged else ""))
         self._save_chat()
 
     def run(self, in_place: bool, render: bool, log: Log) -> str:
         from .batch import run_batch
         from .preview import approval_token
+        blocked = self.run_blocked_reason()
+        if blocked:
+            raise ValueError(blocked)
         if self.generated is not None:
             from .codegen import run_generated
             files = self.files()
