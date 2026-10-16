@@ -30,6 +30,7 @@ or picture that fails is a warning. A custom transform's preview (``preview_gene
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import os
@@ -184,11 +185,13 @@ class SampleView:
     output_pdf: Optional[Path] = None
     look_pages: List[int] = field(default_factory=list)   # page 1 and the first page whose words moved
     stages: List[Dict[str, Any]] = field(default_factory=list)   # a chain's sample: each stage's verdict, in order
+    outcomes: List[Dict[str, Any]] = field(default_factory=list)  # a chain's independent final requirements
 
     def to_dict(self):
         return {"source": str(self.source), "output": str(self.output) if self.output else None, "passed": self.passed,
                 "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception,
-                "look_pages": self.look_pages, **({"stages": self.stages} if self.stages else {})}
+                "look_pages": self.look_pages, **({"stages": self.stages} if self.stages else {}),
+                **({"outcomes": self.outcomes} if self.outcomes else {})}
 
     def stages_text(self) -> str:
         """``stage 1 PASS · stage 2 FAIL [V10]`` — how far a chain's sample got."""
@@ -556,6 +559,8 @@ class ChainPreview(Preview):
             failed = [k for k, v in sv.checks.items() if v == "FAIL"]
             out.append(f"   {lab}: {sv.stages_text()} → verification {'PASS' if sv.passed else 'FAIL ' + str(failed)}"
                        + (f"; images: {[i.name for i in sv.images]}" if sv.images else ""))
+            out += [f"     final requirement {entry['index']} {entry['status']}: {entry['summary']}"
+                    for entry in sv.outcomes]
         if self.review is not None:
             out.append("")
             out.append(self.review.to_text())
@@ -580,6 +585,8 @@ def make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
     from .chain import chain_key, chain_name, chain_templates, stage_name, validate_chain
     from .editspec import is_template_file
     from .verify import run_suite
+    from .verify.outcomes import assert_outcomes
+    chain = copy.deepcopy(chain)
     validate_chain(chain)
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -641,6 +648,12 @@ def make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
             else:
                 if sv.exception is None and sv.passed is None:
                     sv.passed = True
+            if sv.passed and chain.get("assertions"):
+                sv.outcomes = assert_outcomes(data, chain["assertions"])
+                sv.checks["FINAL"] = "PASS" if all(entry["status"] == "PASS" for entry in sv.outcomes) else "FAIL"
+                sv.passed = sv.checks["FINAL"] == "PASS"
+                for entry in sv.outcomes:
+                    log.detail(f"sample {f.name}: final requirement {entry['index']} {entry['status']}: {entry['summary']}")
             if produced:
                 sv.output = out_dir / "samples" / names[str(f)]
                 sv.output.parent.mkdir(parents=True, exist_ok=True)

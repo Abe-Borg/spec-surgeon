@@ -539,6 +539,7 @@ def cmd_chain(args):
     from .editspec import SpecError, is_template_file, load_spec, validate_spec
     from .library import LibraryError, load_chain, load_recipe
     stages = []
+    assertions = []
     for ref in args.stage or []:
         try:
             if ref.startswith("recipe:"):
@@ -548,7 +549,9 @@ def cmd_chain(args):
                 stages.append((name, spec, name))
             elif ref.startswith("chain:"):
                 name = ref[len("chain:"):].strip()
-                for st in load_chain(name)["stages"]:
+                saved = load_chain(name)
+                assertions.extend(saved.get("assertions", []))
+                for st in saved["stages"]:
                     stages.append((st.get("name") or "", st["spec"], st.get("recipe")))
             else:
                 spec = load_spec(ref)
@@ -566,7 +569,7 @@ def cmd_chain(args):
               file=sys.stderr)
         return 2
     try:
-        chain = chain_from_specs(stages, name=getattr(args, "name", None) or "")
+        chain = chain_from_specs(stages, name=getattr(args, "name", None) or "", assertions=assertions or None)
     except ChainError as e:
         print(f"chain refused [{e.code}]: {e.reason}", file=sys.stderr)
         return 2
@@ -834,6 +837,71 @@ def cmd_retry(args):
     args.from_set_aside = args.out_dir
     args.files = []
     return cmd_do(args)
+
+
+def cmd_resolve(args):
+    """Investigate copies within a fixed budget; exporting is a separate approval."""
+    from .recovery import RecoveryOptions, deliver_recovery, recover_from_run
+    out = Path(args.out) if args.out else Path("SpecSurgeon_out") / datetime.now().strftime("%Y%m%d-%H%M%S-%f-recovery")
+    try:
+        options = RecoveryOptions(max_attempts=args.max_attempts, max_calls=args.max_calls,
+                                  max_cost_usd=args.budget, model=args.model, effort=args.effort,
+                                  render=not args.no_render, renderer=args.renderer,
+                                  allow_codegen=args.allow_codegen, use_memory=not args.no_memory)
+        result = recover_from_run(Path(args.run_dir), out, request=args.request, options=options,
+                                  log=lambda m: print(m, file=sys.stderr))
+        print(result.to_text())
+        if result.review is not None:
+            print(result.review.to_text())
+        if not result.ready:
+            return 2
+        blocking = bool(result.review and result.review.blocking())
+        acknowledged = args.ack_review
+        if blocking and not acknowledged:
+            if _interactive():
+                acknowledged = bool(_confirm("\nYou have inspected the blocking visual findings and want to allow export? [y/N] "))
+            if not acknowledged:
+                print("Not exported: inspect the blocking findings; --yes does not acknowledge them. "
+                      "Use --ack-review only after inspecting them.", file=sys.stderr)
+                return 2
+        approved = args.yes or (_interactive() and _confirm("\nExport the verified recovery copies? [y/N] "))
+        if not approved:
+            print(f"Not exported. Investigation and review: {out}")
+            return 0
+        destination = deliver_recovery(result, acknowledge_review=acknowledged)
+        print(f"Recovery copies exported: {destination}. Original files were not changed.")
+        return 0 if len(result.ready) == len(result.files) else 2
+    except (ValueError, OSError) as e:
+        print(f"Recovery stopped: {e}", file=sys.stderr)
+        return 2
+
+
+def cmd_memory(args):
+    """Local repair evidence and user feedback; accepting a case never bypasses verification."""
+    from .repair_memory import CaseStore
+    store = CaseStore()
+    try:
+        if args.action == "list":
+            print(json.dumps(store.list_cases(), ensure_ascii=False, indent=2, default=str))
+            return 0
+        if not args.case_id:
+            print(f"memory {args.action} needs a case ID", file=sys.stderr)
+            return 2
+        if store.get(args.case_id) is None:
+            raise ValueError(f"no repair case {args.case_id!r}")
+        if args.action == "show":
+            case = store.get(args.case_id)
+            print(json.dumps(case, ensure_ascii=False, indent=2, default=str))
+        elif args.action == "forget":
+            store.forget(args.case_id)
+            print(f"Forgot repair case {args.case_id}.")
+        else:
+            store.feedback(args.case_id, args.action == "accept", note=args.note or "")
+            print(f"Recorded {args.action} feedback for {args.case_id}; future reuse still requires verification.")
+        return 0
+    except (ValueError, OSError) as e:
+        print(f"Repair memory: {e}", file=sys.stderr)
+        return 2
 
 
 def _do_codegen(args, spec, files, out_dir, brief=None):
@@ -1219,6 +1287,29 @@ def main(argv=None) -> int:
     p.add_argument("--ack-review", action="store_true", help="run even when Claude's visual check flagged a problem")
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)
+
+    p = sub.add_parser("resolve", help="investigate remaining files on copies within a budget, review, then export")
+    p.add_argument("run_dir", help="previous batch or chain output folder containing set_aside.json")
+    p.add_argument("--request", default=None, help="append a clarification or answer to the original request")
+    p.add_argument("--out", default=None)
+    p.add_argument("--budget", type=float, default=5.0, help="maximum estimated model spend in USD (default 5)")
+    p.add_argument("--max-attempts", type=int, default=3)
+    p.add_argument("--max-calls", type=int, default=12)
+    p.add_argument("--model", default=None)
+    p.add_argument("--effort", choices=["low", "medium", "high", "max"], default="high")
+    p.add_argument("--allow-codegen", action="store_true", help="allow offered, sandboxed custom formatting transforms")
+    p.add_argument("--no-render", action="store_true")
+    p.add_argument("--renderer", choices=["auto", "word", "libreoffice", "none"], default="auto")
+    p.add_argument("--no-memory", action="store_true", help="do not consult or record local repair cases")
+    p.add_argument("--yes", action="store_true", help="approve exporting ready copies after investigation")
+    p.add_argument("--ack-review", action="store_true", help="acknowledge blocking visual findings you inspected; separate from --yes")
+    p.set_defaults(fn=cmd_resolve)
+
+    p = sub.add_parser("memory", help="inspect, correct, or forget local repair evidence")
+    p.add_argument("action", choices=["list", "show", "accept", "reject", "forget"])
+    p.add_argument("case_id", nargs="?", default=None)
+    p.add_argument("--note", default="", help="your explanation or correction for accept/reject feedback")
+    p.set_defaults(fn=cmd_memory)
 
     p = sub.add_parser("chain", help="several specs one after another: each stage a full verified run on the stage "
                                      "before it — preview of the whole chain on samples → approve → run (no API key needed)")

@@ -2,6 +2,8 @@
 
 **Latest: v0.6.0 — run without an API key, apply verified formatting properties, and let Claude find your saved recipes and operations.** Includes the Qt window teardown crash fix and everything in v0.5.0. [v0.6.0 release notes](docs/releases/v0.6.0.md) include installation and update instructions.
 
+**In this source checkout: bounded recovery and local repair memory.** Investigate failed requests, previews and batches within an explicit model budget, try verified repairs or sequences on copies, review the final result, and remember useful cases for future investigations. See [Recovery and local repair memory](docs/RECOVERY.md) for desktop and CLI usage, limits and privacy details, and the [real-batch evaluation protocol](docs/RECOVERY_EVALUATION.md) for validation still to be done. This describes source changes; it does not announce a published installer.
+
 **New in v0.6.0: run it without an API key.** Most people who use Spec Surgeon will not have an Anthropic API key, or will not want one. Without a key the app now runs in **keyless mode**: the *Describe the change* step becomes *Choose the change*, with saved specs and **Your library** first and a note saying what a key would add. Those are typing a request in plain English, custom transforms, Claude's visual check of the preview pages, and advice on set-aside files. Everything else works without a key: saved specs, your library's recipes and operations, Preview, Run and its verification, set-aside passes and diagnostics. On the command line, the new `spec-surgeon library use NAME FILES…` runs one of your recipes or operations without a key. Details: ["Running without an API key"](#running-without-an-api-key).
 
 **Also new in v0.6.0:** `set_properties` applies bold, italic, caps, small caps, strikethrough, underline, text colour and paragraph pagination flags, with independent V10 verification. In a conversation, Claude can find an item in **Your library** and offer it as a choice; choosing it uses the saved recipe or operation, and an item changed since the offer must be offered again. The Qt teardown fix prevents windows from being destroyed on a worker thread, addressing the suite's segmentation fault. Details: ["Formatting properties"](#formatting-properties-bold-caps-colour-keep-with-next-set_properties) and ["Claude and your library"](#claude-and-your-library).
@@ -58,6 +60,7 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 7. [The verification record](#the-verification-record)
 8. [Output folder layout](#output-folder-layout)
 9. [Diagnostics — when something fails](#diagnostics--when-something-fails)
+   - [Bounded recovery and local repair memory](docs/RECOVERY.md) / [Real-batch evaluation](docs/RECOVERY_EVALUATION.md)
 10. [Performance](#performance)
 11. [Exceptions and the agent layer (Tier 2/3)](#exceptions-and-the-agent-layer-tier-23)
 12. [Renderers](#renderers)

@@ -12,6 +12,7 @@ installed-app smoke test drive it through ``window._spec_surgeon`` (buttons, val
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 import sys
@@ -36,8 +37,8 @@ from .about_dialog import AboutDialog, about_text
 from .chat import cost_line, current_choices, transcript, waiting_for_user
 from .models import ROW_ROLE
 from .pages import FilesPage, PreviewPage, RequestPage, RunPage, resize_columns
-from .rows import (ProgressTracker, chain_rows, generated_rows, preview_counts, preview_rows, result_counts, result_rows,
-                   written_back)
+from .rows import (ProgressTracker, chain_rows, generated_rows, preview_counts, preview_rows, recovery_rows,
+                   result_counts, result_rows, written_back)
 from .settings_dialog import SettingsDialog
 from .update_ui import UpdateController
 from .widgets import (STEP_STATE_ROLE, STEP_STATUS_ROLE, ImageViewer, MarkdownDialog, StepDelegate, Thumb, label,
@@ -418,10 +419,11 @@ class MainWindow(QMainWindow):
         self.act_library = QAction("Your library…", self, shortcut=QKeySequence("Ctrl+L"))
         self.act_chain = QAction("Chain recipes…", self)
         self.act_library_folder = QAction("Open library folder", self)
+        self.act_memory = QAction("Repair memory…", self)
         self.act_open = QAction("Open results folder", self)
         self.act_settings = QAction("Settings…", self, shortcut=QKeySequence("Ctrl+,"))
         self.act_exit = QAction("Exit", self, shortcut=QKeySequence("Ctrl+Q"))
-        for a in (self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_open,
+        for a in (self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
                   self.act_settings):
             m.addAction(a)
         m.addSeparator()
@@ -492,6 +494,7 @@ class MainWindow(QMainWindow):
         run.failed_btn.clicked.connect(self._open_failed)
         run.set_aside_btn.clicked.connect(self.do_set_aside)
         run.advise_btn.clicked.connect(self.do_advise)
+        run.resolve_btn.clicked.connect(self.do_resolve)
         run.only_problems.toggled.connect(run.proxy.set_only_problems)
         run.table.doubleClicked.connect(self._open_row)
         p.table.doubleClicked.connect(self._open_row)
@@ -501,6 +504,7 @@ class MainWindow(QMainWindow):
         self.act_load.triggered.connect(self.do_load_spec)
         self.act_library.triggered.connect(self.do_library)
         self.act_library_folder.triggered.connect(self._open_library_folder)
+        self.act_memory.triggered.connect(self.do_memory)
         r.library_btn.clicked.connect(self.do_library)
         r.chain_btn.clicked.connect(self.do_chain)
         self.act_chain.triggered.connect(self.do_chain)
@@ -522,9 +526,9 @@ class MainWindow(QMainWindow):
             QShortcut(QKeySequence(seq), self, activated=self._ctrl_enter)
         resize_columns(p.table, 3, [260, 90, 120, 300])
         resize_columns(run.table, 2, [260, 120, 300, 220])
-        self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn,
+        self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn, run.resolve_btn,
                             p.review_ack_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
-                            self.act_chain]
+                            self.act_chain, self.act_memory]
 
     # ---- values ---------------------------------------------------------------------------------------
     def _load_values(self, fresh: bool) -> None:
@@ -709,9 +713,15 @@ class MainWindow(QMainWindow):
     def _go_run(self):
         self.go(3)
 
+    @Slot()
+    def _go_recovery(self):
+        self.go(3)
+        self.run_page.scroll.ensureWidgetVisible(self.run_page.resolve_btn, 0, 24)
+
     def _preview_current(self) -> bool:
         s = self.session
-        has = s.generated is not None or (s.preview is not None and (s.spec is not None or s.chain is not None))
+        has = (s.recovery is not None or s.generated is not None
+               or (s.preview is not None and (s.spec is not None or s.chain is not None)))
         return has and self.preview_key == self._inputs_key()
 
     def _refresh_nav(self) -> None:
@@ -720,8 +730,9 @@ class MainWindow(QMainWindow):
         request = " ".join(self.typed_request().split())
         loaded = (s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled") or s.chain is not None
         current = self._preview_current()
-        has_preview = s.generated is not None or (s.preview is not None and (s.spec is not None or s.chain is not None))
-        ran = s.last_batch is not None or s.last_trials is not None or s.last_chain is not None
+        has_preview = (s.recovery is not None or s.generated is not None
+                       or (s.preview is not None and (s.spec is not None or s.chain is not None)))
+        ran = s.last_batch is not None or s.last_trials is not None or s.last_chain is not None or s.last_recovery is not None
         done = [bool(self._files_ok), bool(request or loaded or s.generated is not None), current, ran]
         if self._files_ok:
             n = self._files_count
@@ -743,7 +754,9 @@ class MainWindow(QMainWindow):
             describe = f"Saved spec: {Path(s.spec_source).name}"
         else:
             describe = STEP_HINTS[1] if self.claude_ok else KEYLESS_HINT
-        if current and s.generated is not None:
+        if current and s.recovery is not None:
+            preview = f"{len(s.recovery.ready)} ready copies · inspect the recovered results"
+        elif current and s.generated is not None:
             preview = "AI-written transform, verified on samples"
         elif current:
             c = preview_counts(s.preview)
@@ -772,10 +785,19 @@ class MainWindow(QMainWindow):
         run, p, r, s = self.run_page, self.preview_page, self.request_page, self.session
         current = self._preview_current()
         blocked = self.session.run_blocked_reason() if current else ""
-        run.run_btn.setEnabled(current and not blocked and not self.busy and not self.updating)
+        ready = s.recovery is None or bool(s.recovery.ready)
+        run.run_btn.setEnabled(current and ready and not blocked and not self.busy and not self.updating)
+        run.run_btn.setText("Export recovery copies" if s.recovery is not None else "Run")
+        can_resolve = (s.last_run_dir is not None or s.preview is not None or s.recovery is not None
+                       or (self._files_ok and bool(self.typed_request())))
+        run.resolve_btn.setEnabled(can_resolve and self.claude_ok and not self.busy and not self.updating)
+        run.resolve_btn.setToolTip("Investigate remaining files on copies" if self.claude_ok else
+                                  "Recovery needs an Anthropic API key; set one in Settings.")
         if self.busy:
             hint = ""
-        elif not (s.preview or s.generated):
+        elif s.recovery is not None and not ready:
+            hint = "No recovery copies are ready; inspect the questions and unresolved files."
+        elif not (s.preview or s.generated or s.recovery):
             hint = "Preview first — nothing runs before you have seen the preview."
         elif not current:
             hint = "Something changed since the preview — press Preview again."
@@ -786,16 +808,16 @@ class MainWindow(QMainWindow):
             hint = ""
         run.run_hint.setText(hint)
         run.run_hint.setToolTip(blocked)
-        p.continue_hint.setText("Preview first" if not (s.preview or s.generated) else
+        p.continue_hint.setText("Preview first" if not (s.preview or s.generated or s.recovery) else
                                 ("Something changed — press Preview again" if not current else
                                  ("Look at Claude's findings above first" if blocked else "")))
-        generated = s.generated is not None
+        generated = s.generated is not None or s.recovery is not None
         run.inplace_rb.setEnabled(not generated)
         if generated:
             run.copies_rb.setChecked(True)
         p.continue_btn.setEnabled(current)
         live = current and not self.busy and not self.updating     # both refuse anything but the current preview:
-        p.save_btn.setEnabled(live)                                # never a live button that silently does nothing
+        p.save_btn.setEnabled(live and s.recovery is None)
         p.review_ack_btn.setEnabled(live)
         request = self.typed_request()
         loaded = (s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled") or s.chain is not None
@@ -831,7 +853,7 @@ class MainWindow(QMainWindow):
         over, a saved operation or a failed preview voids the outcome (``Session._set_outcome``). A preview that is
         merely out of date stays on show, with the "Changed since the preview" hints."""
         s, p = self.session, self.preview_page
-        if s.preview is None and s.generated is None:
+        if s.preview is None and s.generated is None and s.recovery is None:
             p.body.hide()
             p.empty.show()
 
@@ -1225,7 +1247,9 @@ class MainWindow(QMainWindow):
             title = {"failed": "That didn't work", "unsupported": "No built-in operation does this"}.get(
                 turn.status, "Claude needs your reply")
             r.info.show_message("warn" if turn.status in ("failed", "unsupported") else "info", title,
-                                "See the conversation below: reply in the chat, or pick one of Claude's choices.")
+                                "See the conversation below: reply in the chat, or pick one of Claude's choices.",
+                                [("Investigate with recovery…", self._go_recovery)]
+                                if turn.status in ("failed", "unsupported") else [])
             self.go(1)
             QTimer.singleShot(0, self._show_chat_reply)     # after the new bubbles are laid out
             return
@@ -1242,6 +1266,28 @@ class MainWindow(QMainWindow):
         p.empty.hide()
         p.body.show()
         p.clear_samples()
+        p.info.hide()
+        if s.recovery is not None:
+            result = s.recovery
+            p.request_lbl.setText(f"Recovery: {result.request}")
+            p.summary_lbl.setText(result.to_text())
+            p.generated_card.hide()
+            p.tiles.hide()
+            p.table_card.show()
+            p.samples_card.show()
+            p.model.set_rows(recovery_rows(result, preview=True))
+            p.only_problems.setChecked(False)
+            for sample in result.samples:
+                p.samples.addWidget(self._sample_widget(sample))
+            notes = list(result.notes) + [f"Needs your input: {q}" for q in result.questions]
+            if notes:
+                p.notes.show_message("warn", "Review the recovery", "\n".join(notes))
+            else:
+                p.notes.hide()
+            p.token_lbl.setText("Export rechecks the original inputs and the verified candidate copies. "
+                                "Original files are never overwritten.")
+            self._fill_review()
+            return
         if s.generated is not None:
             g = s.generated
             p.request_lbl.setText("AI-written transform")
@@ -1294,6 +1340,10 @@ class MainWindow(QMainWindow):
         p.only_problems.setChecked(False)
         for sample in pv.samples:
             p.samples.addWidget(self._sample_widget(sample))
+        if self.claude_ok and (c["exceptions"] or any(not sample.passed for sample in pv.samples)):
+            p.info.show_message("warn", "Some files need investigation",
+                                "Recovery can inspect these failures and try verified repairs on copies within a budget.",
+                                [("Resolve remaining files…", self._go_recovery)])
         if not pv.samples:
             p.samples.addWidget(label("No sample could be tried (every file was set aside).", "Muted"))
         p.token_lbl.setText(f"Approval token {pv.token} — Run refuses if any file or the spec changes before it "
@@ -1419,7 +1469,8 @@ class MainWindow(QMainWindow):
     def _after_run(self, text: str) -> None:
         s, run = self.session, self.run_page
         self.write(text or "")
-        rows = (chain_rows(s.last_chain) if s.last_chain is not None else
+        rows = (recovery_rows(s.last_recovery) if s.last_recovery is not None else
+                chain_rows(s.last_chain) if s.last_chain is not None else
                 result_rows(s.last_batch) if s.last_batch is not None else generated_rows(s.last_trials))
         run.model.set_rows(rows)
         run.only_problems.setChecked(False)
@@ -1430,7 +1481,10 @@ class MainWindow(QMainWindow):
         run.t_exc.set(c["EXCEPTION"], "warn" if c["EXCEPTION"] else "")
         problems = c["FAIL"] + c["EXCEPTION"]
         where = s.last_run_dir
-        if s.last_chain is not None:
+        if s.last_recovery is not None:
+            msg = (f"Verified recovery copies were exported in {where}. Inspect the results against your request; "
+                   "original files were not changed.")
+        elif s.last_chain is not None:
             if s.last_chain.in_place:
                 msg = "Files that passed a stage were written back over the originals, stage by stage."
             else:
@@ -1450,7 +1504,8 @@ class MainWindow(QMainWindow):
                                  "Done" if not problems else "Done, with files set aside", msg)
         run.failed_btn.setVisible(bool(where and (where / "failed").is_dir()))
         run.report_btn.setEnabled(bool(where and ((where / "BATCH_REPORT.md").exists()
-                                                  or (where / "CHAIN_REPORT.md").exists())))
+                                                  or (where / "CHAIN_REPORT.md").exists()
+                                                  or (where / "RECOVERY_REPORT.md").exists())))
         run.diag_btn.setEnabled(bool(where and (where / "DIAGNOSTICS.md").exists()))
         run.set_aside_btn.setEnabled(bool(problems))
         run.advise_btn.setEnabled(bool(problems))
@@ -1699,10 +1754,13 @@ class MainWindow(QMainWindow):
         report = d / "BATCH_REPORT.md" if d else None
         if d and not (report and report.exists()) and (d / "CHAIN_REPORT.md").exists():
             report = d / "CHAIN_REPORT.md"        # a chain's run: its own report, each stage's in its folder
+        if d and not (report and report.exists()) and (d / "RECOVERY_REPORT.md").exists():
+            report = d / "RECOVERY_REPORT.md"
         if not report or not report.exists():
             self.prompts.notify("Spec Surgeon", "No report yet — run first.")
             return
-        dlg = MarkdownDialog("Chain report" if report.name == "CHAIN_REPORT.md" else "Batch report",
+        dlg = MarkdownDialog("Recovery report" if report.name == "RECOVERY_REPORT.md" else
+                             "Chain report" if report.name == "CHAIN_REPORT.md" else "Batch report",
                              report.read_text(encoding="utf-8"), self, base=d)
         self._viewers.append(dlg)
         dlg.show()
@@ -1777,6 +1835,73 @@ class MainWindow(QMainWindow):
         return Path(res["path"])
 
     @Slot()
+    def do_resolve(self) -> bool:
+        if self.busy or self.updating:
+            return False
+        if not self.claude_ok:
+            self.run_page.info.show_message("info", "Recovery needs an API key",
+                                           "Set an Anthropic API key in Settings to investigate remaining files.",
+                                           [("Set API key…", self.open_settings)])
+            return False
+        from ..recovery import RecoveryOptions
+        self.sync()
+        page = self.run_page
+        options = RecoveryOptions(max_cost_usd=page.recovery_budget.value(),
+                                  max_attempts=page.recovery_attempts.value(), max_calls=page.recovery_calls.value(),
+                                  allow_codegen=page.recovery_codegen.isChecked(),
+                                  use_memory=page.recovery_memory.isChecked(),
+                                  render=self.request_page.render_cb.isChecked())
+        request = page.recovery_request.toPlainText().strip() or None
+        if request is None and self.session.last_run_dir is None and self.session.recovery is None:
+            request = self.typed_request() or None
+        wkey = self._widget_key(keep_spec=False)
+
+        def done(text):
+            self.write(text or "")
+            self.preview_key = wkey + self._chat_key()
+            self._fill_preview()
+            self.go(2)
+        return self._work("Resolve remaining files", lambda log: self.session.resolve_remaining(log, options, request),
+                          on_done=done, page=page)
+
+    @Slot()
+    def do_memory(self) -> bool:
+        """Inspect evidence and record corrections; approval never promotes a repair past verification."""
+        from ..repair_memory import CaseStore
+        if self.busy or self.updating:
+            return False
+        try:
+            store = CaseStore()
+            cases = store.list_cases()
+            if not cases:
+                self.prompts.notify("Repair memory", "No local repair cases yet.")
+                return False
+            entries = {f"{case.get('id', case.get('case_id', ''))}: {case.get('request', '')[:100]}": case
+                       for case in cases}
+            picked = self.prompts.pick_item("Repair memory", "Choose a past repair to inspect or correct", list(entries))
+            if not picked:
+                return False
+            case = entries[picked]
+            case_id = case.get("id") or case.get("case_id")
+            dlg = MarkdownDialog("Repair evidence", "```json\n" + json.dumps(case, ensure_ascii=False, indent=2,
+                                                                           default=str) + "\n```", self)
+            self._viewers.append(dlg)
+            dlg.show()
+            action = self.prompts.pick_item("Repair memory", "Feedback describes your inspection of this repair",
+                                           ["Inspect only", "Accept result", "Reject result", "Forget case"])
+            if action in ("Accept result", "Reject result"):
+                note = self.prompts.ask_text("Repair memory", "Your explanation or correction (optional)")
+                store.feedback(case_id, action == "Accept result", note=note)
+                self.write(f"Repair case {case_id}: {action}. Every future reuse still requires verification.")
+            elif action == "Forget case":
+                store.forget(case_id)
+                self.write(f"Forgot repair case {case_id}.")
+            return True
+        except (ValueError, OSError) as e:
+            self.prompts.warn("Repair memory", str(e))
+            return False
+
+    @Slot()
     def do_advise(self) -> bool:
         s = self.session
         if not self.claude_ok:
@@ -1802,7 +1927,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _open_preview_folder(self) -> None:
-        if self.session.out_dir and (self.session.out_dir / "preview").exists():
+        if self.session.recovery is not None:
+            open_folder(self.session.recovery.out_dir)
+        elif self.session.out_dir and (self.session.out_dir / "preview").exists():
             open_folder(self.session.out_dir / "preview")
 
     @Slot(QModelIndex)
@@ -1968,6 +2095,7 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
     w._spec_surgeon = {
         "session": w.session, "window": w, "app": app, "wait": wait,
         "buttons": {"preview": r.preview_btn, "load": r.load_btn, "run": run.run_btn, "set_aside": run.set_aside_btn,
+                    "resolve": run.resolve_btn, "memory": w.act_memory,
                     "open": run.open_btn, "advise": run.advise_btn, "check_updates": w.check_btn,
                     "install_update": w.updates.banner.btn_install, "settings": w.settings_btn,
                     "send": r.chat.send_btn, "start_over": r.chat.start_over_btn,

@@ -7,16 +7,16 @@ button on the right, next to a hint that says what is still missing when that bu
 
 Strings other code depends on: "reply in the chat", "Start over", "Load set-aside files", "Advise on
 exceptions" (``Session`` messages name these controls).
-Never re-introduce "Answers"/"Allow AI-written transforms": those controls no longer exist.
+Custom transforms in normal conversations are offered through choices; recovery has its own explicit opt-in.
 """
 from __future__ import annotations
 
 from typing import List
 
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QFrame, QGridLayout, QHBoxLayout,
+from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QDoubleSpinBox, QFrame, QGridLayout, QHBoxLayout,
                                QHeaderView, QLabel, QListWidget, QPlainTextEdit, QProgressBar, QPushButton,
-                               QRadioButton, QScrollArea, QTableView, QVBoxLayout, QWidget)
+                               QRadioButton, QScrollArea, QSpinBox, QTableView, QVBoxLayout, QWidget)
 
 from .chat import ChatView
 from .models import ProblemsFilter, RowsModel
@@ -471,6 +471,41 @@ class RunPage(Page):
         rl.addWidget(card)
         self.results.hide()
         self.content.addWidget(self.results)
+
+        recovery = Card("Resolve remaining files", "Investigate failed or set-aside files on working copies, then "
+                        "review the result before exporting. Verification checks preservation; inspect whether the "
+                        "result meets your request.")
+        limits = QHBoxLayout()
+        self.recovery_budget = QDoubleSpinBox(self)
+        self.recovery_budget.setRange(0.01, 1000)
+        self.recovery_budget.setValue(5.0)
+        self.recovery_budget.setPrefix("$ ")
+        self.recovery_budget.setToolTip("Maximum estimated model spend for this investigation")
+        self.recovery_attempts = QSpinBox(self)
+        self.recovery_attempts.setRange(1, 20)
+        self.recovery_attempts.setValue(3)
+        self.recovery_calls = QSpinBox(self)
+        self.recovery_calls.setRange(1, 100)
+        self.recovery_calls.setValue(12)
+        for title, widget in (("Budget", self.recovery_budget), ("Attempts", self.recovery_attempts),
+                              ("Model calls", self.recovery_calls)):
+            limits.addWidget(label(title, "Muted", wrap=False))
+            limits.addWidget(widget)
+        limits.addStretch(1)
+        recovery.add(limits)
+        self.recovery_request = QPlainTextEdit(self)
+        self.recovery_request.setPlaceholderText("Optional clarification or answer for recovery (the original request is used if empty)")
+        self.recovery_request.setMaximumHeight(80)
+        recovery.add(self.recovery_request)
+        self.recovery_codegen = QCheckBox("Allow offered custom formatting transforms (sandboxed and verified)")
+        recovery.add(self.recovery_codegen)
+        self.recovery_memory = QCheckBox("Remember repair outcomes locally and consult past cases")
+        self.recovery_memory.setChecked(True)
+        recovery.add(self.recovery_memory)
+        self.resolve_btn = QPushButton("Resolve remaining files")
+        self.resolve_btn.setEnabled(False)
+        recovery.add(self.resolve_btn)
+        self.content.addWidget(recovery)
         self.finish()
 
         self.back_btn = QPushButton("\u2190  Preview")

@@ -96,6 +96,8 @@ class Session:
     chain: Optional[Dict[str, Any]] = None        # the outcome is a chain of specs (chain.py), run stage by stage
     chain_source: str = ""                        # "library:NAME" | "recipes" (built from your recipes) | a chain file
     last_chain: Any = None                        # chain.ChainResult of the last Run (the window's results table)
+    recovery: Any = None                          # investigated copies, awaiting review and export
+    last_recovery: Any = None                     # recovery whose ready copies were exported
 
     def claude_ready(self) -> bool:
         """Claude can be called: a client was given (tests, scripted) or credentials are there
@@ -177,6 +179,7 @@ class Session:
         if sum(x is not None for x in (spec, generated, chain)) > 1:
             raise ValueError("a session runs either a spec, a custom transform or a chain, not two of them")
         self.spec, self.generated, self.chain = spec, generated, chain
+        self.recovery = None
         self.spec_source = source if spec is not None else ""
         self.chain_source = source if chain is not None else ""
         self.recipe_name = recipe if spec is not None else ""
@@ -670,6 +673,8 @@ class Session:
 
     def _current_review(self):
         """(the preview object that carries the visual check, the token it was made for)."""
+        if self.recovery is not None:
+            return self.recovery, self.recovery.token
         if self.generated is not None:
             return self.generated_preview, self.generated_token
         if self.preview is not None:
@@ -714,6 +719,18 @@ class Session:
         blocked = self.run_blocked_reason()
         if blocked:
             raise ValueError(blocked)
+        if self.recovery is not None:
+            if in_place:
+                raise ValueError("Recovery exports edited copies only; original files cannot be overwritten.")
+            from .recovery import deliver_recovery
+            result = self.recovery
+            destination = deliver_recovery(result, acknowledge_review=bool(
+                result.token and getattr(result, "review_ack", "") == result.token))
+            self.last_recovery = result
+            self.last_run_dir = result.out_dir
+            self.last_batch, self.last_chain, self.last_trials = None, None, None
+            return result.to_text() + f"\nRecovery copies exported: {destination}. Original files were not changed."
+        self.last_recovery = None
         if self.generated is not None:
             from .codegen import run_generated
             files = self.files()
@@ -804,6 +821,51 @@ class Session:
                          "on only those files" + (", or 'Advise on exceptions' for per-file advice." if
                                                   self.claude_ready() else "."))
         return "\n".join(lines)
+
+    def resolve_remaining(self, log: Log, options=None, request: Optional[str] = None) -> str:
+        """Investigate the last run's exceptions, or the current preview's failed files, on copies.
+
+        No export is performed here. The returned candidates become the reviewable outcome for Run.
+        """
+        from .recovery import recover, recover_from_run
+        out = Path(self.out_root) / datetime.now().strftime("%Y%m%d-%H%M%S-%f-recovery")
+        previous = self.recovery
+        if previous is not None and previous.ready and self.last_recovery is not previous:
+            raise ValueError("Export the ready recovery copies before investigating the remaining files again. "
+                             "The current ready copies are still available on the Preview step.")
+        source_run = previous.out_dir if previous is not None else self.last_run_dir
+        if (previous is None and (self.preview is not None or self.conversation is not None)
+                and self.out_dir is not None and self.last_run_dir != self.out_dir / "run"):
+            source_run = None  # the current conversation/preview has not run; an older batch is unrelated
+        if source_run is not None:
+            result = recover_from_run(source_run, out, request=request, options=options,
+                                      client=self.client, log=log)
+        else:
+            files = self.files()
+            pv = self.preview
+            if pv is not None:
+                bad = {Path(f.source) for f in pv.batch_plan.files if f.status == "exception"}
+                bad.update(Path(s.source) for s in pv.samples if not s.passed)
+                files = [f for f in files if f in bad]
+                if not files:
+                    raise ValueError("The preview has no failed or set-aside files to investigate.")
+            approved = list(self.conversation.sources) if self.conversation is not None else []
+            original_request = (self.conversation.request if self.conversation is not None else "") or \
+                (self.spec or {}).get("request") or "\n".join(
+                st["spec"].get("request") or "" for st in (self.chain or {}).get("stages", []))
+            clarified = original_request
+            if request and request.strip() != original_request.strip():
+                clarified = original_request + "\n\nUser clarification: " + request if original_request else request
+            result = recover(files, clarified, out,
+                             spec=self.spec, chain=self.chain, prior_failures=self.prior_failures,
+                             template=self.template, approved_words=approved, options=options,
+                             client=self.client, log=log)
+        self._set_outcome()
+        self.end_conversation()
+        self.recovery = result
+        self.out_dir = result.out_dir
+        self.questions = list(result.questions)
+        return result.to_text()
 
     def advise(self, log: Log) -> str:
         from .advisor import advise_batch
