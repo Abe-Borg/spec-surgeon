@@ -235,6 +235,41 @@ def test_a_chain_never_reads_where_it_writes_and_refuses_a_bad_chain_before_anyt
     assert load_chain_file(tmp_path / "c.json")["stages"][1]["spec"] == _hf()
 
 
+def test_a_reused_results_folder_keeps_nothing_of_an_earlier_run(folder, tmp_path):
+    """Codex on #23: a file that passed last time and is absent or stops this time must not survive in outputs/."""
+    r1 = run_chain([str(folder)], _template_chain(), tmp_path / "run", workers=1, renderer="none", do_render=False)
+    assert r1.counts()["PASS"] == 2 and len(list((tmp_path / "run" / "outputs").iterdir())) == 2
+    (tmp_path / "run" / "stage-01" / "failed").mkdir()
+    (tmp_path / "run" / "stage-01" / "failed" / "old.docx").write_bytes(b"stale")
+    gone = sorted(folder.glob("21*.docx"))[1]
+    gone.unlink()                                             # one file is no longer in the batch
+    r2 = run_chain([str(folder)], _template_chain(), tmp_path / "run", workers=1, renderer="none", do_render=False)
+    assert [f.source.name for f in r2.files] == ["21 13 13 – WET-PIPE.docx"] and r2.counts()["PASS"] == 1
+    for sub in ("outputs", "stage-01/outputs", "stage-02/outputs"):
+        assert [p.name for p in (tmp_path / "run" / sub).iterdir()] == ["21 13 13 – WET-PIPE.docx"], sub
+    assert not (tmp_path / "run" / "stage-01" / "failed").exists()
+    # the same folder again, now with a chain every file stops in: outputs/ is empty, not last run's copies
+    r3 = run_chain([str(folder)], chain_from_specs([("strip", _remove()), ("refuse", _refuse())]), tmp_path / "run",
+                   workers=1, renderer="none", do_render=False)
+    assert r3.counts()["PASS"] == 0 and not (tmp_path / "run" / "outputs").exists()
+
+
+def test_a_runs_chain_json_loads_back_as_the_chain(folder, tmp_path):
+    """Codex on #23: a run's chain.json wraps the chain beside the stages' results; the loader must unwrap it."""
+    chain = _template_chain()
+    run_chain([str(folder)], chain, tmp_path / "run", workers=1, renderer="none", do_render=False)
+    data = json.loads((tmp_path / "run" / "chain.json").read_text(encoding="utf-8"))
+    assert "chain" in data and "stages" in data and "files" in data          # the wrapper, with the results
+    assert load_chain_file(tmp_path / "run" / "chain.json") == chain
+    pv = make_chain_preview(chain, [str(folder)], tmp_path / "preview", renderer="none", do_render=False)
+    assert load_chain_file(tmp_path / "preview" / "chain.json") == chain      # the preview's: the chain itself
+    s = Session(folder=folder, out_root=tmp_path / "out")
+    assert s.load_chain_file(tmp_path / "run" / "chain.json") == chain and s.chain_source == str(tmp_path / "run" / "chain.json")
+    (tmp_path / "x.json").write_text(json.dumps({"counts": {}, "files": []}), encoding="utf-8")
+    with pytest.raises(ChainError, match="unknown chain key"):                  # neither shape: refused, not misread
+        load_chain_file(tmp_path / "x.json")
+
+
 # ---- the preview and its token ---------------------------------------------------------------------------------------
 
 def test_the_chain_preview_runs_every_stage_on_the_samples_and_its_token_covers_every_stage(folder, tmp_path):

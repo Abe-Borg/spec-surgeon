@@ -22,7 +22,9 @@ Rules this module keeps:
   written back (said in the report); in copies mode the sources are never changed.
 * **A run never reads where it writes** (``batch.check_inputs_outside`` on the chain's folder before anything is
   created), a template of ANY stage is skipped from the inputs (``editspec.is_template_file``), and the chain's
-  ``outputs/`` holds only files that passed every stage, re-hashed before the copy.
+  ``outputs/`` holds only files that passed every stage OF THIS RUN, re-hashed before the copy: a reused results
+  folder has its ``outputs/`` — and each stage folder's ``outputs/`` and ``failed/`` — emptied first (Codex on #23: a
+  file that passed last time and stops this time must not survive from the earlier run).
 * **Order is the user's, flagged where it matters**: a later stage that changes or removes a part an earlier stage added
   (a font change over the template's new header) is flagged per file in the report, never refused — inside one spec the
   engine would refuse it (rule 9); in a chain the user asked for that order.
@@ -34,6 +36,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import time
 import traceback
 from dataclasses import dataclass, field
@@ -288,8 +291,11 @@ def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, worke
     t_start = time.perf_counter()
     stage_label = "start"
     try:
+        _empty(out_dir / "outputs")                # a reused folder: nothing of an earlier run survives in outputs/
         for sr in result.stages:
             stage_label = f"stage {sr.index} ({sr.name})"
+            _empty(sr.out_dir / "outputs")         # the stage's own copies are this run's only (its inputs lie in
+            _empty(sr.out_dir / "failed")          # the stage before it, never here)
             alive = [cf for cf in result.files if cf.stopped_at is None]
             # the pin: stage N+1 reads only the bytes stage N verified
             if sr.index > 1:
@@ -392,6 +398,14 @@ def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, worke
         log.close()
 
 
+def _empty(folder: Path) -> None:
+    """Remove a results subfolder an earlier run of the same folder left (``outputs/``, ``failed/``): the chain's
+    guarantee is about THIS run. Only ever called on folders under the chain's own results folder, after
+    ``check_inputs_outside`` proved no input lies there."""
+    if folder.is_dir():
+        shutil.rmtree(folder)
+
+
 def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, verified_bytes, guard, log) -> None:
     """The chain's own delivery: in copies mode, every file that passed every stage is copied — re-hashed against the
     last stage's verified bytes — into ``<out>/outputs/``; in place the last stage already wrote it back."""
@@ -432,7 +446,12 @@ def load_chain_file(path: Path) -> Dict[str, Any]:
     stages resolve against the file's folder, as ``editspec.load_spec`` does for a spec."""
     path = Path(path)
     data = json.loads(path.read_text(encoding="utf-8"))
-    chain = data.get("chain") if isinstance(data, dict) and "chain" in data and "stages" not in data else data
+    # a run's chain.json wraps the chain beside the stages' RESULTS (``write_chain_report``: ``chain``, ``stages``,
+    # ``files``, …); a saved chain and a preview's chain.json are the chain itself
+    if isinstance(data, dict) and isinstance(data.get("chain"), dict) and isinstance(data["chain"].get("stages"), list):
+        chain = data["chain"]
+    else:
+        chain = data
     if not isinstance(chain, dict):
         raise ChainError(f"{path} does not hold a chain")
     for st in chain.get("stages") or []:

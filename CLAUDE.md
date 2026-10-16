@@ -626,7 +626,7 @@ merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test
 (`tests/test_library_choices.py`, 2026-10-16), 734 with `set_properties` (`tests/test_set_properties.py`), 740 with the Qt
 teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without an API key
 (`tests/test_keyless.py`, 2026-10-16), 768 with the plan-time conflicts for what an op reads
-(`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 782 with chains
+(`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
 (`tests/test_chain.py`, 2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
@@ -1084,8 +1084,8 @@ Abraham: "the user can elect to first change the font, then remove existing head
 header/footer of the template spec" — asked how feasible; the probe showed the engine refuses that as one spec
 (rule 9: the font op's `verify` touch over the header parts the templating op removes; `remove_header_footer` +
 `apply_header_footer_template` both remove the same parts) while a chain of RUNS passes, and he said "make it happen".
-README → "Chains: several recipes, one after another" is the user's view; `tests/test_chain.py` pins every rule (14
-tests, 782 in total). Rules:
+README → "Chains: several recipes, one after another" is the user's view; `tests/test_chain.py` pins every rule (16
+tests, 784 in total). Rules:
 
 1. **A chain never changes the engine's rules.** Every stage is an ordinary `run_batch` with its own plan, apply,
    V1–V10, render and guarded delivery; `merge_fragments` is untouched, and so are rules 2 and 9 — a chain is the home
