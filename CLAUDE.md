@@ -533,7 +533,7 @@ planted-defect test proving the verifier catches a wrong implementation of it �
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
-merged and the merge's own tests, FIXCOUNT with the Phase 8 review fixes (`tests/test_phase8_fixes.py`) — all pass but
+merged and the merge's own tests, 684 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -809,7 +809,7 @@ Both landed after v0.4.1 on separate branches; the merge keeps both sides' featu
 ## Phase 8 review fixes (2026-10-15)
 
 The merged branch was reviewed (an internal adversarially-verified review, Codex, the merge verifiers); every finding was
-reproduced first and `tests/test_phase8_fixes.py` pins each fix with a test that fails without it (FIXCOUNT tests in
+reproduced first and `tests/test_phase8_fixes.py` pins each fix with a test that fails without it (684 tests in
 total). README → "The Phase 8 review fixes" is the finding-by-finding table. Rules that came out of it (the details are
 in rules 13–17 and 19, Diagnostics rule 8 and "Where things are"):
 
@@ -849,11 +849,22 @@ Second pass (the verifiers' residuals and gaps, each reproduced first and pinned
   an operation from Your library clears the request box once it passes; *Save to library…* warns on an `OSError` and on
   a name the other kind holds (Replace is offered only for a same-kind name).
 
-Not changed in this round: the security cluster's finding on `codegen.check_source` (review-7: the attribute rule is a
-denylist) — see the plan's Phase 8 status. (`ui/app.py`'s `do_save_to_library`, recorded here before as catching
-`ValueError` only and asking "Replace it?" for a name the other kind holds, is fixed in the second pass above.)
-`codegen.generate_op` still lists the samples to the writer by `Path.name` while its tools take `compiler.file_labels`
-labels (the same in a single-folder batch).
+The second pass's tests are `tests/test_phase8_fixes_window.py` (the window and its session) and
+`tests/test_phase8_fixes_cli.py` (the command line, the advisor, the visual check, wording, the verifier's sorts).
+
+- **The custom-transform sandbox** (review-7, rule 16): `codegen.check_source` is an ALLOWLIST for module attributes —
+  a plainly imported module (`re`, `json`, `copy`, `math`, `itertools`, `functools`) or lxml's `etree` is usable only
+  as `module.name` with `name` in `MODULE_ATTRS`, and any other use of the module object (passed, assigned, rebound,
+  indexed) is refused; dunder names, attributes with `FORBIDDEN_ATTR_PREFIXES` (frames, code objects, generator
+  internals: `f_`, `gi_`, `cr_`, `ag_`, `tb_`, `co_`, `im_`, `func_`) and lxml's own file readers/writers
+  (`write_c14n`, `xinclude`, `xmlfile`, `XSLT`, `parser`, … in `FORBIDDEN_ATTRS`) are refused. The writer's prompt
+  lists `MODULE_ATTRS`. `sandbox_runner.install_guard(workdir)` adds an audit hook before a line of generated code
+  runs: writes, removals and renames only inside the workdir; no processes, sockets or native code; no `.pyc` writes.
+  lxml's C-level file access is not audited — the whitelist is what keeps generated code away from it. Still a
+  prototype sandbox, not an OS-level jail. Never relax `MODULE_ATTRS` or a forbidden list to let a generated op pass.
+  `tests/test_phase8_fixes.py` feeds the bypass shapes to `check_source` as text (never executes them) and runs the
+  guard on throw-away files.
+- `codegen.generate_op` lists the samples to the writer by `compiler._Batch.label` (the labels its tools take).
 
 ## v0.4.0 additions: template specs and font sizes
 
