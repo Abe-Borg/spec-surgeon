@@ -683,17 +683,19 @@ def build_chain_set_aside_manifest(result: "Any") -> Dict[str, Any]:
         by_code[f.code] += 1
         by_pattern[pid] += 1
         stage = f.stopped_at
+        final_failure = f.code == "chain-outcome"
         items.append({
             "source": str(f.source.resolve()), "name": f.source.name, "pattern_id": pid, "status": "SET_ASIDE",
             "code": f.code, "category": f.category,
-            "reason": f"stopped at stage {stage} of {n}" + (f" — {f.reason}" if f.reason else ""),
+            "reason": ("stopped at final requirements" if final_failure else f"stopped at stage {stage} of {n}")
+                      + (f" — {f.reason}" if f.reason else ""),
             "explanation": f.explanation,
             "details": {**f.details, "chain_stage": stage,
                         "stage_name": result.stages[stage - 1].name if stage and stage <= n else None,
                         "stage_folder": str(result.stages[stage - 1].out_dir) if stage and stage <= n else None,
                         "stages": list(f.stage_status)},
             "body_hygiene": {},
-            **({"stage": f"chain stage {stage}"} if stage else {}),
+            **({"stage": "chain final requirements" if final_failure else f"chain stage {stage}"} if stage else {}),
         })
     templates = [str(t) for t in chain_templates(result.chain)]
     return {
@@ -729,6 +731,10 @@ def write_chain_report(result: "Any") -> Path:
              + ", ".join(f"{k} {v:.1f}s" for k, v in (result.timings or {}).items()), ""]
     if result.chain.get("description"):
         lines += [f"> {result.chain['description']}", ""]
+    if result.chain.get("assertions"):
+        lines += ["Final requirements are checked independently on the exact verified bytes after all stages. "
+                  "Only files that also satisfy every final requirement reach this chain's `outputs/`. "
+                  "These checks do not replace visual review.", ""]
     lines.append("## Stages")
     for s in result.stages:
         spec = s.spec
@@ -748,9 +754,17 @@ def write_chain_report(result: "Any") -> Path:
     lines.append("|---|---|" + "---|" * n + "---|---|")
     for f in result.files:
         cells = [st if st != "NOT_RUN" else "—" for st in f.stage_status] + ["—"] * (n - len(f.stage_status))
-        stopped = f"stage {f.stopped_at}" if f.stopped_at else ""
+        stopped = "final requirements" if f.code == "chain-outcome" else f"stage {f.stopped_at}" if f.stopped_at else ""
         lines.append(f"| {f.source.name} | **{f.status}** | " + " | ".join(cells) + f" | {stopped} | {f.delivered_to or ''} |")
     lines.append("")
+    if result.chain.get("assertions"):
+        lines += ["## Final requirements", "", "```json", json.dumps(result.chain["assertions"], indent=2), "```", ""]
+        for f in result.files:
+            if not f.outcomes:
+                lines.append(f"- **{f.source.name}** — not checked (the file did not reach final verification)")
+            for entry in f.outcomes:
+                lines.append(f"- **{f.source.name}** — requirement {entry['index']}: **{entry['status']}** — {entry['summary']}")
+        lines.append("")
     if manifest["files"]:
         lines.append("## Set-Aside Files (did not get through every stage)")
         lines.append(f"{manifest['set_aside_count']} file(s) stopped at a stage. In copies mode their sources are "
@@ -827,11 +841,22 @@ def write_chain_diagnostics(result: "Any") -> Path:
     if problems:
         lines += ["## Summary", "", "| # | File | Outcome | Stopped at | Why |", "|---|---|---|---|---|"]
         for i, f in enumerate(problems, 1):
-            where = (f"stage {f.stopped_at} of {n} ({result.stages[f.stopped_at - 1].name})"
+            where = ("final requirements" if f.code == "chain-outcome" else
+                     f"stage {f.stopped_at} of {n} ({result.stages[f.stopped_at - 1].name})"
                      if f.stopped_at and f.stopped_at <= n else "—")
             lines.append(f"| {i} | {_cell(f.source.name, 80)} | {f.status} `{f.code}` | {where} | {_cell(f.reason)} |")
         lines.append("")
         for i, f in enumerate(problems, 1):
+            if f.code == "chain-outcome":
+                lines += [f"## {i}. {f.source.name} — final requirements failed", "",
+                          "Every individual stage passed its checks, but the resulting file did not satisfy "
+                          "all explicit final requirements. No final copy was delivered.", "",
+                          f"- **What to do:** {f.explanation}"]
+                for entry in f.outcomes:
+                    lines.append(f"- Requirement {entry['index']}: **{entry['status']}** — {entry['summary']}")
+                    lines += [f"  - {error}" for error in entry["errors"]]
+                lines.append("")
+                continue
             fr = f.results[f.stopped_at - 1] if f.stopped_at and f.stopped_at <= len(f.results) else None
             if fr is not None:
                 stage_dir = result.stages[f.stopped_at - 1].out_dir.name

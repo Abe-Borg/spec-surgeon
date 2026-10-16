@@ -11,6 +11,8 @@ the advisor and the visual check of the preview samples).
   not be echoed back or acted on — only its text is kept.
 * ``served`` tells which model actually answered (``resp.model``) and whether a fallback ran.
 * ``Usage`` adds up tokens per serving model and estimates the cost from ``PRICES``.
+* ``budget_scope`` gives recovery and its nested callers shared call, token and estimated USD limits, with optional
+  model/effort overrides. Calls outside a scope retain the ordinary defaults above.
 
 ``client()`` builds the real client; callers resolve it at call time through ``compiler._client`` (the advisor through
 its own ``advisor._client``), which is what the tests replace with a scripted fake. Without the ``anthropic`` package it
@@ -28,7 +30,10 @@ content).
 from __future__ import annotations
 
 import copy
+import math
 import os
+from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 DEFAULT_MODEL = os.environ.get("SPEC_SURGEON_MODEL", "claude-opus-5-5")
@@ -45,6 +50,7 @@ PRICES: Dict[str, Tuple[float, float, float, float]] = {
     "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50),
 }
 TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+_CALL_BUDGETS: ContextVar[tuple] = ContextVar("spec_surgeon_call_budgets", default=())
 
 
 class ClaudeUnavailable(RuntimeError):
@@ -101,12 +107,43 @@ def _sdk_credentials() -> bool:
 def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], messages: List[Dict[str, Any]]):
     """One streamed request; returns the final message. Raises whatever the SDK raises: the caller classifies it with
     ``is_api_error`` (an API error is a recorded failure, anything else a defect that propagates) and never half-appends
-    a turn."""
-    kw = dict(model=model, max_tokens=MAX_TOKENS, system=system, tools=list(tools), messages=messages,
-              output_config={"effort": EFFORT}, cache_control={"type": "ephemeral"},
+    a turn. Inside ``budget_scope``, every caller shares its limits, including nested transform and visual calls.
+    A refused preflight raises ``BudgetExceeded`` before opening a stream; ordinary calls are unchanged."""
+    budgets = _CALL_BUDGETS.get()
+    max_tokens, effort = MAX_TOKENS, EFFORT
+    tools = list(tools)
+    if budgets:
+        model = next((b.model for b in reversed(budgets) if b.model is not None), model)
+        max_tokens = min(b.max_output_tokens for b in budgets)
+        effort = budgets[-1].effort
+        try:
+            estimated_input = estimate_input_tokens(system=system, tools=tools, messages=messages)
+        except (TypeError, ValueError) as e:
+            for budget in budgets:
+                budget.exhausted_reason = f"cannot estimate this request's input tokens: {e}"
+            raise BudgetExceeded(budgets[-1].exhausted_reason) from e
+        reservations = [b._preflight(model, estimated_input, max_tokens) for b in budgets]
+        # SDK retries are additional HTTP attempts invisible to this call site. Let recovery decide whether to
+        # retry; its next call must pass the same preflight and count against the same cap.
+        options = getattr(client, "with_options", None)
+        if callable(options):
+            client = options(max_retries=0)
+        for budget, reservation in zip(budgets, reservations):
+            budget._reserve(reservation)
+    kw = dict(model=model, max_tokens=max_tokens, system=system, tools=tools, messages=messages,
+              output_config={"effort": effort}, cache_control={"type": "ephemeral"},
               betas=[FALLBACK_BETA], fallbacks="default")
-    with client.beta.messages.stream(**kw) as stream:
-        return stream.get_final_message()
+    try:
+        with client.beta.messages.stream(**kw) as stream:
+            resp = stream.get_final_message()
+    except BaseException:
+        for budget in budgets:
+            budget.failed_calls += 1
+        # Keep the reservation: a dropped stream may have consumed tokens without reporting its usage.
+        raise
+    for budget, reservation in zip(budgets, reservations if budgets else ()):
+        budget._complete(resp, model, reservation)
+    return resp
 
 
 # ---- diagnostics: what a failed call was, and the exchange as plain data ----------------------------------------------
@@ -380,3 +417,199 @@ class Usage:
     def to_dict(self) -> Dict[str, Any]:
         return {**self.as_dict(), "by_model": self.by_model, "calls": self.calls, "served_models": sorted(set(self.served)),
                 "fallbacks": self.fallbacks, "cost_usd": self.cost_usd()}
+
+
+# ---- recovery's task-local spending and request limits -------------------------------------------------------------
+
+class BudgetExceeded(RuntimeError):
+    """A recovery request was stopped locally. This is not an API error or evidence of a document defect."""
+
+    def __init__(self, reason: str):
+        self.reason = reason
+        super().__init__(reason)
+
+
+def estimate_input_tokens(*, system: str, tools: Sequence[Dict[str, Any]], messages: List[Dict[str, Any]]) -> int:
+    """An intentionally high input estimate, not a tokenizer or a guarantee of provider billing.
+
+    Text uses one token per UTF-8 byte plus envelope overhead (rather than the optimistic chars/4 heuristic).
+    Rendered-page images use the 4,784-token ceiling of the supported models, never their base64 byte count. The
+    provider's hidden prompt overhead, future model/image pricing, and server fallback attempts remain uncertain.
+    Unknown document/audio content is refused rather than silently counted as a short source URL.
+    """
+    def count(value: Any) -> int:
+        if isinstance(value, str):
+            return len(value.encode("utf-8")) + 8
+        if value is None or isinstance(value, (bool, int, float)):
+            return len(str(value)) + 8
+        if isinstance(value, (list, tuple)):
+            return 16 + sum(count(v) for v in value)
+        if isinstance(value, dict):
+            kind = value.get("type")
+            if kind == "image" and "source" in value:
+                return 4784 + 64
+            if kind in ("document", "audio", "video") and "source" in value:
+                raise ValueError(f"{kind} input is not supported by the recovery token estimator")
+            return 32 + sum(count(k) + count(v) for k, v in value.items())
+        dump = getattr(value, "model_dump", None)
+        if callable(dump):
+            return count(dump(mode="json", exclude_none=True))
+        if hasattr(value, "__dict__"):
+            return count(vars(value))
+        raise TypeError(f"unsupported request value {type(value).__name__}")
+
+    return 512 + count(system) + count(tools) + count(messages)
+
+
+class CallBudget:
+    """Shared limits for one recovery task, installed with ``budget_scope(budget)``.
+
+    Calls and output caps are enforced mechanically. Token and USD limits use conservative input/output preflight
+    reservations, then the actual reported usage, including every server fallback iteration. They are estimated
+    ceilings, NOT hard provider-billing caps: tokenization, unreported usage and server-side fallbacks may exceed a
+    reservation. Such overruns stop subsequent calls, never discard the response or its usage diagnostics.
+
+    Failed calls count and retain their reservations because a dropped stream can still have incurred a charge.
+    ``usage`` is this budget's independent ledger; callers continue adding the same response to their own Usage,
+    but must not merge those ledgers back into this one. ``calls`` includes failed attempts; ``usage.calls`` counts
+    returned responses only. The optional ``None`` limits disable token/USD checks, never the call/output caps.
+    """
+
+    def __init__(self, *, model: Optional[str] = None, effort: str = "medium", max_calls: int = 12,
+                 max_output_tokens: int = 8000, max_total_tokens: Optional[int] = 500000,
+                 max_cost_usd: Optional[float] = 5.0):
+        if model is not None and (not isinstance(model, str) or not model.strip() or model != model.strip()):
+            raise ValueError("model must be a non-empty model name without surrounding whitespace, or None")
+        if not isinstance(effort, str) or effort not in ("low", "medium", "high", "max"):
+            raise ValueError("effort must be low, medium, high or max")
+        for name, value in (("max_calls", max_calls), ("max_output_tokens", max_output_tokens),
+                            ("max_total_tokens", max_total_tokens)):
+            if name == "max_total_tokens" and value is None:
+                continue
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"{name} must be a positive integer (not a boolean)")
+        if max_output_tokens > MAX_TOKENS:
+            raise ValueError(f"max_output_tokens must not exceed {MAX_TOKENS}")
+        if max_cost_usd is not None:
+            try:
+                valid_cost = (not isinstance(max_cost_usd, bool) and isinstance(max_cost_usd, (int, float))
+                              and math.isfinite(max_cost_usd) and max_cost_usd > 0)
+            except OverflowError:
+                valid_cost = False
+            if not valid_cost:
+                raise ValueError("max_cost_usd must be a finite positive number (not a boolean), or None")
+            max_cost_usd = float(max_cost_usd)
+        self.model, self.effort = model, effort
+        self.max_calls, self.max_output_tokens = max_calls, max_output_tokens
+        self.max_total_tokens, self.max_cost_usd = max_total_tokens, max_cost_usd
+        self.calls = 0
+        self.failed_calls = 0
+        self.unreported_calls = 0
+        self.usage = Usage()
+        self.exhausted_reason: Optional[str] = None
+        self._reserved_tokens = 0
+        self._reserved_cost_usd = 0.0
+        self._unpriced_reservations = 0
+        self._unpriced_response = False
+
+    @property
+    def estimated_cost_usd(self) -> Optional[float]:
+        cost = self.usage.cost_usd()
+        return None if cost is None or self._unpriced_reservations or self._unpriced_response else cost + self._reserved_cost_usd
+
+    @property
+    def accounted_tokens(self) -> int:
+        return self.usage.tokens() + self._reserved_tokens
+
+    def _stop(self, reason: str):
+        self.exhausted_reason = reason
+        raise BudgetExceeded(reason)
+
+    def _preflight(self, model: str, estimated_input: int, max_output: int) -> Tuple[int, Optional[float]]:
+        if self.exhausted_reason:
+            raise BudgetExceeded(self.exhausted_reason)
+        if self.calls >= self.max_calls:
+            self._stop(f"recovery call limit reached ({self.max_calls} calls)")
+        token_reservation = estimated_input + max_output
+        if self.max_total_tokens is not None and self.accounted_tokens + token_reservation > self.max_total_tokens:
+            self._stop(f"recovery token budget cannot cover the next request: {token_reservation:,} estimated tokens "
+                       f"plus {self.accounted_tokens:,} accounted, limit {self.max_total_tokens:,}")
+        price = PRICES.get(model)
+        if price is None:
+            if self.max_cost_usd is not None:
+                self._stop(f"price unknown for {model}; cannot enforce an estimated USD recovery budget")
+            cost_reservation = None
+        else:
+            pin, pout, pread, pwrite = price
+            # A new prompt may be a cache write, which is more expensive than ordinary input.
+            cost_reservation = (estimated_input * max(pin, pread, pwrite) + max_output * pout) / 1e6
+        if self.max_cost_usd is not None:
+            cost = self.estimated_cost_usd
+            if cost is None:
+                self._stop("a serving or fallback model has an unknown price; further budgeted requests are stopped")
+            if cost + cost_reservation > self.max_cost_usd:
+                self._stop(f"estimated recovery spending ceiling cannot cover the next request: "
+                           f"${cost_reservation:.4f} reserved plus ${cost:.4f} accounted, "
+                           f"ceiling ${self.max_cost_usd:.4f} (an estimate, not a provider billing cap)")
+        return token_reservation, cost_reservation
+
+    def _reserve(self, reservation: Tuple[int, Optional[float]]) -> None:
+        self.calls += 1
+        self._reserved_tokens += reservation[0]
+        if reservation[1] is None:
+            self._unpriced_reservations += 1
+        else:
+            self._reserved_cost_usd += reservation[1]
+
+    def _complete(self, resp: Any, model: str, reservation: Tuple[int, Optional[float]]) -> None:
+        self.usage.add(resp, model)
+        if getattr(resp, "usage", None) is None:
+            self.unreported_calls += 1
+            served_model, _ = served(resp)
+            if served_model and served_model not in PRICES:
+                self._unpriced_response = True
+        else:
+            self._reserved_tokens -= reservation[0]
+            if reservation[1] is None:
+                self._unpriced_reservations -= 1
+            else:
+                self._reserved_cost_usd = max(0.0, self._reserved_cost_usd - reservation[1])
+        cost = self.estimated_cost_usd
+        if self.max_cost_usd is not None and cost is None:
+            self.exhausted_reason = "a serving or fallback model has an unknown price; further budgeted requests are stopped"
+        elif self.max_cost_usd is not None and cost >= self.max_cost_usd:
+            self.exhausted_reason = (f"estimated recovery spending ceiling reached (${cost:.4f} accounted, "
+                                     f"${self.max_cost_usd:.4f} ceiling); provider billing may differ")
+        elif self.max_total_tokens is not None and self.accounted_tokens >= self.max_total_tokens:
+            self.exhausted_reason = f"recovery token budget reached ({self.accounted_tokens:,} tokens accounted)"
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {"model": self.model, "effort": self.effort, "max_calls": self.max_calls,
+                "max_output_tokens": self.max_output_tokens, "max_total_tokens": self.max_total_tokens,
+                "max_cost_usd": self.max_cost_usd, "calls": self.calls, "failed_calls": self.failed_calls,
+                "unreported_calls": self.unreported_calls, "usage": copy.deepcopy(self.usage.to_dict()),
+                "accounted_tokens": self.accounted_tokens, "estimated_cost_usd": self.estimated_cost_usd,
+                "unreported_reserved_tokens": self._reserved_tokens,
+                "unreported_reserved_cost_usd": None if self._unpriced_reservations else self._reserved_cost_usd,
+                "exhausted_reason": self.exhausted_reason,
+                "cost_basis": "Listed-price estimate, not a provider bill or guaranteed billing cap. Input preflight "
+                              "uses a conservative token estimate; failed/unreported calls retain reservations. "
+                              "Server fallback attempts count within one call and may exceed its reservation."}
+
+
+@contextmanager
+def budget_scope(budget: CallBudget):
+    """Apply a task-local budget and restore the prior context even after an exception.
+
+    Nested budgets retain every outer limit; the innermost model/effort override wins and the smallest output cap
+    applies. Re-entering the same budget does not double charge. ContextVars isolate unrelated threads/tasks (a new
+    OS thread must explicitly copy the context or enter its own scope).
+    """
+    if not isinstance(budget, CallBudget):
+        raise TypeError("budget_scope requires a CallBudget")
+    current = _CALL_BUDGETS.get()
+    token = _CALL_BUDGETS.set(current if budget in current else (*current, budget))
+    try:
+        yield budget
+    finally:
+        _CALL_BUDGETS.reset(token)

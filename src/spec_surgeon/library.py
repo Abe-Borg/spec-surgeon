@@ -29,6 +29,7 @@ with it (``other_kind_holding``) — never a recipe and an operation that one na
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -234,6 +235,8 @@ def save_chain(name: str, chain: Dict[str, Any], description: str = "", replace:
             new_st["recipe"] = str(st["recipe"])
         stages.append(new_st)
     saved = {"name": name.strip(), "stages": stages}
+    if "assertions" in chain:
+        saved["assertions"] = copy.deepcopy(chain["assertions"])
     if description.strip() or chain.get("description"):
         saved["description"] = (description or chain.get("description") or "").strip()
     validate_chain(saved)

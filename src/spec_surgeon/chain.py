@@ -34,6 +34,7 @@ Rules this module keeps:
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import shutil
@@ -48,12 +49,13 @@ from . import __version__
 from . import diagnostics as diag
 from .editspec import SpecError, is_template_file, spec_templates, validate_spec
 
-CHAIN_KEYS = {"name", "description", "stages"}
+CHAIN_KEYS = {"name", "description", "stages", "assertions"}
 STAGE_KEYS = {"name", "recipe", "spec"}
 STAGE_DIR = "stage-{:02d}"
 CHAIN_LOG = "chain.log"
 DRIFT_CODE = "chain-drift"
 DELIVER_CODE = "chain-deliver"
+OUTCOME_CODE = "chain-outcome"
 
 
 class ChainError(SpecError):
@@ -88,6 +90,12 @@ def validate_chain(chain: Any) -> None:
     for k in ("name", "description"):
         if chain.get(k) is not None and not isinstance(chain[k], str):
             raise ChainError(f"chain '{k}' must be text, got {chain[k]!r}")
+    if "assertions" in chain:
+        from .verify.outcomes import validate_assertions
+        try:
+            validate_assertions(chain["assertions"])
+        except ValueError as e:
+            raise ChainError(str(e)) from e
     stages = chain.get("stages")
     if not isinstance(stages, list) or not stages:
         raise ChainError("a chain needs 'stages': a non-empty list, one EditSpec per stage, in the order they run")
@@ -109,7 +117,8 @@ def validate_chain(chain: Any) -> None:
                              {"stage": i, "code": e.code, **e.details}) from e
 
 
-def chain_from_specs(specs: Sequence[Any], name: str = "", description: str = "") -> Dict[str, Any]:
+def chain_from_specs(specs: Sequence[Any], name: str = "", description: str = "",
+                     assertions: Optional[List[Dict[str, Any]]] = None) -> Dict[str, Any]:
     """A chain from ``(stage name, spec)`` pairs or ``(stage name, spec, recipe name)`` triples, validated."""
     stages = []
     for item in specs:
@@ -123,6 +132,8 @@ def chain_from_specs(specs: Sequence[Any], name: str = "", description: str = ""
         chain["name"] = name
     if description:
         chain["description"] = description
+    if assertions is not None:
+        chain["assertions"] = copy.deepcopy(assertions)
     validate_chain(chain)
     return chain
 
@@ -140,7 +151,10 @@ def chain_templates(chain: Dict[str, Any]) -> List[Path]:
 def chain_key(chain: Dict[str, Any]) -> Dict[str, Any]:
     """What the approval token hashes beside the files (in place of a spec): the stages' names and specs, in order.
     ``preview.approval_token`` reads the templates of every stage from it (``preview.key_templates``)."""
-    return {"stages": [{"name": stage_name(st, i), "spec": st["spec"]} for i, st in enumerate(chain["stages"], 1)]}
+    key = {"stages": [{"name": stage_name(st, i), "spec": st["spec"]} for i, st in enumerate(chain["stages"], 1)]}
+    if "assertions" in chain:
+        key["assertions"] = chain["assertions"]
+    return copy.deepcopy(key)
 
 
 def chain_intent(chain: Dict[str, Any]) -> str:
@@ -153,6 +167,8 @@ def chain_intent(chain: Dict[str, Any]) -> str:
         lines.append(f"  WHAT THE SPEC DOES: {spec.get('summary') or ''}")
         lines += [f"  ASSUMPTION: {a}" for a in spec.get("assumptions") or []]
     lines.append("The AFTER pages show the file once every stage has run.")
+    if chain.get("assertions"):
+        lines.append("FINAL REQUIREMENTS (must still hold after every stage): " + json.dumps(chain["assertions"]))
     return "\n".join(lines)
 
 
@@ -192,6 +208,7 @@ class ChainFile:
     output: Optional[Path] = None                 # the last verified output (a stage's copy, or the chain's)
     noop: bool = False                            # every stage left it as it was
     flags: List[str] = field(default_factory=list)
+    outcomes: List[Dict[str, Any]] = field(default_factory=list)  # independent final requirements, after all stages
 
     @property
     def record_stem(self) -> str:
@@ -201,7 +218,8 @@ class ChainFile:
         return {"source": str(self.source), "out_name": self.out_name, "pattern_id": self.pattern_id,
                 "stages": self.stage_status, "stopped_at": self.stopped_at, "status": self.status, "code": self.code,
                 "category": self.category, "reason": self.reason, "delivered_to": self.delivered_to,
-                "output": str(self.output) if self.output else None, "noop": self.noop, "flags": self.flags}
+                "output": str(self.output) if self.output else None, "noop": self.noop, "flags": self.flags,
+                "outcomes": self.outcomes}
 
 
 @dataclass
@@ -271,7 +289,11 @@ def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, worke
     from .batch import check_inputs_outside, expand_inputs, output_names, run_batch, verified_bytes
     from .editspec import spec_renames_outputs
     from . import guard
+    chain = copy.deepcopy(chain)                 # callers cannot weaken requirements during a stage callback
     validate_chain(chain)
+    if in_place and chain.get("assertions"):
+        raise ChainError("chains with final assertions require copies mode: stage-by-stage write-back cannot "
+                         "withhold a file that fails a final requirement")
     renaming = [stage_name(st, i) for i, st in enumerate(chain["stages"], 1) if spec_renames_outputs(st["spec"])]
     if in_place and renaming:                     # before anything is written: a stage would refuse in place half-way
         raise ValueError(f"stage(s) {renaming} name the output files from their content, so the chain writes copies "
@@ -440,6 +462,19 @@ def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, veri
             _stop(cf, n, "EXCEPTION", DELIVER_CODE, f"{e}")
             log(f"  {cf.source.name}: not delivered — {e}")
             continue
+        if result.chain.get("assertions"):
+            from .verify.outcomes import assert_outcomes
+            cf.outcomes = assert_outcomes(data, result.chain["assertions"])
+            failures = [entry for entry in cf.outcomes if entry["status"] != "PASS"]
+            if failures:
+                _stop(cf, n, "FAIL", OUTCOME_CODE,
+                      "final requirements after all stages: " + "; ".join(entry["summary"] for entry in failures),
+                      {"outcomes": cf.outcomes, "phase": "final requirements"})
+                cf.category = "Final Requirements Not Satisfied"
+                cf.explanation = "Each stage passed, but the final document does not satisfy the chain's explicit " \
+                                 "requirements. Revise the operations or their order and rerun on the original files."
+                log(f"  {cf.source.name}: not delivered — {cf.reason}")
+                continue
         dest = result.out_dir / "outputs" / cf.out_name
         dest.parent.mkdir(parents=True, exist_ok=True)
         dest.write_bytes(data)
