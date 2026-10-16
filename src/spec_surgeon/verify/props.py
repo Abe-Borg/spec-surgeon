@@ -6,7 +6,7 @@ ooxml.py — a selector bug on the transform side must not be able to hide behin
 
 1. **Assertions.** Each ``plan["property_assertions"]`` entry names a kind (run_fonts, style_fonts,
    doc_defaults_fonts, paragraph_props, section_props, section_hf_refs, effective_font, deleted_paragraphs,
-   inserted_paragraphs), a selector, the property values and the predicted target count. The selection is
+   inserted_paragraphs, properties), a selector, the property values and the predicted target count. The selection is
    re-resolved here; the count must match the plan, and every selected target must carry exactly the asserted
    change — no more (every other child and attribute identical to the source) and, for tracked changes, a
    w:rPrChange / w:pPrChange whose snapshot is the source's properties.
@@ -197,6 +197,11 @@ class Styles:
         if self.root is None:
             return None
         return self.root.find(W + "docDefaults/" + W + "rPrDefault/" + W + "rPr")
+
+    def doc_defaults_ppr(self):
+        if self.root is None:
+            return None
+        return self.root.find(W + "docDefaults/" + W + "pPrDefault/" + W + "pPr")
 
 
 class Theme:
@@ -483,6 +488,7 @@ class Ctx:
         self.added_styles: Set[str] = set()       # new styles a styles_added assertion accounted for
         self.deleted_src_blocks: Dict[str, Set[int]] = {}   # untracked deleted blocks verified by deleted_paragraphs
         self.inserted_out_blocks: Dict[str, Set[int]] = {}  # inserted output blocks verified by inserted_paragraphs
+        self.strip_style_ppr: Dict[str, Set[str]] = {}      # style id → pPr children a properties assertion checked
 
     def view(self, part):
         if part not in self.views:
@@ -520,6 +526,53 @@ def _v_size_to(own: Optional[int], size: Optional[Dict[str, Any]], add_where_mis
     return size["sz"] if frm is None or own in frm else None
 
 
+def _check_rpr_change(S, O, tracked: bool, author, where: str, errs: List[str]) -> None:
+    """The w:rPrChange rules shared by the run-property kinds: plain → the marker unchanged; tracked → present as the
+    last child, with w:id and the author, its snapshot the source rPr (reject-all restores it); a source already
+    carrying one is the op's refusal."""
+    s_chg = S.find(W + "rPrChange") if S is not None else None
+    o_chg = O.find(W + "rPrChange")
+    if not tracked:
+        if sig(s_chg) != sig(o_chg):
+            errs.append(f"{where}: w:rPrChange changed by an untracked formatting op")
+        return
+    if s_chg is not None:
+        errs.append(f"{where}: source already carries a w:rPrChange (tracked op must refuse)")
+        return
+    if o_chg is None or list(O)[-1] is not o_chg:
+        errs.append(f"{where}: tracked change missing (w:rPrChange as last child of rPr)")
+        return
+    if o_chg.get(W + "id") is None or o_chg.get(W + "author") != author:
+        errs.append(f"{where}: w:rPrChange needs w:id and author {author!r}")
+    inner = o_chg.findall(W + "rPr")
+    snap = [sig(c) for c in (S if S is not None else []) if _local(c) != "rPrChange"]
+    if len(inner) != 1 or [sig(c) for c in inner[0]] != snap or len(o_chg) != 1:
+        errs.append(f"{where}: w:rPrChange snapshot is not the source rPr (reject-all would not restore it)")
+
+
+def _check_ppr_change(S, O, tracked: bool, author, where: str, errs: List[str]) -> None:
+    """The w:pPrChange rules shared by the paragraph-property kinds (as _check_rpr_change; the snapshot is the source
+    pPr without its rPr, sectPr and pPrChange)."""
+    s_chg = S.find(W + "pPrChange") if S is not None else None
+    o_chg = O.find(W + "pPrChange")
+    if not tracked:
+        if sig(s_chg) != sig(o_chg):
+            errs.append(f"{where}: w:pPrChange changed by an untracked formatting op")
+        return
+    if s_chg is not None:
+        errs.append(f"{where}: source already carries a w:pPrChange (tracked op must refuse)")
+        return
+    if o_chg is None or list(O)[-1] is not o_chg:
+        errs.append(f"{where}: tracked change missing (w:pPrChange as last child of pPr)")
+        return
+    if o_chg.get(W + "id") is None or o_chg.get(W + "author") != author:
+        errs.append(f"{where}: w:pPrChange needs w:id and author {author!r}")
+    inner = o_chg.findall(W + "pPr")
+    snap = [sig(c) for c in (S if S is not None else []) if _local(c) not in ("rPr", "sectPr", "pPrChange")]
+    if len(inner) != 1 or len(o_chg) != 1 or [sig(c) for c in inner[0]] != snap:
+        errs.append(f"{where}: w:pPrChange snapshot is not the source pPr (reject-all would not restore it)")
+
+
 def _check_font_rpr(S, O, a: Dict[str, Any], where: str, errs: List[str], size_to: Optional[int] = None) -> None:
     """The selected rPr ``O`` must be the source rPr ``S`` with exactly the asserted rFonts change (none when the
     assertion sets no font) and, when ``size_to`` is given, w:sz set to it — nothing else."""
@@ -554,24 +607,7 @@ def _check_font_rpr(S, O, a: Dict[str, Any], where: str, errs: List[str], size_t
     if others_s != others_o:
         errs.append(f"{where}: run properties other than " + ("rFonts / w:sz" if size_to is not None else "rFonts")
                     + " changed")
-    s_chg = S.find(W + "rPrChange") if S is not None else None
-    o_chg = O.find(W + "rPrChange")
-    if not tracked:
-        if sig(s_chg) != sig(o_chg):
-            errs.append(f"{where}: w:rPrChange changed by an untracked formatting op")
-        return
-    if s_chg is not None:
-        errs.append(f"{where}: source already carries a w:rPrChange (tracked op must refuse)")
-        return
-    if o_chg is None or list(O)[-1] is not o_chg:
-        errs.append(f"{where}: tracked change missing (w:rPrChange as last child of rPr)")
-        return
-    if o_chg.get(W + "id") is None or o_chg.get(W + "author") != a.get("author"):
-        errs.append(f"{where}: w:rPrChange needs w:id and author {a.get('author')!r}")
-    inner = o_chg.findall(W + "rPr")
-    snap = [sig(c) for c in (S if S is not None else []) if _local(c) != "rPrChange"]
-    if len(inner) != 1 or [sig(c) for c in inner[0]] != snap or len(o_chg) != 1:
-        errs.append(f"{where}: w:rPrChange snapshot is not the source rPr (reject-all would not restore it)")
+    _check_rpr_change(S, O, tracked, a.get("author"), where, errs)
 
 
 def _run_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
@@ -791,24 +827,7 @@ def _paragraph_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                                 f"got { {etree.QName(k).localname: v for k, v in (got or {}).items()} }")
                 if oe is not None and len(oe):
                     errs.append(f"{where}: {name} gained children")
-            s_chg = S.find(W + "pPrChange") if S is not None else None
-            o_chg = O.find(W + "pPrChange")
-            if not tracked:
-                if sig(s_chg) != sig(o_chg):
-                    errs.append(f"{where}: w:pPrChange changed by an untracked formatting op")
-                continue
-            if s_chg is not None:
-                errs.append(f"{where}: source already carries a w:pPrChange (tracked op must refuse)")
-                continue
-            if o_chg is None or list(O)[-1] is not o_chg:
-                errs.append(f"{where}: tracked change missing (w:pPrChange as last child of pPr)")
-                continue
-            if o_chg.get(W + "id") is None or o_chg.get(W + "author") != a.get("author"):
-                errs.append(f"{where}: w:pPrChange needs w:id and author {a.get('author')!r}")
-            inner = o_chg.findall(W + "pPr")
-            snap = [sig(c) for c in (S if S is not None else []) if _local(c) not in ("rPr", "sectPr", "pPrChange")]
-            if len(inner) != 1 or len(o_chg) != 1 or [sig(c) for c in inner[0]] != snap:
-                errs.append(f"{where}: w:pPrChange snapshot is not the source pPr (reject-all would not restore it)")
+            _check_ppr_change(S, O, tracked, a.get("author"), where, errs)
     if n != a.get("expected_paragraphs", -1):
         errs.append(f"paragraph_props: {n} paragraph(s) selected here, plan predicted {a.get('expected_paragraphs')}")
     return f"paragraph_props: {n} paragraph(s) → {setv}" + (" (tracked)" if tracked else "")
@@ -1147,6 +1166,405 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     return f"effective_font: {checked} run(s)/mark(s) resolve to {what} ({preserved} preserved symbol slot(s))"
 
 
+# ---- set_properties: the V10 kind "properties" ------------------------------------------------------------------
+# This module's own reading of the op's definitions (docs/SET_PROPERTIES_DESIGN.md §3; transform side:
+# ops/effective.PropResolver and ops/set_properties.py — CLAUDE.md lists them among the definitions that must stay
+# identical on both sides). Nothing here is shared with the transform side.
+
+PROP_PAIRS = {"b": ("b", "bCs"), "i": ("i", "iCs"), "caps": ("caps",), "smallCaps": ("smallCaps",),
+              "strike": ("strike",)}
+RUN_TOGGLE_ELEMENTS = ("b", "bCs", "i", "iCs", "caps", "smallCaps", "strike")
+PARA_FLAGS = ("keepNext", "keepLines", "widowControl", "pageBreakBefore")
+PARA_FLAG_DEFAULTS = {"keepNext": False, "keepLines": False, "widowControl": True, "pageBreakBefore": False}
+CASE_ELEMENTS = {"caps", "smallCaps"}          # never on a symbol run: case-mapping a dingbat changes the glyph
+COLOR_DEFAULT = ("auto", None, None, None)
+
+
+def _v_on_off(el) -> Optional[bool]:
+    """A CT_OnOff element's value: None when absent, else on unless w:val is 0/false/off."""
+    return None if el is None else el.get(W + "val") not in FALSY
+
+
+def _v_prop_read(element: str, el):
+    """The value an element gives its property: on/off for toggles and paragraph flags, the (val, themeColor,
+    themeShade, themeTint) tuple for w:color, w:val for w:u (None when the attribute is missing — never "already")."""
+    if el is None:
+        return None
+    if element == "color":
+        return (el.get(W + "val"), el.get(W + "themeColor"), el.get(W + "themeShade"), el.get(W + "themeTint"))
+    if element == "u":
+        return el.get(W + "val")
+    return _v_on_off(el)
+
+
+def _v_run_elements(run_set) -> Dict[str, Any]:
+    """An assertion's user-facing run properties → the asked value per element: b/i expand to their complex-script
+    pairs (a w:cs run draws its weight and slant from w:bCs/w:iCs), color to the effective tuple, u to its w:val."""
+    out: Dict[str, Any] = {}
+    for k, v in (run_set or {}).items():
+        if k in PROP_PAIRS:
+            for e in PROP_PAIRS[k]:
+                out[e] = bool(v)
+        elif k == "color":
+            out["color"] = (str(v), None, None, None)
+        elif k == "u":
+            out["u"] = str(v)
+        else:
+            raise ValueError(f"unknown run property {k!r}")
+    return out
+
+
+def _v_para_elements(para_set) -> Dict[str, bool]:
+    out: Dict[str, bool] = {}
+    for k, v in (para_set or {}).items():
+        if k not in PARA_FLAGS:
+            raise ValueError(f"unknown paragraph property {k!r}")
+        out[k] = bool(v)
+    return out
+
+
+def _v_expected_attrs(element: str, asked, source_el) -> Dict[str, str]:
+    """The attributes the output element must carry: toggles and flags on → none, off → val 0; color → exactly val
+    (the theme attributes gone); u → the source element's attributes with val replaced."""
+    if element == "color":
+        return {W + "val": asked[0]}
+    if element == "u":
+        attrs = dict(source_el.attrib) if source_el is not None else {}
+        attrs[W + "val"] = asked
+        return attrs
+    return {} if asked else {W + "val": "0"}
+
+
+def _v_table_style_id(p, styles: Styles) -> Optional[str]:
+    tbl = p
+    while tbl is not None and tbl.tag != W + "tbl":
+        tbl = tbl.getparent()
+    if tbl is None:
+        return None
+    ts = tbl.find(W + "tblPr/" + W + "tblStyle")
+    return ts.get(W + "val") if ts is not None else styles.default.get("table")
+
+
+def _v_run_levels(rpr, p, styles: Styles) -> List[Tuple[str, Any]]:
+    """(provenance, rPr) of every level below direct formatting, lowest first: docDefaults, the table style chain,
+    the paragraph style chain (pStyle, else the default), the character style chain (rStyle, else the default) —
+    each chain root-most first; the order of effective_fonts."""
+    levels: List[Tuple[str, Any]] = [("docDefaults", styles.doc_defaults_rpr())]
+    for sid in (_v_table_style_id(p, styles), _pstyle(p) or styles.default.get("paragraph"),
+                _rstyle(rpr) or styles.default.get("character")):
+        levels += [(f"style:{st.get(W + 'styleId')}", st.find(W + "rPr")) for st in reversed(styles.chain(sid))]
+    return levels
+
+
+def _v_para_levels(p, styles: Styles) -> List[Tuple[str, Any]]:
+    levels: List[Tuple[str, Any]] = [("docDefaults", styles.doc_defaults_ppr())]
+    for sid in (_v_table_style_id(p, styles), _pstyle(p) or styles.default.get("paragraph")):
+        levels += [(f"style:{st.get(W + 'styleId')}", st.find(W + "pPr")) for st in reversed(styles.chain(sid))]
+    return levels
+
+
+def _v_resolve(levels: List[Tuple[str, Any]], direct, element: str) -> Tuple[Any, str]:
+    """(value, provenance) of one property. Toggles: direct formatting wins; specified at exactly one style level →
+    that value; nowhere → off; more than one → (None, "ambiguous") — Word's XOR is not modelled. w:u, w:color and
+    the paragraph flags: the nearest level that specifies them, else the default. Provenance: "direct",
+    "style:<id>", "docDefaults" or "default"."""
+    d = direct.find(W + element) if direct is not None else None
+    if d is not None:
+        return _v_prop_read(element, d), "direct"
+    if element in RUN_TOGGLE_ELEMENTS:
+        specs = [(_v_prop_read(element, L.find(W + element)), prov) for prov, L in levels
+                 if L is not None and L.find(W + element) is not None]
+        if len(specs) == 1:
+            return specs[0]
+        return (False, "default") if not specs else (None, "ambiguous")
+    for prov, L in reversed(levels):
+        e = L.find(W + element) if L is not None else None
+        if e is not None:
+            return _v_prop_read(element, e), prov
+    if element == "color":
+        return COLOR_DEFAULT, "default"
+    if element in PARA_FLAGS:
+        return PARA_FLAG_DEFAULTS[element], "default"
+    return "none", "default"
+
+
+def _v_run_prop(rpr, p, styles: Styles, element: str) -> Tuple[Any, str]:
+    return _v_resolve(_v_run_levels(rpr, p, styles), rpr, element)
+
+
+def _v_para_prop(p, styles: Styles, element: str) -> Tuple[Any, str]:
+    return _v_resolve(_v_para_levels(p, styles), p.find(W + "pPr"), element)
+
+
+def _v_gets_run(rpr, p, styles: Styles, asked: Dict[str, Any], symbol: bool) -> Dict[str, Any]:
+    """The asked elements this run or mark gets: those whose effective value in the source is not the asked one (an
+    ambiguous toggle gets it — direct formatting wins); caps/smallCaps never on a symbol run."""
+    return {e: v for e, v in asked.items()
+            if not (symbol and e in CASE_ELEMENTS) and _v_run_prop(rpr, p, styles, e)[0] != v}
+
+
+def _v_gets_para(p, styles: Styles, asked: Dict[str, bool]) -> Dict[str, bool]:
+    return {e: v for e, v in asked.items() if _v_para_prop(p, styles, e)[0] != v}
+
+
+def _v_style_gets(st, container: str, asked: Dict[str, Any]) -> Dict[str, Any]:
+    """A style definition's own values (its rPr or pPr): the asked elements whose own value is not the asked one."""
+    c = st.find(W + container)
+    return {e: v for e, v in asked.items() if _v_prop_read(e, c.find(W + e) if c is not None else None) != v}
+
+
+def _plain(attrs: Optional[Dict[str, str]]):
+    return None if attrs is None else {etree.QName(k).localname: v for k, v in attrs.items()}
+
+
+def _check_props_rpr(S, O, gets: Dict[str, Any], tracked: bool, author, where: str, errs: List[str]) -> None:
+    """The output rPr ``O`` must be the source rPr ``S`` with exactly the elements in ``gets`` set as asked — every
+    other child identical — and the change marker as the tracked/plain rules demand."""
+    if O is None:
+        errs.append(f"{where}: no rPr in the output")
+        return
+    for e, v in gets.items():
+        oe = O.find(W + e)
+        exp = _v_expected_attrs(e, v, S.find(W + e) if S is not None else None)
+        got = dict(oe.attrib) if oe is not None else None
+        if got != exp or (oe is not None and len(oe)):
+            errs.append(f"{where}: w:{e} is {_plain(got)}, expected {_plain(exp)}")
+    skip = set(gets) | {"rPrChange"}
+    others_s = [sig(c) for c in (S if S is not None else []) if _local(c) not in skip]
+    others_o = [sig(c) for c in O if _local(c) not in skip]
+    if others_s != others_o:
+        errs.append(f"{where}: run properties other than {sorted(gets)} changed")
+    _check_rpr_change(S, O, tracked, author, where, errs)
+
+
+def _check_props_ppr(S, O, gets: Dict[str, bool], tracked: bool, author, where: str, errs: List[str]) -> None:
+    """The output pPr ``O`` must be the source pPr ``S`` with exactly the flags in ``gets`` set as asked; the
+    paragraph mark's rPr is another assertion's (or the residual's) business."""
+    if O is None:
+        errs.append(f"{where}: no pPr in the output")
+        return
+    for e, v in gets.items():
+        oe = O.find(W + e)
+        exp = _v_expected_attrs(e, v, None)
+        got = dict(oe.attrib) if oe is not None else None
+        if got != exp or (oe is not None and len(oe)):
+            errs.append(f"{where}: w:{e} is {_plain(got)}, expected {_plain(exp)}")
+    skip = set(gets) | {"pPrChange", "rPr"}
+    others_s = [sig(c) for c in (S if S is not None else []) if _local(c) not in skip]
+    others_o = [sig(c) for c in O if _local(c) not in skip]
+    if others_s != others_o:
+        errs.append(f"{where}: paragraph properties other than {sorted(gets)} changed")
+    _check_ppr_change(S, O, tracked, author, where, errs)
+
+
+def _check_effective_run(o_rpr, o_p, styles: Styles, asked: Dict[str, Any], symbol: bool, where: str,
+                         errs: List[str]) -> None:
+    """Post-condition on a selected run or mark of the OUTPUT: every asked element resolves to the asked value."""
+    for e, v in asked.items():
+        if symbol and e in CASE_ELEMENTS:
+            continue
+        val, prov = _v_run_prop(o_rpr, o_p, styles, e)
+        if val != v:
+            errs.append(f"{where}: w:{e} resolves to {val!r} ({prov}) in the output, asked {v!r}")
+
+
+def _check_effective_para(o_p, styles: Styles, asked: Dict[str, bool], where: str, errs: List[str]) -> None:
+    for e, v in asked.items():
+        val, prov = _v_para_prop(o_p, styles, e)
+        if val != v:
+            errs.append(f"{where}: w:{e} resolves to {val!r} ({prov}) in the output, asked {v!r}")
+
+
+def _v_mark_in_revision(mrpr) -> bool:
+    return mrpr is not None and any(mrpr.find(W + t) is not None for t in ("ins", "del", "moveFrom", "moveTo"))
+
+
+def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], para_asked: Dict[str, bool],
+                       errs: List[str]) -> str:
+    parts = ctx.scope_parts(a.get("scope", []))
+    if sorted(parts) != sorted(a.get("parts", [])):
+        errs.append(f"properties: scope resolves to {sorted(parts)} here, plan says {sorted(a.get('parts', []))}")
+    preserve = {f.casefold() for f in a.get("preserve_fonts", [])}
+    skip_sym = bool(a.get("skip_sym_runs", True))
+    sel = a.get("select") or {}
+    runs_pred, para_pred = sel.get("runs", "all"), sel.get("paragraphs")
+    exclude_rev = a.get("in_revisions", "include") == "exclude"
+    marks_too = bool(a.get("include_paragraph_marks", True))
+    tracked, author = bool(a.get("tracked")), a.get("author")
+    n_runs = n_marks = n_paras = 0
+    for part in parts:
+        if part not in ctx.both:
+            errs.append(f"properties: {part} missing from the output")
+            continue
+        sv, ov = ctx.view(part)
+        amap = ctx.maps[part]
+        for bi, p in enumerate(sv.pars):
+            if not para_matches(para_pred, p, bi, sv, ctx.src_styles):
+                continue
+            cands = []                                   # (run index, the elements it gets, symbol run)
+            if run_asked:
+                for ri, r in enumerate(sv.runs[bi]):
+                    rpr = r.find(W + "rPr")
+                    in_rev = _has_ancestor(r, REVISION_WRAPPERS, p)
+                    if (exclude_rev and in_rev) or not target_matches(runs_pred, rpr, in_rev, preserve):
+                        continue
+                    sym = symbolic(rpr, p, ctx.src_styles, preserve) or (skip_sym and r.find(W + "sym") is not None)
+                    cands.append((ri, _v_gets_run(rpr, p, ctx.src_styles, run_asked, sym), sym))
+            mark = None                                  # (the elements the mark gets, symbol) when selected
+            if run_asked and marks_too:
+                mrpr = p.find(W + "pPr/" + W + "rPr")
+                m_rev = _v_mark_in_revision(mrpr)
+                if not (exclude_rev and m_rev) and target_matches(runs_pred, mrpr, m_rev, preserve):
+                    msym = symbolic(mrpr, p, ctx.src_styles, preserve)
+                    mark = (_v_gets_run(mrpr, p, ctx.src_styles, run_asked, msym), msym)
+            pgets = _v_gets_para(p, ctx.src_styles, para_asked) if para_asked else {}
+            if not cands and mark is None and not para_asked:
+                continue
+            targeted = any(g for _, g, _ in cands) or bool(mark and mark[0]) or bool(pgets)
+            if bi in ctx.text_changed.get(part, set()):
+                if targeted:
+                    errs.append(f"properties: {part} block {bi} is selected but also has predicted text changes")
+                continue
+            oi = amap.get(bi)
+            if oi is None or len(ov.runs[oi]) != len(sv.runs[bi]):
+                errs.append(f"properties: {part} block {bi}: run structure changed")
+                continue
+            o_p = ov.pars[oi]
+            for ri, gets, sym in cands:
+                s_rpr, o_rpr = sv.runs[bi][ri].find(W + "rPr"), ov.runs[oi][ri].find(W + "rPr")
+                where = f"{part} block {bi} run {ri}"
+                if gets:
+                    n_runs += 1
+                    ctx.strip_runs.setdefault(part, set()).add((bi, ri))
+                    _check_props_rpr(s_rpr, o_rpr, gets, tracked, author, where, errs)
+                _check_effective_run(o_rpr, o_p, ctx.out_styles, run_asked, sym, where, errs)
+            if mark is not None:
+                gets, msym = mark
+                s_rpr, o_rpr = p.find(W + "pPr/" + W + "rPr"), o_p.find(W + "pPr/" + W + "rPr")
+                where = f"{part} block {bi} paragraph mark"
+                if gets:
+                    n_marks += 1
+                    ctx.strip_marks.setdefault(part, set()).add(bi)
+                    _check_props_rpr(s_rpr, o_rpr, gets, tracked, author, where, errs)
+                _check_effective_run(o_rpr, o_p, ctx.out_styles, run_asked, msym, where, errs)
+            if para_asked:
+                where = f"{part} block {bi}"
+                if pgets:
+                    n_paras += 1
+                    ctx.strip_ppr.setdefault(part, {})[bi] = set(pgets) | {"pPrChange"}
+                    _check_props_ppr(p.find(W + "pPr"), o_p.find(W + "pPr"), pgets, tracked, author, where, errs)
+                _check_effective_para(o_p, ctx.out_styles, para_asked, where, errs)
+    for n, key, what in ((n_runs, "expected_runs", "run(s)"), (n_marks, "expected_marks", "paragraph mark(s)"),
+                         (n_paras, "expected_paragraphs", "paragraph(s)")):
+        if n != a.get(key, -1):
+            errs.append(f"properties: {n} {what} get the change here, plan predicted {a.get(key)}")
+    setv = a.get("set") or {}
+    return (f"properties: {n_runs} run(s) + {n_marks} mark(s) → {setv.get('run') or {}}, {n_paras} paragraph(s) → "
+            f"{setv.get('paragraph') or {}}" + (" (tracked)" if tracked else ""))
+
+
+def _judge_style_prop(val, prov: str, asked, sid: str, element: str, symbol: bool, where: str,
+                      errs: List[str]) -> None:
+    """One run, mark or paragraph that uses a selected style, in the OUTPUT: the value it shows must come from that
+    style and be the asked one, or from a nearer level's own definition (normal inheritance). A disagreeing direct
+    value, an ambiguous toggle, or caps/smallCaps reaching a symbol run from the style are what the op must have
+    refused."""
+    if prov == f"style:{sid}":
+        if symbol and element in CASE_ELEMENTS:
+            errs.append(f"{where}: w:{element} from style {sid} would case-map a symbol run (the op must refuse)")
+        elif val != asked:
+            errs.append(f"{where}: w:{element} resolves to {val!r} from style {sid}, asked {asked!r}")
+    elif prov == "ambiguous":
+        errs.append(f"{where}: w:{element} is specified at several style levels — Word XORs them (the op must refuse)")
+    elif prov == "direct" and val != asked:
+        errs.append(f"{where}: direct formatting w:{element} {val!r} overrides style {sid} (the op must refuse)")
+
+
+def _properties_styles(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], para_asked: Dict[str, bool],
+                       errs: List[str]) -> str:
+    if ctx.styles_part is None:
+        errs.append("properties: no common styles part")
+        return "properties: no styles part"
+    ids = list((a.get("select") or {}).get("ids") or [])
+    preserve = {f.casefold() for f in a.get("preserve_fonts", [])}
+    skip_sym = bool(a.get("skip_sym_runs", True))
+    changed: List[str] = []
+    types: Dict[str, str] = {}
+    for sid in ids:
+        st = ctx.src_styles.by_id.get(sid)
+        if st is None:
+            errs.append(f"properties: style {sid} is not in the source")
+            continue
+        types[sid] = st.get(W + "type", "paragraph")
+        if para_asked and types[sid] != "paragraph":
+            errs.append(f"properties: paragraph properties asked on {types[sid]} style {sid}")
+        gets_r = _v_style_gets(st, "rPr", run_asked)
+        gets_p = _v_style_gets(st, "pPr", para_asked) if types[sid] == "paragraph" else {}
+        if not gets_r and not gets_p:
+            continue
+        changed.append(sid)
+        o = ctx.out_styles.by_id.get(sid)
+        if o is None:
+            errs.append(f"properties: style {sid} missing from the output")
+            continue
+        if gets_r:
+            ctx.strip_styles.add(sid)
+            _check_props_rpr(st.find(W + "rPr"), o.find(W + "rPr"), gets_r, False, None, f"style {sid}", errs)
+        if gets_p:
+            ctx.strip_style_ppr.setdefault(sid, set()).update(gets_p)
+            _check_props_ppr(st.find(W + "pPr"), o.find(W + "pPr"), gets_p, False, None, f"style {sid}", errs)
+    if sorted(changed) != sorted(a.get("expected_ids", [])):
+        errs.append(f"properties: style(s) {sorted(changed)} change here, plan predicted "
+                    f"{sorted(a.get('expected_ids', []))}")
+    # post-condition over every text part of the output: whatever uses a selected style shows the asked value
+    out_styles = ctx.out_styles
+    for part in ctx.both:
+        _, ov = ctx.view(part)
+        for oi, p in enumerate(ov.pars):
+            pchain = {st.get(W + "styleId") for st in out_styles.chain(_pstyle(p) or out_styles.default.get("paragraph"))}
+            holders = [(r.find(W + "rPr"), f"{part} block {oi} run {k}", r.find(W + "sym") is not None)
+                       for k, r in enumerate(ov.runs[oi])]
+            holders.append((p.find(W + "pPr/" + W + "rPr"), f"{part} block {oi} paragraph mark", False))
+            for sid in ids:
+                if sid not in types:
+                    continue
+                for rpr, where, has_sym in holders:
+                    if types[sid] == "paragraph":
+                        uses = sid in pchain
+                    else:
+                        uses = sid in {st.get(W + "styleId") for st in
+                                       out_styles.chain(_rstyle(rpr) or out_styles.default.get("character"))}
+                    if not uses:
+                        continue
+                    symbol = symbolic(rpr, p, out_styles, preserve) or (skip_sym and has_sym)
+                    for e, v in run_asked.items():
+                        val, prov = _v_run_prop(rpr, p, out_styles, e)
+                        _judge_style_prop(val, prov, v, sid, e, symbol, where, errs)
+                if types[sid] == "paragraph" and sid in pchain:
+                    for e, v in para_asked.items():
+                        val, prov = _v_para_prop(p, out_styles, e)
+                        _judge_style_prop(val, prov, v, sid, e, False, f"{part} block {oi}", errs)
+    return f"properties: style(s) {changed} → {a.get('set')}"
+
+
+def _properties(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    """set_properties' assertion: exactly the asked properties on exactly the re-derived targets, nothing else, and the
+    asked value shown by every target (and everything that uses a changed style) in the output."""
+    setv = a.get("set") or {}
+    if set(setv) - {"run", "paragraph"}:
+        raise ValueError(f"unknown property group(s) {sorted(set(setv) - {'run', 'paragraph'})}")
+    run_asked = _v_run_elements(setv.get("run"))
+    para_asked = _v_para_elements(setv.get("paragraph"))
+    if not run_asked and not para_asked:
+        raise ValueError("nothing asked")
+    target = a.get("target")
+    if target == "direct":
+        return _properties_direct(ctx, a, run_asked, para_asked, errs)
+    if target == "styles":
+        return _properties_styles(ctx, a, run_asked, para_asked, errs)
+    raise ValueError(f"unknown target {target!r}")
+
+
 KINDS = {
     "run_fonts": _run_fonts,
     "style_fonts": _style_fonts,
@@ -1157,6 +1575,7 @@ KINDS = {
     "effective_font": _effective_font,
     "deleted_paragraphs": _deleted_paragraphs,
     "inserted_paragraphs": _inserted_paragraphs,
+    "properties": _properties,
 }
 
 
@@ -1281,6 +1700,13 @@ def _residual_styles(ctx: Ctx, errs: List[str]) -> None:
         for st in root.findall(W + "style"):
             if st.get(W + "styleId") in ctx.strip_styles and st.find(W + "rPr") is not None:
                 st.remove(st.find(W + "rPr"))
+            names = ctx.strip_style_ppr.get(st.get(W + "styleId"))
+            ppr = st.find(W + "pPr") if names else None
+            if ppr is not None:
+                for c in list(ppr):
+                    if _local(c) in names:
+                        ppr.remove(c)
+                _drop_empty(ppr)
     for st in o_root.findall(W + "style"):            # new styles: checked by styles_added, not residual
         if st.get(W + "styleId") in ctx.added_styles:
             o_root.remove(st)

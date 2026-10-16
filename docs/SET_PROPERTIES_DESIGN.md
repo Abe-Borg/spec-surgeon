@@ -1,7 +1,8 @@
 # `set_properties` — design note (built-in operations round, part 1)
 
-2026-10-16. Status: **proposed, awaiting Abraham's approval** — nothing below is built yet. Revised once after Codex's
-review of the first draft (PR #16): the complex-script pairs in §1 and the provenance rule for style targets in §2–3.
+2026-10-16. Status: **approved by Abraham as recommended and built** (PR #16: `ops/set_properties.py`,
+`ops/effective.PropResolver`, the `properties` kind in `verify/props.py`, `tests/test_set_properties.py`). Revised once
+after Codex's review of the first draft: the complex-script pairs in §1 and the provenance rule for style targets in §2–3.
 Reading order: CLAUDE.md
 hard rules 2, 3, 8, 9 and 16, the "Effective pinnable properties" definition, and the plan's Phase 8 status
 (`set_properties` and its generic V10 kind, ideas #22–23, deferred to this round).

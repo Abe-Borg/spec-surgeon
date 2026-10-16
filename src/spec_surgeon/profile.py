@@ -154,6 +154,10 @@ def _style_entry(sheet: StyleSheet, res: Resolver, sid: str, count: int, sample_
             e["bold"] = True
         if eff["caps"]:
             e["caps"] = True
+        if eff["i"]:
+            e["italic"] = True
+        if eff["color"][0] not in (None, "auto"):
+            e["color"] = eff["color"][0]
     except AmbiguousToggle:
         e["font"] = "(toggle set at several style levels)"
     para = res.paragraph(sample_p)

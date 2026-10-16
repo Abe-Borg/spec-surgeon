@@ -35,6 +35,17 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "set_doc_defaults_font": ["the document default font (and size) changes, so inheriting text follows; with size_from "
                               "its size changes only when it is one of those sizes"],
     "set_paragraph_props": ["values merge into existing spacing/indents; unspecified attributes stay"],
+    "set_properties": [
+        "'all caps' is the w:caps display property — the letters are not retyped; bold and italic are written as the "
+        "pairs Word itself writes (w:b + w:bCs, w:i + w:iCs)",
+        "text that already shows the asked value is left alone (no change, no tracked-change marker); caps and small "
+        "caps never touch symbol/Wingdings runs (the glyph would change), the other properties do apply to them",
+        "direct formatting on the selected paragraphs by default (tracked when they are targeted, so the reviewer sees "
+        "'Formatted: Bold'); the style definition changes only when asked — then every paragraph of that style "
+        "changes, a style based on it inherits the change, and a nearer style's own value keeps it",
+        "a style change that Word's toggle rule, direct formatting or a symbol run would defeat is refused rather than "
+        "applied half-way (set the formatting directly on the paragraphs instead)",
+    ],
     "set_page_setup": ["margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given"],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
                      "tracked unless the user said otherwise"],
@@ -136,10 +147,10 @@ SELECTOR_GRAMMAR = {
 
 
 # What a one-off custom transform (codegen.py) can change and still be verified: each family maps to the V10 assertion
-# kind that checks it (tests/test_conversation.py pins the mapping against verify/props.KINDS). Anything else — bold,
-# italic, underline, caps, colour, highlight, borders, shading, numbering and lists, tables, images, fields, comments,
-# tracked changes, any change of words — has no verified check yet, so a custom transform cannot do it: it needs a new
-# built-in operation (the next round). Shown to Claude in the compiler's and the transform writer's instructions.
+# kind that checks it (tests/test_conversation.py pins the mapping against verify/props.KINDS). Anything else —
+# highlight, borders, shading, numbering and lists, tables, images, fields, comments, tracked changes, any change of
+# words — has no verified check yet, so a custom transform cannot do it: it needs a new built-in operation (the next
+# round). Shown to Claude in the compiler's and the transform writer's instructions.
 CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
     "families": {
         "run fonts and font sizes of selected text": "run_fonts",
@@ -148,8 +159,11 @@ CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
         "paragraph spacing, indents and alignment": "paragraph_props",
         "page size, margins and orientation of sections": "section_props",
         "which header/footer each section shows": "section_hf_refs",
+        "bold, italic, caps, small caps, strikethrough, underline and text colour of selected text or of styles; "
+        "keep-with-next, keep lines together, widow control and page break before of paragraphs or of paragraph "
+        "styles": "properties",
     },
-    "cannot": ["bold, italic, underline, caps", "text colour, highlight, borders, shading", "numbering and lists",
+    "cannot": ["highlight, borders, shading", "numbering and lists",
                "tables", "images", "fields", "comments", "tracked changes", "any change of words"],
     "rules": ["plain (untracked) formatting only", "only the document's text parts (body, headers, footers, footnotes, "
               "endnotes, comments) and its styles part may change", "edited copies only — never written over the "

@@ -94,7 +94,14 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "toggle-ambiguous": (
         "Bold/Italic/Caps Set at Several Style Levels",
-        "The effective toggle property cannot be resolved without Word's XOR rule; the file needs a human look.",
+        "The effective toggle property cannot be resolved without Word's XOR rule; the file needs a human look. For a "
+        "style change, set the formatting directly on the selected paragraphs instead (direct formatting always wins).",
+    ),
+    "conflict-property": (
+        "Another Setting Would Override the Requested Value",
+        "A setting on the same paragraph or run wins over the requested value: spacing given in lines, an indent "
+        "written as start/end, or — for a style change — direct formatting or a symbol-font run that would keep its own "
+        "look. Set the property directly on the selected paragraphs instead, or clear the other setting in Word.",
     ),
     "bad-params": (
         "Operation Parameters Rejected",

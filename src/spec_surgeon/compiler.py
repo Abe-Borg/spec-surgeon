@@ -135,6 +135,12 @@ transform could do it within the catalog's custom_transform_limits, else "outsid
 what the preview found. Submit a revised spec (or ask). The user's replies are approved words like the request.
 - Two ops must not touch the same thing. "Change all fonts" is three ops (set_font on runs with a direct font, \
 set_style_font, set_doc_defaults_font) plus an effective_font assertion.
+- Bold, italic, caps, small caps, strikethrough, underline, text colour, keep-with-next, keep lines together, widow \
+control and page break before are set_properties: one op per selection carrying all of them (it never conflicts with \
+itself); "all caps" is a display property — no letters are retyped. Format the selected paragraphs directly by default \
+(tracked when targeted, so the reviewer sees "Formatted: Bold"); change a style (select.styles) only when the user \
+speaks of the style or wants every paragraph of that style to follow — the profiles' styles_in_use show bold, italic, \
+caps and colour per style. A font change and set_properties on the same paragraphs are two specs.
 - The attached template may be a TEMPLATE SPEC: an ordinary spec from the architect or another firm (read_template \
 says which). "Make the header/footer match the template spec" is apply_header_footer_template with slot_markers \
 ["reference"] and the catalog's reference_fills as slot_fills (adapt them when the profiles show another layout): \

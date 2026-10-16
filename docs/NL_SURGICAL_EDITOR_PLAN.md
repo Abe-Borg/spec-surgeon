@@ -547,6 +547,22 @@ The custom-transform whitelist (review-7) is fixed too: `codegen.check_source` i
 
 ---
 
+## Built-in operations status, part 1 (2026-10-16) — `set_properties` and the `properties` V10 kind
+
+The first of the deferred built-ins (Phase 8 status: ideas #22–23). Design note `docs/SET_PROPERTIES_DESIGN.md` — two
+Codex findings on the first draft folded in (the complex-script pairs, the provenance rule for style targets) — with
+nine decisions, all approved by Abraham as recommended; built verifier-first on PR #16. `set_properties` sets
+b/i/caps/smallCaps/strike/u/color on runs and paragraph marks or in style definitions, and
+keepNext/keepLines/widowControl/pageBreakBefore on paragraphs or paragraph styles; it adds no characters (caps is a
+display property). V10's `properties` kind re-derives the targets and the elements each gets with the verifier's own
+effective-value resolver, checks every target whole, resolves the effective result in the output (and everything that
+uses a changed style) and strips only what it compared. The open question recorded in Phase 8 — two ops on one
+paragraph — is answered for this round by keeping rule 9's granularity: one `set_properties` carries all of its
+properties; a font change and `set_properties` on the same paragraphs are two specs; finer aspects are a follow-up.
+README → "Formatting properties" is the user's view; `tests/test_set_properties.py` (24 tests) pins it.
+
+---
+
 ## Appendix A — EditSpec JSON schema (draft)
 
 ```json
