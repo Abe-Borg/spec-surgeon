@@ -59,12 +59,12 @@ def test_valid_stages_can_fail_final_requirement_without_delivering_or_touching_
     assert not (tmp_path / "run" / "outputs").exists()
     assert assert_outcomes(source.read_bytes(), [_require_font()])[0]["status"] == "PASS"
     assert f.outcomes[0]["status"] == "FAIL" and f.outcomes[0]["checked"] > 0
-    report = json.loads((tmp_path / "run" / "chain.json").read_text())
+    report = json.loads((tmp_path / "run" / "chain.json").read_text(encoding="utf-8"))
     assert report["files"][0]["outcomes"] == f.outcomes
-    assert "Final requirements" in (tmp_path / "run" / "CHAIN_REPORT.md").read_text()
-    diagnostics = (tmp_path / "run" / "DIAGNOSTICS.md").read_text()
+    assert "Final requirements" in (tmp_path / "run" / "CHAIN_REPORT.md").read_text(encoding="utf-8")
+    diagnostics = (tmp_path / "run" / "DIAGNOSTICS.md").read_text(encoding="utf-8")
     assert "final requirements failed" in diagnostics and "Courier New" in diagnostics
-    manifest = json.loads((tmp_path / "run" / "set_aside.json").read_text())
+    manifest = json.loads((tmp_path / "run" / "set_aside.json").read_text(encoding="utf-8"))
     assert manifest["files"][0]["stage"] == "chain final requirements"
     assert manifest["files"][0]["source"] == str(source.resolve())
 
