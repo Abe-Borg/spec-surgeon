@@ -1236,6 +1236,9 @@ py -3 -m pip install -e ".[dev]"
 py -3 -m pytest -q -s
 ```
 
+The no-console GUI test restores `sys.stderr` before pytest closes its capture stream, so running with `-s`
+leaves the terminal available to later command-line tests as well as preserving the no-console startup check.
+
 Covers both jobs on fixtures with a cover/body section split, pending insertions and deletions from other authors, a target inside a pending insertion, a target split across runs, fields, and a tab inside a run; the exceptions; the guard (lock file, drift, atomic write); a 24-file batch; an in-place batch with an exception; and the planted-defect set. Fixtures are built by `tests/make_fixtures.py` (python-docx + lxml); `python tests/make_fixtures.py OUT_DIR --count 60` makes a folder to play with.
 
 Phase 1 (72 tests in total, ~15 s; the rendered geometry test is skipped without LibreOffice):
