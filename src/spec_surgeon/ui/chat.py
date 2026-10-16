@@ -9,6 +9,7 @@ label), with "Choosing approves these exact words": picking it is how wording Cl
 """
 from __future__ import annotations
 
+import html
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -164,7 +165,8 @@ class ChatView(Card):
         h.addWidget(lab, 1)
         b = QPushButton("Do this" if c.get("kind") == "custom_transform" else "Choose")
         b.setProperty("choice_id", c.get("id"))
-        b.setToolTip(c.get("detail") or "")
+        detail = c.get("detail") or ""        # Claude's words: a tooltip renders what looks like markup as rich text,
+        b.setToolTip(f"<p style='white-space:pre-wrap'>{html.escape(detail)}</p>" if detail else "")   # so escape it
         b.clicked.connect(self._on_choice)
         h.addWidget(b, 0, Qt.AlignmentFlag.AlignTop)
         self._choice_buttons.append(b)

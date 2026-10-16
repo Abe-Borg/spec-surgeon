@@ -11,7 +11,9 @@
   verifies every file again — edited copies only, never over your files. A manifest whose op.py changed is refused.
 
 Names become file names safely: casefolded letters, digits and hyphens (≤60), Windows device names refused, every
-lookup an exact match against the listing — a name can never reach outside the library folder.
+lookup an exact match against the listing — a name can never reach outside the library folder. A name belongs to one
+item: ``replace`` replaces an item of the same kind only, and a name an item of the other kind holds is refused even
+with it (``other_kind_holding``) — never a recipe and an operation that one name would leave ambiguous.
 """
 from __future__ import annotations
 
@@ -107,10 +109,25 @@ def find(name: str, kind: Optional[str] = None) -> Item:
     return hits[0]
 
 
+def _a(kind: str) -> str:
+    return f"{'an' if kind[:1] in 'aeiou' else 'a'} {kind}"
+
+
+def other_kind_holding(kind: str, s: str) -> Optional[Item]:
+    """The item of the OTHER kind whose name is ``s`` (a slug), if any — a name ``replace`` can never take: replacing
+    works within one kind, and a recipe and an operation under one name would make every lookup by name ambiguous."""
+    return next((i for i in list_items() if i.slug == s and i.kind != kind), None)
+
+
 def _check_free(kind: str, s: str, replace: bool) -> None:
+    other = other_kind_holding(kind, s)
+    if other is not None:
+        raise LibraryError(f"your library already has {other.label()!r} — {_a(kind)} cannot take that name, not "
+                           f"even with replace (it replaces only {_a(kind)} of the same name); choose another name, or "
+                           f"delete that one first")
     taken = [i for i in list_items(kind) if i.slug == s]
     if taken and not replace:
-        raise LibraryError(f"your library already has a {kind} named {taken[0].name!r} — replace it, or choose "
+        raise LibraryError(f"your library already has {_a(kind)} named {taken[0].name!r} — replace it, or choose "
                            f"another name")
 
 

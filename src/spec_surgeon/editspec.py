@@ -3,6 +3,10 @@ Appendix A). Phase 1 executes hand-written specs: validate → plan every op on 
 with conflict detection → apply in spec order on a working copy → the verifier reads the merged plan.
 
 Rules enforced here (nothing runs when one is broken):
+* every spec-level field has the shape the published schema gives it (``request``/``summary`` text, ``assumptions``/
+  ``questions`` lists of text, ``review``/``applies_to`` objects with ``sample_files`` 1–3, ``pattern_ids`` a list of
+  text and ``or`` only ``"all"``, ``assertions`` a list, an op's ``op`` a name) → else refuse (code ``spec``), never a
+  TypeError or a misreading;
 * ``questions`` non-empty or ``unsupported`` present → refuse (code ``questions`` / ``unsupported``);
 * unknown keys anywhere at spec/op level, and unknown, ill-typed or out-of-enum ``select``/``params`` entries
   (checked against each op's declared ``select_schema``/``params_schema``) → refuse (a typo must not silently
@@ -165,12 +169,38 @@ def is_template_file(path: Path, templates: List[Path]) -> bool:
     return False
 
 
+def _is_str_list(v: Any) -> bool:
+    return isinstance(v, list) and all(isinstance(x, str) for x in v)
+
+
+def _check_shapes(spec: Dict[str, Any]) -> None:
+    """The spec-level fields have the shapes the published schema gives them (``catalog.editspec_json_schema``),
+    before anything reads them: a wrong shape is a ``spec`` refusal, never a TypeError (``"review": [...]`` would make
+    ``set(review)`` raise, ``"assertions": true`` would not iterate) and never a silent misreading (a string
+    ``pattern_ids`` would match by substring, a string ``questions`` or ``assumptions`` would split into characters)."""
+    for k in ("request", "summary"):
+        if k in spec and not isinstance(spec[k], str):
+            raise SpecError(f"'{k}' must be text, got {spec[k]!r}", "spec")
+    for k in ("unsupported", "proposal"):
+        if spec.get(k) is not None and not isinstance(spec[k], str):
+            raise SpecError(f"'{k}' must be text, got {spec[k]!r}", "spec")
+    for k in ("assumptions", "questions"):
+        if spec.get(k) is not None and not _is_str_list(spec[k]):
+            raise SpecError(f"'{k}' must be a list of strings, got {spec[k]!r}", "spec")
+    for k in ("review", "applies_to"):
+        if spec.get(k) is not None and not isinstance(spec[k], dict):
+            raise SpecError(f"'{k}' must be an object, got {spec[k]!r}", "spec")
+    if spec.get("assertions") is not None and not isinstance(spec["assertions"], list):
+        raise SpecError(f"'assertions' must be a list, got {spec['assertions']!r}", "spec")
+
+
 def validate_spec(spec: Dict[str, Any]) -> None:
     if not isinstance(spec, dict):
         raise SpecError("an EditSpec is a JSON object", "spec")
     unknown = set(spec) - SPEC_KEYS
     if unknown:
         raise SpecError(f"unknown EditSpec key(s) {sorted(unknown)}; known: {sorted(SPEC_KEYS)}", "spec")
+    _check_shapes(spec)
     if spec.get("unsupported"):
         raise SpecError(f"the spec says the request is unsupported: {spec['unsupported']}"
                         + (f" — proposal: {spec['proposal']}" if spec.get("proposal") else ""), "unsupported")
@@ -180,13 +210,13 @@ def validate_spec(spec: Dict[str, Any]) -> None:
     missing = [k for k in REQUIRED if k not in spec]
     if missing:
         raise SpecError(f"EditSpec missing required key(s) {missing}", "spec")
-    if spec["mode"] not in MODES:
+    if not isinstance(spec["mode"], str) or spec["mode"] not in MODES:
         raise SpecError(f"mode must be one of {MODES}", "spec")
     ops = spec["ops"]
     if not isinstance(ops, list) or not ops:
         raise SpecError("ops must be a non-empty list", "spec")
     for i, o in enumerate(ops, 1):
-        if not isinstance(o, dict) or "op" not in o:
+        if not isinstance(o, dict) or not isinstance(o.get("op"), str):
             raise SpecError(f"op #{i} must be an object with an 'op' name", "spec")
         bad = set(o) - OP_KEYS
         if bad:
@@ -224,9 +254,16 @@ def validate_spec(spec: Dict[str, Any]) -> None:
         raise SpecError(f"unknown review key(s) {sorted(set(review) - {'sample_files', 'geometry_reference'})}", "spec")
     if review.get("geometry_reference") not in (None, "source", "template", "none"):
         raise SpecError("review.geometry_reference must be source | template | none", "spec")
+    n = review.get("sample_files")
+    if n is not None and (not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 3):
+        raise SpecError(f"review.sample_files must be a whole number from 1 to 3, got {n!r}", "spec")
     applies = spec.get("applies_to") or {}
     if set(applies) - {"pattern_ids", "or"}:
         raise SpecError("applies_to takes pattern_ids and/or \"or\": \"all\"", "spec")
+    if applies.get("pattern_ids") is not None and not _is_str_list(applies["pattern_ids"]):
+        raise SpecError(f"applies_to.pattern_ids must be a list of pattern ids, got {applies['pattern_ids']!r}", "spec")
+    if applies.get("or") is not None and applies["or"] != "all":
+        raise SpecError(f"applies_to.or can only be \"all\", got {applies['or']!r}", "spec")
     for a in spec.get("assertions") or []:
         if not isinstance(a, dict) or a.get("kind") not in SPEC_ASSERTION_KINDS:
             raise SpecError(f"spec-level assertions are post-conditions only ({SPEC_ASSERTION_KINDS}); got {a!r}", "spec")

@@ -24,6 +24,18 @@ from typing import Any, Callable, Dict, List, Optional
 Log = Callable[[str], None]
 
 
+class TransformFailed(RuntimeError):
+    """No custom transform passed verification: every attempt the writer submitted failed on the samples, or a call to
+    Claude failed (an API error, recorded in ``codegen/history.json``). A recorded outcome — ``Session.reply`` tells
+    Claude about it; any other exception raised while a transform is made is a defect and is never told to Claude as
+    a verification result."""
+    PREFIX = "No custom transform passed verification: "
+
+    def __init__(self, details: str):
+        self.details = details
+        super().__init__(self.PREFIX + details)
+
+
 # ---- the logic (no widgets; tested on its own) ----------------------------------------------------
 
 @dataclass
@@ -55,11 +67,22 @@ class Session:
     _compiled_dir: Optional[Path] = None          # the session folder the next preview or custom transform goes into
                                                   # (the compile record sits beside its preview); None once used
     generated_inputs: Dict[str, Any] = field(default_factory=dict)   # approval_inputs beside generated_token
+    generated_intent: str = ""                    # what the custom transform's visual check is told it should do
 
-    def files(self) -> List[Path]:
+    def _templates(self, outcome: bool = True) -> List[Path]:
+        """The files that are never part of the batch: the attached template and (``outcome``) every template the
+        current spec reads — a spec may name a file of the batch folder as its template."""
+        from .editspec import spec_templates
+        return (([self.template.resolve()] if self.template else []) +
+                (spec_templates(self.spec) if outcome and self.spec else []))
+
+    def files(self, outcome: bool = True) -> List[Path]:
+        """The batch: the folder's (or the set-aside pass's) .docx files without the templates. ``outcome=False``: the
+        batch as it reads once the current outcome is void — what a new conversation starts over (``compile``), so its
+        files never depend on the spec it replaces."""
         from .batch import expand_inputs
-        from .editspec import is_template_file, spec_templates
-        templates = ([self.template.resolve()] if self.template else []) + (spec_templates(self.spec) if self.spec else [])
+        from .editspec import is_template_file
+        templates = self._templates(outcome)
         if self.selected_files is not None:
             files = [f for f in self.selected_files if f.is_file() and not is_template_file(f, templates)]
             if not files:
@@ -115,7 +138,7 @@ class Session:
         self.spec, self.generated = spec, generated
         self.spec_source = source if spec is not None else ""
         self.preview, self.generated_token, self.generated_preview = None, "", None
-        self.generated_inputs = {}
+        self.generated_inputs, self.generated_intent = {}, ""
 
     def end_conversation(self) -> None:
         self.conversation, self.turn, self.questions = None, None, []
@@ -135,16 +158,23 @@ class Session:
     # ---- the conversation ----
     def conversation_matches(self, request: str) -> bool:
         """The current conversation is about this request, these files and this template (so Preview continues it
-        rather than starting over)."""
+        rather than starting over). Like is compared with like: the conversation's files go through the same template
+        filter as ``files()`` — a spec Claude accepted may name a file of the batch folder as its template, and that
+        file then leaves ``files()`` although nothing changed. A folder that cannot be read (renamed, a network share
+        that dropped) is no match, never an exception."""
+        from .editspec import is_template_file
         c = self.conversation
         if c is None or c.request.strip() != (request or "").strip():
             return False
         try:
             files = self.files()
-        except ValueError:
+            templates = self._templates()
+            had = [Path(f).resolve() for f in c.files if not is_template_file(f, templates)]
+            return ([Path(f).resolve() for f in files] == had
+                    and (self.template.resolve() if self.template else None) ==
+                    (c.template.resolve() if c.template else None))
+        except (ValueError, OSError):
             return False
-        return ([Path(f).resolve() for f in files] == [f.resolve() for f in c.files]
-                and (self.template.resolve() if self.template else None) == (c.template.resolve() if c.template else None))
 
     def compile(self, request: str, log: Log) -> str:
         """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
@@ -154,7 +184,10 @@ class Session:
         from .conversation import Conversation
         if not request.strip():
             raise ValueError("type what you want done (or load a spec file)")
-        files = self.files()
+        # The batch as it reads once the old outcome is void (just below), never through the outgoing spec: a file of
+        # the folder that spec reads as its template is a file of this conversation, as conversation_matches sees it
+        # from here on. Taken first, so a folder that cannot be read refuses before anything changes.
+        files = self.files(outcome=False)
         self._set_outcome()
         self.end_conversation()
         out = self.out_dir = self._next_session_dir()   # the session folder: conversation.json and compile.json,
@@ -186,7 +219,8 @@ class Session:
             log(f"The conversation continues in {self.chat_dir} (conversation.json, compile.json)")
         self._set_outcome()                       # whatever was previewed before this reply is void now
         if chosen is not None and chosen.kind == "custom_transform":
-            c.take_app_choice(chosen.id)
+            queued = len(c.notes)
+            c.take_app_choice(chosen.id)          # queues "…carried it out; the outcome follows." for Claude
             proposal = (c.unsupported or {}).get("proposal") or chosen.detail
             try:
                 msg = self._codegen(c.request, proposal, self.files(), log, brief=c.brief(), render=render)
@@ -194,12 +228,19 @@ class Session:
                 c.note(f"The one-off custom transform {self.generated.name!r} passed verification on the sample "
                        f"files; the user reviews its preview.\n" + (gp.to_text()[:4000] if gp is not None else ""),
                        display=f"Custom transform {self.generated.name!r} passed verification on the sample files.")
-            except RuntimeError as e:
-                c.note(f"No custom transform passed verification: {e}")
+            except TransformFailed as e:          # the recorded outcome (no attempt passed, or the call failed)
+                c.note(str(e))
                 self._save_chat()
                 raise
-            except Exception:
-                self._save_chat()                 # a defect propagates; what was said is kept for the diagnosis
+            except Exception as e:                # a defect propagates, never told to Claude as a verification result;
+                # the queued promise of an outcome is withdrawn — there is none — and Claude hears only that the app
+                # stopped (the error's type, never its text: not a finding about the request). The transcript keeps
+                # the user's choice; what was said is saved for the diagnosis.
+                del c.notes[queued:]
+                c.notes.append(f"The user chose: «{chosen.label}». The app could not finish the custom transform: it "
+                               f"stopped with an internal error ({type(e).__name__}) before any result — nothing was "
+                               f"applied.")
+                self._save_chat()
                 raise
             self._save_chat()
             return msg
@@ -252,6 +293,10 @@ class Session:
             out = self.new_out_dir()
         else:
             out = self._compiled_dir if self._compiled_dir is not None else self._next_session_dir()
+        return self._use_folder(out)
+
+    def _use_folder(self, out: Path) -> Path:
+        """``out`` becomes the results folder (the next preview and run go there); the conversation's records follow."""
         self.out_dir, self._compiled_dir = out, None
         if self.conversation is not None and self.chat_dir != out:
             self.chat_dir = out
@@ -276,25 +321,84 @@ class Session:
     def _codegen(self, request: str, proposal: str, files: List[Path], log: Log, brief: Optional[str] = None,
                  render: bool = False) -> str:
         from .codegen import generate_op, pick_samples
-        from .preview import approval_inputs, approval_token, preview_generated
+        from .preview import approval_inputs, approval_token, explain_approval_change
         samples = pick_samples(files)
         out = self._session_dir()                 # beside the conversation's records: codegen/history.json, preview/
+        # The files as they are BEFORE the transform is written and tried on them (several calls to Claude). Its token
+        # needs its code, known only after; a file whose stats moved in between was tried with its old content, so the
+        # token taken then must never approve it: it is left empty — Run refuses, and Preview tries the transform again
+        # on the files as they are (``make_preview``; the window's reply does it at once) — as a file edited during
+        # ``_prove``'s trials leaves its token stale.
+        before = approval_inputs({}, files)
         log(f"Writing a one-off transform, tested on {[s.name for s in samples]}…")
         g = generate_op(request, proposal or "", samples, out / "codegen", client=self.client, log=log, brief=brief)
         if not g.passed:
-            raise RuntimeError("No AI-written transform passed verification: " + "; ".join(g.errors or
-                               [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}" for a in g.attempts[-1:]]))
+            raise TransformFailed("; ".join(g.errors or [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}"
+                                                         for a in g.attempts[-1:]]) or "no transform was submitted")
+        intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {request}", f"WHAT IT SHOULD DO: {proposal}"]
+                           + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
+        key = self._generated_key(g)
+        try:
+            token = approval_token(key, files)
+        except OSError:
+            token = ""                            # a file vanished while the transform was written
+        inputs = approval_inputs(key, files)
+        moved = explain_approval_change({"files": before["files"]}, {"files": inputs["files"]},
+                                        since="the custom transform was started")
+        if moved:
+            token, inputs = "", {**inputs, "files": before["files"]}   # Run names what moved since it was tried
+            log("A file changed while the custom transform was being written and tried — it runs only once Preview has "
+                "tried it again on the files as they are now:" + "".join(f"\n  • {w}" for w in moved))
+        self._show_generated(g, out, token, inputs, intent, render, log)
+        return (f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
+                f"It is saved at {g.path} — Run writes edited copies only (never over your files)." +
+                ("\nA file changed while it was written: press Preview to try it again on the files as they are now."
+                 if moved else ""))
+
+    def _prove(self, g, files: List[Path], samples: List[Path], folder: Path, refusal: str):
+        """Try ``g`` on ``samples`` (sandbox + the full suite) in ``folder``. The approval token and inputs of ``files``
+        are taken BEFORE the trials, so a file that changes while they run voids them. Raises naming every sample that
+        fails; changes nothing in the session. Returns (token, inputs, trials)."""
+        from .codegen import trial
+        from .preview import approval_inputs, approval_token
+        key = self._generated_key(g)
+        token, inputs = approval_token(key, files), approval_inputs(key, files)
+        trials = [trial(g.source, f, g.select, g.params, folder / f"{i:02d}") for i, f in enumerate(samples)]
+        bad = [f"{t.source.name}: {'; '.join(t.problems[:2])}" for t in trials if not t.passed]
+        if bad:
+            raise RuntimeError(f"{refusal} — " + " | ".join(bad))
+        return token, inputs, trials
+
+    def _show_generated(self, g, out: Path, token: str, inputs: Dict[str, Any], intent: str, render: bool,
+                        log: Log) -> None:
+        """``g``, passed on the samples of the files ``token`` is of, becomes the session's outcome: its preview in
+        ``out/preview`` (with Claude's visual check when rendering), then the approval token — set last, so a preview
+        that stops leaves nothing runnable (Preview tries the transform again)."""
+        from .preview import preview_generated
         self._set_outcome(generated=g)
-        self.generated_token = approval_token(self._generated_key(g), files)
-        self.generated_inputs = approval_inputs(self._generated_key(g), files)
+        self.generated_intent = intent
         self.generated_preview = preview_generated(g, out / "preview", "auto", render)
         log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
         if render and self.visual_check:
-            intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {request}", f"WHAT IT SHOULD DO: {proposal}"]
-                               + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
             self._visual_check(self.generated_preview, intent, out / "preview", log)
-        return (f"An AI-written transform ({g.name}) passed verification on {len(samples)} sample file(s). "
-                f"It is saved at {g.path} — Run writes edited copies only (never over your files).")
+        self.generated_token, self.generated_inputs = token, inputs
+
+    def _prove_again(self, files: List[Path], render: bool, log: Log) -> None:
+        """A file changed (or was added or removed) since the custom transform was tried: try it again on the samples of
+        the files as they are now, in a new folder, and preview that — the token is then current. One that no longer
+        passes is refused, and the session stays as it was (Run keeps refusing)."""
+        from .codegen import pick_samples
+        g = self.generated
+        samples = pick_samples(files)
+        out = self._next_session_dir()            # a new folder: the old preview stays as it was until this passes
+        log(f"The files changed since the custom transform {g.name!r} was tried — trying it again on "
+            f"{[f.name for f in samples]}…")
+        intent = self.generated_intent or f"A CUSTOM TRANSFORM ({g.name}) for: {g.request}\nWHAT IT DOES: {g.proposal}"
+        token, inputs, trials = self._prove(g, files, samples, out / "retrial",
+                                            f"the custom transform {g.name!r} does not pass on the files as they are now")
+        g.trials = trials
+        self._use_folder(out)
+        self._show_generated(g, out, token, inputs, intent, render, log)
 
     # ---- your library ----
     def load_recipe(self, name: str) -> Dict[str, Any]:
@@ -303,30 +407,23 @@ class Session:
 
     def use_operation(self, name: str, log: Log, render: bool = False) -> str:
         """Run one of your saved operations on this batch: first on its sample files (sandbox + the full suite — it
-        must pass here, not only where it was made), then its preview; Run writes edited copies only."""
-        from .codegen import pick_samples, trial
+        must pass here, not only where it was made), then its preview; Run writes edited copies only. The trials run in
+        a new folder; only an operation that passes there replaces the session's outcome and ends its conversation —
+        one that does not pass leaves the conversation, the outcome, its preview and ``out_dir`` as they were."""
+        from .codegen import pick_samples
         from .library import load_operation
-        from .preview import approval_inputs, approval_token, preview_generated
         g = load_operation(name)
-        files = self.files()
-        self._set_outcome()
-        self.end_conversation()
-        samples = pick_samples(files)
-        out = self.new_out_dir()
+        files = self.files(outcome=False)         # the batch it runs once it replaces the outcome: a file the outgoing
+        samples = pick_samples(files)             # spec read as its template is one of them (compile's rule)
+        out = self._next_session_dir()            # never the current folder: nothing is replaced before it passes
         log(f"Trying your operation {name!r} on {[f.name for f in samples]}…")
-        trials = [trial(g.source, f, g.select, g.params, out / "library-trial" / f"{i:02d}") for i, f in enumerate(samples)]
-        bad = [f"{t.source.name}: {'; '.join(t.problems[:2])}" for t in trials if not t.passed]
-        if bad:
-            raise RuntimeError(f"your operation {name!r} does not pass on these files — " + " | ".join(bad))
+        token, inputs, trials = self._prove(g, files, samples, out / "library-trial",
+                                            f"your operation {name!r} does not pass on these files")
         g.passed, g.trials = True, trials
-        self._set_outcome(generated=g)
-        self.generated_token = approval_token(self._generated_key(g), files)
-        self.generated_inputs = approval_inputs(self._generated_key(g), files)
-        self.generated_preview = preview_generated(g, out / "preview", "auto", render)
-        log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
-        if render and self.visual_check:
-            self._visual_check(self.generated_preview, f"YOUR SAVED OPERATION {name!r} for: {g.request}\n"
-                                                      f"WHAT IT DOES: {g.proposal}", out / "preview", log)
+        self.end_conversation()                   # a saved operation is not part of the conversation
+        self._use_folder(out)
+        self._show_generated(g, out, token, inputs, f"YOUR SAVED OPERATION {name!r} for: {g.request}\n"
+                                                    f"WHAT IT DOES: {g.proposal}", render, log)
         return (f"Your operation {name!r} passed verification on {len(samples)} sample file(s) of this batch. "
                 f"Run writes edited copies only (never over your files).")
 
@@ -348,8 +445,11 @@ class Session:
         return save_operation(name, g, description, replace)
 
     def make_preview(self, render: bool, log: Log) -> str:
-        from .preview import make_preview
+        from .preview import approval_token, make_preview
         if self.generated is not None:
+            files = self.files()
+            if approval_token(self._generated_key(self.generated), files) != self.generated_token:
+                self._prove_again(files, render, log)   # stale: Run would refuse forever — re-prove, then preview
             gp = self.generated_preview
             return ((gp.to_text() + "\n\n") if gp is not None else "") + \
                 "AI-written transform ready. Press Run to apply it to every file (edited copies only)."

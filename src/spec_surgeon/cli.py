@@ -310,19 +310,16 @@ def cmd_do(args):
         print("no .docx files to work on", file=sys.stderr)
         return 2
     if getattr(args, "save_as", None):
-        from .library import LibraryError, list_items, slug
-        try:
-            taken = [i for i in list_items() if i.slug == slug(args.save_as)]
-        except LibraryError as e:
-            print(f"--save-as: {e}", file=sys.stderr)
-            return 2
-        if taken and not getattr(args, "replace", False):
-            print(f"--save-as: your library already has {taken[0].label()!r} — choose another name or pass --replace",
-                  file=sys.stderr)
+        # before any compile: without a terminal and without --allow-codegen only a recipe can come of it
+        could_be = "recipe" if not _interactive() and not getattr(args, "allow_codegen", False) else None
+        why = _save_as_refusal(args.save_as, could_be, getattr(args, "replace", False))
+        if why:
+            print(f"--save-as: {why}", file=sys.stderr)
             return 2
     out_dir.mkdir(parents=True, exist_ok=True)
     template = templates[0] if templates else None
     log = lambda m: print(m, file=sys.stderr)  # noqa: E731
+    conv = None
     if _interactive():
         outcome, value, conv = _chat(args, files, template, out_dir, prior_failures, log)
         if outcome == "stop":
@@ -353,6 +350,13 @@ def cmd_do(args):
                       + (f" ({res.custom_transform_reason})" if res.custom_transform_reason else "")
                       + " — it needs a new built-in operation.")
                 return 2
+            if res.custom_transform != "possible":
+                # only Claude's "possible" is an offer (rule 13): --allow-codegen accepts an offer, never makes one
+                print("No custom transform is offered: Claude did not judge whether a one-off custom transform could "
+                      "do this safely" + (" (--allow-codegen accepts only an offer Claude made)"
+                                          if args.allow_codegen else "")
+                      + ". Run the command in a terminal to talk it through with Claude, or run it again.")
+                return 2
             if not args.allow_codegen:
                 print("(No custom transform was written: run the command in a terminal and pick Claude's custom-"
                       "transform choice, or re-run with --allow-codegen to accept the offer — it is sandboxed, "
@@ -363,15 +367,24 @@ def cmd_do(args):
             print("Compile failed: " + "; ".join(res.errors), file=sys.stderr)
             return 2
         spec = res.spec
+    if getattr(args, "save_as", None):
+        why = _save_as_refusal(args.save_as, "recipe", getattr(args, "replace", False))
+        if why:
+            print(f"--save-as: {why}", file=sys.stderr)
+            return 2
     pv = make_preview(spec, [str(f) for f in files], out_dir / "preview",
                       renderer=args.renderer, do_render=not args.no_render)
     if not args.no_render and not getattr(args, "no_review", False):
-        _visual_check(pv, spec, out_dir / "preview", args)
+        _visual_check(pv, spec, out_dir / "preview", args, brief=conv.brief() if conv is not None else None)
     print(pv.to_text())
     print(f"\npreview: {out_dir / 'preview'}")
     if getattr(args, "save_as", None):
-        from .library import save_recipe
-        item, notes = save_recipe(args.save_as, spec, replace=getattr(args, "replace", False))
+        from .library import LibraryError, save_recipe
+        try:
+            item, notes = save_recipe(args.save_as, spec, replace=getattr(args, "replace", False))
+        except LibraryError as e:
+            print(f"--save-as: {e} — nothing was saved or run", file=sys.stderr)
+            return 2
         print(f"Saved to your library: {item.label()} ({item.path})" + "".join(f"\nnote: {n}" for n in notes))
     blocking = pv.review.blocking() if pv.review is not None else []
     if blocking and not getattr(args, "ack_review", False):
@@ -383,7 +396,7 @@ def cmd_do(args):
     if not approved and _interactive():
         question = (f"\nYou have looked at Claude's findings and want to run this on {len(pv.batch_plan.files)} "
                     f"file(s)? [y/N] " if blocking else f"\nRun this on {len(pv.batch_plan.files)} file(s)? [y/N] ")
-        approved = input(question).strip().lower() in ("y", "yes")
+        approved = bool(_confirm(question))
     if not approved:
         print(f"\nNot run. To run exactly this:\n  spec-surgeon run-spec \"{out_dir / 'preview' / 'spec.json'}\" "
               + " ".join(f'"{f}"' for f in files) + f" --approval {pv.token}"
@@ -391,6 +404,14 @@ def cmd_do(args):
         if blocking:
             print("(running that command means you have looked at Claude's visual-check findings above)")
         return 0
+    # what was approved is what was previewed: a file or the template edited since (while the preview, the visual
+    # check or the question waited) refuses, exactly as run-spec --approval and the window's Run do (rule 12)
+    from .preview import changed_since_preview
+    changed = changed_since_preview(spec, [f.source for f in pv.batch_plan.files], pv.token, pv.token_inputs)
+    if changed is not None:
+        print("Not run: a file or the template changed since the preview — run the command again for a new preview."
+              + "".join(f"\n  • {w}" for w in changed), file=sys.stderr)
+        return 2
     args.out = str(out_dir / "run")
     args.files = [str(f) for f in files]          # exactly the previewed files (an unreferenced --template excluded)
     args.job = "edit-spec"
@@ -398,12 +419,15 @@ def cmd_do(args):
     return cmd_run(args, spec=spec)
 
 
-def _visual_check(pv, spec, folder, args) -> None:
-    """Claude's visual check of the preview samples (advisory; never raises; can only add a reason to stop)."""
+def _visual_check(pv, spec, folder, args, brief=None) -> None:
+    """Claude's visual check of the preview samples (advisory; never raises; can only add a reason to stop). ``brief``:
+    the terminal conversation the spec came from (``Conversation.brief()``) — what the user narrowed or added there is
+    what the AFTER pages are judged against, as in the window."""
     from . import compiler, vision
     from .preview import write_preview_files
     intent = "\n".join([f"REQUEST: {spec.get('request') or args.request}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
-                       + [f"ASSUMPTION: {a}" for a in spec.get("assumptions") or []])
+                       + [f"ASSUMPTION: {a}" for a in spec.get("assumptions") or []]
+                       + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
     pv.review = vision.review_samples(intent, pv.samples, folder, compiler._client, model=args.model,
                                       log=lambda m: print(m, file=sys.stderr))
     vision.save_review(pv.review, folder)
@@ -413,6 +437,53 @@ def _visual_check(pv, spec, folder, args) -> None:
 def _interactive() -> bool:
     """A person is at the terminal (tests replace this with False, so no prompt can block a test run)."""
     return bool(sys.stdin is not None and sys.stdin.isatty() and sys.stdout is not None and sys.stdout.isatty())
+
+
+def _ask(question: str):
+    """One line typed at the terminal, or None when the input ended (Ctrl-D; Ctrl-Z Enter on Windows) or was
+    interrupted (Ctrl-C) — a stop, never a traceback."""
+    try:
+        return input(question)
+    except (EOFError, KeyboardInterrupt):
+        print()                                   # the next line starts on its own line, not after the prompt
+        return None
+
+
+def _confirm(question: str):
+    """A y/N question: True for y/yes, False for anything else, None when the input ended or was interrupted (``_ask``)
+    — falsy, so every y/N prompt reads it as no; the wording approval reads it as a stop."""
+    answer = _ask(question)
+    if answer is None:
+        return None
+    return answer.strip().lower() in ("y", "yes")
+
+
+def _save_as_refusal(name: str, kind, replace: bool) -> str:
+    """Why ``--save-as NAME`` cannot be saved as a ``kind`` ('recipe' | 'operation'; None while the kind is not known
+    yet) — '' when it can. --replace replaces an item of the same kind only: a name an item of the other kind holds is
+    refused even with it (``library._check_free`` refuses the same), so a recipe and an operation never share a name."""
+    from .library import LibraryError, list_items, slug
+    try:
+        s = slug(name)
+        taken = [i for i in list_items() if i.slug == s]
+    except LibraryError as e:
+        return str(e)
+    if kind is not None:
+        other = [i for i in taken if i.kind != kind]
+        if other:
+            o = other[0]
+            return (f"your library already has {o.label()!r} — --replace replaces only an item of the same kind, "
+                    f"so {'an' if kind == 'operation' else 'a'} {kind} cannot take that name; choose another name, "
+                    f"or delete that one first "
+                    f"(spec-surgeon library delete \"{o.name}\" --kind {o.kind})")
+    elif len({i.kind for i in taken}) > 1:        # held by both kinds: whatever comes of it, the other one stays
+        return (f"your library already has {' and '.join(repr(i.label()) for i in taken)} — --replace replaces only "
+                f"an item of the same kind; choose another name, or delete one of them first (spec-surgeon library "
+                f"delete \"{taken[0].name}\" --kind {taken[0].kind})")
+    if taken and not replace:
+        return (f"your library already has {taken[0].label()!r} — choose another name or pass --replace (it replaces "
+                f"an item of the same kind only)")
+    return ""
 
 
 def _print_turn(turn) -> None:
@@ -467,10 +538,7 @@ def _talk(conv, save, out_dir):
             return "spec", turn.spec, conv
         _print_turn(turn)
         print(f"(Claude so far: {conv.usage.line()})")
-        try:
-            line = input("Your reply ('#n' picks a choice; an empty line stops): ").strip()
-        except EOFError:
-            line = ""
+        line = (_ask("Your reply ('#n' picks a choice; an empty line stops): ") or "").strip()
         if not line:
             print("Stopped — nothing was run.")
             return "stop", 2, conv
@@ -484,8 +552,11 @@ def _talk(conv, save, out_dir):
             continue
         choice = turn.choices[i - 1]
         if choice.wording:
-            ok = input(f"Approve these exact words for your documents: «{choice.wording}»? [y/N] ").strip().lower()
-            if ok not in ("y", "yes"):
+            ok = _confirm(f"Approve these exact words for your documents: «{choice.wording}»? [y/N] ")
+            if ok is None:                        # the input ended or Ctrl-C: a stop, like an empty reply
+                print("Stopped — nothing was run.")
+                return "stop", 2, conv
+            if not ok:                            # a typed no: the words are not approved; the conversation goes on
                 continue
         if choice.kind == "custom_transform":
             conv.take_app_choice(choice.id)
@@ -519,7 +590,17 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     """Tier B: generate an op for an unsupported request, prove it on one sample per pattern, run it after
     approval. Outputs only — never in place (a generated op becomes permanent only after human review)."""
     from .codegen import generate_op, pick_samples, run_generated
+    from .preview import approval_inputs, approval_token, changed_since_preview, generated_key
+    if getattr(args, "save_as", None):
+        why = _save_as_refusal(args.save_as, "operation", getattr(args, "replace", False))
+        if why:
+            print(f"--save-as: {why}", file=sys.stderr)
+            return 2
     samples = pick_samples(files)
+    # the files as they are BEFORE the transform is written and tried on them (several calls to Claude): the approval
+    # taken after it must be of these very files, or the preview would pair a source edited meanwhile with a trial
+    # output made from its old content — refused below, once the preview is made, naming the file
+    before_writing = approval_inputs({}, files)
     print(f"Tier B: generating a transform, tested on {[s.name for s in samples]} …", file=sys.stderr)
     g = generate_op(args.request, spec.get("proposal") or spec.get("unsupported") or "", samples, out_dir / "codegen",
                     model=args.model, log=lambda m: print(m, file=sys.stderr), brief=brief)
@@ -533,9 +614,25 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
         print("No generated transform passed verification: " + "; ".join(g.errors))
         return 2
     print(f"generated op {g.name!r} passed on the samples: {g.path} (select {g.select}, params {g.params})")
+    # the approval is of this transform on the files as they were before it was written (as the window's, whose token is
+    # taken before the trials): the token is taken here, its files compared with `before_writing` once the preview is
+    # made, and the token re-checked before the run — a file edited while the transform was written, the preview, the
+    # visual check or the question waited refuses
+    key = generated_key(g)
+    try:
+        token = approval_token(key, files)
+    except OSError:
+        token = ""                                # a file vanished while the transform was written: Run refuses
+    inputs = approval_inputs(key, files)
     from . import compiler, vision
     from .preview import preview_generated, write_preview_files
     gp = preview_generated(g, out_dir / "codegen" / "preview", renderer=args.renderer, do_render=not args.no_render)
+    drift = _changed_while_writing(before_writing, inputs, approval_inputs({}, files))
+    if drift:
+        print("Not run: a file changed while the custom transform was being written and tested — its preview would "
+              "show a result made from the old content. Run the command again."
+              + "".join(f"\n  • {w}" for w in drift), file=sys.stderr)
+        return 2
     if not args.no_render and not getattr(args, "no_review", False):
         intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {args.request}",
                             f"WHAT IT SHOULD DO: {spec.get('proposal') or ''}"] + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
@@ -546,8 +643,12 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     print(gp.to_text())
     print(f"\npreview: {gp.out_dir}")
     if getattr(args, "save_as", None):
-        from .library import save_operation
-        item = save_operation(args.save_as, g, replace=getattr(args, "replace", False))
+        from .library import LibraryError, save_operation
+        try:
+            item = save_operation(args.save_as, g, replace=getattr(args, "replace", False))
+        except LibraryError as e:
+            print(f"--save-as: {e} — nothing was saved or run", file=sys.stderr)
+            return 2
         print(f"Saved to your library: {item.label()} ({item.path})")
     if args.in_place:
         print("note: generated transforms are never delivered in place; outputs go to the output folder")
@@ -560,10 +661,15 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     if not approved and _interactive():
         q = (f"\nYou have looked at Claude's findings and want to run it on {len(files)} file(s) (edited copies "
              f"only)? [y/N] " if blocking else f"\nRun it on {len(files)} file(s) (edited copies only)? [y/N] ")
-        approved = input(q).strip().lower() in ("y", "yes")
+        approved = bool(_confirm(q))
     if not approved:
         print("Not run. Review the generated module and its preview before running it.")
         return 0
+    changed = changed_since_preview(key, files, token, inputs)
+    if changed is not None:
+        print("Not run: a file changed since the custom transform was tested and previewed — run the command again."
+              + "".join(f"\n  • {w}" for w in changed), file=sys.stderr)
+        return 2
     results = run_generated(g, [str(f) for f in files], out_dir / "run", log=lambda m: print(m, file=sys.stderr))
     ok = sum(1 for r in results if r.passed)
     print(f"{ok} of {len(results)} file(s) PASS; outputs in {out_dir / 'run' / 'outputs'}")
@@ -571,6 +677,19 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
         if not r.passed:
             print(f"  FAIL {r.source.name}: " + "; ".join(r.problems[:2]))
     return 0 if ok == len(results) else 1
+
+
+def _changed_while_writing(before: dict, *later: dict) -> list:
+    """What changed in the files between ``before`` (``preview.approval_inputs`` taken before the custom transform was
+    written) and each of ``later`` (the inputs its approval token was taken over; the files once its preview is made),
+    one line per file — [] when every one matches. Only the files are compared (the key is not known before)."""
+    from .preview import explain_approval_change
+    for now in later:
+        lines = explain_approval_change({"files": before.get("files") or {}}, {"files": now.get("files") or {}},
+                                        since="the custom transform was started")
+        if lines:
+            return lines
+    return []
 
 
 def cmd_library(args):
@@ -604,7 +723,7 @@ def cmd_library(args):
             if not _interactive():
                 print(f"Pass --yes to delete {item.label()!r}.", file=sys.stderr)
                 return 2
-            if input(f"Delete {item.label()!r}? [y/N] ").strip().lower() not in ("y", "yes"):
+            if not _confirm(f"Delete {item.label()!r}? [y/N] "):
                 return 2
         delete(item.name, item.kind)
         print(f"Deleted {item.label()}.")
@@ -755,11 +874,13 @@ def main(argv=None) -> int:
     p.add_argument("--save-as", default=None, metavar="NAME",
                    help="save the previewed spec as a recipe (or the passing custom transform as one of your "
                         "operations) in your library under NAME")
-    p.add_argument("--replace", action="store_true", help="with --save-as: replace an item of the same name")
+    p.add_argument("--replace", action="store_true",
+                   help="with --save-as: replace an item of the same name and kind (a name the other kind holds is "
+                        "refused even with it)")
     p.add_argument("--allow-codegen", action="store_true",
                    help="without a terminal: accept Claude's offer of a one-off custom transform when no operation "
-                        "fits (sandboxed, verified on samples first, edited copies only); in a terminal pick it from "
-                        "the choices instead")
+                        "fits — made only when Claude judged it \"possible\" (sandboxed, verified on samples first, "
+                        "edited copies only); in a terminal pick it from the choices instead")
     p.set_defaults(fn=cmd_do)
 
     p = sub.add_parser("retry", help="rinse & repeat: run next pass on set-aside files from a previous output folder")

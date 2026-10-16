@@ -6,16 +6,69 @@ hook that only admits the whitelisted modules, finds the one ``Op`` subclass, an
 it was given runs ``plan`` (predict first) and ``apply``; it writes ``out.docx`` and ``plan.json`` next to the
 request. The parent process verifies the result with the independent verifier — the generated code never sees it.
 
+Before the generated source is executed, ``install_guard`` adds a Python audit hook (defence in depth under the
+whitelist): from then on this process may write, remove or rename only inside its own working directory, and may not
+start a process, open a socket or load native code. lxml's C-level file access is not audited — the whitelist
+(``codegen.FORBIDDEN_ATTRS``, ``MODULE_ATTRS``) is what keeps generated code away from those writers.
+
 This is a prototype sandbox: it keeps an honest model inside the engine's API; it is not a security boundary
-against hostile code (the process boundary, the copy-only inputs and the timeout are the real limits).
+against hostile code (the process boundary, the copy-only inputs, the timeout, the whitelist and the audit hook are
+the limits — none of them is an OS-level jail).
 """
 from __future__ import annotations
 
 import builtins
 import json
+import os
 import sys
 import traceback
 from pathlib import Path
+
+# Audit events that take paths and change the file system: allowed only inside the working directory.
+PATH_EVENTS = {"os.remove", "os.rename", "os.rmdir", "os.mkdir", "os.chmod", "os.chown", "os.truncate", "os.symlink",
+               "os.link", "os.utime", "os.chflags", "os.lchflags", "os.setxattr", "os.removexattr", "shutil.rmtree",
+               "shutil.copyfile", "shutil.copytree", "shutil.move", "shutil.chown", "shutil.copymode",
+               "shutil.copystat", "shutil.make_archive", "shutil.unpack_archive"}
+# Audit events that are never allowed once the generated code may run.
+BLOCKED_EVENTS = {"subprocess.Popen", "os.system", "os.fork", "os.forkpty", "os.kill", "os.killpg", "os.startfile",
+                  "os.posix_spawn", "socket.connect", "socket.bind", "socket.sendto", "socket.sendmsg",
+                  "socket.getaddrinfo", "ctypes.dlopen", "ctypes.dlsym", "ctypes.call_function", "ctypes.cdata",
+                  "webbrowser.open", "urllib.Request", "ftplib.connect", "http.client.connect", "smtplib.connect"}
+BLOCKED_PREFIXES = ("os.exec", "os.spawn", "winreg.", "msvcrt.")
+
+
+def install_guard(workdir) -> None:
+    """From here on this process may change the file system only inside ``workdir`` (and may not start processes,
+    open sockets or load native code). Audit hooks cannot be removed again."""
+    root = os.path.normcase(os.path.realpath(workdir))
+    write_flags = os.O_WRONLY | os.O_RDWR | os.O_APPEND | os.O_CREAT | os.O_TRUNC
+
+    def inside(p) -> bool:
+        try:
+            p = os.fspath(p)
+        except TypeError:
+            return False                      # a file descriptor or anything else that is not a path
+        if isinstance(p, bytes):
+            p = os.fsdecode(p)
+        full = os.path.normcase(os.path.realpath(p))
+        return full == root or full.startswith(root + os.sep)
+
+    def hook(event, args):
+        if event == "open":
+            path, mode, flags = (list(args) + [None, None, None])[:3]
+            writing = ((isinstance(mode, str) and any(c in mode for c in "wax+"))
+                       or (isinstance(flags, int) and flags & write_flags))
+            if writing and path is not None and not inside(path):
+                raise PermissionError(f"the sandbox may not write outside its folder: {path}")
+        elif event in PATH_EVENTS:
+            for p in args:
+                if isinstance(p, (str, bytes, os.PathLike)) and not inside(p):
+                    raise PermissionError(f"the sandbox may not change {p} ({event})")
+        elif event in BLOCKED_EVENTS or event.startswith(BLOCKED_PREFIXES):
+            raise PermissionError(f"the sandbox may not do this: {event}")
+
+    sys.dont_write_bytecode = True              # imports from here on never write .pyc files outside the folder
+    sys.addaudithook(hook)
 
 SAFE_BUILTINS = (
     "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float", "frozenset", "hasattr", "int",
@@ -60,6 +113,7 @@ def main(argv=None) -> int:
     try:
         from .ops.base import merge_fragments
         from .package import DocxPackage
+        install_guard(out_dir)                  # before a single line of the generated code runs
         cls = load_op_class(req["source"])
         op = cls()
         pkg = DocxPackage(Path(req["docx"]).read_bytes(), name=Path(req["docx"]).name)

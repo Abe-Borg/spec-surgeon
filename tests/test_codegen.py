@@ -173,9 +173,10 @@ def test_generate_gives_up_after_three_attempts(folder, tmp_path):
 def test_do_allow_codegen_end_to_end(folder, tmp_path, monkeypatch, capsys):
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op sets the header distance alone",
                    "proposal": "set_header_distance"}
-    clients = iter([FakeClient(resp(tool("submit_editspec", {"spec": unsupported}))),
+    offer = {"spec": unsupported, "custom_transform": "possible"}          # Claude judged it within the limits
+    clients = iter([FakeClient(resp(tool("submit_editspec", offer))),
                     FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}))),
-                    FakeClient(resp(tool("submit_editspec", {"spec": unsupported})))])
+                    FakeClient(resp(tool("submit_editspec", offer)))])
     monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(tmp_path / "o"), "--no-render",
                      "--allow-codegen", "--yes"]) == 0

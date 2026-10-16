@@ -19,7 +19,7 @@ import time
 import traceback
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Tuple
 
 from PySide6.QtCore import QByteArray, QModelIndex, QSize, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence, QShortcut
@@ -470,16 +470,21 @@ class MainWindow(QMainWindow):
         if f.out.text():
             s.out_root = Path(f.out.text())
 
-    def _widget_key(self) -> tuple:
+    def _widget_key(self, keep_spec: bool = True, request: Optional[str] = None) -> tuple:
         """The inputs a preview depends on that live in the widgets. A loaded spec counts only while no request is
         typed (a typed request is compiled instead — ``Session``'s rule). The results folder is part of it: a preview
         is of a run that writes under one results folder, and changing it afterwards must send the user back to
-        Preview rather than let Run write into the folder the preview was made for."""
+        Preview rather than let Run write into the folder the preview was made for. So is "Render pages": a preview
+        made without page images has had no visual check, and Run renders (or not) as the preview did.
+        ``keep_spec=False``: the key as it reads once the loaded spec is gone — one of your operations replaces it
+        (``Session.use_operation``); the key is still taken before the job, from the widgets the trial is made of.
+        ``request``: the request box as it will read (one of your operations clears it once it passes)."""
         f, r, s = self.files_page, self.request_page, self.session
-        request = r.request.toPlainText().strip()
-        loaded = s.spec_source if (not request and s.spec is not None and s.spec_source != "compiled") else ""
+        request = r.request.toPlainText().strip() if request is None else request.strip()
+        loaded = s.spec_source if (keep_spec and not request and s.spec is not None and s.spec_source != "compiled") \
+            else ""
         return (f.folder.text(), f.template.text(), f.out.text(), request, loaded,
-                tuple(str(x) for x in (s.selected_files or [])))
+                tuple(str(x) for x in (s.selected_files or [])), r.render_cb.isChecked())
 
     def _chat_key(self) -> tuple:
         """The conversation a preview came from: which one, and how many times the user had spoken in it (a reply
@@ -625,11 +630,14 @@ class MainWindow(QMainWindow):
         if generated:
             run.copies_rb.setChecked(True)
         p.continue_btn.setEnabled(current)
+        live = current and not self.busy and not self.updating     # both refuse anything but the current preview:
+        p.save_btn.setEnabled(live)                                # never a live button that silently does nothing
+        p.review_ack_btn.setEnabled(live)
         request = r.request.toPlainText().strip()
         loaded = s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled"
         if not self._files_ok:
             r.preview_hint.setText("Choose the specs folder first (step 1)")
-        elif not (request or loaded):
+        elif not (request or loaded or s.generated is not None):
             r.preview_hint.setText("Type a request or load a saved spec")
         elif (waiting_for_user(s) and s.conversation is not None
               and s.conversation.request.strip() == request):          # cheap: runs on every keystroke
@@ -644,6 +652,14 @@ class MainWindow(QMainWindow):
             self._refresh_run_state()
             self._refresh_chat_block()
             self._refresh_preview_empty()
+            self._refresh_spec_bar()
+
+    def _refresh_spec_bar(self) -> None:
+        """The "Saved spec" bar stays only while that spec is the session's outcome. A compiled spec, a custom
+        transform or one of your operations replaces it — and the bar's Remove would throw the new outcome away."""
+        s = self.session
+        if not (s.spec is not None and s.spec_source and s.spec_source != "compiled"):
+            self.request_page.spec_bar.hide()
 
     def _refresh_preview_empty(self) -> None:
         """The Preview step's empty state once there is nothing previewed behind it: a reply that only asks, Start
@@ -665,6 +681,7 @@ class MainWindow(QMainWindow):
                                 waiting_for_user(s))
         self._refresh_chat_block()
         self._refresh_preview_empty()
+        self._refresh_spec_bar()
 
     def _refresh_chat_block(self) -> None:
         s = self.session
@@ -762,8 +779,9 @@ class MainWindow(QMainWindow):
 
     @Slot()
     def _clear_set_aside(self) -> None:
-        self.session.reset_set_aside()
+        self.session.reset_set_aside()            # ends the conversation (its files were the set-aside ones)
         self._show_set_aside()
+        self._refresh_chat()
         self._refresh_files()
         self._inputs_changed()
 
@@ -927,7 +945,10 @@ class MainWindow(QMainWindow):
         self.sync()
         wkey = self._widget_key()          # what this preview is of; Run is enabled only while it still holds
         loaded = bool(s.spec_source and s.spec_source != "compiled" and s.spec is not None and not req)
-        continuing = not loaded and s.conversation is not None and s.conversation_matches(req)
+        # a custom transform or one of your operations with no request typed: preview it again (make_preview tries it
+        # again on the files as they are now) — never "type what you want done"
+        transform = not loaded and not req and s.generated is not None
+        continuing = not loaded and not transform and s.conversation is not None and s.conversation_matches(req)
         if continuing and s.spec is None and s.generated is None:
             r.info.show_message("info", "Claude is waiting for your reply",
                                 "Answer in the chat below (or pick one of Claude's choices), or Start over.")
@@ -939,6 +960,8 @@ class MainWindow(QMainWindow):
             out = []
             if loaded:
                 out.append(f"Using the spec file {s.spec_source}.")
+            elif transform:
+                out.append(f"Using the custom transform {s.generated.name}.")
             elif not continuing:
                 out.append(s.compile(req, log))
                 if s.spec is None and s.generated is None:
@@ -957,9 +980,16 @@ class MainWindow(QMainWindow):
             self._refresh_chat_block()
             return False
         render = self.request_page.render_cb.isChecked()
-        self.sync()
-        wkey = self._widget_key()
         page = self.stack.currentWidget()
+        self.sync()
+        if s.conversation is None:            # the folder changed: sync ended the conversation (a new set of files)
+            self._refresh_chat()
+            target = page if page in (self.request_page, self.preview_page) else self.request_page
+            target.info.show_message("info", "The conversation ended",
+                                     "The specs folder changed, so the conversation ended — press Preview to start "
+                                     "again with these files.")
+            return False
+        wkey = self._widget_key()
 
         def fn(log):
             out = [s.reply(text, choice_id, log, render)]
@@ -1236,15 +1266,20 @@ class MainWindow(QMainWindow):
         except Exception as e:
             self.prompts.warn("Spec Surgeon", f"Cannot use this spec:\n{e}")
             return False
-        self.request_page.request.blockSignals(True)
-        self.request_page.request.clear()
-        self.request_page.request.blockSignals(False)
+        self._clear_request()
         self.write(f"\nLoaded spec {path}: {spec.get('request')!r} — {spec.get('summary')}\nPress Preview.")
         self._show_loaded_spec()
         self._refresh_chat()                      # loading a spec ends the conversation: both chat views go
         self._inputs_changed()
         self.go(1)
         return True
+
+    def _clear_request(self) -> None:
+        """Empty the request box (a loaded spec, a recipe or one of your operations is the outcome now), without the
+        keystroke handlers."""
+        self.request_page.request.blockSignals(True)
+        self.request_page.request.clear()
+        self.request_page.request.blockSignals(False)
 
     def _show_loaded_spec(self) -> None:
         s = self.session
@@ -1283,9 +1318,7 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 self.prompts.warn("Spec Surgeon", f"Cannot use this recipe:\n{e}")
                 return False
-            self.request_page.request.blockSignals(True)
-            self.request_page.request.clear()
-            self.request_page.request.blockSignals(False)
+            self._clear_request()
             self.write(f"\nLoaded recipe {item.name!r}: {spec.get('request')!r} — {spec.get('summary')}\nPress Preview.")
             self._show_loaded_spec()
             self._refresh_chat()
@@ -1294,17 +1327,27 @@ class MainWindow(QMainWindow):
             return True
         render = self.request_page.render_cb.isChecked()
         self.sync()
-        wkey = self._widget_key()
+        # use_operation replaces a loaded spec and ends the conversation, and the request box is cleared once it passes
+        # (below): the key is taken now, from the widgets the trial is made of (they stay editable while it runs), as
+        # it reads then
+        wkey = self._widget_key(keep_spec=False, request="")
         name = item.name
 
         def fn(log):
             return s.use_operation(name, log, render) + "\n" + s.make_preview(render, log)
-        return self._work("Use your operation", fn, on_done=lambda text: self._after_preview(text, wkey),
-                          page=self.request_page)
+
+        def done(text):
+            # the operation is the outcome now: the words typed for the conversation it ended are not its request, and
+            # Preview with the box empty previews (tries again) the operation — never compiles them in a new
+            # conversation. One that does not pass leaves the box, the conversation and the outcome as they were.
+            self._clear_request()
+            self._refresh_spec_bar()
+            self._after_preview(text, wkey)
+        return self._work("Use your operation", fn, on_done=done, page=self.request_page)
 
     @Slot()
     def do_save_to_library(self) -> bool:
-        from ..library import LibraryError
+        from ..library import LibraryError, list_items, other_kind_holding, slug
         s = self.session
         if self.busy or self.updating or not self._preview_current():
             return False
@@ -1321,16 +1364,31 @@ class MainWindow(QMainWindow):
             if kind == "operation":
                 return s.save_operation(name, replace=replace), []
             return s.save_recipe(name, replace=replace)
+
+        def replace_can_help(e: LibraryError) -> bool:
+            """The name is taken by an item of this kind, and only by one: replacing works within one kind, so a name
+            the other kind holds is refused even with replace (``library.other_kind_holding``) — never asked about."""
+            if "already has" not in str(e):
+                return False
+            try:
+                key = slug(name)
+            except LibraryError:
+                return False
+            return other_kind_holding(kind, key) is None and any(i.slug == key for i in list_items(kind))
         try:
             try:
                 item, notes = save(replace=False)
             except LibraryError as e:
-                if "already has" not in str(e) or not self.prompts.ask("Spec Surgeon", f"{e}\n\nReplace it?"):
+                if not replace_can_help(e):
                     raise
+                if not self.prompts.ask("Spec Surgeon", f"{e}\n\nReplace it?"):
+                    return False                   # the user's answer: nothing to report
                 item, notes = save(replace=True)
-        except ValueError as e:                    # LibraryError is a ValueError
-            if "already has" not in str(e):
-                self.prompts.warn("Spec Surgeon", str(e))
+        except (ValueError, OSError) as e:
+            # LibraryError is a ValueError. OSError: a specs folder that cannot be read (moved, a network share that
+            # dropped — the preview's token is checked against it) or a library folder that cannot be written. On the
+            # GUI thread: shown, never raised.
+            self.prompts.warn("Spec Surgeon", f"Nothing was saved to your library:\n{e}")
             return False
         self.write(f"Saved to your library: {item.label()} ({item.path})" + "".join(f"\nNote: {n}" for n in notes))
         self.preview_page.info.show_message("ok", "Saved to your library", item.label() + "".join(f" — {n}" for n in notes))
@@ -1401,35 +1459,47 @@ class MainWindow(QMainWindow):
             pass
         open_folder(d)
 
+    def _bundle_folders(self) -> Tuple[Optional[Path], List[Path]]:
+        """(the folder a bundle mirrors under results/, the newer folders beside it under results-later/). The last run
+        with its session comes first, always (its reports, logs, traces and records are what a bundle is for); else
+        the last preview's folder; else the conversation's. Beside it, every folder the session has moved on to since:
+        the last preview's folder and, while a conversation is open, the one holding its records — a reply after the
+        run, or a new request (``Session.compile`` opens a new session folder), keeps its records there, a reply or
+        first turn that failed included. ``diag.make_bundle`` never bundles a folder twice."""
+        s = self.session
+
+        def folder(p) -> Optional[Path]:
+            return Path(p) if p and Path(p).is_dir() else None
+        found: List[Path] = []
+        chat = folder(s.chat_dir) if s.conversation is not None else None
+        for p in (folder(s.last_run_dir), folder(s.out_dir), chat):
+            if p is not None and p not in found:
+                found.append(p)
+        return (found[0], found[1:]) if found else (None, [])
+
     @Slot()
     def save_bundle(self) -> Optional[Path]:
         """A zip for whoever diagnoses a problem: the last run's (or preview's) reports, logs, traces, records and
-        plans, and the app's own logs — never the documents. When the conversation has gone on since the last preview
-        (a reply opens the next session folder, ``Session.reply``), that folder is the one bundled: it holds the
-        conversation record of what happened since — a reply that failed included."""
+        plans with its session's conversation and preview, the newer session folder the conversation has moved on to
+        since (``_bundle_folders``), and the app's own logs — never the documents."""
         s = self.session
-        if s.conversation is not None and s.chat_dir is not None and s.chat_dir != s.out_dir \
-                and Path(s.chat_dir).is_dir():
-            run_dir = s.chat_dir
-        elif s.last_run_dir and Path(s.last_run_dir).exists():
-            run_dir = s.last_run_dir
-        else:
-            run_dir = s.out_dir or s.chat_dir
+        run_dir, later = self._bundle_folders()
         stamp = time.strftime("%Y%m%d-%H%M%S")
-        start = str((Path(run_dir) if run_dir else Path.home()) / f"spec-surgeon-diagnostics-{stamp}.zip")
+        start = str((run_dir or Path.home()) / f"spec-surgeon-diagnostics-{stamp}.zip")
         path = self.prompts.save_file("Save a diagnostics bundle", start, "Zip (*.zip)")
         if not path:
             return None
         try:
-            res = diag.make_bundle(Path(path), Path(run_dir) if run_dir else None, logs_dir(),
-                                   note=f"window; last run {s.last_run_dir}")
+            res = diag.make_bundle(Path(path), run_dir, logs_dir(), note=f"window; last run {s.last_run_dir}",
+                                   also=later)
         except OSError as e:
             self.prompts.warn("Spec Surgeon", f"The bundle could not be written:\n{e}")
             return None
         self.write(f"Diagnostics bundle: {res['path']} — {len(res['included'])} file(s); the documents themselves "
                    f"are never included ({res['left_out']} left out).")
+        where = str(run_dir or "no run yet") + "".join(f" and {p}" for p in res.get("also") or [])
         self.prompts.notify("Spec Surgeon", f"Saved {res['path']}.\n\nIt holds the reports, logs and records of "
-                                            f"{run_dir or 'no run yet'} and the app's own logs — not the documents. "
+                                            f"{where} and the app's own logs — not the documents. "
                                             f"Records and logs quote the paragraphs that changed or failed, so share "
                                             f"it as you would the specs.")
         return Path(res["path"])

@@ -76,33 +76,68 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
     the `wording` of a choice the user picked, and `PROJECT.json` without `_path` — each source checked on its own.
     Never Claude's message, understanding, labels, summary, assumptions, the app's notes or the brief. Choices are
     built by code (`_choices_from`): only `clarify`/`alternative`/`rephrase` from Claude; `custom_transform` only by
-    the app, only when the submission said `"possible"`; wording with Cc/Cf characters (tab aside) is dropped. The
-    advisor's sources are `placed_words(original spec)` + the request + the answers, never the whole spec JSON.
+    the app, only when the submission said `"possible"`; wording holding any character `conversation.invisible` flags
+    is dropped — the categories Cc, Cf, Cs, Co, Cn, Zl, Zp (tab aside), every Default_Ignorable_Code_Point
+    (`INVISIBLE_RANGES`: some are letters or marks, e.g. U+3164, U+FE0F, U+034F) and U+2800, U+1D159, U+16FE4 (blank
+    without being ignorable); never the Zs spaces (U+00A0…: they show as a space, and spec text has them). The spec a
+    conversation hands the app (`_spec_turn`: a deep copy, for ok, questions and unsupported turns, chat and compile
+    mode) carries `Conversation.request` in `request`, never Claude's text there — the advisor and the next pass
+    (`set_aside.json` → `retry`) count a spec's request as approved; the API history keeps Claude's call as made.
+    `conversation.json` records the sources as `approved_words` (beside `answers`); a source is never empty (no memory
+    entry without a non-empty PROJECT.json — `memory_source` of none is `"{}"`, which traced the words "{}" —, no empty
+    request or answer). The advisor's sources are the original spec's `placed_words`, the request and the answers,
+    never the whole spec JSON (its docstring and `ADVISOR_SYSTEM` say so); a respec it accepts carries the ORIGINAL
+    spec's `request` (`_respec_errors` pins it beside `applies_to`), never Claude's: `advice/<name>.spec.json` is run
+    and advised on again.
 14. **The conversation is append-only and every tool call is answered** (Phase 8). Opus 5.5 keeps its thinking,
     so history is never rewritten. `conversation.check_pairing` runs before every request: the last message is the
     user's and its leading `tool_result` ids equal the previous assistant turn's `tool_use` ids. The user message
     is built in one step (pending results, then notes, then the user's text) and appended before the call; a failed
     call (API error — `llm.is_api_error` —, refusal, `max_tokens`, `pause_turn`) appends nothing — the next reply is a
     new user message. A non-API exception of the call is a defect: it propagates and appends nothing either (the
-    caller saves `conversation.json` first). A tool's own exception is answered as an `is_error` tool result.
+    caller saves `conversation.json` first). A tool's own exception is answered as an `is_error` tool result, and so
+    is a submission whose `check_submission` raises (`REJECTED — fix and call submit_editspec again:` with `[spec] the
+    spec could not be checked (<Type>: <message>) — fix its shape …`; `validate_spec._check_shapes` refuses wrong
+    shapes as `spec` first). Claude's `questions`/`choices` of the wrong shape are dropped and said in the turn's
+    errors (`_texts`, `_choices_from`), never raised; `reply()` sets `turn = None` before it advances, so an answered
+    turn's choices cannot be picked after a failed call.
     Tool calls, text and `Turn.message` are read from `llm.history_content(resp)`, never `resp.content` (a fallback's
     abandoned tool calls are neither echoed nor acted on). `system` and `tools` are frozen per conversation. Never
     send `thinking`, `tool_choice` or an assistant prefill (400 on Opus 5.5).
 15. **Claude's visual check can stop a run, never pass one** (Phase 8). `vision.review_samples` never raises (a
     problem is `skipped`; a non-API error keeps its traceback in `VisualReview.transcript`; every transcript append
     sits inside the never-raise guards), is never a `CheckResult`, never appears in a verification record, never says
-    PASS.
+    PASS. Every stage is guarded — preparing the pages (image blocks included), the client factory, the call, reading
+    the answer (`_read_answer`: raises on an answer that is not a review's shape, which becomes "Claude's answer could
+    not be read (…)") — and the caller's `log` is wrapped (`_quiet`). A `client_factory` error is classified like the
+    call's (`_skip_for`: `llm.failure_text`, `llm.error_entry`, traceback unless an API error). A skipped review has
+    no findings: summary and findings are set together, at the end. Pages are labelled, and findings validated, by
+    `compiler.file_labels` over all the samples (two folders' `Spec.docx` are `a/Spec.docx`, `b/Spec.docx`) — the
+    labels the preview text uses (`preview.sample_labels`).
     `Session.run_blocked_reason()` is the first statement of `Session.run` (spec and custom transform alike); the
     acknowledgement is bound to the preview token (`acknowledge_review`) and is never persisted.
 16. **Custom transforms are plain formatting on text parts and the styles part** (Phase 8). `codegen.hard_limits`
     refuses any revision delta of any kind and any part outside `allowed_parts_of(docx)`; the tracked-change
     helpers stay out of `ALLOWED_FROM` (`EXCLUDED_FROM_EXAMPLES`). `catalog.CUSTOM_TRANSFORM_LIMITS` lists only
     families a V10 kind checks (a test maps each). A custom transform is offered, never automatic: the CLI without a
-    terminal needs `--allow-codegen`. Edited copies only.
+    terminal needs `--allow-codegen` AND Claude's `"possible"` verdict (any other verdict, none included, is exit 2 —
+    `--allow-codegen` accepts an offer, never makes one). Edited copies only. Its approval token
+    (`preview.generated_key(g)` + the files) is checked again before it runs — the window's Run, and the CLI after
+    y/N/`--yes` (`preview.changed_since_preview`); a transform whose token went stale is tried again by
+    `Session.make_preview` (`_prove_again`), never shown again as it was. A transform is approved for the files as
+    they were BEFORE it was written: `approval_inputs({}, files)` is taken before `generate_op` and compared (files
+    only, `explain_approval_change(…, since="the custom transform was started")`) with the inputs the token is taken
+    over — the window then leaves the token empty (Run refuses; its reply's preview tries the transform again at
+    once); `cli._do_codegen` (`_changed_while_writing`) also compares once the preview is made and refuses, exit 2,
+    before the visual check. `_prove` takes its token before the trials.
 17. **The library never trusts a name or an old operation** (Phase 8). Names go through `library.slug` (Windows
     device names refused), lookups are exact matches against the listing, `_inside` checks every path before a read
-    or delete. A saved operation is re-tried on the current batch's samples before its preview, and refused when
-    `op.py`'s sha256 differs from its manifest or it fails the whitelist. Only a current preview is saved.
+    or delete. A saved operation is re-tried on the current batch's samples before its preview — first, in a new
+    session folder (`use_operation`: `_prove` before `end_conversation`/`_use_folder`/`_show_generated`; a failing one
+    changes nothing) — and refused when `op.py`'s sha256 differs from its manifest or it fails the whitelist. Only a
+    current preview is saved. A name belongs to one item: `replace` works within a kind, and a name the other kind
+    holds is refused even with it (`library.other_kind_holding` in `_check_free`; `cli._save_as_refusal` before
+    anything is written).
 18. **One call site** (Phase 8). Every Claude call goes through `llm.call` (streamed, `MAX_TOKENS` 64000, effort
     `high`, `fallbacks="default"`, 5-minute cache). Callers resolve the client when the call is made, through
     `compiler._client()` (the advisor through `advisor._client`) or an injected `client` — never captured at import.
@@ -113,8 +148,17 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
     the exchange's records — total (a `record_error` entry, never an exception) and without image data. `compiler`
     re-exports `is_api_error`, `api_error_text` and `block_dict` (master's import path).
 19. **Tests never call Claude.** `tests/conftest.py` (autouse) gives every test a temp `SPEC_SURGEON_CONFIG_DIR`,
-    removes API keys, makes `llm.client` raise and `cli._interactive` false; `tests/fake_claude.py` is the scripted
-    streaming client (its `messages.create` raises; `raise_on_enter`/`raise_on_final`/`api_error` script API errors).
+    removes API keys, makes `llm.client` raise and `cli._interactive` false; cuts every test off from Windows
+    Credential Manager (`seal_credential_manager`: `credentials._win32cred` replaced by a function returning None, so
+    `available()` False, `load()` None, `save()` raises, `delete()` False — only `tests/test_credentials.py`
+    (`REAL_CREDENTIALS_TEST`) keeps the real functions, and its round trip uses a throw-away target; `credentials.py`
+    stays the only module that touches `win32cred`, an AST scan checks it); seals `SEALED_ENV` (`ANTHROPIC_API_KEY`,
+    `ANTHROPIC_AUTH_TOKEN`, `SPEC_SURGEON_MODEL`: set then deleted, so teardown restores exactly what was there before
+    the test — the machine's keys, or their absence —, also after a test or the window's Settings wrote a key into
+    `os.environ`); pops `SPEC_SURGEON_MODEL` from `os.environ` when conftest loads, for the whole run (nothing puts it
+    back; so each test's teardown restores its absence), and pins `DEFAULT_MODEL` to `PINNED_MODEL` (`claude-opus-5-5`)
+    in every loaded `spec_surgeon` module (`pin_model`).
+    `tests/fake_claude.py` is the scripted streaming client (its `messages.create` raises; `raise_on_enter`/`raise_on_final`/`api_error` script API errors).
     A new test that needs Claude scripts it there. `llm.client`'s error in the tests is a plain `RuntimeError` — NOT an
     API error — so a test that forgot its script fails loudly instead of recording a failed turn; keep it so.
 
@@ -284,7 +328,9 @@ proposals and recorded in the plan's status sections.
 - `jobs/` — `OpJob` aliases (`page-numbering` → `fix_page_numbering`, `tracked-replace` → `replace_text`).
 - `verify/suite.py` — V1…V10 as a `VerificationRecord`; V6/V7/V9 are filled by `batch.py`
   (`geometry_check()` implements V7's `source | none | template` modes). V5a takes `template_baselines` for
-  added parts.
+  added parts. Every sort of values that can be None (V2's `(part, before, after)` — an inserted block has no
+  `before`, a removed one no `after` —, V4's duplicate ids, V5b's new ids — a revision without `w:id`) uses
+  `_total_key` (None, then text, then tuples): it decides the order only, the lists compared are the same as ever.
 - `verify/reader.py` — `REL_CONTENT_TYPES`: V1's content-type-vs-relationship-type table.
 - `verify/template.py` — V10 kinds `hf_template_refs`, `template_parts`, `styles_added` (registered into
   `props.KINDS`); template packages cached by content md5 (re-read every time, so an edited template shows).
@@ -319,7 +365,9 @@ proposals and recorded in the plan's status sections.
   `os_error_hint` (Windows codes first), `Tracer` (per-file trace, flushed per line; `watch(crash=True)` only in a
   pool worker), `RunLog` (run.log; a call is a progress line too, `detail`/`block` file only), `environment`,
   `setup_app_logging`, `CrashWatch` + `com_quiet` (the window), `pid_alive` (never `os.kill` on Windows — it would
-  terminate the process; `winapp.process_alive` asks the kernel), `make_bundle`. `report.write_diagnostics` /
+  terminate the process; `winapp.process_alive` asks the kernel), `make_bundle` (`also=`: more results folders under
+  `LATER_PREFIX` `results-later/<folder name>/`, `-2`, `-3` for repeated names; `_within` skips a folder already
+  bundled or inside one; `environment.json` and the result carry `also`). `report.write_diagnostics` /
   `file_diagnosis` / `exception_diagnosis` build DIAGNOSTICS.md and the window's per-file diagnosis.
 - `guard.py` — identity, drift (size, mtime, then md5), lock file, read-only refusal (`is_read_only`: the file's mode, never `os.access`, so
   root/administrator see the same answer), atomic write; every reason a write-back cannot happen is a `GuardError`
@@ -335,15 +383,35 @@ proposals and recorded in the plan's status sections.
   `build(body_footer_linked=True)` is a body section that inherits the cover's footer, `build(appendix_restart=True)` a
   third section that restarts page numbering. Add a case here when an op grows.
 - `editspec.py` — `load_spec` resolves a relative `template` against the spec's folder; `is_template_file`.
+  `validate_spec` runs `_check_shapes` right after the unknown-key check: every spec-level field has the published
+  schema's shape (`request`/`summary` text, `unsupported`/`proposal` text or null, `assumptions`/`questions` lists of
+  strings, `review`/`applies_to` objects, `assertions` a list), then `mode` a string in `MODES`, an op's `op` a string,
+  `review.sample_files` an int 1–3 (not a bool), `applies_to.pattern_ids` a list of strings, `applies_to.or` only
+  `"all"` — all `SpecError` code `spec`, never a `TypeError` or a misreading. `effective_font` sub-fields are not
+  shape-checked (a wrong type there is V10's "could not evaluate").
 - `compiler.py` — the tools, the SYSTEM prompt (`system_prompt(chat)`; `CHAT_NOTE` adds the chat rules), `TOOLS`
   (one-shot) and `CHAT_TOOLS` (+ `view_pages`), `_Batch` (the read-only tools, plus `show_xml`/`find_paragraphs` for
   the transform writer and `view_pages` for the chat), the submission checks: `validate_spec`, `untraceable()` over
-  `placed_words()` (add any new op that places text there), dry plan per pattern (spec-level codes only).
+  `placed_words()` (add any new op that places text there), dry plan per pattern (spec-level codes only). Files are
+  shown and addressed by **label** (`file_labels(files)`, keyed by `str(path)`: the name when no other input has it,
+  else the fewest trailing folders that tell same-named files apart, joined with "/" — `a/Spec.docx`; the same path
+  twice is one file). `_Batch.labels` (path → label), `_Batch.label(path)`, `_Batch.files` (label → path);
+  `_relabel` renames files in the profiles (a pattern's `files` are labels, its `paths` are paths; the
+  representative's `file`, `unprofiled`, an error profile's `files`, `unreadable`), and `_dry_errors` names files by
+  label. Never key anything by `Path.name` again — two folders' `Spec.docx` would shadow each other.
   `compile_request` is a wrapper over `Conversation(mode="compile")` (Phase 8). `CompileResult` carries `transcript`
   and `seconds` (diagnostics) beside `usage`/`served_models`/`custom_transform`; `is_api_error`, `api_error_text` and
   `block_dict` are importable here (re-exported from `llm`). `preview.py` — `make_preview`, `approval_token`,
   `approval_inputs` + `explain_approval_change` (what changed since the preview), `render_samples`,
   `preview_generated` (a custom transform's preview), `write_preview_files`; both previews write `logs/preview.log`.
+  `generated_key(g)` (`{generated_source, select, params}` — the same key as `gui.Session._generated_key`) and
+  `changed_since_preview(key, files, token, before)` (None when unchanged, else `explain_approval_change` lines; a
+  missing file is a change, never an exception) are what `cli.cmd_do`/`_do_codegen` re-check after y/N or `--yes`.
+  `make_preview` names sample outputs with `batch.output_names(picks)` (`Spec.docx`, `Spec (1).docx`).
+  `sample_labels(samples)` (`compiler.file_labels` over the samples) names them in `Preview.to_text`/
+  `GeneratedPreview.to_text` (the note Claude gets) and in `render_samples`' warnings — the labels the visual check
+  uses. `explain_approval_change(before, now, since=)` names the moment `before` was taken ("the preview" by default;
+  "the custom transform was started" for the files' stats taken before a transform is written).
   Default model `claude-opus-5-5` (`SPEC_SURGEON_MODEL`); the live API path is untested in the container.
 - `llm.py` — the one Claude call site (rule 18): `call`, `history_content`, `tool_uses`, `texts`, `served`,
   `stop_problem`, `Usage`, `PRICES`, `client()` (`ClaudeUnavailable` without the SDK); diagnostics: `is_api_error`,
@@ -355,12 +423,22 @@ proposals and recorded in the plan's status sections.
   it as `failed`; asks take precedence over a submission in the same assistant turn. `conversation.json` is a record,
   never replayed: `entries` is what the user saw, `exchange` the model exchange of every call (never the API
   `messages`), which `compile_result` hands to `CompileResult.transcript`. `ACCEPTED_RESULT` is the accepted spec's
-  tool result.
+  tool result. `to_dict` also writes `approved_words` (`sources`, in order: request, `--answer` lines,
+  `memory_source` — PROJECT.json without `_path` as JSON text, only when it holds something —, then each picked
+  wording and typed reply; never an empty source) and `answers`. `invisible`/`INVISIBLE_RANGES`/`INVISIBLE_CATEGORIES` back `clean_wording`; `_texts` reads a list of
+  texts from Claude (one string = one item; else dropped and said). Only a terminal conversation (`cli._chat`) and
+  the window (`Session._save_chat`) write `conversation.json`; `compile_request` (a scripted `do`) saves none — the
+  CLI writes `compile.json` after it returns.
 - `vision.py` — `page_pngs`/`rasterize_pages` (≤ 2000 px long edge), `est_tokens`, `image_block`, `render_pdf` (md5
-  cache), `review_samples` + `VisualReview` (+ `transcript`, without the images) + `save_review` (rule 15);
-  `VIEW_BUDGET_TOKENS` for `view_pages`.
+  cache), `review_samples` + `VisualReview` (+ `transcript`, without the images) + `save_review` (rule 15; its guards:
+  `_read_answer`, `_finding` — a page is an int, not a bool —, `_skip_for`, `_quiet`, `_describe`, `_traceback`;
+  page labels and the findings' `file` are `compiler.file_labels` labels over all the samples);
+  `VIEW_BUDGET_TOKENS` for `view_pages` (60,000: about 20 letter pages — `page_tokens()` 2,714 a letter page at 150 dpi,
+  22 one at a time, 21 in calls of three; 18 pages of 11×17 at 117 dpi, 3,312 each; `page_dpi` is the one dpi rule
+  `rasterize_pages` uses; a test derives the comment's figures).
 - `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`) and operations (`operations/<slug>/op.py` +
-  `manifest.json`) under `config_dir()/library` (rule 17).
+  `manifest.json`) under `config_dir()/library` (rule 17). `other_kind_holding(kind, slug)`; `_check_free` refuses the
+  other kind's name even with `replace` ("… cannot take that name, not even with replace …").
 - `codegen.py` + `sandbox_runner.py` — custom transforms (Tier B; offered in the conversation, or `do
   --allow-codegen` without a terminal): AST whitelist (`ALLOWED_FROM`, `ALLOWED_IMPORT`, `FORBIDDEN_*`,
   `EXCLUDED_FROM_EXAMPLES`), isolated subprocess on copies, `hard_limits` (rule 16), the full suite as the test, 3
@@ -370,8 +448,9 @@ proposals and recorded in the plan's status sections.
   `stderr`/`returncode`, `sandbox-stderr.txt` in the trial's workdir; an API error ends the generation as a recorded
   failure, a defect propagates. Never let generated code import `verify/`, write files, or run in place; never relax a
   hard limit to make a generated op pass.
-- `advisor.py` — exception record → recommendation or re-compiled spec (pinned to the file's pattern; must pass
-  `compiler.check_submission` and plan on that file). Writes `advice/`; never applies anything. `ADVISOR_TOOLS` is an
+- `advisor.py` — exception record → recommendation or re-compiled spec (pinned to the file's pattern and to the
+  original spec's `request` — `_respec_errors(…, request)`; must pass `compiler.check_submission` and plan on that
+  file). Writes `advice/`; never applies anything. `ADVISOR_TOOLS` is an
   explicit list (a test pins it). Its exchange with Claude is kept (`Advice.transcript` → `advice/<name>.transcript.json`,
   built with `llm.response_entry`/`results_entry`/`error_entry`); an API error is a recorded `failed` advice, a defect
   propagates (`advise_batch` still isolates every record: one file's failure never stops the others).
@@ -389,7 +468,25 @@ proposals and recorded in the plan's status sections.
   writes `conversation.json` + `compile.json` (`last_compile`, via `diagnostics.write_json`) after every turn;
   `_session_dir()` gives the first preview or custom transform that folder and later ones a new folder the records
   follow; `reply()` opens the next folder first once a preview used the current one (`_next_session_dir`), so a
-  used folder's records are frozen. No Qt here: `main()`/`build_window()` import
+  used folder's records are frozen. Custom transforms (Phase 8 review fixes): `TransformFailed` (`PREFIX` "No custom
+  transform passed verification: ", `.details`) is what `_codegen` raises when no attempt passed or a call failed, and
+  the ONLY exception `reply` notes to Claude as an outcome — any other is a defect: the queued "the outcome follows"
+  note (`take_app_choice`) is withdrawn and replaced by "… The app could not finish the custom transform: it stopped
+  with an internal error (<Type>) before any result — nothing was applied." (the type, never the text; second pass),
+  `_save_chat()`, then propagate. `_codegen` takes `approval_inputs({}, files)` BEFORE `generate_op`; a file whose
+  stats moved by the time the token is taken leaves the token empty and the inputs at the old stats (Run names what
+  moved; the window's reply previews, so `_prove_again` tries it at once). `compile` and `use_operation` take their
+  batch with `files(outcome=False)` (never through the outgoing spec's templates), before anything changes.
+  `_prove(g, files, samples, folder, refusal)` takes the token and inputs BEFORE the trials and raises naming every
+  failing sample; `_show_generated` sets the outcome, preview and visual check, and the token LAST (a preview that
+  stops leaves nothing runnable); `_prove_again` (from `make_preview` when the token is stale) re-proves on the
+  current samples in `_next_session_dir()/retrial/NN`, then `_use_folder` + `_show_generated`, or raises "the custom
+  transform 'NAME' does not pass on the files as they are now — …" and changes nothing; `generated_intent` keeps the
+  visual-check intent for it. `use_operation` proves first in `_next_session_dir()/library-trial/NN` and only then
+  `end_conversation`/`_use_folder`/`_show_generated`. `_use_folder(out)` (split from `_session_dir`) moves `out_dir`
+  and the conversation's records. `conversation_matches` runs the conversation's files through the same template
+  filter as `files()` (the attached template + `spec_templates(self.spec)`, `is_template_file`) and is False on
+  `ValueError`/`OSError`. No Qt here: `main()`/`build_window()` import
   `ui/` lazily and explain `pip install "spec-surgeon[gui]"` when PySide6 is missing (exit 2).
 - `ui/` — the Qt window (PySide6-Essentials ≥ 6.8, v0.4.0; reworked 2026-10-15). `app.py`: `MainWindow` (all wiring),
   `build_window` (test hook `window._spec_surgeon`: buttons incl. `next`/`about` and `send`/`start_over`/`review_ack`/
@@ -406,8 +503,16 @@ proposals and recorded in the plan's status sections.
   `about_dialog.py` (rich-text body from `about.py`), `chat.py` (`ChatView`: the conversation card — two instances, on
   Describe right under the request and under the preview; choice buttons are rebuilt per turn and never in
   `job_buttons`; Claude's text shown as plain text only; bubbles are added AND shown at once (`_add_now`) so
-  `MainWindow._show_chat_reply` can scroll the Describe step to the choices and Send), `resources/icon.svg` (source of
-  `packaging/windows/SpecSurgeon.ico` via `make_icon.py`).
+  `MainWindow._show_chat_reply` can scroll the Describe step to the choices and Send; a choice's `detail` tooltip is
+  `html.escape`d — Claude's words are never rendered as rich text), `resources/icon.svg` (source of
+  `packaging/windows/SpecSurgeon.ico` via `make_icon.py`). In `app.py` (Phase 8 review fixes): `_widget_key(keep_spec)`
+  ends with the *Render pages* state (`keep_spec=False` in `do_library`'s operation branch: the key as it reads once
+  `use_operation` replaced the loaded spec); `_refresh_spec_bar` hides the "Saved spec" bar whenever the outcome is not
+  that loaded spec; `do_preview` with an empty request box and a custom transform as the outcome previews it again
+  ("Using the custom transform NAME.") instead of compiling; `_reply` ends the chat with the info bar "The conversation
+  ended" when `sync()` ended the conversation (folder changed) and starts no job; `_clear_set_aside` refreshes the
+  chat; `_refresh_run_state` enables Save to library… and I've looked — allow Run only while the preview is current
+  and nothing is busy or updating; `_bundle_folders` → `save_bundle` (see Diagnostics rule 8).
   **Qt rules:** PySide6 is imported at module level only inside `ui/` (never `ui/__init__.py` or `ui/rows.py`) —
   the CLI, `Session` and pool workers must load without Qt (`test_gui.py` checks both ways). Background work runs
   on a daemon thread (`worker.start_job`); its signals connect only to `@Slot` methods of GUI-thread QObjects, never
@@ -428,8 +533,8 @@ planted-defect test proving the verifier catches a wrong implementation of it �
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
-merged and the merge's own tests — all pass but the Windows-only Credential Manager test, which skips elsewhere; in the
-Linux container `python3 -m pytest -q -s`).
+merged and the merge's own tests, FIXCOUNT with the Phase 8 review fixes (`tests/test_phase8_fixes.py`) — all pass but
+the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
 
@@ -573,7 +678,7 @@ Rules that came out of it, beside the batch/guard/render entries above and the s
   order); `profile_batch` takes the next file of a pattern when the first will not profile (`unprofiled`); `advisor`
   isolates every record (an unreadable file gets a readable-file recommendation, no model call); `codegen` resolves the
   sandbox paths and turns a verifier exception into a failed trial.
-- The window's preview key includes the results folder.
+- The window's preview key includes the results folder (and, since the Phase 8 review fixes, the Render pages option).
 - Deferred, recorded in the response: F11 (`w:vanish` on a target's Header style — rendering on catches it), F8b (a
   results folder reused by hand), and the Tier B "bold headings" expectation (V10 has no bold assertion kind: a design
   limit, not a bug — stays unsupported until a verified operation exists).
@@ -618,7 +723,10 @@ how." README → "Diagnostics — when something fails" is the user's view; `tes
    `record_error` entry (rule 3) — and never keep image data (page renders are document content).
 8. **Bundles never carry documents** (`DOCUMENT_SUFFIXES`, `DOCUMENT_DIRS`); keep it so, and keep the README's warning
    that records quote document text. A session's `run/` is bundled with its session (`bundle_root`, `SESSION_MARKERS`:
-   compile.json, conversation.json, preview/, codegen/ beside it), mirrored under `results/`.
+   compile.json, conversation.json, preview/, codegen/ beside it), mirrored under `results/`. Newer folders go under
+   `results-later/<folder name>/` (`make_bundle(…, also=)`), never in place of the run: the window's `save_bundle`
+   (`_bundle_folders`) bundles the last run with its session (else the last preview's folder — `out_dir` —, else the
+   conversation's), plus `out_dir` and, while a conversation is open, `chat_dir` beside it; no folder twice.
 9. **The approval refusal says what changed** (`preview.approval_inputs` kept in `preview.json` and on the `Preview`;
    `explain_approval_change`). `approval_token` itself is unchanged — old tokens stay valid.
 
@@ -641,7 +749,18 @@ model/effort/fallback/cache unchanged; no version bump in the PR. Rules 13–19 
   a reply after a preview disables Run. Preview continues a matching conversation instead of starting a new one;
   Send and choices are disabled while the request text differs from `conversation.request`.
 - The CLI's terminal loop is `cli._chat` (`#n` picks a choice; wording needs a yes; an empty line stops, exit 2);
-  `cli._interactive()` decides terminal vs one-shot.
+  `cli._interactive()` decides terminal vs one-shot. Every prompt goes through `cli._ask` (None on `EOFError`/
+  `KeyboardInterrupt`) or `cli._confirm` (True / False / None): None stops at the reply prompt and the wording approval
+  (exit 2) and is a no at a y/N question; a typed `n` at the wording approval only declines the words. No bare
+  `input(` in `cli.py`. `cmd_do` passes `conv.brief()` to `_visual_check` (`THE CONVERSATION:`), and re-checks the
+  approval token (`preview.changed_since_preview`) after y/N or `--yes`, before `cmd_run` / `run_generated` (exit 2,
+  "Not run: a file or the template changed since the preview — …" / "Not run: a file changed since the custom
+  transform was tested and previewed — …"); `_do_codegen` takes the files' stats before `generate_op` and, once the
+  preview is made, refuses a file that changed since (`_changed_while_writing`: exit 2 before the visual check, "Not
+  run: a file changed while the custom transform was being written and tested — …", one line per file). `--save-as` goes through `_save_as_refusal(name, kind, replace)` — before
+  the compile (kind "recipe" without a terminal and without `--allow-codegen`, else unknown: a name both kinds hold is
+  refused), again once the kind is known (before the preview; at the start of `_do_codegen`); a `LibraryError` from
+  the save is exit 2 ("--save-as: … — nothing was saved or run").
 
 ## Phase 8 merged with the GUI rework and diagnostics (2026-10-15)
 
@@ -659,11 +778,16 @@ Both landed after v0.4.1 on separate branches; the merge keeps both sides' featu
   turn; `_session_dir()` hands the first preview or custom transform that folder (master's `_compiled_dir`). Once a
   preview or transform has used a folder its records are frozen: `reply()` first opens the next session folder
   (`_next_session_dir`, never an existing one), and the records and the next preview go there. A non-API exception
-  saves `conversation.json` before it propagates. The CLI keeps `OUT/conversation.json`, `OUT/compile.json` (via
-  `write_json`) and `OUT/chat/`. `diagnostics.SESSION_MARKERS` includes `conversation.json` (and `BUNDLE_README` names
-  it); `save_bundle` bundles the conversation's newer folder when a reply has opened one since the last preview.
+  saves `conversation.json` before it propagates. A terminal conversation (`cli._chat`) keeps `OUT/conversation.json`,
+  `OUT/compile.json` (via `write_json`) and `OUT/chat/`; a scripted `do` (`compile_request`) writes `OUT/compile.json`
+  only, after the compile returns (no conversation record; nothing when a defect propagates).
+  `diagnostics.SESSION_MARKERS` includes `conversation.json` (and `BUNDLE_README` names it); `save_bundle`
+  (`_bundle_folders`) bundles the last run with its session (else the last preview's folder, else the conversation's),
+  plus the last preview's folder and, while a conversation is open, `chat_dir`, under `results-later/<folder name>/`
+  via `make_bundle(…, also=)` (Phase 8 review fixes; it used to bundle the newer folder INSTEAD of the run).
 - **Run refusals say what changed** for a custom transform too: `Session.generated_inputs` (reset in `_set_outcome`,
-  set beside `generated_token` in `_codegen` and `use_operation`); `explain_approval_change` bullets follow the
+  set beside `generated_token` — since the Phase 8 review fixes in `_show_generated`, last, for `_codegen`,
+  `use_operation` and `_prove_again` alike); `explain_approval_change` bullets follow the
   unchanged prefix of the refusal.
 - **preview.py** keeps Phase 8's `render_samples`, unique image stems, `GeneratedPreview`, `SampleView.pdf/look_pages`
   and the review fields, plus master's `logs/preview.log` (also for `preview_generated`) and a failing sample that no
@@ -681,6 +805,55 @@ Both landed after v0.4.1 on separate branches; the merge keeps both sides' featu
 - **Tests:** master's tests that drove Claude through `messages.create` use `tests/fake_claude.py`
   (`raise_on_enter`/`raise_on_final`/`api_error`) and `Session.compile(request, log)`; never loosen an assertion to
   fit (an exact string stays exact — e.g. `ACCEPTED_RESULT`, not a `startswith`).
+
+## Phase 8 review fixes (2026-10-15)
+
+The merged branch was reviewed (an internal adversarially-verified review, Codex, the merge verifiers); every finding was
+reproduced first and `tests/test_phase8_fixes.py` pins each fix with a test that fails without it (FIXCOUNT tests in
+total). README → "The Phase 8 review fixes" is the finding-by-finding table. Rules that came out of it (the details are
+in rules 13–17 and 19, Diagnostics rule 8 and "Where things are"):
+
+- **A malformed submission is a rejection, never an exception** (rule 14): `validate_spec._check_shapes` first, and
+  any exception of `check_submission` answered as `REJECTED`; Claude's lists of the wrong shape dropped and said.
+- **The user's request, the user's words** (rule 13): the accepted spec's `request` is `Conversation.request`;
+  `conversation.json` has `approved_words` and `answers`; `conversation.invisible` is the definition of a wording
+  character the user cannot see.
+- **Files by label** (`compiler.file_labels`): never key a batch file by its name.
+- **The visual check is guarded at every stage** (rule 15): pages, client, call, answer; a skipped review has no
+  findings.
+- **A custom transform's approval follows its files** (rule 16): the token is checked again before every run (window,
+  CLI); a stale one is re-proven by Preview (`_prove_again`); only `gui.TransformFailed` is noted to Claude.
+- **A saved operation changes nothing until it passes** (rule 17): trials first, in a new session folder.
+- **The CLI asks safely**: `_ask`/`_confirm` for every prompt; `--allow-codegen` needs `"possible"`; `--save-as`
+  never takes the other kind's name.
+- **The window**: *Render pages* is in the preview key; Save to library… and I've looked — allow Run only while the
+  preview is current; the "Saved spec" bar only while that spec is the outcome; the chat closes when the conversation
+  ends; Claude's choice details are escaped.
+- **Bundles add newer folders, never swap the run out** (Diagnostics rule 8).
+- **Tests are sealed from Credential Manager and the developer's model** (rule 19).
+
+Second pass (the verifiers' residuals and gaps, each reproduced first and pinned the same way):
+
+- **A custom transform is approved for the files as they were before it was written** (rule 16): window
+  (`Session._codegen`: token left empty when a file moved; the reply's preview tries it again) and CLI
+  (`_do_codegen`: exit 2 once the preview is made).
+- **An advisor respec carries the original request** (rule 13); **no empty approved word** — no `"{}"` memory source.
+- **Two more blank characters** (U+1D159, U+16FE4) refused in a wording; the Zs spaces stay allowed (rule 13).
+- **Samples by label** in the visual check and the preview text (`compiler.file_labels`; rule 15).
+- **The verifier never raises on None beside text in a sort** (`verify/suite._total_key`): the comparison is the
+  same, so a mismatch is still a FAIL (rule 3: never weaker).
+- **The window** (`gui.py`, `ui/app.py`): `Session.compile` takes `files(outcome=False)` before voiding the outcome (a
+  template of the batch folder named by the outgoing spec is in the new conversation's files; `use_operation` the same);
+  a defect while making a custom transform withdraws the queued "the outcome follows" note and tells Claude "… stopped
+  with an internal error (<Type>) before any result — nothing was applied." (type only; never a verification result);
+  an operation from Your library clears the request box once it passes; *Save to library…* warns on an `OSError` and on
+  a name the other kind holds (Replace is offered only for a same-kind name).
+
+Not changed in this round: the security cluster's finding on `codegen.check_source` (review-7: the attribute rule is a
+denylist) — see the plan's Phase 8 status. (`ui/app.py`'s `do_save_to_library`, recorded here before as catching
+`ValueError` only and asking "Replace it?" for a name the other kind holds, is fixed in the second pass above.)
+`codegen.generate_op` still lists the samples to the writer by `Path.name` while its tools take `compiler.file_labels`
+labels (the same in a single-folder batch).
 
 ## v0.4.0 additions: template specs and font sizes
 

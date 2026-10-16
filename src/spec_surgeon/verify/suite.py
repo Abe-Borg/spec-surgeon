@@ -157,6 +157,22 @@ def _rev_elements(root) -> List[tuple]:
     return out
 
 
+def _total_key(v: Any) -> tuple:
+    """A sort key for every value the suite sorts, so a sort never raises: None (no block on that side of a V2 change,
+    a revision element without a w:id) first, then text, then tuples element by element, then anything else by type
+    name and repr. It decides only the ORDER: list equality still compares the items themselves, so two sorted lists
+    are equal only when they hold the same items, and the same items of None, text and tuples of them always sort
+    the same way — a comparison of sorted lists is exactly as strict as before (it used to raise TypeError on None
+    beside text, e.g. an inserted and a changed block in one part)."""
+    if v is None:
+        return (0,)
+    if isinstance(v, str):
+        return (1, v)
+    if isinstance(v, tuple):
+        return (2, tuple(_total_key(x) for x in v))
+    return (3, type(v).__name__, repr(v))
+
+
 def _rev_ids(root) -> Dict[str, List[str]]:
     out = {"ins": [], "del": []}
     for tag in ("ins", "del"):
@@ -299,8 +315,10 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
                     struct_changes.append({"part": part, "block": ch.before_index,
                                            "before": ch.struct_before, "after": ch.struct_after,
                                            "text": (ch.before or "")[:160]})
-    expected = sorted((d["part"], d.get("before"), d.get("after")) for d in plan.get("diffs", []))
-    actual = sorted((c["part"], c["before"], c["after"]) for c in actual_text_changes)
+    # the same multisets as ever, sorted with a total key: a part whose changes mix an inserted or removed block (None
+    # on one side) with a changed one sorts instead of raising
+    expected = sorted(((d["part"], d.get("before"), d.get("after")) for d in plan.get("diffs", [])), key=_total_key)
+    actual = sorted(((c["part"], c["before"], c["after"]) for c in actual_text_changes), key=_total_key)
     v2_ok = expected == actual
     missing = [e for e in expected if e not in actual]
     extra = [a for a in actual if a not in expected]
@@ -347,7 +365,7 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
     for part in out_xml:
         r = _rev_ids(out_xml[part])
         all_ids += r["ins"] + r["del"]
-    dup = sorted({i for i in all_ids if all_ids.count(i) > 1})
+    dup = sorted({i for i in all_ids if all_ids.count(i) > 1}, key=_total_key)   # an id may be None (no w:id)
     id_count: Dict[str, int] = {}
     for _, _, i in out_elems:
         if i is not None:
@@ -371,7 +389,8 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
                         f"w:del {del_b}→{del_a} (Δ{d_del:+d}, predicted {pred.get('del', 0):+d})"
                         + (f"; {'; '.join(others)}" if others else "")
                         + (f"; UNPREDICTED deltas {wrong}" if wrong else "")
-                        + (f"; DUPLICATE ids {sorted(set(dup) | set(dup_all))[:5]}" if (dup or dup_all) else "; ids unique")
+                        + (f"; DUPLICATE ids {sorted(set(dup) | set(dup_all), key=_total_key)[:5]}"
+                           if (dup or dup_all) else "; ids unique")
                         + (f"; NEW revision ids collide {collide[:5]}" if collide else ""),
                         {"ins_before": ins_b, "ins_after": ins_a, "del_before": del_b, "del_after": del_a,
                          "counts_before": cnt_b, "counts_after": cnt_a, "unpredicted": wrong,
@@ -426,7 +445,7 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
                             + (f"; parts present on one side only {one_sided} are accounted for by V1/V2" if one_sided else ""),
                             {"differences": rej_diffs[:20]}))
     else:
-        new_ids = sorted(ids_a - ids_b)
+        new_ids = sorted(ids_a - ids_b, key=_total_key)               # (part, id); an id may be None
         prop_new = sum(1 for _, k, _ in new_elems if k in PROPERTY_REV)
         prop_pred = sum(pred.get(k, 0) for k in PROPERTY_REV if pred.get(k, 0) > 0)
         ok = not new_ids and v2_ok and prop_new == prop_pred
