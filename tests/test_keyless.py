@@ -232,6 +232,28 @@ def test_setting_a_key_in_settings_brings_claude_back(qt, folder, tmp_path, monk
     assert r.content.indexOf(r.saved_card) == r.content.indexOf(r.chat) + 1
 
 
+def test_advise_comes_back_with_a_key_after_a_keyless_run_set_files_aside(qt, folder, tmp_path, monkeypatch):
+    """Codex on #20: the gate turned Advise off, and a key set afterwards only restored its tooltip."""
+    from spec_surgeon.ui.settings_dialog import SettingsDialog
+    monkeypatch.setattr(llm, "credentials_found", lambda: bool(os.environ.get("ANTHROPIC_API_KEY")))
+    (folder / "21 09 00 – BROKEN.docx").write_bytes(b"not a zip")
+    s = Session(out_root=tmp_path / "out")
+    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    ui["buttons"]["run"].click()
+    ui["wait"]()
+    adv = w.run_page.advise_btn
+    assert w.run_page.set_aside_btn.isEnabled() and not adv.isEnabled()
+    dlg = SettingsDialog(w)
+    dlg.key.setText("sk-ant-test-not-a-real-key")
+    dlg.apply()
+    assert w.claude_ok and adv.isEnabled() and adv.toolTip() != NEEDS_KEY_ADVICE
+
+
 def test_the_chat_waits_for_a_key_in_the_window(qt, folder, tmp_path, monkeypatch):
     s = Session(out_root=tmp_path / "out", client=FakeClient(resp(tool("ask_user", {"questions": ["Which?"]}))))
     w, ui = window(qt, s)

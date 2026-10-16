@@ -172,6 +172,7 @@ class MainWindow(QMainWindow):
         self.key_origin = self._init_key()
         self.claude_ok = True                  # Claude can be called (Session.claude_ready); set by refresh_key_label
         self.signed_in = False                 # no key here, but the SDK found a sign-in (``ant auth login``)
+        self._advise_gated = False             # keyless mode turned Advise off (``_gate_claude_buttons``)
         self.setWindowTitle(f"Spec Surgeon {__version__}")
         self.setWindowIcon(app_icon())
         self.setMinimumSize(900, 560)          # every step scrolls; fits a 1366×768 laptop at 125 % scaling
@@ -569,13 +570,20 @@ class MainWindow(QMainWindow):
         self._inputs_changed()
 
     def _gate_claude_buttons(self) -> None:
-        """Buttons that only Claude can serve stay off in keyless mode, with the reason as their tooltip."""
+        """Buttons that only Claude can serve stay off in keyless mode, with the reason as their tooltip. When a key
+        comes back (Settings), a button the gate turned off is turned on again as the last run left it: Advise while
+        that run set files aside and no job is running (Codex on #20: it used to stay off until the next job)."""
         adv = self.run_page.advise_btn
         if not self.claude_ok:
             adv.setEnabled(False)
             adv.setToolTip(NEEDS_KEY_ADVICE)
+            self._advise_gated = True
         else:
             adv.setToolTip("Claude writes a recommendation or a corrected spec per set-aside file (advice/)")
+            if self._advise_gated:
+                c = self._result_counts
+                adv.setEnabled(bool(c["FAIL"] + c["EXCEPTION"]) and not self.busy and not self.updating)
+                self._advise_gated = False
 
     # ---- navigation ------------------------------------------------------------------------------------
     def go(self, index: int) -> None:

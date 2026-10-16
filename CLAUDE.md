@@ -559,7 +559,7 @@ wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` befor
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
 merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 709 with Claude and your library
-(`tests/test_library_choices.py`, 2026-10-16), 724 with running without an API key (`tests/test_keyless.py`,
+(`tests/test_library_choices.py`, 2026-10-16), 725 with running without an API key (`tests/test_keyless.py`,
 2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
@@ -962,7 +962,7 @@ pins every rule (24 tests, 709 in total); README → "Your library → Claude an
 
 Abraham: "most users either not have or will not want an api key … give the user [the option] to run this software API
 keyless. And inform them that some functions are unavailable." README → "Running without an API key" is the user's view;
-`tests/test_keyless.py` pins every rule (15 tests, 724 in total; each fails without the code it pins). Rules:
+`tests/test_keyless.py` pins every rule (16 tests, 725 in total; each fails without the code it pins). Rules:
 
 1. **One decision.** `llm.credentials_found()`: `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` (`CREDENTIAL_ENV`, non-empty)
    or a profile the SDK finds (`_sdk_credentials`: `anthropic.lib.credentials.default_credentials`, files only, never a
@@ -979,7 +979,8 @@ keyless. And inform them that some functions are unavailable." README → "Runni
 4. **The window in keyless mode** (`_apply_claude_mode`, `RequestPage.set_claude`): step 2 is *Choose the change* (page
    title, rail item, `KEYLESS_HINT`), the saved-spec card first, the request box/chips/codegen note hidden and the note
    listing `llm.CLAUDE_FEATURES` with *Set API key…* shown, the rail's `keyless_note`, *Advise* off with its reason
-   (`_gate_claude_buttons`, re-applied after every `set_busy`/`set_updating`/`_after_run`), the chat blocked
+   (`_gate_claude_buttons`, re-applied after every `set_busy`/`set_updating`/`_after_run`; a key coming back turns
+   on what the gate turned off, as the last run left it — `_advise_gated`, Codex on #20), the chat blocked
    (`NEEDS_KEY_REPLY`), the set-aside strip and run summary pointing at saved specs. `typed_request()` is "" keyless:
    every read of the request box that decides anything goes through it (`_widget_key`, `_refresh_nav`,
    `_refresh_run_state`, `do_preview`), so a hidden draft never compiles and never hides a loaded spec; `do_preview`
