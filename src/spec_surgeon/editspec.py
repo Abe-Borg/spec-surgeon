@@ -285,6 +285,33 @@ def _op_params(o: Dict[str, Any]) -> Dict[str, Any]:
     return params
 
 
+op_params = _op_params                        # what an op's plan() receives (``tracked`` folded in) — batch.planned_names
+
+NAMING_OPS = ("name_output", "make_values_agree")
+
+
+def naming_op(spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The spec's op that can name the output files: name_output, or make_values_agree with the file name among its
+    places and not its truth (only then can it rename)."""
+    for o in (spec or {}).get("ops") or []:
+        if not isinstance(o, dict):
+            continue
+        if o.get("op") == "name_output":
+            return o
+        if o.get("op") == "make_values_agree":
+            params = o.get("params") or {}
+            places = params.get("places") if isinstance(params.get("places"), dict) else {}
+            if any(isinstance(v, dict) and v.get("in") == "filename" and k != params.get("truth")
+                   for k, v in places.items()):
+                return o
+    return None
+
+
+def spec_renames_outputs(spec: Dict[str, Any]) -> bool:
+    """True when the spec may give an output another name than its source — then it delivers copies only."""
+    return naming_op(spec) is not None
+
+
 def _check_expect(i: int, o: Dict[str, Any], frag: PlanFragment, plan_notes: List[str]) -> None:
     exp = o.get("expect") or {}
     label = f"op #{i} ({o['op']})"

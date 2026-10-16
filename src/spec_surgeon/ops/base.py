@@ -82,6 +82,7 @@ class Plan:
     geometry_template: Optional[str] = None     # V7: template file when geometry_reference == "template"
     ops: List[Dict[str, Any]] = field(default_factory=list)    # per-op summary when the plan merges several ops
     template_baselines: Dict[str, List[str]] = field(default_factory=dict)  # V5a: added member → [template file, its member]
+    output_name: Optional[str] = None          # the output file's name when an op names it (name_output, make_values_agree)
 
     def to_dict(self):
         d = asdict(self)
@@ -298,6 +299,11 @@ def merge_fragments(fragments: Sequence[PlanFragment], job: str = "edit-spec",
         for a in f.property_assertions:
             plan.property_assertions.append({**a, "op": f.op, "op_index": f.op_index})
         plan.template_baselines.update(f.template_baselines)
+        if f.output_name is not None:
+            if plan.output_name is not None:
+                raise JobException(f"two ops name the output file ({plan.output_name!r} and {f.output_name!r})",
+                                   "conflict")
+            plan.output_name = f.output_name
         plan.ops.append({"index": f.op_index, "op": f.op, "mode": f.mode, "select": f.select, "params": f.params,
                          "intended_parts": list(f.intended_parts), "diffs": len(f.diffs),
                          "rev_delta": dict(f.rev_delta), "members_removed": list(f.members_removed),

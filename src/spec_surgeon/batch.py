@@ -48,7 +48,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from . import __version__, guard
 from . import diagnostics as diag
 from .fingerprint import fingerprint
-from .editspec import apply_spec, is_template_file, plan_spec, spec_templates, validate_spec
+from .editspec import (apply_spec, is_template_file, naming_op, plan_spec, spec_renames_outputs, spec_templates,
+                       validate_spec)
+from .ops import JobException
 from .jobs import get_job
 from .package import DocxPackage
 from .verify import run_suite, VerificationRecord, CheckResult, GEOM_TOL_PT
@@ -149,18 +151,22 @@ def expand_inputs(inputs: Sequence[str]) -> List[Path]:
     return out
 
 
-def output_names(files: Sequence[Path]) -> Dict[str, str]:
+def output_names(files: Sequence[Path], fixed: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """One output name per input, unique across the batch however the inputs are named.
 
     An input keeps its own name when it is the first with it; a later input with the same name (another folder)
     gets ``stem (n)suffix`` for the first n that no input really has and no earlier output took — so ``a/Spec.docx``,
     ``b/Spec.docx`` and ``c/Spec (1).docx`` come out as ``Spec.docx``, ``Spec (2).docx`` and ``Spec (1).docx``, never
     two outputs at one path with one of them silently replacing the other. Names compare case-insensitively (Windows
-    does). Keyed by ``str(path)``, as the worker results are."""
+    does). Keyed by ``str(path)``, as the worker results are. ``fixed`` are the names a spec gives (name_output,
+    make_values_agree): they are taken first, and every other input steers clear of them."""
     reserved = {f.name.casefold() for f in files}      # every real name, before any generated one
-    assigned: set = set()
-    out: Dict[str, str] = {}
+    fixed = dict(fixed or {})
+    assigned: set = {n.casefold() for n in fixed.values()}
+    out: Dict[str, str] = dict(fixed)
     for f in files:
+        if str(f) in fixed:
+            continue
         key = f.name.casefold()
         if key not in assigned:
             name = f.name
@@ -172,6 +178,39 @@ def output_names(files: Sequence[Path]) -> Dict[str, str]:
         assigned.add(name.casefold())
         out[str(f)] = name
     return out
+
+
+def planned_names(files: Sequence[Path], spec: Optional[Dict[str, Any]]) -> Tuple[Dict[str, str], Dict[str, Dict[str, Any]]]:
+    """The output names a spec's naming op gives (name_output, make_values_agree — computed with that op's own plan on
+    each file, before the workers start), and the refusals for files two of which would get one name (``name-collision``:
+    both are refused, never one silently renamed). A file the op cannot name keeps a plain name; its worker plans the
+    spec again and records why."""
+    o = naming_op(spec) if spec is not None else None
+    if o is None:
+        return {}, {}
+    from .editspec import op_params
+    from .ops import get_op
+    names: Dict[str, str] = {}
+    for f in files:
+        try:
+            frag = get_op(o["op"]).plan(DocxPackage(Path(f).read_bytes(), name=str(f)), o.get("select") or {},
+                                        op_params(o))
+        except Exception:  # noqa: BLE001 — the worker plans it again and records the reason in full
+            continue
+        if frag.output_name:
+            names[str(f)] = frag.output_name
+    groups: Dict[str, List[str]] = {}
+    for k, n in names.items():
+        groups.setdefault(n.casefold(), []).append(k)
+    refused: Dict[str, Dict[str, Any]] = {}
+    for n, ks in groups.items():
+        if len(ks) > 1:
+            for k in ks:
+                others = [Path(x).name for x in ks if x != k]
+                refused[k] = {"code": "name-collision", "details": {"name": names[k], "others": others},
+                              "reason": f"the spec would name this file {names[k]!r}, as it would {others} — two outputs "
+                                        f"cannot share a name; check the numbers and titles these files show"}
+    return {k: v for k, v in names.items() if k not in refused}, refused
 
 
 def check_inputs_outside(files: Sequence[Path], out_dir: Path) -> None:
@@ -233,7 +272,8 @@ def _note_exception(tr: "diag.Tracer", stage: str, exc: Dict[str, Any]) -> None:
 
 
 def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str, out_name: Optional[str] = None,
-                 spec: Optional[Dict[str, Any]] = None, attempt: int = 1) -> Dict[str, Any]:
+                 spec: Optional[Dict[str, Any]] = None, attempt: int = 1,
+                 refuse: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """One file from acquisition to its verified output (in a pool worker, or in-process for a single file).
 
     Every stage is written to the file's trace as it happens (``logs/<name>.trace.log``). Anything that stops the
@@ -275,8 +315,13 @@ def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
         res["timings"]["acquire+fingerprint"] = time.perf_counter() - t0
 
         stage, t_stage = "plan", time.perf_counter()
+        if refuse:
+            raise JobException(refuse["reason"], refuse["code"], refuse.get("details") or {})
         if spec is not None:
             plan, fragments = plan_spec(pkg, spec, res["fingerprint"].get("pattern_id"), trace=tr.op_hook)
+            if plan.output_name is not None and plan.output_name != name:
+                raise JobException(f"the spec names this file {plan.output_name!r} but the batch planned "
+                                   f"{name!r}", "internal")
         else:
             tr.note("plan", f"job {job_name} …")
             job = get_job(job_name)
@@ -289,7 +334,7 @@ def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
         stage, t_stage = "apply", time.perf_counter()
         if spec is not None:
             work = apply_spec(pkg, fragments, trace=tr.op_hook)
-            res["noop"] = not work.is_modified()
+            res["noop"] = not work.is_modified() and plan.output_name in (None, src.name)   # a rename is delivered
             out_bytes = work.output_bytes()
         else:
             tr.note("apply", f"job {job_name} …")
@@ -371,12 +416,13 @@ def _lost_result(path: Path, out_dir: Path, out_name: str, e: BaseException) -> 
 
 
 def _run_alone(path: Path, job_name: str, params: Dict[str, Any], out_dir: Path, out_name: str,
-               spec: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+               spec: Optional[Dict[str, Any]], refuse: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run one file again in a fresh one-process pool, so a file that kills its worker is named — and the files that
     only shared a worker with it get their results."""
     try:
         with ProcessPoolExecutor(max_workers=1) as ex:
-            return ex.submit(_process_one, str(path), job_name, params, str(out_dir), out_name, spec, 2).result()
+            return ex.submit(_process_one, str(path), job_name, params, str(out_dir), out_name, spec, 2,
+                             refuse).result()
     except BrokenProcessPool as e:
         return _worker_died(path, out_dir, out_name, e)
     except Exception as e:  # noqa: BLE001
@@ -529,6 +575,10 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
         params = {"request": spec.get("request"), "summary": spec.get("summary")}
     else:
         get_job(job_name)  # fail early on an unknown job
+    if in_place and spec is not None and spec_renames_outputs(spec):
+        raise ValueError("this spec names the output files (name_output / make_values_agree with the file name) — "
+                         "renamed files are delivered as copies only; run it without writing back in place (nothing "
+                         "was written)")
     files = expand_inputs(inputs)
     check_inputs_outside(files, out_dir)      # before anything is created: a run never writes where it reads
     for sub in ("outputs", "records", "exceptions", "plans", "render", diag.LOGS):
@@ -600,16 +650,20 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
     results: Dict[str, Dict[str, Any]] = {}
     log(f"{len(files)} file(s); transform+verify with {workers} worker(s)"
         + (f"; skipped the spec's template file(s) {[Path(x).name for x in batch.skipped]}" if batch.skipped else ""))
-    out_names = output_names(files)       # unique across the batch, whatever the inputs are called
+    named, refused = planned_names(files, spec)      # the spec's own output names, when it gives them
+    if named or refused:
+        log(f"output names from the spec: {len(named)} file(s) renamed, {len(refused)} refused (two files one name)")
+    out_names = output_names(files, named)            # unique across the batch, whatever the inputs are called
     if workers == 1 or len(files) == 1:
         for f in files:
-            results[str(f)] = _process_one(str(f), job_name, params, str(out_dir), out_names[str(f)], spec)
+            results[str(f)] = _process_one(str(f), job_name, params, str(out_dir), out_names[str(f)], spec,
+                                           refuse=refused.get(str(f)))
             _file_done(f, results[str(f)], log)
     else:
         broken: List[Path] = []
         with ProcessPoolExecutor(max_workers=workers) as ex:
-            futs = {ex.submit(_process_one, str(f), job_name, params, str(out_dir), out_names[str(f)], spec): f
-                    for f in files}
+            futs = {ex.submit(_process_one, str(f), job_name, params, str(out_dir), out_names[str(f)], spec, 1,
+                              refused.get(str(f))): f for f in files}
             for fut in as_completed(futs):
                 f = futs[fut]
                 try:
@@ -625,7 +679,7 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
             log(f"a worker process stopped abruptly; running its {len(broken)} unfinished file(s) again, each alone "
                 f"in a fresh process, to find the cause")
         for f in broken:
-            results[str(f)] = _run_alone(f, job_name, params, out_dir, out_names[str(f)], spec)
+            results[str(f)] = _run_alone(f, job_name, params, out_dir, out_names[str(f)], spec, refused.get(str(f)))
             _file_done(f, results[str(f)], log)
     batch.timings["transform+verify"] = time.perf_counter() - t_start
 

@@ -533,10 +533,190 @@ def _end_of_section(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     return f"end_of_section: {case} ({line!r})"
 
 
+# ---- output file names and agreeing values -----------------------------------------------------------------------------
+
+_V_PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
+_V_DEVICES = {"con", "prn", "aux", "nul"} | {f"{k}{i}" for k in ("com", "lpt") for i in range(1, 10)}
+
+
+def _v_base(path: Optional[str]) -> str:
+    return re.split(r"[\\/]", path or "")[-1]
+
+
+def _v_stem(path: Optional[str]) -> str:
+    base = _v_base(path)
+    return base[:-5] if base.lower().endswith(".docx") else base
+
+
+def _v_transformed(value: str, how: str) -> str:
+    if how == "digits":
+        return "".join(ch for ch in value if ch.isdigit())
+    if how in ("upper", "lower"):
+        return value.upper() if how == "upper" else value.lower()
+    if how == "title":
+        out, k = [], 0
+        for m in re.finditer(r"[^\W\d_]+(?:['’][^\W\d_]+)*", value):
+            out.append(value[k:m.start()] + m.group(0)[0].upper() + m.group(0)[1:].lower())
+            k = m.end()
+        return "".join(out) + value[k:]
+    return value
+
+
+def _v_name_problem(name: str) -> Optional[str]:
+    import unicodedata
+    stem = name[:-5] if name.lower().endswith(".docx") else name
+    if not stem.strip():
+        return "empty"
+    if set(name) & set('\\/:*?"<>|'):
+        return "a character Windows forbids"
+    if any(ord(c) < 32 or unicodedata.category(c) in {"Cc", "Cf", "Co", "Cs", "Cn", "Zl", "Zp"} for c in name):
+        return "a control or invisible character"
+    if stem[:1] == " " or stem[-1:] in (" ", "."):
+        return "a leading space or a trailing space/dot"
+    if stem.split(".")[0].strip().lower() in _V_DEVICES:
+        return "a device name"
+    if len(name) > 200:
+        return "too long"
+    return None
+
+
+def _output_name(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    got: Dict[str, str] = {}
+    for k, rule in (a.get("values") or {}).items():
+        try:
+            got[k] = _v_transformed(fill_value(ctx.src, k, rule), (a.get("transforms") or {}).get(k, "as_is"))
+        except (ValueError, KeyError, re.error) as e:
+            errs.append(f"output_name: {k} cannot be extracted here ({e})")
+            return "output_name"
+    pattern = a.get("pattern") or ""
+    if set(_V_PLACEHOLDER.findall(pattern)) != set(got):
+        errs.append("output_name: the pattern's placeholders and the values differ")
+        return "output_name"
+    name = _V_PLACEHOLDER.sub(lambda m: got[m.group(1)], pattern)
+    name = name if name.lower().endswith(".docx") else name + ".docx"
+    problem = _v_name_problem(name)
+    if problem:
+        errs.append(f"output_name: {name!r} has {problem} — the op must refuse")
+    if name != a.get("expected"):
+        errs.append(f"output_name: {name!r} here, the plan predicted {a.get('expected')!r}")
+    if _v_base(ctx.output_name) != name:
+        errs.append(f"output_name: the output was written as {_v_base(ctx.output_name)!r}, not {name!r}")
+    return f"output_name: {name!r}"
+
+
+def _v_span(m, g: str) -> Optional[Tuple[int, int]]:
+    a, b = m.span(g)
+    if a < 0:
+        return None
+    piece = m.string[a:b]
+    a2 = a + (len(piece) - len(piece.lstrip()))
+    b2 = b - (len(piece) - len(piece.rstrip()))
+    return (a2, b2) if b2 > a2 else None
+
+
+def _v_agree(x: str, y: str) -> bool:
+    from .template import _v_tokens
+    return "".join(_v_tokens(x)) == "".join(_v_tokens(y))
+
+
+def _agreed_values(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    try:
+        places = {k: (v["in"], re.compile(v["pattern"]), bool(v.get("required"))) for k, v in a["places"].items()}
+    except (KeyError, TypeError, re.error) as e:
+        errs.append(f"agreed_values: {e}")
+        return "agreed_values"
+    truth, names = a.get("truth"), list(a.get("values") or [])
+    tracked, author = bool(a.get("tracked", True)), a.get("author")
+    stem = _v_stem(ctx.source_name)
+    found: Dict[str, List[Tuple[str, int, Any, List[Any]]]] = {}
+    for pname, (where, rx, _req) in places.items():
+        if where == "filename":
+            m = rx.search(stem)
+            found[pname] = [("filename", -1, None, [m])] if m else []
+            continue
+        found[pname] = []
+        for part in ctx.scope_parts([where]):
+            sv, _ = ctx.view(part)
+            for bi, p in enumerate(sv.pars):
+                ms = list(rx.finditer(v_paragraph_text(p)))
+                if ms:
+                    found[pname].append((part, bi, p, ms))
+    truths: Dict[str, str] = {}
+    for g in names:
+        vals = [m.string[s[0]:s[1]] for _, _, _, ms in found.get(truth, []) for m in ms
+                for s in [_v_span(m, g)] if s is not None]
+        if not vals or len({" ".join(v.split()) for v in vals}) > 1:
+            errs.append(f"agreed_values: the truth gives {g} as {sorted(set(vals))} — the op must refuse")
+            return "agreed_values"
+        truths[g] = vals[0]
+    if truths != a.get("expected_truth"):
+        errs.append(f"agreed_values: the truth says {truths} here, the plan {a.get('expected_truth')}")
+    edits: Dict[Tuple[str, int], List[Tuple[int, int, str, bool]]] = {}
+    paras: Dict[Tuple[str, int], Any] = {}
+    stem_edits: List[Tuple[int, int, str]] = []
+    for pname, (where, rx, required) in places.items():
+        if pname == truth:
+            continue
+        if not found[pname] and required:
+            errs.append(f"agreed_values: {pname} shows no match — the op must refuse")
+        for part, bi, p, ms in found[pname]:
+            for m in ms:
+                for g in names:
+                    if g not in rx.groupindex:
+                        continue
+                    s = _v_span(m, g)
+                    if s is None or _v_agree(m.string[s[0]:s[1]], truths[g]):
+                        continue
+                    if where == "filename":
+                        stem_edits.append((s[0], s[1], truths[g]))
+                    else:
+                        edits.setdefault((part, bi), []).append((s[0], s[1], truths[g], False))
+                        paras[(part, bi)] = p
+    n, edited = 0, {}
+    for (part, bi), es in sorted(edits.items()):
+        sv, ov = ctx.view(part)
+        if len(sv.pars) != len(ov.pars):
+            errs.append(f"agreed_values: {part} has {len(ov.pars)} paragraphs, the source {len(sv.pars)}")
+            continue
+        p = paras[(part, bi)]
+        text = v_paragraph_text(p)
+        es = [e for e in es if text[e[0]:e[1]] != e[2]]
+        if not es:
+            continue
+        if _v_owner(p) is not None:
+            errs.append(f"agreed_values: {part} block {bi} is in a text box — the op must refuse")
+            continue
+        n += len(es)
+        edited.setdefault(part, []).append(bi)
+        check_edited_paragraph(p, ov.pars[bi], es, tracked, author, _v_field_runs(sv.root),
+                               part_revision_ids(sv.root), f"agreed_values {part} block {bi}", errs)
+        ctx.verified_blocks.setdefault(part, {})[bi] = bi
+    if n != a.get("expected_edits", -1):
+        errs.append(f"agreed_values: {n} correction(s) here, the plan predicted {a.get('expected_edits')}")
+    if edited != {k: list(v) for k, v in (a.get("edited_blocks") or {}).items()}:
+        errs.append(f"agreed_values: corrected paragraphs {edited} here, the plan predicted {a.get('edited_blocks')}")
+    name = None
+    if stem_edits:
+        new = stem
+        for x, y, v in sorted(stem_edits, reverse=True):
+            new = new[:x] + v + new[y:]
+        name = new + ".docx"
+        problem = _v_name_problem(name)
+        if problem:
+            errs.append(f"agreed_values: the corrected name {name!r} has {problem} — the op must refuse")
+        if _v_base(ctx.output_name) != name:
+            errs.append(f"agreed_values: the output was written as {_v_base(ctx.output_name)!r}, not {name!r}")
+    if name != a.get("expected_name"):
+        errs.append(f"agreed_values: the output name is {name!r} here, the plan predicted {a.get('expected_name')!r}")
+    return f"agreed_values: {n} correction(s)" + (f", file name {name!r}" if name else "")
+
+
 TEXT_OP_KINDS = {
     "replaced_text": _replaced_text,
     "filled_variables": _filled_variables,
     "resolved_options": _resolved_options,
     "tagged_paragraphs": _tagged_paragraphs,
     "end_of_section": _end_of_section,
+    "output_name": _output_name,
+    "agreed_values": _agreed_values,
 }

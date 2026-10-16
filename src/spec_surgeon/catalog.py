@@ -108,6 +108,21 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "a nested group, a group shown by a field, or a pick that matches two options sets the file aside",
         "tracked unless the user asked for clean copies",
     ],
+    "name_output": [
+        "each part of the name is read from the file itself by the stated rule (the SECTION title line, a header or a "
+        "footer) — never typed; fixed words and separators are in the pattern",
+        "the document is not changed; only the edited copy gets the new name, so this never runs in place",
+        "a transform (digits, upper, lower, title) changes only the file name, never the document",
+        "two files that would get the same name, or a name Windows cannot hold, set the file(s) aside",
+    ],
+    "make_values_agree": [
+        "the place the user picked is the truth; a place whose value has the same letters and digits (any case or "
+        "spacing: '211319' and '21 13 19') already agrees and is left as it is — nothing is converted",
+        "a value that disagrees is replaced by the truth's text exactly as the truth writes it; a disagreeing file name "
+        "gives the edited copy the corrected name (never in place)",
+        "a truth shown two different ways in one file, or a required place that is missing, sets the file aside",
+        "tracked unless the user asked for clean copies",
+    ],
     "apply_header_footer_template": [
         "template slots are the yellow-highlighted placeholders and the {{NAME}} placeholders",
         "each fill is extracted from each document by a stated rule (or fallback rule chain), never typed",
