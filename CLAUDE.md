@@ -88,7 +88,16 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
     request or answer). The advisor's sources are the original spec's `placed_words`, the request and the answers,
     never the whole spec JSON (its docstring and `ADVISOR_SYSTEM` say so); a respec it accepts carries the ORIGINAL
     spec's `request` (`_respec_errors` pins it beside `applies_to`), never Claude's: `advice/<name>.spec.json` is run
-    and advised on again.
+    and advised on again. **Library choices (2026-10-16):** Claude may NAME one of the user's library items (`kind`
+    `recipe`/`operation` + `name`; chat mode only — `LIBRARY_CHOICE_KINDS`, part of `APP_CHOICE_KINDS`, never of
+    `CHOICE_KINDS_FROM_CLAUDE`); `_library_choice` builds the choice from the library alone — exact name via
+    `library.find`; a recipe loads, validates, keeps its templates, places only visible words and dry-plans on the batch
+    (`compiler._dry_errors`); an operation loads with its code unchanged; else dropped and said in the errors, to the
+    user (an app entry) and to Claude (a note) — with `words` = `compiler.placed_words` of the recipe (deduplicated),
+    `item_hash` = `library.item_hash`, `snapshot` = the validated spec; Claude's `label`/`wording` never reach it.
+    `take_library_choice` refuses an item whose hash changed (`LibraryChanged`: nothing approved), appends `Choice.words`
+    to `sources` (each its own source — `reply()` does the same for every choice) and hands the app a deep copy of the
+    snapshot with `placed_words == words` asserted and `Conversation.request` in `request`.
 14. **The conversation is append-only and every tool call is answered** (Phase 8). Opus 5.5 keeps its thinking,
     so history is never rewritten. `conversation.check_pairing` runs before every request: the last message is the
     user's and its leading `tool_result` ids equal the previous assistant turn's `tool_use` ids. The user message
@@ -137,7 +146,12 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
     changes nothing) — and refused when `op.py`'s sha256 differs from its manifest or it fails the whitelist. Only a
     current preview is saved. A name belongs to one item: `replace` works within a kind, and a name the other kind
     holds is refused even with it (`library.other_kind_holding` in `_check_free`; `cli._save_as_refusal` before
-    anything is written).
+    anything is written). An operation Claude offered and the user picked (2026-10-16) follows the same trial-first rule
+    with the conversation kept: `Session._take_library_choice` → `_use_saved_operation(end_conversation=False)`
+    (`use_operation` is the same with `True`); `_prove(…, exc=)` raises `TrialsFailed` / `OperationFailed`, and
+    `OperationFailed` is the ONE failure Claude hears (as `TransformFailed`), a defect withdraws the promised outcome; at
+    the terminal `cli._try_saved_operation` runs the trials inside `_talk` and a failure returns to the prompt. A recipe
+    picked there is used as the choice's snapshot, never a re-read file (`Session.recipe_name` says so).
 18. **One call site** (Phase 8). Every Claude call goes through `llm.call` (streamed, `MAX_TOKENS` 64000, effort
     `high`, `fallbacks="default"`, 5-minute cache). Callers resolve the client when the call is made, through
     `compiler._client()` (the advisor through `advisor._client`) or an injected `client` — never captured at import.
@@ -419,7 +433,9 @@ proposals and recorded in the plan's status sections.
   seconds, request id, content via `block_dict`), `results_entry`, `error_entry`, `transcript_content` (total, no
   image data).
 - `conversation.py` — `Conversation` (start/reply/choice/note/brief/save/compile_result), `Turn`, `Choice`,
-  `check_pairing`, `clean_wording` (rules 13–14). At most 12 calls per turn; two rejections in one user turn end
+  `check_pairing`, `clean_wording` (rules 13–14). Since 2026-10-16: `LIBRARY_CHOICE_KINDS`, `LibraryChanged`,
+  `Choice.words/name/item_hash/snapshot`, `_library_choice`, `take_library_choice`, `_dropped` (see "2026-10-16 Claude
+  and your library" below). At most 12 calls per turn; two rejections in one user turn end
   it as `failed`; asks take precedence over a submission in the same assistant turn. `conversation.json` is a record,
   never replayed: `entries` is what the user saw, `exchange` the model exchange of every call (never the API
   `messages`), which `compile_result` hands to `CompileResult.transcript`. `ACCEPTED_RESULT` is the accepted spec's
@@ -438,7 +454,9 @@ proposals and recorded in the plan's status sections.
   `rasterize_pages` uses; a test derives the comment's figures).
 - `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`) and operations (`operations/<slug>/op.py` +
   `manifest.json`) under `config_dir()/library` (rule 17). `other_kind_holding(kind, slug)`; `_check_free` refuses the
-  other kind's name even with `replace` ("… cannot take that name, not even with replace …").
+  other kind's name even with `replace` ("… cannot take that name, not even with replace …"). `item_hash(item)`: the
+  content hash a conversation's library choice pins; `recipe_file(item)` / `read_manifest(item)`: the `_inside`-checked
+  reads the compiler's index and `read_library_item` use (2026-10-16).
 - `codegen.py` + `sandbox_runner.py` — custom transforms (Tier B; offered in the conversation, or `do
   --allow-codegen` without a terminal): AST whitelist (`ALLOWED_FROM`, `ALLOWED_IMPORT`, `FORBIDDEN_*`,
   `EXCLUDED_FROM_EXAMPLES`), isolated subprocess on copies, `hard_limits` (rule 16), the full suite as the test, 3
@@ -535,7 +553,8 @@ planted-defect test proving the verifier catches a wrong implementation of it �
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
-merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`) — all pass but
+merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 709 with Claude and your library
+(`tests/test_library_choices.py`, 2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -573,7 +592,12 @@ tells you every other place that must follow.
   The container has no `py` launcher: use `python3`. `pip install -e ".[dev,gui]"` first (pytest is not
   preinstalled). Qt needs `apt-get install -y libegl1 libopengl0` in the container; run the suite with
   `QT_QPA_PLATFORM=offscreen` (no Xvfb needed). Qt tests skip when Qt can't load unless `SPEC_SURGEON_REQUIRE_QT=1`
-  (CI sets it — a broken Qt install must fail, not skip). `python3 packaging/gui_screenshot.py` regenerates
+  (CI sets it — a broken Qt install must fail, not skip). Every Qt fixture tears its windows down with
+  `tests/qt_support.close_windows` (close, the deferred deletes delivered, `gc.collect()` — all on the GUI thread): a
+  window left for a later garbage collection was destroyed on a batch's pool thread in an unrelated test
+  (`QObject::killTimer: Timers cannot be stopped from another thread`) and segfaulted the whole run, at a spot that
+  moved with allocation timing (2026-10-16: a new test module made it land in `test_editspec`'s perf test every time).
+  Never go back to a bare `w.close()` in a fixture. `python3 packaging/gui_screenshot.py` regenerates
   `docs/gui-files.png` / `docs/gui.png` / `docs/gui-results.png` (`--chat`: `docs/gui-chat.png`, scripted client;
   `SPEC_SURGEON_THEME=dark` + `SPEC_SURGEON_SCREENSHOT_SUFFIX=-dark` for the dark look) — run it with `PYTHONPATH=src`
   in a worktree (the editable install points at the main checkout); look at screenshots before changing layout. A grab
@@ -882,3 +906,48 @@ The second pass's tests are `tests/test_phase8_fixes_window.py` (the window and 
 - Compiler: `read_template` returns `template_spec` (prepared slots, or own values by `REFERENCE_FILLS` + ⟦ ⟧
   occurrences + problems, body font/size); the SYSTEM prompt and the catalog's rules say how to compose "match the
   header/footer / font of the template spec". Window: the Files card is "Template spec (optional)"; two new chips.
+
+## 2026-10-16 Claude and your library
+
+Abraham: "when I type something a saved item already does ('strip the headers and footers like last time'), Claude can
+find my recipe or operation and offer it as a choice, so I reuse it instead of getting a fresh spec." The design note
+`docs/design/2026-10-16_claude_and_your_library.md` was approved as recommended (after Codex's two findings on it: the
+offered item pinned by hash, a failing terminal operation back to the conversation); `tests/test_library_choices.py`
+pins every rule (24 tests, 709 in total); README → "Your library → Claude and your library" is the user's view. Rules:
+
+1. **Chat only.** `compiler.library_index()` goes into the first message (`build_messages(library=)`, `YOUR LIBRARY`,
+   at most `INDEX_LIMIT` 40 items within `INDEX_BUDGET`; `library_entry` counts a recipe's words, never shows them) and
+   `CHAT_TOOLS` gets `LIBRARY_TOOLS` — `list_library` (`_Batch.list_library`) and `read_library_item`
+   (`_Batch.read_library_item` → `library_item_detail`: the spec as saved, `placed_words` under `PLACED_WORDS_RULE`, the
+   templates' existence, `dry_plan_summary`; an operation's manifest without `op.py`) — and `ASK_USER_CHAT` (the one-shot
+   `ask_user` plus the kinds `recipe`/`operation` and `name`). `TOOLS`, `mode="compile"`, `ADVISOR_TOOLS` and
+   `CODEGEN_TOOLS` are unchanged; a library kind in compile mode is dropped ("offered in a conversation only").
+   Every read goes through the library's containment check (`library.recipe_file` / `read_manifest`, `_inside`; rule
+   17): a listed item that is a symlink leading outside the library is an `error` entry in the index, the tool's
+   error, and no choice. Results stay valid JSON: an index entry lists at most `ENTRY_OPS` op names and one that does
+   not fit `INDEX_BUDGET` is skipped (the items after it still show); `_fit_detail` keeps a `read_library_item` result
+   within `DETAIL_BUDGET` — the spec as saved gives way to an outline of its ops first, then over-long placed words are
+   cut and said to be (the choice shows them whole) — never cut mid-JSON by `_dispatch`'s cap (Codex on #17).
+2. **Named by Claude, built by code** (rule 13, "Library choices"): `conversation._library_choice`; a drop is said in the
+   turn's `errors`, to the user as an app `Entry` (`_dropped`, appended by `_finish` after Claude's entry) and to Claude
+   as a note with the next message. The label comes from the item (name, description cut at `DESCRIPTION_CHARS`, saved
+   date, the request cut at 120); Claude's `detail` (or `label`) is the tooltip.
+3. **The pick approves, and only the pick** (rule 13): `take_library_choice`; `take_app_choice` refuses library kinds.
+   `Choice.words` is the truth of what a pick approves for every kind (`[wording]` for Claude's choices;
+   `__post_init__`); `describe()`/`exact_words()` show them; `to_dict` records `words`, `name`, `item_hash`, never the
+   snapshot.
+4. **A saved operation is proven first, the conversation kept** (rule 17): `Session._take_library_choice`,
+   `_use_saved_operation`, `TrialsFailed` / `OperationFailed`. A recipe: `_set_outcome(spec, source="compiled",
+   recipe=name)` → `Session.recipe_name` (the Preview step's heading, `_intent`, `_note_preview`'s heading "THE PREVIEW OF
+   YOUR RECIPE «NAME» (used as saved)"); `spec_source` stays `"compiled"` (the conversation's outcome: Preview with the
+   request typed continues the conversation and previews the recipe, never compiles).
+5. **Terminal**: `cli._talk(conv, save, out_dir, files)` — a choice's `words` approved in one prompt ("Approve these
+   exact words for your documents: «A»; «B»? [y/N]"); a recipe returns `("recipe", spec, conv)` and takes `cmd_do`'s
+   spec path; an operation is tried inside the loop (`_try_saved_operation`: `OUT/library-trial/try-N`, the token before
+   the trials; a failure prints "Not used: …", notes it and `continue`s) and a passing one returns
+   `("operation", (g, key, token, inputs), conv)` → `_run_saved_operation` → `_approve_and_run_generated`, the tail
+   `_do_codegen` now shares (visual check, `--save-as`, y/N, the token re-check, `run_generated`). `_print_turn` prints
+   one `exact words:` line per word.
+6. **Window**: `ui/chat.py` builds one *Exact words* line per word from `words` (never Claude's text) and the buttons
+   *Use it* / *Try it* (beside *Choose* / *Do this*); `ui/app.py` heads the Preview step *Your recipe “NAME” (as saved)
+   for “request”*. `Your library…` (`use_operation`, `load_recipe`) is unchanged.

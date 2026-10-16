@@ -54,16 +54,12 @@ def folder(tmp_path) -> Path:
 def qt(monkeypatch):
     """A Qt application (skipped when Qt cannot load, unless SPEC_SURGEON_REQUIRE_QT=1); every window a test appends
     to the list is closed after it."""
-    from qt_support import qt_app_or_skip
+    from qt_support import close_windows, qt_app_or_skip
     app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     windows = []
     yield app, windows
-    for w in windows:
-        w.force_close = True
-        w.close()
-        w.deleteLater()
-    app.processEvents()
+    close_windows(app, windows)
 
 
 def window(qt, session=None, **kw):
