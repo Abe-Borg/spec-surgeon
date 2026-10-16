@@ -1,0 +1,27 @@
+{
+  "request": "Turn the master set into the VA3 site set: fill every {{PLACEHOLDER}} and yellow-highlighted field from the VA3 column of C:\\Projects\\DataCenters\\PROJECT.xlsx, clean copies",
+  "summary": "Fill each {{NAME}} placeholder and yellow-highlighted field in the body, headers and footers with its VA3 value from PROJECT.xlsx (names in the 'Variable' column); the highlight goes from filled text; untracked, as asked.",
+  "assumptions": [
+    "the names are in the 'Variable' column and the site values in the 'VA3' column of the first sheet",
+    "a placeholder the sheet has no value for sets the file aside (nothing is invented)",
+    "untracked: the user asked for clean copies of the site set"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "untracked",
+  "ops": [
+    {
+      "op": "fill_variables",
+      "params": {
+        "table": {
+          "file": "C:\\Projects\\DataCenters\\PROJECT.xlsx",
+          "name_column": "Variable",
+          "value_column": "VA3"
+        },
+        "tracked": false
+      }
+    }
+  ]
+}

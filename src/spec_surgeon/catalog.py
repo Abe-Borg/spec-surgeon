@@ -115,6 +115,14 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "a transform (digits, upper, lower, title) changes only the file name, never the document",
         "two files that would get the same name, or a name Windows cannot hold, set the file(s) aside",
     ],
+    "swap_image": [
+        "the old logo is found by its picture file (its bytes), its md5, its name/alt text, or every picture in scope — "
+        "say which; the headers by default",
+        "'contain' (default) keeps the new logo's proportions inside the old picture's box, top-left; 'stretch' fills "
+        "the box exactly",
+        "the old picture's alt text stays as it was (flagged); a linked, SVG, cropped or turned picture sets the file "
+        "aside, and so does a file without a matching picture unless allow_missing",
+    ],
     "make_values_agree": [
         "the place the user picked is the truth; a place whose value has the same letters and digits (any case or "
         "spacing: '211319' and '21 13 19') already agrees and is left as it is — nothing is converted",

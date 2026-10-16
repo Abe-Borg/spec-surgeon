@@ -46,8 +46,9 @@ from .planner import BatchPlan, plan_batch
 
 def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, Any]:
     """What the approval token is a hash of, as data: the spec's digest, every planned file's size and mtime, and every
-    template's size, mtime and md5 — kept beside the preview so a refused run can say exactly what changed."""
-    from .editspec import spec_templates
+    template's (and table's and picture's: ``editspec.spec_input_files``) size, mtime and md5 — kept beside the preview
+    so a refused run can say exactly what changed."""
+    from .editspec import spec_input_files
     spec_text = json.dumps(spec, sort_keys=True, ensure_ascii=False)
     out: Dict[str, Any] = {"spec": hashlib.sha256(spec_text.encode("utf-8")).hexdigest()[:16], "files": {},
                            "templates": {}}
@@ -57,7 +58,7 @@ def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, An
             out["files"][str(f)] = [st.st_size, st.st_mtime_ns]
         except OSError:
             out["files"][str(f)] = "missing"
-    for t in sorted(set(spec_templates(spec) if isinstance(spec, dict) else [])):
+    for t in sorted(set(spec_input_files(spec) if isinstance(spec, dict) else [])):
         try:
             st = t.stat()
             out["templates"][str(t)] = [st.st_size, st.st_mtime_ns, hashlib.md5(t.read_bytes()).hexdigest()]
@@ -67,15 +68,16 @@ def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, An
 
 
 def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
-    """A hash of the spec, of every planned file's path, size and mtime, and of every template file the spec reads
-    (path, size, mtime and content hash): the template is an input like the source (CLAUDE.md rule 12), so a
-    template edited after the preview voids the approval exactly as an edited spec file does."""
-    from .editspec import spec_templates
+    """A hash of the spec, of every planned file's path, size and mtime, and of every file the spec reads beside the
+    documents — templates, tables, pictures (``editspec.spec_input_files``: path, size, mtime and content hash): they
+    are inputs like the source (CLAUDE.md rule 12), so one edited after the preview voids the approval exactly as an
+    edited spec file does. A spec with templates only hashes exactly as before."""
+    from .editspec import spec_input_files
     h = hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8"))
     for f in sorted(Path(x).resolve() for x in files):
         st = f.stat()
         h.update(f"\n{f}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8"))
-    for t in sorted(set(spec_templates(spec) if isinstance(spec, dict) else [])):
+    for t in sorted(set(spec_input_files(spec) if isinstance(spec, dict) else [])):
         try:
             st = t.stat()
             digest = hashlib.md5(t.read_bytes()).hexdigest()
@@ -139,7 +141,8 @@ def explain_approval_change(before: Dict[str, Any], now: Dict[str, Any], limit: 
     for t in sorted(set(bt) | set(nt)):
         a, b = bt.get(t), nt.get(t)
         if a != b:
-            out.append(f"template {Path(t).name}: " + ("missing now" if b == "missing" or b is None else
+            what = "template" if Path(t).suffix.lower() == ".docx" else "input file"
+            out.append(f"{what} {Path(t).name}: " + ("missing now" if b == "missing" or b is None else
                                                        f"changed since {since}" if a not in (None, "missing")
                                                        else "new"))
     if len(out) > limit:

@@ -146,7 +146,7 @@ def _now() -> str:
 
 def save_recipe(name: str, spec: Dict[str, Any], description: str = "", replace: bool = False) -> Tuple[Item, List[str]]:
     """Save a (validated) spec as a recipe. Returns the item and any notes (e.g. pattern pins dropped)."""
-    from .editspec import validate_spec
+    from .editspec import input_slots, validate_spec
     s = slug(name)
     _check_free("recipe", s, replace)
     spec = json.loads(json.dumps(spec))           # a copy
@@ -161,9 +161,8 @@ def save_recipe(name: str, spec: Dict[str, Any], description: str = "", replace:
         notes.append("the spec was pinned to this batch's structure patterns; the pin was dropped so the recipe can "
                      "run on other projects' files (it is still planned file by file)")
     for o in spec.get("ops") or []:
-        t = (o.get("params") or {}).get("template")
-        if isinstance(t, str) and t:
-            o["params"]["template"] = str(Path(t).resolve())
+        for d, k in input_slots(o):                # templates, tables, pictures: stored absolute
+            d[k] = str(Path(d[k]).resolve())
     validate_spec(spec)
     d = _kind_dir("recipe")
     d.mkdir(parents=True, exist_ok=True)

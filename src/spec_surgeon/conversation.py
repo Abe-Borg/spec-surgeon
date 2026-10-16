@@ -673,7 +673,7 @@ class Conversation:
         never reach it (a wording is said to be ignored); its ``detail`` is kept as the detail. Whatever fails drops the
         choice, said three ways: in the errors, to the user (an app entry), to Claude (a note with the next message)."""
         from . import library
-        from .editspec import SpecError, load_spec, spec_templates, validate_spec
+        from .editspec import SpecError, load_spec, spec_input_files, validate_spec
         name = str(c.get("name") or "").strip()
         if not name:
             errors.append(f"a {kind} choice without a name was dropped")
@@ -736,10 +736,12 @@ class Conversation:
         except (OSError, ValueError) as e:                  # a file that is gone, or that is not JSON
             drop(f"it cannot be read ({e})")
             return None
-        missing = [str(t) for t in spec_templates(spec) if not t.is_file()]
+        missing = [t for t in spec_input_files(spec) if not t.is_file()]
         if missing:
-            drop(f"its template file is no longer at {', '.join(missing)} — save the recipe again with the template "
-                 f"where it is now")
+            what = ("its template file" if all(t.suffix.lower() == ".docx" for t in missing) else
+                    "a file it reads (its template, table or picture)")
+            drop(f"{what} is no longer at {', '.join(map(str, missing))} — save the recipe again with the "
+                 f"{'template' if what == 'its template file' else 'file'} where it is now")
             return None
         words = list(dict.fromkeys(compiler.placed_words(spec)))
         try:

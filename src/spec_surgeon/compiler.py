@@ -51,6 +51,7 @@ from .ooxml import paragraphs
 from .ops.selectors import StyleSheet
 from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
+from .inputs import near as input_files_near, overview as input_overview, read as read_input
 from .profile import profile, profile_batch, template_spec_summary
 
 from . import llm
@@ -86,6 +87,13 @@ TOOLS = [
      "as a template (template_spec: prepared slots, or — an ordinary spec from another firm — its own section "
      "number/title and where its headers/footers show them; its body text font/size).",
      "input_schema": {"type": "object", "properties": {}}},
+    {"name": "read_input_file", "description": "One of the INPUT FILES listed beside the documents (a table the user "
+     "keeps — .json, .csv, .xlsx — or a picture): a sheet's or a CSV's rows (the first is the headers), a JSON file's "
+     "text, a picture's format, size and md5. Only a listed file, by the exact path the listing shows.",
+     "input_schema": {"type": "object", "properties": {
+         "path": {"type": "string", "description": "the exact path from INPUT FILES"},
+         "sheet": {"type": "string", "description": "an .xlsx sheet's name (default: the first)"},
+         "rows": {"type": "integer", "minimum": 1, "maximum": 40}}, "required": ["path"]}},
     {"name": "ask_user", "description": "Ask the user before anything runs; their reply comes back as this tool's "
      "result. Use it when the request is ambiguous, needs words the user has not given, or no operation does exactly "
      "what was asked (then say what you understood, what is missing, and offer choices).",
@@ -142,6 +150,12 @@ itself); "all caps" is a display property — no letters are retyped. Format the
 (tracked when targeted, so the reviewer sees "Formatted: Bold"); change a style (select.styles) only when the user \
 speaks of the style or wants every paragraph of that style to follow — the profiles' styles_in_use show bold, italic, \
 caps and colour per style. A font change and set_properties on the same paragraphs are two specs.
+- Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
+in fill_variables.table.file, replace_table.pairs_table.file or swap_image.image / match.image — what a table holds is \
+the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
+END OF SECTION wording) must be the user's exact words, like any replacement.
+- Text-changing ops are tracked unless the user asks for clean copies (tracked false). name_output, and \
+make_values_agree with the file name among its places, rename the outputs: they write copies, never in place.
 - The attached template may be a TEMPLATE SPEC: an ordinary spec from the architect or another firm (read_template \
 says which). "Make the header/footer match the template spec" is apply_header_footer_template with slot_markers \
 ["reference"] and the catalog's reference_fills as slot_fills (adapt them when the profiles show another layout): \
@@ -315,18 +329,36 @@ def _extract_literal_rules(rule: Any, out: List[str]) -> None:
             _extract_literal_rules(r, out)
 
 
+END_OF_SECTION_DEFAULT = "END OF SECTION {number}"     # ops/end_of_section.DEFAULT_TEXT (a test pins them equal)
+
+
 def placed_words(spec: Dict[str, Any]) -> List[str]:
-    """Every string an op of the spec would place in a document."""
+    """Every string an op of the spec would place in a document as typed in the spec — never what a table file, a
+    template, a snippet the user picked or the documents themselves give (agreeing values, kept options, numbers)."""
     out: List[str] = []
     for o in spec.get("ops") or []:
-        params = o.get("params") or {}
-        if o.get("op") == "replace_text" and isinstance(params.get("replace"), str) and params["replace"]:
+        if not isinstance(o, dict):
+            continue
+        params = o.get("params") if isinstance(o.get("params"), dict) else {}
+        op = o.get("op")
+        if op == "replace_text" and isinstance(params.get("replace"), str) and params["replace"]:
             out.append(params["replace"])
-        if o.get("op") == "insert_paragraph" and isinstance(params.get("text"), str) and params["text"]:
+        if op == "insert_paragraph" and isinstance(params.get("text"), str) and params["text"]:
             out.append(params["text"])
-        if o.get("op") == "apply_header_footer_template":
+        if op == "apply_header_footer_template":
             for rule in (params.get("slot_fills") or {}).values():
                 _extract_literal_rules(rule, out)
+        if op == "replace_table":
+            for pair in params.get("pairs") or []:
+                if isinstance(pair, dict) and isinstance(pair.get("replace"), str) and pair["replace"]:
+                    out.append(pair["replace"])
+        if op == "set_issue_stamp" and isinstance(params.get("text"), str) and params["text"]:
+            out.append(params["text"])
+        if op == "fill_variables" and isinstance(params.get("values"), dict):
+            out += [v for v in params["values"].values() if isinstance(v, str) and v]
+        if op == "ensure_end_of_section":
+            text = params.get("text") if isinstance(params.get("text"), str) else END_OF_SECTION_DEFAULT
+            out += [piece.strip() for piece in text.split("{number}") if piece.strip()]
     return out
 
 
@@ -377,6 +409,7 @@ class _Batch:
         self.template = Path(template) if template else None
         self._pkgs: Dict[str, DocxPackage] = {}
         self.work_dir: Optional[Path] = None      # where a conversation keeps its page renders (chat only)
+        self.inputs = input_files_near(paths, self.template)   # tables and pictures beside them (inputs.py)
 
     def label(self, path: Path) -> str:
         """The label a batch file is shown and addressed by (its name when it is not one of the batch's files)."""
@@ -552,6 +585,10 @@ class _Batch:
         pkg = DocxPackage.from_path(self.template)
         return {"path": str(self.template), "template_spec": template_spec_summary(pkg), "profile": profile(pkg)}
 
+    def read_input_file(self, path: str, sheet: Optional[str] = None, rows: int = 40):
+        """A table or picture listed beside the documents — only a listed one (inputs.read)."""
+        return read_input(path, self.inputs, sheet, rows)
+
     def list_library(self):
         """The conversation's tool (chat only): the whole library, within the tool-result budget."""
         return library_index(limit=None)
@@ -570,7 +607,7 @@ def library_entry(item: Any) -> Dict[str, Any]:
     """One library item as the index shows it to Claude: what it is and where it came from — never the words a recipe
     places (read_library_item shows those beside the rule that only the user's pick approves them, and the choice
     shows them to the user). An item that cannot be read is listed with its problem, never hidden."""
-    from .editspec import load_spec, spec_templates
+    from .editspec import load_spec, spec_input_files, spec_templates
     from .library import read_manifest, read_snippet, recipe_file
     e: Dict[str, Any] = {"kind": item.kind, "name": item.name, "description": _cut(item.description, DESCRIPTION_CHARS),
                          "saved": item.saved_at, "request": _cut(item.request, REQUEST_CHARS)}
@@ -585,6 +622,9 @@ def library_entry(item: Any) -> Dict[str, Any]:
             e["mode"] = spec.get("mode")
             e["places_words"] = len(placed_words(spec))
             e["templates"] = [{"path": str(t), "exists": t.is_file()} for t in spec_templates(spec)]
+            others = [t for t in spec_input_files(spec) if t not in spec_templates(spec)]
+            if others:
+                e["input_files"] = [{"path": str(t), "exists": t.is_file()} for t in others]
         else:
             manifest = read_manifest(item)
             e["op"] = manifest.get("op_name")
@@ -640,7 +680,7 @@ def library_item_detail(name: str, batch: Optional["_Batch"] = None) -> Dict[str
     operation: its manifest without ``op.py`` — Claude has nothing to do with the code — the brief cut at
     ``BRIEF_CHARS``. A snippet: its text under ``SNIPPET_WORDS_RULE``, style and formatting. A name that is not in the
     library, a recipe that does not load or validate, a snippet that is not one plain paragraph: the tool's error."""
-    from .editspec import load_spec, spec_templates, validate_spec
+    from .editspec import load_spec, spec_input_files, spec_templates, validate_spec
     from .library import find, read_manifest, read_snippet, recipe_file
     item = find(name)
     out: Dict[str, Any] = {"kind": item.kind, "name": item.name, "description": item.description,
@@ -657,6 +697,9 @@ def library_item_detail(name: str, batch: Optional["_Batch"] = None) -> Dict[str
         out["placed_words"] = placed_words(spec)
         out["placed_words_rule"] = PLACED_WORDS_RULE
         out["templates"] = [{"path": str(t), "exists": t.is_file()} for t in spec_templates(spec)]
+        others = [t for t in spec_input_files(spec) if t not in spec_templates(spec)]
+        if others:
+            out["input_files"] = [{"path": str(t), "exists": t.is_file()} for t in others]
         if batch is not None:
             out["dry_plan"] = dry_plan_summary(spec, batch)
         return _fit_detail(out, DETAIL_BUDGET)
@@ -782,10 +825,15 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str], memory: 
         parts.append(f"A TEMPLATE FILE IS ATTACHED: {batch.template} — a prepared header/footer template or a "
                      f"template spec (e.g. the architect's); call read_template to see which, and put this exact path "
                      f"in the op's 'template' param")
+    if batch.inputs:
+        parts.append("INPUT FILES beside the documents — tables and pictures an op can read (read_input_file shows one; "
+                     "put the exact path in the op's params):\n"
+                     + json.dumps([input_overview(p) for p in batch.inputs], ensure_ascii=False))
     if library and library.get("items"):
-        parts.append("YOUR LIBRARY — the user's saved recipes (specs they previewed before) and operations (custom "
-                     "transforms that passed). When one does what the user asks, read it (read_library_item) and offer "
-                     "it as a choice {\"kind\": \"recipe\" | \"operation\", \"name\": <its exact name>}:\n"
+        parts.append("YOUR LIBRARY — the user's saved recipes (specs they previewed before), operations (custom "
+                     "transforms that passed) and snippets (saved paragraphs). When one does what the user asks, read "
+                     "it (read_library_item) and offer it as a choice {\"kind\": \"recipe\" | \"operation\" | "
+                     "\"snippet\", \"name\": <its exact name>}:\n"
                      + json.dumps(library["items"], ensure_ascii=False)
                      + (f"\n… and {library['more']} more — call list_library" if library.get("more") else ""))
     parts.append("THE BATCH (profiles per structure pattern):\n" + json.dumps(batch.summary(), ensure_ascii=False))

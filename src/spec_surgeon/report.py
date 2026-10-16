@@ -194,6 +194,53 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The file is saved in Word's 'Strict Open XML Document' format, which Spec Surgeon does not read. Open it in "
         "Word and Save As 'Word Document (*.docx)', then run again.",
     ),
+    # built-in batch 1 (docs/BUILTIN_OPS_BATCH1_DESIGN.md)
+    "spans-structure": (
+        "Text Split by a Tab, Line Break or Field",
+        "The words to change run across a tab, a line break, a field or a picture in this paragraph, so they cannot be "
+        "replaced as one piece of text without moving or losing that element. Change the parts on either side "
+        "separately, or fix the paragraph in Word.",
+    ),
+    "table-value": (
+        "A Table Value Cannot Be Used",
+        "A cell or entry of your table (PROJECT.json, a CSV or an Excel sheet) is empty, holds a character you cannot "
+        "see, or is a number Excel shows in its own format (a date, a decimal, a percentage). Format the column as Text "
+        "in Excel and type the value exactly as it should read, then run again.",
+    ),
+    "table-changed": (
+        "Your Table Changed During the Run",
+        "The table file was edited after the plan read it, so the values would not be the ones previewed. Preview "
+        "again, then run.",
+    ),
+    "nested-options": (
+        "Option Brackets Inside Option Brackets",
+        "This paragraph holds a [choice [inside] another] bracket group; which brackets belong together cannot be "
+        "decided safely. Resolve it in Word, or narrow the rules to the groups you mean.",
+    ),
+    "eos-not-last": (
+        "END OF SECTION Is Not the Last Paragraph",
+        "The file has an END OF SECTION line with more text after it. Moving or deleting that text is not this "
+        "operation's job — look at the end of the file in Word.",
+    ),
+    "missing-style": (
+        "A Style the Operation Needs Is Missing",
+        "The style named in the spec does not exist in this file. Use a style the file has, or let the new paragraph "
+        "copy its neighbour's formatting.",
+    ),
+    "bad-name": (
+        "The New File Name Cannot Be Used",
+        "The name made from this file's content has a character Windows does not allow in a file name, is a reserved "
+        "name, ends with a space or a dot, or is too long. Adjust the naming pattern or the values it reads.",
+    ),
+    "name-collision": (
+        "Two Files Would Get the Same Name",
+        "The naming convention gives this file the same name as another file in the batch. Neither was renamed or "
+        "written — check which one holds the wrong number or title.",
+    ),
+    "image-changed": (
+        "Your Picture File Changed During the Run",
+        "The new (or old) logo picture was edited after the plan read it. Preview again, then run.",
+    ),
 }
 
 

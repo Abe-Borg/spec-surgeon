@@ -71,16 +71,30 @@ def _si_text(si) -> str:
     return "".join((t.text or "") for r in si.findall(SSML + "r") for t in r.findall(SSML + "t"))
 
 
+def _book(z: zipfile.ZipFile, names) -> str:
+    book = "xl/workbook.xml"
+    if "_rels/.rels" in names:
+        for rel in _parse(z.read("_rels/.rels")).findall(RELS + "Relationship"):
+            if rel.get("Type", "").endswith("/officeDocument"):
+                book = rel.get("Target", book).lstrip("/")
+    return book
+
+
+def xlsx_sheet_names(data: bytes, where: str) -> List[str]:
+    """The workbook's sheet names, in order (what the compiler shows Claude beside the documents)."""
+    try:
+        z = zipfile.ZipFile(io.BytesIO(data))
+        return [s.get("name") for s in _parse(z.read(_book(z, set(z.namelist())))).iter(SSML + "sheet")]
+    except (zipfile.BadZipFile, KeyError, etree.XMLSyntaxError, ValueError) as e:
+        raise JobException(f"{where}: not a readable Excel workbook ({type(e).__name__}: {e})", "table-value")
+
+
 def xlsx_rows(data: bytes, sheet: Optional[str], where: str) -> List[List[Any]]:
     """The sheet's rows as lists of cells (str, or Bad), top row first; missing cells are ''."""
     try:
         z = zipfile.ZipFile(io.BytesIO(data))
         names = set(z.namelist())
-        book = "xl/workbook.xml"
-        if "_rels/.rels" in names:
-            for rel in _parse(z.read("_rels/.rels")).findall(RELS + "Relationship"):
-                if rel.get("Type", "").endswith("/officeDocument"):
-                    book = rel.get("Target", book).lstrip("/")
+        book = _book(z, names)
         wb = _parse(z.read(book))
         base = posixpath.dirname(book)
         rels_name = posixpath.join(base, "_rels", posixpath.basename(book) + ".rels")
