@@ -559,7 +559,7 @@ effective-value resolver, checks every target whole, resolves the effective resu
 uses a changed style) and strips only what it compared. The open question recorded in Phase 8 — two ops on one
 paragraph — is answered for this round by keeping rule 9's granularity: one `set_properties` carries all of its
 properties; a font change and `set_properties` on the same paragraphs are two specs; finer aspects are a follow-up.
-README → "Formatting properties" is the user's view; `tests/test_set_properties.py` (24 tests) pins it.
+README → "Formatting properties" is the user's view; `tests/test_set_properties.py` (25 tests) pins it.
 
 ---
 

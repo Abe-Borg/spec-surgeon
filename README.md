@@ -1403,7 +1403,7 @@ Merged with the GUI rework and diagnostics (2026-10-15): master's model-side dia
 | `test_codegen.py` | + `codegen/history.json` keeping the exchange, and an API error as a recorded failure of the generation |
 | `test_gui.py` | + the GUI rework's window tests (the rail, Settings, Help, About, the update check) with the chat, Your library and the visual-check card in the reworked steps |
 
-The Phase 8 review fixes (2026-10-15; see ["The Phase 8 review fixes"](#the-phase-8-review-fixes-2026-10-15)): `tests/test_phase8_fixes.py` (with `test_phase8_fixes_window.py` and `test_phase8_fixes_cli.py` for the second pass) pins every fix — 685 tests in total, all of them pass but the Credential Manager round trip, which skips off Windows (709 with `tests/test_set_properties.py`, the built-in operations round, part 1). Each test fails on the code before its fix:
+The Phase 8 review fixes (2026-10-15; see ["The Phase 8 review fixes"](#the-phase-8-review-fixes-2026-10-15)): `tests/test_phase8_fixes.py` (with `test_phase8_fixes_window.py` and `test_phase8_fixes_cli.py` for the second pass) pins every fix — 685 tests in total, all of them pass but the Credential Manager round trip, which skips off Windows (710 with `tests/test_set_properties.py`, the built-in operations round, part 1). Each test fails on the code before its fix:
 
 | Covers | |
 |---|---|
