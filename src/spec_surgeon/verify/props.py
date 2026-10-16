@@ -1211,6 +1211,8 @@ def _v_run_elements(run_set) -> Dict[str, Any]:
             out["u"] = str(v)
         else:
             raise ValueError(f"unknown run property {k!r}")
+    if out.get("caps") is True and out.get("smallCaps") is True:
+        raise ValueError("caps and smallCaps both asked on — mutually exclusive in Word (the op must refuse)")
     return out
 
 
@@ -1366,6 +1368,19 @@ def _check_effective_run(o_rpr, o_p, styles: Styles, asked: Dict[str, Any], symb
         val, prov = _v_run_prop(o_rpr, o_p, styles, e)
         if val != v:
             errs.append(f"{where}: w:{e} resolves to {val!r} ({prov}) in the output, asked {v!r}")
+    _check_caps_exclusive(o_rpr, o_p, styles, asked, symbol, where, errs)
+
+
+def _check_caps_exclusive(o_rpr, o_p, styles: Styles, asked: Dict[str, Any], symbol: bool, where: str,
+                          errs: List[str]) -> None:
+    """Word shows all caps and ignores small caps when both are in effect: an op that asks either on must leave the
+    output with at most one of them in effect (an ambiguous toggle counts as possibly in effect)."""
+    if symbol or not (asked.get("caps") is True or asked.get("smallCaps") is True):
+        return
+    c, s = _v_run_prop(o_rpr, o_p, styles, "caps")[0], _v_run_prop(o_rpr, o_p, styles, "smallCaps")[0]
+    if c is not False and s is not False:
+        errs.append(f"{where}: w:caps and w:smallCaps are both in effect in the output — Word shows all caps and ignores "
+                    f"small caps (the op must refuse, or set the other one off)")
 
 
 def _check_effective_para(o_p, styles: Styles, asked: Dict[str, bool], where: str, errs: List[str]) -> None:
@@ -1470,7 +1485,7 @@ def _judge_style_prop(val, prov: str, asked, sid: str, element: str, symbol: boo
     value, an ambiguous toggle, or caps/smallCaps reaching a symbol run from the style are what the op must have
     refused."""
     if prov == f"style:{sid}":
-        if symbol and element in CASE_ELEMENTS:
+        if symbol and element in CASE_ELEMENTS and asked:
             errs.append(f"{where}: w:{element} from style {sid} would case-map a symbol run (the op must refuse)")
         elif val != asked:
             errs.append(f"{where}: w:{element} resolves to {val!r} from style {sid}, asked {asked!r}")
@@ -1540,6 +1555,7 @@ def _properties_styles(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                     for e, v in run_asked.items():
                         val, prov = _v_run_prop(rpr, p, out_styles, e)
                         _judge_style_prop(val, prov, v, sid, e, symbol, where, errs)
+                    _check_caps_exclusive(rpr, p, out_styles, run_asked, symbol, where, errs)
                 if types[sid] == "paragraph" and sid in pchain:
                     for e, v in para_asked.items():
                         val, prov = _v_para_prop(p, out_styles, e)

@@ -81,6 +81,10 @@ def clean_params(params: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, bool
                 run_out[k] = v if v == "auto" else v.upper()
             else:
                 raise JobException(f"unknown run property {k!r}; known: {BOOL_RUN + ('u', 'color')}", "bad-params")
+    if run_out.get("caps") and run_out.get("smallCaps"):
+        raise JobException("run.caps and run.smallCaps are mutually exclusive — Word shows all caps and ignores small "
+                           "caps when both are in effect; ask for one of them true (and the other false where it is in "
+                           "effect)", "bad-params")
     para_out: Dict[str, bool] = {}
     if para is not None:
         if not isinstance(para, dict) or not para:
@@ -92,6 +96,21 @@ def clean_params(params: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, bool
                 raise JobException(f"paragraph.{k} must be true or false", "bad-params")
             para_out[k] = v
     return run_out, para_out
+
+
+def caps_conflict(asked: Dict[str, Any], effective) -> bool:
+    """Word shows all caps and ignores small caps when both are in effect: True when the op asks caps or smallCaps on
+    and, after the change, both would be in effect on this run or mark. ``effective(element)`` gives the value of an
+    element the op does not ask (the source's for a direct target, the simulated one for a style target); an
+    ambiguous toggle (None) counts as possibly in effect."""
+    if not (asked.get("caps") is True or asked.get("smallCaps") is True):
+        return False
+    after = {e: (asked[e] if e in asked else effective(e)) for e in ("caps", "smallCaps")}
+    return after["caps"] is not False and after["smallCaps"] is not False
+
+
+CAPS_CONFLICT = ("w:caps and w:smallCaps would both be in effect — Word shows all caps and ignores small caps; set the "
+                 "other one false in this op")
 
 
 def write_element(container, element: str, value, order: List[str]) -> None:
@@ -236,6 +255,9 @@ class SetProperties(Op):
                             continue
                         sym = is_symbol_rpr(rpr, p, sheet, preserve) or (skip_sym and r.find(W + "sym") is not None)
                         gets = resolver.gets_run(rpr, p, run_asked, sym)
+                        if not sym and caps_conflict(run_asked, lambda e, rpr=rpr, p=p: resolver.run_prop(rpr, p, e)[0]):
+                            raise JobException(f"{part} paragraph {bi} run {ri}: {CAPS_CONFLICT}", "conflict-property",
+                                               {"part": part, "paragraph": bi})
                         if gets:
                             t_runs.append([bi, ri, sorted(gets)])
                         else:
@@ -244,7 +266,11 @@ class SetProperties(Op):
                         mrpr = p.find(W + "pPr/" + W + "rPr")
                         revised = mark_in_revision(p)
                         if not (in_revs == "exclude" and revised) and rpr_selected(runs_pred, mrpr, revised):
-                            gets = resolver.gets_run(mrpr, p, run_asked, is_symbol_rpr(mrpr, p, sheet, preserve))
+                            msym = is_symbol_rpr(mrpr, p, sheet, preserve)
+                            gets = resolver.gets_run(mrpr, p, run_asked, msym)
+                            if not msym and caps_conflict(run_asked, lambda e, mrpr=mrpr, p=p: resolver.run_prop(mrpr, p, e)[0]):
+                                raise JobException(f"{part} paragraph {bi} paragraph mark: {CAPS_CONFLICT}",
+                                                   "conflict-property", {"part": part, "paragraph": bi})
                             if gets:
                                 if tracked and revised:
                                     raise JobException(
@@ -372,7 +398,7 @@ class SetProperties(Op):
 
         def judge(val, prov, v, sid, e, sym, own_style, where):
             if prov == f"style:{sid}":
-                if sym and e in CASE_ELEMENTS:
+                if sym and e in CASE_ELEMENTS and v:
                     refusals.append(("conflict-property", f"{where}: w:{e} from style {sid} would case-map a symbol "
                                                           f"run (the glyph would change) — set it as direct formatting "
                                                           f"instead, which leaves symbol runs alone"))
@@ -418,6 +444,8 @@ class SetProperties(Op):
                         for e, v in run_asked.items():
                             val, prov = sim.run_prop(rpr, p, e)
                             judge(val, prov, v, sid, e, sym, own, f"{part} paragraph {bi} {label}")
+                        if not sym and caps_conflict(run_asked, lambda e, rpr=rpr, p=p: sim.run_prop(rpr, p, e)[0]):
+                            refusals.append(("conflict-property", f"{part} paragraph {bi} {label}: {CAPS_CONFLICT}"))
                     if types[sid] == "paragraph" and sid in pchain:
                         for e, v in para_asked.items():
                             val, prov = sim.para_prop(p, e)

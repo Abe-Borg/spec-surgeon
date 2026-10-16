@@ -282,8 +282,12 @@ test that proves they agree.)
   `caps`/`smallCaps`; a style target gets an element whose own value differs. **Expected element**: toggles and flags on →
   no attributes, off → `w:val="0"`; `color` → exactly `{val}`; `u` → the source element's attributes with `val` replaced.
   **Style-target partition** (plan refusals / V10 FAIL): provenance the selected style → affected; a nearer style → noted,
-  left alone; `direct` disagreeing → `conflict-property`; ambiguous → `toggle-ambiguous`; `caps`/`smallCaps` reaching a
-  symbol run → `conflict-property`. Transform: `ops/effective.PropResolver` (+ `run_elements`/`para_elements`; an
+  left alone; `direct` disagreeing → `conflict-property`; ambiguous → `toggle-ambiguous`; a style turning `caps`/`smallCaps`
+  ON for a symbol run → `conflict-property` (off is fine). **Exclusive pair**: Word shows all caps and ignores small caps
+  when both are in effect — an op asking `caps` or `smallCaps` on must leave at most one of them in effect on every
+  selected (direct) or using (style) run and mark after the change, an ambiguous toggle counting as in effect: plan
+  `conflict-property` (`caps_conflict`) / V10 FAIL (`_check_caps_exclusive`); both asked on → `bad-params` /
+  `ValueError`. Transform: `ops/effective.PropResolver` (+ `run_elements`/`para_elements`; an
   `override` simulates the style change), `ops/set_properties.py`; verifier: `verify/props._v_run_prop`/`_v_para_prop`/
   `_v_gets_run`/`_v_gets_para`/`_v_style_gets`/`_v_expected_attrs`/`_properties`. `tests/test_set_properties.py::
   test_transform_and_verifier_property_resolvers_agree` compares them on every run, mark and paragraph of four fixtures;
@@ -927,6 +931,6 @@ properties" is the user's view):
 - **Layout reference** `none` for `b`/`i`/`caps`/`smallCaps` and the paragraph flags, `source` for `color`/`u`/`strike`.
 - `report.FAILURE_EXPLANATIONS` gained `conflict-property`; `CUSTOM_TRANSFORM_LIMITS` maps the new family to
   `properties` (the "cannot" list lost bold/italic/underline/caps and text colour); the profile's `styles_in_use` show
-  `italic` and `color`; `examples/specs/bold-part-headings.json` is the worked example. The verifier's change-marker
+  `italic`, `color` and `color_theme` (Word renders the theme colour, not the cached `w:val`); `examples/specs/bold-part-headings.json` is the worked example. The verifier's change-marker
   tails of `run_fonts` and `paragraph_props` became `_check_rpr_change`/`_check_ppr_change` (shared with `properties`;
   the same checks, byte for byte).

@@ -431,6 +431,38 @@ def test_on_off_writer_bug_is_caught(fmt, monkeypatch):
     assert "V10" in failed(rec)
 
 
+def test_small_caps_and_all_caps_are_never_both_left_in_effect(fmt, monkeypatch):
+    """Word shows all caps and ignores small caps when both are in effect (Codex on PR #18): small caps on text whose
+    style says caps is refused, for both targets, unless the same op turns caps off; both true is a bad parameter; a
+    transform that forgot the rule is caught by V10's post-condition on the output."""
+    def style_caps(root):
+        style_el(root, "SpecPart").find(W + "rPr").insert(0, etree.Element(W + "caps"))
+    capped = mutate(fmt, "word/styles.xml", style_caps)
+    op = get_op("set_properties")
+    for sel in (PART, {"styles": {"ids": ["SpecPart"]}}):
+        with pytest.raises(JobException) as e:
+            op.plan(DocxPackage(capped), sel, {"run": {"smallCaps": True}})
+        assert e.value.code == "conflict-property" and "both be in effect" in e.value.reason, sel
+    with pytest.raises(JobException) as e:
+        op.plan(DocxPackage(capped), PART, {"run": {"smallCaps": True, "caps": True}})
+    assert e.value.code == "bad-params"
+    plan, out, rec = run_ops(capped, [("set_properties", PART, {"run": {"smallCaps": True, "caps": False}, "author": AUTHOR})])
+    assert rec.passed, rec.to_markdown()
+    r = run_with_text(doc_root(out), "PART 1").find(W + "rPr")
+    assert r.find(W + "caps").get(W + "val") == "0" and dict(r.find(W + "smallCaps").attrib) == {}
+    plan, out, rec = run_ops(capped, [("set_properties", {"styles": {"ids": ["SpecPart"]}},
+                                       {"run": {"smallCaps": True, "caps": False}})])
+    assert rec.passed, rec.to_markdown()
+    st = style_el(doc_root(out, "word/styles.xml"), "SpecPart").find(W + "rPr")
+    assert st.find(W + "caps").get(W + "val") == "0" and st.find(W + "smallCaps") is not None
+    # the transform forgets the rule (plan and apply alike): V10 finds both in effect in the output
+    monkeypatch.setattr(set_properties_module, "caps_conflict", lambda *a, **k: False)
+    plan, out, rec = run_ops(capped, [("set_properties", PART, {"run": {"smallCaps": True}, "author": AUTHOR})])
+    assert "V10" in failed(rec) and any("both in effect" in x for x in rec.get("V10").data["errors"])
+    plan, out, rec = run_ops(capped, [("set_properties", {"styles": {"ids": ["SpecPart"]}}, {"run": {"smallCaps": True}})])
+    assert "V10" in failed(rec) and any("both in effect" in x for x in rec.get("V10").data["errors"])
+
+
 # ---- the two resolvers implement one definition --------------------------------------------------------------------
 
 def test_transform_and_verifier_property_resolvers_agree():
@@ -517,7 +549,7 @@ def test_worked_example_plans_on_the_fixture(fmt):
 
 # ---- what Claude sees ---------------------------------------------------------------------------------------------
 
-def test_catalog_prompt_profile_and_explanations(fmt):
+def test_catalog_prompt_profile_and_explanations(fmt, rich):
     cat = op_catalog()
     assert cat["ops"]["set_properties"]["common_assumptions"]
     assert [f for f, k in CUSTOM_TRANSFORM_LIMITS["families"].items() if k == "properties"]
@@ -528,3 +560,5 @@ def test_catalog_prompt_profile_and_explanations(fmt):
     styles = {e["id"]: e for e in profile(DocxPackage(fmt))["styles_in_use"]}
     assert styles["SpecNoteItalic"].get("italic") is True and styles["SpecSub"].get("color") == "FF0000"
     assert "italic" not in styles["Normal"] and "color" not in styles["SpecPart"]
+    heading = {e["id"]: e for e in profile(DocxPackage(rich))["styles_in_use"]}["Heading1"]
+    assert heading["color"] == "365F91" and heading["color_theme"] == "accent1 shade BF"   # Word renders the theme colour
