@@ -1,0 +1,24 @@
+{
+  "request": "Collapse the runs of blank lines to one, clean copies",
+  "summary": "Where several blank paragraphs stand together the first stays and the rest are deleted (untracked); a blank paragraph with a number, a border, a bookmark or a break is not blank, a cell and the document keep their last paragraph, two tables are never joined.",
+  "assumptions": [
+    "a blank paragraph holds nothing but spaces — a numbered or bulleted empty line, a bordered one, one with a bookmark, a tab or a page break is not blank",
+    "each run of blank lines keeps its first; single blank lines stay",
+    "the body only; headers and footers are left as they are",
+    "clean copies (untracked) as asked; a file with nothing to collapse is left as it is"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "untracked",
+  "ops": [
+    {
+      "op": "remove_empty_paragraphs",
+      "params": {
+        "mode": "collapse",
+        "tracked": false
+      }
+    }
+  ]
+}

@@ -1,0 +1,20 @@
+{
+  "request": "Remove all hidden text before we issue the specs; list what was removed",
+  "summary": "Every run Word hides (the Hidden font setting, directly or through a style) is deleted as a tracked change, and a paragraph whose text and paragraph mark are all hidden is deleted with it; every removed piece is listed in the preview.",
+  "assumptions": [
+    "hidden text is text with Word's 'Hidden' font setting, set directly or by a style — text that is merely white or tiny is not hidden",
+    "the body, headers, footers, footnotes and endnotes are searched; a file with no hidden text is left as it is",
+    "a hidden index entry or other field goes whole; hidden text inside a field that is otherwise shown, or in a text box, sets the file aside",
+    "tracked, so the reviewer sees each deletion; ask for clean copies to remove it untracked"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "content",
+  "ops": [
+    {
+      "op": "remove_hidden_text"
+    }
+  ]
+}
