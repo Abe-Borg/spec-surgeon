@@ -612,7 +612,7 @@ taken on his behalf and each changeable; its last section records what the build
   own words** so a wrong default shared by plan and apply shows.
 
 Twelve new V10 kinds, each with planted defects shared by plan and apply. README → "Built-in operations, batch 2" is the
-user's view; TESTCOUNT tests in total. Not in this batch: the design note's list (adding a picture watermark, comments in
+user's view; 1556 tests pass in total (with master's bounded recovery; four skip in the Linux container). Not in this batch: the design note's list (adding a picture watermark, comments in
 text boxes, joining paragraphs on accept/reject, table row/cell revisions, highlight in styles, removing personal
 information on save).
 

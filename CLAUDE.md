@@ -979,8 +979,10 @@ merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test
 teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without an API key
 (`tests/test_keyless.py`, 2026-10-16), 768 with the plan-time conflicts for what an op reads
 (`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
-(`tests/test_chain.py`, 2026-10-16), 963 with built-in operations batch 1 (2026-10-16) — all pass but
-the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
+(`tests/test_chain.py`, 2026-10-16), 963 with built-in operations batch 1 (2026-10-16), 1556 with master's bounded
+recovery and built-in operations batch 2 (2026-10-16) — all pass but four that skip in the Linux container: the
+Windows-only Credential Manager round trip and three `tests/test_llm.py` tests that need the `anthropic` package; in the
+container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
 
