@@ -93,6 +93,9 @@ class Session:
     recipe_name: str = ""                         # the outcome is one of your recipes, picked in the conversation and
                                                   # used as saved (``spec_source`` "compiled": the conversation's
                                                   # outcome)
+    chain: Optional[Dict[str, Any]] = None        # the outcome is a chain of specs (chain.py), run stage by stage
+    chain_source: str = ""                        # "library:NAME" | "recipes" (built from your recipes) | a chain file
+    last_chain: Any = None                        # chain.ChainResult of the last Run (the window's results table)
 
     def claude_ready(self) -> bool:
         """Claude can be called: a client was given (tests, scripted) or credentials are there
@@ -104,9 +107,11 @@ class Session:
     def _templates(self, outcome: bool = True) -> List[Path]:
         """The files that are never part of the batch: the attached template and (``outcome``) every template the
         current spec reads — a spec may name a file of the batch folder as its template."""
+        from .chain import chain_templates
         from .editspec import spec_templates
         return (([self.template.resolve()] if self.template else []) +
-                (spec_templates(self.spec) if outcome and self.spec else []))
+                (spec_templates(self.spec) if outcome and self.spec else []) +
+                (chain_templates(self.chain) if outcome and self.chain else []))
 
     def files(self, outcome: bool = True) -> List[Path]:
         """The batch: the folder's (or the set-aside pass's) .docx files without the templates. ``outcome=False``: the
@@ -163,18 +168,31 @@ class Session:
     # ---- steps ----
     # ---- outcome: a spec XOR a custom transform, and what was previewed of it ----
     def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "",
-                     recipe: str = "") -> None:
+                     recipe: str = "", chain: Optional[Dict[str, Any]] = None) -> None:
         """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
         old one: a reply that turns a custom transform into a spec must never leave the transform runnable, and a reply
         that only asks a question must never leave the old spec's preview runnable. ``recipe``: the spec is one of your
-        recipes picked in the conversation (``recipe_name``; the Preview step and the visual check say so)."""
-        if spec is not None and generated is not None:
-            raise ValueError("a session runs either a spec or a custom transform, not both")
-        self.spec, self.generated = spec, generated
+        recipes picked in the conversation (``recipe_name``; the Preview step and the visual check say so). ``chain``:
+        a chain of specs (``chain.py``) is the outcome — a spec XOR a custom transform XOR a chain."""
+        if sum(x is not None for x in (spec, generated, chain)) > 1:
+            raise ValueError("a session runs either a spec, a custom transform or a chain, not two of them")
+        self.spec, self.generated, self.chain = spec, generated, chain
         self.spec_source = source if spec is not None else ""
+        self.chain_source = source if chain is not None else ""
         self.recipe_name = recipe if spec is not None else ""
         self.preview, self.generated_token, self.generated_preview = None, "", None
         self.generated_inputs, self.generated_intent = {}, ""
+
+    def outcome_key(self) -> Any:
+        """What the approval token is taken over beside the files: the spec, or the chain's key (every stage's spec
+        and templates)."""
+        from .chain import chain_key
+        return chain_key(self.chain) if self.chain is not None else self.spec
+
+    def chain_label(self) -> str:
+        """How the chain is called on the rail, the Preview step and in the visual check's intent."""
+        from .chain import chain_name
+        return chain_name(self.chain) if self.chain is not None else ""
 
     def end_conversation(self) -> None:
         self.conversation, self.turn, self.questions = None, None, []
@@ -502,6 +520,51 @@ class Session:
         from .library import load_recipe
         return self.load_spec(load_recipe(name))
 
+    # ---- chains: several recipes, one after another (chain.py) ----
+    def load_chain(self, name: str) -> Dict[str, Any]:
+        """One of your saved chains (Your library…) as the outcome: its stages' specs as saved, previewed and run
+        stage by stage. Ends the conversation like a loaded spec does."""
+        from .library import load_chain
+        chain = load_chain(name)
+        self._set_outcome(chain=chain, source=f"library:{name}")
+        self.end_conversation()
+        return chain
+
+    def load_chain_file(self, path: Path) -> Dict[str, Any]:
+        """A chain from a file (a saved chain's file, a run's or a preview's ``chain.json``)."""
+        from .chain import load_chain_file
+        chain = load_chain_file(Path(path))
+        self._set_outcome(chain=chain, source=str(path))
+        self.end_conversation()
+        return chain
+
+    def build_chain(self, names: List[str], name: str = "") -> Dict[str, Any]:
+        """A chain from your recipes, in the order given (Chain recipes…): each recipe's spec as saved becomes a stage
+        named after it. The chain is validated (every stage's spec) before it becomes the outcome; a name that is not
+        a recipe of yours is a ``LibraryError`` and changes nothing."""
+        from .chain import chain_from_specs
+        from .editspec import load_spec, validate_spec
+        from .library import load_recipe
+        if not names:
+            raise ValueError("pick at least one recipe for the chain")
+        stages = []
+        for n in names:
+            spec = load_spec(load_recipe(n))
+            validate_spec(spec)
+            stages.append((n, spec, n))
+        chain = chain_from_specs(stages, name=name)
+        self._set_outcome(chain=chain, source="recipes")
+        self.end_conversation()
+        return chain
+
+    def save_chain(self, name: str, description: str = "", replace: bool = False):
+        """Save the previewed chain (only while its preview is current) in your library."""
+        from .library import save_chain
+        from .preview import approval_token
+        if self.chain is None or self.preview is None or approval_token(self.outcome_key(), self.files()) != self.preview.token:
+            raise ValueError("preview the chain first — only a chain whose preview is current can be saved")
+        return save_chain(name, self.chain, description, replace)
+
     def use_operation(self, name: str, log: Log, render: bool = False) -> str:
         """Run one of your saved operations on this batch (Your library…): first on its sample files (sandbox + the
         full suite — it must pass here, not only where it was made), then its preview; Run writes edited copies only.
@@ -559,13 +622,20 @@ class Session:
             gp = self.generated_preview
             return ((gp.to_text() + "\n\n") if gp is not None else "") + \
                 "AI-written transform ready. Press Run to apply it to every file (edited copies only)."
-        if self.spec is None:
+        if self.spec is None and self.chain is None:
             raise ValueError("nothing to preview — type a request or load a spec file")
         files = self.files()                      # the same filtered set Run checks and runs (no template files)
         out = self._session_dir()                 # beside the conversation's records (a loaded spec: a new folder)
-        log("Planning every file and trying the samples…")
-        self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
-                                    do_render=render)
+        if self.chain is not None:
+            from .preview import make_chain_preview
+            n = len(self.chain["stages"])
+            log(f"Planning stage 1 on every file and running all {n} stage(s) on the samples…")
+            self.preview = make_chain_preview(self.chain, [str(f) for f in files], out / "preview", renderer="auto",
+                                              do_render=render)
+        else:
+            log("Planning every file and trying the samples…")
+            self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
+                                        do_render=render)
         log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
         if render and self.visual_check:
             self._visual_check(self.preview, self._intent(), out / "preview", log)
@@ -574,6 +644,9 @@ class Session:
 
     # ---- Claude's visual check: advisory, can stop a run, never passes one ----
     def _intent(self) -> str:
+        if self.chain is not None:
+            from .chain import chain_intent
+            return chain_intent(self.chain)
         spec = self.spec or {}
         lines = [f"REQUEST: {spec.get('request') or ''}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
         if self.recipe_name:
@@ -652,23 +725,26 @@ class Session:
                                  "press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
             out = (self.out_dir or self.new_out_dir()) / "run"
             res = run_generated(self.generated, [str(f) for f in files], out, log=log)
-            self.last_run_dir, self.last_trials, self.last_batch = out, res, None
+            self.last_run_dir, self.last_trials, self.last_batch, self.last_chain = out, res, None, None
             ok = sum(r.passed for r in res)
             return f"{ok} of {len(res)} file(s) PASS. Outputs: {out / 'outputs'} (your files were not changed)."
-        if self.preview is None or self.spec is None:
+        if self.preview is None or (self.spec is None and self.chain is None):
             raise ValueError("press Preview first — nothing runs before you have seen the preview")
         files = self.files()
-        if approval_token(self.spec, files) != self.preview.token:
+        key = self.outcome_key()
+        if approval_token(key, files) != self.preview.token:
             from .preview import approval_inputs, explain_approval_change
             what = explain_approval_change(getattr(self.preview, "token_inputs", None) or {},
-                                           approval_inputs(self.spec, files))
-            raise ValueError("a file or the spec changed since the preview — press Preview again"
-                             + ("".join(f"\n  • {w}" for w in what) if what else ""))
+                                           approval_inputs(key, files))
+            raise ValueError(f"a file or the {'chain' if self.chain is not None else 'spec'} changed since the preview "
+                             "— press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
         out = self.out_dir / "run"
         self.last_run_dir = out                   # set before the run: a run that stops still has its logs there
+        if self.chain is not None:
+            return self._run_chain(files, out, in_place, render, log)
         batch = run_batch([str(f) for f in files], "edit-spec", {}, out, renderer="auto", do_render=render,
                           in_place=in_place, progress=log, spec=self.spec)
-        self.last_run_dir, self.last_batch, self.last_trials = out, batch, None
+        self.last_run_dir, self.last_batch, self.last_trials, self.last_chain = out, batch, None, None
         c = batch.counts()
         lines = [f"{len(batch.files)} file(s): PASS {c['PASS']}  FAIL {c['FAIL']}  EXCEPTION {c['EXCEPTION']}"]
         for f in batch.files:
@@ -695,12 +771,55 @@ class Session:
                                                   self.claude_ready() else "."))
         return "\n".join(lines)
 
+    def _run_chain(self, files: List[Path], out: Path, in_place: bool, render: bool, log: Log) -> str:
+        """Run the chain (every stage a verified batch in ``out/stage-NN/``; ``chain.run_chain``) and say, per file,
+        how far it got."""
+        from .chain import run_chain
+        result = run_chain([str(f) for f in files], self.chain, out, renderer="auto", do_render=render,
+                           in_place=in_place, progress=log)
+        self.last_run_dir, self.last_chain, self.last_batch, self.last_trials = out, result, None, None
+        c = result.counts()
+        n = len(result.stages)
+        lines = [f"Chain «{result.name}» — {n} stage(s): " + " → ".join(s.name for s in result.stages),
+                 f"{len(result.files)} file(s): PASS {c['PASS']} (every stage)  FAIL {c['FAIL']}  EXCEPTION {c['EXCEPTION']}"]
+        for f in result.files:
+            line = f"  {f.status:<9} {f.source.name}  [" + " · ".join(f.stage_status) + "]"
+            if f.stopped_at:
+                line += f"  stopped at stage {f.stopped_at}: [{f.code}] {f.reason}"
+            elif f.delivered_to:
+                line += f"  → written back to {f.delivered_to}" if in_place else f"  → {f.delivered_to}"
+            for fl in f.flags:
+                line += f"\n            FLAG: {fl}"
+            lines.append(line)
+        lines.append(f"\nReport: {out / 'CHAIN_REPORT.md'} (each stage's own report: {out}/stage-NN/BATCH_REPORT.md)")
+        lines.append(f"Diagnostics (which stage, why, where and how, per file): {out / 'DIAGNOSTICS.md'} — log: "
+                     f"{out / 'logs' / 'chain.log'}")
+        if not in_place:
+            lines.append(f"Edited copies that passed every stage: {out / 'outputs'} (your files were not changed)")
+        else:
+            lines.append("Files that passed a stage were written back over the originals stage by stage; a file that "
+                         "stopped later keeps the stages before it (see the report).")
+        if c["EXCEPTION"] or c["FAIL"]:
+            lines.append("Some files did not get through every stage — click 'Load set-aside files' to run the next pass "
+                         "on only those files" + (", or 'Advise on exceptions' for per-file advice." if
+                                                  self.claude_ready() else "."))
+        return "\n".join(lines)
+
     def advise(self, log: Log) -> str:
         from .advisor import advise_batch
         if not self.last_run_dir:
             raise ValueError("run something first")
         if not self.claude_ready():
             raise ValueError(NEEDS_KEY_ADVICE)
+        if self.last_chain is not None:           # a chain: each stage's exceptions are in its own folder
+            res = []
+            for st in self.last_chain.stages:
+                if st.batch is not None and (st.out_dir / "exceptions").is_dir():
+                    res += [(st, a) for a in advise_batch(st.out_dir, client=self.client, log=log)]
+            if not res:
+                return "No exceptions to advise on."
+            return "\n".join(f"  {a.kind:<14} {Path(a.source).name}  (stage {st.index}: {st.name})" for st, a in res) + \
+                "\n\nAdvice: " + ", ".join(str(st.out_dir / "advice") for st in {id(st): st for st, _ in res}.values())
         res = advise_batch(self.last_run_dir, client=self.client, log=log)
         if not res:
             return "No exceptions to advise on."
