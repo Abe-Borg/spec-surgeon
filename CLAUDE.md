@@ -171,7 +171,10 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
     the test — the machine's keys, or their absence —, also after a test or the window's Settings wrote a key into
     `os.environ`); pops `SPEC_SURGEON_MODEL` from `os.environ` when conftest loads, for the whole run (nothing puts it
     back; so each test's teardown restores its absence), and pins `DEFAULT_MODEL` to `PINNED_MODEL` (`claude-opus-5-5`)
-    in every loaded `spec_surgeon` module (`pin_model`).
+    in every loaded `spec_surgeon` module (`pin_model`). It makes `llm.credentials_found` return True (the tests script
+    their clients, so every surface takes its Claude path as before) and `llm._sdk_credentials` False (an `ant auth
+    login` profile on the developer's machine is never seen); a keyless test patches `credentials_found` to False, and
+    `tests/test_keyless.py` tests the real function (taken at collection, before any fixture patches it).
     `tests/fake_claude.py` is the scripted streaming client (its `messages.create` raises; `raise_on_enter`/`raise_on_final`/`api_error` script API errors).
     A new test that needs Claude scripts it there. `llm.client`'s error in the tests is a plain `RuntimeError` — NOT an
     API error — so a test that forgot its script fails loudly instead of recording a failed turn; keep it so.
@@ -428,10 +431,11 @@ proposals and recorded in the plan's status sections.
   "the custom transform was started" for the files' stats taken before a transform is written).
   Default model `claude-opus-5-5` (`SPEC_SURGEON_MODEL`); the live API path is untested in the container.
 - `llm.py` — the one Claude call site (rule 18): `call`, `history_content`, `tool_uses`, `texts`, `served`,
-  `stop_problem`, `Usage`, `PRICES`, `client()` (`ClaudeUnavailable` without the SDK); diagnostics: `is_api_error`,
-  `api_error_text`, `failure_text`, and the per-call records `response_entry` (stop reason, serving model, usage,
-  seconds, request id, content via `block_dict`), `results_entry`, `error_entry`, `transcript_content` (total, no
-  image data).
+  `stop_problem`, `Usage`, `PRICES`, `client()` (`ClaudeUnavailable` without the SDK); keyless mode's one decision
+  `credentials_found()` (+ `_sdk_credentials`) and `CLAUDE_FEATURES` (the list every "needs a key" text shows);
+  diagnostics: `is_api_error`, `api_error_text`, `failure_text`, and the per-call records `response_entry` (stop reason,
+  serving model, usage, seconds, request id, content via `block_dict`), `results_entry`, `error_entry`,
+  `transcript_content` (total, no image data).
 - `conversation.py` — `Conversation` (start/reply/choice/note/brief/save/compile_result), `Turn`, `Choice`,
   `check_pairing`, `clean_wording` (rules 13–14). Since 2026-10-16: `LIBRARY_CHOICE_KINDS`, `LibraryChanged`,
   `Choice.words/name/item_hash/snapshot`, `_library_choice`, `take_library_choice`, `_dropped` (see "2026-10-16 Claude
@@ -510,7 +514,8 @@ proposals and recorded in the plan's status sections.
   `ui/` lazily and explain `pip install "spec-surgeon[gui]"` when PySide6 is missing (exit 2).
 - `ui/` — the Qt window (PySide6-Essentials ≥ 6.8, v0.4.0; reworked 2026-10-15). `app.py`: `MainWindow` (all wiring),
   `build_window` (test hook `window._spec_surgeon`: buttons incl. `next`/`about` and `send`/`start_over`/`review_ack`/
-  `library`/`save_to_library`, `Var` values, `request`/`reply`/`chat`/`preview_chat`/`choices`, `wait()`; never
+  `library`/`save_to_library`, `Var` values, `request`/`reply`/`chat`/`preview_chat`/`choices`, `claude`, `wait()`;
+  never
   `answers` or `vars.codegen` — those controls are gone), `Prompts`/`RecordingPrompts` (every dialog goes through
   `prompts` — a modal dialog hangs an offscreen test), `qt_app`, `main`. `pages.py` the four steps (layout only: header
   with "STEP n OF 4", cards, an action bar with the primary button and a hint label — `next_hint`, `preview_hint`,
@@ -554,7 +559,8 @@ wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` befor
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
 merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 709 with Claude and your library
-(`tests/test_library_choices.py`, 2026-10-16) — all pass but
+(`tests/test_library_choices.py`, 2026-10-16), 724 with running without an API key (`tests/test_keyless.py`,
+2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -951,3 +957,38 @@ pins every rule (24 tests, 709 in total); README → "Your library → Claude an
 6. **Window**: `ui/chat.py` builds one *Exact words* line per word from `words` (never Claude's text) and the buttons
    *Use it* / *Try it* (beside *Choose* / *Do this*); `ui/app.py` heads the Preview step *Your recipe “NAME” (as saved)
    for “request”*. `Your library…` (`use_operation`, `load_recipe`) is unchanged.
+
+## 2026-10-16 Running without an API key (keyless mode)
+
+Abraham: "most users either not have or will not want an api key … give the user [the option] to run this software API
+keyless. And inform them that some functions are unavailable." README → "Running without an API key" is the user's view;
+`tests/test_keyless.py` pins every rule (15 tests, 724 in total; each fails without the code it pins). Rules:
+
+1. **One decision.** `llm.credentials_found()`: `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` (`CREDENTIAL_ENV`, non-empty)
+   or a profile the SDK finds (`_sdk_credentials`: `anthropic.lib.credentials.default_credentials`, files only, never a
+   call; any failure or no SDK is False). `Session.claude_ready()` = a client was given OR `credentials_found()`. The
+   window caches it as `MainWindow.claude_ok`, set by `refresh_key_label` (at start, and whenever Settings saves or
+   forgets a key) — never per keystroke. The command line asks `llm.credentials_found()` directly.
+2. **Claude's features refuse before anything changes, with the reason; nothing else changes.** `Session.compile`
+   (`gui.NEEDS_KEY`, before the outcome is voided), `Session.reply` (`NEEDS_KEY_REPLY`, nothing said or voided — the
+   conversation waits), `Session.advise` (`NEEDS_KEY_ADVICE`); `cli.cmd_do`/`retry` (`NEEDS_KEY_DO`, exit 2 before the
+   out folder is made) and `cmd_advise` (`NEEDS_KEY_ADVISE`). Never let a keyless path reach `llm.call` to fail there.
+3. **The visual check without a key is a skipped review, built without preparing or sending anything**
+   (`Session._visual_check`, `cli._review`: `vision.VisualReview(skipped=NO_KEY_REVIEW)`), saved like any review. Rule
+   15 holds: it never blocks Run and never passes anything. The Preview card's helper says Claude did not look (`REVIEW_HELP`).
+4. **The window in keyless mode** (`_apply_claude_mode`, `RequestPage.set_claude`): step 2 is *Choose the change* (page
+   title, rail item, `KEYLESS_HINT`), the saved-spec card first, the request box/chips/codegen note hidden and the note
+   listing `llm.CLAUDE_FEATURES` with *Set API key…* shown, the rail's `keyless_note`, *Advise* off with its reason
+   (`_gate_claude_buttons`, re-applied after every `set_busy`/`set_updating`/`_after_run`), the chat blocked
+   (`NEEDS_KEY_REPLY`), the set-aside strip and run summary pointing at saved specs. `typed_request()` is "" keyless:
+   every read of the request box that decides anything goes through it (`_widget_key`, `_refresh_nav`,
+   `_refresh_run_state`, `do_preview`), so a hidden draft never compiles and never hides a loaded spec; `do_preview`
+   with nothing loaded shows *Choose a saved spec* instead of compiling. **Nothing is cleared**: the draft stays in the box
+   (and `settings.json`) and a key set later brings the full step back at once.
+5. **`spec-surgeon library use NAME FILES…`** (`cli._use_library_item`): a recipe takes `_preview_and_run` — the tail
+   `cmd_do` now shares after the compile (`--save-as`, preview, visual check, y/N/`--yes`, the token re-check,
+   `cmd_run`); an operation `_try_saved_operation(None, …)` (rule 17: trials first, the token before them; `conv` None
+   = nothing to note) then `_run_saved_operation`. `library show` names `library use`.
+6. `packaging/gui_screenshot.py --keyless` writes `docs/gui-keyless.png` (refuses on a machine with an `ant auth login`
+   sign-in). The other screenshots set a dummy `ANTHROPIC_API_KEY` in the script's own process (nothing calls Claude:
+   a saved spec, *Render pages* off), so they keep the look with a key; `--chat` has its scripted client.

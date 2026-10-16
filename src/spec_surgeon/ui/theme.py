@@ -199,6 +199,8 @@ QWidget#Sidebar QLabel {{ color: {t.sidebar_text}; background: transparent; }}
 QLabel#AppName {{ font-size: 13pt; font-weight: 600; }}
 QLabel#Version {{ color: {t.sidebar_muted}; font-size: 8.5pt; }}
 QLabel#SideHeading {{ color: {t.sidebar_muted}; font-size: 8pt; font-weight: 600; }}
+QWidget#Sidebar QLabel#SideNote {{ color: {t.sidebar_muted}; font-size: 8.5pt; padding: 2px 0 6px 8px;
+    border-left: 3px solid #F5C451; }}
 QFrame#SidebarDivider {{ background: {t.sidebar_border}; border: none; max-height: 1px; min-height: 1px; }}
 QListWidget#StepNav {{ background: transparent; border: none; outline: none; }}
 QPushButton#NavButton {{ color: {t.sidebar_text}; text-align: left; padding: 8px 12px; border: none;

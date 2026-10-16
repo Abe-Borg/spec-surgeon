@@ -20,6 +20,9 @@
                                                              (rinse & repeat: run next pass on set-aside files only)
     spec-surgeon library list|show NAME|delete NAME [--kind recipe|operation] [--yes]
                                                              (your saved recipes and operations)
+    spec-surgeon library use NAME FILES... [--kind recipe|operation] [--out DIR] [--yes] [--in-place] [--no-render]
+                                                             (one of them on these files — no API key needed:
+                                                              preview → approve → verified run)
     spec-surgeon gui                                         (the window; also: spec-surgeon-gui)
     spec-surgeon advise OUT_DIR [--file NAME]                (Claude: per exception a recommendation or a re-compiled spec)
     spec-surgeon diagnose OUT_DIR [--file NAME] [--bundle ZIP] (why each file failed, where and how; a zip to send)
@@ -39,6 +42,14 @@ from .batch import expand_inputs, load_set_aside, run_batch
 from .fingerprint import fingerprint
 from .jobs import REGISTRY, get_job
 from .package import DocxPackage
+
+# Running without an API key (``llm.credentials_found`` False): what needs Claude says so; everything else runs.
+NEEDS_KEY_DO = ("Talking a request through with Claude needs an Anthropic API key: set ANTHROPIC_API_KEY (or sign in "
+                "with `ant auth login`). Without one, use your library — spec-surgeon library use NAME FILES… — or a "
+                "saved spec — spec-surgeon run-spec SPEC.json FILES…; both run without a key.")
+NEEDS_KEY_ADVISE = ("Advice comes from Claude and needs an Anthropic API key: set ANTHROPIC_API_KEY (or sign in with "
+                    "`ant auth login`). Without one, `spec-surgeon diagnose OUT_DIR` says why each file was set aside.")
+NO_KEY_REVIEW = "no Anthropic API key — look at the before/after pages in the preview folder yourself"
 
 
 def _params(arg: str | None) -> dict:
@@ -284,7 +295,6 @@ def cmd_do(args):
     from .compiler import compile_request
     from .diagnostics import write_json
     from .editspec import is_template_file
-    from .preview import make_preview
     out_dir = Path(args.out) if args.out else Path.cwd() / "SpecSurgeon_out" / datetime.now().strftime("%Y%m%d-%H%M%S")
     prior_failures = getattr(args, "prior_failures", None)
     input_files = list(getattr(args, "files", None) or [])
@@ -308,6 +318,10 @@ def cmd_do(args):
     files = [f for f in expand_inputs(input_files) if not is_template_file(f, templates)]
     if not files:
         print("no .docx files to work on", file=sys.stderr)
+        return 2
+    from . import llm
+    if not llm.credentials_found():               # keyless: say what works without a key, before anything is written
+        print(NEEDS_KEY_DO, file=sys.stderr)
         return 2
     if getattr(args, "save_as", None):
         # before any compile: without a terminal and without --allow-codegen only a recipe can come of it
@@ -369,6 +383,14 @@ def cmd_do(args):
             print("Compile failed: " + "; ".join(res.errors), file=sys.stderr)
             return 2
         spec = res.spec
+    return _preview_and_run(args, spec, files, out_dir, brief=conv.brief() if conv is not None else None)
+
+
+def _preview_and_run(args, spec, files, out_dir, brief=None):
+    """The tail a spec takes, compiled by Claude (``cmd_do``) or one of your recipes (``library use``): --save-as
+    checked, the preview, Claude's visual check (with a key, rendering on and no --no-review), --save-as saved, the y/N
+    question (a blocking finding needs a look; --yes), the approval token checked again, then the verified batch."""
+    from .preview import make_preview
     if getattr(args, "save_as", None):
         why = _save_as_refusal(args.save_as, "recipe", getattr(args, "replace", False))
         if why:
@@ -377,7 +399,7 @@ def cmd_do(args):
     pv = make_preview(spec, [str(f) for f in files], out_dir / "preview",
                       renderer=args.renderer, do_render=not args.no_render)
     if not args.no_render and not getattr(args, "no_review", False):
-        _visual_check(pv, spec, out_dir / "preview", args, brief=conv.brief() if conv is not None else None)
+        _visual_check(pv, spec, out_dir / "preview", args, brief=brief)
     print(pv.to_text())
     print(f"\npreview: {out_dir / 'preview'}")
     if getattr(args, "save_as", None):
@@ -425,15 +447,27 @@ def _visual_check(pv, spec, folder, args, brief=None) -> None:
     """Claude's visual check of the preview samples (advisory; never raises; can only add a reason to stop). ``brief``:
     the terminal conversation the spec came from (``Conversation.brief()``) — what the user narrowed or added there is
     what the AFTER pages are judged against, as in the window."""
-    from . import compiler, vision
+    from . import vision
     from .preview import write_preview_files
-    intent = "\n".join([f"REQUEST: {spec.get('request') or args.request}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
+    intent = "\n".join([f"REQUEST: {spec.get('request') or getattr(args, 'request', '')}",
+                        f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
                        + [f"ASSUMPTION: {a}" for a in spec.get("assumptions") or []]
                        + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
-    pv.review = vision.review_samples(intent, pv.samples, folder, compiler._client, model=args.model,
-                                      log=lambda m: print(m, file=sys.stderr))
+    pv.review = _review(intent, pv.samples, folder, args)
     vision.save_review(pv.review, folder)
     write_preview_files(pv)
+
+
+def _review(intent, samples, folder, args):
+    """Claude's visual check of the sample pages — or, without credentials (``llm.credentials_found``), a skipped
+    review that says why: nothing is prepared or sent, and nothing is blocked (it can stop a run, never pass one)."""
+    from . import compiler, llm, vision
+    if not llm.credentials_found():
+        print(f"Claude's visual check skipped: {NO_KEY_REVIEW}", file=sys.stderr)
+        return vision.VisualReview(skipped=NO_KEY_REVIEW)
+    return vision.review_samples(intent, samples, folder, compiler._client,
+                                 model=getattr(args, "model", None) or compiler.DEFAULT_MODEL,
+                                 log=lambda m: print(m, file=sys.stderr))
 
 
 def _interactive() -> bool:
@@ -591,8 +625,8 @@ def _try_saved_operation(conv, name, files, out_dir):
     """One of your operations, picked in the terminal conversation: its trials on the batch's samples (sandbox + the
     full suite) under OUT/library-trial, the approval token taken BEFORE them (CLAUDE.md rule 17, as the window's
     ``Session._prove``). A failing sample — or an operation that no longer loads — is printed and noted to Claude, and
-    None returned: the conversation goes on. A passing one returns (g, key, token, inputs) for
-    ``_run_saved_operation``."""
+    None returned: the conversation goes on. ``conv`` None: ``library use`` (no conversation, nothing to note). A
+    passing one returns (g, key, token, inputs) for ``_run_saved_operation``."""
     from .codegen import pick_samples, trial
     from .library import LibraryError, load_operation
     from .preview import approval_inputs, approval_token, generated_key
@@ -600,7 +634,8 @@ def _try_saved_operation(conv, name, files, out_dir):
         g = load_operation(name)
     except LibraryError as e:
         print(f"Not used: {e}")
-        conv.note(f"Your operation {name!r} could not be used: {e}")
+        if conv is not None:
+            conv.note(f"Your operation {name!r} could not be used: {e}")
         return None
     samples = pick_samples(files)
     print(f"Trying your operation {name!r} on {[s.name for s in samples]} …", file=sys.stderr)
@@ -615,7 +650,8 @@ def _try_saved_operation(conv, name, files, out_dir):
     if bad:
         why = f"your operation {name!r} does not pass on these files — " + " | ".join(bad)
         print(f"Not used: {why}")
-        conv.note(why)
+        if conv is not None:
+            conv.note(why)
         return None
     g.passed, g.trials = True, trials
     print(f"your operation {name!r} passed on the samples")
@@ -719,12 +755,11 @@ def _approve_and_run_generated(args, g, gp, files, out_dir, key, token, inputs, 
     """The tail a passing generated op shares, fresh (``_do_codegen``) or saved (``_run_saved_operation``): Claude's
     visual check of its preview ``gp``, the preview text, --save-as, the y/N question (a blocking finding needs a look),
     the approval token checked again right before the run, and ``run_generated`` — edited copies only."""
-    from . import compiler, vision
+    from . import vision
     from .codegen import run_generated
     from .preview import changed_since_preview, write_preview_files
     if not args.no_render and not getattr(args, "no_review", False):
-        gp.review = vision.review_samples(intent, gp.samples, gp.out_dir, compiler._client, model=args.model,
-                                          log=lambda m: print(m, file=sys.stderr))
+        gp.review = _review(intent, gp.samples, gp.out_dir, args)
         vision.save_review(gp.review, gp.out_dir)
         write_preview_files(gp)
     print(gp.to_text())
@@ -794,17 +829,20 @@ def cmd_library(args):
     if not args.name:
         print(f"library {args.action}: which one? (spec-surgeon library list)", file=sys.stderr)
         return 2
+    if args.action == "use":
+        return _use_library_item(args)
     try:
         item = find(args.name, args.kind)
         if args.action == "show":
             print(f"{item.label()}\n  saved:   {item.saved_at}\n  request: {item.request}\n  path:    {item.path}")
             if item.description:
                 print(f"  about:   {item.description}")
+            print(f"\nuse it:   spec-surgeon library use \"{item.name}\" FILES…   (no API key needed)")
             if item.kind == "recipe":
-                print(f"\nrun it:   spec-surgeon run-spec \"{item.path}\" FILES…")
+                print(f"run it:   spec-surgeon run-spec \"{item.path}\" FILES…   (straight to the run, no preview)")
             else:
-                print("\nuse it from the window (Your library…): it is tried on the batch's samples first, then "
-                      "previewed; Run writes edited copies only")
+                print("it is tried on the files' samples first, then previewed; the run writes edited copies only "
+                      "(the window: Your library…)")
             return 0
         if not args.yes:
             if not _interactive():
@@ -820,13 +858,54 @@ def cmd_library(args):
         return 2
 
 
+def _use_library_item(args):
+    """``library use NAME FILES…``: one of your recipes or operations on these files, with no API key needed (Claude's
+    visual check runs only when there is one). A recipe takes ``do``'s path after the compile (``_preview_and_run``:
+    preview, approval — y/N, or --yes —, the token re-checked, the verified batch; --in-place guarded as always). An
+    operation is tried on the files' samples first (CLAUDE.md rule 17: a failing one changes nothing), then previewed,
+    approved and run like a custom transform (``_run_saved_operation``) — edited copies only."""
+    from .editspec import is_template_file, spec_templates
+    from .library import LibraryError, find, load_recipe
+    if not args.files:
+        print("library use: which files? (spec-surgeon library use NAME FILES…)", file=sys.stderr)
+        return 2
+    try:
+        item = find(args.name, args.kind)
+        spec = None
+        if item.kind == "recipe":
+            spec = _load_valid_spec(str(load_recipe(item.name)))
+            if spec is None:
+                return 2
+    except LibraryError as e:
+        print(str(e), file=sys.stderr)
+        return 2
+    templates = spec_templates(spec) if spec is not None else []
+    files = [f for f in expand_inputs(args.files) if not is_template_file(f, templates)]
+    if not files:
+        print("no .docx files to work on", file=sys.stderr)
+        return 2
+    out_dir = Path(args.out) if args.out else Path.cwd() / "SpecSurgeon_out" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Using your {item.kind} {item.name!r} on {len(files)} file(s).", file=sys.stderr)
+    if spec is not None:
+        return _preview_and_run(args, spec, files, out_dir)
+    picked = _try_saved_operation(None, item.name, files, out_dir)
+    if picked is None:                            # its trials failed (said above): nothing previewed or run
+        return 2
+    return _run_saved_operation(args, picked, files, out_dir)
+
+
 def cmd_gui(args):
     from .gui import main as gui_main
     return gui_main()
 
 
 def cmd_advise(args):
+    from . import llm
     from .advisor import advise_batch
+    if not llm.credentials_found():
+        print(NEEDS_KEY_ADVISE, file=sys.stderr)
+        return 2
     res = advise_batch(Path(args.out_dir), only=args.file, model=args.model,
                        log=lambda m: print(m, file=sys.stderr))
     if not res:
@@ -987,10 +1066,24 @@ def main(argv=None) -> int:
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)
 
-    p = sub.add_parser("library", help="your library of saved recipes (specs) and operations (custom transforms)")
-    p.add_argument("action", choices=["list", "show", "delete"]); p.add_argument("name", nargs="?", default=None)
+    p = sub.add_parser("library", help="your library of saved recipes (specs) and operations (custom transforms); "
+                                       "`library use NAME FILES…` runs one without an API key")
+    p.add_argument("action", choices=["list", "show", "delete", "use"]); p.add_argument("name", nargs="?", default=None)
+    p.add_argument("files", nargs="*", help="use: the .docx files or folders to run it on")
     p.add_argument("--kind", choices=["recipe", "operation"], default=None)
-    p.add_argument("--yes", action="store_true", help="delete without asking")
+    p.add_argument("--yes", action="store_true",
+                   help="delete: without asking; use: run after the preview without asking")
+    p.add_argument("--out", default=None, help="use: output directory (default ./SpecSurgeon_out/<timestamp>)")
+    p.add_argument("--in-place", action="store_true",
+                   help="use, a recipe: write verified outputs back over the sources (guarded); an operation always "
+                        "writes edited copies")
+    p.add_argument("--workers", type=int, default=0)
+    p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
+    p.add_argument("--no-render", action="store_true")
+    p.add_argument("--no-review", action="store_true",
+                   help="use: skip Claude's visual check (it runs only with an API key and rendering on)")
+    p.add_argument("--ack-review", action="store_true",
+                   help="use: run even when Claude's visual check flagged a blocking problem (you have looked at it)")
     p.set_defaults(fn=cmd_library)
 
     p = sub.add_parser("verify", help="re-run the verification suite on a source/output pair")

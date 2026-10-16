@@ -163,28 +163,57 @@ class FilesPage(Page):
 
 
 class RequestPage(Page):
+    # The step reads one of two ways (``set_claude``): with Claude (a key is there) the request box comes first; without
+    # a key (keyless mode) the saved specs and Your library come first, and the request box gives way to a note saying
+    # what a key would add — the draft typed earlier stays in the (hidden) box and comes back with a key.
+    TITLES = {True: "Describe the change", False: "Choose the change"}
+    SUBTITLES = {True: "Say it in plain English — Claude turns it into an edit spec, and the engine previews it on "
+                       "every file before anything runs. No API key? Load a saved spec instead.",
+                 False: "Use a saved spec or one from Your library — they preview, run and verify without an API key. "
+                        "Describing a change in plain English needs one."}
+    SAVED_TITLES = {True: "Or use a saved spec", False: "Use a saved spec"}
+    REQUEST_TITLES = {True: "What should change?", False: "Describe it in plain English"}
+
     def __init__(self, parent=None):
-        super().__init__(2, "Describe the change",
-                         "Say it in plain English — Claude turns it into an edit spec, and the engine previews it on "
-                         "every file before anything runs. No API key? Load a saved spec instead.", parent)
-        card = Card("What should change?")
+        super().__init__(2, self.TITLES[True], self.SUBTITLES[True], parent)
+        self.claude = True
+        card = Card(self.REQUEST_TITLES[True])
+        self.request_card = card
         self.request = QPlainTextEdit()
         self.request.setObjectName("Editor")
         self.request.setPlaceholderText("e.g.  change all fonts to Arial")
         self.request.setMinimumHeight(104)
         self.request.setMaximumHeight(140)
         card.add(self.request)
-        card.add(label("Try one of these:", "Muted"))
+        self.try_lbl = label("Try one of these:", "Muted")
+        card.add(self.try_lbl)
         self.chips = ChipRow()
         card.add(self.chips)
+        self.keyless = QWidget()                  # keyless mode: in place of the box, what a key would add
+        kl = QVBoxLayout(self.keyless)
+        kl.setContentsMargins(0, 0, 0, 0)
+        kl.setSpacing(8)
+        self.keyless_lbl = label("", "Muted")
+        kl.addWidget(self.keyless_lbl)
+        krow = QHBoxLayout()
+        self.keyless_pill = pill("Needs an API key", "warn")
+        krow.addWidget(self.keyless_pill)
+        self.keyless_key_btn = QPushButton("Set API key\u2026")
+        self.keyless_key_btn.setToolTip("Settings: your Anthropic API key (it stays on this computer)")
+        krow.addWidget(self.keyless_key_btn)
+        krow.addStretch(1)
+        kl.addLayout(krow)
+        self.keyless.hide()
+        card.add(self.keyless)
         self.content.addWidget(card)
 
         self.chat = ChatView()                    # Claude's reply and choices sit right under the request they are about
         self.content.addWidget(self.chat)
 
-        card = Card("Or use a saved spec", "An edit spec file (.json) runs without an API key: an example from the "
-                                          "Start menu's Example edit specs, the spec.json saved in an earlier "
-                                          "preview folder, or a recipe or operation from Your library.")
+        card = Card(self.SAVED_TITLES[True], "An edit spec file (.json) runs without an API key: an example from the "
+                                             "Start menu's Example edit specs, the spec.json saved in an earlier "
+                                             "preview folder, or a recipe or operation from Your library.")
+        self.saved_card = card
         row = QHBoxLayout()
         self.load_btn = QPushButton("Load saved spec\u2026")
         self.load_btn.setToolTip("Use an EditSpec (.json) — e.g. one from the Start menu's Example edit specs, or the "
@@ -205,9 +234,10 @@ class RequestPage(Page):
         card.add(self.render_cb)
         card.add(label("Makes before/after page images for the preview and checks that page layout did not move. "
                        "Slower; needs Word or LibreOffice.", "Muted"))
-        card.add(label("When no built-in operation can do the request, Claude says why and offers choices in the "
-                       "chat — including, when it can be done safely, a one-off transform it writes and tests on "
-                       "sample files first (edited copies only).", "Muted"))
+        self.codegen_lbl = label("When no built-in operation can do the request, Claude says why and offers choices "
+                                 "in the chat — including, when it can be done safely, a one-off transform it writes "
+                                 "and tests on sample files first (edited copies only).", "Muted")
+        card.add(self.codegen_lbl)
         key_row = QHBoxLayout()
         key_row.setSpacing(10)
         self.key_pill = pill("API key")
@@ -230,8 +260,33 @@ class RequestPage(Page):
         self.preview_btn.setToolTip("Plan every file and try the change on samples — nothing is written to your files")
         self.footer.addWidget(self.preview_btn)
 
+    def set_claude(self, on: bool, features: List[str]) -> None:
+        """With Claude (``on``) or keyless: the titles, which card comes first, and the request box or the note in its
+        place (``features``: what a key adds, ``llm.CLAUDE_FEATURES``). The request box keeps its text either way."""
+        self.claude = on
+        self.title.setText(self.TITLES[on])
+        self.subtitle.setText(self.SUBTITLES[on])
+        self.saved_card.title.setText(self.SAVED_TITLES[on])
+        self.request_card.title.setText(self.REQUEST_TITLES[on])
+        for w in (self.request, self.try_lbl, self.chips, self.codegen_lbl):
+            w.setVisible(on)
+        self.keyless_lbl.setText("An Anthropic API key adds:\n" + "\n".join(f"\u2022 {f[:1].upper()}{f[1:]}"
+                                                                           for f in features)
+                                 + "\nEverything else — saved specs, Your library, Preview, Run and its verification — "
+                                   "works without one.")
+        self.keyless.setVisible(not on)
+        # keyless: the saved specs first — what this step is about without a key
+        self.content.removeWidget(self.saved_card)
+        self.content.insertWidget(0 if not on else self.content.indexOf(self.chat) + 1, self.saved_card)
+
 
 class PreviewPage(Page):
+    # the visual check's helper line: Claude looked (True), or the check was skipped — no key, nothing rendered (False)
+    REVIEW_HELP = {True: "Advisory — not a verification. Claude looked at the before/after pages of the samples: it "
+                         "can stop a run, never pass one. The engine's checks are above.",
+                   False: "Advisory — not a verification, and Claude did not look this time. The engine's checks "
+                          "are above."}
+
     def __init__(self, parent=None):
         super().__init__(3, "Preview", "What will change in every file, and the change tried on sample files. Nothing "
                                        "has been written to your files.", parent)
@@ -287,9 +342,7 @@ class PreviewPage(Page):
         self.samples_card.add(self.samples)
         bl.addWidget(self.samples_card)
 
-        self.review_card = Card("Claude's visual check",
-                                "Advisory — not a verification. Claude looked at the before/after pages of the "
-                                "samples: it can stop a run, never pass one. The engine's checks are above.")
+        self.review_card = Card("Claude's visual check", self.REVIEW_HELP[True])
         self.review_lbl = label("", selectable=True)
         self.review_lbl.setTextFormat(Qt.TextFormat.PlainText)
         self.review_card.add(self.review_lbl)

@@ -24,6 +24,18 @@ def _no_live_claude():
     raise RuntimeError("no live Claude calls in tests — script a FakeClient and pass it in (or patch compiler._client)")
 
 
+def _scripted_claude_reachable():
+    """Stands in for ``llm.credentials_found``: the tests script their Claude clients, so the window, the session and
+    the command line take their Claude-enabled path as they always did. A test of keyless mode patches it to False; the
+    real function, tested on its own, reads the environment and ``llm._sdk_credentials`` (sealed below)."""
+    return True
+
+
+def _no_sdk_profile():
+    """Stands in for ``llm._sdk_credentials``: an ``ant auth login`` profile on this machine is never seen."""
+    return False
+
+
 def _no_credential_manager():
     """Stands in for ``credentials._win32cred`` (the only route to win32cred): Credential Manager is not there, as on
     Linux — ``available()`` False, ``load()`` None, ``save()`` raises, ``delete()`` False."""
@@ -70,6 +82,8 @@ def _hermetic(request, tmp_path_factory, monkeypatch):
     try:
         from spec_surgeon import llm
         monkeypatch.setattr(llm, "client", _no_live_claude)
+        monkeypatch.setattr(llm, "credentials_found", _scripted_claude_reachable)
+        monkeypatch.setattr(llm, "_sdk_credentials", _no_sdk_profile)
     except ImportError:
         pass
     try:

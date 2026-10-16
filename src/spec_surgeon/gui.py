@@ -23,6 +23,17 @@ from typing import Any, Callable, Dict, List, Optional
 
 Log = Callable[[str], None]
 
+# Running without an API key (``Session.claude_ready`` False): what each Claude feature says instead of calling. Saved
+# specs, your library, Preview, Run and set-aside passes need no key and are unchanged.
+NEEDS_KEY = ("Describing a change in plain English needs an Anthropic API key — set one in Settings. Without one, use "
+             "a saved spec or Your library: they preview and run without a key.")
+NEEDS_KEY_REPLY = ("Claude needs an Anthropic API key to go on with this conversation — set one in Settings, or Start "
+                   "over and use a saved spec or Your library.")
+NEEDS_KEY_ADVICE = ("Advice on set-aside files comes from Claude and needs an Anthropic API key — set one in Settings. "
+                    "Without one, View diagnostics says why each file was set aside.")
+NO_KEY_REVIEW = ("Claude's visual check needs an Anthropic API key (Settings) — look at the before/after pages "
+                 "yourself.")
+
 
 class TransformFailed(RuntimeError):
     """No custom transform passed verification: every attempt the writer submitted failed on the samples, or a call to
@@ -83,6 +94,13 @@ class Session:
                                                   # used as saved (``spec_source`` "compiled": the conversation's
                                                   # outcome)
 
+    def claude_ready(self) -> bool:
+        """Claude can be called: a client was given (tests, scripted) or credentials are there
+        (``llm.credentials_found``: the key from Settings, the environment or an ``ant auth login`` profile). False is keyless mode — the window
+        offers saved specs and Your library, and every Claude feature says it needs a key instead of failing."""
+        from . import llm
+        return self.client is not None or llm.credentials_found()
+
     def _templates(self, outcome: bool = True) -> List[Path]:
         """The files that are never part of the batch: the attached template and (``outcome``) every template the
         current spec reads — a spec may name a file of the batch folder as its template."""
@@ -133,7 +151,8 @@ class Session:
         lines = [f"Loaded {len(items)} set-aside file(s) for the next pass:"]
         for x in items:
             lines.append(f"  - {x['name']} [{x['code']}] ({x['category']}): {x['reason']}")
-        lines.append("Press Preview to compile an EditSpec tailored to these files.")
+        lines.append("Press Preview to compile an EditSpec tailored to these files." if self.claude_ready() else
+                     "Load a saved spec or use Your library for them, then press Preview.")
         return "\n".join(lines)
 
     def new_out_dir(self) -> Path:
@@ -201,6 +220,8 @@ class Session:
         from .conversation import Conversation
         if not request.strip():
             raise ValueError("type what you want done (or load a spec file)")
+        if not self.claude_ready():
+            raise ValueError(NEEDS_KEY)           # before anything changes: the outcome and its preview stay
         # The batch as it reads once the old outcome is void (just below), never through the outgoing spec: a file of
         # the folder that spec reads as its template is a file of this conversation, as conversation_matches sees it
         # from here on. Taken first, so a folder that cannot be read refuses before anything changes.
@@ -228,6 +249,8 @@ class Session:
         c = self.conversation
         if c is None:
             raise ValueError("there is no conversation yet — type a request and press Preview")
+        if not self.claude_ready():
+            raise ValueError(NEEDS_KEY_REPLY)     # nothing said, nothing voided: the conversation waits for a key
         if not self.conversation_matches(c.request):
             raise ValueError("the files or the template changed since this conversation started — press Start over")
         chosen = c.choice(choice_id) if choice_id else None
@@ -564,7 +587,11 @@ class Session:
         from . import compiler, vision
         from .preview import write_preview_files
         client = self.client
-        pv.review = vision.review_samples(intent, pv.samples, folder, lambda: client or compiler._client(), log=log)
+        if not self.claude_ready():               # keyless: said on the Preview step, nothing prepared or sent
+            log(f"Claude's visual check skipped: {NO_KEY_REVIEW}")
+            pv.review = vision.VisualReview(skipped=NO_KEY_REVIEW)
+        else:
+            pv.review = vision.review_samples(intent, pv.samples, folder, lambda: client or compiler._client(), log=log)
         vision.save_review(pv.review, folder)
         write_preview_files(pv)
 
@@ -664,13 +691,16 @@ class Session:
             lines.append(f"Copies that FAILED verification: {out / 'failed'} (diagnosis only — do not use them)")
         if c["EXCEPTION"] or c["FAIL"]:
             lines.append("Some files were set aside untouched — click 'Load set-aside files' to run the next pass "
-                         "on only those files, or 'Advise on exceptions' for per-file advice.")
+                         "on only those files" + (", or 'Advise on exceptions' for per-file advice." if
+                                                  self.claude_ready() else "."))
         return "\n".join(lines)
 
     def advise(self, log: Log) -> str:
         from .advisor import advise_batch
         if not self.last_run_dir:
             raise ValueError("run something first")
+        if not self.claude_ready():
+            raise ValueError(NEEDS_KEY_ADVICE)
         res = advise_batch(self.last_run_dir, client=self.client, log=log)
         if not res:
             return "No exceptions to advise on."

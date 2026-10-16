@@ -5,6 +5,8 @@ needed (it uses the example spec).
     python packaging/gui_screenshot.py            (needs: pip install -e ".[gui,dev]")
     python packaging/gui_screenshot.py --chat     docs/gui-chat.png — the conversation with Claude on the Describe
                                                   step, from a scripted client (tests/fake_claude.py; no network)
+    python packaging/gui_screenshot.py --keyless  docs/gui-keyless.png — the step "Choose the change" as it reads
+                                                  without an API key (keyless mode)
     SPEC_SURGEON_THEME=dark SPEC_SURGEON_SCREENSHOT_SUFFIX=-dark python packaging/gui_screenshot.py   (the dark look)
 
 The screenshots show the app's own theme as Linux renders it; fonts differ slightly from Windows (Segoe UI).
@@ -68,6 +70,30 @@ def chat_screenshot(work: Path, folder: Path, suffix: str = "") -> None:
     w.close()
 
 
+def keyless_screenshot(work: Path, folder: Path, suffix: str = "") -> None:
+    """Step 2 without an API key: the saved specs and Your library first, what a key adds, the rail's note."""
+    from spec_surgeon.gui import Session, build_window
+    from spec_surgeon.settings import Settings
+    from spec_surgeon.ui.app import RecordingPrompts
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN"):
+        os.environ.pop(var, None)
+    s = Session(out_root=work / "Results")
+    w = build_window(s, settings=Settings(), prompts=RecordingPrompts())
+    if w.claude_ok:
+        raise SystemExit("an Anthropic sign-in was found on this machine (ant auth login): the keyless screenshot "
+                         "needs a machine without one")
+    ui = w._spec_surgeon
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    w.resize(1280, 840)
+    w.show()
+    w.go(1)
+    settle(ui["app"])
+    w.grab().save(str(ROOT / "docs" / f"gui-keyless{suffix}.png"))
+    w.force_close = True
+    w.close()
+
+
 def main() -> int:
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     sys.path.insert(0, str(ROOT / "tests"))
@@ -82,6 +108,10 @@ def main() -> int:
         for number, title in SPECS:
             (folder / f"{number} – {title}.docx").write_bytes(build(number, title))
         suffix = os.environ.get("SPEC_SURGEON_SCREENSHOT_SUFFIX", "")
+        if "--keyless" in sys.argv[1:]:
+            keyless_screenshot(work, folder, suffix)
+            print(f"wrote docs/gui-keyless{suffix}.png")
+            return 0
         if "--chat" in sys.argv[1:]:
             chat_screenshot(work, folder, suffix)
             print(f"wrote docs/gui-chat{suffix}.png")
@@ -89,6 +119,9 @@ def main() -> int:
         from spec_surgeon.gui import Session, build_window
         from spec_surgeon.settings import Settings
         from spec_surgeon.ui.app import RecordingPrompts
+        # the window as it reads with a key (keyless mode has its own screenshot, --keyless); never used — a saved spec
+        # with Render pages off calls nothing
+        os.environ["ANTHROPIC_API_KEY"] = "screenshot-not-a-real-key"
         s = Session(out_root=work / "Results")
         s.load_spec(ROOT / "examples" / "specs" / "remove-all-headers-footers.json")
         w = build_window(s, settings=Settings(), prompts=RecordingPrompts())
