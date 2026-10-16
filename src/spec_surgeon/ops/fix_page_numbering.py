@@ -152,6 +152,12 @@ class FixPageNumbering(Op):
             raise JobException(f"cover footer part {footer} is also shown by {'; '.join(shared)}; editing it would "
                                f"remove the page number from those pages too (unlink the body footer in Word first)",
                                "shared-part", {"footer": footer, "sections": shared})
+        # The plan READS every section's titlePg (rule 9): the cover's decides which footer part the cover shows
+        # (its first-page footer only while titlePg is on), a later section's whether it shows the cover's first-page
+        # footer by inheritance. An op flipping a titlePg in the same spec (apply_header_footer_template following its
+        # template's) would leave this edit on a part the cover no longer shows — the page number still on the cover
+        # and nothing to catch it (V7 skips page 1 here) — so it is a plan-time conflict, not a guess at an order.
+        reads = [(pkg.main_part(), f"sectPr:{s.sect_pr_ordinal}", "verify:titlePg") for s in sections]
         root = pkg.xml(footer)
         hits = _page_field_paragraphs(root)
         if not hits:
@@ -174,7 +180,7 @@ class FixPageNumbering(Op):
             plan.transform_data = {"footer": footer, "paragraph_index": idx, "clear_only": True}
             plan.diffs.append(BlockDiff(part=footer, block_index=idx, before=before, after="", struct_after={},
                                         note="only paragraph in the footer: content cleared, paragraph kept"))
-            plan.touches = [(footer, str(idx), "text")]
+            plan.touches = [(footer, str(idx), "text")] + reads
             plan.notes.append("The PAGE paragraph is the footer's only paragraph; its runs are removed and the "
                               "empty paragraph kept so the part stays schema-valid.")
         else:
@@ -182,7 +188,7 @@ class FixPageNumbering(Op):
             plan.transform_data = {"footer": footer, "paragraph_index": idx, "clear_only": False}
             plan.diffs.append(BlockDiff(part=footer, block_index=idx, before=before, after=None,
                                         note="paragraph containing the PAGE field deleted"))
-            plan.touches = [(footer, "*", "structure")]
+            plan.touches = [(footer, "*", "structure")] + reads
         plan.untracked_diffs_expected = True
         plan.rev_delta = {"ins": 0, "del": 0}
         for k, v in gone.items():

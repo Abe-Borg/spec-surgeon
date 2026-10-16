@@ -49,11 +49,17 @@ class AmbiguousToggle(Exception):
     pass
 
 
+def theme_part(pkg: DocxPackage) -> Optional[str]:
+    """The package's theme part (resolved via the main part's rels), or None — what ``theme_fonts`` reads, so an
+    op whose prediction depends on the theme can declare it as a read (``(part, "*", "verify")``)."""
+    main = pkg.main_part()
+    return next((r.resolved for r in pkg.rels(main).values() if r.type == THEME_REL and r.resolved
+                 and pkg.has(r.resolved)), None)
+
+
 def theme_fonts(pkg: DocxPackage) -> Dict[str, str]:
     """{"major:latin": "Calibri Light", "minor:cs": "", …} from the package's theme part (resolved via rels)."""
-    main = pkg.main_part()
-    part = next((r.resolved for r in pkg.rels(main).values() if r.type == THEME_REL and r.resolved
-                 and pkg.has(r.resolved)), None)
+    part = theme_part(pkg)
     out: Dict[str, str] = {}
     if part is None:
         return out

@@ -23,9 +23,9 @@ from typing import Any, Callable, List, Optional, Tuple
 
 from PySide6.QtCore import QByteArray, QModelIndex, QSize, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-                               QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
-                               QStackedWidget, QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+                               QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
+                               QPushButton, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
 
 from .. import __version__, about, credentials, llm, winapp
 from .. import diagnostics as diag
@@ -36,7 +36,7 @@ from .about_dialog import AboutDialog, about_text
 from .chat import cost_line, current_choices, transcript, waiting_for_user
 from .models import ROW_ROLE
 from .pages import FilesPage, PreviewPage, RequestPage, RunPage, resize_columns
-from .rows import (ProgressTracker, generated_rows, preview_counts, preview_rows, result_counts, result_rows,
+from .rows import (ProgressTracker, chain_rows, generated_rows, preview_counts, preview_rows, result_counts, result_rows,
                    written_back)
 from .settings_dialog import SettingsDialog
 from .update_ui import UpdateController
@@ -105,17 +105,107 @@ class Prompts:
     def save_file(self, title: str, start: str, filter_: str) -> str:
         return QFileDialog.getSaveFileName(self.parent, title, start or str(Path.home()), filter_)[0]
 
+    def pick_sequence(self, title: str, label_: str, items: List[str]) -> List[str]:
+        """Several of ``items`` in an order the user builds (Chain recipes…): [] when cancelled or empty."""
+        dlg = SequenceDialog(title, label_, items, self.parent)
+        try:
+            return dlg.picked() if dlg.exec() == QDialog.DialogCode.Accepted else []
+        finally:
+            dlg.deleteLater()
+
+
+class SequenceDialog(QDialog):
+    """Build an ordered sequence out of a list: the items on the left, the sequence on the right, Add / Remove /
+    Up / Down between them. Modal; every widget has this dialog as its Qt parent (the Qt rules in CLAUDE.md)."""
+
+    def __init__(self, title: str, label_: str, items: List[str], parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setMinimumSize(640, 380)
+        v = QVBoxLayout(self)
+        v.addWidget(label(label_, "Muted"))
+        row = QHBoxLayout()
+        left = QVBoxLayout()
+        left.addWidget(label("Your recipes", "CardTitle", wrap=False))
+        self.available = QListWidget(self)
+        for it in items:
+            self.available.addItem(QListWidgetItem(it))
+        left.addWidget(self.available)
+        row.addLayout(left, 1)
+        mid = QVBoxLayout()
+        mid.addStretch(1)
+        self.add_btn = QPushButton("Add \u2192", self)
+        self.remove_btn = QPushButton("\u2190 Remove", self)
+        self.up_btn = QPushButton("Up", self)
+        self.down_btn = QPushButton("Down", self)
+        for b in (self.add_btn, self.remove_btn, self.up_btn, self.down_btn):
+            mid.addWidget(b)
+        mid.addStretch(1)
+        row.addLayout(mid)
+        right = QVBoxLayout()
+        right.addWidget(label("The chain, in the order the stages run", "CardTitle", wrap=False))
+        self.chain = QListWidget(self)
+        right.addWidget(self.chain)
+        row.addLayout(right, 1)
+        v.addLayout(row)
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Use this chain")
+        v.addWidget(self.buttons)
+        self.add_btn.clicked.connect(self._add)
+        self.remove_btn.clicked.connect(self._remove)
+        self.up_btn.clicked.connect(lambda: self._move(-1))
+        self.down_btn.clicked.connect(lambda: self._move(1))
+        self.available.itemDoubleClicked.connect(lambda _item: self._add())
+        self.chain.itemDoubleClicked.connect(lambda _item: self._remove())
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        self._refresh()
+
+    def picked(self) -> List[str]:
+        return [self.chain.item(i).text() for i in range(self.chain.count())]
+
+    @Slot()
+    def _add(self) -> None:
+        for it in self.available.selectedItems():
+            self.chain.addItem(QListWidgetItem(it.text()))
+        self.chain.setCurrentRow(self.chain.count() - 1)
+        self._refresh()
+
+    @Slot()
+    def _remove(self) -> None:
+        for it in self.chain.selectedItems():
+            self.chain.takeItem(self.chain.row(it))
+        self._refresh()
+
+    def _move(self, delta: int) -> None:
+        row = self.chain.currentRow()
+        if row < 0 or not 0 <= row + delta < self.chain.count():
+            return
+        it = self.chain.takeItem(row)
+        self.chain.insertItem(row + delta, it)
+        self.chain.setCurrentRow(row + delta)
+        self._refresh()
+
+    def _refresh(self) -> None:
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(self.chain.count() > 0)
+
 
 class RecordingPrompts:
     """Answers questions from a list (default yes) and records everything it was shown."""
 
     def __init__(self, answers: Optional[List[bool]] = None, files: Optional[List[str]] = None,
-                 texts: Optional[List[str]] = None, items: Optional[List[str]] = None):
+                 texts: Optional[List[str]] = None, items: Optional[List[str]] = None,
+                 sequences: Optional[List[List[str]]] = None):
         self.answers = list(answers or [])
         self.files = list(files or [])
         self.texts = list(texts or [])
         self.items = list(items or [])
+        self.sequences = [list(x) for x in (sequences or [])]
         self.shown: List[tuple] = []
+
+    def pick_sequence(self, title, label_, items):
+        self.shown.append(("pick_sequence", title, "\n".join(items)))
+        return self.sequences.pop(0) if self.sequences else []
 
     def ask_text(self, title, label_, default=""):
         self.shown.append(("ask_text", title, label_))
@@ -337,11 +427,13 @@ class MainWindow(QMainWindow):
         m = mb.addMenu("&File")
         self.act_load = QAction("Load saved spec…", self, shortcut=QKeySequence("Ctrl+O"))
         self.act_library = QAction("Your library…", self, shortcut=QKeySequence("Ctrl+L"))
+        self.act_chain = QAction("Chain recipes…", self)
         self.act_library_folder = QAction("Open library folder", self)
         self.act_open = QAction("Open results folder", self)
         self.act_settings = QAction("Settings…", self, shortcut=QKeySequence("Ctrl+,"))
         self.act_exit = QAction("Exit", self, shortcut=QKeySequence("Ctrl+Q"))
-        for a in (self.act_load, self.act_library, self.act_library_folder, self.act_open, self.act_settings):
+        for a in (self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_open,
+                  self.act_settings):
             m.addAction(a)
         m.addSeparator()
         m.addAction(self.act_exit)
@@ -421,6 +513,8 @@ class MainWindow(QMainWindow):
         self.act_library.triggered.connect(self.do_library)
         self.act_library_folder.triggered.connect(self._open_library_folder)
         r.library_btn.clicked.connect(self.do_library)
+        r.chain_btn.clicked.connect(self.do_chain)
+        self.act_chain.triggered.connect(self.do_chain)
         p.save_btn.clicked.connect(self.do_save_to_library)
         self.act_open.triggered.connect(self.do_open)
         self.act_settings.triggered.connect(self.open_settings)
@@ -440,7 +534,8 @@ class MainWindow(QMainWindow):
         resize_columns(p.table, 3, [260, 90, 120, 300])
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn,
-                            p.review_ack_btn, r.library_btn, p.save_btn, self.act_load, self.act_library]
+                            p.review_ack_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
+                            self.act_chain]
 
     # ---- values ---------------------------------------------------------------------------------------
     def _load_values(self, fresh: bool) -> None:
@@ -507,7 +602,8 @@ class MainWindow(QMainWindow):
         request = self.typed_request() if request is None else request.strip()
         loaded = s.spec_source if (keep_spec and not request and s.spec is not None and s.spec_source != "compiled") \
             else ""
-        return (f.folder.text(), f.template.text(), f.out.text(), request, loaded,
+        chain = (s.chain_source, s.chain_label()) if (keep_spec and not request and s.chain is not None) else ()
+        return (f.folder.text(), f.template.text(), f.out.text(), request, loaded, chain,
                 tuple(str(x) for x in (s.selected_files or [])), r.render_cb.isChecked())
 
     def _chat_key(self) -> tuple:
@@ -626,17 +722,17 @@ class MainWindow(QMainWindow):
 
     def _preview_current(self) -> bool:
         s = self.session
-        has = s.generated is not None or (s.preview is not None and s.spec is not None)
+        has = s.generated is not None or (s.preview is not None and (s.spec is not None or s.chain is not None))
         return has and self.preview_key == self._inputs_key()
 
     def _refresh_nav(self) -> None:
         """The rail: a check mark for every step that is done, and under each title where it stands."""
         s = self.session
         request = " ".join(self.typed_request().split())
-        loaded = s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled"
+        loaded = (s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled") or s.chain is not None
         current = self._preview_current()
-        has_preview = s.generated is not None or (s.preview is not None and s.spec is not None)
-        ran = s.last_batch is not None or s.last_trials is not None
+        has_preview = s.generated is not None or (s.preview is not None and (s.spec is not None or s.chain is not None))
+        ran = s.last_batch is not None or s.last_trials is not None or s.last_chain is not None
         done = [bool(self._files_ok), bool(request or loaded or s.generated is not None), current, ran]
         if self._files_ok:
             n = self._files_count
@@ -652,6 +748,8 @@ class MainWindow(QMainWindow):
             describe = f"\u201c{request}\u201d"
         elif s.generated is not None:
             describe = f"Custom transform: {s.generated.name}"
+        elif s.chain is not None:
+            describe = f"Chain: {s.chain_label()}"
         elif loaded:
             describe = f"Saved spec: {loaded_name(s.spec_source)}"
         else:
@@ -711,7 +809,7 @@ class MainWindow(QMainWindow):
         p.save_btn.setEnabled(live)                                # never a live button that silently does nothing
         p.review_ack_btn.setEnabled(live)
         request = self.typed_request()
-        loaded = s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled"
+        loaded = (s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled") or s.chain is not None
         if not self._files_ok:
             r.preview_hint.setText("Choose the specs folder first (step 1)")
         elif not (request or loaded or s.generated is not None):
@@ -736,7 +834,7 @@ class MainWindow(QMainWindow):
         """The "Saved spec" bar stays only while that spec is the session's outcome. A compiled spec, a custom
         transform or one of your operations replaces it — and the bar's Remove would throw the new outcome away."""
         s = self.session
-        if not (s.spec is not None and s.spec_source and s.spec_source != "compiled"):
+        if not (s.spec is not None and s.spec_source and s.spec_source != "compiled") and s.chain is None:
             self.request_page.spec_bar.hide()
 
     def _refresh_preview_empty(self) -> None:
@@ -1027,7 +1125,8 @@ class MainWindow(QMainWindow):
             return False
         self.sync()
         wkey = self._widget_key()          # what this preview is of; Run is enabled only while it still holds
-        loaded = bool(s.spec_source and s.spec_source != "compiled" and s.spec is not None and not req)
+        loaded = bool(((s.spec_source and s.spec_source != "compiled" and s.spec is not None) or s.chain is not None)
+                      and not req)
         # a custom transform or one of your operations with no request typed: preview it again (make_preview tries it
         # again on the files as they are now) — never "type what you want done"
         transform = not loaded and not req and s.generated is not None
@@ -1048,7 +1147,9 @@ class MainWindow(QMainWindow):
 
         def fn(log):
             out = []
-            if loaded:
+            if loaded and s.chain is not None:
+                out.append(f"Using the chain {s.chain_label()!r} ({len(s.chain['stages'])} stage(s)).")
+            elif loaded:
                 out.append(f"Using {s.spec_source}." if is_snippet_source(s.spec_source)
                            else f"Using the spec file {s.spec_source}.")
             elif transform:
@@ -1178,17 +1279,27 @@ class MainWindow(QMainWindow):
         p.tiles.show()
         p.table_card.show()
         p.samples_card.show()
-        p.request_lbl.setText((f"Your recipe “{s.recipe_name}” (as saved) for " if s.recipe_name else "")
-                              + f"“{spec.get('request') or ''}”")
-        p.summary_lbl.setText(spec.get("summary") or "")
+        if s.chain is not None:
+            from ..chain import stage_name
+            stages = s.chain["stages"]
+            p.request_lbl.setText(f"Your chain “{s.chain_label()}” — {len(stages)} stage(s), one after another")
+            p.summary_lbl.setText("\n".join(f"{i}. {stage_name(st, i)}: “{st['spec'].get('request') or ''}” — "
+                                            f"{st['spec'].get('summary') or ''}" for i, st in enumerate(stages, 1))
+                                  + "\n\nThe table shows stage 1's plan on every file; the samples below went through "
+                                    "every stage (their pages show the final result).")
+        else:
+            p.request_lbl.setText((f"Your recipe “{s.recipe_name}” (as saved) for " if s.recipe_name else "")
+                                  + f"“{spec.get('request') or ''}”")
+            p.summary_lbl.setText(spec.get("summary") or "")
         c = preview_counts(pv)
         p.t_files.set(c["files"], "accent")
         p.t_planned.set(c["planned"], "ok" if c["planned"] else "")
         p.t_exceptions.set(c["exceptions"], "warn" if c["exceptions"] else "")
         p.t_patterns.set(c["patterns"])
-        notes = [f"• {a}" for a in spec.get("assumptions", [])] + [f"• {w}" for w in pv.warnings]
+        notes = ([] if s.chain is not None else [f"• {a}" for a in spec.get("assumptions", [])]) \
+            + [f"• {w}" for w in pv.warnings]
         if notes:
-            p.notes.show_message("warn", "Check these assumptions", "\n".join(notes))
+            p.notes.show_message("warn", "Check these assumptions" if s.chain is None else "Check these", "\n".join(notes))
         else:
             p.notes.hide()
         p.model.set_rows(preview_rows(pv))
@@ -1320,7 +1431,8 @@ class MainWindow(QMainWindow):
     def _after_run(self, text: str) -> None:
         s, run = self.session, self.run_page
         self.write(text or "")
-        rows = result_rows(s.last_batch) if s.last_batch is not None else generated_rows(s.last_trials)
+        rows = (chain_rows(s.last_chain) if s.last_chain is not None else
+                result_rows(s.last_batch) if s.last_batch is not None else generated_rows(s.last_trials))
         run.model.set_rows(rows)
         run.only_problems.setChecked(False)
         c = result_counts(rows)
@@ -1330,17 +1442,27 @@ class MainWindow(QMainWindow):
         run.t_exc.set(c["EXCEPTION"], "warn" if c["EXCEPTION"] else "")
         problems = c["FAIL"] + c["EXCEPTION"]
         where = s.last_run_dir
-        if s.last_batch is not None and any(written_back(f) for f in s.last_batch.files):
+        if s.last_chain is not None:
+            if s.last_chain.in_place:
+                msg = "Files that passed a stage were written back over the originals, stage by stage."
+            else:
+                msg = (f"Edited copies that passed every stage are in {where / 'outputs'} — your files were not "
+                       f"changed.")
+            if problems:
+                msg += (" Files that stopped at a stage are listed with the stage and why: load them for the next pass"
+                        + (", or ask for advice." if self.claude_ok else " (View diagnostics says why)."))
+        elif s.last_batch is not None and any(written_back(f) for f in s.last_batch.files):
             msg = "Verified files were written back over the originals."
         else:
             msg = f"Edited copies that passed every check are in {where / 'outputs'} — your files were not changed."
-        if problems:
+        if problems and s.last_chain is None:
             msg += (" Files with problems were left untouched: load them for the next pass"
                     + (", or ask for advice." if self.claude_ok else " (View diagnostics says why)."))
         run.summary.show_message("error" if c["FAIL"] else ("warn" if problems else "ok"),
                                  "Done" if not problems else "Done, with files set aside", msg)
         run.failed_btn.setVisible(bool(where and (where / "failed").is_dir()))
-        run.report_btn.setEnabled(bool(where and (where / "BATCH_REPORT.md").exists()))
+        run.report_btn.setEnabled(bool(where and ((where / "BATCH_REPORT.md").exists()
+                                                  or (where / "CHAIN_REPORT.md").exists())))
         run.diag_btn.setEnabled(bool(where and (where / "DIAGNOSTICS.md").exists()))
         run.set_aside_btn.setEnabled(bool(problems))
         run.advise_btn.setEnabled(bool(problems))
@@ -1398,7 +1520,7 @@ class MainWindow(QMainWindow):
             return False
         items = list_items()
         labels = [i.label() + (f" — {i.description}" if i.description else "") for i in items] + [NEW_SNIPPET]
-        intro = ("Use a saved recipe, one of your operations or a snippet:" if items else
+        intro = ("Use a saved recipe, a chain, one of your operations or a snippet:" if items else
                  "Your library is empty. Save a previewed spec as a recipe, or a custom transform as one of your "
                  "operations, with “Save to library…” on the Preview step — or add a paragraph you insert often:")
         picked = self.prompts.pick_item("Your library", intro, labels)
@@ -1410,6 +1532,20 @@ class MainWindow(QMainWindow):
         s = self.session
         if item.kind == "snippet":
             return self._use_snippet(item.name)
+        if item.kind == "chain":
+            try:
+                chain = s.load_chain(item.name)
+            except Exception as e:
+                self.prompts.warn("Spec Surgeon", f"Cannot use this chain:\n{e}")
+                return False
+            self._clear_request()
+            self.write(f"\nLoaded chain {item.name!r}: {len(chain['stages'])} stage(s) — "
+                       + " → ".join(st.get("name") or "" for st in chain["stages"]) + "\nPress Preview.")
+            self._show_loaded_chain()
+            self._refresh_chat()
+            self._inputs_changed()
+            self.go(1)
+            return True
         if item.kind == "recipe":
             try:
                 spec = s.load_recipe(item.name)
@@ -1484,6 +1620,52 @@ class MainWindow(QMainWindow):
         return True
 
     @Slot()
+    def do_chain(self) -> bool:
+        """Chain recipes…: pick several of your recipes in the order they should run; the chain becomes the outcome
+        (previewed and run stage by stage — ``Session.build_chain``)."""
+        from ..library import list_items
+        if self.busy or self.updating:
+            return False
+        recipes = list_items("recipe")
+        if not recipes:
+            self.prompts.notify("Chain recipes", "Your library has no recipes yet. Save a previewed spec as a recipe "
+                                "with “Save to library…” on the Preview step; a chain runs two or more of them one "
+                                "after another.")
+            return False
+        labels = [i.name + (f" — {i.description}" if i.description else "") for i in recipes]
+        picked = self.prompts.pick_sequence(
+            "Chain recipes", "Pick your recipes in the order they should run. Each stage is a full verified run on "
+                             "the result of the stage before it (e.g. match the font, then the header/footer).", labels)
+        if not picked:
+            return False
+        names = [recipes[labels.index(x)].name for x in picked if x in labels]
+        if not names:
+            return False
+        s = self.session
+        try:
+            chain = s.build_chain(names)
+        except Exception as e:
+            self.prompts.warn("Spec Surgeon", f"Cannot build this chain:\n{e}")
+            return False
+        self._clear_request()
+        self.write(f"\nChain of {len(chain['stages'])} stage(s): " + " → ".join(names) + "\nPress Preview.")
+        self._show_loaded_chain()
+        self._refresh_chat()                      # a chain ends the conversation: both chat views go
+        self._inputs_changed()
+        self.go(1)
+        return True
+
+    def _show_loaded_chain(self) -> None:
+        s = self.session
+        stages = s.chain["stages"]
+        self.request_page.spec_bar.show_message(
+            "info", "Chain", f"{s.chain_label()}: " + " → ".join(f"{i}. {st.get('name') or ''}" for i, st in
+                                                                 enumerate(stages, 1))
+            + "\nPress Preview to use it: every stage is tried on the sample files, one after another (typing a "
+              "request instead compiles a new spec).",
+            [("Remove", self._remove_spec)])
+
+    @Slot()
     def do_save_to_library(self) -> bool:
         from ..library import LibraryError, list_items, other_kind_holding, slug
         s = self.session
@@ -1491,9 +1673,11 @@ class MainWindow(QMainWindow):
             return False
         if s.generated is not None:
             kind, default = "operation", s.generated.name.replace("_", " ")
+        elif s.chain is not None:
+            kind, default = "chain", s.chain_label()
         else:
             kind, default = "recipe", (s.spec or {}).get("request") or ""
-        title = "Save as my operation" if kind == "operation" else "Save as recipe"
+        title = {"operation": "Save as my operation", "chain": "Save as chain"}.get(kind, "Save as recipe")
         name = self.prompts.ask_text(title, "Name (you pick it from Your library later):", default[:60])
         if not name:
             return False
@@ -1501,6 +1685,8 @@ class MainWindow(QMainWindow):
         def save(replace: bool):
             if kind == "operation":
                 return s.save_operation(name, replace=replace), []
+            if kind == "chain":
+                return s.save_chain(name, replace=replace)
             return s.save_recipe(name, replace=replace)
 
         def replace_can_help(e: LibraryError) -> bool:
@@ -1566,10 +1752,13 @@ class MainWindow(QMainWindow):
     def do_report(self) -> None:
         d = self.session.last_run_dir
         report = d / "BATCH_REPORT.md" if d else None
+        if d and not (report and report.exists()) and (d / "CHAIN_REPORT.md").exists():
+            report = d / "CHAIN_REPORT.md"        # a chain's run: its own report, each stage's in its folder
         if not report or not report.exists():
             self.prompts.notify("Spec Surgeon", "No report yet — run first.")
             return
-        dlg = MarkdownDialog("Batch report", report.read_text(encoding="utf-8"), self, base=d)
+        dlg = MarkdownDialog("Chain report" if report.name == "CHAIN_REPORT.md" else "Batch report",
+                             report.read_text(encoding="utf-8"), self, base=d)
         self._viewers.append(dlg)
         dlg.show()
 
@@ -1837,7 +2026,7 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
                     "open": run.open_btn, "advise": run.advise_btn, "check_updates": w.check_btn,
                     "install_update": w.updates.banner.btn_install, "settings": w.settings_btn,
                     "send": r.chat.send_btn, "start_over": r.chat.start_over_btn,
-                    "review_ack": w.preview_page.review_ack_btn, "library": r.library_btn,
+                    "review_ack": w.preview_page.review_ack_btn, "library": r.library_btn, "chain": r.chain_btn,
                     "save_to_library": w.preview_page.save_btn, "about": w.about_btn, "next": f.next_btn},
         "vars": {"folder": Var(f.folder.text, f.folder.setText), "template": Var(f.template.text, f.template.setText),
                  "out": Var(f.out.text, f.out.setText),

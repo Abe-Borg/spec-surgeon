@@ -4,6 +4,12 @@
   so it loads, previews and runs exactly like any spec (``Session.load_spec``, ``run-spec``) — plus
   ``<slug>.meta.json`` (name, description, when, the request). Template paths are stored absolute; structure-pattern
   pins (``applies_to``) are dropped (they would not match another project's files).
+* A **chain** (2026-10-16) is a saved sequence of specs run one after another (``chain.py``): ``chains/<slug>.json`` —
+  the stages with their specs embedded as they were when the chain was saved (a recipe edited later does not change a
+  chain that was built from it; the stage keeps the recipe's name) — plus ``<slug>.meta.json``. It previews and runs
+  through ``preview.make_chain_preview`` / ``chain.run_chain`` (the window's *Chain recipes…*, ``spec-surgeon chain``,
+  ``library use``). Claude never offers a chain as a choice (its words are its recipes' words, approved recipe by
+  recipe — a later round).
 * An **operation** is a saved one-off custom transform (AI-written, passed verification when it was made):
   ``operations/<slug>/op.py`` + ``manifest.json`` (name, description, the request and conversation it came from, its
   select/params, the sha256 of op.py, the model, its attempts). It is never trusted more than the day it was made:
@@ -34,9 +40,9 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .settings import config_dir
 
-KINDS = {"recipe": "recipes", "operation": "operations", "snippet": "snippets"}
-FILE_KINDS = ("recipe", "snippet")             # kept as <slug>.json + <slug>.meta.json (an operation is a folder)
-LABELS = {"recipe": "Recipe", "operation": "My operation", "snippet": "Snippet"}
+KINDS = {"recipe": "recipes", "operation": "operations", "chain": "chains", "snippet": "snippets"}
+FILE_KINDS = ("recipe", "chain", "snippet")       # one JSON file + <slug>.meta.json; an operation is a folder
+LABELS = {"recipe": "Recipe", "operation": "My operation", "chain": "Chain", "snippet": "Snippet"}
 FORMATTINGS = ("inherit", "none")
 RESERVED = {"con", "prn", "aux", "nul"} | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
 
@@ -47,10 +53,10 @@ class LibraryError(ValueError):
 
 @dataclass
 class Item:
-    kind: str                                     # recipe | operation
+    kind: str                                     # recipe | operation | chain
     name: str
     slug: str
-    path: Path                                    # the spec file / the operation's folder
+    path: Path                                    # the spec file / the operation's folder / the chain file
     description: str = ""
     request: str = ""
     saved_at: str = ""
@@ -112,9 +118,10 @@ def find(name: str, kind: Optional[str] = None) -> Item:
     want = (name or "").strip().casefold()
     hits = [i for i in list_items(kind) if i.name.casefold() == want or i.slug == want]
     if not hits:
-        raise LibraryError(f"there is no {kind or 'recipe, operation or snippet'} named {name!r} in your library")
+        raise LibraryError(f"there is no {kind or 'recipe, operation, chain or snippet'} named {name!r} in your library")
     if len(hits) > 1:
-        raise LibraryError(f"{name!r} names {' and '.join(_a(i.kind) for i in hits)} — say which (kind)")
+        raise LibraryError(f"{name!r} names more than one item ({' and '.join(_a(h.kind) for h in hits)}) — say which "
+                           f"(kind)")
     return hits[0]
 
 
@@ -123,8 +130,9 @@ def _a(kind: str) -> str:
 
 
 def other_kind_holding(kind: str, s: str) -> Optional[Item]:
-    """The item of the OTHER kind whose name is ``s`` (a slug), if any — a name ``replace`` can never take: replacing
-    works within one kind, and a recipe and an operation under one name would make every lookup by name ambiguous."""
+    """The item of ANOTHER kind whose name is ``s`` (a slug), if any — a name ``replace`` can never take: replacing
+    works within one kind, and a recipe, an operation or a chain under one name would make every lookup by name
+    ambiguous."""
     return next((i for i in list_items() if i.slug == s and i.kind != kind), None)
 
 
@@ -144,11 +152,11 @@ def _now() -> str:
     return datetime.now().isoformat(timespec="seconds")
 
 
-def save_recipe(name: str, spec: Dict[str, Any], description: str = "", replace: bool = False) -> Tuple[Item, List[str]]:
-    """Save a (validated) spec as a recipe. Returns the item and any notes (e.g. pattern pins dropped)."""
-    from .editspec import input_slots, validate_spec
-    s = slug(name)
-    _check_free("recipe", s, replace)
+def _portable_spec(spec: Dict[str, Any], what: str = "the recipe") -> Tuple[Dict[str, Any], List[str]]:
+    """A copy of ``spec`` as the library keeps it: every input-file path absolute (templates, tables, pictures:
+    ``editspec.input_slots``), the pin to this batch's structure patterns dropped (with a note) so it can run on other
+    projects' files — still planned file by file."""
+    from .editspec import input_slots
     spec = json.loads(json.dumps(spec))           # a copy
     notes: List[str] = []
     applies = spec.get("applies_to")
@@ -158,11 +166,20 @@ def save_recipe(name: str, spec: Dict[str, Any], description: str = "", replace:
             spec["applies_to"] = rest
         else:
             spec.pop("applies_to")
-        notes.append("the spec was pinned to this batch's structure patterns; the pin was dropped so the recipe can "
+        notes.append(f"the spec was pinned to this batch's structure patterns; the pin was dropped so {what} can "
                      "run on other projects' files (it is still planned file by file)")
     for o in spec.get("ops") or []:
         for d, k in input_slots(o):                # templates, tables, pictures: stored absolute
             d[k] = str(Path(d[k]).resolve())
+    return spec, notes
+
+
+def save_recipe(name: str, spec: Dict[str, Any], description: str = "", replace: bool = False) -> Tuple[Item, List[str]]:
+    """Save a (validated) spec as a recipe. Returns the item and any notes (e.g. pattern pins dropped)."""
+    from .editspec import validate_spec
+    s = slug(name)
+    _check_free("recipe", s, replace)
+    spec, notes = _portable_spec(spec)
     validate_spec(spec)
     d = _kind_dir("recipe")
     d.mkdir(parents=True, exist_ok=True)
@@ -195,6 +212,50 @@ def save_operation(name: str, g: Any, description: str = "", replace: bool = Fal
     (folder / "manifest.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
     return Item("operation", manifest["name"], s, folder, manifest["description"], manifest["request"],
                 manifest["saved_at"])
+
+
+def save_chain(name: str, chain: Dict[str, Any], description: str = "", replace: bool = False) -> Tuple[Item, List[str]]:
+    """Save a (validated) chain: ``chains/<slug>.json`` holds its stages with their specs embedded — each made portable
+    like a recipe (``_portable_spec``: template paths absolute, pattern pins dropped and noted per stage) — and
+    ``<slug>.meta.json`` the name, description, when, and the stages' names as its ``request``. A name a recipe or an
+    operation holds is refused even with ``replace`` (``_check_free``)."""
+    from .chain import stage_name, validate_chain
+    validate_chain(chain)
+    s = slug(name)
+    _check_free("chain", s, replace)
+    stages: List[Dict[str, Any]] = []
+    notes: List[str] = []
+    for i, st in enumerate(chain["stages"], 1):
+        label = stage_name(st, i)
+        spec, ns = _portable_spec(st["spec"], f"stage {i} ({label})")
+        notes += [f"stage {i} ({label}): {n}" for n in ns]
+        new_st = {"name": label, "spec": spec}
+        if st.get("recipe"):
+            new_st["recipe"] = str(st["recipe"])
+        stages.append(new_st)
+    saved = {"name": name.strip(), "stages": stages}
+    if description.strip() or chain.get("description"):
+        saved["description"] = (description or chain.get("description") or "").strip()
+    validate_chain(saved)
+    d = _kind_dir("chain")
+    d.mkdir(parents=True, exist_ok=True)
+    path = _inside(d / f"{s}.json", "chain")
+    path.write_text(json.dumps(saved, indent=2, ensure_ascii=False), encoding="utf-8")
+    meta = {"name": name.strip(), "description": saved.get("description", ""), "saved_at": _now(),
+            "request": " → ".join(st["name"] for st in stages), "stages": [st["name"] for st in stages]}
+    _inside(d / f"{s}.meta.json", "chain").write_text(json.dumps(meta, indent=2, ensure_ascii=False), encoding="utf-8")
+    return Item("chain", meta["name"], s, path, meta["description"], meta["request"], meta["saved_at"]), notes
+
+
+def chain_file(item: Item) -> Path:
+    """A listed chain's file, checked to lie directly inside the library (``_inside``)."""
+    return _inside(item.path, "chain")
+
+
+def load_chain(name: str) -> Dict[str, Any]:
+    """The saved chain, validated (``chain.load_chain_file``) — the stages' specs as they were saved."""
+    from .chain import load_chain_file
+    return load_chain_file(_inside(find(name, "chain").path, "chain"))
 
 
 def item_hash(item: Item) -> str:

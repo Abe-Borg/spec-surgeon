@@ -18,9 +18,9 @@
     spec-surgeon retry OUT_DIR [--request "..."] [--template T] [--answer A]... [--out DIR] [--yes] [--no-render]
                                [--no-review] [--ack-review] [--in-place] [--allow-codegen]
                                                              (rinse & repeat: run next pass on set-aside files only)
-    spec-surgeon library list|show NAME|delete NAME [--kind recipe|operation|snippet] [--yes]
-                                                             (your saved recipes, operations and snippets)
-    spec-surgeon library use NAME FILES... [--kind recipe|operation|snippet] [--out DIR] [--yes] [--in-place]
+    spec-surgeon library list|show NAME|delete NAME [--kind recipe|operation|chain|snippet] [--yes]
+                                                             (your saved recipes, operations, chains and snippets)
+    spec-surgeon library use NAME FILES... [--kind recipe|operation|chain|snippet] [--out DIR] [--yes] [--in-place]
                                            [--no-render] [--after REGEX | --before REGEX] [--untracked]
                                                              (one of them on these files — no API key needed:
                                                               preview → approve → verified run; a snippet goes after
@@ -28,6 +28,11 @@
     spec-surgeon library add-snippet NAME (--text "…" | --from FILE --paragraph REGEX) [--style ID]
                                           [--formatting inherit|none] [--description "…"] [--replace]
                                                              (save a paragraph to insert later)
+    spec-surgeon chain --stage SPEC.json|recipe:NAME|chain:NAME [--stage ...] FILES... [--name N] [--out DIR] [--yes]
+                       [--in-place] [--no-render] [--no-review] [--ack-review] [--save-as NAME [--replace]]
+                                                             (several specs one after another: each stage a full
+                                                              verified run on the stage before it — preview of the
+                                                              whole chain on samples → approve → run; no API key needed)
     spec-surgeon gui                                         (the window; also: spec-surgeon-gui)
     spec-surgeon advise OUT_DIR [--file NAME]                (Claude: per exception a recommendation or a re-compiled spec)
     spec-surgeon diagnose OUT_DIR [--file NAME] [--bundle ZIP] (why each file failed, where and how; a zip to send)
@@ -448,6 +453,139 @@ def _preview_and_run(args, spec, files, out_dir, brief=None):
     return cmd_run(args, spec=spec)
 
 
+def _preview_and_run_chain(args, chain, files, out_dir):
+    """The tail a chain takes (``chain`` and ``library use`` of a chain): --save-as checked (kind chain), the preview of
+    the whole chain on the samples, Claude's visual check of the final pages (with a key, rendering on and no
+    --no-review), --save-as saved, the y/N question, the approval token (every stage's spec and templates) checked
+    again, then ``chain.run_chain``."""
+    from .chain import chain_intent, chain_key, chain_name, run_chain
+    from .preview import changed_since_preview, make_chain_preview
+    if getattr(args, "save_as", None):
+        why = _save_as_refusal(args.save_as, "chain", getattr(args, "replace", False))
+        if why:
+            print(f"--save-as: {why}", file=sys.stderr)
+            return 2
+    pv = make_chain_preview(chain, [str(f) for f in files], out_dir / "preview",
+                            renderer=args.renderer, do_render=not args.no_render)
+    if not args.no_render and not getattr(args, "no_review", False):
+        from . import vision
+        from .preview import write_preview_files
+        pv.review = _review(chain_intent(chain), pv.samples, out_dir / "preview", args)
+        vision.save_review(pv.review, out_dir / "preview")
+        write_preview_files(pv)
+    print(pv.to_text())
+    print(f"\npreview: {out_dir / 'preview'}")
+    if getattr(args, "save_as", None):
+        from .library import LibraryError, save_chain
+        try:
+            item, notes = save_chain(args.save_as, chain, replace=getattr(args, "replace", False))
+        except LibraryError as e:
+            print(f"--save-as: {e} — nothing was saved or run", file=sys.stderr)
+            return 2
+        print(f"Saved to your library: {item.label()} ({item.path})" + "".join(f"\nnote: {n}" for n in notes))
+    blocking = pv.review.blocking() if pv.review is not None else []
+    if blocking and not getattr(args, "ack_review", False):
+        print(f"\nClaude's visual check flagged {len(blocking)} problem(s) it rates as blocking (see above).")
+        if args.yes and not _interactive():
+            print("Not run: look at the pages in the preview folder; re-run with --ack-review to run anyway.")
+            return 2
+    approved = args.yes and (not blocking or getattr(args, "ack_review", False))
+    n_files = len(pv.batch_plan.files)
+    if not approved and _interactive():
+        question = (f"\nYou have looked at Claude's findings and want to run this chain on {n_files} file(s)? [y/N] "
+                    if blocking else f"\nRun this chain ({len(chain['stages'])} stage(s)) on {n_files} file(s)? [y/N] ")
+        approved = bool(_confirm(question))
+    if not approved:
+        print(f"\nNot run. The chain is saved as {out_dir / 'preview' / 'chain.json'}; to run exactly this, run the "
+              f"command again (or `spec-surgeon library use` once it is saved with --save-as).")
+        return 0
+    changed = changed_since_preview(chain_key(chain), [f.source for f in pv.batch_plan.files], pv.token, pv.token_inputs)
+    if changed is not None:
+        print("Not run: a file or a template changed since the preview — run the command again for a new preview."
+              + "".join(f"\n  • {w}" for w in changed), file=sys.stderr)
+        return 2
+    out = out_dir / "run"
+
+    def progress(msg):
+        print(msg, file=sys.stderr, flush=True)
+    try:
+        result = run_chain([str(f) for f in files], chain, out, workers=args.workers, renderer=args.renderer,
+                           do_render=not args.no_render, in_place=args.in_place, progress=progress)
+    except ValueError as e:          # refused before anything was written (an input inside the results folder)
+        print(f"refused: {e}", file=sys.stderr)
+        return 2
+    c = result.counts()
+    n = len(result.stages)
+    print(f"\nChain «{chain_name(chain)}» — {n} stage(s): " + " → ".join(st.name for st in result.stages))
+    print(f"{len(result.files)} file(s): PASS {c['PASS']} (every stage)  FAIL {c['FAIL']}  EXCEPTION {c['EXCEPTION']}   "
+          f"({result.timings.get('total', 0):.1f}s; renderer {result.renderer or 'none'})")
+    for f in result.files:
+        line = f"  {f.status:<9} {f.source.name}  [" + " · ".join(f.stage_status) + "]"
+        if f.stopped_at:
+            line += f"  stopped at stage {f.stopped_at}: [{f.code}] {f.reason}"
+        elif f.delivered_to:
+            line += f"  → {f.delivered_to}"
+        print(line)
+        for fl in f.flags:
+            print(f"            FLAG: {fl}")
+    print(f"\nReport: {out / 'CHAIN_REPORT.md'} (each stage: {out}/stage-NN/BATCH_REPORT.md)")
+    print(f"Log: {out / 'logs' / 'chain.log'} (each stage's run.log and traces in its folder)")
+    if c["FAIL"] or c["EXCEPTION"]:
+        print(f"Diagnostics — which stage, why, where and how: {out / 'DIAGNOSTICS.md'}")
+        print(f"Set-aside manifest: {out / 'set_aside.json'} (the files that did not get through every stage)")
+    return 0 if c["FAIL"] == 0 and c["EXCEPTION"] == 0 else 1
+
+
+def cmd_chain(args):
+    """``spec-surgeon chain --stage A --stage B FILES…``: several specs one after another. A stage is an EditSpec file
+    (or inline JSON), ``recipe:NAME`` (one of your recipes) or ``chain:NAME`` (a saved chain's stages, spliced in).
+    No API key needed; Claude's visual check of the final pages runs when there is one (rendering on)."""
+    from .chain import ChainError, chain_from_specs, chain_templates
+    from .editspec import SpecError, is_template_file, load_spec, validate_spec
+    from .library import LibraryError, load_chain, load_recipe
+    stages = []
+    for ref in args.stage or []:
+        try:
+            if ref.startswith("recipe:"):
+                name = ref[len("recipe:"):].strip()
+                spec = load_spec(load_recipe(name))
+                validate_spec(spec)
+                stages.append((name, spec, name))
+            elif ref.startswith("chain:"):
+                name = ref[len("chain:"):].strip()
+                for st in load_chain(name)["stages"]:
+                    stages.append((st.get("name") or "", st["spec"], st.get("recipe")))
+            else:
+                spec = load_spec(ref)
+                validate_spec(spec)
+                label = spec.get("request") if ref.lstrip().startswith("{") else Path(ref).stem
+                stages.append((label, spec, None))
+        except SpecError as e:
+            print(f"stage {ref!r} refused [{e.code}]: {e.reason}", file=sys.stderr)
+            return 2
+        except (LibraryError, OSError, ValueError) as e:
+            print(f"stage {ref!r}: {e}", file=sys.stderr)
+            return 2
+    if not stages:
+        print("chain: give at least one --stage (an EditSpec .json, recipe:NAME or chain:NAME), in the order they run",
+              file=sys.stderr)
+        return 2
+    try:
+        chain = chain_from_specs(stages, name=getattr(args, "name", None) or "")
+    except ChainError as e:
+        print(f"chain refused [{e.code}]: {e.reason}", file=sys.stderr)
+        return 2
+    files = [f for f in expand_inputs(args.files) if not is_template_file(f, chain_templates(chain))]
+    if not files:
+        print("no .docx files to work on", file=sys.stderr)
+        return 2
+    out_dir = Path(args.out) if args.out else Path.cwd() / "SpecSurgeon_out" / datetime.now().strftime("%Y%m%d-%H%M%S")
+    out_dir.mkdir(parents=True, exist_ok=True)
+    print(f"Chain of {len(chain['stages'])} stage(s) on {len(files)} file(s): "
+          + " → ".join(st["name"] for st in chain["stages"]), file=sys.stderr)
+    return _preview_and_run_chain(args, chain, files, out_dir)
+
+
 def _visual_check(pv, spec, folder, args, brief=None) -> None:
     """Claude's visual check of the preview samples (advisory; never raises; can only add a reason to stop). ``brief``:
     the terminal conversation the spec came from (``Conversation.brief()``) — what the user narrowed or added there is
@@ -824,8 +962,8 @@ def _changed_while_writing(before: dict, *later: dict) -> list:
 
 
 def cmd_library(args):
-    """Your library: list it, show one item, delete one, add a snippet (recipes, your own operations and snippets;
-    local to this computer)."""
+    """Your library: list it, show one item, delete one, add a snippet (recipes, your own operations, chains and
+    snippets; local to this computer)."""
     from .library import LibraryError, delete, find, library_dir, list_items, read_snippet
     if args.action == "list":
         items = list_items(args.kind)
@@ -861,6 +999,14 @@ def cmd_library(args):
             print(f"\nuse it:   spec-surgeon library use \"{item.name}\" FILES…   (no API key needed)")
             if item.kind == "recipe":
                 print(f"run it:   spec-surgeon run-spec \"{item.path}\" FILES…   (straight to the run, no preview)")
+            elif item.kind == "chain":
+                from .library import load_chain
+                chain = load_chain(item.name)
+                print("stages (run one after another, each a full verified run on the stage before it):")
+                for i, st in enumerate(chain["stages"], 1):
+                    print(f"  {i}. {st.get('name')}" + (f" (recipe {st['recipe']!r})" if st.get("recipe") else "")
+                          + f" — {st['spec'].get('request')!r}")
+                print(f"as stages: spec-surgeon chain --stage \"chain:{item.name}\" FILES…   (add --stage to extend it)")
             else:
                 print("it is tried on the files' samples first, then previewed; the run writes edited copies only "
                       "(the window: Your library…)")
@@ -907,21 +1053,23 @@ def _add_snippet(args):
 
 
 def _use_library_item(args):
-    """``library use NAME FILES…``: one of your recipes, operations or snippets on these files, with no API key needed
-    (Claude's visual check runs only when there is one). A recipe — and a snippet, as the ``insert_paragraph`` spec
-    ``library.snippet_spec`` builds (after/before the paragraph matching --after/--before, in every file that has it, at
-    most once per file) — takes ``do``'s path after the compile (``_preview_and_run``: preview, approval — y/N, or
-    --yes —, the token re-checked, the verified batch; --in-place guarded as always). An operation is tried on the
-    files' samples first (CLAUDE.md rule 17: a failing one changes nothing), then previewed, approved and run like a
-    custom transform (``_run_saved_operation``) — edited copies only."""
+    """``library use NAME FILES…``: one of your recipes, operations, chains or snippets on these files, with no API key
+    needed (Claude's visual check runs only when there is one). A recipe — and a snippet, as the ``insert_paragraph``
+    spec ``library.snippet_spec`` builds (after/before the paragraph matching --after/--before, in every file that has
+    it, at most once per file) — takes ``do``'s path after the compile (``_preview_and_run``: preview, approval — y/N,
+    or --yes —, the token re-checked, the verified batch; --in-place guarded as always); a chain takes
+    ``_preview_and_run_chain``. An operation is tried on the files' samples first (CLAUDE.md rule 17: a failing one
+    changes nothing), then previewed, approved and run like a custom transform (``_run_saved_operation``) — edited
+    copies only."""
+    from .chain import ChainError, chain_templates
     from .editspec import is_template_file, spec_templates
-    from .library import LibraryError, find, load_recipe, read_snippet, snippet_spec
+    from .library import LibraryError, find, load_chain, load_recipe, read_snippet, snippet_spec
     if not args.files:
         print("library use: which files? (spec-surgeon library use NAME FILES…)", file=sys.stderr)
         return 2
     try:
         item = find(args.name, args.kind)
-        spec = None
+        spec = chain = None
         if item.kind == "recipe":
             spec = _load_valid_spec(str(load_recipe(item.name)))
             if spec is None:
@@ -933,10 +1081,15 @@ def _use_library_item(args):
                 return 2
             spec = snippet_spec(item.name, read_snippet(item), args.after or args.before,
                                 "after" if args.after else "before", tracked=not args.untracked)
+        elif item.kind == "chain":
+            chain = load_chain(item.name)
+    except ChainError as e:
+        print(f"your chain {args.name!r} cannot be used [{e.code}]: {e.reason}", file=sys.stderr)
+        return 2
     except LibraryError as e:
         print(str(e), file=sys.stderr)
         return 2
-    templates = spec_templates(spec) if spec is not None else []
+    templates = spec_templates(spec) if spec is not None else (chain_templates(chain) if chain is not None else [])
     files = [f for f in expand_inputs(args.files) if not is_template_file(f, templates)]
     if not files:
         print("no .docx files to work on", file=sys.stderr)
@@ -946,6 +1099,8 @@ def _use_library_item(args):
     print(f"Using your {item.kind} {item.name!r} on {len(files)} file(s).", file=sys.stderr)
     if spec is not None:
         return _preview_and_run(args, spec, files, out_dir)
+    if chain is not None:
+        return _preview_and_run_chain(args, chain, files, out_dir)
     picked = _try_saved_operation(None, item.name, files, out_dir)
     if picked is None:                            # its trials failed (said above): nothing previewed or run
         return 2
@@ -1123,12 +1278,33 @@ def main(argv=None) -> int:
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)
 
-    p = sub.add_parser("library", help="your library of saved recipes (specs), operations (custom transforms) and "
-                                       "snippets (paragraphs); `library use NAME FILES…` runs one without an API key")
+    p = sub.add_parser("chain", help="several specs one after another: each stage a full verified run on the stage "
+                                     "before it — preview of the whole chain on samples → approve → run (no API key needed)")
+    p.add_argument("--stage", action="append", metavar="STAGE",
+                   help="an EditSpec .json (or inline JSON), recipe:NAME or chain:NAME — repeat, in the order they run")
+    p.add_argument("files", nargs="+", help="the .docx files or folders to run it on")
+    p.add_argument("--name", default=None, help="what to call the chain (reports, --save-as)")
+    p.add_argument("--out", default=None, help="output directory (default ./SpecSurgeon_out/<timestamp>)")
+    p.add_argument("--yes", action="store_true", help="approve without asking (after the preview is written)")
+    p.add_argument("--in-place", action="store_true",
+                   help="write each stage's verified outputs back over the sources (guarded, stage by stage)")
+    p.add_argument("--workers", type=int, default=0)
+    p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
+    p.add_argument("--no-render", action="store_true")
+    p.add_argument("--no-review", action="store_true", help="skip Claude's visual check of the final sample pages")
+    p.add_argument("--ack-review", action="store_true", help="run even when Claude's visual check flagged a problem")
+    p.add_argument("--save-as", default=None, metavar="NAME", help="save the previewed chain in your library")
+    p.add_argument("--replace", action="store_true", help="with --save-as: replace a chain of that name")
+    p.add_argument("--model", default=None)
+    p.set_defaults(fn=cmd_chain)
+
+    p = sub.add_parser("library", help="your library of saved recipes (specs), chains, operations (custom transforms) "
+                                       "and snippets (paragraphs); `library use NAME FILES…` runs one without an API "
+                                       "key")
     p.add_argument("action", choices=["list", "show", "delete", "use", "add-snippet"])
     p.add_argument("name", nargs="?", default=None)
     p.add_argument("files", nargs="*", help="use: the .docx files or folders to run it on")
-    p.add_argument("--kind", choices=["recipe", "operation", "snippet"], default=None)
+    p.add_argument("--kind", choices=["recipe", "operation", "chain", "snippet"], default=None)
     p.add_argument("--after", default=None, help="use, a snippet: insert it after the paragraph whose text matches "
                                                  "this regular expression (in every file that has one)")
     p.add_argument("--before", default=None, help="use, a snippet: insert it before that paragraph instead")

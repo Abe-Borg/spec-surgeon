@@ -212,7 +212,8 @@ class RequestPage(Page):
 
         card = Card(self.SAVED_TITLES[True], "An edit spec file (.json) runs without an API key: an example from the "
                                              "Start menu's Example edit specs, the spec.json saved in an earlier "
-                                             "preview folder, or a recipe or operation from Your library.")
+                                             "preview folder, or a recipe, chain or operation from Your library. "
+                                             "Chain recipes… runs several recipes one after another.")
         self.saved_card = card
         row = QHBoxLayout()
         self.load_btn = QPushButton("Load saved spec\u2026")
@@ -223,6 +224,10 @@ class RequestPage(Page):
         self.library_btn.setToolTip("Your saved recipes (specs) and your own operations (custom transforms that "
                                     "passed) — reuse them on another batch")
         row.addWidget(self.library_btn)
+        self.chain_btn = QPushButton("Chain recipes\u2026")
+        self.chain_btn.setToolTip("Run several of your recipes one after another — each stage a full verified run on "
+                                  "the result of the stage before it (e.g. match the font, then the header/footer)")
+        row.addWidget(self.chain_btn)
         row.addStretch(1)
         card.add(row)
         self.spec_bar = InfoBar(closable=False)

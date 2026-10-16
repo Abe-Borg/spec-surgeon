@@ -194,6 +194,16 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The file is saved in Word's 'Strict Open XML Document' format, which Spec Surgeon does not read. Open it in "
         "Word and Save As 'Word Document (*.docx)', then run again.",
     ),
+    "chain-drift": (
+        "Changed Between Two Stages of the Chain",
+        "The file a stage was to read is no longer the one the stage before it verified (edited, synced or replaced "
+        "between the stages), so the later stage did not read it. Run the chain again on the current file.",
+    ),
+    "chain-deliver": (
+        "The Final Copy Was Not the Verified One",
+        "The last stage's output was changed after it was verified, so the chain did not copy it to outputs/. Run the "
+        "chain again.",
+    ),
     # built-in batch 1 (docs/BUILTIN_OPS_BATCH1_DESIGN.md)
     "spans-structure": (
         "Text Split by a Tab, Line Break or Field",
@@ -650,6 +660,187 @@ def write_diagnostics(batch: "BatchResult") -> Path:
                 f"{f.source.name} {f.timings['total']:.2f} s ("
                 + ", ".join(f"{k} {v:.2f}" for k, v in f.timings.items() if k != "total") + ")" for f in slow))
         lines.append("")
+    path = out / "DIAGNOSTICS.md"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    return path
+
+
+# ---- chains: several specs run one after another (chain.py) ------------------------------------------------------------
+
+def build_chain_set_aside_manifest(result: "Any") -> Dict[str, Any]:
+    """The set-aside manifest of a chain (``chain.ChainResult``): every file that did not pass every stage, with the
+    ORIGINAL source path (the next pass — ``retry``, *Load set-aside files* — works on the user's files), the stage it
+    stopped at and why. The same keys as a batch's manifest, so the loaders read it as one."""
+    from .chain import chain_name, chain_templates
+    items: List[Dict[str, Any]] = []
+    by_code: Counter = Counter()
+    by_pattern: Counter = Counter()
+    n = len(result.stages)
+    for f in result.files:
+        if f.status == "PASS":
+            continue
+        pid = f.pattern_id or "?"
+        by_code[f.code] += 1
+        by_pattern[pid] += 1
+        stage = f.stopped_at
+        items.append({
+            "source": str(f.source.resolve()), "name": f.source.name, "pattern_id": pid, "status": "SET_ASIDE",
+            "code": f.code, "category": f.category,
+            "reason": f"stopped at stage {stage} of {n}" + (f" — {f.reason}" if f.reason else ""),
+            "explanation": f.explanation,
+            "details": {**f.details, "chain_stage": stage,
+                        "stage_name": result.stages[stage - 1].name if stage and stage <= n else None,
+                        "stage_folder": str(result.stages[stage - 1].out_dir) if stage and stage <= n else None,
+                        "stages": list(f.stage_status)},
+            "body_hygiene": {},
+            **({"stage": f"chain stage {stage}"} if stage else {}),
+        })
+    templates = [str(t) for t in chain_templates(result.chain)]
+    return {
+        "job": "chain", "request": chain_name(result.chain), "spec": None, "chain": result.chain,
+        "template": templates[0] if templates else None,
+        "total_batch_files": len(result.files),
+        "passed_count": sum(1 for f in result.files if f.status == "PASS"),
+        "set_aside_count": len(items),
+        "by_code": dict(by_code.most_common()), "by_pattern": dict(by_pattern.most_common()),
+        "files": items,
+    }
+
+
+def write_chain_report(result: "Any") -> Path:
+    """``CHAIN_REPORT.md``, ``chain.json`` and ``set_aside.json`` of a chain run: the stages, every file's way through
+    them (one column per stage), where each stopped and why, what was flagged, and where to look (each stage's own
+    BATCH_REPORT.md, DIAGNOSTICS.md and records are in its folder)."""
+    from .chain import chain_name
+    from .editspec import spec_templates
+    out = Path(result.out_dir)
+    c = result.counts()
+    manifest = build_chain_set_aside_manifest(result)
+    (out / "set_aside.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
+    n = len(result.stages)
+    lines = ["# Spec Surgeon — chain report", "",
+             f"Chain: “{chain_name(result.chain)}” — {n} stage(s), run one after another on each file; every stage is "
+             f"a full verified run (plan → apply → verify V1–V10 → render → deliver) on the files the stage before it "
+             f"verified.",
+             f"Files: {len(result.files)}  —  PASS {c['PASS']} (every stage), FAIL {c['FAIL']}, EXCEPTION "
+             f"{c['EXCEPTION']} (set aside: {manifest['set_aside_count']})",
+             f"Mode: {'written back in place, stage by stage (guarded)' if result.in_place else 'copies — the sources were not changed'}"
+             f"    Renderer: {result.renderer or 'none'}    Timings: "
+             + ", ".join(f"{k} {v:.1f}s" for k, v in (result.timings or {}).items()), ""]
+    if result.chain.get("description"):
+        lines += [f"> {result.chain['description']}", ""]
+    lines.append("## Stages")
+    for s in result.stages:
+        spec = s.spec
+        cc = s.batch.counts() if s.batch is not None else {}
+        lines.append(f"{s.index}. **{s.name}** — “{spec.get('request')}” (mode `{spec.get('mode')}`, ops "
+                     f"{[o.get('op') for o in spec.get('ops', [])]}) — folder `{s.out_dir.name}/`: "
+                     + (f"{len(s.inputs)} file(s): PASS {cc.get('PASS', 0)}, FAIL {cc.get('FAIL', 0)}, EXCEPTION "
+                        f"{cc.get('EXCEPTION', 0)}" if s.batch is not None else "not run (nothing left)"))
+        for t in [str(x) for x in spec_templates(spec)]:
+            lines.append(f"   - template: `{t}`")
+    for x in result.skipped:
+        lines.append(f"- Not processed (a stage's own template file): `{x}`")
+    lines.append("")
+    lines.append("## Files")
+    head = "| File | Result | " + " | ".join(f"{s.index} {s.name}" for s in result.stages) + " | Stopped at | Delivered to |"
+    lines.append(head)
+    lines.append("|---|---|" + "---|" * n + "---|---|")
+    for f in result.files:
+        cells = [st if st != "NOT_RUN" else "—" for st in f.stage_status] + ["—"] * (n - len(f.stage_status))
+        stopped = f"stage {f.stopped_at}" if f.stopped_at else ""
+        lines.append(f"| {f.source.name} | **{f.status}** | " + " | ".join(cells) + f" | {stopped} | {f.delivered_to or ''} |")
+    lines.append("")
+    if manifest["files"]:
+        lines.append("## Set-Aside Files (did not get through every stage)")
+        lines.append(f"{manifest['set_aside_count']} file(s) stopped at a stage. In copies mode their sources are "
+                     f"untouched; in place, the stages before the one that stopped were written back (said per file). "
+                     f"Run `spec-surgeon retry \"{out}\"` (or **Load set-aside files** in the window) for a pass on "
+                     f"only these files.")
+        lines.append("")
+        for item in manifest["files"]:
+            lines.append(f"- **{item['name']}** (pattern `{item['pattern_id']}`) — **{item['category']}** (`{item['code']}`)")
+            lines.append(f"  - Why: {item['reason']}")
+            lines.append(f"  - Next step: {item['explanation']}")
+            folder = item["details"].get("stage_folder")
+            if folder:
+                lines.append(f"  - Where to look: `{Path(folder).name}/DIAGNOSTICS.md`")
+        lines.append("")
+    flagged = [(f, fl) for f in result.files for fl in f.flags]
+    if flagged:
+        lines.append("## Flagged for review (the order of the stages)")
+        lines.append("A later stage changed a part an earlier stage added from its template: inside one spec the engine "
+                     "would refuse that; in a chain the order is yours. Look at the pages.")
+        for f, fl in flagged:
+            lines.append(f"- {f.source.name}: {fl}")
+        lines.append("")
+    lines.append("## Where to look")
+    lines.append("- **Why a file stopped, where and how: `DIAGNOSTICS.md`** here (every file that did not get through, "
+                 "with the stage), and `stage-NN/DIAGNOSTICS.md` for the stage's own specifics")
+    lines.append("- Each stage's run: `stage-NN/BATCH_REPORT.md`, `stage-NN/logs/run.log`, `stage-NN/records/`, "
+                 "`stage-NN/plans/`, `stage-NN/exceptions/`")
+    lines.append("- Everything the chain did, stage by stage: `logs/chain.log`")
+    if not result.in_place:
+        lines.append("- Files that passed every stage: `outputs/` (each stage's own copies are in `stage-NN/outputs/`)")
+    else:
+        lines.append("- Files that passed every stage were written back over the originals, stage by stage")
+    if manifest["files"]:
+        lines.append("- Set-aside manifest for the next pass: `set_aside.json`")
+    (out / "CHAIN_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+    (out / "chain.json").write_text(json.dumps({
+        "chain": result.chain, "name": chain_name(result.chain), "in_place": result.in_place,
+        "renderer": result.renderer, "timings": result.timings, "counts": c,
+        "set_aside_count": manifest["set_aside_count"], "skipped": result.skipped,
+        "started": result.started, "finished": result.finished, "environment": result.environment,
+        "log": f"{LOGS}/chain.log", "stopped": result.stopped,
+        "stages": [s.to_dict() for s in result.stages], "files": [f.to_dict() for f in result.files],
+    }, indent=2, default=str), encoding="utf-8")
+    return out / "CHAIN_REPORT.md"
+
+
+def write_chain_diagnostics(result: "Any") -> Path:
+    """``DIAGNOSTICS.md`` of a chain: for every file that did not get through every stage — the stage it stopped at,
+    and that stage's own diagnosis of it (``file_diagnosis`` of the stage's record; its trace lives in the stage's
+    ``logs/``)."""
+    from .diagnostics import environment_line
+    from .chain import chain_name
+    out = Path(result.out_dir)
+    c = result.counts()
+    n = len(result.stages)
+    problems = [f for f in result.files if f.status != "PASS"]
+    total = (result.timings or {}).get("total")
+    lines = ["# Spec Surgeon — diagnostics (chain)", "",
+             "Every file that did not get through every stage: which stage it stopped at, what happened there, why, "
+             "what to do. Everything the chain did is in `logs/chain.log`; each stage's run is in its own folder "
+             "(`stage-NN/logs/run.log`, one trace per file beside it).", "",
+             f"- **Run:** {result.started or '?'} → {result.finished or '?'}"
+             + (f" ({total:.1f} s)" if isinstance(total, (int, float)) else "") + f" — results in `{out}`",
+             f"- **Chain:** “{chain_name(result.chain)}” — " + " → ".join(f"{s.index} {s.name}" for s in result.stages),
+             f"- **Result:** {len(result.files)} file(s): PASS {c['PASS']} · FAIL {c['FAIL']} · EXCEPTION {c['EXCEPTION']}",
+             f"- **Program:** {environment_line(result.environment or {})}", ""]
+    if result.stopped:
+        lines += [f"> **The chain itself stopped** — {result.stopped}. The files below are the ones it had reached; "
+                  f"`logs/chain.log` ends with the traceback. This is a defect in Spec Surgeon: please send the "
+                  f"diagnostics bundle.", ""]
+    if not problems and not result.stopped:
+        lines += ["**No problems: every file passed every stage.**", ""]
+    if problems:
+        lines += ["## Summary", "", "| # | File | Outcome | Stopped at | Why |", "|---|---|---|---|---|"]
+        for i, f in enumerate(problems, 1):
+            where = (f"stage {f.stopped_at} of {n} ({result.stages[f.stopped_at - 1].name})"
+                     if f.stopped_at and f.stopped_at <= n else "—")
+            lines.append(f"| {i} | {_cell(f.source.name, 80)} | {f.status} `{f.code}` | {where} | {_cell(f.reason)} |")
+        lines.append("")
+        for i, f in enumerate(problems, 1):
+            fr = f.results[f.stopped_at - 1] if f.stopped_at and f.stopped_at <= len(f.results) else None
+            if fr is not None:
+                stage_dir = result.stages[f.stopped_at - 1].out_dir.name
+                lines += [f"## {i}. {f.source.name} — stopped at stage {f.stopped_at} of {n} "
+                          f"({result.stages[f.stopped_at - 1].name}); the stage's own records are in `{stage_dir}/`", "",
+                          file_diagnosis(fr, "###"), ""]
+            else:
+                lines += [f"## {i}. {f.source.name} — {f.category} (`{f.code}`)", "", f"- **Why:** {f.reason}",
+                          f"- **What to do:** {f.explanation}", ""]
     path = out / "DIAGNOSTICS.md"
     path.write_text("\n".join(lines), encoding="utf-8")
     return path

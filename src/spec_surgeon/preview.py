@@ -44,11 +44,29 @@ from .package import DocxPackage
 from .planner import BatchPlan, plan_batch
 
 
+def key_templates(key: Any) -> List[Path]:
+    """The files an approval key reads beside the documents: a spec's templates, tables and pictures
+    (``editspec.spec_input_files``), or — a chain key (``chain.chain_key``: ``{"stages": [{"name", "spec"}, …]}``) —
+    those of every stage, once each. A file edited after the preview voids the approval whichever stage reads it
+    (CLAUDE.md rule 12)."""
+    from .editspec import spec_input_files
+    if not isinstance(key, dict):
+        return []
+    if isinstance(key.get("stages"), list) and "ops" not in key:
+        out: List[Path] = []
+        for st in key["stages"]:
+            for t in spec_input_files((st or {}).get("spec") or {}) if isinstance(st, dict) else []:
+                if t not in out:
+                    out.append(t)
+        return out
+    return spec_input_files(key)
+
+
 def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, Any]:
     """What the approval token is a hash of, as data: the spec's digest, every planned file's size and mtime, and every
-    template's (and table's and picture's: ``editspec.spec_input_files``) size, mtime and md5 — kept beside the preview
-    so a refused run can say exactly what changed."""
-    from .editspec import spec_input_files
+    file the spec reads beside the documents — templates, tables, pictures (``key_templates``) — its size, mtime and md5,
+    kept beside the preview so a refused run can say exactly what changed. ``spec`` may be a chain key
+    (``chain.chain_key``): then the files are every stage's."""
     spec_text = json.dumps(spec, sort_keys=True, ensure_ascii=False)
     out: Dict[str, Any] = {"spec": hashlib.sha256(spec_text.encode("utf-8")).hexdigest()[:16], "files": {},
                            "templates": {}}
@@ -58,7 +76,7 @@ def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, An
             out["files"][str(f)] = [st.st_size, st.st_mtime_ns]
         except OSError:
             out["files"][str(f)] = "missing"
-    for t in sorted(set(spec_input_files(spec) if isinstance(spec, dict) else [])):
+    for t in sorted(set(key_templates(spec))):
         try:
             st = t.stat()
             out["templates"][str(t)] = [st.st_size, st.st_mtime_ns, hashlib.md5(t.read_bytes()).hexdigest()]
@@ -69,15 +87,15 @@ def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, An
 
 def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
     """A hash of the spec, of every planned file's path, size and mtime, and of every file the spec reads beside the
-    documents — templates, tables, pictures (``editspec.spec_input_files``: path, size, mtime and content hash): they
-    are inputs like the source (CLAUDE.md rule 12), so one edited after the preview voids the approval exactly as an
-    edited spec file does. A spec with templates only hashes exactly as before."""
-    from .editspec import spec_input_files
+    documents — templates, tables, pictures (``key_templates`` → ``editspec.spec_input_files``: path, size, mtime and
+    content hash): they are inputs like the source (CLAUDE.md rule 12), so one edited after the preview voids the
+    approval exactly as an edited spec file does. A spec with templates only hashes exactly as before. ``spec`` may be
+    a chain key (``chain.chain_key``): every stage's files count."""
     h = hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8"))
     for f in sorted(Path(x).resolve() for x in files):
         st = f.stat()
         h.update(f"\n{f}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8"))
-    for t in sorted(set(spec_input_files(spec) if isinstance(spec, dict) else [])):
+    for t in sorted(set(key_templates(spec))):
         try:
             st = t.stat()
             digest = hashlib.md5(t.read_bytes()).hexdigest()
@@ -169,11 +187,25 @@ class SampleView:
     source_pdf: Optional[Path] = None             # the renders (for Claude's visual check)
     output_pdf: Optional[Path] = None
     look_pages: List[int] = field(default_factory=list)   # page 1 and the first page whose words moved
+    stages: List[Dict[str, Any]] = field(default_factory=list)   # a chain's sample: each stage's verdict, in order
 
     def to_dict(self):
         return {"source": str(self.source), "output": str(self.output) if self.output else None, "passed": self.passed,
                 "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception,
-                "look_pages": self.look_pages}
+                "look_pages": self.look_pages, **({"stages": self.stages} if self.stages else {})}
+
+    def stages_text(self) -> str:
+        """``stage 1 PASS · stage 2 FAIL [V10]`` — how far a chain's sample got."""
+        parts = []
+        for st in self.stages:
+            if st.get("exception"):
+                parts.append(f"stage {st['stage']} EXCEPTION [{st['exception'].get('code')}]")
+            elif st.get("passed"):
+                parts.append(f"stage {st['stage']} PASS")
+            else:
+                failed = [k for k, v in (st.get("checks") or {}).items() if v == "FAIL"]
+                parts.append(f"stage {st['stage']} FAIL {failed}")
+        return " · ".join(parts)
 
 
 @dataclass
@@ -484,6 +516,146 @@ def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, ren
         pv.token = approval_token(spec, [f.source for f in bp.files])
         pv.token_inputs = approval_inputs(spec, [f.source for f in bp.files])
         (out_dir / "spec.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
+        write_preview_files(pv)
+        log.detail(f"approval token {pv.token}")
+        return pv
+    except BaseException as e:
+        log.detail(f"THE PREVIEW STOPPED: {type(e).__name__}: {e}")
+        log.block(traceback.format_exc())
+        raise
+    finally:
+        log.close()
+
+
+# ---- chains: several specs, one after another (chain.py) ----------------------------------------------------------
+
+@dataclass
+class ChainPreview(Preview):
+    """A chain's preview: stage 1's plan on every file (the later stages are planned on each file once the stage before
+    it ran, so only the samples go through every stage here), the samples applied and verified stage by stage in
+    memory, their before/after renders (the source against the file after the LAST stage) and Claude's visual check.
+    The approval token is over the chain (``chain.chain_key``: every stage's spec and templates) and the files."""
+    chain: Dict[str, Any] = field(default_factory=dict)
+
+    def to_text(self) -> str:
+        from .chain import chain_name, stage_name
+        stages = self.chain.get("stages") or []
+        out = [f"PREVIEW — chain «{chain_name(self.chain)}»: {len(stages)} stage(s), run one after another on each file"]
+        for i, st in enumerate(stages, 1):
+            spec = st.get("spec") or {}
+            out.append(f"  stage {i} — {stage_name(st, i)}: {spec.get('request')!r} — {spec.get('summary') or ''}")
+            out += [f"     assumption: {a}" for a in spec.get("assumptions") or []]
+        out += [f"WARNING: {w}" for w in self.warnings]
+        out.append("")
+        out.append("STAGE 1 planned on every file (each later stage is planned on a file once the stage before it ran; "
+                   "the samples below went through every stage):")
+        out.append(self.batch_plan.to_text(per_file=False))
+        out.append("\nSAMPLES (every stage applied and verified in memory, one after another; sources untouched):")
+        labels = sample_labels(self.samples)
+        for sv in self.samples:
+            lab = labels[str(Path(sv.source))]
+            if sv.exception:
+                out.append(f"   {lab}: {sv.stages_text()} — EXCEPTION [{sv.exception['code']}] {sv.exception['reason']}")
+                continue
+            failed = [k for k, v in sv.checks.items() if v == "FAIL"]
+            out.append(f"   {lab}: {sv.stages_text()} → verification {'PASS' if sv.passed else 'FAIL ' + str(failed)}"
+                       + (f"; images: {[i.name for i in sv.images]}" if sv.images else ""))
+        if self.review is not None:
+            out.append("")
+            out.append(self.review.to_text())
+        out.append(f"\napproval token: {self.token}")
+        return "\n".join(out)
+
+    def to_dict(self):
+        d = super().to_dict()
+        d["chain"] = self.chain
+        return d
+
+
+def make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
+                       do_render: bool = True) -> ChainPreview:
+    """``make_preview`` for a chain: stage 1 planned on every file, the samples (``_pick_samples`` of that plan) run
+    through every stage in memory — plan → apply → verify, each stage on the bytes the stage before it verified; a
+    stage that refuses or fails verification stops that sample there —, the final output written under
+    ``samples/`` (unique names), rendered beside the source. Writes ``chain.json``, PREVIEW.md and preview.json;
+    ``logs/preview.log`` has every stage's verdict per sample."""
+    from . import diagnostics as diag
+    from .batch import expand_inputs, output_names
+    from .chain import chain_key, chain_name, chain_templates, stage_name, validate_chain
+    from .editspec import is_template_file
+    from .verify import run_suite
+    validate_chain(chain)
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    log = _preview_log(out_dir, f"chain {chain_name(chain)!r}")
+    try:
+        templates = chain_templates(chain)
+        files = [f for f in expand_inputs(inputs) if not is_template_file(f, templates)]
+        stages = chain["stages"]
+        bp = plan_batch([str(f) for f in files], stages[0]["spec"])
+        pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path)
+        log.detail(f"stage 1 ({stage_name(stages[0], 1)}) planned on {len(bp.files)} file(s) in {bp.seconds:.2f}s: "
+                   f"{len(bp.files) - len(bp.exceptions)} plan cleanly, {len(bp.exceptions)} exception(s)")
+        for fpl in bp.files:
+            if fpl.status == "planned":
+                log.detail(f"  {fpl.source.name}: planned [{fpl.ms:.0f} ms] — " + " · ".join(fpl.summary))
+            else:
+                e = fpl.exception or {}
+                log.detail(f"  {fpl.source.name}: EXCEPTION [{e.get('code')}] at {e.get('stage')}: {e.get('reason')}")
+        picks = _pick_samples(bp)
+        names = output_names(picks)
+        for f in picks:
+            sv = SampleView(source=f)
+            phase, data, produced = "open", None, False
+            try:
+                data = Path(f).read_bytes()
+            except Exception as e:  # noqa: BLE001
+                sv.exception = diag.exception_record(e, phase, None)
+            for i, st in enumerate(stages, 1):
+                if sv.exception is not None:
+                    break
+                spec, label = st["spec"], stage_name(st, i)
+                try:
+                    phase = "plan"
+                    pkg = DocxPackage(data, name=str(f))
+                    plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+                    phase = "apply"
+                    out = apply_spec(pkg, frags).output_bytes()
+                    produced = True
+                    phase = "verify"
+                    rec = run_suite(pkg.data, out, plan.to_dict(), str(f), str(out_dir / "samples" / names[str(f)]))
+                    checks = {c.id: c.status for c in rec.checks}
+                    sv.stages.append({"stage": i, "name": label, "passed": rec.passed, "checks": checks})
+                    _log_verification(log, f"{f.name} · stage {i} ({label})", rec)
+                    data = out
+                    sv.checks = checks
+                    if not rec.passed:
+                        sv.passed = False
+                        break
+                except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
+                    exc = diag.exception_record(e, phase, data)
+                    exc["chain_stage"] = i
+                    exc["reason"] = f"stage {i} ({label}): {exc.get('reason', '')}"
+                    sv.exception = exc
+                    sv.stages.append({"stage": i, "name": label, "exception": {"code": exc.get("code"),
+                                                                                "reason": exc.get("reason")}})
+                    log.detail(f"sample {f.name}: stage {i} EXCEPTION [{exc['code']}] at {phase}: {exc['reason']}")
+                    if exc.get("traceback") and exc.get("kind") != "refusal":
+                        log.block(exc["traceback"])
+            else:
+                if sv.exception is None and sv.passed is None:
+                    sv.passed = True
+            if produced:
+                sv.output = out_dir / "samples" / names[str(f)]
+                sv.output.parent.mkdir(parents=True, exist_ok=True)
+                sv.output.write_bytes(data)
+            pv.samples.append(sv)
+        pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
+        key = chain_key(chain)
+        planned = [f.source for f in bp.files]
+        pv.token = approval_token(key, planned)
+        pv.token_inputs = approval_inputs(key, planned)
+        (out_dir / "chain.json").write_text(json.dumps(chain, indent=2, ensure_ascii=False), encoding="utf-8")
         write_preview_files(pv)
         log.detail(f"approval token {pv.token}")
         return pv

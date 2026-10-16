@@ -58,12 +58,33 @@ edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inpu
    op removes/restructures. Ops declare what they touch in `touches`; keep that list honest — including a
    `(part, "scope", "verify")` touch for every part an op's V10 assertion re-resolves its selection over
    (`set_font`, `set_paragraph_props`: every part in scope, changed or not), so an op that removes that part is a
-   plan-time conflict rather than a V10 failure after apply. Two `verify` touches of one member never conflict.
+   plan-time conflict rather than a V10 failure after apply — and a `verify` touch for everything an op's prediction
+   READS from the source that another op could change (2026-10-16; `base.verify_family` is the grammar): a whole
+   member, `(member, "*", "verify")`, conflicts with any change inside it by another op; a family of a target,
+   `(member, target, "verify:<family>")`, with a change of that family or of the target's `text`; a bare `verify` on a
+   target with any change of it. `apply_header_footer_template` reads the styles part and the theme part whole (its
+   pins are the diff of template-effective vs TARGET-effective properties, resolved over every style chain and
+   docDefaults) and `verify:pgSz`/`verify:pgMar`/`verify:titlePg` of every section's sectPr (its tab rescale and
+   distance alignment read the section's text width and distances; `hf_template_refs` predicts every titlePg);
+   `fix_page_numbering`'s cover-unnumbered reads `verify:titlePg` of every section (which footer the cover shows,
+   whether a later section shows it by inheritance). So a `set_style_font`, `set_doc_defaults_font`, `set_properties`
+   on styles or `set_page_setup` beside the templating op is a plan-time `conflict` naming the op to split out (they
+   used to plan and fail V10 after apply, and the compiler's dry plan accepted them), and a template flipping the
+   cover's titlePg beside cover-unnumbered is one too (it used to PASS every check with the page number still on the
+   cover: the edit landed on a footer the cover no longer showed, and V7 skips page 1 there). Two reads of one member
+   or target never conflict, and an op's own change of what it reads is none. `fix_page_numbering continuous` beside
+   the templating op still plans: `pgNumType` is neither read nor changed by the templating op, and both ops' V10
+   assertions strip their own sectPr children before the residual compares the rest — decided right as is
+   (`tests/test_read_conflicts.py`).
    Batch 1: the in-paragraph edit ops touch `(part, block, "text")`; `swap_image` touches `(part, block, "drawing")`
    for each paragraph holding a swapped picture (so a text edit of that paragraph conflicts: the item model would see
    the drawing change), the part's rels and `[Content_Types].xml` as whole members, every part in scope as `verify`;
    `name_output`/`make_values_agree` touch `naming.OUTPUT_NAME_TOUCH`, and `merge_fragments` refuses two ops that
-   both name the output.
+   both name the output. What they READ is declared too (`slots.fill_reads`): `name_output`'s and
+   `ensure_end_of_section`'s fill rules read `(part, block, "verify:text")` of every paragraph they take a value from,
+   `make_values_agree` of every paragraph a place matched, `ensure_end_of_section` its `copy_from_regex` paragraph
+   (`verify`) and the body's end (`(main, "end", "verify")`, so a paragraph added after its line by another op is a
+   conflict), and `make_values_agree` with a file-name place reads `OUTPUT_NAME_TOUCH`'s member.
 10. **Never create a part to make an edit work.** E.g. `remove_header_footer` refuses (`inheritance`) rather
     than add an empty header part. Adding members is allowed only when the op's whole purpose is the added
     member and it is predicted in `members_added` — today `apply_header_footer_template`, whose new parts
@@ -453,7 +474,8 @@ proposals and recorded in the plan's status sections.
   `property_change` (rPrChange/pPrChange snapshot), `count_revisions`.
 - `ops/base.py` — `Op`, `Plan` (v0.1.0 fields + `members_removed/added`, `property_assertions`,
   `geometry_reference/reason/template`, `ops`), `PlanFragment` (+ `touches`, `rev_ids_needed`), `JobException`,
-  `merge_fragments` (conflicts, mode, revision-id ranges, geometry). `ops/__init__.py` — registry (`@register`).
+  `merge_fragments` (conflicts, mode, revision-id ranges, geometry), `check_conflicts` + `verify_family` (the read
+  grammar of `touches`: `verify`, `verify:<family>`; rule 9). `ops/__init__.py` — registry (`@register`).
 - `ops/selectors.py` — transform-side selector resolution, `DEFAULT_PRESERVE_FONTS`, font param parsing.
 - `ops/*.py` — `fix_page_numbering`, `replace_text`, `remove_header_footer`, `set_font`, `set_style_font`, `set_properties`,
   `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, `apply_header_footer_template`; built-in batch 1:
@@ -470,11 +492,17 @@ proposals and recorded in the plan's status sections.
   `apply_removal` (shared by `remove_header_footer` and templating: rels, members, overrides, orphaned media,
   revisions flagged). `ops/slots.py` — slots, display text, `apply_slot`, `expected_block_text`, `extract_fill`;
   reference slots (`located_text`, `bounded`, `reference_values`, `reference_slots`), `carve`, `mark_slots` (⟦ ⟧ for notes).
-  `ops/effective.py` — `Resolver` (effective pinnable properties), `theme_fonts`, `text_width`, `rescale_tabs`;
+  `ops/effective.py` — `Resolver` (effective pinnable properties), `theme_fonts` (+ `theme_part`, the part it reads —
+  what the templating op declares as a read), `text_width`, `rescale_tabs`;
   `PropResolver` (set_properties' effective value with provenance, with an `override` that simulates a style change).
 - `apply_header_footer_template` plan: copies keyed by (template part, template width, target width); pins are
   the diff of template-effective vs target-effective (with imported styles); `transform_data` carries pins,
   slots, rels/media maps, docPr start ids, new refs, removal plan. Apply works on a fresh parse of the template.
+- `chain.py` (2026-10-16) — chains: several specs run one after another, each stage a full `run_batch` in
+  `<out>/stage-NN/` on the files the stage before it verified (`run_chain`, `ChainResult`/`ChainFile`/`StageRun`,
+  `validate_chain`, `chain_from_specs`, `chain_templates`, `chain_key` — the approval key —, `chain_intent`,
+  `load_chain_file`); the reports in `report.write_chain_report`/`write_chain_diagnostics`/
+  `build_chain_set_aside_manifest`. See "2026-10-16 Chains" below.
 - `editspec.py` — EditSpec validate → `plan_spec` → `apply_spec` (minimal Phase 1 executor; the Phase 3
   planner grows out of it). `examples/specs/` — the worked example specs (Phase 1's two, the templating ones,
   `match-template-spec-header-footer` and `match-template-spec-font`); `examples/templates/` — the template fixture
@@ -607,9 +635,13 @@ proposals and recorded in the plan's status sections.
   `VIEW_BUDGET_TOKENS` for `view_pages` (60,000: about 20 letter pages — `page_tokens()` 2,714 a letter page at 150 dpi,
   22 one at a time, 21 in calls of three; 18 pages of 11×17 at 117 dpi, 3,312 each; `page_dpi` is the one dpi rule
   `rasterize_pages` uses; a test derives the comment's figures).
-- `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`), operations (`operations/<slug>/op.py` +
-  `manifest.json`) and snippets (`snippets/<slug>.json` + `.meta.json`; batch 1: `save_snippet`, `snippet_from_document`,
-  `read_snippet`, `load_snippet`, `snippet_spec`, `snippet_text_problem`) under `config_dir()/library` (rule 17). `other_kind_holding(kind, slug)`; `_check_free` refuses the
+- `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`), chains (`chains/<slug>.json` + `.meta.json`, the
+  stages' specs embedded as saved; `save_chain`/`load_chain`/`chain_file`, 2026-10-16), operations
+  (`operations/<slug>/op.py` + `manifest.json`) and snippets (`snippets/<slug>.json` + `.meta.json`; batch 1:
+  `save_snippet`, `snippet_from_document`, `read_snippet`, `load_snippet`, `snippet_spec`, `snippet_text_problem`) under
+  `config_dir()/library` (rule 17). `FILE_KINDS` are the file-backed kinds (recipe, chain, snippet); `LABELS` the
+  labels; `_portable_spec` makes a spec portable (every input-file path absolute — `editspec.input_slots` —, pattern
+  pins dropped) for a recipe and every chain stage. `other_kind_holding(kind, slug)`; `_check_free` refuses the
   other kind's name even with `replace` ("… cannot take that name, not even with replace …"). `item_hash(item)`: the
   content hash a conversation's library choice pins; `recipe_file(item)` / `read_manifest(item)`: the `_inside`-checked
   reads the compiler's index and `read_library_item` use (2026-10-16).
@@ -724,7 +756,9 @@ Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its
 merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 709 with Claude and your library
 (`tests/test_library_choices.py`, 2026-10-16), 734 with `set_properties` (`tests/test_set_properties.py`), 740 with the Qt
 teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without an API key
-(`tests/test_keyless.py`, 2026-10-16), 931 with built-in operations batch 1 (2026-10-16) — all pass but
+(`tests/test_keyless.py`, 2026-10-16), 768 with the plan-time conflicts for what an op reads
+(`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
+(`tests/test_chain.py`, 2026-10-16), BATCH1_MERGED_TOTAL with built-in operations batch 1 (2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -1175,6 +1209,57 @@ properties" is the user's view):
   tails of `run_fonts` and `paragraph_props` became `_check_rpr_change`/`_check_ppr_change` (shared with `properties`;
   the same checks, byte for byte).
 
+## 2026-10-16 Chains: several specs, one after another
+
+Abraham: "the user can elect to first change the font, then remove existing header/footer, and finally, to match the
+header/footer of the template spec" — asked how feasible; the probe showed the engine refuses that as one spec
+(rule 9: the font op's `verify` touch over the header parts the templating op removes; `remove_header_footer` +
+`apply_header_footer_template` both remove the same parts) while a chain of RUNS passes, and he said "make it happen".
+README → "Chains: several recipes, one after another" is the user's view; `tests/test_chain.py` pins every rule (16
+tests, 784 in total). Rules:
+
+1. **A chain never changes the engine's rules.** Every stage is an ordinary `run_batch` with its own plan, apply,
+   V1–V10, render and guarded delivery; `merge_fragments` is untouched, and so are rules 2 and 9 — a chain is the home
+   for "split them into separate specs". `chain.py` imports nothing from `verify/` beyond what `batch` does.
+2. **The pin between stages.** Stage N+1 reads a file only when its md5 equals stage N's `FileResult.output_md5` (the
+   bytes the suite verified, the hash `batch.verified_bytes` re-checks at delivery): copies mode reads stage N's
+   `outputs/` copy, in place the source as stage N wrote it back; a mismatch is that file's `chain-drift` at stage N+1
+   (`report.FAILURE_EXPLANATIONS`), never a read. The chain's own `outputs/` is written from `verified_bytes` of the last
+   stage (`chain-deliver` when it is not).
+3. **A file goes as far as it passes**: `ChainFile.stopped_at`, `stage_status` per stage (`PASS | FAIL | EXCEPTION |
+   DRIFTED | NOT_RUN`), the stopping stage's `FileResult` in `results`; the later stages never see it. In place, the
+   stages before the stop stay written back and the reason says so. `set_aside.json` lists the ORIGINAL sources with
+   the stage (`stage: "chain stage N"`, `details.chain_stage/stage_name/stage_folder`) — `batch.load_set_aside`,
+   `Session.load_set_aside` and `cmd_retry` read it as a batch's.
+4. **Templates of every stage are inputs** (rule 12): `chain_templates` filters the inputs (`is_template_file`), and the
+   approval token is taken over `chain_key(chain)` — `preview.key_templates` reads every stage's templates from it, so
+   `approval_token`/`approval_inputs`/`changed_since_preview` take a chain key in place of a spec. `check_inputs_outside`
+   runs on the chain's folder before anything is created.
+5. **Order is the user's, flagged, never refused** (the one departure from rule 9, by design): a stage whose plan's
+   `intended_parts`/`members_removed` meet a part an earlier stage's plan `members_added` gets a flag per file
+   (`ChainFile.flags`, the report's "Flagged for review"). A plan-time conflict check ACROSS stages is a follow-up.
+6. **The preview runs every stage on the samples in memory** (`preview.make_chain_preview` → `ChainPreview(Preview)`;
+   `SampleView.stages`, `stages_text()`): stage 1's `plan_batch` on every file is the per-file table; a sample stops at
+   the stage that refuses or fails (`exception["chain_stage"]`, the reason prefixed "stage N (NAME): "); the output
+   written is the file as the last stage that applied left it. `Session.preview` holds it (a `Preview`), so the visual
+   check, `run_blocked_reason`, `acknowledge_review` and the window's cards work unchanged; the intent is
+   `chain_intent`.
+7. **The library's chain kind** follows rules 13 and 17: `chains/<slug>.json` embeds the stages' specs as saved (made
+   portable like a recipe — `_portable_spec`), a name belongs to one item across the three kinds (`_check_free`,
+   `other_kind_holding`), reads go through `_inside`. Claude never offers a chain: `compiler.OFFERABLE_KINDS` keeps
+   chains out of `library_index`/`list_library`; `library_item_detail` of a chain names its stages and says it cannot
+   be offered; `LIBRARY_CHOICE_KINDS` is unchanged.
+8. **One outcome at a time** (`Session._set_outcome(spec | generated | chain)`): `Session.chain`/`chain_source`
+   (`"recipes"` from `build_chain`, `"library:NAME"` from `load_chain`, a path from `load_chain_file`),
+   `outcome_key()` for the token, `chain_label()`, `_run_chain` → `last_chain` (`last_batch`/`last_trials` None),
+   `save_chain` only while the preview is current, `advise` per stage folder. The window: `_widget_key` carries the
+   chain, `_preview_current`/`_refresh_nav`/`_refresh_run_state`/`_refresh_spec_bar`/`do_preview` count a chain as a
+   loaded outcome, `_fill_preview` heads the step with the stages, `_after_run` uses `rows.chain_rows`, `do_report`
+   opens `CHAIN_REPORT.md`, `do_save_to_library` saves a chain; `Prompts.pick_sequence` (`SequenceDialog`, every
+   widget parented to the dialog) and `RecordingPrompts(sequences=)`; hook `buttons["chain"]`.
+9. **The progress lines gained one**: `"stage i of n — NAME: k file(s)"` before each stage (`rows.ProgressTracker`
+   names the stage in the phase and restarts the bar per stage; `test_ui_rows.py`'s pinned lines are unchanged).
+
 ## 2026-10-16 Running without an API key (keyless mode)
 
 Abraham: "most users either not have or will not want an api key … give the user [the option] to run this software API
@@ -1211,6 +1296,40 @@ keyless. And inform them that some functions are unavailable." README → "Runni
 6. `packaging/gui_screenshot.py --keyless` writes `docs/gui-keyless.png` (refuses on a machine with an `ant auth login`
    sign-in). The other screenshots set a dummy `ANTHROPIC_API_KEY` in the script's own process (nothing calls Claude:
    a saved spec, *Render pages* off), so they keep the look with a key; `--chat` has its scripted client.
+
+## 2026-10-16 Plan-time conflicts for what an op reads
+
+The gap: rule 9 promised that overlapping ops are refused at plan time, but `apply_header_footer_template` computes
+its pins from the SOURCE's `styles.xml` while `set_style_font` / `set_doc_defaults_font` / `set_properties` on styles
+in the same spec change it underneath — its `touches` named only the imported styles, theirs the styles they change:
+different targets, no conflict, a clean plan, a V10 `template_parts` failure after apply (when the target's style
+already gave the template's font, so no pin was made) and a dry plan the compiler accepted. The same for the text
+width and distances it reads from each section's `pgSz`/`pgMar` under a `set_page_setup`; and worse, for the
+`titlePg` that `fix_page_numbering`'s cover-unnumbered reads: a headers-only templating op following its template's
+titlePg turned the cover's off, the PAGE paragraph was cleared from the first-page footer the cover no longer showed,
+and the file PASSED with the page number still on the cover (V7 skips page 1 there). Rules (rule 9 has the detail;
+`tests/test_read_conflicts.py` plants each old behaviour and pins each refusal; `tests/test_ops_base.py` the grammar):
+
+1. **An op declares what its prediction reads** as `verify` touches (`base.verify_family`): a whole member
+   `(member, "*", "verify")`, a family of a target `(member, target, "verify:<family>")`, every family of a target
+   `(member, target, "verify")`; `(member, "scope", "verify")` keeps its older, weaker meaning (the member must survive
+   as a whole). `check_conflicts` rule 1 pairs a whole-member read with any change inside the member by another op,
+   rule 2 a family read with a change of that family or of the target's `text`. Two reads never conflict; an op's own
+   change of what it reads is no conflict. The refusal names the op to split out and the order: "split out X into a
+   spec of its own and run it first, then Y on its outputs" — the second spec plans on the first's outputs.
+2. **The templating op reads** the styles part and the theme part whole, and `pgSz`, `pgMar`, `titlePg` of every
+   section (unconditionally: V10's `template_parts` reads the output's widths whether or not tabs are rescaled, and
+   `hf_template_refs` predicts every titlePg). A `set_page_setup` of any section beside it is refused, top/bottom
+   margins included (the aspect is the element, not the attribute).
+3. **Cover-unnumbered reads `titlePg` of every section**; not `hfref`: a footer-reference change by another op always
+   comes with the removal of the footer part it edits (rule 1 already) — `remove_header_footer` refuses to leave a
+   section inheriting (`inheritance`), and the templating op removes every old part of the kinds it replaces.
+4. **`continuous` beside the templating op is right as is** (neither reads nor changes the other's sectPr children;
+   both strip their own before V10's residual) and stays pinned as planning and verifying in both orders.
+5. **Not changed, recorded:** `set_font`'s symbol-run rule and `set_properties`' effective values with provenance also
+   read the style chains from the source; a `set_style_font` beside them plans today and the compiler's "change all
+   fonts" spec relies on it (`test_sweep_fixes.py`). A style change to a symbol font beside a `set_font` is the only
+   way that read goes wrong — left for the built-in-operations round, not widened here.
 
 ## Built-in operations, batch 1 (2026-10-16)
 
