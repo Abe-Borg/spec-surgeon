@@ -328,8 +328,8 @@ class PreviewPage(Page):
         top.addWidget(_table_hint("Hover a row for the engine's diagnosis; double-click to open the file or see why "
                                   "it was refused"), 1)
         self.table_card.add(top)
-        self.model = RowsModel(PREVIEW_COLUMNS)
-        self.proxy = ProblemsFilter()
+        self.model = RowsModel(PREVIEW_COLUMNS, self)      # the page owns them: they die with it, on the GUI thread
+        self.proxy = ProblemsFilter(self)
         self.table = _table(self.model, self.proxy)
         self.table.setItemDelegateForColumn(2, BadgeDelegate(self.table))
         self.table_card.add(self.table)
@@ -440,8 +440,8 @@ class RunPage(Page):
         top.addWidget(self.only_problems)
         top.addWidget(_table_hint("Double-click a file to open its edited copy — or to see why it did not pass"), 1)
         card.add(top)
-        self.model = RowsModel(RESULT_COLUMNS)
-        self.proxy = ProblemsFilter()
+        self.model = RowsModel(RESULT_COLUMNS, self)       # the page owns them: they die with it, on the GUI thread
+        self.proxy = ProblemsFilter(self)
         self.table = _table(self.model, self.proxy)
         self.table.setItemDelegateForColumn(1, BadgeDelegate(self.table))
         card.add(self.table)

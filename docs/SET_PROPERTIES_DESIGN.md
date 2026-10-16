@@ -1,7 +1,8 @@
 # `set_properties` — design note (built-in operations round, part 1)
 
-2026-10-16. Status: **proposed, awaiting Abraham's approval** — nothing below is built yet. Revised once after Codex's
-review of the first draft (PR #16): the complex-script pairs in §1 and the provenance rule for style targets in §2–3.
+2026-10-16. Status: **approved by Abraham as recommended and built** (PR #16: `ops/set_properties.py`,
+`ops/effective.PropResolver`, the `properties` kind in `verify/props.py`, `tests/test_set_properties.py`). Revised once
+after Codex's review of the first draft: the complex-script pairs in §1 and the provenance rule for style targets in §2–3.
 Reading order: CLAUDE.md
 hard rules 2, 3, 8, 9 and 16, the "Effective pinnable properties" definition, and the plan's Phase 8 status
 (`set_properties` and its generic V10 kind, ideas #22–23, deferred to this round).
@@ -33,6 +34,10 @@ borders, shading, highlight or hidden text.
 `run` properties go on runs, paragraph marks and style `rPr`; `paragraph` properties on a paragraph's `pPr` and a
 paragraph style's `pPr`. Elements are created in `RPR_ORDER` / `PPR_ORDER`. `false` means explicitly off; there is no
 "remove the direct value and let the style decide" in v1 (its effect would depend on the chain — `false` is certain).
+
+Caps and small caps are mutually exclusive in Word — all caps wins when both are in effect (Codex, on the implementation
+PR #18): asking one where the other is in effect is refused (`conflict-property`) unless the same op turns the other off,
+both true is `bad-params`, and V10 fails an output that leaves both in effect.
 
 Left out, and why: `highlight` (the template slot marker and a reviewer's tool, not client formatting); `vanish`
 (hides text from the reader — loss by another name); `dstrike`, `outline`, `shadow`, `emboss`, `imprint` (legacy effects); character spacing, kerning, position, scale;
@@ -153,7 +158,8 @@ flags); `source` when only `color`, `u` or `strike` change — V7 then still pro
   types and enums, so a misspelled property or a bad value is refused by `validate_spec`.
 - `compiler.SYSTEM`: one line — caps is display formatting (no letters retyped); direct formatting by default, the
   style when the user asks for it; one `set_properties` per selection carrying all its properties.
-- `profile._style_entry`: `italic` and `color` beside `bold`/`caps`, so Claude can see where italic or a colour comes from.
+- `profile._style_entry`: `italic`, `color` and `color_theme` beside `bold`/`caps`, so Claude can see where italic or a
+  colour comes from — Word renders a theme colour (with its shade or tint), not the cached `w:val` (Codex, PR #18).
 - `report.FAILURE_EXPLANATIONS`: `conflict-property` (missing today; `set_paragraph_props` raises it too).
 - `examples/specs/bold-part-headings.json` (worked example); README (operations table, a section of its own, codes, test
   count); CLAUDE.md (the both-sides definition, rule 8's kinds, "Where things are"); the plan's status section.

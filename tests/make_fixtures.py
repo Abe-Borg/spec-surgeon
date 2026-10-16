@@ -615,6 +615,100 @@ SPECS = [
 ]
 
 
+def build_formatted(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS") -> bytes:
+    """The set_properties fixture (docs/SET_PROPERTIES_DESIGN.md §7).
+
+    Styles: ``SpecPart`` (the PART headings — plain: no bold, no keep-with-next, 11 pt), ``ArticleTitle`` (the article
+    titles, plain), ``SpecSub`` (based on SpecPart, its own red colour), ``SpecSubPlain`` (based on SpecPart, inherits),
+    ``SpecNoteItalic`` (italic through the style), ``SpecStrong`` (a bold character style).
+    Body: PART 1 plain; PART 2 with a SpecStrong run (bold at a second style level once SpecPart turns bold); PART 3
+    with "EXECUTION" explicitly not bold (a direct override); PART 4 as a complex-script run (w:cs); article titles in
+    mixed case — one already uppercase, one with a theme-coloured run, one with a Wingdings bullet and a w:sym; body
+    text with a direct italic run and an italic-style note; an underlined run with an underline colour; a paragraph
+    already keep-with-next; a run bolded earlier under tracked changes (w:rPrChange); a SpecSub and a SpecSubPlain
+    heading; a table; the header paragraph in SpecPart; trackRevisions on.
+    """
+    from docx.enum.style import WD_STYLE_TYPE
+    from docx.shared import RGBColor
+    doc = Document()
+    styles = doc.styles
+    styles["Normal"].font.name = "Arial"
+    styles["Normal"].font.size = Pt(10)
+    part = styles.add_style("SpecPart", WD_STYLE_TYPE.PARAGRAPH)
+    part.base_style = styles["Normal"]
+    part.font.size = Pt(11)
+    art = styles.add_style("ArticleTitle", WD_STYLE_TYPE.PARAGRAPH)
+    art.base_style = styles["Normal"]
+    sub = styles.add_style("SpecSub", WD_STYLE_TYPE.PARAGRAPH)
+    sub.base_style = part
+    sub.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+    sub_plain = styles.add_style("SpecSubPlain", WD_STYLE_TYPE.PARAGRAPH)
+    sub_plain.base_style = part
+    note = styles.add_style("SpecNoteItalic", WD_STYLE_TYPE.PARAGRAPH)
+    note.base_style = styles["Normal"]
+    note.font.italic = True
+    strong = styles.add_style("SpecStrong", WD_STYLE_TYPE.CHARACTER)
+    strong.font.bold = True
+
+    hp = doc.sections[0].header.paragraphs[0]
+    hp.style = part
+    hp.add_run(f"SECTION {section_number}")                                        # the heading style in a header
+    doc.add_paragraph(f"SECTION {section_number}")
+    doc.add_paragraph(title)
+    doc.add_paragraph("PART 1 - GENERAL", style="SpecPart")
+    doc.add_paragraph("1.01\tSUMMARY", style="ArticleTitle")                        # already typed in capitals
+    p = doc.add_paragraph(style="ArticleTitle")
+    p.add_run("1.02\tReferences ")
+    r = p.add_run("(see list)")
+    r.font.color.rgb = RGBColor(0x1F, 0x49, 0x7D)
+    r._r.rPr.find(qn("w:color")).set(qn("w:themeColor"), "text2")                  # a theme colour over the value
+    p = doc.add_paragraph(style="ArticleTitle")
+    p.add_run("1.03\t")
+    _rfonts(p.add_run("l"), ascii="Wingdings", hAnsi="Wingdings")                   # a bullet glyph: never capitalised
+    sym_run = p.add_run()
+    sym = OxmlElement("w:sym"); sym.set(qn("w:font"), "Symbol"); sym.set(qn("w:char"), "F0B7"); sym_run._r.append(sym)
+    p.add_run(" Submittals")
+    p = doc.add_paragraph()
+    p.add_run("A.\tProvide hangers ")
+    r = p.add_run("per NFPA 13")
+    r.italic = True                                                                  # direct italic (w:i only)
+    p.add_run(" (2025).")
+    doc.add_paragraph("B.\tNote in the italic style.", style="SpecNoteItalic")
+    p = doc.add_paragraph()
+    p.add_run("C.\tUnderlined ")
+    r = p.add_run("red underline")
+    r.underline = True
+    r._r.rPr.find(qn("w:u")).set(qn("w:color"), "FF0000")                           # an underline colour to keep
+    p = doc.add_paragraph("D.\tKeep with next already.")
+    p.paragraph_format.keep_with_next = True
+    p = doc.add_paragraph()
+    fmt = p.add_run("E.\tHangers formatted earlier by Jeremy.")
+    fmt.bold = True
+    chg = OxmlElement("w:rPrChange")
+    chg.set(qn("w:id"), "303"); chg.set(qn("w:author"), "Jeremy"); chg.set(qn("w:date"), "2026-09-22T11:00:00Z")
+    chg.append(OxmlElement("w:rPr"))
+    fmt._r.rPr.append(chg)
+    p = doc.add_paragraph("PART 2 - PRODUCTS", style="SpecPart")
+    r = p.add_run(" (strong)")
+    r.style = styles["SpecStrong"]                                                   # bold at a second style level
+    p = doc.add_paragraph(style="SpecPart")
+    p.add_run("PART 3 - ")
+    r = p.add_run("EXECUTION")
+    r.bold = False                                                                   # a direct override
+    p = doc.add_paragraph(style="SpecPart")
+    r = p.add_run("PART 4 - CLOSEOUT")
+    r.font.complex_script = True                                                     # w:cs: weight comes from w:bCs
+    doc.add_paragraph("Sub heading in red", style="SpecSub")
+    doc.add_paragraph("Sub heading that inherits", style="SpecSubPlain")
+    t = doc.add_table(rows=1, cols=2)
+    t.cell(0, 0).text = "Item"; t.cell(0, 1).text = "Value"
+
+    settings = doc.settings.element
+    settings.insert(0, OxmlElement("w:trackRevisions"))
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir")

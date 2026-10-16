@@ -287,6 +287,30 @@ test that proves they agree.)
   `pos + (W_target − W_template)`; center: `floor(pos × W_target / W_template + 0.5)`; others unchanged; never in
   table paragraphs. Transform: `ops/effective.rescale_tabs/text_width`; verifier: `verify/template.rescaled/_width`.
 
+- **Formatting properties (`set_properties`, 2026-10-16; design `docs/SET_PROPERTIES_DESIGN.md`).** User-facing `run`
+  properties expand to elements — `b` → `b`+`bCs`, `i` → `i`+`iCs`, `caps`, `smallCaps`, `strike`, `u`, `color`;
+  `paragraph`: `keepNext`, `keepLines`, `widowControl`, `pageBreakBefore`. **Effective value with provenance**: toggles
+  (`b`, `bCs`, `i`, `iCs`, `caps`, `smallCaps`, `strike`) — direct wins; specified at exactly one style level (docDefaults,
+  table chain, paragraph chain, character chain: the level order of `effective_fonts`) → that value; nowhere → off;
+  more → ambiguous (`None`); `u`, `color` (the (val, themeColor, themeShade, themeTint) tuple) and the paragraph flags —
+  nearest level wins; defaults `"none"`, `("auto", None, None, None)`, flags off except `widowControl` on. Provenance:
+  `direct` | `style:<id>` | `docDefaults` | `default`. **Gets**: a direct target gets an element whose effective value in
+  the SOURCE differs from the asked one (ambiguous → gets); a symbol run (set_font's definition, plus `w:sym`) never gets
+  `caps`/`smallCaps`; a style target gets an element whose own value differs. **Expected element**: toggles and flags on →
+  no attributes, off → `w:val="0"`; `color` → exactly `{val}`; `u` → the source element's attributes with `val` replaced.
+  **Style-target partition** (plan refusals / V10 FAIL): provenance the selected style → affected; a nearer style → noted,
+  left alone; `direct` disagreeing → `conflict-property`; ambiguous → `toggle-ambiguous`; a style turning `caps`/`smallCaps`
+  ON for a symbol run → `conflict-property` (off is fine). **Exclusive pair**: Word shows all caps and ignores small caps
+  when both are in effect — an op asking `caps` or `smallCaps` on must leave at most one of them in effect on every
+  selected (direct) or using (style) run and mark after the change, an ambiguous toggle counting as in effect: plan
+  `conflict-property` (`caps_conflict`) / V10 FAIL (`_check_caps_exclusive`); both asked on → `bad-params` /
+  `ValueError`. Transform: `ops/effective.PropResolver` (+ `run_elements`/`para_elements`; an
+  `override` simulates the style change), `ops/set_properties.py`; verifier: `verify/props._v_run_prop`/`_v_para_prop`/
+  `_v_gets_run`/`_v_gets_para`/`_v_style_gets`/`_v_expected_attrs`/`_properties`. `tests/test_set_properties.py::
+  test_transform_and_verifier_property_resolvers_agree` compares them on every run, mark and paragraph of four fixtures;
+  the planted-defect tests there share a wrong pair table, "already" rule, symbol rule, certainty check and on/off writer
+  between plan and apply.
+
 ## Roadmap
 
 `docs/NL_SURGICAL_EDITOR_PLAN.md` is the design and phased plan for the natural-language editor built on
@@ -328,13 +352,14 @@ proposals and recorded in the plan's status sections.
   `geometry_reference/reason/template`, `ops`), `PlanFragment` (+ `touches`, `rev_ids_needed`), `JobException`,
   `merge_fragments` (conflicts, mode, revision-id ranges, geometry). `ops/__init__.py` — registry (`@register`).
 - `ops/selectors.py` — transform-side selector resolution, `DEFAULT_PRESERVE_FONTS`, font param parsing.
-- `ops/*.py` — `fix_page_numbering`, `replace_text`, `remove_header_footer`, `set_font`, `set_style_font`,
+- `ops/*.py` — `fix_page_numbering`, `replace_text`, `remove_header_footer`, `set_font`, `set_style_font`, `set_properties`,
   `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, `apply_header_footer_template`.
 - `ops/hf_common.py` — header/footer refs, `effective_refs` (what each section shows), `plan_removal`/
   `apply_removal` (shared by `remove_header_footer` and templating: rels, members, overrides, orphaned media,
   revisions flagged). `ops/slots.py` — slots, display text, `apply_slot`, `expected_block_text`, `extract_fill`;
   reference slots (`located_text`, `bounded`, `reference_values`, `reference_slots`), `carve`, `mark_slots` (⟦ ⟧ for notes).
-  `ops/effective.py` — `Resolver` (effective pinnable properties), `theme_fonts`, `text_width`, `rescale_tabs`.
+  `ops/effective.py` — `Resolver` (effective pinnable properties), `theme_fonts`, `text_width`, `rescale_tabs`;
+  `PropResolver` (set_properties' effective value with provenance, with an `override` that simulates a style change).
 - `apply_header_footer_template` plan: copies keyed by (template part, template width, target width); pins are
   the diff of template-effective vs target-effective (with imported styles); `transform_data` carries pins,
   slots, rels/media maps, docPr start ids, new refs, removal plan. Apply works on a fresh parse of the template.
@@ -356,7 +381,8 @@ proposals and recorded in the plan's status sections.
   `compare_template_bands()` pairs their pages by section (map from the spec's `template_sections`) and
   variant — never a "best page" search (a blank variant would stand in for anything) — and checks each
   templated region: blank ↔ blank, else outer edge + shared words, 2 pt window, footer from the page bottom.
-- `verify/props.py` — V10: assertion kinds, independent selectors/styles/theme, residual identity. `first_difference`
+- `verify/props.py` — V10: assertion kinds (the `properties` kind of `set_properties` included, with its own effective-value
+  resolver `_v_run_prop`/`_v_para_prop`), independent selectors/styles/theme, residual identity. `first_difference`
   names the paragraph (its text) or the style (its id) a difference lies in.
 - `verify/explain.py` — why a check failed, in specifics, from the check's own data and the record's predictions
   (`failure_details`, `text_change` word diffs with ⇥ ⍽ ⏎ made visible); `VerificationRecord.failures()` and the
@@ -389,6 +415,10 @@ proposals and recorded in the plan's status sections.
 - `guard.py` — identity, drift (size, mtime, then md5), lock file, read-only refusal (`is_read_only`: the file's mode, never `os.access`, so
   root/administrator see the same answer), atomic write; every reason a write-back cannot happen is a `GuardError`
   (a refused `os.replace` included), which `batch.py` records as that file's V9 failure — never a crashed batch.
+- `tests/qt_support.py` — `qt_app_or_skip()` (offscreen Qt, or skip unless `SPEC_SURGEON_REQUIRE_QT`) and
+  `close_windows(app, windows)` — the ONLY way a test lets go of a window (see the Qt rules under `ui/`, and
+  `docs/audits/2026-10-16_qt_teardown_segfault.md`); `flush_deferred_deletes(app)` delivers pending `deleteLater()`s,
+  which `processEvents()` alone never does outside an event loop.
 - `tests/make_fixtures.py` — synthetic specs with the hard cases; `build_rich()` is the op fixture (first/even
   headers, shared footer part, inheriting section, header-only and shared media, theme/explicit/symbol fonts,
   runs inside revisions, an earlier rPrChange). `build_template()` is the template fixture (both slot
@@ -541,7 +571,15 @@ proposals and recorded in the plan's status sections.
   **Qt rules:** PySide6 is imported at module level only inside `ui/` (never `ui/__init__.py` or `ui/rows.py`) —
   the CLI, `Session` and pool workers must load without Qt (`test_gui.py` checks both ways). Background work runs
   on a daemon thread (`worker.start_job`); its signals connect only to `@Slot` methods of GUI-thread QObjects, never
-  to lambdas; read every widget value before the job starts; never touch a widget from the job.
+  to lambdas; read every widget value before the job starts; never touch a widget from the job. **Every QObject the
+  window makes has a Qt parent in the window** (or goes to Qt through a layout or `deleteLater()`), so Qt deletes it with
+  the window, on the GUI thread; never leave a Qt object to the garbage collector — it runs on whatever thread happens
+  to allocate, and PySide6 6.12 deletes a Python subclass of a Qt class right there and defers a plain widget's deletion
+  to a pointer its parent already freed (the 2026-10-16 segmentation fault, below). **Tests let go of a window only
+  through `tests/qt_support.close_windows`** (close, `deleteLater`, the deferred deletes flushed, `gc.collect()` — on
+  the main thread, while the test still holds every wrapper); `close()` alone, or `deleteLater()` + `processEvents()`
+  (which deletes nothing outside an event loop), is the crash coming back. `tests/test_qt_lifetime.py` checks every
+  test module that builds a window.
 - `updater.py` — GitHub release check / verified download / detached Setup launch (no Qt; every network and
   process call injectable). `settings.py` — `settings.json` (+ `config_dir`/`data_dir`/`updates_dir`/`logs_dir`;
   `SPEC_SURGEON_CONFIG_DIR` moves them). `winapp.py` — app mutex, AppUserModelID, message box (ctypes; no-ops off
@@ -559,8 +597,9 @@ wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` befor
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
 merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 709 with Claude and your library
-(`tests/test_library_choices.py`, 2026-10-16), 725 with running without an API key (`tests/test_keyless.py`,
-2026-10-16) — all pass but
+(`tests/test_library_choices.py`, 2026-10-16), 734 with `set_properties` (`tests/test_set_properties.py`), 740 with the Qt
+teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without an API key
+(`tests/test_keyless.py`, 2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -898,6 +937,34 @@ The second pass's tests are `tests/test_phase8_fixes_window.py` (the window and 
   guard on throw-away files.
 - `codegen.generate_op` lists the samples to the writer by `compiler._Batch.label` (the labels its tools take).
 
+## 2026-10-16 Qt teardown: the test suite's segmentation fault
+
+`docs/audits/2026-10-16_qt_teardown_segfault.md` is the record; `tests/test_qt_lifetime.py` pins the fix. The pair
+`python3 -m pytest -q tests/test_diagnostics.py tests/test_editspec.py` (and, sometimes, the full suite) died with
+SIGSEGV in `Shiboken::BindingManager::runDeletionInMainThread` during the 24-file batch of `test_editspec.py`, leaving
+four pool workers orphaned. Cause: `test_diagnostics.py`'s `qt` fixture only closed its windows, so the cyclic garbage
+collector freed them later, on whatever thread was allocating — the pool's manager thread. PySide6 6.12 deletes a
+Python subclass of a Qt class (`MainWindow`) on that thread at once (the `delete_in_main_thread` deferral applies to
+plain Qt types only: `QWidget`, `QMainWindow`, `QDialog` are deferred to the main thread; `QObject`, `QTimer` and every
+Python subclass are not) and defers the 44 plain widgets the window still "owns" by Shiboken's books (the parentless
+`QLabel`/`QPushButton`/`QCheckBox` placed through layouts) to the main thread, where that second `delete` ran on memory
+Qt had freed with the window. Rules that came out of it (also under "Qt rules"):
+
+- A test lets go of a window only through `tests/qt_support.close_windows` (master's commit `4058f10` landed the
+  remedy under that name the same day, from the symptom; this fix adds the mechanism, the wait for the window's threads
+  and the regression tests): the Qt objects die now, on the main thread, in Qt's order, while the test holds every
+  wrapper; `gc.collect()` there frees the rest of the test's Qt garbage on the main thread too. A window whose job,
+  update check or download thread still runs at the deadline is kept alive in `KEPT_ALIVE` and named in a
+  `TimeoutError`, never deleted under its thread (Codex's finding on the PR). Never `close()` alone; `deleteLater()` + `processEvents()` deletes nothing outside a running
+  event loop (Qt holds a DeferredDelete back until control returns to the loop that posted it) — `test_gui.py`'s old
+  fixture leaked its windows, which is why it never crashed anything. `flush_deferred_deletes` is
+  `QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)`.
+- Every QObject the window makes has a Qt parent in the window: `RowsModel` and `ProblemsFilter` were the only ones
+  without (`ui/pages.py` now parents them to their page).
+- The regression tests run the crash's own scenario (teardown, a collection on a worker thread, Python on the main
+  thread) in a subprocess — with `close()` alone it segfaults three times in three; never assert on PySide crashing,
+  assert on the invariant: after the teardown no wrapper of the window or of anything it owns is valid.
+
 ## v0.4.0 additions: template specs and font sizes
 
 - `apply_header_footer_template` with `slot_markers: ["reference"]` (a both-sides definition, listed above). New refusal
@@ -958,11 +1025,37 @@ pins every rule (24 tests, 709 in total); README → "Your library → Claude an
    *Use it* / *Try it* (beside *Choose* / *Do this*); `ui/app.py` heads the Preview step *Your recipe “NAME” (as saved)
    for “request”*. `Your library…` (`use_operation`, `load_recipe`) is unchanged.
 
+## Built-in operations round, part 1 (2026-10-16): `set_properties`
+
+Abraham approved the design note's recommendations (`docs/SET_PROPERTIES_DESIGN.md`; PR #16) and the op was built
+verifier-first. Rules that came out of it (the definition is in the both-sides list above; README → "Formatting
+properties" is the user's view):
+
+- **One op, two targets, never mixed in one call**: direct formatting (`scope`/`paragraphs`/`runs`; the compiler's
+  default, tracked when targeted) or style definitions (`styles: {ids}`; never tracked; `paragraph` flags on paragraph
+  styles only).
+- **Zero characters**: `caps` is a display property. Highlight (the slot marker), hidden text, borders, shading,
+  numbering, theme colours and the complex-script variants other than the `bCs`/`iCs` twins stay out until a verified
+  kind exists.
+- **Already as asked = untouched and uncounted**; the plan notes the count. Tracked mode records a change only where
+  Word itself would have.
+- **A style change is certain or refused** (`toggle-ambiguous`, `conflict-property`); V10 re-derives the partition on
+  the output. Word's §17.7.3 XOR is still not modelled anywhere in the engine.
+- **Rule 9 granularity unchanged**: a font change and `set_properties` on the same paragraphs are two specs; one
+  `set_properties` call carries all of its properties. Finer aspects (per property) are a recorded follow-up.
+- **Layout reference** `none` for `b`/`i`/`caps`/`smallCaps` and the paragraph flags, `source` for `color`/`u`/`strike`.
+- `report.FAILURE_EXPLANATIONS` gained `conflict-property`; `CUSTOM_TRANSFORM_LIMITS` maps the new family to
+  `properties` (the "cannot" list lost bold/italic/underline/caps and text colour); the profile's `styles_in_use` show
+  `italic`, `color` and `color_theme` (Word renders the theme colour, not the cached `w:val`); `examples/specs/bold-part-headings.json` is the worked example. The verifier's change-marker
+  tails of `run_fonts` and `paragraph_props` became `_check_rpr_change`/`_check_ppr_change` (shared with `properties`;
+  the same checks, byte for byte).
+
 ## 2026-10-16 Running without an API key (keyless mode)
 
 Abraham: "most users either not have or will not want an api key … give the user [the option] to run this software API
 keyless. And inform them that some functions are unavailable." README → "Running without an API key" is the user's view;
-`tests/test_keyless.py` pins every rule (16 tests, 725 in total; each fails without the code it pins). Rules:
+`tests/test_keyless.py` pins every rule (16 tests; 756 in total with `set_properties` and the Qt teardown fix merged; each fails without the code it
+pins). Rules:
 
 1. **One decision.** `llm.credentials_found()`: `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` (`CREDENTIAL_ENV`, non-empty)
    or a profile the SDK finds (`_sdk_credentials`: `anthropic.lib.credentials.default_credentials`, files only, never a
