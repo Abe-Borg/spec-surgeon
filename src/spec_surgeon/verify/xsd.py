@@ -148,10 +148,64 @@ def _validate(part: str, rel: str, data: bytes) -> Set[str]:
     return errs
 
 
+# libxml2 stops checking a sequence at the first child it does not expect, so an error in a LATER child of the SOURCE is
+# never reported — python-docx's <w:zoom w:val="bestFit"/> without its required w:percent, behind a w:trackRevisions
+# placed first — until an op removes the misplaced child and the output reports it as new (a correct "track changes
+# off" failed V5a so). For these parts the baseline also validates a copy of the source whose root children stand in
+# the schema's sequence order: it only reorders, so every error it shows is the source's own and none is excused that
+# the source does not have. (root tag → (schema, complexType))
+REORDER_BASELINE = {"{http://schemas.openxmlformats.org/wordprocessingml/2006/main}settings":
+                    ("ISO-IEC29500-4_2016/wml.xsd", "CT_Settings")}
+
+
+@functools.lru_cache(maxsize=4)
+def sequence_order(rel: str, type_name: str) -> Tuple[str, ...]:
+    """The elements of a complexType's sequence in the bundled schema, in order (Clark names)."""
+    root = etree.parse(str(SCHEMA_DIR / rel)).getroot()
+    tns = root.get("targetNamespace")
+    ct = next((c for c in root.iter(XS + "complexType") if c.get("name") == type_name), None)
+    seq = ct.find(XS + "sequence") if ct is not None else None
+    out: List[str] = []
+    for el in (seq.iter(XS + "element") if seq is not None else ()):
+        if el.get("name"):
+            out.append("{%s}%s" % (tns, el.get("name")))
+        elif el.get("ref"):
+            prefix, local = el.get("ref").split(":", 1)
+            out.append("{%s}%s" % (el.nsmap[prefix], local))
+    return tuple(out)
+
+
+def in_schema_order(data: bytes) -> Optional[bytes]:
+    """The part with its root's element children stable-sorted into the schema's sequence order (elements the sequence
+    does not name last), for a root REORDER_BASELINE names; None for any other part, one that is not well-formed, or
+    one already in order."""
+    try:
+        root = etree.fromstring(data, etree.XMLParser(remove_blank_text=False, resolve_entities=False, huge_tree=True))
+    except etree.XMLSyntaxError:
+        return None
+    spec = REORDER_BASELINE.get(root.tag)
+    if spec is None:
+        return None
+    order = sequence_order(*spec)
+    rank = {tag: k for k, tag in enumerate(order)}
+    kids = [c for c in root if isinstance(c.tag, str)]
+    ranked = sorted(kids, key=lambda c: rank.get(c.tag, len(order)))
+    if ranked == kids:
+        return None
+    for c in list(root):
+        root.remove(c)
+    root.extend(ranked)
+    return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+
+
 def compare(part: str, before: Optional[bytes], after: bytes) -> Tuple[Optional[Set[str]], Optional[Set[str]], Optional[Set[str]]]:
-    """(baseline_errors, output_errors, new_errors) — any of them None when the part has no schema."""
+    """(baseline_errors, output_errors, new_errors) — any of them None when the part has no schema. The baseline is the
+    source's errors, plus — for a part REORDER_BASELINE names — those of the source with its children in schema order."""
     out = validate_part(part, after)
     if out is None:
         return None, None, None
     base = validate_part(part, before) if before is not None else set()
+    ordered = in_schema_order(before) if before is not None else None
+    if ordered is not None:
+        base = (base or set()) | (validate_part(part, ordered) or set())
     return base, out, out - (base or set())

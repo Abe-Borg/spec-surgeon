@@ -555,8 +555,9 @@ Batch 2's operations (each module's docstring is the full definition; `docs/BUIL
   range (`_GoBack` goes whole) and no part of a complex field (`marks-in-change`). Transform: `ops/revisions.classify`,
   `Selection`, `_moves`, `_marks_in_removed`, `_leftover`, `analyze`, `predict`/`gone_revisions`, `resolve` (in place);
   verifier: `verify/revisions._v_class`, `_v_when`, `_v_decide`, `_v_bare`, `_v_build` (a REBUILD of the part from the
-  decisions), `_resolved_changes` (every part in scope compared WHOLE — `ctx.verified_parts` —, the revision counts per V4
-  kind and the number chosen equal to the plan's). `apply` re-runs `analyze` on the working copy and refuses (`internal`)
+  decisions), `_resolved_changes` (every part it resolves compared WHOLE — `ctx.verified_parts` —, the revision counts
+  per V4 kind and the number chosen equal to the plan's; a part in scope with nothing to resolve is left to the residual,
+  never claimed: claiming it failed a `set_font` on a footer the accept never touched, after a clean plan). `apply` re-runs `analyze` on the working copy and refuses (`internal`)
   a different count. `tests/test_revisions.py` checks the outputs against pandoc's accept/reject and plants shared
   defects (selection, semantics, the wrong paragraph, a skipped join or anchor check, a wrong count).
 - **Hidden text, notes and blank paragraphs** (`remove_hidden_text`, `remove_notes`, `remove_empty_paragraphs`).
@@ -872,8 +873,9 @@ proposals and recorded in the plan's status sections.
   failure, a defect propagates. Never let generated code import `verify/`, write files, or run in place; never relax a
   hard limit to make a generated op pass.
 - `advisor.py` — exception record → recommendation or re-compiled spec (pinned to the file's pattern and to the
-  original spec's `request` — `_respec_errors(…, request)`; must pass `compiler.check_submission` and plan on that
-  file). Writes `advice/`; never applies anything. `ADVISOR_TOOLS` is an
+  original spec's `request` — `_respec_errors(…, request, original_ops)`; may not add an op of
+  `catalog.REQUEST_ONLY_OPS` the original spec lacks — checked first —; must pass `compiler.check_submission` and plan
+  on that file). Writes `advice/`; never applies anything. `ADVISOR_TOOLS` is an
   explicit list (a test pins it). Its exchange with Claude is kept (`Advice.transcript` → `advice/<name>.transcript.json`,
   built with `llm.response_entry`/`results_entry`/`error_entry`); an API error is a recorded `failed` advice, a defect
   propagates (`advise_batch` still isolates every record: one file's failure never stops the others).
@@ -1685,7 +1687,9 @@ listed above. Built by six parallel builders on the shared machinery (§1), then
    engine's or Claude's own initiative, only when the user asks for it by name**, through `resolve_tracked_changes`,
    `set_document_properties`, `set_document_state` — each previewed with exactly what it does and verified like every
    other op. `codegen.hard_limits` is unchanged: a custom transform still can never do any of the three. Claude's
-   prompt says so; never offer them as a side effect of another request.
+   prompt says so; never offer them as a side effect of another request. `catalog.REQUEST_ONLY_OPS` names the three;
+   the advisor's respec may not add one the original spec lacks (`advisor._respec_errors` checks it before anything
+   else, and `ADVISOR_SYSTEM` says to recommend it instead).
 2. **Clean-up runs over whole batches**: every op of the batch that removes something defaults `allow_missing` to true —
    a file with nothing to remove plans as a no-op with a note and passes; `false` keeps `not-found`.
 3. **An assertion carries the user's own words**: scope, options and rules exactly as the spec gave them (absent = the
@@ -1701,17 +1705,25 @@ listed above. Built by six parallel builders on the shared machinery (§1), then
    key of `fields.REFUSAL_TEXT`).
 6. **Structure-only declarations never excuse a paragraph** (Codex on #27): the paragraph stays in V10's residual unless
    the kind that made the change checked it item by item and registered it in `verified_blocks`.
-7. **Whole parts, whole members.** `resolve_tracked_changes` is checked by a REBUILD of each part (the verifier never
-   edits a copy in place as the transform does) compared element for element; the comment side parts, the rels part of
-   a removed address and a created `custom.xml` are compared whole (`verified_members`); `settings.xml` and the
-   properties parts by the member residual. Never register a part or member as verified without comparing all of it.
+7. **Whole parts, whole members.** `resolve_tracked_changes` is checked by a REBUILD of each part it resolves (the
+   verifier never edits a copy in place as the transform does) compared element for element; the comment side parts,
+   the rels part of a removed address and a created `custom.xml` are compared whole (`verified_members`); `settings.xml`
+   and the properties parts by the member residual. Never register a part or member as verified without comparing all
+   of it — and never claim one the op does not change: another op in the same spec may change it legitimately, checked
+   by its own kind, and the residual is what lets that through and nothing else.
 8. **Words placed** (rule 13): `add_watermark.text`, `set_document_properties.set` and `custom` values
    (`compiler.placed_words`); the other ops place none (accepting keeps the document's own inserted words, rejecting
    brings back its own deleted words). Custom property NAMES are labels, not document text.
-9. **Recorded, not changed**: V5a drops messages containing `hyphenationZone`, hiding an out-of-order `settings.xml`
-   element before it (`document_state` checks the place of `w:trackRevisions` itself — `verify/docprops._in_order`);
-   narrowing the filter could unmask latent errors of sources and fail correct outputs, so it is its own change. The
-   clean-up ops' reads of the style chains are not declared as reads (as `set_font`'s). Not in this batch: adding a
+9. **V5a and `settings.xml`.** libxml2 stops checking a sequence at the first child it does not expect, so a source
+   whose `w:trackRevisions` stands first hides a later error (python-docx's `<w:zoom w:val="bestFit"/>` without
+   `w:percent`); "track changes off" removed the element and V5a called the reached error new on a correct output.
+   `xsd.compare` therefore also validates, for a root `xsd.REORDER_BASELINE` names (`w:settings`), a copy of the source
+   with its children stable-sorted into the schema's sequence (`xsd.sequence_order`, read from the bundled schema;
+   `in_schema_order`) and adds those errors to the baseline: it only reorders, so each is the source's own — a really new
+   error is still new (`tests/test_batch2_integration.py`). **Recorded, not changed**: V5a still drops messages
+   containing `hyphenationZone`, which hides an out-of-order settings element before it (`document_state` checks the
+   place of `w:trackRevisions` itself — `verify/docprops._in_order`). The clean-up ops' reads of the style chains are
+   not declared as reads (as `set_font`'s). Not in this batch: adding a
    picture watermark, comments whose marks sit in text boxes, joining paragraphs on accept/reject, table row/cell
    revisions, rejecting section/table property changes, highlight in styles, `w:removePersonalInformation`.
 10. **Profiles show the markup** (`profile.markup`) so Claude can see what a clean-up op would find; it is descriptive

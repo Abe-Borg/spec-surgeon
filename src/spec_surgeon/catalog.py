@@ -17,6 +17,11 @@ from .ops import OPS
 EXAMPLES_DIR = Path(__file__).resolve().parent.parent.parent / "examples" / "specs"
 
 # What a compiled spec usually has to state about each op (the user sees these in the preview and can veto them).
+# The method's three request-only operations (built-in batch 2, design §0): accepting/rejecting tracked changes, editing
+# the document properties, changing the Track Changes setting / Mark as Final — never on a model's own initiative, only
+# when the user asks for exactly that. The advisor never adds one to a respec (advisor._respec_errors).
+REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_document_state")
+
 COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "remove_header_footer": [
         "'all' means every section, including first-page and even-page variants",

@@ -11,7 +11,7 @@ from docx import Document
 from docx.enum.text import WD_COLOR_INDEX
 from docx.shared import RGBColor
 
-from make_fixtures import build_rich, docx_bytes
+from make_fixtures import build_rich, docx_bytes, patch_docx
 from spec_surgeon import SKILL_DIR
 from spec_surgeon.compiler import placed_words, system_prompt, untraceable
 from spec_surgeon.editspec import apply_spec, plan_spec
@@ -20,7 +20,7 @@ from spec_surgeon.ops import fields
 from spec_surgeon.package import DocxPackage
 from spec_surgeon.profile import markup, profile
 from spec_surgeon.report import FAILURE_EXPLANATIONS
-from spec_surgeon.verify import run_suite
+from spec_surgeon.verify import run_suite, xsd
 
 OPS_DIR = Path(__file__).resolve().parent.parent / "src" / "spec_surgeon" / "ops"
 BATCH2_MODULES = ["comments", "highlight", "revisions", "hidden", "empty_paragraphs", "watermark", "links", "fields",
@@ -129,4 +129,58 @@ def test_a_clean_up_op_beside_a_header_removal_is_a_plan_time_conflict(op):
     plan, frags = plan_spec(pkg, alone)                    # on its own the op plans (a no-op where nothing matches)
     out = apply_spec(pkg, frags).output_bytes()
     rec = run_suite(pkg.data, out, plan.to_dict(), "src.docx", "out.docx")
+    assert [c.id for c in rec.checks if c.status == "FAIL"] == []
+
+
+def _verify(data: bytes, ops, mode="untracked", tamper=None):
+    pkg = DocxPackage(data)
+    plan, frags = plan_spec(pkg, {"request": "r", "summary": "s", "mode": mode, "ops": ops})
+    out = apply_spec(pkg, frags).output_bytes()
+    if tamper:
+        out = tamper(out)
+    return run_suite(pkg.data, out, plan.to_dict(), "src.docx", "out.docx")
+
+
+def test_accepting_beside_another_op_on_a_part_it_does_not_resolve():
+    """resolved_changes compares WHOLE only the parts it resolves; a part with nothing to resolve stays with the
+    residual — so a set_font on footers the accept never touches verifies (it planned clean and failed V10 when the
+    kind claimed every part in scope), and a change nobody checked in such a part still fails."""
+    ops = [{"op": "resolve_tracked_changes", "params": {"action": "accept"}},
+           {"op": "set_font", "select": {"scope": ["footers"]}, "params": {"font": "Arial"}}]
+    rec = _verify(build_rich(), ops)
+    assert [c.id for c in rec.checks if c.status == "FAIL"] == []
+
+    def tamper(out: bytes) -> bytes:                  # the footer loses a character nobody asked to change
+        return patch_docx(out, {"word/footer1.xml": lambda root: _drop_first_char(root)})
+    bad = _verify(build_rich(), ops, tamper=tamper)
+    assert "V10" in [c.id for c in bad.checks if c.status == "FAIL"]
+
+
+def _drop_first_char(root):
+    t = next(t for t in root.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t") if t.text)
+    t.text = t.text[1:]
+
+
+SETTINGS_HEAD = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
+                 '<w:settings xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">')
+
+
+def test_v5a_judges_a_settings_part_against_the_source_in_schema_order():
+    """libxml2 stops checking a sequence at the first child it does not expect: a w:trackRevisions placed first hides a
+    w:zoom without its required w:percent. Turning track changes off then let V5a reach the zoom error and call it new
+    on a correct output. The baseline also validates the source with its children in schema order — every error that
+    copy shows is the source's own — and a really new error is still new."""
+    src = (SETTINGS_HEAD + '<w:trackRevisions/><w:zoom w:val="bestFit"/><w:defaultTabStop w:val="720"/>'
+           '</w:settings>').encode()
+    off = (SETTINGS_HEAD + '<w:zoom w:val="bestFit"/><w:defaultTabStop w:val="720"/></w:settings>').encode()
+    assert xsd.validate_part("word/settings.xml", src) == set()          # the zoom error is out of reach here
+    assert xsd.validate_part("word/settings.xml", off) != set()          # and in reach once the element goes
+    base, out, new = xsd.compare("word/settings.xml", src, off)
+    assert out and new == set()
+    broken = (SETTINGS_HEAD + '<w:zoom w:val="bestFit"/><w:defaultTabStop/></w:settings>').encode()
+    assert xsd.compare("word/settings.xml", src, broken)[2] != set()     # a missing w:val is the output's own
+    fine = (SETTINGS_HEAD + '<w:zoom w:percent="100"/><w:defaultTabStop w:val="720"/></w:settings>').encode()
+    assert xsd.in_schema_order(fine) is None                              # in order: nothing more to validate
+    assert xsd.compare("word/settings.xml", fine, broken.replace(b'w:val="bestFit"', b'w:percent="100"'))[2] != set()
+    rec = _verify(build_rich(), [{"op": "set_document_state", "params": {"track_changes": "off"}}], mode="formatting")
     assert [c.id for c in rec.checks if c.status == "FAIL"] == []

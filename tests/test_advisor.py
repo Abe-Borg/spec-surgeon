@@ -129,3 +129,24 @@ def test_the_advice_keeps_its_transcript_and_an_api_error_is_a_recorded_failure(
     monkeypatch.setattr(advisor_module, "_client", missing)
     gone = advise(rec)
     assert gone.kind == "failed" and gone.errors == ["Claude is not available: install the Claude layer"]
+
+
+def test_a_respec_never_adds_an_operation_only_the_user_may_ask_for(batch_out):
+    """Built-in batch 2 (design §0): accepting/rejecting tracked changes, the document properties and the Track Changes
+    setting change only when the user asks for exactly that — the advisor's respec may not add one the original spec
+    did not have (it would have run on the model's own initiative); it is rejected, and the advice ends failed."""
+    rec = _record(batch_out)
+    fixed = copy.deepcopy(rec["spec"])
+    fixed["ops"][0]["expect"] = {"members_removed": 9}
+    for extra in ({"op": "resolve_tracked_changes", "params": {"action": "accept"}},
+                  {"op": "set_document_state", "params": {"track_changes": "off"}},
+                  {"op": "set_document_properties", "params": {"clear": ["author"]}}):
+        added = copy.deepcopy(fixed)
+        added["ops"].append(extra)
+        fake = FakeClient(resp(tool("submit_editspec", {"spec": added})),
+                          resp(tool("submit_editspec", {"spec": added}, "t2")))
+        adv = advise(rec, client=fake)
+        assert adv.kind == "failed" and any(extra["op"] in e and "only when the user asks" in e for e in adv.errors), \
+            adv.errors
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": fixed, "why": "9 parts here"})))
+    assert advise(rec, client=fake).kind == "respec"                    # without it the same respec is accepted

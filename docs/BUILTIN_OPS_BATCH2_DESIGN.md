@@ -398,8 +398,19 @@ relationship, two `w:trackRevisions`); custom names matched casefolded, an exist
 value tag; setting `keywords` replaces any `cp:value` children; `set_document_state` checks the settings order itself
 (V5a cannot — below) and refuses `off` on a locked file even when tracking is already off.
 
-**Recorded, not changed:** `verify/xsd.py` drops every V5a message containing `hyphenationZone` (an old false alarm),
-which also hides an out-of-order `settings.xml` element before it; narrowing the filter could unmask latent errors of
-sources the check never reached (python-docx's `<w:zoom w:val="bestFit"/>` without `w:percent`) and fail correct
-outputs, so it waits for its own change. The clean-up ops' reads of the style chains (effective hidden and colour) are
+**V5a and `settings.xml`** (found at integration): libxml2 stops checking a sequence at the first child it does not
+expect, so a source whose `w:trackRevisions` stands first never reports a later error (python-docx's
+`<w:zoom w:val="bestFit"/>` without `w:percent`); "track changes off" removed the element, V5a reached the error and
+failed a correct output as "new". The baseline now also validates the source with its children in schema order (it only
+reorders: every error it shows is the source's own; a really new error still fails). **Accept/reject beside other ops**
+(found at integration): `resolved_changes` claimed every part in scope as compared whole, so a `set_font` on a footer
+the accept never touched planned clean and failed V10; it now claims only the parts it resolves and leaves the others to
+the residual. **The advisor and the request-only ops** (found at integration): nothing kept the advisor from adding
+`resolve_tracked_changes`, `set_document_properties` or `set_document_state` to a re-compiled spec for a set-aside file —
+the model's own initiative, which §0 rules out; `catalog.REQUEST_ONLY_OPS` names the three and the advisor rejects a
+respec that adds one the original spec lacks (before any other check) and says to recommend it instead.
+
+**Recorded, not changed:** `verify/xsd.py` still drops every V5a message containing `hyphenationZone` (an old false
+alarm), which also hides an out-of-order settings element before it (`set_document_state` checks the place of what it
+adds itself). The clean-up ops' reads of the style chains (effective hidden and colour) are
 not declared as reads, like `set_font`'s (CLAUDE.md "Plan-time conflicts for what an op reads" 5).

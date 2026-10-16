@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from . import llm
-from .catalog import op_catalog
+from .catalog import REQUEST_ONLY_OPS, op_catalog
 from .compiler import DEFAULT_MODEL, TOOLS, _Batch, _client, check_submission, placed_words
 from .diagnostics import write_json
 from .editspec import plan_spec
@@ -61,7 +61,9 @@ user's words (a spec placing them is rejected); or
 refused, the safe way forward (including what the user must decide or fix in Word first), and the one question to \
 ask if a decision is needed.
 Never invent document text. Do not loosen the request to make it pass (e.g. do not drop a section the user asked \
-for); recommend instead.
+for); recommend instead. Never add resolve_tracked_changes, set_document_properties or set_document_state when the \
+original spec does not have it: accepting or rejecting tracked changes, the document properties and the Track Changes \
+setting change only when the user asks for exactly that — recommend it instead.
 
 OP CATALOG:
 """
@@ -95,11 +97,18 @@ class Advice:
 
 
 def _respec_errors(spec: Any, batch: _Batch, sources: Sequence[str], pkg: DocxPackage, pid: str,
-                   request: str = "") -> List[str]:
+                   request: str = "", original_ops: Sequence[str] = ()) -> List[str]:
     """[] when ``spec`` is an acceptable respec — which is then pinned: ``applies_to`` to this file's pattern and
     ``request`` to the ORIGINAL spec's request (``request``). Claude's own text in ``request`` never reaches
     ``advice/<name>.spec.json``: whoever runs that spec next (``run-spec``, Load saved spec, ``set_aside.json`` →
     ``retry``, the next advice) counts its request among the user's approved words."""
+    ops = spec.get("ops") if isinstance(spec, dict) else None
+    added = sorted({o.get("op") for o in (ops if isinstance(ops, list) else []) if isinstance(o, dict)
+                    and o.get("op") in REQUEST_ONLY_OPS} - set(original_ops))
+    if added:                                   # the method's rule comes first: never on the model's own initiative
+        return [f"{added} accept or reject tracked changes, edit the document properties or change the Track Changes "
+                f"setting — only when the user asks for exactly that, and the original spec does not: never add one; "
+                f"submit a recommendation instead (the user decides)"]
     errs = check_submission(spec, batch, sources)
     if errs or not isinstance(spec, dict):
         return errs
@@ -190,7 +199,8 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
                 return adv
             if b.name == "submit_editspec":
                 spec = inp.get("spec")
-                errs = _respec_errors(spec, batch, sources, pkg, pid, request0)
+                errs = _respec_errors(spec, batch, sources, pkg, pid, request0,
+                                      [o.get("op") for o in spec0.get("ops") or [] if isinstance(o, dict)])
                 if not errs:
                     adv.kind, adv.spec, adv.text = "respec", spec, str(inp.get("why", ""))
                     return adv

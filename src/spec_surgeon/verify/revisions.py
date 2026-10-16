@@ -369,6 +369,11 @@ def _resolved_changes(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         d = _v_decide(src_root, part, action, chooses)
         for why in d.refusals:
             errs.append(f"resolved_changes: {why} — the op must refuse")
+        if not (d.chosen or d.drop or d.unwrap or d.rpr_restore or d.ppr_restore):
+            # nothing to resolve here: the part is left to the residual, which fails any change this op made to it
+            # and lets another op's change through only where that op's own kind checked it (a whole-part claim here
+            # would fail a set_font on a footer the accept never touched — planned clean, failed after apply)
+            continue
         built = _v_build(src_root, d)
         expected = built[0] if built else None
         diff = tree_difference(expected, out_root) if expected is not None else "the whole part would vanish"
@@ -381,10 +386,9 @@ def _resolved_changes(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         if d.chosen:
             picked[part] = d.chosen
             total += d.chosen
-        if d.chosen or d.drop or d.unwrap or d.rpr_restore or d.ppr_restore:
-            changed.append(part)
-            gone[part] = dict(sorted(vanished.items()))
-        ctx.verified_parts.add(part)
+        changed.append(part)
+        gone[part] = dict(sorted(vanished.items()))
+        ctx.verified_parts.add(part)                   # compared whole above: the residual leaves it out
     if sorted(changed) != sorted(a.get("parts") or []):
         errs.append(f"resolved_changes: parts changed here {changed}, the plan predicted {a.get('parts')}")
     if gone != {p: dict(sorted(v.items())) for p, v in (a.get("expected_gone") or {}).items()}:
@@ -392,7 +396,8 @@ def _resolved_changes(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     planned = {p: n for p, n in (a.get("expected_selected") or {}).items() if n}
     if picked != planned:
         errs.append(f"resolved_changes: tracked changes chosen here {picked}, the plan predicted {planned}")
-    return f"resolved_changes: {action} {total} chosen tracked change(s) in {len(changed)} part(s), each part compared whole"
+    return (f"resolved_changes: {action} {total} chosen tracked change(s) in {len(changed)} part(s), each of them "
+            f"compared whole")
 
 
 REVISION_KINDS: Dict[str, Callable[..., Any]] = {"resolved_changes": _resolved_changes}
