@@ -154,7 +154,7 @@ def test_the_tools_read_the_library_and_a_recipe_is_dry_planned_on_the_batch(fol
     op = json.loads(fake.requests[2]["messages"][-1]["content"][0]["content"])
     assert op["kind"] == "operation" and op["op_name"] == "set_header_distance" and "source" not in op and "op.py" not in json.dumps(op)
     missing = fake.requests[3]["messages"][-1]["content"][0]
-    assert missing["is_error"] and "there is no recipe or operation named 'Nope'" in missing["content"]
+    assert missing["is_error"] and "there is no recipe, operation or chain named 'Nope'" in missing["content"]
     listing = json.loads(fake.requests[4]["messages"][-1]["content"][0]["content"])
     assert sorted(i["name"] for i in listing["items"]) == ["Header distance", "Permit stamp"] and listing["more"] == 0
     assert_well_formed(fake)

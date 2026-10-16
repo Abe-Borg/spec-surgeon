@@ -83,6 +83,48 @@ def result_rows(batch: Any) -> List[Row]:
     return rows
 
 
+def chain_rows(result: Any) -> List[Row]:
+    """The Run step's table for a chain (``chain.ChainResult``): one row per file — PASS when it got through every
+    stage, else the stage it stopped at and why (that stage's own diagnosis opens on a double-click)."""
+    from ..report import file_diagnosis
+    rows = []
+    n = len(result.stages)
+    for f in result.files:
+        name = Path(f.source).name
+        output = Path(f.output) if f.output else None
+        if f.status == "PASS":
+            if f.delivered_to and _same(f.delivered_to, f.source):
+                detail, where = f"Verified at every stage ({n}) and written back over the original", str(f.delivered_to)
+            else:
+                detail, where = f"Verified at every stage ({n})", output.name if output else ""
+            rows.append(Row([name, "PASS", detail, where], "pass", tooltip=" · ".join(
+                f"stage {i} {st}" for i, st in enumerate(f.stage_status, 1)),
+                            open_path=output if output and output.exists() else None, status_col=1))
+            continue
+        stage = f.stopped_at or n
+        stage_name = result.stages[stage - 1].name if 0 < stage <= n else "?"
+        fr = f.results[stage - 1] if 0 < stage <= len(f.results) else None
+        diagnosis = (f"# {name} — stopped at stage {stage} of {n} ({stage_name})\n\n"
+                     + (file_diagnosis(fr, heading="##") if fr is not None else f"- **Why:** {f.reason}"))
+        badge = "fail" if f.status == "FAIL" else "exception"
+        label = "FAIL" if f.status == "FAIL" else "Exception"
+        detail = f"Stopped at stage {stage} of {n} ({stage_name}) — {f.category}: {f.reason}"
+        tooltip = f"[{f.code}] {f.explanation}"
+        where = "" if f.status == "EXCEPTION" and stage == 1 else (
+            f"stages 1–{stage - 1} written back" if f.delivered_to is None and result.in_place and stage > 1 else
+            (output.name if output and f.status == "FAIL" else ""))
+        rows.append(Row([name, label, detail, where or ("— (left untouched)" if not result.in_place or stage == 1 else "")],
+                        badge, tooltip=tooltip, open_path=None, status_col=1, diagnosis=diagnosis))
+    return rows
+
+
+def _same(a: Any, b: Any) -> bool:
+    try:
+        return Path(a).resolve() == Path(b).resolve()
+    except OSError:
+        return False
+
+
 def written_back(f: Any) -> bool:
     """``FileResult.delivered_to`` is the output path for a copy run and the source path for an in-place run."""
     if not f.delivered_to:
@@ -116,22 +158,35 @@ def result_counts(rows: List[Row]) -> dict:
 _TOTAL = re.compile(r"^(\d+) file\(s\); transform\+verify")
 _DONE = re.compile(r"^\s+done (.+)$")
 _RENDER = re.compile(r"^rendering ")
+_STAGE = re.compile(r"^stage (\d+) of (\d+) — (.*?): \d+ file\(s\)")
 
 
 @dataclass
 class ProgressTracker:
     """Reads ``run_batch``'s progress lines: ``"N file(s); transform+verify with W worker(s)"``, one
-    ``"  done NAME"`` per file, then ``"rendering …"``. ``tests/test_ui_rows.py`` pins these lines."""
+    ``"  done NAME"`` per file, then ``"rendering …"`` — and, in a chain (``chain.run_chain``), the
+    ``"stage i of n — NAME: k file(s)"`` line before each stage, which names the stage in the phase ("Stage 2 of 3 ·
+    Editing and verifying"); each stage's own lines then move the bar from 0 again. ``tests/test_ui_rows.py`` pins
+    these lines."""
     total: int = 0
     done: int = 0
     phase: str = ""
+    stage: str = ""
     seen: List[str] = field(default_factory=list)
+
+    def _phase(self, text: str) -> str:
+        return f"{self.stage} · {text}" if self.stage else text
 
     def feed(self, line: str) -> Optional[Tuple[int, int, str]]:
         """(done, total, phase) when the line moves the progress; total 0 means "busy, no count"."""
+        m = _STAGE.match(line)
+        if m:
+            self.stage = f"Stage {m.group(1)} of {m.group(2)} ({m.group(3)})"
+            self.total, self.done, self.phase = 0, 0, self._phase("Starting")
+            return 0, 0, self.phase
         m = _TOTAL.match(line)
         if m:
-            self.total, self.done, self.phase = int(m.group(1)), 0, "Editing and verifying"
+            self.total, self.done, self.phase = int(m.group(1)), 0, self._phase("Editing and verifying")
             return self.done, self.total, self.phase
         m = _DONE.match(line)
         if m and self.total:
@@ -139,6 +194,6 @@ class ProgressTracker:
             self.seen.append(m.group(1))
             return self.done, self.total, self.phase
         if _RENDER.match(line):
-            self.phase = "Rendering pages"
+            self.phase = self._phase("Rendering pages")
             return 0, 0, self.phase
         return None

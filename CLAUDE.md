@@ -363,6 +363,11 @@ proposals and recorded in the plan's status sections.
 - `apply_header_footer_template` plan: copies keyed by (template part, template width, target width); pins are
   the diff of template-effective vs target-effective (with imported styles); `transform_data` carries pins,
   slots, rels/media maps, docPr start ids, new refs, removal plan. Apply works on a fresh parse of the template.
+- `chain.py` (2026-10-16) — chains: several specs run one after another, each stage a full `run_batch` in
+  `<out>/stage-NN/` on the files the stage before it verified (`run_chain`, `ChainResult`/`ChainFile`/`StageRun`,
+  `validate_chain`, `chain_from_specs`, `chain_templates`, `chain_key` — the approval key —, `chain_intent`,
+  `load_chain_file`); the reports in `report.write_chain_report`/`write_chain_diagnostics`/
+  `build_chain_set_aside_manifest`. See "2026-10-16 Chains" below.
 - `editspec.py` — EditSpec validate → `plan_spec` → `apply_spec` (minimal Phase 1 executor; the Phase 3
   planner grows out of it). `examples/specs/` — the worked example specs (Phase 1's two, the templating ones,
   `match-template-spec-header-footer` and `match-template-spec-font`); `examples/templates/` — the template fixture
@@ -486,8 +491,10 @@ proposals and recorded in the plan's status sections.
   `VIEW_BUDGET_TOKENS` for `view_pages` (60,000: about 20 letter pages — `page_tokens()` 2,714 a letter page at 150 dpi,
   22 one at a time, 21 in calls of three; 18 pages of 11×17 at 117 dpi, 3,312 each; `page_dpi` is the one dpi rule
   `rasterize_pages` uses; a test derives the comment's figures).
-- `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`) and operations (`operations/<slug>/op.py` +
-  `manifest.json`) under `config_dir()/library` (rule 17). `other_kind_holding(kind, slug)`; `_check_free` refuses the
+- `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`), chains (`chains/<slug>.json` + `.meta.json`, the
+  stages' specs embedded as saved; `save_chain`/`load_chain`/`chain_file`, 2026-10-16) and operations
+  (`operations/<slug>/op.py` + `manifest.json`) under `config_dir()/library` (rule 17). `FILE_KINDS` are the two
+  file-backed kinds; `LABELS` the labels. `other_kind_holding(kind, slug)`; `_check_free` refuses the
   other kind's name even with `replace` ("… cannot take that name, not even with replace …"). `item_hash(item)`: the
   content hash a conversation's library choice pins; `recipe_file(item)` / `read_manifest(item)`: the `_inside`-checked
   reads the compiler's index and `read_library_item` use (2026-10-16).
@@ -599,7 +606,7 @@ Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its
 merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 709 with Claude and your library
 (`tests/test_library_choices.py`, 2026-10-16), 734 with `set_properties` (`tests/test_set_properties.py`), 740 with the Qt
 teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without an API key
-(`tests/test_keyless.py`, 2026-10-16) — all pass but
+(`tests/test_keyless.py`, 2026-10-16), 770 with chains (`tests/test_chain.py`, 2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -1049,6 +1056,57 @@ properties" is the user's view):
   `italic`, `color` and `color_theme` (Word renders the theme colour, not the cached `w:val`); `examples/specs/bold-part-headings.json` is the worked example. The verifier's change-marker
   tails of `run_fonts` and `paragraph_props` became `_check_rpr_change`/`_check_ppr_change` (shared with `properties`;
   the same checks, byte for byte).
+
+## 2026-10-16 Chains: several specs, one after another
+
+Abraham: "the user can elect to first change the font, then remove existing header/footer, and finally, to match the
+header/footer of the template spec" — asked how feasible; the probe showed the engine refuses that as one spec
+(rule 9: the font op's `verify` touch over the header parts the templating op removes; `remove_header_footer` +
+`apply_header_footer_template` both remove the same parts) while a chain of RUNS passes, and he said "make it happen".
+README → "Chains: several recipes, one after another" is the user's view; `tests/test_chain.py` pins every rule (14
+tests, 770 in total). Rules:
+
+1. **A chain never changes the engine's rules.** Every stage is an ordinary `run_batch` with its own plan, apply,
+   V1–V10, render and guarded delivery; `merge_fragments` is untouched, and so are rules 2 and 9 — a chain is the home
+   for "split them into separate specs". `chain.py` imports nothing from `verify/` beyond what `batch` does.
+2. **The pin between stages.** Stage N+1 reads a file only when its md5 equals stage N's `FileResult.output_md5` (the
+   bytes the suite verified, the hash `batch.verified_bytes` re-checks at delivery): copies mode reads stage N's
+   `outputs/` copy, in place the source as stage N wrote it back; a mismatch is that file's `chain-drift` at stage N+1
+   (`report.FAILURE_EXPLANATIONS`), never a read. The chain's own `outputs/` is written from `verified_bytes` of the last
+   stage (`chain-deliver` when it is not).
+3. **A file goes as far as it passes**: `ChainFile.stopped_at`, `stage_status` per stage (`PASS | FAIL | EXCEPTION |
+   DRIFTED | NOT_RUN`), the stopping stage's `FileResult` in `results`; the later stages never see it. In place, the
+   stages before the stop stay written back and the reason says so. `set_aside.json` lists the ORIGINAL sources with
+   the stage (`stage: "chain stage N"`, `details.chain_stage/stage_name/stage_folder`) — `batch.load_set_aside`,
+   `Session.load_set_aside` and `cmd_retry` read it as a batch's.
+4. **Templates of every stage are inputs** (rule 12): `chain_templates` filters the inputs (`is_template_file`), and the
+   approval token is taken over `chain_key(chain)` — `preview.key_templates` reads every stage's templates from it, so
+   `approval_token`/`approval_inputs`/`changed_since_preview` take a chain key in place of a spec. `check_inputs_outside`
+   runs on the chain's folder before anything is created.
+5. **Order is the user's, flagged, never refused** (the one departure from rule 9, by design): a stage whose plan's
+   `intended_parts`/`members_removed` meet a part an earlier stage's plan `members_added` gets a flag per file
+   (`ChainFile.flags`, the report's "Flagged for review"). A plan-time conflict check ACROSS stages is a follow-up.
+6. **The preview runs every stage on the samples in memory** (`preview.make_chain_preview` → `ChainPreview(Preview)`;
+   `SampleView.stages`, `stages_text()`): stage 1's `plan_batch` on every file is the per-file table; a sample stops at
+   the stage that refuses or fails (`exception["chain_stage"]`, the reason prefixed "stage N (NAME): "); the output
+   written is the file as the last stage that applied left it. `Session.preview` holds it (a `Preview`), so the visual
+   check, `run_blocked_reason`, `acknowledge_review` and the window's cards work unchanged; the intent is
+   `chain_intent`.
+7. **The library's chain kind** follows rules 13 and 17: `chains/<slug>.json` embeds the stages' specs as saved (made
+   portable like a recipe — `_portable_spec`), a name belongs to one item across the three kinds (`_check_free`,
+   `other_kind_holding`), reads go through `_inside`. Claude never offers a chain: `compiler.OFFERABLE_KINDS` keeps
+   chains out of `library_index`/`list_library`; `library_item_detail` of a chain names its stages and says it cannot
+   be offered; `LIBRARY_CHOICE_KINDS` is unchanged.
+8. **One outcome at a time** (`Session._set_outcome(spec | generated | chain)`): `Session.chain`/`chain_source`
+   (`"recipes"` from `build_chain`, `"library:NAME"` from `load_chain`, a path from `load_chain_file`),
+   `outcome_key()` for the token, `chain_label()`, `_run_chain` → `last_chain` (`last_batch`/`last_trials` None),
+   `save_chain` only while the preview is current, `advise` per stage folder. The window: `_widget_key` carries the
+   chain, `_preview_current`/`_refresh_nav`/`_refresh_run_state`/`_refresh_spec_bar`/`do_preview` count a chain as a
+   loaded outcome, `_fill_preview` heads the step with the stages, `_after_run` uses `rows.chain_rows`, `do_report`
+   opens `CHAIN_REPORT.md`, `do_save_to_library` saves a chain; `Prompts.pick_sequence` (`SequenceDialog`, every
+   widget parented to the dialog) and `RecordingPrompts(sequences=)`; hook `buttons["chain"]`.
+9. **The progress lines gained one**: `"stage i of n — NAME: k file(s)"` before each stage (`rows.ProgressTracker`
+   names the stage in the phase and restarts the bar per stage; `test_ui_rows.py`'s pinned lines are unchanged).
 
 ## 2026-10-16 Running without an API key (keyless mode)
 

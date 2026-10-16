@@ -181,6 +181,8 @@ VIEW_PAGES_TOOL = {
 # in the first message (``library_index``), these two read-only tools, and two choice kinds Claude may NAME (``recipe``,
 # ``operation``) that the app builds from the library itself (conversation._library_choice; CLAUDE.md rule 13).
 INDEX_LIMIT = 40                                   # items the first message's index shows; list_library has the rest
+OFFERABLE_KINDS = ("recipe", "operation")          # what Claude may name as a choice (conversation.LIBRARY_CHOICE_KINDS);
+                                                   # a chain (chain.py) runs from the window or the command line only
 INDEX_BUDGET = 18000                               # characters of a list_library result (the tool-result cap is 20,000)
 DETAIL_BUDGET = 18000                              # characters of a read_library_item result: the spec gives way first
 ENTRY_OPS = 30                                     # op names an index entry lists before it counts the rest
@@ -569,6 +571,11 @@ def library_entry(item: Any) -> Dict[str, Any]:
             e["mode"] = spec.get("mode")
             e["places_words"] = len(placed_words(spec))
             e["templates"] = [{"path": str(t), "exists": t.is_file()} for t in spec_templates(spec)]
+        elif item.kind == "chain":
+            from .library import load_chain
+            chain = load_chain(item.name)
+            e["stages"] = [str(st.get("name") or "") for st in chain.get("stages") or []]
+            e["note"] = "a chain of recipes, run from the window or the command line; it cannot be offered as a choice"
         else:
             manifest = read_manifest(item)
             e["op"] = manifest.get("op_name")
@@ -583,7 +590,7 @@ def library_index(limit: Optional[int] = INDEX_LIMIT, budget: int = INDEX_BUDGET
     characters of JSON) and ``more`` (how many were left out). The conversation's first message carries it (chat
     mode); ``list_library`` is the same without the item limit."""
     from .library import list_items
-    items = list_items()
+    items = [i for i in list_items() if i.kind in OFFERABLE_KINDS]   # a chain is never a choice: not shown
     shown: List[Dict[str, Any]] = []
     size = 2                                       # the list's brackets
     for item in (items if limit is None else items[:limit]):
@@ -637,6 +644,16 @@ def library_item_detail(name: str, batch: Optional["_Batch"] = None) -> Dict[str
         out["templates"] = [{"path": str(t), "exists": t.is_file()} for t in spec_templates(spec)]
         if batch is not None:
             out["dry_plan"] = dry_plan_summary(spec, batch)
+        return _fit_detail(out, DETAIL_BUDGET)
+    if item.kind == "chain":
+        from .library import load_chain
+        chain = load_chain(item.name)
+        out["stages"] = [{"stage": i, "name": st.get("name"), "recipe": st.get("recipe"),
+                          "request": (st.get("spec") or {}).get("request"), "summary": (st.get("spec") or {}).get("summary"),
+                          "ops": [str(o.get("op")) for o in (st.get("spec") or {}).get("ops") or [] if isinstance(o, dict)]}
+                         for i, st in enumerate(chain.get("stages") or [], 1)]
+        out["note"] = ("a chain of recipes, run one after another from the window (Chain recipes…) or the command line "
+                       "(spec-surgeon chain); it cannot be offered as a choice — offer its recipes one at a time")
         return _fit_detail(out, DETAIL_BUDGET)
     manifest = read_manifest(item)
     out.update({k: manifest.get(k) for k in ("op_name", "proposal", "select", "params", "model", "attempts")})
