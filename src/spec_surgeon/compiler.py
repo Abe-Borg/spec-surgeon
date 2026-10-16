@@ -25,18 +25,18 @@ A rejected spec goes back to the model once with the errors; a second rejection 
 The client is injectable (``client=``) so the loop is tested without the API; the default needs the
 ``anthropic`` package and credentials (``ANTHROPIC_API_KEY`` or an ``ant auth login`` profile).
 
-Diagnostics: ``CompileResult.transcript`` is the whole exchange — what the model was given, every turn's text and tool
-calls (a submitted spec in full), every tool result and rejection with its reasons, each call's stop reason, tokens,
-time and request id. An API call that fails (no network, a bad key, an overloaded service) ends the compile as
-``failed`` with the error, its HTTP status and request id, and the transcript so far — never as an exception that
-loses it. ``spec-surgeon do`` and the window write it to ``compile.json``.
+Diagnostics: ``CompileResult.transcript`` is the whole exchange (``conversation.Conversation.exchange``, also in
+``conversation.json``) — what the model was given, every call's text and tool calls (a submitted spec in full), every
+tool result and rejection with its reasons, each call's stop reason, serving model, tokens, time and request id; page
+images never go in. An API call that fails (no network, a bad key, an overloaded service, Claude not installed) ends
+the TURN as ``failed`` with the error, its HTTP status and request id, and the exchange so far; anything else is a
+defect and propagates (``llm.is_api_error`` decides; ``is_api_error``, ``api_error_text`` and ``block_dict`` are
+re-exported here). ``spec-surgeon do`` and the window write it to ``compile.json``.
 """
 from __future__ import annotations
 
 import json
-import os
 import re
-import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
@@ -51,7 +51,10 @@ from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
 from .profile import profile, profile_batch, template_spec_summary
 
-DEFAULT_MODEL = os.environ.get("SPEC_SURGEON_MODEL", "claude-opus-5-5")
+from . import llm
+from .llm import DEFAULT_MODEL, FALLBACK_BETA  # noqa: F401 — re-exported (cli, codegen, advisor, tests)
+from .llm import api_error_text, block_dict, is_api_error  # noqa: F401 — re-exported (master's diagnostics names)
+
 MAX_TURNS = 12
 # template-slot: a reference fill rule finds no usable value in the template spec itself — the same for every file
 FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "unknown-slot", "slot-overlap",
@@ -60,7 +63,6 @@ FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "
 # EVERY non-fatal code as pattern-sensitive, so a refusal the ops add later can never slip through the gate.
 PATTERN_SENSITIVE_CODES = {"unfilled-slot", "expect", "not-found", "ambiguous"}
 SPEC_LEVEL_CODES = FATAL_SPEC_CODES | {"unfilled-slot", "expect"}
-FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 TOOLS = [
     {"name": "inspect_profile", "description": "The full profile of one structure pattern of the batch (sections, "
@@ -82,13 +84,30 @@ TOOLS = [
      "as a template (template_spec: prepared slots, or — an ordinary spec from another firm — its own section "
      "number/title and where its headers/footers show them; its body text font/size).",
      "input_schema": {"type": "object", "properties": {}}},
-    {"name": "ask_user", "description": "Ask the user before anything runs (ends the compile; the user's answers "
-     "come back with the request). Use it when the request is ambiguous or needs words the user has not given.",
-     "input_schema": {"type": "object", "properties": {"questions": {"type": "array", "items": {"type": "string"}, "minItems": 1}},
-                      "required": ["questions"]}},
-    {"name": "submit_editspec", "description": "Submit the EditSpec (the final answer). It is validated and dry-planned; "
-     "errors come back once to fix.",
-     "input_schema": {"type": "object", "properties": {"spec": {"type": "object"}}, "required": ["spec"]}},
+    {"name": "ask_user", "description": "Ask the user before anything runs; their reply comes back as this tool's "
+     "result. Use it when the request is ambiguous, needs words the user has not given, or no operation does exactly "
+     "what was asked (then say what you understood, what is missing, and offer choices).",
+     "input_schema": {"type": "object", "properties": {
+         "understanding": {"type": "string", "description": "one sentence: what you understood the user wants"},
+         "message": {"type": "string", "description": "what you need to tell the user (e.g. what no operation can "
+                                                      "do, and why) — plain words, no XML"},
+         "questions": {"type": "array", "items": {"type": "string"}},
+         "choices": {"type": "array", "items": {"type": "object", "properties": {
+             "label": {"type": "string", "description": "what picking this means, in plain words; for an "
+                                                       "alternative, say exactly how it differs from what was asked"},
+             "kind": {"type": "string", "enum": ["clarify", "alternative", "rephrase"]},
+             "wording": {"type": "string", "description": "ONLY when picking this choice would place words in the "
+                                                         "documents: those exact words (the user's pick approves "
+                                                         "them; nothing else does)"},
+             "detail": {"type": "string"}}, "required": ["label", "kind"]}}}}},
+    {"name": "submit_editspec", "description": "Submit the EditSpec. It is validated and dry-planned; errors come "
+     "back to fix. A spec that says 'unsupported' must also judge custom_transform.",
+     "input_schema": {"type": "object", "properties": {
+         "spec": {"type": "object"},
+         "custom_transform": {"type": "string", "enum": ["possible", "outside_limits"],
+                              "description": "for an unsupported spec only: could a one-off custom transform do it "
+                                             "within the catalog's custom_transform_limits?"},
+         "custom_transform_reason": {"type": "string"}}, "required": ["spec"]}},
 ]
 
 SYSTEM = """You compile a user's request about editing Word (.docx) specification files into an EditSpec — a JSON \
@@ -102,9 +121,17 @@ own words). Never invent, reword, or "improve" document text; if the user did no
 is ambiguous in a way an assumption cannot honestly cover, call ask_user instead of guessing.
 - Use only ops, selector keys and params from the catalog; use only part names, style ids and section indices that \
 appear in the profiles or tool results.
-- If no op can express the request, submit {"request", "summary", "unsupported": "<why no op fits>", \
-"proposal": "<what operation would do it>"} with no ops. Never approximate the request with an op that does \
-something else.
+- When no op can express the request exactly, do not give up and never silently approximate. If a clarification \
+could make it expressible, or a built-in op could do something close, call ask_user with "understanding" (one \
+sentence: what you understood), "message" (what no op can do, and why, in plain words) and "choices": kind \
+"clarify" for a likely meaning an op can do; kind "alternative" for the closest built-in action, its label saying \
+exactly how it differs from what was asked. A choice that would place words in the documents carries those exact \
+words in "wording" — the user's pick approves them; your own text never does. When nothing fits even after the \
+user's answers, submit {"request", "summary", "unsupported": "<why no op fits>", "proposal": "<what a one-off \
+transform would do>"} with no ops, and beside the spec set custom_transform to "possible" only when a one-off \
+transform could do it within the catalog's custom_transform_limits, else "outside_limits" with custom_transform_reason.
+- The user may reply after your spec was previewed: that reply is a correction, and the app's notes before it say \
+what the preview found. Submit a revised spec (or ask). The user's replies are approved words like the request.
 - Two ops must not touch the same thing. "Change all fonts" is three ops (set_font on runs with a direct font, \
 set_style_font, set_doc_defaults_font) plus an effective_font assertion.
 - The attached template may be a TEMPLATE SPEC: an ordinary spec from the architect or another firm (read_template \
@@ -115,10 +142,34 @@ template's font" follows the catalog rule: font and size from the template spec'
 batch's body_text sizes. State the template's values and the sizes in assumptions.
 - mode: "formatting" unless an op places characters; "content" for tracked wording changes; "untracked" when \
 the user asked for untracked wording or a template has literal fills.
-- Finish by calling submit_editspec exactly once with the whole spec (or ask_user). Keep tool calls few.
-
-OP CATALOG (ops, selector grammar, common assumptions, the EditSpec JSON schema, worked examples):
+- Finish each turn by calling submit_editspec once with the whole spec, or ask_user. Keep tool calls few.
 """
+
+CHAT_NOTE = """
+- This is a conversation: plain text without a tool call is shown to the user as your message and waits for their \
+reply.
+- view_pages shows you rendered pages (of a batch file or the template) when what the user means depends on how the \
+pages look; the profiles cannot show you lines, boxes, logos or layout.
+"""
+
+
+VIEW_PAGES_TOOL = {
+    "name": "view_pages", "description": "See pages of a batch file (or of the attached template) as rendered images "
+    "— when the request is about how something looks (a line, a logo, a box, 'like the template') or you need the "
+    "layout. Up to 3 pages per call; images cost, so look only when it helps.",
+    "input_schema": {"type": "object", "properties": {
+        "file": {"type": "string", "description": "a file name from the profiles, or \"template\""},
+        "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 3}},
+        "required": ["file"]}}
+CHAT_TOOLS = list(TOOLS) + [VIEW_PAGES_TOOL]   # the conversation's tools; the advisor never gets these
+
+
+def system_prompt(chat: bool = False) -> str:
+    """The system prompt — built once per conversation and never changed during it."""
+    return (SYSTEM + (CHAT_NOTE if chat else "")
+            + "\nOP CATALOG (ops, selector grammar, common assumptions, custom_transform_limits, the EditSpec JSON schema, "
+            "worked examples):\n"
+            + json.dumps(op_catalog(), ensure_ascii=False))
 
 
 @dataclass
@@ -130,60 +181,23 @@ class CompileResult:
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
     model: str = DEFAULT_MODEL
     usage: Dict[str, int] = field(default_factory=dict)
-    transcript: List[Dict[str, Any]] = field(default_factory=list)   # the whole exchange (diagnostics)
-    seconds: float = 0.0
+    served_models: List[str] = field(default_factory=list)   # what actually answered (a refusal fallback may differ)
+    custom_transform: str = ""                    # unsupported only: "possible" | "outside_limits" | "" (not judged)
+    custom_transform_reason: str = ""
+    transcript: List[Dict[str, Any]] = field(default_factory=list)   # the model exchange (Conversation.exchange)
+    seconds: float = 0.0                          # time with Claude and the tools, never waiting for the user
 
     def to_dict(self):
         return {"status": self.status, "spec": self.spec, "questions": self.questions, "errors": self.errors,
-                "tool_calls": self.tool_calls, "model": self.model, "usage": self.usage,
+                "tool_calls": self.tool_calls, "model": self.model, "served_models": self.served_models,
+                "usage": self.usage, "custom_transform": self.custom_transform,
+                "custom_transform_reason": self.custom_transform_reason,
                 "seconds": round(self.seconds, 2), "transcript": self.transcript}
 
 
-def block_dict(b: Any) -> Dict[str, Any]:
-    """A response content block as plain data for a transcript (the SDK's objects, or a test's stand-ins)."""
-    kind = getattr(b, "type", None) or type(b).__name__
-    out: Dict[str, Any] = {"type": kind}
-    for key in ("text", "id", "name", "input"):
-        v = getattr(b, key, None)
-        if v is not None:
-            out[key] = v if key != "input" else dict(v)
-    if kind == "thinking":
-        out["thinking"] = str(getattr(b, "thinking", "") or "")[:8000]
-    return out
-
-
-def is_api_error(e: BaseException) -> bool:
-    """An error of the API call itself — the SDK's (a bad key, a rate limit, an overloaded or unreachable service) or
-    the network's — as opposed to a defect in the caller."""
-    root = type(e).__module__.split(".")[0]
-    return root in ("anthropic", "httpx", "httpcore") or isinstance(e, (OSError, TimeoutError, ConnectionError))
-
-
-def api_error_text(e: BaseException) -> str:
-    """An API error as one line: its kind, HTTP status and request id when the SDK gives them."""
-    bits = [f"{type(e).__name__}: {str(e)[:500]}"]
-    status = getattr(e, "status_code", None)
-    if status:
-        bits.append(f"HTTP {status}")
-    rid = getattr(e, "request_id", None)
-    if not rid:
-        headers = getattr(getattr(e, "response", None), "headers", None)
-        try:
-            rid = headers.get("request-id") if headers is not None else None
-        except Exception:  # noqa: BLE001 — a header we cannot read is just not said
-            rid = None
-    if rid:
-        bits.append(f"request id {rid}")
-    return " · ".join(bits)
-
-
 def _client():
-    try:
-        import anthropic
-    except ImportError as e:  # pragma: no cover
-        raise RuntimeError("pip install anthropic (and set ANTHROPIC_API_KEY or run `ant auth login`) to compile "
-                           "natural-language requests") from e
-    return anthropic.Anthropic()
+    """The Claude client every caller resolves at call time (tests replace this name with a scripted fake)."""
+    return llm.client()
 
 
 def load_project_memory(inputs: Sequence[Path]) -> Dict[str, Any]:
@@ -205,6 +219,12 @@ def load_project_memory(inputs: Sequence[Path]) -> Dict[str, Any]:
             except ValueError:
                 pass
     return {}
+
+
+def memory_source(memory: Dict[str, Any]) -> str:
+    """PROJECT.json as a source of approved words — without the path it was read from (a folder name is not wording
+    the user approved for the documents)."""
+    return json.dumps({k: v for k, v in (memory or {}).items() if k != "_path"}, ensure_ascii=False)
 
 
 def _norm(s: str) -> str:
@@ -239,8 +259,10 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
 
 
 def untraceable(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
-    hay = _norm("\n".join(sources))
-    return [w for w in placed_words(spec) if _norm(w) not in hay]
+    """The words the spec would place that appear verbatim (whitespace-normalised) in none of the sources. Each source
+    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next."""
+    hay = [_norm(s) for s in sources if s]
+    return [w for w in placed_words(spec) if not any(_norm(w) in h for h in hay)]
 
 
 class _Batch:
@@ -251,6 +273,7 @@ class _Batch:
         self.prof = profile_batch([Path(f) for f in files])
         self.template = Path(template) if template else None
         self._pkgs: Dict[str, DocxPackage] = {}
+        self.work_dir: Optional[Path] = None      # where a conversation keeps its page renders (chat only)
 
     def pkg(self, name: str) -> DocxPackage:
         if name not in self.files:
@@ -323,6 +346,66 @@ class _Batch:
         if not pkg.has(part):
             raise KeyError(f"{file} has no part {part!r}; text parts: {pkg.text_parts()}")
         return [display_text(p)[:200] for p in paragraphs(pkg.xml(part))][:80]
+
+    def show_xml(self, file: str, part: str = "", start: int = 0, count: int = 10):
+        """The transform writer's eyes (never the compiler's): pretty-printed XML of paragraphs [start, start+count) of
+        one part — every w:p of the part in document order. Capped at 20 paragraphs / 30,000 characters."""
+        from lxml import etree
+        pkg = self.pkg(file)
+        part = part or pkg.main_part()
+        if not pkg.has(part):
+            raise KeyError(f"{file} has no part {part!r}; text parts: {pkg.text_parts()}")
+        pars = paragraphs(pkg.xml(part))
+        start, count = max(0, int(start or 0)), min(max(1, int(count or 10)), 20)
+        xml = "\n".join(f"<!-- paragraph {i} -->\n" + etree.tostring(p, pretty_print=True, encoding="unicode")
+                        for i, p in enumerate(pars[start:start + count], start))
+        return {"file": file, "part": part, "paragraphs_in_part": len(pars), "start": start, "xml": xml[:30000]}
+
+    def find_paragraphs(self, file: str, regex: str, part: str = ""):
+        pkg = self.pkg(file)
+        part = part or pkg.main_part()
+        if not pkg.has(part):
+            raise KeyError(f"{file} has no part {part!r}; text parts: {pkg.text_parts()}")
+        sheet = StyleSheet(pkg)
+        rx = re.compile(regex)
+        out = []
+        for i, p in enumerate(paragraphs(pkg.xml(part))):
+            t = display_text(p)
+            if rx.search(t):
+                ps = p.find(f"{W}pPr/{W}pStyle")
+                out.append({"index": i, "style": ps.get(W + "val") if ps is not None else sheet.defaults.get("paragraph"),
+                            "text": t[:200]})
+                if len(out) >= 40:
+                    break
+        return out
+
+    def view_pages(self, file: str, pages: Optional[Sequence[int]] = None):
+        """Rendered pages as image blocks (the conversation sends them as the tool result). Budgeted per conversation."""
+        from . import vision
+        if self.work_dir is None:
+            raise KeyError("page images are not available here")
+        if file == "template":
+            if not self.template:
+                raise KeyError("no template was attached to this request")
+            path = self.template
+        else:
+            if file not in self.files:
+                raise KeyError(f"no file {file!r} in this batch; files: {sorted(self.files)[:12]}")
+            path = self.files[file]
+        wanted = sorted({int(n) for n in (pages or [1]) if int(n) >= 1})[:3] or [1]
+        pngs = vision.page_pngs(path, wanted, Path(self.work_dir) / "pages")
+        if not pngs:
+            raise ValueError(f"{file} has no page {wanted}")
+        cost = sum(vision.est_tokens(p) for p in pngs)
+        used = getattr(self, "_image_tokens", 0)
+        if used + cost > vision.VIEW_BUDGET_TOKENS:
+            raise ValueError(f"the page budget of this conversation is used up ({used} of "
+                             f"{vision.VIEW_BUDGET_TOKENS} image tokens) — ask the user to describe what they mean")
+        self._image_tokens = used + cost
+        blocks: List[Dict[str, Any]] = []
+        for png in pngs:
+            blocks += [{"type": "text", "text": f"{file} — page {png.stem[1:]}"}, vision.image_block(png)]
+        return {"_content_blocks": blocks, "_images": pngs}
 
     def read_template(self):
         if not self.template:
@@ -420,119 +503,10 @@ def compile_request(request: str, files: Sequence[Path], template: Optional[Path
                     answers: Sequence[str] = (), model: Optional[str] = None, client=None,
                     memory: Optional[Dict[str, Any]] = None, log: Optional[Callable[[str], None]] = None,
                     prior_failures: Optional[Sequence[Dict[str, Any]]] = None) -> CompileResult:
-    """Request + batch → CompileResult. ``status`` is ``ok`` (a validated, dry-planned spec), ``questions`` (ask the
-    user, then call again with ``answers``), ``unsupported`` (no op fits; see spec["proposal"]) or ``failed``."""
-    model = model or DEFAULT_MODEL
-    log = log or (lambda m: None)
-    client = client or _client()
-    t_compile = time.perf_counter()
-    batch = _Batch(files, template)
-    memory = memory if memory is not None else load_project_memory([Path(f) for f in files])
-    sources = [request, *answers, json.dumps(memory, ensure_ascii=False)]
-    system = SYSTEM + json.dumps(op_catalog(), ensure_ascii=False)
-    messages = build_messages(request, batch, answers, memory, prior_failures=prior_failures)
-    res = CompileResult(status="failed", model=model)
-    res.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"],
-                           "files": [str(f) for f in files], "template": str(template) if template else None})
-    rejections = 0
-    nudged = False
-    for _turn in range(MAX_TURNS):
-        t_call = time.perf_counter()
-        try:
-            resp = client.beta.messages.create(
-                model=model, max_tokens=16000, system=system, tools=TOOLS, messages=messages,
-                output_config={"effort": "high"}, cache_control={"type": "ephemeral"},
-                betas=[FALLBACK_BETA], fallbacks="default")
-        except Exception as e:
-            if not is_api_error(e):
-                raise                          # a defect (a wrong argument, a test's script running out) propagates
-            res.errors.append(f"the call to the model failed: {api_error_text(e)}")
-            res.transcript.append({"turn": _turn + 1, "error": api_error_text(e),
-                                   "seconds": round(time.perf_counter() - t_call, 2)})
-            log(f"compiler: the call to the model failed ({type(e).__name__})")
-            res.seconds = time.perf_counter() - t_compile
-            return res
-        u = getattr(resp, "usage", None)
-        for k in ("input_tokens", "output_tokens", "cache_read_input_tokens"):
-            res.usage[k] = res.usage.get(k, 0) + int(getattr(u, k, 0) or 0)
-        stop = getattr(resp, "stop_reason", None)
-        res.transcript.append({"turn": _turn + 1, "role": "assistant", "stop_reason": stop,
-                               "seconds": round(time.perf_counter() - t_call, 2),
-                               "request_id": getattr(resp, "_request_id", None) or getattr(resp, "id", None),
-                               "usage": {k: int(getattr(u, k, 0) or 0) for k in
-                                         ("input_tokens", "output_tokens", "cache_read_input_tokens")},
-                               "content": [block_dict(b) for b in (getattr(resp, "content", None) or [])]})
-        res.seconds = time.perf_counter() - t_compile
-        if stop == "refusal":
-            det = getattr(resp, "stop_details", None)
-            res.errors.append(f"the model declined the request ({getattr(det, 'category', None)}: "
-                              f"{getattr(det, 'explanation', '')})")
-            return res
-        if stop == "max_tokens":
-            res.errors.append("the model's answer was cut off (max_tokens)")
-            return res
-        messages.append({"role": "assistant", "content": resp.content})
-        if stop == "pause_turn":
-            continue
-        uses = [b for b in resp.content if getattr(b, "type", "") == "tool_use"]
-        if not uses:
-            if nudged:
-                res.errors.append("the model ended without submitting a spec or asking a question")
-                return res
-            nudged = True
-            messages.append({"role": "user", "content": "Finish by calling submit_editspec (or ask_user)."})
-            res.transcript.append({"turn": _turn + 1, "role": "user",
-                                   "content": "Finish by calling submit_editspec (or ask_user)."})
-            continue
-        results = []
-        final: Optional[CompileResult] = None
-        for b in uses:
-            name, inp = b.name, dict(b.input or {})
-            res.tool_calls.append({"tool": name, "input": inp if name != "submit_editspec" else "(spec)"})
-            log(f"compiler: {name}")
-            if name == "ask_user":
-                qs = [q for q in inp.get("questions") or [] if isinstance(q, str) and q.strip()]
-                final = CompileResult("questions", questions=qs or ["(the model asked an empty question)"])
-                results.append({"type": "tool_result", "tool_use_id": b.id, "content": "asked"})
-                continue
-            if name == "submit_editspec":
-                spec = inp.get("spec")
-                errs = check_submission(spec, batch, sources)
-                if not errs:
-                    if spec.get("unsupported"):
-                        final = CompileResult("unsupported", spec=spec)
-                    elif spec.get("questions"):
-                        final = CompileResult("questions", spec=spec, questions=list(spec["questions"]))
-                    else:
-                        final = CompileResult("ok", spec=spec)
-                    results.append({"type": "tool_result", "tool_use_id": b.id, "content": "accepted"})
-                    continue
-                rejections += 1
-                res.errors += errs
-                if rejections > 1:
-                    res.errors.insert(0, "the spec was rejected twice")
-                    return res
-                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
-                                "content": "REJECTED — fix and call submit_editspec again:\n- " + "\n- ".join(errs)})
-                continue
-            try:
-                fn = getattr(batch, name) if name in {t["name"] for t in TOOLS} else None
-                if fn is None:
-                    raise KeyError(f"unknown tool {name}")
-                out = fn(**inp)
-                results.append({"type": "tool_result", "tool_use_id": b.id,
-                                "content": json.dumps(out, ensure_ascii=False)[:20000]})
-            except (KeyError, TypeError, ValueError, re.error) as e:
-                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True, "content": str(e)})
-        res.transcript.append({"turn": _turn + 1, "role": "user", "tool_results": [
-            {"tool_use_id": r.get("tool_use_id"), "is_error": bool(r.get("is_error")),
-             "content": str(r.get("content"))[:6000]} for r in results]})
-        if final is not None:
-            final.model, final.usage, final.tool_calls = model, res.usage, res.tool_calls
-            final.errors = res.errors
-            final.transcript, final.seconds = res.transcript, time.perf_counter() - t_compile
-            return final
-        messages.append({"role": "user", "content": results})
-    res.errors.append(f"no spec after {MAX_TURNS} turns")
-    res.seconds = time.perf_counter() - t_compile
-    return res
+    """Request + batch → CompileResult, in one go (the command line without a terminal, the tests). ``status`` is
+    ``ok`` (a validated, dry-planned spec), ``questions`` (ask the user, then call again with ``answers``),
+    ``unsupported`` (no op fits; see spec["proposal"]) or ``failed``. The loop itself is conversation.Conversation."""
+    from .conversation import Conversation
+    conv = Conversation(request, files, template=template, client=client, model=model, memory=memory,
+                        prior_failures=prior_failures, answers=answers, mode="compile", log=log)
+    return conv.compile_result(conv.start())

@@ -225,6 +225,13 @@ QLabel#Badge {{ border-radius: 10px; padding: 2px 10px; font-weight: 600; font-s
 QLabel#Badge[kind="pass"] {{ color: {t.ok_fg}; background: {t.ok_bg}; }}
 QLabel#Badge[kind="fail"] {{ color: {t.err_fg}; background: {t.err_bg}; }}
 QLabel#Badge[kind="exception"] {{ color: {t.warn_fg}; background: {t.warn_bg}; }}
+QFrame#ChatMsg {{ border-radius: 8px; border: 1px solid {t.border}; background: {t.surface_alt}; }}
+QFrame#ChatMsg[role="user"] {{ background: {t.info_bg}; }}
+QFrame#ChatMsg[role="app"] {{ background: {t.surface}; border-style: dashed; }}
+QFrame#ChatMsg QLabel {{ background: transparent; }}
+QLabel#ChatWho {{ font-weight: 600; font-size: 8.5pt; color: {t.muted}; }}
+QFrame#ChoiceRow {{ border-radius: 6px; border: 1px solid {t.input_border}; background: {t.surface}; }}
+QFrame#ChoiceRow QLabel {{ background: transparent; }}
 QDialog#About QLabel#AboutName {{ font-size: 16pt; font-weight: 600; }}
 QTextBrowser#AboutBody {{ background: transparent; border: none; }}
 QStatusBar {{ background: {t.window}; border-top: 1px solid {t.border}; }}

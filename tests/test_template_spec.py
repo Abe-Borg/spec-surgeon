@@ -24,24 +24,7 @@ HF_SPEC = SPECS / "match-template-spec-header-footer.json"
 FONT_SPEC = SPECS / "match-template-spec-font.json"
 
 
-def tool(name, inp, tid="t1"):
-    return SimpleNamespace(type="tool_use", id=tid, name=name, input=inp)
-
-
-def resp(*blocks, stop="tool_use"):
-    return SimpleNamespace(content=list(blocks), stop_reason=stop, stop_details=None,
-                           usage=SimpleNamespace(input_tokens=100, output_tokens=20, cache_read_input_tokens=0))
-
-
-class FakeClient:
-    def __init__(self, *responses):
-        self.responses = list(responses)
-        self.requests = []
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
-
-    def _create(self, **kw):
-        self.requests.append(copy.deepcopy({k: v for k, v in kw.items() if k != "system"}) | {"system": kw.get("system")})
-        return self.responses.pop(0)
+from fake_claude import FakeClient, resp, tool  # noqa: E402
 
 
 @pytest.fixture

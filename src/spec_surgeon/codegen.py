@@ -1,23 +1,30 @@
 """Tier B — a generated transform for a request no op can express (docs/NL_SURGICAL_EDITOR_PLAN.md §8; Phase 5).
 
-Off by default (decision on §14.3: the user turns it on with ``--allow-codegen``). When the compiler answers
-``unsupported`` with a ``proposal``, ``generate_op`` asks Claude to write ONE op module against a restricted API
-(the ``Op`` interface, ``DocxPackage``, ``ooxml`` helpers, selectors, lxml) and tests it:
+Offered when it is needed (decided 2026-10-15): when the conversation ends with ``unsupported`` and Claude judged the
+request within the catalog's ``custom_transform_limits``, the user picks "Have Claude write a one-off custom transform"
+(in the window or at the terminal; ``do --allow-codegen`` accepts the offer without a terminal). ``generate_op`` gives
+Claude the whole conversation as its brief, read-only tools to look at the sample files' XML (``show_xml``,
+``find_paragraphs``, ``list_styles``, ``show_part_text``), and asks for ONE op module against a restricted API (the
+``Op`` interface, ``DocxPackage``, ``ooxml`` helpers, selectors, lxml); it tests it:
 
 1. ``check_source`` — an AST whitelist: imports only from ``ALLOWED_FROM`` (named symbols) and a few pure stdlib
    modules; no dunder attributes (bar ``__init__``), no ``open``/``exec``/``eval``/``getattr``/``__import__``…,
    no file-writing or file-reading attributes; exactly one ``Op`` subclass with ``plan`` and ``apply``;
 2. ``run_in_sandbox`` — the module runs in a separate isolated process (``python -I``, temp working directory,
    stripped environment, timeout) on a COPY of each sample file: plan (predict first), then apply;
-3. ``hard_limits`` — the plan may not change text in surviving parts (generated ops are formatting-only in this
-   prototype), add or drop tracked insertions/deletions, touch ``settings.xml``, or claim no layout reference
-   without a reason;
+3. ``hard_limits`` — plain formatting only: the plan may not change text in surviving parts, add members, predict a
+   revision of any kind (no tracked formatting either), change any part but the document's text parts and its styles
+   part (V10's residual identity covers exactly those), or claim no layout reference without a reason;
 4. the **full verification suite** (independent verifier, V1–V5, V8, V10) on every sample. A failure goes back
    to the model with the record; at most ``max_iter`` (3) attempts.
 
 A passing op is saved (``generated_ops/<hash>.py`` + ``.history.json`` beside the batch's records) — a cache, not
 a registered op: promotion into ``ops/`` is a human decision, with tests. ``run_generated`` applies it to a batch
 the same way (sandbox per file, verifier per file); outputs go to the output folder only — never in place.
+
+``codegen/history.json`` is the diagnosis of every attempt, passing or not: the submitted source, its problems and
+trials, and the whole exchange with the model (``GeneratedOp.transcript``), re-written after every turn and on every
+way out. An API error (``llm.is_api_error``) ends the generation as a recorded failure; anything else propagates.
 """
 from __future__ import annotations
 
@@ -34,14 +41,19 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from .llm import Usage
+
 ALLOWED_FROM: Dict[str, set] = {
     "spec_surgeon.ops.base": {"Op", "PlanFragment", "BlockDiff", "JobException"},
     "spec_surgeon.package": {"W", "NS", "R", "DocxPackage", "serialize_xml", "parse_xml"},
     "spec_surgeon.ooxml": {"PPR_ORDER", "RPR_ORDER", "SECTPR_ORDER", "STYLE_ORDER", "insert_in_order", "get_or_add",
                            "paragraphs", "paragraph_ppr", "run_rpr", "mark_rpr", "set_rfonts", "block_full_text",
-                           "count_revisions"},
+                           "count_revisions", "THEME_FONT_ATTR", "own_size", "set_size"},
     "spec_surgeon.ops.selectors": {"resolve_sections", "scope_parts", "paragraph_selected", "check_paragraph_selector",
-                                   "is_targeted", "StyleSheet", "DEFAULT_PRESERVE_FONTS"},
+                                   "is_targeted", "StyleSheet", "DEFAULT_PRESERVE_FONTS", "FONT_PARAM_DOC",
+                                   "check_run_selector", "font_values", "has_direct_font", "in_revision",
+                                   "is_symbol_rpr", "mark_in_revision", "rpr_selected", "runs_by_paragraph",
+                                   "size_applies", "size_values"},
     "lxml": {"etree"},
     "__future__": {"annotations"},
     "typing": {"Any", "Dict", "List", "Optional", "Tuple", "Sequence", "Set", "Iterable"},
@@ -49,6 +61,16 @@ ALLOWED_FROM: Dict[str, set] = {
     "collections": {"Counter", "OrderedDict", "defaultdict"},
 }
 ALLOWED_IMPORT = {"re", "copy", "math", "itertools", "functools", "json"}
+# What the reference ops import that a generated op may NOT: the tracked-formatting helpers (generated ops are plain
+# formatting — no revision of any kind) and the engine's registration hook. tests/test_codegen.py pins that every name
+# the examples import is either allowed above or listed here.
+EXCLUDED_FROM_EXAMPLES: Dict[str, set] = {
+    "spec_surgeon.ooxml": {"RevisionStamp", "property_change", "max_revision_id", "file_uses_date_utc"},
+    "spec_surgeon.ops.replace_text": {"default_author"},
+    "spec_surgeon.ops": {"register"},
+}
+EXAMPLE_OPS = ("set_page_setup.py", "set_paragraph_props.py", "set_font.py")
+MAX_CALLS = 24
 ALLOWED_MODULES = tuple(sorted(set(ALLOWED_FROM) | ALLOWED_IMPORT))
 FORBIDDEN_NAMES = {"open", "exec", "eval", "compile", "__import__", "globals", "locals", "vars", "getattr", "setattr",
                    "delattr", "input", "breakpoint", "memoryview", "help", "exit", "quit", "type", "object"}
@@ -155,7 +177,10 @@ def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict
                          seconds=time.perf_counter() - t0)
 
 
-def hard_limits(plan: Dict[str, Any]) -> List[str]:
+def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = None) -> List[str]:
+    """What a generated op may never do, judged from its own plan before the suite runs. ``allowed_parts``: the source's
+    text parts and its styles part — the parts V10's residual identity covers; any other part (numbering.xml, docProps,
+    a chart…) could carry a change no verified assertion checks, so it is refused outright."""
     probs = []
     removed, added = set(plan.get("members_removed") or []), set(plan.get("members_added") or [])
     kept = [d for d in plan.get("diffs") or [] if d["part"] not in removed and d["part"] not in added]
@@ -163,14 +188,35 @@ def hard_limits(plan: Dict[str, Any]) -> List[str]:
         probs.append(f"generated ops may not change text in surviving parts ({len(kept)} block(s) predicted)")
     if plan.get("members_added"):
         probs.append("generated ops may not add package members")
-    for k in ("ins", "del", "moveFrom", "moveTo", "ins_mark", "del_mark"):
-        if (plan.get("rev_delta") or {}).get(k):
-            probs.append(f"generated ops may not add or drop tracked insertions/deletions ({k})")
+    deltas = {k: v for k, v in (plan.get("rev_delta") or {}).items() if v}
+    if deltas:
+        probs.append(f"generated ops are plain formatting: no tracked change or revision of any kind ({sorted(deltas)})")
     if any(p.endswith("settings.xml") for p in plan.get("intended_parts") or []):
         probs.append("generated ops may not edit settings.xml")
+    if allowed_parts is not None:
+        outside = sorted({p for p in list(plan.get("intended_parts") or []) + sorted(removed)
+                          if p not in set(allowed_parts)})
+        if outside:
+            probs.append(f"generated ops may change only the document's text parts and its styles part — no verified "
+                         f"assertion kind covers {outside}")
     if plan.get("geometry_reference") == "none" and not (plan.get("geometry_reason") or "").strip():
         probs.append("geometry_reference 'none' needs a geometry_reason")
     return probs
+
+
+def allowed_parts_of(docx: Path) -> List[str]:
+    """The parts a generated op may change in this file: its text parts and its styles part."""
+    from .ops.selectors import StyleSheet
+    from .package import DocxPackage
+    pkg = DocxPackage.from_path(docx)
+    parts = list(pkg.text_parts())
+    try:
+        sp = StyleSheet(pkg).part
+        if sp:
+            parts.append(sp)
+    except Exception:  # noqa: BLE001 — a file without a styles part: only its text parts may change
+        pass
+    return parts
 
 
 @dataclass
@@ -180,10 +226,11 @@ class FileTrial:
     problems: List[str] = field(default_factory=list)
     output: Optional[Path] = None
     record: Optional[Any] = None
+    output_md5: str = ""                          # the bytes the suite verified (re-checked before any copy)
 
     def to_dict(self):
         return {"source": str(self.source), "passed": self.passed, "problems": self.problems,
-                "output": str(self.output) if self.output else None}
+                "output": str(self.output) if self.output else None, "output_md5": self.output_md5}
 
 
 def trial(source: str, f: Path, select, params, workdir: Path) -> FileTrial:
@@ -194,19 +241,20 @@ def trial(source: str, f: Path, select, params, workdir: Path) -> FileTrial:
         return FileTrial(f, False, [f"[{sb.code or 'error'}] {sb.error}"
                                     + (f"\n(traceback, last lines:)\n{where}" if where else "")])
     try:
-        limits = hard_limits(sb.plan)
+        limits = hard_limits(sb.plan, allowed_parts_of(f))
     except Exception as e:  # noqa: BLE001 — a plan the engine cannot even read is a failed trial, with the reason
         return FileTrial(f, False, [f"the generated op's plan is malformed ({type(e).__name__}: {e})"], sb.output)
     if limits:
         return FileTrial(f, False, limits, sb.output)
+    out_bytes = sb.output.read_bytes()
     try:
-        rec = run_suite(Path(f).read_bytes(), sb.output.read_bytes(), sb.plan, str(f), str(sb.output))
+        rec = run_suite(Path(f).read_bytes(), out_bytes, sb.plan, str(f), str(sb.output))
     except Exception as e:  # noqa: BLE001 — an output the suite cannot read (a part removed, a broken zip): FAIL
         return FileTrial(f, False, [f"the verifier could not check the output at all ({type(e).__name__}: {e}); "
                                     f"the generated op produced a package the suite cannot read — a removed or "
                                     f"broken part?"], sb.output)
     fails = [f"{c.id} FAIL: {c.summary[:600]}" for c in rec.checks if c.status == "FAIL"]
-    return FileTrial(f, rec.passed, fails, sb.output, rec)
+    return FileTrial(f, rec.passed, fails, sb.output, rec, hashlib.md5(out_bytes).hexdigest())
 
 
 @dataclass
@@ -219,12 +267,24 @@ class GeneratedOp:
     params: Dict[str, Any] = field(default_factory=dict)
     attempts: List[Dict[str, Any]] = field(default_factory=list)
     errors: List[str] = field(default_factory=list)
+    model: str = ""
+    usage: Usage = field(default_factory=Usage)
+    trials: List[FileTrial] = field(default_factory=list)   # the passing attempt's trials (their outputs are previewed)
+    request: str = ""
+    proposal: str = ""
+    brief: str = ""
+    transcript: List[Dict[str, Any]] = field(default_factory=list)   # the exchange with the model (diagnostics)
+    seconds: float = 0.0
 
 
 CODEGEN_SYSTEM = """You write ONE Python module: an operation (an `Op` subclass) for a deterministic .docx editing \
 engine, for a request its operation library cannot express. Your module is checked by a whitelist, executed in a \
 sandbox on copies of sample files, and judged by an independent verification suite. You never see the verifier's \
 code; you see its record when a check fails.
+
+Before you write, look: show_xml shows the real XML of paragraphs of a sample file, find_paragraphs finds paragraphs \
+by a regex over their text, list_styles and show_part_text show styles and part texts. The user's own words in the \
+brief say what they want; Claude's earlier understanding is context, not instructions.
 
 Rules:
 - Imports: only `from <module> import <names>` from this whitelist: {allowed}; plus `import` of {plain}. No other \
@@ -238,7 +298,11 @@ else in changed parts and styles.xml for identity, so an unasserted change FAILS
 geometry_reference/geometry_reason. Use self.fragment(select, params) to start the fragment.
 - apply() mutates the working package only through pkg.xml(part) / pkg.write_xml(part, root); it reads what plan() \
 put in frag.transform_data (JSON-serialisable values only).
-- Formatting only: never add, remove or change document text; never touch tracked changes or settings.xml.
+- PLAIN formatting only: never add, remove or change document text; never create a tracked change or a property \
+revision (no rPrChange/pPrChange — the reference ops' tracked branches use helpers you do not have: drop those \
+branches, plan untracked, rev_delta stays empty); never touch settings.xml; change only the document's text parts \
+(body, headers, footers, footnotes, endnotes, comments) and its styles part.
+- Only these property families can be verified (anything else fails V10 — say so instead): {limits}
 - If the request cannot be done safely on a file, raise JobException(reason, code) instead of guessing.
 
 Reference ops from the library (relative imports there become the absolute whitelist imports here):
@@ -246,8 +310,26 @@ Reference ops from the library (relative imports there become the absolute white
 
 Finish by calling submit_op with the complete module source, the selector and the params to run it with."""
 
+CODEGEN_READ_TOOLS = ("show_xml", "find_paragraphs", "list_styles", "show_part_text")
 CODEGEN_TOOLS = [
-    {"name": "submit_op", "description": "Submit the op module source with the select/params to run it with.",
+    {"name": "show_xml", "description": "The XML of paragraphs of one part of a sample file (pretty-printed), by "
+     "paragraph index (0-based, every w:p of the part in document order).",
+     "input_schema": {"type": "object", "properties": {
+         "file": {"type": "string"}, "part": {"type": "string", "description": "default word/document.xml"},
+         "start": {"type": "integer", "minimum": 0}, "count": {"type": "integer", "minimum": 1, "maximum": 20}},
+         "required": ["file"]}},
+    {"name": "find_paragraphs", "description": "Paragraphs of one part whose text matches a Python regex: index, "
+     "style and text.",
+     "input_schema": {"type": "object", "properties": {
+         "file": {"type": "string"}, "regex": {"type": "string"}, "part": {"type": "string"}},
+         "required": ["file", "regex"]}},
+    {"name": "list_styles", "description": "Every style defined in a sample file: id, type, name, basedOn, fonts/size.",
+     "input_schema": {"type": "object", "properties": {"file": {"type": "string"}}, "required": ["file"]}},
+    {"name": "show_part_text", "description": "The paragraph texts of one part of a sample file.",
+     "input_schema": {"type": "object", "properties": {"file": {"type": "string"}, "part": {"type": "string"}},
+                      "required": ["file", "part"]}},
+    {"name": "submit_op", "description": "Submit the op module source with the select/params to run it with (one "
+     "submission per turn; it is tried on every sample file).",
      "input_schema": {"type": "object", "properties": {
          "source": {"type": "string"}, "select": {"type": "object"}, "params": {"type": "object"},
          "notes": {"type": "string"}}, "required": ["source"]}},
@@ -257,86 +339,152 @@ CODEGEN_TOOLS = [
 def _examples() -> str:
     here = Path(__file__).resolve().parent / "ops"
     out = []
-    for name in ("set_page_setup.py", "set_paragraph_props.py"):
+    for name in EXAMPLE_OPS:
         p = here / name
         if p.is_file():
             out.append(f"===== ops/{name} =====\n{p.read_text(encoding='utf-8')}")
     return "\n\n".join(out)
 
 
+def system_prompt() -> str:
+    from .catalog import CUSTOM_TRANSFORM_LIMITS
+    return CODEGEN_SYSTEM.format(allowed=json.dumps({k: sorted(v) for k, v in ALLOWED_FROM.items()}),
+                                 plain=sorted(ALLOWED_IMPORT), examples=_examples(),
+                                 limits=json.dumps(CUSTOM_TRANSFORM_LIMITS, ensure_ascii=False))
+
+
 def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: Path, client=None,
-                model: Optional[str] = None, max_iter: int = MAX_ITER, log=None) -> GeneratedOp:
-    """Generate → sandbox + verify on the samples → feed failures back, up to ``max_iter`` attempts."""
-    from .compiler import DEFAULT_MODEL, FALLBACK_BETA, _client
+                model: Optional[str] = None, max_iter: int = MAX_ITER, log=None, brief: Optional[str] = None) -> GeneratedOp:
+    """Look → generate → sandbox + verify on the samples → feed failures back: at most ``max_iter`` submissions and
+    ``MAX_CALLS`` calls. Every tool call is answered in the next message."""
+    from . import compiler, llm
     from .profile import profile
     from .package import DocxPackage
     log = log or (lambda m: None)
-    client = client or _client()
-    model = model or DEFAULT_MODEL
+    model = model or compiler.DEFAULT_MODEL
     out_dir = Path(out_dir)
-    system = CODEGEN_SYSTEM.format(allowed=json.dumps({k: sorted(v) for k, v in ALLOWED_FROM.items()}),
-                                   plain=sorted(ALLOWED_IMPORT), examples=_examples())
+    system = system_prompt()
     profiles = [profile(DocxPackage.from_path(f)) for f in samples]
+    batch = compiler._Batch(list(samples), None)
+    asked = (f"THE CONVERSATION WITH THE USER (what they asked, what was understood, every reply):\n{brief}"
+             if brief else f"REQUEST: {request}")
     messages: List[Dict[str, Any]] = [{"role": "user", "content":
-        f"REQUEST: {request}\n\nWHY NO EXISTING OP FITS / PROPOSAL: {proposal}\n\nSAMPLE FILE PROFILES:\n"
-        + json.dumps(profiles, ensure_ascii=False)}]
-    g = GeneratedOp()
-    from .compiler import api_error_text, is_api_error
-    for attempt in range(1, max_iter + 1):
-        try:
-            resp = client.beta.messages.create(model=model, max_tokens=16000, system=system, tools=CODEGEN_TOOLS,
-                                               messages=messages, output_config={"effort": "high"},
-                                               cache_control={"type": "ephemeral"}, betas=[FALLBACK_BETA],
-                                               fallbacks="default")
-        except Exception as e:
-            if not is_api_error(e):
-                raise
-            g.errors.append(f"the call to the model failed: {api_error_text(e)}")
-            _save_history(g, out_dir)
-            return g
-        if getattr(resp, "stop_reason", None) in ("refusal", "max_tokens"):
-            g.errors.append(f"model stopped: {resp.stop_reason}")
-            return g
-        messages.append({"role": "assistant", "content": resp.content})
-        uses = [b for b in resp.content if getattr(b, "type", "") == "tool_use" and b.name == "submit_op"]
-        if not uses:
-            messages.append({"role": "user", "content": "Call submit_op with the module source."})
-            g.attempts.append({"attempt": attempt, "problems": ["no submission"]})
-            continue
-        b = uses[0]
-        inp = dict(b.input or {})
-        src, select, params = inp.get("source") or "", inp.get("select") or {}, inp.get("params") or {}
-        problems = check_source(src)
-        trials: List[FileTrial] = []
-        if not problems:
-            for i, f in enumerate(samples):
-                t = trial(src, Path(f), select, params, out_dir / "sandbox" / f"attempt{attempt}" / f"{i:02d}")
-                trials.append(t)
-                problems += [f"{Path(f).name}: {p}" for p in t.problems]
-        g.attempts.append({"attempt": attempt, "problems": problems, "trials": [t.to_dict() for t in trials]})
-        log(f"codegen attempt {attempt}: {'PASS' if not problems else f'{len(problems)} problem(s)'}")
-        g.attempts[-1]["source"] = src
-        if not problems:
-            g.source, g.select, g.params, g.passed = src, select, params, True
-            g.name = _op_name(src)
-            g.path = save_generated(g, out_dir)
-            _save_history(g, out_dir)            # after the result is set: the history says it passed
-            return g
+        f"{asked}\n\nWHY NO EXISTING OP FITS / PROPOSAL: {proposal}\n\nSAMPLE FILES (for the tools): "
+        f"{[Path(f).name for f in samples]}\n\nSAMPLE FILE PROFILES:\n" + json.dumps(profiles, ensure_ascii=False)}]
+    g = GeneratedOp(model=model, request=request, proposal=proposal or "", brief=brief or "")
+    g.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"],
+                         "samples": [str(f) for f in samples]})
+    t_all = time.perf_counter()
+
+    def done() -> GeneratedOp:                     # every way out keeps codegen/history.json
+        g.seconds = time.perf_counter() - t_all
         _save_history(g, out_dir)
-        messages.append({"role": "user", "content": [{"type": "tool_result", "tool_use_id": b.id, "is_error": True,
-                                                      "content": "FAILED — fix and submit again:\n- "
-                                                      + "\n- ".join(problems)[:12000]}]})
-    g.errors.append(f"no passing op after {max_iter} attempt(s)")
-    _save_history(g, out_dir)
-    return g
+        return g
+
+    def client_now():
+        nonlocal client
+        if client is None:
+            client = compiler._client()
+        return client
+    calls = 0
+    while len(g.attempts) < max_iter and calls < MAX_CALLS:
+        calls += 1
+        t_call = time.perf_counter()
+        try:
+            resp = llm.call(client_now(), model=model, system=system, tools=CODEGEN_TOOLS, messages=messages)
+        except Exception as e:  # noqa: BLE001 — classified below
+            if not llm.is_api_error(e):
+                raise                          # a defect (a wrong argument, a test's script running out) propagates
+            g.errors.append(llm.failure_text(e, "the call to the model failed"))
+            g.transcript.append(llm.error_entry(calls, e, time.perf_counter() - t_call))
+            return done()
+        g.usage.add(resp, model)
+        g.transcript.append(llm.response_entry(calls, resp, time.perf_counter() - t_call))
+        problem = llm.stop_problem(resp)
+        if problem:
+            g.errors.append(f"model stopped: {problem}")
+            return done()
+        content = llm.history_content(resp)
+        uses = llm.tool_uses(content)
+        if not content:
+            g.errors.append("the model returned an empty answer")
+            return done()
+        messages.append({"role": "assistant", "content": content})
+        if not uses:
+            nudge = "Call submit_op with the module source."
+            messages.append({"role": "user", "content": nudge})
+            g.transcript.append({"turn": calls, "role": "user", "content": nudge})
+            continue
+        results: List[Dict[str, Any]] = []
+        submitted = False
+        for b in uses:
+            inp = dict(b.input or {})
+            if b.name == "submit_op":
+                if submitted:
+                    results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
+                                    "content": "one submission per turn — this one was not tried"})
+                    continue
+                submitted = True
+                attempt = len(g.attempts) + 1
+                src, select, params = inp.get("source") or "", inp.get("select") or {}, inp.get("params") or {}
+                problems = check_source(src)
+                trials: List[FileTrial] = []
+                if not problems:
+                    for i, f in enumerate(samples):
+                        t = trial(src, Path(f), select, params, out_dir / "sandbox" / f"attempt{attempt}" / f"{i:02d}")
+                        trials.append(t)
+                        problems += [f"{Path(f).name}: {p}" for p in t.problems]
+                g.attempts.append({"attempt": attempt, "problems": problems, "trials": [t.to_dict() for t in trials],
+                                   "source": src, "select": select, "params": params})
+                log(f"codegen attempt {attempt}: {'PASS' if not problems else f'{len(problems)} problem(s)'}")
+                if not problems:
+                    g.source, g.select, g.params, g.passed, g.trials = src, select, params, True, trials
+                    g.name = _op_name(src)
+                    g.path = save_generated(g, out_dir)
+                    return done()                  # after the result is set: the history says it passed
+                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
+                                "content": ("FAILED — fix and submit again:\n- " + "\n- ".join(problems))[:12000]})
+                continue
+            try:
+                if b.name not in CODEGEN_READ_TOOLS:
+                    raise KeyError(f"unknown tool {b.name}")
+                out = getattr(batch, b.name)(**inp)
+                results.append({"type": "tool_result", "tool_use_id": b.id,
+                                "content": json.dumps(out, ensure_ascii=False)[:30000]})
+            except Exception as e:  # noqa: BLE001 — every tool call gets an answer, or the next request is refused
+                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
+                                "content": f"{type(e).__name__}: {e}"[:2000]})
+        messages.append({"role": "user", "content": results})
+        g.transcript.append(llm.results_entry(calls, results))
+        g.seconds = time.perf_counter() - t_all
+        _save_history(g, out_dir)                  # every attempt kept as it happens
+    g.errors.append(f"no passing op after {len(g.attempts)} attempt(s)" if len(g.attempts) >= max_iter else
+                    f"no passing op after {calls} calls ({len(g.attempts)} attempt(s))")
+    return done()
 
 
 def _save_history(g: GeneratedOp, out_dir: Path) -> None:
     """Every attempt — the source the model submitted, the whitelist and sandbox problems, each sample's verification
-    — in ``codegen/history.json``, passing or not (the diagnosis of a transform that never passed)."""
+    — and the whole exchange in ``codegen/history.json``, passing or not (the diagnosis of a transform that never
+    passed). A history that cannot be written never stops the work (``diagnostics.write_json``)."""
     from .diagnostics import write_json
     write_json(Path(out_dir) / "history.json", {"passed": g.passed, "name": g.name, "errors": g.errors,
-                                                "attempts": g.attempts})
+                                                "request": g.request, "proposal": g.proposal, "brief": g.brief,
+                                                "model": g.model, "usage": g.usage.to_dict(),
+                                                "seconds": round(g.seconds, 2), "attempts": g.attempts,
+                                                "transcript": g.transcript})
+
+
+def pick_samples(files: Sequence[Path]) -> List[Path]:
+    """The files a generated op is proven on: the first file of each structure pattern, up to three — by path (two
+    files may share a name in different folders)."""
+    from .profile import profile_batch
+    files = [Path(f) for f in files]
+    out: List[Path] = []
+    for pat in profile_batch(files)["patterns"][:3]:
+        paths = pat.get("paths") or []
+        out.append(Path(paths[0]) if paths else next(f for f in files if f.name == pat["files"][0]))
+    return out
 
 
 def _op_name(src: str) -> str:
@@ -357,31 +505,44 @@ def save_generated(g: GeneratedOp, out_dir: Path) -> Path:
     p = d / f"{h}.py"
     p.write_text(g.source, encoding="utf-8")
     (d / f"{h}.history.json").write_text(json.dumps({"name": g.name, "select": g.select, "params": g.params,
+                                                     "request": g.request, "proposal": g.proposal, "brief": g.brief,
+                                                     "model": g.model, "usage": g.usage.to_dict(),
                                                      "attempts": g.attempts}, indent=2, default=str), encoding="utf-8")
     return p
 
 
 def run_generated(g: GeneratedOp, inputs: Sequence[str], out_dir: Path, log=None) -> List[FileTrial]:
-    """Apply a passing generated op to every input (sandbox per file, verifier per file). Verified outputs are
-    copied to ``out_dir/outputs``; records to ``out_dir/records``. Never in place."""
-    from .batch import expand_inputs
+    """Apply a passing generated op to every input (sandbox per file, verifier per file). Verified outputs are copied
+    to ``out_dir/outputs`` under names unique across the batch, and only when their bytes are the ones the suite
+    verified; records to ``out_dir/records``. Never in place: an input inside the results folder is refused before
+    anything is written (the same rules as a batch run)."""
+    from .batch import check_inputs_outside, expand_inputs, output_names
     log = log or (lambda m: None)
     out_dir = Path(out_dir)
+    files = expand_inputs(inputs)
+    check_inputs_outside(files, out_dir)
+    names = output_names(files)
     results = []
     with tempfile.TemporaryDirectory() as tmp:
-        for i, f in enumerate(expand_inputs(inputs)):
+        for i, f in enumerate(files):
             t = trial(g.source, f, g.select, g.params, Path(tmp) / f"{i:04d}")
+            name = names[str(f)]
             if t.passed:
-                dest = out_dir / "outputs" / f.name
-                dest.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copyfile(t.output, dest)
-                t.output = dest
+                data = t.output.read_bytes()
+                if hashlib.md5(data).hexdigest() != t.output_md5:
+                    t.passed, t.output = False, None
+                    t.problems.append("the output is not the one the suite verified; not delivered")
+                else:
+                    dest = out_dir / "outputs" / name
+                    dest.parent.mkdir(parents=True, exist_ok=True)
+                    dest.write_bytes(data)
+                    t.output = dest
             else:
                 t.output = None
             if t.record is not None:
                 rd = out_dir / "records"
                 rd.mkdir(parents=True, exist_ok=True)
-                (rd / f"{f.stem}.record.md").write_text(t.record.to_markdown(), encoding="utf-8")
+                (rd / f"{Path(name).stem}.record.md").write_text(t.record.to_markdown(), encoding="utf-8")
             results.append(t)
             log(f"{'PASS' if t.passed else 'FAIL'} {f.name}")
     return results

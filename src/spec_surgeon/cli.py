@@ -12,21 +12,23 @@
                                                              (execute a hand-written EditSpec end to end)
     spec-surgeon verify SOURCE OUTPUT --plan plan.json       (re-run the suite standalone)
     spec-surgeon do "request" [FILES...] [--from-set-aside DIR] [--template T] [--answer A]... [--out DIR] [--yes]
-                                         [--no-render] [--in-place]
-                                                             (natural language: compile → preview → approve → run)
+                                         [--no-render] [--no-review] [--ack-review] [--in-place] [--allow-codegen]
+                                                             (natural language: talk it through with Claude in a
+                                                              terminal → preview (+ Claude's visual check) → approve → run)
     spec-surgeon retry OUT_DIR [--request "..."] [--template T] [--answer A]... [--out DIR] [--yes] [--no-render]
-                               [--in-place] [--allow-codegen]
+                               [--no-review] [--ack-review] [--in-place] [--allow-codegen]
                                                              (rinse & repeat: run next pass on set-aside files only)
+    spec-surgeon library list|show NAME|delete NAME [--kind recipe|operation] [--yes]
+                                                             (your saved recipes and operations)
     spec-surgeon gui                                         (the window; also: spec-surgeon-gui)
     spec-surgeon advise OUT_DIR [--file NAME]                (Claude: per exception a recommendation or a re-compiled spec)
     spec-surgeon diagnose OUT_DIR [--file NAME] [--bundle ZIP] (why each file failed, where and how; a zip to send)
-    spec-surgeon ask "natural-language request"              (optional; needs anthropic + API key)
-    spec-surgeon agent EXCEPTION.json                        (optional; written recommendation)
 """
 from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 import time
 from datetime import datetime
@@ -280,6 +282,7 @@ def cmd_do(args):
     """Natural language end to end: compile (Claude) → preview (dry plan + sample apply/verify/render) → approval →
     the verified batch. Nothing touches a source before approval; --in-place delivery is guarded as always."""
     from .compiler import compile_request
+    from .diagnostics import write_json
     from .editspec import is_template_file
     from .preview import make_preview
     out_dir = Path(args.out) if args.out else Path.cwd() / "SpecSurgeon_out" / datetime.now().strftime("%Y%m%d-%H%M%S")
@@ -306,51 +309,189 @@ def cmd_do(args):
     if not files:
         print("no .docx files to work on", file=sys.stderr)
         return 2
-    print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
-    res = compile_request(args.request, files, template=templates[0] if templates else None, answers=args.answer or [],
-                          model=args.model, log=lambda m: print(m, file=sys.stderr),
-                          prior_failures=prior_failures)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    (out_dir / "compile.json").write_text(json.dumps({"request": args.request, "answers": args.answer or [],
-                                                      **res.to_dict()}, indent=2, ensure_ascii=False, default=str),
-                                          encoding="utf-8")
-    print(f"compile record (the model's whole exchange): {out_dir / 'compile.json'}", file=sys.stderr)
-    if res.status == "questions":
-        print("The request needs answers before anything runs:")
-        for q in res.questions:
-            print(f"  ? {q}")
-        print('Re-run with --answer "…" for each (answers are passed to the compiler verbatim).')
-        return 2
-    if res.status == "unsupported":
-        print(f"No operation can do this: {res.spec.get('unsupported')}")
-        if res.spec.get("proposal"):
-            print(f"Proposal: {res.spec['proposal']}")
-        if not args.allow_codegen:
-            print("(Tier B is off: re-run with --allow-codegen to let Claude write a one-off transform that is "
-                  "sandboxed and verified on sample files first)")
+    if getattr(args, "save_as", None):
+        from .library import LibraryError, list_items, slug
+        try:
+            taken = [i for i in list_items() if i.slug == slug(args.save_as)]
+        except LibraryError as e:
+            print(f"--save-as: {e}", file=sys.stderr)
             return 2
-        return _do_codegen(args, res.spec, files, out_dir)
-    if res.status != "ok":
-        print("Compile failed: " + "; ".join(res.errors), file=sys.stderr)
-        return 2
-    spec = res.spec
+        if taken and not getattr(args, "replace", False):
+            print(f"--save-as: your library already has {taken[0].label()!r} — choose another name or pass --replace",
+                  file=sys.stderr)
+            return 2
+    out_dir.mkdir(parents=True, exist_ok=True)
+    template = templates[0] if templates else None
+    log = lambda m: print(m, file=sys.stderr)  # noqa: E731
+    if _interactive():
+        outcome, value, conv = _chat(args, files, template, out_dir, prior_failures, log)
+        if outcome == "stop":
+            return value
+        if outcome == "codegen":
+            return _do_codegen(args, value, files, out_dir, brief=conv.brief())
+        spec = value
+    else:
+        print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
+        res = compile_request(args.request, files, template=template, answers=args.answer or [],
+                              model=args.model, log=log, prior_failures=prior_failures)
+        if write_json(out_dir / "compile.json", {"request": args.request, "answers": args.answer or [],
+                                                 **res.to_dict()}):
+            print(f"compile record (the model's whole exchange): {out_dir / 'compile.json'}", file=sys.stderr)
+        if res.status == "questions":
+            print("The request needs answers before anything runs:")
+            for q in res.questions:
+                print(f"  ? {q}")
+            print('Re-run with --answer "…" for each (answers are passed to the compiler verbatim), or run the '
+                  'command in a terminal to talk it through with Claude.')
+            return 2
+        if res.status == "unsupported":
+            print(f"No operation can do this: {res.spec.get('unsupported')}")
+            if res.spec.get("proposal"):
+                print(f"Proposal: {res.spec['proposal']}")
+            if res.custom_transform == "outside_limits":
+                print("A one-off custom transform cannot do this safely yet"
+                      + (f" ({res.custom_transform_reason})" if res.custom_transform_reason else "")
+                      + " — it needs a new built-in operation.")
+                return 2
+            if not args.allow_codegen:
+                print("(No custom transform was written: run the command in a terminal and pick Claude's custom-"
+                      "transform choice, or re-run with --allow-codegen to accept the offer — it is sandboxed, "
+                      "verified on sample files first, and writes edited copies only.)")
+                return 2
+            return _do_codegen(args, res.spec, files, out_dir)
+        if res.status != "ok":
+            print("Compile failed: " + "; ".join(res.errors), file=sys.stderr)
+            return 2
+        spec = res.spec
     pv = make_preview(spec, [str(f) for f in files], out_dir / "preview",
                       renderer=args.renderer, do_render=not args.no_render)
+    if not args.no_render and not getattr(args, "no_review", False):
+        _visual_check(pv, spec, out_dir / "preview", args)
     print(pv.to_text())
     print(f"\npreview: {out_dir / 'preview'}")
-    approved = args.yes
-    if not approved and sys.stdin.isatty():
-        approved = input(f"\nRun this on {len(pv.batch_plan.files)} file(s)? [y/N] ").strip().lower() in ("y", "yes")
+    if getattr(args, "save_as", None):
+        from .library import save_recipe
+        item, notes = save_recipe(args.save_as, spec, replace=getattr(args, "replace", False))
+        print(f"Saved to your library: {item.label()} ({item.path})" + "".join(f"\nnote: {n}" for n in notes))
+    blocking = pv.review.blocking() if pv.review is not None else []
+    if blocking and not getattr(args, "ack_review", False):
+        print(f"\nClaude's visual check flagged {len(blocking)} problem(s) it rates as blocking (see above).")
+        if args.yes and not _interactive():
+            print("Not run: look at the pages in the preview folder; re-run with --ack-review to run anyway.")
+            return 2
+    approved = args.yes and (not blocking or getattr(args, "ack_review", False))
+    if not approved and _interactive():
+        question = (f"\nYou have looked at Claude's findings and want to run this on {len(pv.batch_plan.files)} "
+                    f"file(s)? [y/N] " if blocking else f"\nRun this on {len(pv.batch_plan.files)} file(s)? [y/N] ")
+        approved = input(question).strip().lower() in ("y", "yes")
     if not approved:
         print(f"\nNot run. To run exactly this:\n  spec-surgeon run-spec \"{out_dir / 'preview' / 'spec.json'}\" "
               + " ".join(f'"{f}"' for f in files) + f" --approval {pv.token}"
               + (" --in-place" if args.in_place else ""))
+        if blocking:
+            print("(running that command means you have looked at Claude's visual-check findings above)")
         return 0
     args.out = str(out_dir / "run")
     args.files = [str(f) for f in files]          # exactly the previewed files (an unreferenced --template excluded)
     args.job = "edit-spec"
     args.params = None
     return cmd_run(args, spec=spec)
+
+
+def _visual_check(pv, spec, folder, args) -> None:
+    """Claude's visual check of the preview samples (advisory; never raises; can only add a reason to stop)."""
+    from . import compiler, vision
+    from .preview import write_preview_files
+    intent = "\n".join([f"REQUEST: {spec.get('request') or args.request}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
+                       + [f"ASSUMPTION: {a}" for a in spec.get("assumptions") or []])
+    pv.review = vision.review_samples(intent, pv.samples, folder, compiler._client, model=args.model,
+                                      log=lambda m: print(m, file=sys.stderr))
+    vision.save_review(pv.review, folder)
+    write_preview_files(pv)
+
+
+def _interactive() -> bool:
+    """A person is at the terminal (tests replace this with False, so no prompt can block a test run)."""
+    return bool(sys.stdin is not None and sys.stdin.isatty() and sys.stdout is not None and sys.stdout.isatty())
+
+
+def _print_turn(turn) -> None:
+    if turn.understanding:
+        print(f"Claude understood: {turn.understanding}")
+    if turn.message:
+        print(f"Claude: {turn.message}")
+    for q in turn.questions:
+        print(f"  ? {q}")
+    for i, c in enumerate(turn.choices, 1):
+        print(f"  [#{i}] {c.label}" + (f"\n        exact words: «{c.wording}»" if c.wording else ""))
+
+
+def _chat(args, files, template, out_dir, prior_failures, log):
+    """Talk the request through with Claude at the terminal. Returns ("spec", spec, conv), ("codegen", the unsupported
+    spec, conv) when the user picks the custom transform, or ("stop", exit code, conv). OUT/conversation.json and
+    OUT/compile.json are re-written after every turn (a record that cannot be written never stops the conversation),
+    and saved before a defect propagates."""
+    from .conversation import Conversation
+    from .diagnostics import write_json
+    print(f"talking {args.request!r} through with Claude ({args.model}) over {len(files)} file(s) …", file=sys.stderr)
+    conv = Conversation(args.request, files, template=template, model=args.model, prior_failures=prior_failures,
+                        answers=args.answer or [], work_dir=out_dir / "chat", log=log)
+
+    def save(turn=None):
+        try:
+            conv.save(out_dir / "conversation.json")
+        except OSError:
+            pass
+        if turn is not None:
+            return write_json(out_dir / "compile.json", {"request": args.request, "answers": args.answer or [],
+                                                         **conv.compile_result(turn).to_dict()})
+        return None
+
+    try:
+        return _talk(conv, save, out_dir)
+    except Exception:
+        save()                                    # what was said before a defect stopped it, for the diagnosis
+        raise
+
+
+def _talk(conv, save, out_dir):
+    """_chat's loop: one turn of Claude's, then the user's reply or choice, until a spec, a custom transform or stop."""
+    turn = conv.start()
+    told = False
+    while True:
+        if save(turn) and not told:
+            print(f"compile record (the model's whole exchange): {out_dir / 'compile.json'}; the conversation: "
+                  f"{out_dir / 'conversation.json'}", file=sys.stderr)
+            told = True
+        if turn.status == "ok":
+            return "spec", turn.spec, conv
+        _print_turn(turn)
+        print(f"(Claude so far: {conv.usage.line()})")
+        try:
+            line = input("Your reply ('#n' picks a choice; an empty line stops): ").strip()
+        except EOFError:
+            line = ""
+        if not line:
+            print("Stopped — nothing was run.")
+            return "stop", 2, conv
+        m = re.fullmatch(r"#(\d+)", line)
+        if m is None:
+            turn = conv.reply(line)
+            continue
+        i = int(m.group(1))
+        if not 1 <= i <= len(turn.choices):
+            print(f"There is no choice #{i}.")
+            continue
+        choice = turn.choices[i - 1]
+        if choice.wording:
+            ok = input(f"Approve these exact words for your documents: «{choice.wording}»? [y/N] ").strip().lower()
+            if ok not in ("y", "yes"):
+                continue
+        if choice.kind == "custom_transform":
+            conv.take_app_choice(choice.id)
+            save()
+            return "codegen", conv.unsupported, conv
+        turn = conv.reply(choice_id=choice.id)
 
 
 def cmd_retry(args):
@@ -374,31 +515,54 @@ def cmd_retry(args):
     return cmd_do(args)
 
 
-def _do_codegen(args, spec, files, out_dir):
+def _do_codegen(args, spec, files, out_dir, brief=None):
     """Tier B: generate an op for an unsupported request, prove it on one sample per pattern, run it after
     approval. Outputs only — never in place (a generated op becomes permanent only after human review)."""
-    from .codegen import generate_op, run_generated
-    from .profile import profile_batch
-    prof = profile_batch(files)
-    names = {f.name: f for f in files}
-    samples = [names[p["files"][0]] for p in prof["patterns"][:3]]
+    from .codegen import generate_op, pick_samples, run_generated
+    samples = pick_samples(files)
     print(f"Tier B: generating a transform, tested on {[s.name for s in samples]} …", file=sys.stderr)
     g = generate_op(args.request, spec.get("proposal") or spec.get("unsupported") or "", samples, out_dir / "codegen",
-                    model=args.model, log=lambda m: print(m, file=sys.stderr))
+                    model=args.model, log=lambda m: print(m, file=sys.stderr), brief=brief)
     for a in g.attempts:
         print(f"  attempt {a['attempt']}: " + ("PASS" if not a["problems"] else f"{len(a['problems'])} problem(s): "
                                                 + "; ".join(a["problems"][:3])))
+    if (out_dir / "codegen" / "history.json").is_file():
+        print(f"Tier B history (every attempt, the model's exchange): {out_dir / 'codegen' / 'history.json'}",
+              file=sys.stderr)
     if not g.passed:
         print("No generated transform passed verification: " + "; ".join(g.errors))
         return 2
     print(f"generated op {g.name!r} passed on the samples: {g.path} (select {g.select}, params {g.params})")
+    from . import compiler, vision
+    from .preview import preview_generated, write_preview_files
+    gp = preview_generated(g, out_dir / "codegen" / "preview", renderer=args.renderer, do_render=not args.no_render)
+    if not args.no_render and not getattr(args, "no_review", False):
+        intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {args.request}",
+                            f"WHAT IT SHOULD DO: {spec.get('proposal') or ''}"] + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
+        gp.review = vision.review_samples(intent, gp.samples, gp.out_dir, compiler._client, model=args.model,
+                                          log=lambda m: print(m, file=sys.stderr))
+        vision.save_review(gp.review, gp.out_dir)
+        write_preview_files(gp)
+    print(gp.to_text())
+    print(f"\npreview: {gp.out_dir}")
+    if getattr(args, "save_as", None):
+        from .library import save_operation
+        item = save_operation(args.save_as, g, replace=getattr(args, "replace", False))
+        print(f"Saved to your library: {item.label()} ({item.path})")
     if args.in_place:
         print("note: generated transforms are never delivered in place; outputs go to the output folder")
-    approved = args.yes
-    if not approved and sys.stdin.isatty():
-        approved = input(f"\nRun it on {len(files)} file(s) (outputs only)? [y/N] ").strip().lower() in ("y", "yes")
+    blocking = gp.review.blocking() if gp.review is not None else []
+    if blocking and not getattr(args, "ack_review", False) and args.yes and not _interactive():
+        print(f"\nNot run: Claude's visual check flagged {len(blocking)} blocking problem(s); look at the pages, then "
+              f"re-run with --ack-review to run anyway.")
+        return 2
+    approved = args.yes and (not blocking or getattr(args, "ack_review", False))
+    if not approved and _interactive():
+        q = (f"\nYou have looked at Claude's findings and want to run it on {len(files)} file(s) (edited copies "
+             f"only)? [y/N] " if blocking else f"\nRun it on {len(files)} file(s) (edited copies only)? [y/N] ")
+        approved = input(q).strip().lower() in ("y", "yes")
     if not approved:
-        print("Not run. Review the generated module before running it.")
+        print("Not run. Review the generated module and its preview before running it.")
         return 0
     results = run_generated(g, [str(f) for f in files], out_dir / "run", log=lambda m: print(m, file=sys.stderr))
     ok = sum(1 for r in results if r.passed)
@@ -407,6 +571,47 @@ def _do_codegen(args, spec, files, out_dir):
         if not r.passed:
             print(f"  FAIL {r.source.name}: " + "; ".join(r.problems[:2]))
     return 0 if ok == len(results) else 1
+
+
+def cmd_library(args):
+    """Your library: list it, show one item, delete one (recipes and your own operations; local to this computer)."""
+    from .library import LibraryError, delete, find, library_dir, list_items
+    if args.action == "list":
+        items = list_items(args.kind)
+        if not items:
+            print("Your library is empty — save a previewed spec or a custom transform (window: Save to library…; "
+                  "command line: do … --save-as NAME).")
+        for i in items:
+            print(f"{i.label():<52} saved {i.saved_at or '?'}" + (f"  — {i.description}" if i.description else ""))
+        print(f"\n(library folder: {library_dir()})")
+        return 0
+    if not args.name:
+        print(f"library {args.action}: which one? (spec-surgeon library list)", file=sys.stderr)
+        return 2
+    try:
+        item = find(args.name, args.kind)
+        if args.action == "show":
+            print(f"{item.label()}\n  saved:   {item.saved_at}\n  request: {item.request}\n  path:    {item.path}")
+            if item.description:
+                print(f"  about:   {item.description}")
+            if item.kind == "recipe":
+                print(f"\nrun it:   spec-surgeon run-spec \"{item.path}\" FILES…")
+            else:
+                print("\nuse it from the window (Your library…): it is tried on the batch's samples first, then "
+                      "previewed; Run writes edited copies only")
+            return 0
+        if not args.yes:
+            if not _interactive():
+                print(f"Pass --yes to delete {item.label()!r}.", file=sys.stderr)
+                return 2
+            if input(f"Delete {item.label()!r}? [y/N] ").strip().lower() not in ("y", "yes"):
+                return 2
+        delete(item.name, item.kind)
+        print(f"Deleted {item.label()}.")
+        return 0
+    except LibraryError as e:
+        print(str(e), file=sys.stderr)
+        return 2
 
 
 def cmd_gui(args):
@@ -483,21 +688,6 @@ def cmd_verify(args):
     return 0 if rec.passed else 1
 
 
-def cmd_ask(args):
-    from .agent import ask
-    res = ask(args.request, model=args.model)
-    print(json.dumps(res, indent=2))
-    if res.get("job") and not res.get("questions"):
-        print("\nTo run:\n  spec-surgeon run %s <files> --params '%s'" % (res["job"], json.dumps(res["params"])))
-    return 0
-
-
-def cmd_agent(args):
-    from .agent import advise
-    print(advise(Path(args.exception), model=args.model))
-    return 0
-
-
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(prog="spec-surgeon", description=f"Spec Surgeon {__version__} — surgical, verified .docx edits at any scale.")
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -558,8 +748,18 @@ def main(argv=None) -> int:
     p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--model", default=None)
+    p.add_argument("--no-review", action="store_true",
+                   help="skip Claude's visual check of the rendered sample pages (--no-render skips it too)")
+    p.add_argument("--ack-review", action="store_true",
+                   help="run even when Claude's visual check flagged a blocking problem (you have looked at it)")
+    p.add_argument("--save-as", default=None, metavar="NAME",
+                   help="save the previewed spec as a recipe (or the passing custom transform as one of your "
+                        "operations) in your library under NAME")
+    p.add_argument("--replace", action="store_true", help="with --save-as: replace an item of the same name")
     p.add_argument("--allow-codegen", action="store_true",
-                   help="Tier B: if no op fits, let Claude write a one-off transform, verified on samples first")
+                   help="without a terminal: accept Claude's offer of a one-off custom transform when no operation "
+                        "fits (sandboxed, verified on samples first, edited copies only); in a terminal pick it from "
+                        "the choices instead")
     p.set_defaults(fn=cmd_do)
 
     p = sub.add_parser("retry", help="rinse & repeat: run next pass on set-aside files from a previous output folder")
@@ -574,8 +774,16 @@ def main(argv=None) -> int:
     p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--model", default=None)
+    p.add_argument("--no-review", action="store_true", help="skip Claude's visual check of the sample pages")
+    p.add_argument("--ack-review", action="store_true", help="run even when Claude's visual check flagged a problem")
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)
+
+    p = sub.add_parser("library", help="your library of saved recipes (specs) and operations (custom transforms)")
+    p.add_argument("action", choices=["list", "show", "delete"]); p.add_argument("name", nargs="?", default=None)
+    p.add_argument("--kind", choices=["recipe", "operation"], default=None)
+    p.add_argument("--yes", action="store_true", help="delete without asking")
+    p.set_defaults(fn=cmd_library)
 
     p = sub.add_parser("verify", help="re-run the verification suite on a source/output pair")
     p.add_argument("source"); p.add_argument("output"); p.add_argument("--plan", required=True); p.set_defaults(fn=cmd_verify)
@@ -588,16 +796,10 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("diagnose", help="why each file of a run failed — where it stopped, why, how; --bundle: a zip "
                                         "of the run's diagnostics and the app's logs (no documents) to send")
-    p.add_argument("out_dir", help="a results folder (or a `do` folder with run/ in it)")
+    p.add_argument("out_dir", help="a results folder (or a `do` or window session folder with run/ in it)")
     p.add_argument("--file", default=None, help="only the file whose name contains this")
     p.add_argument("--bundle", default=None, help="also write a diagnostics zip here")
     p.set_defaults(fn=cmd_diagnose)
-
-    p = sub.add_parser("ask", help="natural-language request → job + params (needs anthropic + ANTHROPIC_API_KEY)")
-    p.add_argument("request"); p.add_argument("--model", default=None); p.set_defaults(fn=cmd_ask)
-
-    p = sub.add_parser("agent", help="written recommendation for one exception (needs anthropic + ANTHROPIC_API_KEY)")
-    p.add_argument("exception"); p.add_argument("--model", default=None); p.set_defaults(fn=cmd_agent)
 
     args = ap.parse_args(argv)
     if getattr(args, "model", None) is None and hasattr(args, "model"):

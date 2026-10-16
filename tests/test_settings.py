@@ -66,4 +66,5 @@ def test_config_dir_override(tmp_path, monkeypatch):
 
 def test_safety_switches_and_the_key_are_never_settings():
     names = {f.name for f in dataclasses.fields(Settings)}
-    assert not names & {"in_place", "codegen", "allow_codegen", "api_key", "key", "anthropic_api_key"}
+    assert not names & {"in_place", "codegen", "allow_codegen", "api_key", "key", "anthropic_api_key",
+                        "accept_custom_transform", "review_ack", "acknowledge_review", "conversation"}

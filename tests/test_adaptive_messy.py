@@ -240,7 +240,7 @@ def test_chunk2_gui_session_set_aside_loop(tmp_path):
                  "params": {"find": "COMMON WORK RESULTS", "replace": "FIRE PROTECTION", "author": AUTHOR}}],
     }
     s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec1}))))
-    s.compile("replace COMMON WORK RESULTS or WET-PIPE SPRINKLERS with FIRE PROTECTION", [], False, lambda m: None)
+    s.compile("replace COMMON WORK RESULTS or WET-PIPE SPRINKLERS with FIRE PROTECTION", lambda m: None)
     s.make_preview(render=False, log=lambda m: None)
     run_msg = s.run(in_place=False, render=False, log=lambda m: None)
     assert "PASS 1" in run_msg and "EXCEPTION 1" in run_msg and "Load set-aside files" in run_msg
@@ -258,7 +258,7 @@ def test_chunk2_gui_session_set_aside_loop(tmp_path):
                  "params": {"find": "WET-PIPE SPRINKLERS", "replace": "FIRE PROTECTION", "author": AUTHOR}}],
     }
     s.client = FakeClient(resp(tool("submit_editspec", {"spec": spec2})))
-    s.compile("replace COMMON WORK RESULTS or WET-PIPE SPRINKLERS with FIRE PROTECTION", [], False, lambda m: None)
+    s.compile("replace COMMON WORK RESULTS or WET-PIPE SPRINKLERS with FIRE PROTECTION", lambda m: None)
     s.make_preview(render=False, log=lambda m: None)
     run_msg2 = s.run(in_place=False, render=False, log=lambda m: None)
     assert "1 file(s): PASS 1  FAIL 0  EXCEPTION 0" in run_msg2

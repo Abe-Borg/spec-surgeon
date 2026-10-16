@@ -135,6 +135,28 @@ SELECTOR_GRAMMAR = {
 }
 
 
+# What a one-off custom transform (codegen.py) can change and still be verified: each family maps to the V10 assertion
+# kind that checks it (tests/test_conversation.py pins the mapping against verify/props.KINDS). Anything else — bold,
+# italic, underline, caps, colour, highlight, borders, shading, numbering and lists, tables, images, fields, comments,
+# tracked changes, any change of words — has no verified check yet, so a custom transform cannot do it: it needs a new
+# built-in operation (the next round). Shown to Claude in the compiler's and the transform writer's instructions.
+CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
+    "families": {
+        "run fonts and font sizes of selected text": "run_fonts",
+        "fonts and sizes defined in styles": "style_fonts",
+        "the document default font and size": "doc_defaults_fonts",
+        "paragraph spacing, indents and alignment": "paragraph_props",
+        "page size, margins and orientation of sections": "section_props",
+        "which header/footer each section shows": "section_hf_refs",
+    },
+    "cannot": ["bold, italic, underline, caps", "text colour, highlight, borders, shading", "numbering and lists",
+               "tables", "images", "fields", "comments", "tracked changes", "any change of words"],
+    "rules": ["plain (untracked) formatting only", "only the document's text parts (body, headers, footers, footnotes, "
+              "endnotes, comments) and its styles part may change", "edited copies only — never written over the "
+              "user's files"],
+}
+
+
 def editspec_json_schema() -> Dict[str, Any]:
     """Appendix A, with every op's own select/params schema attached (oneOf by op name)."""
     op_items = []
@@ -203,6 +225,7 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
         "expect_checks": list(EXPECT_CHECKS),
         "expect_syntax": EXPECT_SYNTAX,
         "spec_assertions": list(SPEC_ASSERTION_KINDS),
+        "custom_transform_limits": CUSTOM_TRANSFORM_LIMITS,
         "rules": [
             "never invent document text: replacement wording and literal fills come verbatim from the user",
             "a batch that mixes layouts gets ONE spec: extract fills with a first_match chain, match wording with "
@@ -211,7 +234,10 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
             "state every interpretation in 'assumptions'; ask in 'questions' when the request is ambiguous "
             "(nothing runs while questions are open)",
             "use only part names, style ids and section indices that appear in the profiles",
-            "if no op can express the request, return 'unsupported' and a 'proposal' instead of ops",
+            "if no op can express the request exactly, never approximate silently: ask (understanding, message, "
+            "choices — a closest built-in only as an 'alternative' that says how it differs); when nothing fits after "
+            "the user's answers, return 'unsupported' and a 'proposal' instead of ops, judged against "
+            "custom_transform_limits",
             "two ops must not touch the same thing (the engine refuses overlapping ops)",
             "a TEMPLATE SPEC (an ordinary spec from the architect or another firm — no highlights, no {{placeholders}}) "
             "is used with apply_header_footer_template slot_markers ['reference'] and reference_fills (adapted when "

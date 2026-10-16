@@ -734,11 +734,13 @@ MAX_BUNDLED_FILE = 25 * 2 ** 20
 
 BUNDLE_README = """Spec Surgeon diagnostics bundle
 
-In here, under results/ (the results folder's own layout; for a `do` or window session that is compile.json,
-preview/, codegen/ and run/): the run's reports (BATCH_REPORT.md, DIAGNOSTICS.md, SET_ASIDE_REPORT.md), its logs
-(logs/run.log and one trace per file), the verification records, plans and exception records, the compile record
-(the model's whole exchange), the preview's log and records, the Tier B history — and, under app-logs/, the
-application's own logs. environment.json describes the computer and the program.
+In here, under results/ (the results folder's own layout; for a `do` or window session that is conversation.json,
+compile.json, preview/, codegen/ and run/): the run's reports (BATCH_REPORT.md, DIAGNOSTICS.md, SET_ASIDE_REPORT.md),
+its logs (logs/run.log and one trace per file), the verification records, plans and exception records, the
+conversation with Claude (conversation.json: what was said, the choices offered and picked, the model's exchange) and
+the compile record (compile.json: the outcome of its last turn and the model's whole exchange), the preview's log and
+records, the Tier B history — and, under app-logs/, the application's own logs. environment.json describes the
+computer and the program.
 
 Not in here: the documents — no source file, edited copy, failed copy, rendered PDF or page image. The records, plans
 and logs do quote document text (the paragraphs that changed or failed): share this bundle the way you would share
@@ -746,12 +748,13 @@ the specs themselves.
 """
 
 
-SESSION_MARKERS = ("compile.json", "preview", "codegen")
+SESSION_MARKERS = ("compile.json", "conversation.json", "preview", "codegen")
 
 
 def bundle_root(folder: Path) -> Path:
-    """The folder a bundle mirrors. A `do` or window session keeps its run in ``<session>/run`` beside the compile
-    record, the preview and the Tier B history; given that ``run`` folder, the whole session is bundled."""
+    """The folder a bundle mirrors. A `do` or window session keeps its run in ``<session>/run`` beside the
+    conversation, the compile record, the preview and the Tier B history; given that ``run`` folder, the whole session
+    is bundled."""
     f = Path(folder).resolve()
     if f.name == "run" and any((f.parent / m).exists() for m in SESSION_MARKERS):
         return f.parent
@@ -767,7 +770,8 @@ def _bundled(p: Path, root: Path) -> bool:
 def make_bundle(dest: Path, run_dir: Optional[Path] = None, app_logs: Optional[Path] = None,
                 note: str = "") -> Dict[str, Any]:
     """Zip the diagnostics of a run (``run_dir``: reports, logs, records, plans, exceptions, set-aside — with, for a
-    session's ``run`` folder, the session's compile record, preview and Tier B history beside it; ``bundle_root``)
+    session's ``run`` folder, the session's conversation, compile record, preview and Tier B history beside it;
+    ``bundle_root``)
     and the app's logs into ``dest`` — never the documents. Returns what went in and what was left out."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)

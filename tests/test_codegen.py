@@ -133,6 +133,9 @@ def test_sandbox_timeout(folder, tmp_path):
 def test_hard_limits():
     assert hard_limits({"diffs": [], "rev_delta": {"ins": 0}}) == []
     assert any("tracked" in p for p in hard_limits({"diffs": [], "rev_delta": {"del": -1}}))
+    assert any("revision of any kind" in p for p in hard_limits({"diffs": [], "rev_delta": {"rPrChange": 3}}))
+    assert any("no verified assertion kind covers ['word/numbering.xml']" in p
+               for p in hard_limits({"intended_parts": ["word/numbering.xml"]}, ["word/document.xml", "word/styles.xml"]))
     assert any("settings.xml" in p for p in hard_limits({"intended_parts": ["word/settings.xml"]}))
     assert any("add package members" in p for p in hard_limits({"members_added": ["word/x.xml"]}))
 
@@ -179,4 +182,136 @@ def test_do_allow_codegen_end_to_end(folder, tmp_path, monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "passed on the samples" in out and "2 of 2 file(s) PASS" in out
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(tmp_path / "o2"), "--no-render"]) == 2
-    assert "Tier B is off" in capsys.readouterr().out
+    assert "No custom transform was written" in capsys.readouterr().out
+
+
+# an op that writes a document property: docProps is no text part and no styles part — refused before the suite runs
+DOCPROPS_OP = GOOD_OP.replace("frag.intended_parts = [main]", "frag.intended_parts = [main, 'docProps/core.xml']")
+
+
+def test_a_generated_op_may_change_only_text_parts_and_styles(folder, tmp_path):
+    t = trial(DOCPROPS_OP, sorted(folder.glob("*.docx"))[0], {}, {"twips": 900}, tmp_path / "sb")
+    assert not t.passed and any("docProps/core.xml" in p and "no verified assertion kind" in p for p in t.problems)
+
+
+def test_every_name_the_example_ops_import_is_allowed_or_deliberately_excluded():
+    """The examples are what Claude copies: a name they import that is neither whitelisted nor excluded on purpose
+    would make a faithful copy fail check_source for no reason Claude can see."""
+    import ast
+    from spec_surgeon.codegen import ALLOWED_FROM, ALLOWED_IMPORT, EXAMPLE_OPS, EXCLUDED_FROM_EXAMPLES
+    ops_dir = Path(compiler_module.__file__).resolve().parent / "ops"
+    for name in EXAMPLE_OPS:
+        tree = ast.parse((ops_dir / name).read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom):
+                mod = node.module or ""
+                if node.level == 1:
+                    mod = "spec_surgeon.ops" + (f".{mod}" if mod else "")
+                elif node.level == 2:
+                    mod = f"spec_surgeon.{mod}"
+                for a in node.names:
+                    ok = a.name in ALLOWED_FROM.get(mod, set()) or a.name in EXCLUDED_FROM_EXAMPLES.get(mod, set())
+                    assert ok, f"{name}: from {mod} import {a.name}"
+            elif isinstance(node, ast.Import):
+                for a in node.names:
+                    assert a.name in ALLOWED_IMPORT, f"{name}: import {a.name}"
+    assert "set_font.py" in EXAMPLE_OPS
+
+
+def test_the_writer_looks_first_and_every_tool_call_is_answered(folder, tmp_path):
+    f = sorted(folder.glob("*.docx"))[0]
+    fake = FakeClient(resp(tool("show_xml", {"file": f.name, "start": 0, "count": 2}, "x1"),
+                           tool("find_paragraphs", {"file": f.name, "regex": "SPEC"}, "x2"),
+                           tool("list_styles", {"file": f.name}, "x3"),
+                           tool("show_part_text", {"file": f.name, "part": "word/nope.xml"}, "x4"),
+                           tool("delete_everything", {}, "x5")),
+                      resp(tool("submit_op", {"source": "import os\n"}, "a1"),
+                           tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "a2")),
+                      resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "a3")))
+    g = generate_op("header 0.625 in", "set the header distance", [f], tmp_path / "cg", client=fake,
+                    brief="REQUEST: header 0.625 in\nUSER: only the header, not the footer")
+    assert g.passed and len(g.attempts) == 2 and g.trials and g.trials[0].output_md5
+    first = fake.requests[0]["messages"][0]["content"]
+    assert first.startswith("THE CONVERSATION WITH THE USER") and "only the header, not the footer" in first
+    looked = fake.requests[1]["messages"][-1]["content"]
+    assert [r["tool_use_id"] for r in looked] == ["x1", "x2", "x3", "x4", "x5"]
+    assert "<w:p" in looked[0]["content"] and "SPEC" in looked[1]["content"]
+    assert looked[3]["is_error"] and looked[4]["is_error"] and "unknown tool" in looked[4]["content"]
+    tried = fake.requests[2]["messages"][-1]["content"]
+    assert [r["tool_use_id"] for r in tried] == ["a1", "a2"]
+    assert "not allowed" in tried[0]["content"] and "one submission per turn" in tried[1]["content"]
+    assert "set_font.py" in fake.requests[0]["system"] and "custom_transform" not in fake.requests[0]["system"]
+    assert "run fonts and font sizes" in fake.requests[0]["system"]                    # the limits are in the prompt
+
+
+def test_a_turn_without_a_submission_is_not_an_attempt(folder, tmp_path):
+    from fake_claude import text
+    fake = FakeClient(resp(text("Let me think."), stop="end_turn"),
+                      resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    g = generate_op("x", "y", sorted(folder.glob("*.docx"))[:1], tmp_path / "cg", client=fake)
+    assert g.passed and len(g.attempts) == 1
+
+
+def test_the_history_keeps_the_exchange_and_an_api_error_is_a_recorded_failure(folder, tmp_path, monkeypatch):
+    from fake_claude import api_error, raise_on_final
+    from spec_surgeon import llm
+    f = sorted(folder.glob("*.docx"))[:1]
+    fake = FakeClient(resp(tool("submit_op", {"source": "import os\n"}, "a1")),
+                      raise_on_final(api_error("Overloaded", 529, "req_9")))
+    g = generate_op("x", "y", f, tmp_path / "cg", client=fake)
+    assert not g.passed and g.errors == ["the call to the model failed: APIStatusError: Overloaded · HTTP 529 · request id req_9"]
+    h = json.loads((tmp_path / "cg" / "history.json").read_text(encoding="utf-8"))
+    assert h["passed"] is False and h["errors"] == g.errors and [a["source"] for a in h["attempts"]] == ["import os\n"]
+    assert [e.get("role") for e in h["transcript"]] == ["user", "assistant", "user", None]
+    assert h["transcript"][0]["content"].startswith("REQUEST: x") and h["transcript"][0]["samples"] == [str(f[0])]
+    assert h["transcript"][2]["tool_results"][0]["tool_use_id"] == "a1" and h["transcript"][2]["tool_results"][0]["is_error"]
+    assert h["transcript"][-1]["error"].startswith("APIStatusError: Overloaded")
+    assert h["usage"]["calls"] == 1 and h["model"] == g.model and h["request"] == "x" and h["proposal"] == "y"
+    with pytest.raises(AssertionError, match="more turns than were scripted"):        # a defect propagates
+        generate_op("x", "y", f, tmp_path / "cg2", client=FakeClient())
+
+    def missing():
+        raise llm.ClaudeUnavailable("install the Claude layer")
+    monkeypatch.setattr(compiler_module, "_client", missing)
+    g = generate_op("x", "y", f, tmp_path / "cg3")
+    assert not g.passed and g.errors == ["Claude is not available: install the Claude layer"]
+    h = json.loads((tmp_path / "cg3" / "history.json").read_text(encoding="utf-8"))
+    assert h["transcript"][-1]["error"].startswith("ClaudeUnavailable")
+
+
+def test_run_generated_keeps_the_batch_rules(folder, tmp_path, monkeypatch):
+    fake = FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    g = generate_op("x", "y", sorted(folder.glob("*.docx"))[:1], tmp_path / "cg", client=fake)
+    with pytest.raises(Exception, match="results folder|inside"):
+        run_generated(g, [str(folder)], folder)                            # a run never reads where it writes
+    other = tmp_path / "other"
+    other.mkdir()
+    twin = other / sorted(folder.glob("*.docx"))[0].name
+    twin.write_bytes(build("21 00 00", "TWIN"))
+    res = run_generated(g, [str(folder), str(twin)], tmp_path / "run")
+    names = sorted(p.name for p in (tmp_path / "run" / "outputs").iterdir())
+    assert len(names) == 3 and all(r.passed for r in res)                 # same name, two folders: two outputs
+    import spec_surgeon.codegen as cg
+    real = cg.trial
+
+    def tampered(*a, **k):
+        t = real(*a, **k)
+        t.output_md5 = "0" * 32
+        return t
+    monkeypatch.setattr(cg, "trial", tampered)
+    res = run_generated(g, [str(folder)], tmp_path / "run2")
+    assert not any(r.passed for r in res) and "not the one the suite verified" in res[0].problems[-1]
+    assert not (tmp_path / "run2" / "outputs").exists()
+
+
+def test_the_custom_transform_has_a_preview(folder, tmp_path):
+    from spec_surgeon.preview import preview_generated
+    fake = FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    g = generate_op("x", "y", sorted(folder.glob("*.docx")), tmp_path / "cg", client=fake)
+    gp = preview_generated(g, tmp_path / "pv", do_render=False)
+    assert [s.passed for s in gp.samples] == [True, True] and all(s.output.is_file() for s in gp.samples)
+    assert all(s.checks["V10"] == "PASS" for s in gp.samples)
+    assert "custom transform" in gp.to_text() and (tmp_path / "pv" / "PREVIEW.md").is_file()
+    log = (tmp_path / "pv" / "logs" / "preview.log").read_text(encoding="utf-8")
+    assert "one-off custom transform" in log and log.count("verification PASS") == 2
+    assert json.loads((tmp_path / "pv" / "preview.json").read_text(encoding="utf-8"))["log"] == "logs/preview.log"

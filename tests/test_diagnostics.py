@@ -4,9 +4,11 @@ Pins: failure classification (a refusal, an unreadable file and what its bytes a
 failure — never "a corrupt file" for a bug), the line of code a refusal or failure came from, the per-file trace and
 the run log, a worker process that dies (its file named, the others unharmed), what the renderer said, a comparison
 or a batch that fails, the verification record's specifics (which paragraph, which characters), DIAGNOSTICS.md, the
-preview's log and the approval refusal that says what changed, the compiler's transcript and API errors, the Tier B
-sandbox's traceback, the bundle (never the documents), `spec-surgeon diagnose`, the window's crash watch, and the
-window's diagnosis views."""
+preview's log (and a page comparison that fails: a warning, never a lost preview) and the approval refusal that says
+what changed (for a spec and for a custom transform), the compiler's transcript and API errors (an API error is a failed
+turn, a defect propagates with what was said kept), the window session's folders and the records beside each preview,
+the Tier B sandbox's traceback, the bundle (never the documents), `spec-surgeon diagnose`, the window's crash watch, and
+the window's diagnosis views."""
 from __future__ import annotations
 
 import faulthandler
@@ -383,6 +385,24 @@ def test_a_refused_run_says_what_changed_since_the_preview(tmp_path):
     assert "21 05 00 – NEW.docx: a file that was not in the preview" in str(e.value)
 
 
+def test_a_refused_custom_transform_run_says_what_changed(tmp_path):
+    from spec_surgeon.gui import Session
+    from test_codegen import GOOD_OP
+    from test_compiler import FakeClient, resp, tool
+    d = _folder(tmp_path, ["A", "B"])
+    unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
+    s = Session(folder=d, out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                                  resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}))))
+    s.compile("x", lambda m: None)
+    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
+    a = d / "21 00 00 – A.docx"
+    a.write_bytes(a.read_bytes() + b"\0")
+    with pytest.raises(ValueError, match="since the AI-written transform was tested — press Preview again") as e:
+        s.run(False, False, lambda m: None)
+    assert "21 00 00 – A.docx: modified since the preview (size" in str(e.value)
+
+
 def test_run_spec_with_a_stale_approval_says_what_changed(tmp_path, capsys):
     from spec_surgeon.cli import main as cli_main
     from spec_surgeon.preview import make_preview
@@ -393,6 +413,33 @@ def test_run_spec_with_a_stale_approval_says_what_changed(tmp_path, capsys):
                    "--out", str(tmp_path / "out")])
     err = capsys.readouterr().err
     assert rc == 2 and "approval token does not match" in err and "21 00 00 – A.docx: modified since the preview" in err
+
+
+def test_a_failing_page_comparison_is_a_warning_not_a_lost_preview(tmp_path, monkeypatch):
+    """The before/after pictures are a convenience: a comparison that raises costs the pictures (a warning, its
+    traceback in the preview log), never the sample, its PDFs, or the pages the visual check would look at."""
+    from spec_surgeon import render as render_mod
+    from spec_surgeon.preview import make_preview
+    from spec_surgeon.verify import geometry as geom
+    from test_vision import make_pdf
+    d = _folder(tmp_path, ["A"])
+    spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
+
+    def fake_render(files, out_dir, backend, workers=4, log=None, detail=None):
+        return {Path(f): make_pdf(Path(out_dir) / f"{Path(f).stem}.pdf") for f in files}
+
+    def boom(*a, **k):
+        raise RuntimeError("planted")
+    monkeypatch.setattr(render_mod, "pick", lambda prefer="auto": "libreoffice")
+    monkeypatch.setattr(render_mod, "describe", lambda backend: "fake renderer")
+    monkeypatch.setattr(render_mod, "render_pdfs", fake_render)
+    monkeypatch.setattr(geom, "compare_pdfs", boom)
+    pv = make_preview(spec, [str(d)], tmp_path / "pv", do_render=True)
+    s = pv.samples[0]
+    assert s.passed and s.source_pdf and s.output_pdf and s.look_pages == [1] and not s.images
+    assert any("the before/after pictures could not be made (RuntimeError: planted)" in w for w in pv.warnings)
+    log = (tmp_path / "pv" / "logs" / "preview.log").read_text(encoding="utf-8")
+    assert "planted" in log and "Traceback" in log and "renderer: fake renderer" in log
 
 
 # ---- the model's exchange: transcripts and API errors --------------------------------------------------------------------
@@ -406,17 +453,10 @@ class _ApiError(Exception):
         self.status_code, self.request_id = 529, "req_01ABC"
 
 
-class _Raises:
-    def __init__(self, exc):
-        self.exc = exc
-        self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create))
-
-    def _create(self, **kw):
-        raise self.exc
-
-
 def test_the_compile_keeps_its_transcript_and_says_why_the_api_failed(tmp_path):
+    from fake_claude import raise_on_enter, raise_on_final
     from spec_surgeon.compiler import compile_request
+    from spec_surgeon.conversation import ACCEPTED_RESULT
     from test_compiler import FakeClient, resp, text, tool
     d = _folder(tmp_path, ["A"])
     files = sorted(d.glob("*.docx"))
@@ -427,12 +467,14 @@ def test_the_compile_keeps_its_transcript_and_says_why_the_api_failed(tmp_path):
     turn = res.transcript[1]
     assert turn["role"] == "assistant" and turn["stop_reason"] == "tool_use" and turn["usage"]["input_tokens"] == 100
     assert [b["type"] for b in turn["content"]] == ["text", "tool_use"] and turn["content"][1]["input"]["spec"] == spec
-    assert res.transcript[2]["tool_results"][0]["content"] == "accepted" and "transcript" in res.to_dict()
-    failed = compile_request("remove all headers and footers", files, client=_Raises(_ApiError()))
-    assert failed.status == "failed" and "HTTP 529" in failed.errors[0] and "request id req_01ABC" in failed.errors[0]
-    assert failed.transcript[-1]["error"].startswith("_ApiError: Overloaded")
+    assert res.transcript[2]["tool_results"][0]["content"] == ACCEPTED_RESULT and "transcript" in res.to_dict()
+    for scripted in (raise_on_enter(_ApiError()), raise_on_final(_ApiError())):  # refused at once, or dropped mid-way
+        failed = compile_request("remove all headers and footers", files, client=FakeClient(scripted))
+        assert failed.status == "failed" and "HTTP 529" in failed.errors[0]
+        assert "request id req_01ABC" in failed.errors[0]
+        assert failed.transcript[-1]["error"].startswith("_ApiError: Overloaded")
     with pytest.raises(AssertionError):                     # a defect (a test script running out) is not an API error
-        compile_request("x", files, client=_Raises(AssertionError("scripted turns ran out")))
+        compile_request("x", files, client=FakeClient(raise_on_enter(AssertionError("scripted turns ran out"))))
 
 
 def test_the_window_session_writes_the_compile_record_beside_its_preview(tmp_path):
@@ -442,12 +484,111 @@ def test_the_window_session_writes_the_compile_record_beside_its_preview(tmp_pat
     spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
     s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
     lines = []
-    assert s.compile("remove all headers and footers", [], False, lines.append) == "Compiled."
+    assert s.compile("remove all headers and footers", lines.append) == "Compiled."
     record = s.out_dir / "compile.json"
     assert record.is_file() and json.loads(record.read_text(encoding="utf-8"))["transcript"]
+    assert s.chat_dir == s.out_dir and (s.out_dir / "conversation.json").is_file()     # the conversation beside it
     s.make_preview(render=False, log=lines.append)
     assert (record.parent / "preview" / "preview.json").is_file()            # the same folder: compile, then preview
     assert any("Compile record" in x for x in lines) and any("Preview log" in x for x in lines)
+
+
+def test_the_window_session_records_a_failed_call_and_keeps_what_was_said_before_a_defect(tmp_path, monkeypatch):
+    """An API error (or Claude not installed) is a failed turn the user can answer: its kind, HTTP status and request
+    id in compile.json and the exchange in conversation.json. Anything else is a defect: it propagates, and the session
+    folder still holds what was said up to it, for the diagnosis."""
+    from fake_claude import raise_on_enter, raise_on_final
+    from spec_surgeon import llm
+    from spec_surgeon.gui import Session
+    from test_compiler import FakeClient, resp, tool
+    d = _folder(tmp_path, ["A"])
+    s = Session(folder=d, out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]})),
+                                  raise_on_final(_ApiError()),
+                                  raise_on_enter(AssertionError("a planted defect"))))
+
+    def records():
+        return (json.loads((s.out_dir / "compile.json").read_text(encoding="utf-8")),
+                json.loads((s.out_dir / "conversation.json").read_text(encoding="utf-8")))
+    assert "reply in the chat" in s.compile("remove some headers", lambda m: None)
+    msg = s.reply("all of them")
+    assert msg.startswith("That didn't work: the request to Claude failed: _ApiError: Overloaded") and "HTTP 529" in msg
+    compiled, said = records()
+    assert compiled["status"] == "failed" and "request id req_01ABC" in compiled["errors"][0]
+    assert said["exchange"][-1]["error"].startswith("_ApiError: Overloaded") and s.conversation is not None
+    with pytest.raises(AssertionError, match="a planted defect"):
+        s.reply("every section, please")
+    said = records()[1]
+    assert [e["text"] for e in said["entries"] if e["role"] == "user"][-1] == "every section, please"
+
+    def missing():
+        raise llm.ClaudeUnavailable('install the Claude layer (pip install "spec-surgeon[agent]")')
+    monkeypatch.setattr(llm, "client", missing)                 # Claude not installed: the user's setup, not a defect
+    s.client = None
+    msg = s.compile("remove some headers", lambda m: None)
+    assert msg.startswith("That didn't work: Claude is not available: install the Claude layer")
+    assert records()[0]["status"] == "failed"
+
+
+def test_every_preview_of_a_conversation_has_the_records_that_led_to_it(tmp_path, monkeypatch):
+    """The window's session folders: the compile folder takes the first preview or custom transform; once a preview
+    used a folder, its records stay as they were (the spec in its compile.json is the one its preview and run used),
+    and the conversation goes on in the next folder, which the next preview takes. A loaded spec never previews into a
+    conversation's folder."""
+    from datetime import datetime, timedelta
+    from spec_surgeon import gui
+    from spec_surgeon.gui import Session
+    from test_codegen import GOOD_OP
+    from test_compiler import FakeClient, resp, tool
+
+    class Clock:                                  # every folder a second apart (no same-second reuse in a fast test)
+        t = 0
+
+        @classmethod
+        def now(cls):
+            cls.t += 1
+            return datetime(2026, 10, 15, 12, 0, 0) + timedelta(seconds=cls.t)
+    monkeypatch.setattr(gui, "datetime", Clock)
+    d = _folder(tmp_path, ["A", "B"])
+    spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
+    again = dict(spec, summary="remove them again")
+    unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
+    s = Session(folder=d, out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                                  resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})),
+                                  resp(tool("submit_editspec", {"spec": spec}, "s2")),
+                                  resp(tool("submit_editspec", {"spec": again}, "s3"))))
+
+    def records(folder):
+        return (json.loads((folder / "compile.json").read_text(encoding="utf-8")),
+                json.loads((folder / "conversation.json").read_text(encoding="utf-8")))
+
+    def users(conversation):
+        return sum(e["role"] == "user" for e in conversation["entries"])
+
+    s.compile("x", lambda m: None)
+    f1 = s.out_dir
+    assert s.chat_dir == f1 and records(f1)[0]["status"] == "unsupported"
+    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
+    assert s.out_dir == f1 and (f1 / "codegen" / "history.json").is_file() and (f1 / "preview").is_dir()
+    assert s.reply("actually, just remove all headers and footers") == "Compiled."
+    f2 = s.chat_dir
+    assert f2 != f1 and s.out_dir == f1                    # the transform's folder keeps its records; out_dir its preview
+    assert records(f1)[0]["status"] == "unsupported" and records(f2)[0]["status"] == "ok"
+    s.make_preview(render=False, log=lambda m: None)
+    assert s.out_dir == f2 and (f2 / "preview" / "spec.json").is_file()
+    assert s.reply("again") == "Compiled."
+    f3 = s.chat_dir
+    s.make_preview(render=False, log=lambda m: None)
+    assert s.out_dir == f3 and len({f1, f2, f3}) == 3
+    for folder, which in ((f2, spec), (f3, again)):        # each folder: the spec its preview used, and only that
+        compiled, _ = records(folder)
+        assert compiled["spec"] == which == json.loads((folder / "preview" / "spec.json").read_text(encoding="utf-8"))
+    assert users(records(f2)[1]) < users(records(f3)[1])
+    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    s.make_preview(render=False, log=lambda m: None)
+    assert s.out_dir not in (f1, f2, f3) and not (s.out_dir / "compile.json").exists()
+    assert not (s.out_dir / "conversation.json").exists()
 
 
 def test_the_sandbox_hands_back_the_generated_codes_traceback(tmp_path):
@@ -490,15 +631,15 @@ def test_a_sessions_bundle_holds_its_compile_and_preview_beside_the_run(tmp_path
     d = _folder(tmp_path, ["A"])
     spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
     s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
-    s.compile("remove all headers and footers", [], False, lambda m: None)
+    s.compile("remove all headers and footers", lambda m: None)
     s.make_preview(render=False, log=lambda m: None)
     s.run(False, False, lambda m: None)
     assert s.last_run_dir.name == "run" and diag.bundle_root(s.last_run_dir) == s.out_dir.resolve()
     res = diag.make_bundle(tmp_path / "session.zip", s.last_run_dir)
     with zipfile.ZipFile(res["path"]) as z:
         names = z.namelist()
-    assert {"results/compile.json", "results/preview/logs/preview.log", "results/preview/preview.json",
-            "results/run/DIAGNOSTICS.md", "results/run/logs/run.log"} <= set(names)
+    assert {"results/compile.json", "results/conversation.json", "results/preview/logs/preview.log",
+            "results/preview/preview.json", "results/run/DIAGNOSTICS.md", "results/run/logs/run.log"} <= set(names)
     assert not [n for n in names if n.lower().endswith((".docx", ".pdf", ".png"))]
     assert cli_main(["diagnose", str(s.out_dir), "--bundle", str(tmp_path / "cli.zip")]) == 0    # a `do` folder: run/
     capsys.readouterr()

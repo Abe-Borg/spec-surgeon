@@ -13,8 +13,10 @@ file, for ONE of:
   very file without any exception; otherwise it goes back once.
 
 ``advise_batch(out_dir)`` does it for every exception of a batch output folder and writes ``advice/<name>.advice.md``
-(+ ``advice/<name>.spec.json`` for a re-compiled spec). Nothing is applied: a re-compiled spec is run like any
-other (``run-spec``), after a human reads the advice.
+(+ ``advice/<name>.spec.json`` for a re-compiled spec, and ``advice/<name>.transcript.json``: ``Advice.transcript``, the
+exchange with the model, for a diagnosis). Nothing is applied: a re-compiled spec is run like any other
+(``run-spec``), after a human reads the advice. An API error (``llm.is_api_error``) ends the advice as ``failed`` with
+its HTTP status and request id; anything else propagates from ``advise`` (``advise_batch`` records it per file).
 """
 from __future__ import annotations
 
@@ -24,16 +26,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from . import llm
 from .catalog import op_catalog
-from .compiler import (DEFAULT_MODEL, FALLBACK_BETA, TOOLS, _Batch, _client, api_error_text, block_dict,
-                       check_submission, is_api_error)
+from .compiler import DEFAULT_MODEL, TOOLS, _Batch, _client, check_submission, placed_words
 from .diagnostics import write_json
 from .editspec import plan_spec
 from .fingerprint import fingerprint
 from .ops import JobException
 from .package import DocxPackage
 
-ADVISOR_TOOLS = [t for t in TOOLS if t["name"] not in ("ask_user", "read_template", "submit_editspec")] + [
+# An explicit allowlist: a tool added to the compiler (or its chat) never reaches the advisor by accident.
+ADVISOR_READ_TOOLS = ("inspect_profile", "list_styles", "sample_paragraphs", "show_part_text")
+ADVISOR_TOOLS = [t for t in TOOLS if t["name"] in ADVISOR_READ_TOOLS] + [
     {"name": "submit_recommendation", "description": "A written recommendation for a human (final answer).",
      "input_schema": {"type": "object", "properties": {"text": {"type": "string"}}, "required": ["text"]}},
     {"name": "submit_editspec", "description": "A re-compiled EditSpec for this file's structure pattern (final "
@@ -65,6 +69,8 @@ class Advice:
     spec: Optional[Dict[str, Any]] = None
     errors: List[str] = field(default_factory=list)
     tool_calls: List[Dict[str, Any]] = field(default_factory=list)
+    model: str = ""
+    usage: llm.Usage = field(default_factory=llm.Usage)
     transcript: List[Dict[str, Any]] = field(default_factory=list)   # the exchange with the model (diagnostics)
 
     def to_markdown(self) -> str:
@@ -76,6 +82,9 @@ class Advice:
                     "```json", json.dumps(self.spec, indent=2, ensure_ascii=False), "```"]
         if self.errors:
             out += ["", "Errors: " + "; ".join(self.errors)]
+        if self.usage.calls:
+            served = ", ".join(sorted(set(self.usage.served))) or self.model
+            out += ["", f"Claude ({served}): {self.usage.line()}"]
         return "\n".join(out)
 
 
@@ -96,7 +105,7 @@ def _respec_errors(spec: Any, batch: _Batch, sources: Sequence[str], pkg: DocxPa
 def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, answers: Sequence[str] = ()) -> Advice:
     model = model or DEFAULT_MODEL
     src = Path(record["source"])
-    adv = Advice(source=str(src), kind="failed")
+    adv = Advice(source=str(src), kind="failed", model=model)
     if not src.is_file():
         adv.errors.append(f"source file not found: {src}")
         return adv
@@ -112,9 +121,18 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
                     f"as a .docx (Word Document), check that it is a Word file at all (a renamed PDF or text file "
                     f"is not), then run the next pass on it.")
         return adv
-    client = client or _client()          # only now: an unreadable file never needs the model (nor an API key)
+    if client is None:                    # only now: an unreadable file never needs the model (nor an API key)
+        try:
+            client = _client()
+        except Exception as e:  # noqa: BLE001 — classified: Claude not installed is a recorded failure, a defect raises
+            if not llm.is_api_error(e):
+                raise
+            adv.errors.append(llm.failure_text(e, "the call to the model failed"))
+            return adv
     spec0 = record.get("spec") or {}
-    sources = [json.dumps(spec0, ensure_ascii=False), str(spec0.get("request", "")), *answers]
+    # Only words the user approved: the original request, the words the original spec places (the user approved that
+    # spec) and the user's answers — never Claude's own summary, assumptions or proposal.
+    sources = [*placed_words(spec0), str(spec0.get("request", "")), *answers]
     messages: List[Dict[str, Any]] = [{"role": "user", "content": json.dumps({
         "file": src.name, "structure_pattern": pid, "exception": record.get("exception"),
         "original_spec": spec0 or {"job": record.get("job"), "params": record.get("params")},
@@ -125,30 +143,30 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
     for turn in range(10):
         t = time.perf_counter()
         try:
-            resp = client.beta.messages.create(model=model, max_tokens=16000, system=system, tools=ADVISOR_TOOLS,
-                                               messages=messages, output_config={"effort": "high"},
-                                               cache_control={"type": "ephemeral"}, betas=[FALLBACK_BETA],
-                                               fallbacks="default")
-        except Exception as e:
-            if not is_api_error(e):
-                raise
-            adv.errors.append(f"the call to the model failed: {api_error_text(e)}")
-            adv.transcript.append({"turn": turn + 1, "error": api_error_text(e)})
+            resp = llm.call(client, model=model, system=system, tools=ADVISOR_TOOLS, messages=messages)
+        except Exception as e:  # noqa: BLE001 — classified below
+            if not llm.is_api_error(e):
+                raise                          # a defect propagates (advise_batch records it per file)
+            adv.errors.append(llm.failure_text(e, "the call to the model failed"))
+            adv.transcript.append(llm.error_entry(turn + 1, e, time.perf_counter() - t))
             return adv
-        adv.transcript.append({"turn": turn + 1, "role": "assistant", "stop_reason": getattr(resp, "stop_reason", None),
-                               "seconds": round(time.perf_counter() - t, 2),
-                               "content": [block_dict(b) for b in (getattr(resp, "content", None) or [])]})
-        if getattr(resp, "stop_reason", None) in ("refusal", "max_tokens"):
-            adv.errors.append(f"model stopped: {resp.stop_reason}")
+        adv.usage.add(resp, model)
+        adv.transcript.append(llm.response_entry(turn + 1, resp, time.perf_counter() - t))
+        problem = llm.stop_problem(resp)
+        if problem:
+            adv.errors.append(f"model stopped: {problem}")
             return adv
-        messages.append({"role": "assistant", "content": resp.content})
-        uses = [b for b in resp.content if getattr(b, "type", "") == "tool_use"]
+        content = llm.history_content(resp)
+        messages.append({"role": "assistant", "content": content})
+        uses = llm.tool_uses(content)
         if not uses:
-            texts = [b.text for b in resp.content if getattr(b, "type", "") == "text"]
+            texts = [t for t in llm.texts(content) if t.strip()]
             if texts:                                    # a plain answer counts as a recommendation
                 adv.kind, adv.text = "recommendation", "\n".join(texts)
                 return adv
-            messages.append({"role": "user", "content": "Finish with submit_recommendation or submit_editspec."})
+            nudge = "Finish with submit_recommendation or submit_editspec."
+            messages.append({"role": "user", "content": nudge})
+            adv.transcript.append({"turn": turn + 1, "role": "user", "content": nudge})
             continue
         results = []
         for b in uses:
@@ -171,13 +189,15 @@ def advise(record: Dict[str, Any], client=None, model: Optional[str] = None, ans
                                 "content": "REJECTED:\n- " + "\n- ".join(errs)})
                 continue
             try:
+                if b.name not in ADVISOR_READ_TOOLS:
+                    raise KeyError(f"unknown tool {b.name}")
                 out = getattr(batch, b.name)(**inp)
                 results.append({"type": "tool_result", "tool_use_id": b.id,
                                 "content": json.dumps(out, ensure_ascii=False)[:20000]})
-            except (AttributeError, KeyError, TypeError, ValueError) as e:
-                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True, "content": str(e)})
-        adv.transcript.append({"role": "user", "tool_results": [
-            {"is_error": bool(r.get("is_error")), "content": str(r.get("content"))[:6000]} for r in results]})
+            except Exception as e:  # noqa: BLE001 — every tool call gets an answer, or the next request is refused
+                results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
+                                "content": f"{type(e).__name__}: {e}"[:2000]})
+        adv.transcript.append(llm.results_entry(turn + 1, results))
         messages.append({"role": "user", "content": results})
     adv.errors.append("no advice after 10 turns")
     return adv
@@ -204,7 +224,8 @@ def advise_batch(out_dir: Path, only: Optional[str] = None, client=None, model: 
         (adir / f"{stem}.advice.md").write_text(adv.to_markdown(), encoding="utf-8")
         if adv.transcript:
             write_json(adir / f"{stem}.transcript.json", {"source": adv.source, "kind": adv.kind,
-                                                          "errors": adv.errors, "transcript": adv.transcript})
+                                                          "errors": adv.errors, "model": adv.model,
+                                                          "usage": adv.usage.to_dict(), "transcript": adv.transcript})
         if adv.spec:
             (adir / f"{stem}.spec.json").write_text(json.dumps(adv.spec, indent=2, ensure_ascii=False), encoding="utf-8")
         results.append(adv)

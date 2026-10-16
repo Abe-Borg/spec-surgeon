@@ -25,7 +25,7 @@ def _gui(request, result):
     import win32com.client  # noqa: F401
     from PySide6.QtWidgets import QStyleFactory
     from spec_surgeon import __version__, catalog, credentials, updater, winapp
-    from spec_surgeon.agent import SKILL_DIR
+    from spec_surgeon import SKILL_DIR
     from spec_surgeon.codegen import _examples, trial
     from spec_surgeon.gui import Session, build_window
     from spec_surgeon.ui.app import RecordingPrompts, qt_app

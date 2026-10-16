@@ -5,8 +5,9 @@ Pages are layout only: they own their widgets and expose them; ``ui.app.MainWind
 message strip), a scrolling body of cards, and an action bar at the foot with Back on the left and the one primary
 button on the right, next to a hint that says what is still missing when that button is off.
 
-Strings other code depends on: "Answers", "Allow AI-written transforms", "Load set-aside files", "Advise on
+Strings other code depends on: "reply in the chat", "Start over", "Load set-aside files", "Advise on
 exceptions" (``Session`` messages name these controls).
+Never re-introduce "Answers"/"Allow AI-written transforms": those controls no longer exist.
 """
 from __future__ import annotations
 
@@ -17,6 +18,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QFram
                                QHeaderView, QLabel, QListWidget, QPlainTextEdit, QProgressBar, QPushButton,
                                QRadioButton, QScrollArea, QTableView, QVBoxLayout, QWidget)
 
+from .chat import ChatView
 from .models import ProblemsFilter, RowsModel
 from .rows import PREVIEW_COLUMNS, RESULT_COLUMNS
 from .widgets import (BadgeDelegate, Card, ChipRow, DropZone, EmptyState, InfoBar, PathPicker, StatTile, eyebrow,
@@ -47,6 +49,7 @@ class Page(QWidget):
         hl.addWidget(self.info)
         outer.addWidget(head)
         scroll = QScrollArea()
+        self.scroll = scroll
         scroll.setObjectName("PageScroll")
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -176,43 +179,35 @@ class RequestPage(Page):
         card.add(self.chips)
         self.content.addWidget(card)
 
+        self.chat = ChatView()                    # Claude's reply and choices sit right under the request they are about
+        self.content.addWidget(self.chat)
+
         card = Card("Or use a saved spec", "An edit spec file (.json) runs without an API key: an example from the "
-                                          "Start menu's Example edit specs, or the spec.json saved in an earlier "
-                                          "preview folder.")
+                                          "Start menu's Example edit specs, the spec.json saved in an earlier "
+                                          "preview folder, or a recipe or operation from Your library.")
         row = QHBoxLayout()
         self.load_btn = QPushButton("Load saved spec\u2026")
         self.load_btn.setToolTip("Use an EditSpec (.json) — e.g. one from the Start menu's Example edit specs, or the "
                                  "spec.json saved in an earlier preview folder")
         row.addWidget(self.load_btn)
+        self.library_btn = QPushButton("Your library\u2026")
+        self.library_btn.setToolTip("Your saved recipes (specs) and your own operations (custom transforms that "
+                                    "passed) — reuse them on another batch")
+        row.addWidget(self.library_btn)
         row.addStretch(1)
         card.add(row)
         self.spec_bar = InfoBar(closable=False)
         card.add(self.spec_bar)
         self.content.addWidget(card)
 
-        self.answers_card = Card("Claude needs a few answers",
-                                 "Type one answer per line, in the order of the questions, then press Preview again.")
-        self.questions = label("", selectable=True)
-        self.answers_label = label("Answers (one per line)")
-        self.answers = QPlainTextEdit()
-        self.answers.setObjectName("Editor")
-        self.answers.setMinimumHeight(70)
-        self.answers.setMaximumHeight(130)
-        self.answers_card.add(self.questions)
-        self.answers_card.add(self.answers_label)
-        self.answers_card.add(self.answers)
-        self.answers_card.hide()
-        self.content.addWidget(self.answers_card)
-
         card = Card("Options")
         self.render_cb = QCheckBox("Render pages (Word or LibreOffice)")
         card.add(self.render_cb)
         card.add(label("Makes before/after page images for the preview and checks that page layout did not move. "
                        "Slower; needs Word or LibreOffice.", "Muted"))
-        self.codegen_cb = QCheckBox("Allow AI-written transforms")
-        card.add(self.codegen_cb)
-        card.add(label("Off by default. When no built-in operation can do the request, Claude may write a one-off "
-                       "transform. It is tested on sample files first and only ever writes edited copies.", "Muted"))
+        card.add(label("When no built-in operation can do the request, Claude says why and offers choices in the "
+                       "chat — including, when it can be done safely, a one-off transform it writes and tests on "
+                       "sample files first (edited copies only).", "Muted"))
         key_row = QHBoxLayout()
         key_row.setSpacing(10)
         self.key_pill = pill("API key")
@@ -250,7 +245,14 @@ class PreviewPage(Page):
         bl.setSpacing(14)
         self.request_lbl = label("", "CardTitle", selectable=True)
         self.summary_lbl = label("", "Muted", selectable=True)
-        bl.addWidget(self.request_lbl)
+        head = QHBoxLayout()                      # the action bar holds one primary button: this one sits up here
+        head.setSpacing(12)
+        head.addWidget(self.request_lbl, 1)
+        self.save_btn = QPushButton("Save to library\u2026")
+        self.save_btn.setToolTip("Save this spec as a recipe — or this custom transform as one of your operations — "
+                                 "to reuse on other batches")
+        head.addWidget(self.save_btn, 0, Qt.AlignmentFlag.AlignTop)
+        bl.addLayout(head)
         bl.addWidget(self.summary_lbl)
         tiles = QHBoxLayout()
         tiles.setSpacing(12)
@@ -285,6 +287,23 @@ class PreviewPage(Page):
         self.samples_card.add(self.samples)
         bl.addWidget(self.samples_card)
 
+        self.review_card = Card("Claude's visual check",
+                                "Advisory — not a verification. Claude looked at the before/after pages of the "
+                                "samples: it can stop a run, never pass one. The engine's checks are above.")
+        self.review_lbl = label("", selectable=True)
+        self.review_lbl.setTextFormat(Qt.TextFormat.PlainText)
+        self.review_card.add(self.review_lbl)
+        self.review_bar = InfoBar(closable=False)
+        self.review_card.add(self.review_bar)
+        ack_row = QHBoxLayout()
+        ack_row.addStretch(1)
+        self.review_ack_btn = QPushButton("I\u2019ve looked \u2014 allow Run")
+        self.review_ack_btn.setToolTip("You have looked at Claude's findings for this preview; Run is allowed for it")
+        ack_row.addWidget(self.review_ack_btn)
+        self.review_card.add(ack_row)
+        self.review_card.hide()
+        bl.addWidget(self.review_card)
+
         self.generated_card = Card("AI-written transform")
         self.generated_lbl = label("", selectable=True)
         self.generated_card.add(self.generated_lbl)
@@ -294,6 +313,8 @@ class PreviewPage(Page):
         bl.addWidget(self.token_lbl)
         self.body.hide()
         self.content.addWidget(self.body)
+        self.chat = ChatView(compact=True)
+        self.content.addWidget(self.chat)
         self.finish()
 
         self.back_btn = QPushButton("\u2190  Change request")

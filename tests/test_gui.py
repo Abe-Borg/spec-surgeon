@@ -1,6 +1,8 @@
 """The window: its logic (``gui.Session``) end to end with a scripted client, and the real Qt window (offscreen)
-driven through its buttons — preview and run, stale previews, questions, errors, updates (check, skip, install
-hand-off, post-update banners), what it remembers, and that Qt never leaks into the engine or the command line."""
+driven through its buttons — preview and run, stale previews, the chat (Claude's questions and choices, replies, a
+custom transform, Start over), the visual check's findings gate, the rail and the step hints, errors, updates (check,
+skip, install hand-off, post-update banners), Settings, Help and About, what it remembers, and that Qt never leaks into
+the engine or the command line."""
 from __future__ import annotations
 
 import json
@@ -36,7 +38,7 @@ def test_request_preview_run(folder, tmp_path):
     lines = []
     with pytest.raises(ValueError, match="Preview first"):
         s.run(False, False, log_to(lines))
-    assert s.compile("remove all headers and footers", [], False, log_to(lines)) == "Compiled."
+    assert s.compile("remove all headers and footers", log_to(lines)) == "Compiled."
     text = s.make_preview(render=False, log=log_to(lines))
     assert "2 plan cleanly" in text and s.preview.token in text
     before = {f: f.read_bytes() for f in folder.glob("*.docx")}
@@ -69,16 +71,52 @@ def test_in_place_run_is_guarded(folder, tmp_path):
 def test_questions_and_unsupported(folder, tmp_path):
     s = Session(folder=folder, out_root=tmp_path / "out",
                 client=FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]}))))
-    msg = s.compile("remove some headers", [], False, lambda m: None)
-    assert "Answers box" in msg and s.questions == ["Which sections?"] and s.spec is None
+    msg = s.compile("remove some headers", lambda m: None)
+    assert "reply in the chat" in msg and s.questions == ["Which sections?"] and s.spec is None
+    assert (s.chat_dir / "conversation.json").is_file() and (s.chat_dir / "compile.json").is_file()
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
     s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported})))
-    assert "Allow AI-written transforms" in s.compile("x", [], False, lambda m: None)
-    s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported})),
-                          resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
-    assert "passed verification" in s.compile("x", [], True, lambda m: None)
+    msg = s.compile("x", lambda m: None)
+    assert "No built-in operation" in msg and s.turn.choices == []        # Claude did not judge it possible: no offer
+    s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})))
+    msg = s.compile("x", lambda m: None)
+    assert "custom transform" in msg and [c.kind for c in s.turn.choices] == ["custom_transform"]
+    s.client = FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
+    assert "set_header_distance" in s.conversation.notes[-1]               # Claude hears what happened
     out = s.run(False, False, lambda m: None)
     assert "2 of 2 file(s) PASS" in out
+
+
+def test_a_reply_replaces_the_custom_transform_and_voids_old_previews(folder, tmp_path):
+    """Plan review blocker: after a custom transform, a reply that yields a spec must replace it (Run runs the spec,
+    after its preview), and a reply that only asks a question leaves nothing runnable."""
+    unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
+    s = Session(folder=folder, out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                                  resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})),
+                                  resp(tool("submit_editspec", {"spec": REMOVE}, "s2")),
+                                  resp(tool("ask_user", {"questions": ["Really?"]}, "a3"))))
+    s.compile("x", lambda m: None)
+    s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
+    assert s.generated is not None
+    assert s.reply("actually, just remove all headers and footers") == "Compiled."
+    assert s.generated is None and s.spec == REMOVE
+    assert "2 plan cleanly" in s.make_preview(render=False, log=lambda m: None)
+    assert "THE PREVIEW OF YOUR SPEC" in s.conversation.notes[-1]
+    s.reply("hmm")
+    assert s.spec is None and s.preview is None and s.questions == ["Really?"]
+    with pytest.raises(ValueError, match="Preview first"):
+        s.run(False, False, lambda m: None)
+
+
+def test_a_reply_refuses_when_the_files_changed(folder, tmp_path):
+    s = Session(folder=folder, out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]}))))
+    s.compile("remove some headers", lambda m: None)
+    (folder / "21 99 00 – NEW.docx").write_bytes(build("21 99 00", "NEW"))
+    with pytest.raises(ValueError, match="Start over"):
+        s.reply("all of them")
 
 
 def test_errors_are_plain(tmp_path):
@@ -89,7 +127,7 @@ def test_errors_are_plain(tmp_path):
     with pytest.raises(ValueError, match="no .docx files"):
         Session(folder=empty, out_root=tmp_path).files()
     with pytest.raises(ValueError, match="type what you want"):
-        Session(folder=empty, out_root=tmp_path).compile("  ", [], False, lambda m: None)
+        Session(folder=empty, out_root=tmp_path).compile("  ", lambda m: None)
 
 
 # ---- the real window (Qt, offscreen) ------------------------------------------------------------------
@@ -172,10 +210,79 @@ def test_the_window_shows_claude_s_questions(qt, folder, tmp_path):
     ui["buttons"]["preview"].click()
     ui["wait"]()
     assert ui["status"].get() == "Ready."
-    assert not w.request_page.answers_card.isHidden()
-    assert "Which sections?" in w.request_page.questions.text()
-    assert "Answers" in w.request_page.answers_label.text()
+    assert not ui["chat"].isHidden() and "Claude needs your reply" in w.request_page.info.title.text()
+    texts = [lab.text() for lab in ui["chat"].findChildren(type(w.request_page.info.text))]
+    assert any("Which sections?" in t for t in texts) and any(t == "remove some headers" for t in texts)
     assert not ui["buttons"]["run"].isEnabled()
+    from spec_surgeon.ui.widgets import STEP_STATUS_ROLE
+    assert w.nav.item(1).data(STEP_STATUS_ROLE) == "Waiting for your reply"
+    w._refresh_files()                                        # the folder check runs on a 250 ms timer
+    assert "waiting for your reply" in w.request_page.preview_hint.text()
+    from PySide6.QtWidgets import QCheckBox                   # the chat replaced the Answers box and the codegen switch
+    assert "answers" not in ui and "codegen" not in ui["vars"] and "codegen" not in ui["buttons"]
+    assert not any(hasattr(w.request_page, n) for n in ("answers_card", "answers_label", "questions", "codegen_cb"))
+    assert not [c.text() for c in w.findChildren(QCheckBox) if "AI-written" in c.text()]
+    # Preview again while Claude waits: nothing is recompiled (no second scripted turn is needed)
+    assert w.do_preview() is False and "waiting for your reply" in w.request_page.info.title.text()
+
+
+def test_the_window_chat_choice_reply_preview_and_start_over(qt, folder, tmp_path):
+    """The whole loop in the window: Claude asks with choices; picking one sends it; the spec that comes back is
+    previewed; a reply typed under the preview revises it; Start over forgets the conversation."""
+    fake = FakeClient(resp(tool("ask_user", {"understanding": "Remove the headers and footers.",
+                                             "choices": [{"label": "Every section", "kind": "clarify"},
+                                                         {"label": "Stamp instead", "kind": "alternative",
+                                                          "wording": "ISSUED FOR PERMIT"}]})),
+                      resp(tool("submit_editspec", {"spec": REMOVE}, "s2")),
+                      resp(tool("submit_editspec", {"spec": REMOVE}, "s3")))
+    s = Session(out_root=tmp_path / "out", client=fake)
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    ui["request"].set("remove the headers")
+    w.resize(1100, 640)                                       # short enough that the chat starts below the fold
+    w.show()
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    qt[0].processEvents()
+    choices = ui["choices"]()
+    assert len(choices) == 2
+    chat = w.request_page.chat                                # scrolled to Claude's choices, the reply box and Send
+    assert not chat.reply.visibleRegion().isEmpty() and not chat.send_btn.visibleRegion().isEmpty()
+    labels = [lab.text() for lab in ui["chat"].findChildren(type(w.request_page.info.text))]
+    assert any("Exact words: «ISSUED FOR PERMIT»" in t and "approves these exact words" in t for t in labels)
+    choices[0][1].click()                                     # "Every section"
+    ui["wait"]()
+    assert w.stack.currentWidget() is w.preview_page and ui["buttons"]["run"].isEnabled()
+    assert fake.requests[1]["messages"][-1]["content"][0]["content"].startswith("The user chose: «Every section»")
+    assert ui["choices"]() == [] and not ui["preview_chat"].isHidden()
+    key_before = w.preview_key
+    ui["preview_chat"].reply.setPlainText("keep the cover footer")
+    ui["preview_chat"].send_btn.click()
+    ui["wait"]()
+    last = fake.requests[2]["messages"][-1]["content"]
+    assert last[0]["tool_use_id"] == "s2" and "THE PREVIEW OF YOUR SPEC" in last[1]["text"]
+    assert last[-1]["text"] == "The user replied: keep the cover footer"
+    assert w.preview_key != key_before and ui["buttons"]["run"].isEnabled()
+    assert ui["preview_chat"].reply.toPlainText() == ""
+    assert w.preview_page.save_btn.parentWidget() is not w.preview_page.continue_btn.parentWidget()
+    ui["buttons"]["start_over"].click()
+    assert s.conversation is None and s.spec is None and ui["chat"].isHidden()
+    assert not ui["buttons"]["run"].isEnabled()
+    assert w.preview_page.body.isHidden() and not w.preview_page.empty.isHidden()
+
+
+def test_the_window_blocks_replies_to_a_different_request(qt, folder, tmp_path):
+    s = Session(out_root=tmp_path / "out", client=FakeClient(resp(tool("ask_user", {"questions": ["Which?"]}))))
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["request"].set("remove some headers")
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert ui["buttons"]["send"].isEnabled()
+    ui["request"].set("something else entirely")
+    assert not ui["buttons"]["send"].isEnabled() and "not the one this conversation" in ui["chat"].hint.text()
+    assert w.do_send("all") is False
 
 
 def test_an_error_is_shown_not_swallowed(qt, tmp_path):
@@ -219,9 +326,10 @@ def test_generated_run_refuses_unpreviewed_files(folder, tmp_path):
     """Codex review on PR #4: an AI-written transform runs only on the files it was tested on."""
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
     s = Session(folder=folder, out_root=tmp_path / "out",
-                client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported})),
+                client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
                                   resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}))))
-    assert "passed verification" in s.compile("x", [], True, lambda m: None)
+    s.compile("x", lambda m: None)
+    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
     (folder / "21 99 00 – NEW.docx").write_bytes(build("21 99 00", "NEW"))
     with pytest.raises(ValueError, match="since the AI-written transform was tested"):
         s.run(False, False, lambda m: None)
@@ -394,7 +502,6 @@ def test_the_window_remembers_folders_but_not_the_risky_switches_or_the_key(qt, 
     ui["vars"]["out"].set(str(tmp_path / "Results"))
     ui["vars"]["render"].set(False)
     ui["vars"]["in_place"].set(True)
-    ui["vars"]["codegen"].set(True)
     ui["request"].set("change all fonts to Arial")
     dlg = SettingsDialog(w)
     dlg.key.setText("sk-ant-test-not-a-real-key")
@@ -405,7 +512,7 @@ def test_the_window_remembers_folders_but_not_the_risky_switches_or_the_key(qt, 
     w2, ui2 = window(qt)
     assert ui2["vars"]["folder"].get() == str(folder) and ui2["vars"]["out"].get() == str(tmp_path / "Results")
     assert ui2["vars"]["render"].get() is False and ui2["request"].get() == "change all fonts to Arial"
-    assert ui2["vars"]["in_place"].get() is False and ui2["vars"]["codegen"].get() is False
+    assert ui2["vars"]["in_place"].get() is False
 
 
 def test_closing_during_a_job_asks_first(qt, tmp_path):
@@ -549,6 +656,7 @@ def test_the_engine_and_command_line_never_load_qt():
     import subprocess
     import sys
     code = ("import sys, spec_surgeon.gui, spec_surgeon.cli, spec_surgeon.batch, spec_surgeon.updater, "
+            "spec_surgeon.llm, spec_surgeon.conversation, "
             "spec_surgeon.settings, spec_surgeon.winapp, spec_surgeon.credentials, spec_surgeon.ui, "
             "spec_surgeon.ui.rows; "
             "bad = [m for m in sys.modules if m.split('.')[0] in ('PySide6', 'shiboken6')]; "
@@ -574,3 +682,63 @@ def test_pyside6_is_imported_only_by_the_ui_package():
                     not (rel.startswith("ui/") and rel not in ("ui/__init__.py", "ui/rows.py")):
                 offenders.append(rel)
     assert offenders == []
+
+
+def test_the_window_blocks_run_on_claude_s_findings_until_acknowledged(qt, folder, tmp_path):
+    from spec_surgeon.vision import VisualReview
+    s = Session(out_root=tmp_path / "out")
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert ui["buttons"]["run"].isEnabled()
+    s.preview.review = VisualReview(summary="Looked at page 1.",
+                                    findings=[{"severity": "block", "file": "x.docx", "page": 1, "text": "Logo squashed."}])
+    w._fill_preview()
+    w._refresh_run_state()
+    p = w.preview_page
+    assert not p.review_card.isHidden() and "Logo squashed." in p.review_lbl.text()
+    assert "advisory" in p.review_card.helper.text().lower() and "PASS" not in p.review_lbl.text()
+    assert not ui["buttons"]["run"].isEnabled() and "visual check flagged" in w.run_page.run_hint.text()
+    assert "visual check flagged" in w.run_page.run_hint.toolTip()          # the full reason
+    assert "Look at Claude's findings" in w.preview_page.continue_hint.text()
+    from spec_surgeon.ui.widgets import STEP_STATUS_ROLE
+    w._refresh_nav()
+    assert w.nav.item(2).data(STEP_STATUS_ROLE) == "Look at Claude's findings before Run"
+    assert w.do_run() is False
+    assert "visual check flagged" in w.run_page.info.text.text()
+    assert not ui["buttons"]["review_ack"].isHidden()
+    ui["buttons"]["review_ack"].click()
+    assert ui["buttons"]["run"].isEnabled() and ui["buttons"]["review_ack"].isHidden()
+    assert "Acknowledged" in p.review_bar.title.text()
+    assert w.run_page.run_hint.text() == "" and w.preview_page.continue_hint.text() == ""
+
+
+def test_the_window_runs_the_custom_transform_offered_in_the_chat(qt, folder, tmp_path):
+    unsupported = {"request": "r", "summary": "Set the header distance.", "unsupported": "no op sets it alone",
+                   "proposal": "set_header_distance"}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                      resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    s = Session(out_root=tmp_path / "out", client=fake)
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    ui["request"].set("put the header 0.625 in from the top")
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert "No built-in operation" in w.request_page.info.title.text()
+    (cid, button), = ui["choices"]()
+    assert button.text() == "Do this"
+    button.click()
+    ui["wait"]()
+    p = w.preview_page
+    assert w.stack.currentWidget() is p and not p.generated_card.isHidden() and not p.samples_card.isHidden()
+    assert p.samples.count() == 1 and ui["buttons"]["run"].isEnabled()                # one sample per pattern
+    assert not w.run_page.inplace_rb.isEnabled()                            # custom transforms write copies only
+    before = {f: f.read_bytes() for f in folder.glob("*.docx")}
+    ui["buttons"]["run"].click()
+    ui["wait"]()
+    assert ui["results_model"].badges() == ["pass", "pass"]
+    assert {f: f.read_bytes() for f in folder.glob("*.docx")} == before
