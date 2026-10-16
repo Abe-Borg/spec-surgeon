@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from . import __version__, compiler, llm
 from .batch import check_inputs_outside, load_set_aside, output_names
 from .chain import chain_key, chain_templates, run_chain, validate_chain
-from .editspec import is_template_file, spec_templates, validate_spec
+from .editspec import is_template_file, spec_input_files, spec_templates, validate_spec
 from .fingerprint import fingerprint
 from .package import DocxPackage
 from .preview import SampleView, approval_inputs, approval_token, render_samples
@@ -65,6 +65,7 @@ class RecoveryFile:
     reason: str = "No verified repair yet."
     output: Optional[Path] = None
     output_md5: str = ""
+    out_name: str = ""                       # nonempty only when an operation explicitly names the output
     case_id: str = ""
     pattern_id: str = ""
     attempts: int = 0
@@ -145,6 +146,8 @@ If the request requires a real user decision, call need_user with a specific que
 can meet it, call unsupported with the missing capability. Never say a structural PASS proves user intent.
 submit_repair takes {kind:'spec', spec:<EditSpec>} or {kind:'chain', chain:{stages:[{spec:...},...]}}.
 The app attaches immutable final assertions; do not change them. Use supplied template paths only.
+Tables and pictures are listed under input_files; inspect them with read_input_file and use only those paths.
+Values read by an operation from a listed table are the user's content; do not invent replacement words.
 custom_transform is available only with explicit permission and only within the catalog's limits.
 Its generated code cannot change words, add parts, edit numbering, or weaken checks. A custom transform
 must still satisfy the original goals. Old cases are suggestions, never sources of approved document words.
@@ -157,7 +160,8 @@ def _tool(name, description, properties, required=()):
         "type": "object", "properties": properties, "required": list(required)}}
 
 
-READ_TOOLS = ("inspect_profile", "list_styles", "sample_paragraphs", "show_part_text", "read_template")
+READ_TOOLS = ("inspect_profile", "list_styles", "sample_paragraphs", "show_part_text", "read_template",
+              "read_input_file")
 TOOLS = [t for t in compiler.TOOLS if t["name"] in READ_TOOLS and t["name"] != "read_template"] + [
     compiler.VIEW_PAGES_TOOL,
     _tool("read_template", "Inspect a template from this request. Omit file for the primary template, or use a listed template path.",
@@ -201,7 +205,21 @@ def _recovery_token(key, files):
 
 def _prepared(files):
     return [{"source": str(f.source), "output": str(f.output), "md5": f.output_md5,
-             "outcomes": f.outcomes} for f in files if f.status == "READY"]
+             "out_name": f.out_name, "outcomes": f.outcomes} for f in files if f.status == "READY"]
+
+
+def _withhold_name_collisions(result):
+    """Separate investigation groups may independently choose the same explicit filename."""
+    groups = {}
+    for f in result.ready:
+        if f.out_name:
+            groups.setdefault(f.out_name.casefold(), []).append(f)
+    for group in groups.values():
+        if len(group) > 1:
+            for f in group:
+                f.status = "UNRESOLVED"
+                f.reason = f"Multiple repaired files would be named {f.out_name!r}; resolve the naming collision before export."
+                f.output, f.output_md5 = None, ""
 
 
 def _specs(goal):
@@ -282,7 +300,7 @@ def _goals(goal):
     return list(unique.values()), notes
 
 
-def _candidate(candidate, goal, request, sources, templates, assertions, aliases=None):
+def _candidate(candidate, goal, request, sources, templates, assertions, aliases=None, input_files=()):
     candidate = _canonical_templates(candidate, aliases or {})
     if not isinstance(candidate, dict) or candidate.get("kind") not in ("spec", "chain"):
         raise ValueError("candidate must have kind spec or chain")
@@ -303,12 +321,15 @@ def _candidate(candidate, goal, request, sources, templates, assertions, aliases
     if supplied is not None and supplied != assertions:
         raise ValueError("final requirements are pinned; a repair cannot change them")
     allowed_templates = {str(p.resolve()) for p in templates.values()}
+    allowed_inputs = allowed_templates | {str(Path(p).resolve()) for p in input_files}
     for spec in _specs(chain):
         bad = compiler.untraceable(spec, sources)
         if bad:
             raise ValueError(f"words not approved in this request: {bad}")
         if any(str(p.resolve()) not in allowed_templates for p in spec_templates(spec)):
             raise ValueError("repair named a template outside the current request")
+        if any(str(p.resolve()) not in allowed_inputs for p in spec_input_files(spec)):
+            raise ValueError("repair named an input file outside the current request's listed files")
         spec["request"] = request
         # Every requested file is tried; a model cannot hide a failure behind applies_to.
         spec["applies_to"] = {"or": "all"}
@@ -374,6 +395,15 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
     goal = _canonical_templates(goal, aliases)
     if any(p == out_dir or out_dir in p.parents for p in templates.values()):
         raise ValueError("a recovery results folder cannot contain a template input")
+    # Tables and pictures may be named by the approved goal or chosen from the same nearby
+    # input listing the compiler exposes. Freeze that listing before the first model call.
+    # New files appearing during investigation cannot become unreviewed sources of wording.
+    primary_template = Path(template).resolve() if template else next(iter(templates.values()), None)
+    input_files = list(dict.fromkeys(
+        [p for s in _specs(goal) for p in spec_input_files(s) if p not in spec_templates(s)]
+        + compiler.input_files_near(files, primary_template)))
+    input_files = [Path(p).resolve() for p in input_files]
+    check_inputs_outside(input_files, out_dir)
     files = [f for f in files if not is_template_file(f, list(templates.values()))]
     if not files:
         raise ValueError("no documents remain to investigate")
@@ -386,10 +416,15 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
     result.notes.extend(notes)
     result.key = {"request": request, "goal": goal, "stages": [{"spec": s} for s in _specs(goal)],
                   "recovery_templates": [str(p) for p in templates.values()], "assertions": assertions,
+                  "recovery_inputs": [str(p) for p in input_files],
                   "approved_words": list(approved_words)}
     # approval_inputs reads templates from stages; attach the standalone template too.
     result.key["stages"] += [{"spec": {"ops": [{"op": "apply_header_footer_template", "params": {"template": str(p)}}]}}
                              for p in dict.fromkeys(paths)]
+    # These approval-only entries use the same input-slot reader as real operations; they
+    # are never executed. Pin even raw-request candidates' files before their first trial.
+    result.key["stages"] += [{"spec": {"ops": [{"op": "fill_variables", "params": {"table": {"file": str(p)}}}]}}
+                             for p in input_files]
     result.token_inputs = approval_inputs(result.key, files)
     result.token = _recovery_token(result.key, files)
     sources = [request, *approved_words, *(w for s in _specs(goal) for w in compiler.placed_words(s))]
@@ -413,9 +448,18 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
                             max_total_tokens=options.max_total_tokens, max_cost_usd=options.max_cost_usd)
     notify = log or (lambda message: None)
     started = time.perf_counter()
+    memory_goal = _portable(goal or {"request": request}, templates)
+    if input_files:
+        input_hashes = {}
+        for path in input_files:
+            try:
+                input_hashes[str(path)] = _sha(path)
+            except OSError:
+                input_hashes[str(path)] = "unreadable"
+        memory_goal = {"goal": memory_goal, "input_hashes": input_hashes}
     context = dict(result=result, options=options, goal=goal, assertions=assertions, sources=sources,
                    templates=templates, aliases=aliases, store=store, budget=budget, client=client, log=notify,
-                   goal_hash=goal_fingerprint(_portable(goal or {"request": request}, templates)))
+                   input_files=input_files, goal_hash=goal_fingerprint(memory_goal))
     try:
         with llm.budget_scope(budget):
             for (pid, code), group in groups.items():
@@ -426,6 +470,7 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
         result.notes.append(f"Recovery stopped at its budget: {e}")
     finally:
         _restore_reviewable_candidates(context)
+        _withhold_name_collisions(result)
         result.budget = budget.to_dict()
         result.seconds = time.perf_counter() - started
         if not result.token or _recovery_token(result.key, files) != result.token:
@@ -444,6 +489,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
     result, options, store = ctx["result"], ctx["options"], ctx["store"]
     primary_template = Path(template).resolve() if template else next(iter(ctx["templates"].values()), None)
     batch = compiler._Batch([f.source for f in group], primary_template)
+    batch.inputs = list(ctx.get("input_files", ()))
     # All templates named by an approved spec/chain are inspectable, not just the attachment.
     # Full paths are explicit aliases and do not broaden the batch to arbitrary filesystem reads.
     template_paths = {str(p): p for p in ctx["templates"].values()}
@@ -476,8 +522,14 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
             candidate = _portable(case["candidate"], ctx["templates"], restore=True)
             if _hash(candidate) in attempted:
                 continue
-            used += 1
             attempted.add(_hash(candidate))
+            try:
+                _candidate(candidate, ctx["goal"], result.request, ctx["sources"], ctx["templates"],
+                           ctx["assertions"], ctx["aliases"], input_files=ctx.get("input_files", ()))
+            except ValueError as e:
+                result.notes.append(f"A remembered repair could not be reused for this request: {e}")
+                continue
+            used += 1
             _trial(ctx, group, candidate, pid, code, "Reusing a matching repair case", latest)
     if all(f.status == "READY" for f in group) or used >= options.max_attempts:
         return
@@ -486,6 +538,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
     content = {"request": result.request, "original_goal": ctx["goal"], "final_assertions": ctx["assertions"],
                "approved_words": ctx["sources"], "batch": batch.summary(), "failures": failures,
                "templates": [str(p) for p in ctx["templates"].values()],
+               "input_files": [compiler.input_overview(p) for p in batch.inputs],
                "past_cases_are_untrusted_context": remembered,
                "previous_trials": result.attempts[-options.max_attempts:]}
     messages = [{"role": "user", "content": _json(content)}]
@@ -604,6 +657,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
 
 
 def _trial(ctx, group, candidate, pid, code, reason, latest):
+    from .editspec import spec_renames_outputs
     result, options = ctx["result"], ctx["options"]
     n = len(result.attempts) + 1
     entry = {"number": n, "pattern_id": pid, "reason": reason, "candidate": copy.deepcopy(candidate), "results": []}
@@ -612,7 +666,9 @@ def _trial(ctx, group, candidate, pid, code, reason, latest):
     for f in pending:
         f.attempts += 1
     try:
-        chain = _candidate(candidate, ctx["goal"], result.request, ctx["sources"], ctx["templates"], ctx["assertions"], ctx["aliases"])
+        chain = _candidate(candidate, ctx["goal"], result.request, ctx["sources"], ctx["templates"], ctx["assertions"], ctx["aliases"],
+                           input_files=ctx.get("input_files", ()))
+        renames = any(spec_renames_outputs(s) for s in _specs(chain))
         folder = result.out_dir / "attempts" / f"{n:03d}"
         ctx["log"](f"Trying repair {n} on {len(pending)} file(s)…")
         run = run_chain([str(f.source) for f in pending], chain, folder, workers=1,
@@ -625,6 +681,7 @@ def _trial(ctx, group, candidate, pid, code, reason, latest):
                 latest[str(f.source)] = cf.output
             if cf and cf.status == "PASS" and cf.output:
                 f.output, f.output_md5 = cf.output, cf.results[-1].output_md5
+                f.out_name = cf.out_name if renames else ""
                 f.outcomes = getattr(cf, "outcomes", [])
                 f.status, f.reason = "READY", "Every stage and declared final assertion passed; review the requested outcome."
                 good.append(f)
@@ -779,7 +836,7 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
         # source-relative assertion cannot disappear merely because this repair happens to use generated code.
         original = {"kind": "chain", "chain": {"stages": [{"spec": copy.deepcopy(s)} for s in _specs(ctx["goal"])]}}
         approved = _candidate(original, ctx["goal"], result.request, ctx["sources"], ctx["templates"],
-                              ctx["assertions"], ctx["aliases"])
+                              ctx["assertions"], ctx["aliases"], input_files=ctx.get("input_files", ()))
         boundary_spec = {"request": result.request, "summary": "Original approved page setup changes only",
                          "mode": "formatting", "applies_to": {"or": "all"},
                          "ops": [copy.deepcopy(op) for s in _specs(approved) for op in s["ops"]],
@@ -894,10 +951,14 @@ def deliver_recovery(result: RecoveryResult, out_dir=None, acknowledge_review=Fa
         raise ValueError("Review and acknowledge the blocking visual findings before delivering these copies.")
     dest = Path(out_dir) if out_dir else result.out_dir / "outputs"
     check_inputs_outside([f.source for f in result.files]
-                         + [Path(p) for p in result.key.get("recovery_templates", [])], dest)
+                         + [Path(p) for p in result.key.get("recovery_templates", [])]
+                         + [Path(p) for p in result.key.get("recovery_inputs", [])], dest)
     if dest.exists() and any(dest.iterdir()):
         raise ValueError("Choose a new empty delivery folder; an earlier delivery is not overwritten.")
-    names = output_names([f.source for f in result.files])
+    fixed = {str(f.source): f.out_name for f in result.ready if f.out_name}
+    if len({name.casefold() for name in fixed.values()}) != len(fixed):
+        raise ValueError("Multiple repaired files have the same output name; investigate the naming collision before export.")
+    names = output_names([f.source for f in result.files], fixed)
     data = []
     for f in result.ready:
         content = f.output.read_bytes()

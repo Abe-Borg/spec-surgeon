@@ -456,8 +456,10 @@ def target_matches(pred, rpr, in_revision: bool, preserve: Set[str]) -> bool:
 # ---- the checks ------------------------------------------------------------------------------------
 
 class Ctx:
-    def __init__(self, src: VPackage, out: VPackage, plan: Dict[str, Any]):
+    def __init__(self, src: VPackage, out: VPackage, plan: Dict[str, Any], source_name: Optional[str] = None,
+                 output_name: Optional[str] = None):
         self.src, self.out, self.plan = src, out, plan
+        self.source_name, self.output_name = source_name, output_name      # file paths, as run_suite was given them
         self.src_tp, self.out_tp = src.text_parts(), out.text_parts()
         self.both = [p for p in self.src_tp if p in self.out_tp]
         self.views: Dict[str, Tuple[PartView, PartView]] = {}
@@ -489,6 +491,10 @@ class Ctx:
         self.deleted_src_blocks: Dict[str, Set[int]] = {}   # untracked deleted blocks verified by deleted_paragraphs
         self.inserted_out_blocks: Dict[str, Set[int]] = {}  # inserted output blocks verified by inserted_paragraphs
         self.strip_style_ppr: Dict[str, Set[str]] = {}      # style id → pPr children a properties assertion checked
+        # source block → output block of every paragraph an edit kind checked item by item (verify/edits.py): the
+        # residual leaves exactly those out, by this mapping, whatever the text alignment paired them with
+        self.verified_blocks: Dict[str, Dict[int, int]] = {}
+        self.masked_extents: Dict[str, Set[int]] = {}       # part → ordinals of the w:drawings whose sizes image_swaps checked
 
     def view(self, part):
         if part not in self.views:
@@ -1624,18 +1630,49 @@ def _ppr_without_mark_del(ppr):
     return c if (len(c) or c.attrib) else None
 
 
+_WP_EXTENT = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent"
+_PIC_EXT = ("{http://schemas.openxmlformats.org/drawingml/2006/main}graphic/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicData/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/picture}pic/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/picture}spPr/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}xfrm/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}ext")
+
+
+def mask_picture_sizes(drawing) -> None:
+    """Blank the two sizes of a picture (wp:extent and its pic:spPr a:xfrm/a:ext) — exactly what image_swaps checks."""
+    for frame in drawing:
+        if not isinstance(frame.tag, str):
+            continue
+        for e in [frame.find(_WP_EXTENT), frame.find(_PIC_EXT)]:
+            if e is not None:
+                e.set("cx", "masked")
+                e.set("cy", "masked")
+
+
 def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
     sv, ov = ctx.view(part)
     s_root = etree.fromstring(etree.tostring(sv.root))   # private copies: stripping must not disturb the views
     o_root = etree.fromstring(etree.tostring(ov.root))
+    masked = ctx.masked_extents.get(part, set())
+    if masked:                                         # the sizes image_swaps checked, by drawing ordinal (never moved)
+        for root in (s_root, o_root):
+            drawings = list(root.iter(W + "drawing"))
+            for k in masked:
+                if k < len(drawings):
+                    mask_picture_sizes(drawings[k])
     s, o = PartView(s_root), PartView(o_root)
     amap = ctx.maps[part]
-    tc = ctx.text_changed.get(part, set())
+    vb = ctx.verified_blocks.get(part, {})            # checked item by item by an edit kind (verify/edits.py)
+    tc = ctx.text_changed.get(part, set()) | set(vb)
     del_src = ctx.deleted_src_blocks.get(part, set())
     ins_out = ctx.inserted_out_blocks.get(part, set())
-    # predicted text changes: pPr identical, no new run-property signature, then out of the residual
+    out_of = lambda b: vb[b] if b in vb else amap.get(b)
+    # predicted text changes: pPr identical, no new run-property signature, then out of the residual (a block an edit
+    # kind checked item by item has had every character's properties compared already — a filled highlight slot's
+    # run legitimately has a signature the source block never had)
     for bi in sorted(tc):
-        if bi >= len(s.pars) or bi in del_src:
+        if bi >= len(s.pars) or bi in del_src or bi in vb:
             continue
         oi = amap.get(bi)
         if oi is not None:
@@ -1696,7 +1733,7 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
             if not inside and el.getparent() is not None:
                 el.getparent().remove(el)
     remove_blocks(s, tc | del_src)
-    remove_blocks(o, {amap[b] for b in tc if b in amap} | ins_out)
+    remove_blocks(o, {out_of(b) for b in tc if out_of(b) is not None} | ins_out)
     d = _residual_difference(s_root, o_root)
     if d:
         errs.append(f"{part}: unpredicted change {d}")
@@ -1731,8 +1768,9 @@ def _residual_styles(ctx: Ctx, errs: List[str]) -> None:
         errs.append(f"{ctx.styles_part}: unpredicted change {d}")
 
 
-def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any]) -> Tuple[bool, str, Dict[str, Any]]:
-    ctx = Ctx(src, out, plan)
+def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_name: Optional[str] = None,
+                     output_name: Optional[str] = None) -> Tuple[bool, str, Dict[str, Any]]:
+    ctx = Ctx(src, out, plan, source_name, output_name)
     errs: List[str] = []
     summaries: List[str] = []
     assertions = plan.get("property_assertions", []) or []
@@ -1760,7 +1798,12 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any]) -> Tupl
     return ok, summary, {"errors": errs[:50], "assertions": summaries, "residual_parts": residual_parts}
 
 
-# header/footer templating kinds live in verify/template.py (imported last: it uses the helpers above)
+# header/footer templating kinds live in verify/template.py, built-in batch 1's word-changing kinds in verify/textops.py
+# and its picture swap in verify/images.py (imported last: they use the helpers above)
 from .template import TEMPLATE_KINDS  # noqa: E402
+from .textops import TEXT_OP_KINDS  # noqa: E402
+from .images import IMAGE_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
+KINDS.update(TEXT_OP_KINDS)
+KINDS.update(IMAGE_KINDS)

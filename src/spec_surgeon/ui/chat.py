@@ -6,8 +6,9 @@ instances show the same transcript: one on the Describe step, a compact one unde
 rebuilt every turn, so they are never put in the window's static ``job_buttons``; ``set_busy`` disables them.
 A choice that carries exact words shows them, one line each, built here from the choice's ``words`` (never from
 Claude's label), with "choosing approves these exact words": picking it is how wording Claude suggests — or the words
-one of your recipes places — becomes approved. A library choice's button reads "Use it" (a recipe) or "Try it" (one
-of your operations, tried on the sample files first).
+one of your recipes places — becomes approved. A library choice's button reads "Use it" (a recipe), "Try it" (one
+of your operations, tried on the sample files first) or "Insert it" (one of your snippets: the pick is a reply, and
+Claude writes where it goes).
 """
 from __future__ import annotations
 
@@ -165,8 +166,8 @@ class ChatView(Card):
             text += f"\nExact words: «{w}» — choosing approves these exact words for your documents."
         lab = _plain(text, selectable=True)
         h.addWidget(lab, 1)
-        b = QPushButton({"custom_transform": "Do this", "recipe": "Use it", "operation": "Try it"}.get(c.get("kind"),
-                                                                                                        "Choose"))
+        b = QPushButton({"custom_transform": "Do this", "recipe": "Use it", "operation": "Try it",
+                         "snippet": "Insert it"}.get(c.get("kind"), "Choose"))
         b.setProperty("choice_id", c.get("id"))
         detail = c.get("detail") or ""        # Claude's words: a tooltip renders what looks like markup as rich text,
         b.setToolTip(f"<p style='white-space:pre-wrap'>{html.escape(detail)}</p>" if detail else "")   # so escape it

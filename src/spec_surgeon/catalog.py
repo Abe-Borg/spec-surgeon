@@ -63,6 +63,74 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "tracked insertion unless untracked was requested",
     ],
     "fix_page_numbering": ["body page numbering restarts at 1 after the cover"],
+    "replace_table": [
+        "every replacement is exactly the user's wording; all pairs are found at once in the original text (two words "
+        "can swap), whole words and exact case unless the user says otherwise",
+        "the body, headers and footers are searched; text inside fields, text boxes and pending deletions is never "
+        "changed — an occurrence there (or split by a tab or line break) sets the file aside rather than being skipped",
+        "tracked unless the user asked for clean copies; a file with none of the words is set aside unless "
+        "allow_missing (say which)",
+    ],
+    "set_issue_stamp": [
+        "the stamp is found wherever it sits — the cover, a header or a footer — by its current wording (the pattern or "
+        "phrases); every occurrence becomes the user's new wording exactly",
+        "a file without the stamp is set aside unless allow_missing; tracked unless the user asked for clean copies",
+    ],
+    "fill_variables": [
+        "placeholders are the {{NAME}} markers and the yellow-highlighted text; each gets its value from the typed "
+        "values or the user's table (the named site/project column) — never invented",
+        "a placeholder with no value sets the file aside unless 'leave' was asked; highlights go from filled text",
+        "tracked unless the user asked for clean copies (a master turned into a site set usually is untracked)",
+    ],
+    "filter_tagged_paragraphs": [
+        "the tag is found by the stated pattern (fitted to how these files mark systems — check the samples); untagged "
+        "paragraphs always stay",
+        "a paragraph tagged for several systems ('WET/DRY') stays while one of its systems stays; the tag is taken off the "
+        "paragraphs that stay unless asked to keep it",
+        "a tagged paragraph carrying a section break, a field or a text box sets the file aside; tracked deletion (the "
+        "default) also refuses one holding pending revisions or a hyperlink",
+        "only tagged paragraphs are deleted — the untagged paragraphs of a system's article are not (delete those with "
+        "delete_paragraphs and a between_paragraphs selector)",
+    ],
+    "ensure_end_of_section": [
+        "the number is each file's own, read by the stated rule (the SECTION title line, or the footer) — never typed",
+        "a last line that reads otherwise (another number, other capitals) is replaced by the user's line; a missing one "
+        "is added after the last content — with the file's own end-line style when it has one, or the title line's "
+        "formatting, else plain",
+        "an END OF SECTION line with content after it sets the file aside",
+        "tracked unless the user asked for clean copies",
+    ],
+    "resolve_options": [
+        "an option group is [option] [option] … separated by spaces; for each group the first rule that matches one of "
+        "its options decides; groups no rule matches stay as they are",
+        "'pick' keeps the one matching option's own words and removes the brackets and the other options — nothing is "
+        "retyped; 'drop' removes matching options (a whole optional [text] with its space)",
+        "a nested group, a group shown by a field, or a pick that matches two options sets the file aside",
+        "tracked unless the user asked for clean copies",
+    ],
+    "name_output": [
+        "each part of the name is read from the file itself by the stated rule (the SECTION title line, a header or a "
+        "footer) — never typed; fixed words and separators are in the pattern",
+        "the document is not changed; only the edited copy gets the new name, so this never runs in place",
+        "a transform (digits, upper, lower, title) changes only the file name, never the document",
+        "two files that would get the same name, or a name Windows cannot hold, set the file(s) aside",
+    ],
+    "swap_image": [
+        "the old logo is found by its picture file (its bytes), its md5, its name/alt text, or every picture in scope — "
+        "say which; the headers by default",
+        "'contain' (default) keeps the new logo's proportions inside the old picture's box, top-left; 'stretch' fills "
+        "the box exactly",
+        "the old picture's alt text stays as it was (flagged); a linked, SVG, cropped or turned picture sets the file "
+        "aside, and so does a file without a matching picture unless allow_missing",
+    ],
+    "make_values_agree": [
+        "the place the user picked is the truth; a place whose value has the same letters and digits (any case or "
+        "spacing: '211319' and '21 13 19') already agrees and is left as it is — nothing is converted",
+        "a value that disagrees is replaced by the truth's text exactly as the truth writes it; a disagreeing file name "
+        "gives the edited copy the corrected name (never in place)",
+        "a truth shown two different ways in one file, or a required place that is missing, sets the file aside",
+        "tracked unless the user asked for clean copies",
+    ],
     "apply_header_footer_template": [
         "template slots are the yellow-highlighted placeholders and the {{NAME}} placeholders",
         "each fill is extracted from each document by a stated rule (or fallback rule chain), never typed",

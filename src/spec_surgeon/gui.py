@@ -523,6 +523,22 @@ class Session:
         from .library import load_recipe
         return self.load_spec(load_recipe(name))
 
+    def use_snippet(self, name: str, anchor: str, position: str = "after", tracked: bool = True) -> Dict[str, Any]:
+        """One of your snippets as the outcome (Your library…): the ``insert_paragraph`` spec ``library.snippet_spec``
+        builds — its text exactly as saved, ``position`` the body paragraph whose text matches ``anchor``, in every file
+        that has one, at most once per file. Like a loaded recipe it ends the conversation; Preview shows it."""
+        from .library import load_snippet, snippet_spec
+        item, sn = load_snippet(name)
+        spec = snippet_spec(item.name, sn, anchor, position, tracked)
+        self._set_outcome(spec=spec, source=f"your snippet {item.name!r}")
+        self.end_conversation()
+        return spec
+
+    def new_snippet(self, name: str, text: str, description: str = "", replace: bool = False):
+        """Save a typed paragraph as a snippet (Your library… → New snippet…)."""
+        from .library import save_snippet
+        return save_snippet(name, text, description=description, replace=replace)
+
     # ---- chains: several recipes, one after another (chain.py) ----
     def load_chain(self, name: str) -> Dict[str, Any]:
         """One of your saved chains (Your library…) as the outcome: its stages' specs as saved, previewed and run

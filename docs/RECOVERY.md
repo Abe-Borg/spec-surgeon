@@ -67,6 +67,11 @@ limits; its defaults are 8,000 output tokens per call and 500,000 total tokens.
 under `outputs/`; intermediate trials and their verification records stay in the investigation
 folder. Reusing a nonempty delivery folder is refused.
 
+Recovery preserves filenames assigned by naming operations. If separate problem groups would
+produce the same explicit filename, those files remain unresolved instead of overwriting each
+other. Tables and images listed beside the documents, or named by the approved goal, are
+inspectable inputs whose contents are pinned before investigation and rechecked at export.
+
 ## What a repair may change
 
 For an existing EditSpec or chain, recovery preserves the approved operation effects, target

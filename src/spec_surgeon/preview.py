@@ -46,26 +46,28 @@ from .planner import BatchPlan, plan_batch
 
 
 def key_templates(key: Any) -> List[Path]:
-    """The template files an approval key reads: a spec's (``editspec.spec_templates``), or — a chain key
-    (``chain.chain_key``: ``{"stages": [{"name", "spec"}, …]}``) — those of every stage, once each. A template edited
-    after the preview voids the approval whichever stage reads it (CLAUDE.md rule 12)."""
-    from .editspec import spec_templates
+    """The files an approval key reads beside the documents: a spec's templates, tables and pictures
+    (``editspec.spec_input_files``), or — a chain key (``chain.chain_key``: ``{"stages": [{"name", "spec"}, …]}``) —
+    those of every stage, once each. A file edited after the preview voids the approval whichever stage reads it
+    (CLAUDE.md rule 12)."""
+    from .editspec import spec_input_files
     if not isinstance(key, dict):
         return []
     if isinstance(key.get("stages"), list) and "ops" not in key:
         out: List[Path] = []
         for st in key["stages"]:
-            for t in spec_templates((st or {}).get("spec") or {}) if isinstance(st, dict) else []:
+            for t in spec_input_files((st or {}).get("spec") or {}) if isinstance(st, dict) else []:
                 if t not in out:
                     out.append(t)
         return out
-    return spec_templates(key)
+    return spec_input_files(key)
 
 
 def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, Any]:
     """What the approval token is a hash of, as data: the spec's digest, every planned file's size and mtime, and every
-    template's size, mtime and md5 — kept beside the preview so a refused run can say exactly what changed. ``spec`` may
-    be a chain key (``chain.chain_key``): then the templates are every stage's."""
+    file the spec reads beside the documents — templates, tables, pictures (``key_templates``) — its size, mtime and md5,
+    kept beside the preview so a refused run can say exactly what changed. ``spec`` may be a chain key
+    (``chain.chain_key``): then the files are every stage's."""
     spec_text = json.dumps(spec, sort_keys=True, ensure_ascii=False)
     out: Dict[str, Any] = {"spec": hashlib.sha256(spec_text.encode("utf-8")).hexdigest()[:16], "files": {},
                            "templates": {}}
@@ -85,10 +87,11 @@ def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, An
 
 
 def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
-    """A hash of the spec, of every planned file's path, size and mtime, and of every template file the spec reads
-    (path, size, mtime and content hash): the template is an input like the source (CLAUDE.md rule 12), so a
-    template edited after the preview voids the approval exactly as an edited spec file does. ``spec`` may be a chain
-    key (``chain.chain_key``): every stage's templates count."""
+    """A hash of the spec, of every planned file's path, size and mtime, and of every file the spec reads beside the
+    documents — templates, tables, pictures (``key_templates`` → ``editspec.spec_input_files``: path, size, mtime and
+    content hash): they are inputs like the source (CLAUDE.md rule 12), so one edited after the preview voids the
+    approval exactly as an edited spec file does. A spec with templates only hashes exactly as before. ``spec`` may be
+    a chain key (``chain.chain_key``): every stage's files count."""
     h = hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8"))
     for f in sorted(Path(x).resolve() for x in files):
         st = f.stat()
@@ -157,7 +160,8 @@ def explain_approval_change(before: Dict[str, Any], now: Dict[str, Any], limit: 
     for t in sorted(set(bt) | set(nt)):
         a, b = bt.get(t), nt.get(t)
         if a != b:
-            out.append(f"template {Path(t).name}: " + ("missing now" if b == "missing" or b is None else
+            what = "template" if Path(t).suffix.lower() == ".docx" else "input file"
+            out.append(f"{what} {Path(t).name}: " + ("missing now" if b == "missing" or b is None else
                                                        f"changed since {since}" if a not in (None, "missing")
                                                        else "new"))
     if len(out) > limit:

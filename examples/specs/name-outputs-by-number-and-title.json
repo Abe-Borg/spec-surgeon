@@ -1,0 +1,35 @@
+{
+  "request": "Name the files like 211319 - Preaction Sprinkler Systems.docx from their own number and title",
+  "summary": "Each edited copy is named '<number digits> - <title in title case>.docx', both read from the file's SECTION title line; the documents themselves do not change.",
+  "assumptions": [
+    "number and title come from the title line 'SECTION 21 13 19 - PREACTION SPRINKLER SYSTEMS'",
+    "copies only: the files are never renamed in place; two files that would share a name are set aside"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "name_output",
+      "params": {
+        "pattern": "{number} - {title}",
+        "values": {
+          "number": {
+            "rule": "regex",
+            "pattern": "^SECTION\\s+(\\d{2}\\s?\\d{2}\\s?\\d{2})\\b"
+          },
+          "title": {
+            "rule": "regex",
+            "pattern": "^SECTION\\s+\\d{2}\\s?\\d{2}\\s?\\d{2}\\s*[-–—]\\s*(.+)$"
+          }
+        },
+        "transforms": {
+          "number": "digits",
+          "title": "title"
+        }
+      }
+    }
+  ]
+}

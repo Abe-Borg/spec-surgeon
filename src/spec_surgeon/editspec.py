@@ -127,9 +127,38 @@ def _matches_expect_val(actual_val: int, exp_val: Any) -> bool:
     return False
 
 
+# Files an op reads beside the documents, besides any op's ``template`` (built-in batch 1): (op, keys into params).
+# They are inputs like the source (CLAUDE.md rule 12): pinned by md5 in the plan, hashed by the approval token,
+# resolved against a spec file's folder, stored absolute in a recipe.
+INPUT_FILE_PARAMS: Dict[str, List[Tuple[str, ...]]] = {
+    "fill_variables": [("table", "file")],
+    "replace_table": [("pairs_table", "file")],
+    "swap_image": [("image",), ("match", "image")],
+}
+
+
+def input_slots(o: Any) -> List[Tuple[Dict[str, Any], str]]:
+    """(the dict, its key) of every input-file path one op's params hold: its ``template``, and the
+    ``INPUT_FILE_PARAMS`` of its kind."""
+    params = o.get("params") if isinstance(o, dict) else None
+    if not isinstance(params, dict):
+        return []
+    out: List[Tuple[Dict[str, Any], str]] = []
+    if isinstance(params.get("template"), str):
+        out.append((params, "template"))
+    for keys in INPUT_FILE_PARAMS.get(o.get("op"), []):
+        d: Any = params
+        for k in keys[:-1]:
+            d = d.get(k) if isinstance(d, dict) else None
+        if isinstance(d, dict) and isinstance(d.get(keys[-1]), str) and d[keys[-1]].strip():
+            out.append((d, keys[-1]))
+    return out
+
+
 def load_spec(source: Union[str, Path, Dict[str, Any]]) -> Dict[str, Any]:
-    """A spec from a dict, inline JSON or a file. From a file, relative ``template`` paths in op params are
-    resolved against the spec file's folder (so a spec and its template travel together)."""
+    """A spec from a dict, inline JSON or a file. From a file, relative input-file paths in op params (a ``template``,
+    a table, a picture: ``input_slots``) are resolved against the spec file's folder (so a spec and its files travel
+    together)."""
     if isinstance(source, dict):
         return source
     text = str(source)
@@ -138,9 +167,9 @@ def load_spec(source: Union[str, Path, Dict[str, Any]]) -> Dict[str, Any]:
     path = Path(text)
     spec = json.loads(path.read_text(encoding="utf-8"))
     for o in spec.get("ops", []) if isinstance(spec, dict) else []:
-        params = o.get("params") if isinstance(o, dict) else None
-        if isinstance(params, dict) and isinstance(params.get("template"), str) and not Path(params["template"]).is_absolute():
-            params["template"] = str((path.parent / params["template"]).resolve())
+        for d, k in input_slots(o):
+            if not Path(d[k]).is_absolute():
+                d[k] = str((path.parent / d[k]).resolve())
     return spec
 
 
@@ -148,6 +177,18 @@ def spec_templates(spec: Dict[str, Any]) -> List[Path]:
     """Template files an EditSpec reads (never edited, never in the batch)."""
     return [Path(o["params"]["template"]).resolve() for o in spec.get("ops", [])
             if isinstance(o.get("params"), dict) and isinstance(o["params"].get("template"), str)]
+
+
+def spec_input_files(spec: Dict[str, Any]) -> List[Path]:
+    """Every file an EditSpec reads beside the documents — templates, tables, pictures (``input_slots``) — in spec
+    order, each once. What the approval token hashes (rule 12)."""
+    out: List[Path] = []
+    for o in (spec or {}).get("ops", []) if isinstance(spec, dict) else []:
+        for d, k in input_slots(o):
+            p = Path(d[k]).resolve()
+            if p not in out:
+                out.append(p)
+    return out
 
 
 def is_template_file(path: Path, templates: List[Path]) -> bool:
@@ -283,6 +324,33 @@ def _op_params(o: Dict[str, Any]) -> Dict[str, Any]:
     if "tracked" in o:
         params["tracked"] = o["tracked"]
     return params
+
+
+op_params = _op_params                        # what an op's plan() receives (``tracked`` folded in) — batch.planned_names
+
+NAMING_OPS = ("name_output", "make_values_agree")
+
+
+def naming_op(spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The spec's op that can name the output files: name_output, or make_values_agree with the file name among its
+    places and not its truth (only then can it rename)."""
+    for o in (spec or {}).get("ops") or []:
+        if not isinstance(o, dict):
+            continue
+        if o.get("op") == "name_output":
+            return o
+        if o.get("op") == "make_values_agree":
+            params = o.get("params") or {}
+            places = params.get("places") if isinstance(params.get("places"), dict) else {}
+            if any(isinstance(v, dict) and v.get("in") == "filename" and k != params.get("truth")
+                   for k, v in places.items()):
+                return o
+    return None
+
+
+def spec_renames_outputs(spec: Dict[str, Any]) -> bool:
+    """True when the spec may give an output another name than its source — then it delivers copies only."""
+    return naming_op(spec) is not None
 
 
 def _check_expect(i: int, o: Dict[str, Any], frag: PlanFragment, plan_notes: List[str]) -> None:

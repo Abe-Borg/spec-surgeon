@@ -303,7 +303,11 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
         b_before = blocks(src_xml[part]) if part in src_xml else []
         b_after = blocks(out_xml[part]) if part in out_xml else []
         n_blocks += len(b_before)
-        for ch in diff_blocks(b_before, b_after):
+        mine = [d for d in plan.get("diffs", []) if d.get("part") == part and isinstance(d.get("block_index"), int)
+                and not isinstance(d.get("block_index"), bool)]
+        deleted_hint = {d["block_index"] for d in mine if d.get("before") is not None and d.get("after") is None}
+        inserted_hint = {d["block_index"] for d in mine if d.get("before") is None and d.get("after") is not None}
+        for ch in diff_blocks(b_before, b_after, deleted_hint, inserted_hint):
             if ch.before != ch.after:
                 actual_text_changes.append({"part": part, "before": ch.before, "after": ch.after,
                                             "before_index": ch.before_index, "after_index": ch.after_index})
@@ -513,7 +517,7 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
 
     # V10 — property assertions + residual identity (verify/props.py)
     try:
-        ok10, summary10, data10 = check_properties(src, out, plan)
+        ok10, summary10, data10 = check_properties(src, out, plan, source_name, output_name)
     except Exception as e:  # a check that cannot run is a failure, never a skip
         ok10, summary10, data10 = False, f"could not evaluate: {type(e).__name__}: {e}", {}
     rec.set(CheckResult("V10", "Property assertions", "PASS" if ok10 else "FAIL", summary10, data10))
