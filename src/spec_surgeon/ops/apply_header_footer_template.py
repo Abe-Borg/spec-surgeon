@@ -42,7 +42,7 @@ from ..ooxml import (PPR_ORDER, RPR_ORDER, SECTPR_ORDER, block_full_text, count_
                      insert_in_order, mark_rpr, paragraph_ppr, paragraphs, run_rpr, set_rfonts)
 from . import register
 from .base import BlockDiff, JobException, Op, PlanFragment
-from .effective import AmbiguousToggle, Resolver, rescale_tabs, text_width, theme_fonts
+from .effective import AmbiguousToggle, Resolver, rescale_tabs, text_width, theme_fonts, theme_part
 from .hf_common import (FOOTER_CT, HEADER_CT, KINDS, TYPES, apply_removal, check_part_relationships, effective_refs,
                         plan_removal, refs)
 from .selectors import StyleSheet
@@ -524,6 +524,19 @@ class ApplyHeaderFooterTemplate(Op):
         frag.touches += [(m, "*", "remove") for m in frag.members_removed] + [(m, "*", "add") for m in members_added]
         frag.touches += [(pkg.rels_path_for(main), "*", "rels"), (CT_PART, "*", "ct")]
         frag.touches += [(styles_part, f"style:{sid}", "add") for sid in imported]
+        # What the plan READS from the target (rule 9: a change of it by another op in this spec is a plan-time
+        # conflict, never a V10 failure after apply): the pins are the diff of template-effective vs TARGET-effective
+        # properties, resolved over the target's whole styles part (every chain, docDefaults) and theme; every copy's
+        # tab rescale and the table-width flag read the section's text width (pgSz, pgMar), the distance alignment
+        # its pgMar, and hf_template_refs predicts every section's titlePg. The op's own changes of these targets
+        # (titlePg, pgMar where they follow the template; imported styles) are not conflicts with its own reads.
+        frag.touches += [(main, f"sectPr:{i}", f"verify:{fam}") for i in range(len(secs))
+                         for fam in ("pgSz", "pgMar", "titlePg")]
+        if styles_part is not None:
+            frag.touches.append((styles_part, "*", "verify"))
+        theme = theme_part(pkg)
+        if theme is not None:
+            frag.touches.append((theme, "*", "verify"))
         part_name = lambda idx: copies[idx]["part"]
         frag.property_assertions.append({
             "kind": "hf_template_refs", "kinds": kinds,
