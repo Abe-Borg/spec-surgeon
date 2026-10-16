@@ -591,7 +591,12 @@ tells you every other place that must follow.
   The container has no `py` launcher: use `python3`. `pip install -e ".[dev,gui]"` first (pytest is not
   preinstalled). Qt needs `apt-get install -y libegl1 libopengl0` in the container; run the suite with
   `QT_QPA_PLATFORM=offscreen` (no Xvfb needed). Qt tests skip when Qt can't load unless `SPEC_SURGEON_REQUIRE_QT=1`
-  (CI sets it — a broken Qt install must fail, not skip). `python3 packaging/gui_screenshot.py` regenerates
+  (CI sets it — a broken Qt install must fail, not skip). Every Qt fixture tears its windows down with
+  `tests/qt_support.close_windows` (close, the deferred deletes delivered, `gc.collect()` — all on the GUI thread): a
+  window left for a later garbage collection was destroyed on a batch's pool thread in an unrelated test
+  (`QObject::killTimer: Timers cannot be stopped from another thread`) and segfaulted the whole run, at a spot that
+  moved with allocation timing (2026-10-16: a new test module made it land in `test_editspec`'s perf test every time).
+  Never go back to a bare `w.close()` in a fixture. `python3 packaging/gui_screenshot.py` regenerates
   `docs/gui-files.png` / `docs/gui.png` / `docs/gui-results.png` (`--chat`: `docs/gui-chat.png`, scripted client;
   `SPEC_SURGEON_THEME=dark` + `SPEC_SURGEON_SCREENSHOT_SUFFIX=-dark` for the dark look) — run it with `PYTHONPATH=src`
   in a worktree (the editable install points at the main checkout); look at screenshots before changing layout. A grab
