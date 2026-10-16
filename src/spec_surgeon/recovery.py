@@ -22,6 +22,7 @@ from .batch import check_inputs_outside, load_set_aside, output_names
 from .chain import chain_key, chain_templates, run_chain, validate_chain
 from .editspec import is_template_file, spec_input_files, spec_templates, validate_spec
 from .fingerprint import fingerprint
+from .ops.selectors import DEFAULT_PRESERVE_FONTS
 from .package import DocxPackage
 from .preview import SampleView, approval_inputs, approval_token, render_samples
 
@@ -264,23 +265,43 @@ def _effect(op):
     return _json(out)
 
 
-def _goals(goal):
-    """Preserve existing explicit assertions. Only exact supported final checks are inferred;
-    source-relative font exceptions remain a visible review requirement.
+def _final_stage_assertion(assertion):
+    """Translate only contracts that the independent final checker can prove.
+
+    EditSpec font assertions default to preserving symbol fonts. Those exceptions
+    require the original document, which the output-only final checker cannot use.
     """
+    allowed = {"kind", "value", "size", "scope", "slots", "include_paragraph_marks", "preserve_fonts"}
+    unsupported = ("an original source-relative assertion cannot yet be checked independently at the end "
+                   "of recovery; it cannot be dropped. This repair needs a supported final contract.")
+    if assertion.get("kind") != "effective_font" or set(assertion) - allowed:
+        raise ValueError(unsupported)
+    if "size" in assertion:
+        # V10 exempts runs holding w:sym from size checks even without preserved font names.
+        raise ValueError(unsupported + " EditSpec font-size assertions also exempt symbol runs.")
+    preservation = assertion.get("preserve_fonts", DEFAULT_PRESERVE_FONTS)
+    if not isinstance(preservation, list) or preservation:
+        raise ValueError(unsupported + " Font assertions preserve symbol fonts by default when preserve_fonts is omitted.")
+    final = copy.deepcopy(assertion)
+    final.pop("preserve_fonts", None)
+    if "value" in final:
+        final.setdefault("slots", ["ascii", "hAnsi", "cs"])
+    final.setdefault("include_paragraph_marks", True)
+    final.setdefault("scope", ["document"])
+    final["allow_absent_scopes"] = True
+    return final
+
+
+def _goals(goal):
+    """Preserve explicit final assertions and infer only supported final checks."""
     assertions = copy.deepcopy(goal.get("assertions", [])) if "stages" in goal else []
     notes = []
     for spec in _specs(goal):
         for a in spec.get("assertions", []):
-            if a.get("kind") == "effective_font":
-                if a.get("preserve_fonts"):
-                    notes.append("Font preservation exceptions need review; no universal final-font assertion was inferred.")
-                    continue
-                allowed = {"kind", "value", "size", "scope", "slots", "include_paragraph_marks"}
-                if set(a) <= allowed:
-                    assertions.append({**copy.deepcopy(a), "allow_absent_scopes": True})
-                else:
-                    notes.append("A source-relative font requirement remains covered by stage verification and final review.")
+            try:
+                assertions.append(_final_stage_assertion(a))
+            except ValueError as exc:
+                notes.append(str(exc))
         for op in spec.get("ops", []):
             if op.get("op") == "set_page_setup":
                 params = op.get("params") or {}
@@ -313,10 +334,7 @@ def _candidate(candidate, goal, request, sources, templates, assertions, aliases
         raise ValueError("a recovery chain may have at most 12 stages")
     for original in _specs(goal):
         for assertion in original.get("assertions", []):
-            allowed = {"kind", "value", "size", "scope", "slots", "include_paragraph_marks"}
-            if assertion.get("kind") != "effective_font" or set(assertion) - allowed:
-                raise ValueError("an original source-relative assertion cannot yet be checked independently at the end "
-                                 "of recovery; it cannot be dropped. This repair needs a supported final contract.")
+            _final_stage_assertion(assertion)
     supplied = chain.get("assertions")
     if supplied is not None and supplied != assertions:
         raise ValueError("final requirements are pinned; a repair cannot change them")
@@ -660,7 +678,9 @@ def _trial(ctx, group, candidate, pid, code, reason, latest):
     from .editspec import spec_renames_outputs
     result, options = ctx["result"], ctx["options"]
     n = len(result.attempts) + 1
-    entry = {"number": n, "pattern_id": pid, "reason": reason, "candidate": copy.deepcopy(candidate), "results": []}
+    entry = {"number": n, "pattern_id": pid, "reason": reason, "candidate": copy.deepcopy(candidate), "results": [],
+             "visual_review": {"skipped": "No independently verified output was available for visual review.",
+                               "findings": []}}
     result.attempts.append(entry)
     pending = [f for f in group if f.status != "READY"]
     for f in pending:
@@ -687,22 +707,27 @@ def _trial(ctx, group, candidate, pid, code, reason, latest):
                 good.append(f)
             else:
                 f.reason = cf.reason if cf else "No result was produced for this file."
-            entry["results"].append(f.to_dict())
-        _review(ctx, good, folder)
+        review = _review(ctx, good, folder)
+        if review is not None:
+            entry["visual_review"] = copy.deepcopy(review.to_dict())
     except llm.BudgetExceeded:
         raise
     except Exception as e:
         entry["error"] = f"{type(e).__name__}: {e}"
         for f in pending:
             f.status, f.reason, f.output, f.output_md5 = "UNRESOLVED", entry["error"], None, ""
-        entry["results"] = [f.to_dict() for f in pending]
+    entry["results"] = [f.to_dict() for f in pending]
     _remember(ctx, group, candidate, pid, code, entry)
     return {"attempt": n, "files": [f.to_dict() for f in pending],
-            "error": entry.get("error"), "visual_review": result.review.to_dict() if result.review else None,
+            "error": entry.get("error"), "visual_review": entry["visual_review"],
             "remaining_attempts": options.max_attempts - max(f.attempts for f in group)}
 
 
 def _review(ctx, good, folder):
+    """Review this trial's verified outputs and return only that evidence.
+
+    The accumulated result review is for the batch UI; it is never evidence for a different repair case.
+    """
     if not good:
         return
     from . import vision
@@ -750,6 +775,7 @@ def _review(ctx, good, folder):
                 parked[str(f.source)] = (f.output, f.output_md5, f.attempts)
         result.notes.append("Blocking visual findings require correction or explicit review before delivery.")
     vision.save_review(rv, folder / "preview")
+    return rv
 
 
 def _restore_reviewable_candidates(ctx):
@@ -795,7 +821,7 @@ def _remember(ctx, group, candidate, pid, code, entry):
         case = store.record({"request": result.request, "pattern_id": pid, "failure_code": code,
                              "candidate": _portable(_canonical_templates(candidate, ctx["aliases"]), ctx["templates"]),
                              "status": "success" if good else "failed", "structural_verified": bool(good),
-                             "visual_review": result.review.to_dict() if result.review else {"skipped": "not reviewed"},
+                             "visual_review": copy.deepcopy(entry.get("visual_review") or {"skipped": "not reviewed"}),
                              "template_hashes": sorted(ctx["templates"]), "goal_fingerprint": ctx["goal_hash"],
                              "app_version": __version__, "usage": ctx["budget"].to_dict(),
                              "notes": entry.get("error") or "; ".join(f.reason for f in group)})
@@ -826,7 +852,9 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
     n = len(result.attempts) + 1
     folder = result.out_dir / "attempts" / f"{n:03d}"
     entry = {"number": n, "pattern_id": pid, "reason": proposal,
-             "candidate": {"kind": "generated", "proposal": proposal}, "results": []}
+             "candidate": {"kind": "generated", "proposal": proposal}, "results": [],
+             "visual_review": {"skipped": "No independently verified output was available for visual review.",
+                               "findings": []}}
     result.attempts.append(entry)
     for f in pending:
         f.attempts += 1
@@ -904,7 +932,9 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
                         good.append(f)
                     else:
                         f.reason = "Custom formatting did not satisfy the original final requirements."
-                _review(ctx, good, folder)
+                review = _review(ctx, good, folder)
+                if review is not None:
+                    entry["visual_review"] = copy.deepcopy(review.to_dict())
     except llm.BudgetExceeded as e:
         entry["error"] = f"{type(e).__name__}: {e}"
         for f in pending:

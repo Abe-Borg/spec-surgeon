@@ -26,7 +26,9 @@ def _recover(tmp_path, goal):
 
 def test_stage_font_assertion_optional_scopes_remain_a_real_final_check(tmp_path):
     goal = _font("Courier New")
-    goal["assertions"] = [_require_font("Courier New", scope=["document", "headers", "footers", "footnotes", "endnotes"])]
+    # This is a universal final requirement, explicitly without symbol-font exceptions.
+    goal["assertions"] = [_require_font("Courier New", preserve_fonts=[],
+                                        scope=["document", "headers", "footers", "footnotes", "endnotes"])]
     result = _recover(tmp_path, goal)
     assert result.ready, result.to_text()
     assert result.key["assertions"][0]["allow_absent_scopes"] is True
