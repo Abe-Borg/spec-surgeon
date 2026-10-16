@@ -490,8 +490,13 @@ def expected_block_text(p, slots: Sequence[Slot], fills: Dict[str, str]) -> str:
 # ---- fills -------------------------------------------------------------------------------------------
 
 def _source_paragraphs(pkg: DocxPackage, source: str, section: Optional[int]) -> List[Any]:
+    return [p for part in _source_parts(pkg, source, section) for p in paragraphs(pkg.xml(part))]
+
+
+def _source_parts(pkg: DocxPackage, source: str, section: Optional[int]) -> List[str]:
+    """The parts a fill rule's ``source`` reads, in order (their paragraphs, in this order, are what it searches)."""
     if source == "document":
-        return paragraphs(pkg.xml(pkg.main_part()))
+        return [pkg.main_part()]
     kind, _, typ = source.partition(".")
     if kind not in KINDS or typ not in TYPES:
         raise JobException(f"fill source must be 'document' or '<header|footer>.<default|first|even>', got {source!r}",
@@ -508,7 +513,43 @@ def _source_paragraphs(pkg: DocxPackage, source: str, section: Optional[int]) ->
     if not parts:
         raise JobException(f"the document has no {typ} {kind} to extract a fill from", "not-found",
                            {"source": source})
-    return [p for part in parts for p in paragraphs(pkg.xml(part))]
+    return parts
+
+
+def fill_reads(pkg: DocxPackage, rule: Dict[str, Any]) -> List[Tuple[str, int]]:
+    """(part, block index) of every paragraph a fill rule takes its value from — what an op extracting with it READS
+    from the source (CLAUDE.md rule 9: declared as ``(part, block, "verify:text")``, so another op changing that text
+    in the same spec is a plan-time conflict, never a value the output no longer shows). ``regex``: the paragraphs it
+    matches (as written or whitespace-normalised); ``paragraph_after``: each anchor and the paragraphs after it up to and
+    including the first non-blank one; ``first_match``: every sub-rule's; ``literal``: none. A rule that cannot be
+    resolved reads nothing here (its extraction raised already)."""
+    if not isinstance(rule, dict):
+        return []
+    if rule.get("rule") == "first_match" or ("rules" in rule and rule.get("rule") in (None, "first_match")):
+        out: List[Tuple[str, int]] = []
+        for sub in rule.get("rules") or []:
+            out += [r for r in fill_reads(pkg, sub) if r not in out]
+        return out
+    kind = rule.get("rule")
+    if kind not in ("regex", "paragraph_after"):
+        return []
+    try:
+        rx = re.compile(rule["pattern"] if kind == "regex" else rule["anchor_regex"])
+        parts = _source_parts(pkg, rule.get("source", "document"), rule.get("section"))
+    except (JobException, KeyError, re.error):
+        return []
+    out = []
+    for part in parts:
+        texts = [display_text(p) for p in paragraphs(pkg.xml(part))]
+        hits = [i for i, t in enumerate(texts) if rx.search(t) or rx.search(_norm_ws(t).strip())]
+        for h in hits:
+            out.append((part, h))
+            if kind == "paragraph_after":
+                for j in range(h + 1, len(texts)):
+                    out.append((part, j))
+                    if texts[j].strip():
+                        break
+    return list(dict.fromkeys(out))
 
 
 def rule_uses_literal(rule: Dict[str, Any]) -> bool:

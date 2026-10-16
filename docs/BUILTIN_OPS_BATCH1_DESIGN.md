@@ -1,7 +1,7 @@
 # Built-in operations, batch 1 — design note
 
 2026-10-16. Abraham's request: ten prebuilt operations, the first batch of several ("let's do it in manageable chunks").
-Status: **built** on branch `claude/bold-cori-xrt4yw` — all ten items, with their tests (931 in the suite) — decisions below
+Status: **built** on branch `claude/bold-cori-xrt4yw` — all ten items, with their tests (963 in the suite once merged with master) — decisions below
 were taken on Abraham's behalf, as in earlier rounds, and can each be changed. Reading order: CLAUDE.md hard rules 1–4, 8–13, the "Block-text definition", "Slots" and "Fill
 rules"; `docs/SET_PROPERTIES_DESIGN.md` for the shape of a verifier-first op.
 
@@ -252,3 +252,14 @@ or character the user cannot see (`snippet_text_problem`; insert_paragraph place
 Not in this batch, recorded: tags that are styles or highlight colours; tags that cover a whole article; editing inside
 text boxes; replacing across tabs/breaks; `w:tab` inside a replacement; snippets with rich run formatting; renaming in
 place.
+
+## After merging master (2026-10-16): reads and chains
+
+Master gained, while this batch was built, plan-time conflicts for what an op READS (`ops/base.verify_family`) and
+chains (`chain.py`). Merged without changing either: the ops that extract a value now declare what they read —
+`name_output` and `ensure_end_of_section` the paragraphs their fill rules take a value from (`slots.fill_reads`, as
+`verify:text`), `ensure_end_of_section` also the end of the body and its copy-from paragraph, `make_values_agree` every
+paragraph a place matched and, with a file-name place, the output's name — so rewriting the line a name or a number comes
+from in the same spec is a plan-time conflict (run it first, as its own spec or an earlier chain stage). A chain keeps a
+renaming stage's name in its `outputs/` and refuses `in_place` with a renaming stage before anything is written; its
+approval token covers every stage's tables and pictures; snippets can be offered in a conversation, chains cannot.

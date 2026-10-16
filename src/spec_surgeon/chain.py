@@ -269,8 +269,13 @@ def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, worke
     batch stopped) is recorded in ``stopped`` and the chain log, DIAGNOSTICS.md written, and the exception propagates
     (as ``run_batch`` does)."""
     from .batch import check_inputs_outside, expand_inputs, output_names, run_batch, verified_bytes
+    from .editspec import spec_renames_outputs
     from . import guard
     validate_chain(chain)
+    renaming = [stage_name(st, i) for i, st in enumerate(chain["stages"], 1) if spec_renames_outputs(st["spec"])]
+    if in_place and renaming:                     # before anything is written: a stage would refuse in place half-way
+        raise ValueError(f"stage(s) {renaming} name the output files from their content, so the chain writes copies "
+                         f"only — run it without in-place")
     out_dir = Path(out_dir)
     files = expand_inputs(inputs)
     check_inputs_outside(files, out_dir)          # before anything is created: a run never writes where it reads
@@ -355,7 +360,8 @@ def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, worke
                 if fr.status == "PASS":
                     if not in_place:
                         current[str(cf.source)] = Path(fr.output)
-                    cf.output = Path(fr.output) if fr.output else cf.output
+                        cf.out_name = fr.out_name or cf.out_name     # a stage that names files (name_output): the
+                    cf.output = Path(fr.output) if fr.output else cf.output   # chain's copy keeps the new name
                     continue
                 if fr.status == "FAIL":
                     bad = [c for c in fr.record.checks if c.status == "FAIL"]

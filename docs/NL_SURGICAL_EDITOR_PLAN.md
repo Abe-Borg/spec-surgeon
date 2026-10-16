@@ -586,7 +586,7 @@ round added to the plan's architecture:
 
 Eight new V10 kinds (`replaced_text`, `filled_variables`, `resolved_options`, `tagged_paragraphs`, `end_of_section`,
 `output_name`, `agreed_values`, `image_swaps`, plus the residual's `verified_blocks`/`masked_extents`), each with planted
-defects shared by plan and apply. README → "Built-in operations, batch 1" is the user's view; 931 tests in total. Not
+defects shared by plan and apply. README → "Built-in operations, batch 1" is the user's view; 963 tests in total (with master's chains and read conflicts). Not
 in this batch: the design note's list (tags as styles or whole articles, text boxes, replacing across tabs or breaks,
 rich snippets, renaming in place). The next batches come from Abraham's list.
 

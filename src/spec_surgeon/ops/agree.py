@@ -147,6 +147,13 @@ class MakeValuesAgree(Op):
         frag = self.fragment({}, {**params, "tracked": tracked, "author": author},
                              mode="content" if tracked else "untracked")
         frag.untracked_diffs_expected = not tracked
+        # what the decisions READ (rule 9): every paragraph a place matched (the truth's included), and the output's
+        # name when a place is the file name — another op changing either would reach this plan unverified
+        for pname, hits in found.items():
+            if places[pname][0] != "filename":
+                frag.touches += [(part, str(bi), "verify:text") for part, bi, _, _ in hits]
+        if any(w == "filename" for w, _, _ in places.values()):
+            frag.touches.append((OUTPUT_NAME_TOUCH[0], "*", "verify"))
         edits: Dict[Tuple[str, int], List[Edit]] = {}
         pars: Dict[Tuple[str, int], Any] = {}
         name_edits: List[Tuple[int, int, str]] = []

@@ -18,7 +18,7 @@ from typing import Any, Dict, List
 from ..package import DocxPackage
 from . import register
 from .base import JobException, Op, PlanFragment
-from .slots import extract_fill, rule_uses_literal
+from .slots import extract_fill, fill_reads, rule_uses_literal
 
 PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 TRANSFORMS = ("as_is", "digits", "upper", "lower", "title")
@@ -115,6 +115,8 @@ class NameOutput(Op):
         frag = self.fragment({}, params)
         frag.output_name = name
         frag.touches.append(OUTPUT_NAME_TOUCH)
+        for rule in values.values():               # what the name is read from (rule 9): another op changing that
+            frag.touches += [(part, str(bi), "verify:text") for part, bi in fill_reads(pkg, rule)]   # text conflicts
         frag.property_assertions.append({"kind": "output_name", "pattern": pattern, "values": values,
                                          "transforms": transforms, "expected": name})
         frag.notes.append(f"output file name: {name!r} — " + ", ".join(f"{k} = {v!r}" for k, v in got.items()))

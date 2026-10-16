@@ -210,3 +210,77 @@ def test_defect_renamed_output_under_the_old_name():
                                     written_as="211313 - Wet-Pipe Sprinkler Systems.docx")
     assert failed(rec) == ["V10"]
     assert any("written as" in e for e in v10_errors(rec))
+
+
+# ---- what the naming ops READ (rule 9: read touches, 2026-10-16) and chains ---------------------------------------
+
+def _plan(spec):
+    from spec_surgeon.editspec import plan_spec
+    return plan_spec(DocxPackage(build_batch1(), "211319 - Preaction Sprinkler Systems.docx"), spec)
+
+
+def _spec(*ops, mode="content"):
+    return {"request": "r", "summary": "s", "mode": mode, "ops": list(ops)}
+
+
+TITLE_EDIT = {"op": "replace_table", "params": {"pairs": [{"find": "PREACTION", "replace": "DELUGE"}],
+                                                "scope": ["document"], "author": "A"}}
+
+
+def test_a_name_read_from_a_line_another_op_rewrites_is_a_conflict():
+    """name_output reads the title line; replace_table rewriting it in the same spec would leave the copy named after
+    words it no longer shows — refused at plan time, naming the op to run first."""
+    with pytest.raises(JobException) as e:
+        _plan(_spec({"op": "name_output", "params": CONVENTION}, TITLE_EDIT))
+    assert e.value.code == "conflict" and "split out" in e.value.reason
+    # a font change of the same line reads nothing of its text: it plans
+    plan, _ = _plan(_spec({"op": "name_output", "params": CONVENTION},
+                          {"op": "set_font", "select": {"scope": ["document"],
+                                                        "paragraphs": {"text_regex": "^SECTION"}},
+                           "params": {"font": "Arial", "tracked": False}}, mode="formatting"))
+    assert plan.output_name == "211319 - Preaction Sprinkler Systems.docx"
+
+
+def test_end_of_section_reads_its_number_and_the_end_of_the_body():
+    eos = {"op": "ensure_end_of_section", "params": {"number": NUMBER, "author": "A"}}
+    with pytest.raises(JobException) as e:                 # the number's line rewritten underneath
+        _plan(_spec(eos, {"op": "replace_table", "params": {"pairs": [{"find": "21 13 19", "replace": "21 13 13"}],
+                                                             "scope": ["document"], "author": "A"}}))
+    assert e.value.code == "conflict"
+    after_end = {"op": "insert_paragraph", "select": {"scope": ["document"],
+                                                      "paragraphs": {"text_regex": "^END OF SECTION"}},
+                 "params": {"text": "NOTE", "author": "A"}}
+    from spec_surgeon.editspec import plan_spec
+    right = DocxPackage(build_batch1(eos="right"))
+    with pytest.raises(JobException) as e:                 # a paragraph added after a line that was already right
+        plan_spec(right, _spec(eos, after_end))
+    assert e.value.code == "conflict"
+
+
+def test_agreement_reads_every_place_it_matched_and_the_output_name():
+    agree_params = {"places": {"title": TITLE_LINE, "header": HEADER}, "truth": "title", "author": "A"}
+    with pytest.raises(JobException) as e:
+        _plan(_spec({"op": "make_values_agree", "params": agree_params}, TITLE_EDIT))
+    assert e.value.code == "conflict"
+    with_file = {"places": {"title": TITLE_LINE, "file": FILE_NAME}, "truth": "title", "author": "A"}
+    with pytest.raises(JobException) as e:                 # it reads the name another op gives the copy
+        _plan(_spec({"op": "make_values_agree", "params": with_file}, {"op": "name_output", "params": CONVENTION}))
+    assert e.value.code == "conflict"
+
+
+def test_a_chain_carries_a_renaming_stage_to_its_outputs_and_refuses_in_place(tmp_path):
+    from spec_surgeon.chain import run_chain
+    folder = tmp_path / "in"
+    folder.mkdir()
+    (folder / "a.docx").write_bytes(build_batch1())
+    chain = {"stages": [
+        {"name": "name", "spec": _spec({"op": "name_output", "params": CONVENTION}, mode="formatting")},
+        {"name": "stamp", "spec": _spec({"op": "set_issue_stamp", "params": {
+            "pattern": r"ISSUED FOR PERMIT \S+", "text": "ISSUED FOR BID", "author": "A"}})}]}
+    result = run_chain([str(folder)], chain, tmp_path / "out", workers=1, do_render=False)
+    assert [cf.status for cf in result.files] == ["PASS"]
+    assert sorted(p.name for p in (tmp_path / "out" / "outputs").iterdir()) == \
+        ["211319 - Preaction Sprinkler Systems.docx"]
+    with pytest.raises(ValueError) as e:
+        run_chain([str(folder)], chain, tmp_path / "out2", workers=1, do_render=False, in_place=True)
+    assert "copies only" in str(e.value) and not (tmp_path / "out2").exists()

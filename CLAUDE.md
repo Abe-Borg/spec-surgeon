@@ -758,7 +758,7 @@ merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test
 teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without an API key
 (`tests/test_keyless.py`, 2026-10-16), 768 with the plan-time conflicts for what an op reads
 (`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
-(`tests/test_chain.py`, 2026-10-16), BATCH1_MERGED_TOTAL with built-in operations batch 1 (2026-10-16) — all pass but
+(`tests/test_chain.py`, 2026-10-16), 963 with built-in operations batch 1 (2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -1366,3 +1366,12 @@ user's view; the both-sides definitions are listed above. Rules that came out of
    scans the batch-1 op modules for codes and fails on one without an explanation.
 9. **Not in this batch** (recorded): tags as styles/highlights or whole articles, text boxes, replacing across tabs or
    breaks, a tab in a replacement or snippet, rich snippets, renaming in place, two logo swaps in one header in one spec.
+10. **Merged with master's reads and chains** (2026-10-16): the ops that extract a value declare what they read
+    (rule 9: `slots.fill_reads` → `(part, block, "verify:text")`; `ensure_end_of_section` also `(main, "end", "verify")`
+    and its copy-from paragraph; `make_values_agree` every matched paragraph and, with a file-name place, the output
+    name), so rewriting the title line a name or a number comes from — or adding a paragraph after an END OF SECTION
+    line — in the same spec is a plan-time conflict (`tests/test_naming.py`). A chain follows a renaming stage's name to
+    its `outputs/` (`ChainFile.out_name` takes each passing stage's `out_name`), and refuses `in_place` with a renaming
+    stage before anything is written (`chain.run_chain`). The approval token of a chain covers every stage's tables and
+    pictures (`preview.key_templates` → `spec_input_files`); snippets are offerable (`compiler.OFFERABLE_KINDS`), chains
+    never are.

@@ -35,7 +35,7 @@ from .base import BlockDiff, JobException, Op, PlanFragment
 from .insert_paragraph import inherited_ppr, inherited_rpr
 from .replace_table import default_author, tracked_of
 from .selectors import StyleSheet
-from .slots import extract_fill, field_runs
+from .slots import extract_fill, field_runs, fill_reads
 from .textedit import Edit, RunText, apply_part_edits, edits_to_data, plan_paragraph, shown
 
 DEFAULT_TEXT = "END OF SECTION {number}"
@@ -137,6 +137,10 @@ class EnsureEndOfSection(Op):
         frag = self.fragment({}, {**params, "tracked": tracked, "author": author, "text": text},
                              mode="content" if tracked else "untracked")
         frag.untracked_diffs_expected = not tracked
+        # what the prediction READS (rule 9): the paragraphs the number comes from, and the end of the body — another
+        # op changing that text, or adding a paragraph after the line, would reach this plan unverified
+        frag.touches += [(part, str(bi), "verify:text") for part, bi in fill_reads(pkg, rule)]
+        frag.touches.append((main, "end", "verify"))
         pars = paragraphs(root)
         last = last_block(body)
         if last is None:
@@ -178,6 +182,7 @@ class EnsureEndOfSection(Op):
                     raise JobException(f"copy_from_regex matches {len(hits)} body paragraph(s); exactly one needed",
                                        "ambiguous" if hits else "not-found", {"matches": hits})
                 at = hits[0]
+                frag.touches.append((main, str(at), "verify"))      # its paragraph and run properties are copied
             inner = [p for p in ([last] if last.tag == W + "p" else list(last.iter(W + "p")))]
             out_index = (pars.index(inner[-1]) + 1) if inner else sum(
                 1 for p in pars if p.getparent() is not None and _before(p, last, body))
