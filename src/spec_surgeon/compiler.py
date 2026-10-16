@@ -166,6 +166,12 @@ shows the user the exact words a recipe places; only the user's pick approves th
 spec of your own before that pick — they are refused like any words the user did not give. Offer your own reading \
 beside it when both fit. A picked recipe is previewed as saved and the user may then ask you for changes; a picked \
 operation is tried on the sample files first.
+- The library also holds snippets — saved paragraphs. When the user wants one of them inserted ("add our hydrant \
+flow test paragraph"), offer it as a choice {"kind": "snippet", "name": <its exact name>}: the app shows its exact \
+words, and the user's pick comes back to you as their reply with those words approved. Then submit insert_paragraph \
+with text exactly those words (the snippet's style and formatting, allow_missing true when it goes in every file that \
+has the anchor, expect text_diffs {"max": 1} when it goes in once per file) — asking which paragraph it goes after if \
+that is not clear.
 """
 
 
@@ -178,8 +184,9 @@ VIEW_PAGES_TOOL = {
         "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 3}},
         "required": ["file"]}}
 # The user's library in the conversation (chat only — the one-shot compile has nobody to pick a choice): an index of it
-# in the first message (``library_index``), these two read-only tools, and two choice kinds Claude may NAME (``recipe``,
-# ``operation``) that the app builds from the library itself (conversation._library_choice; CLAUDE.md rule 13).
+# in the first message (``library_index``), these two read-only tools, and three choice kinds Claude may NAME
+# (``recipe``, ``operation``, ``snippet``) that the app builds from the library itself (conversation._library_choice;
+# CLAUDE.md rule 13).
 INDEX_LIMIT = 40                                   # items the first message's index shows; list_library has the rest
 INDEX_BUDGET = 18000                               # characters of a list_library result (the tool-result cap is 20,000)
 DETAIL_BUDGET = 18000                              # characters of a read_library_item result: the spec gives way first
@@ -187,18 +194,24 @@ ENTRY_OPS = 30                                     # op names an index entry lis
 DESCRIPTION_CHARS, REQUEST_CHARS, BRIEF_CHARS = 160, 200, 3000
 PLACED_WORDS_RULE = ("these words count as the user's ONLY once the user picks the choice offering this recipe; a spec "
                      "of yours that places them before that pick is refused like any words the user did not give")
+SNIPPET_WORDS_RULE = ("this text counts as the user's ONLY once the user picks the choice offering this snippet (their "
+                      "reply then approves it); a spec of yours that places it before that pick is refused like any "
+                      "words the user did not give — after it, place it verbatim with insert_paragraph")
 
 LIBRARY_TOOLS = [
     {"name": "list_library", "description": "The user's library: every saved recipe (a spec they previewed before: its "
-     "op names, mode, template files, how many words it places) and operation (a custom transform that passed: its "
-     "proposal), each with its name, description and the request it was saved from. The first message carries the "
-     "same index (up to 40 items); call this for the rest, or to look again.",
+     "op names, mode, template files, how many words it places), operation (a custom transform that passed: its "
+     "proposal) and snippet (a saved paragraph: how long it is, its style), each with its name, description and the "
+     "request it was saved from. The first message carries the same index (up to 40 items); call this for the rest, "
+     "or to look again.",
      "input_schema": {"type": "object", "properties": {}}},
     {"name": "read_library_item", "description": "One library item in full. A recipe: its spec as saved, the exact "
      "words it places (they count as the user's ONLY if the user picks the choice that shows them), its template "
      "files and whether each exists, and a dry plan over this batch. An operation: its manifest (request, proposal, "
-     "select/params, attempts, the conversation it came from) — never its code. Offer the item as a choice "
-     "{\"kind\": \"recipe\" | \"operation\", \"name\": <this exact name>} when it does what the user asks.",
+     "select/params, attempts, the conversation it came from) — never its code. A snippet: its text (it counts as the "
+     "user's ONLY once the user picks the choice offering it), style and formatting. Offer the item as a choice "
+     "{\"kind\": \"recipe\" | \"operation\" | \"snippet\", \"name\": <this exact name>} when it does what the "
+     "user asks.",
      "input_schema": {"type": "object", "properties": {
          "name": {"type": "string", "description": "the item's exact name, from YOUR LIBRARY or list_library"}},
          "required": ["name"]}},
@@ -210,11 +223,11 @@ def _chat_ask_user() -> Dict[str, Any]:
     and ``operation``, with ``name``); the app builds that choice from the library. The one-shot tool is unchanged."""
     tool = copy.deepcopy(next(t for t in TOOLS if t["name"] == "ask_user"))
     choice = tool["input_schema"]["properties"]["choices"]["items"]
-    choice["properties"]["kind"]["enum"] = ["clarify", "alternative", "rephrase", "recipe", "operation"]
+    choice["properties"]["kind"]["enum"] = ["clarify", "alternative", "rephrase", "recipe", "operation", "snippet"]
     choice["properties"]["name"] = {
-        "type": "string", "description": "for kind recipe or operation only: the exact name of the user's library item "
-                                         "to offer (the app builds that choice from the library; your label and wording "
-                                         "are not used for it)"}
+        "type": "string", "description": "for kind recipe, operation or snippet only: the exact name of the user's "
+                                         "library item to offer (the app builds that choice from the library; your "
+                                         "label and wording are not used for it)"}
     return tool
 
 
@@ -558,11 +571,14 @@ def library_entry(item: Any) -> Dict[str, Any]:
     places (read_library_item shows those beside the rule that only the user's pick approves them, and the choice
     shows them to the user). An item that cannot be read is listed with its problem, never hidden."""
     from .editspec import load_spec, spec_templates
-    from .library import read_manifest, recipe_file
+    from .library import read_manifest, read_snippet, recipe_file
     e: Dict[str, Any] = {"kind": item.kind, "name": item.name, "description": _cut(item.description, DESCRIPTION_CHARS),
                          "saved": item.saved_at, "request": _cut(item.request, REQUEST_CHARS)}
     try:
-        if item.kind == "recipe":
+        if item.kind == "snippet":
+            sn = read_snippet(item)                       # never its words here (read_library_item, under the rule)
+            e.update({"characters": len(sn["text"]), "style": sn["style"], "formatting": sn["formatting"]})
+        elif item.kind == "recipe":
             spec = load_spec(recipe_file(item))           # every read goes through the library's containment check
             ops = [str(o.get("op")) for o in spec.get("ops") or [] if isinstance(o, dict)]
             e["ops"] = ops[:ENTRY_OPS] + ([f"… and {len(ops) - ENTRY_OPS} more"] if len(ops) > ENTRY_OPS else [])
@@ -622,12 +638,18 @@ def library_item_detail(name: str, batch: Optional["_Batch"] = None) -> Dict[str
     """read_library_item: the item in full. A recipe: the spec exactly as saved, the words it places under
     ``PLACED_WORDS_RULE``, its templates with whether each exists, and (with a batch) ``dry_plan_summary``. An
     operation: its manifest without ``op.py`` — Claude has nothing to do with the code — the brief cut at
-    ``BRIEF_CHARS``. A name that is not in the library, a recipe that does not load or validate: the tool's error."""
+    ``BRIEF_CHARS``. A snippet: its text under ``SNIPPET_WORDS_RULE``, style and formatting. A name that is not in the
+    library, a recipe that does not load or validate, a snippet that is not one plain paragraph: the tool's error."""
     from .editspec import load_spec, spec_templates, validate_spec
-    from .library import find, read_manifest, recipe_file
+    from .library import find, read_manifest, read_snippet, recipe_file
     item = find(name)
     out: Dict[str, Any] = {"kind": item.kind, "name": item.name, "description": item.description,
                            "saved": item.saved_at, "request": item.request}
+    if item.kind == "snippet":
+        sn = read_snippet(item)
+        out.update({"text": sn["text"], "text_rule": SNIPPET_WORDS_RULE, "style": sn["style"],
+                    "formatting": sn["formatting"], "source": sn["source"]})
+        return _fit_detail(out, DETAIL_BUDGET)
     if item.kind == "recipe":
         spec = load_spec(recipe_file(item))           # every read goes through the library's containment check
         validate_spec(spec)

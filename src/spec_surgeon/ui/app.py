@@ -52,6 +52,17 @@ EXAMPLES = ["remove all headers and footers", "change all fonts to Arial",
             "replace \u201cNFPA 13, 2022 Edition\u201d with \u201cNFPA 13, 2025 Edition\u201d"]
 STEPS = ["Files", "Describe the change", "Preview", "Run & results"]
 STEP_HINTS = ["Pick the specs folder", "Say what should change", "Check before anything runs", "Apply and verify"]
+NEW_SNIPPET = "＋ New snippet… (a paragraph you insert often)"     # the last entry of Your library…
+SNIPPET_SOURCE = "your snippet "                                     # Session.use_snippet's spec_source starts so
+
+
+def is_snippet_source(source: str) -> bool:
+    return (source or "").startswith(SNIPPET_SOURCE)
+
+
+def loaded_name(source: str) -> str:
+    """How a loaded spec is named: a spec file by its name, one of your snippets as itself (its name is free text)."""
+    return source if is_snippet_source(source) else Path(source).name
 # keyless mode (no API key): step 2 is choosing a saved spec or an item of Your library
 KEYLESS_STEP, KEYLESS_HINT = "Choose the change", "A saved spec or Your library"
 NO_RESULTS = {"PASS": 0, "FAIL": 0, "EXCEPTION": 0}
@@ -642,7 +653,7 @@ class MainWindow(QMainWindow):
         elif s.generated is not None:
             describe = f"Custom transform: {s.generated.name}"
         elif loaded:
-            describe = f"Saved spec: {Path(s.spec_source).name}"
+            describe = f"Saved spec: {loaded_name(s.spec_source)}"
         else:
             describe = STEP_HINTS[1] if self.claude_ok else KEYLESS_HINT
         if current and s.generated is not None:
@@ -1038,7 +1049,8 @@ class MainWindow(QMainWindow):
         def fn(log):
             out = []
             if loaded:
-                out.append(f"Using the spec file {s.spec_source}.")
+                out.append(f"Using {s.spec_source}." if is_snippet_source(s.spec_source)
+                           else f"Using the spec file {s.spec_source}.")
             elif transform:
                 out.append(f"Using the custom transform {s.generated.name}.")
             elif not continuing:
@@ -1366,7 +1378,7 @@ class MainWindow(QMainWindow):
 
     def _show_loaded_spec(self) -> None:
         s = self.session
-        name = Path(s.spec_source).name
+        name = loaded_name(s.spec_source)
         self.request_page.spec_bar.show_message(
             "info", "Saved spec", f"{name}: “{s.spec.get('request')}” — {s.spec.get('summary') or ''}\n"
                                   "Press Preview to use it (typing a request instead compiles a new spec).",
@@ -1385,16 +1397,19 @@ class MainWindow(QMainWindow):
         if self.busy or self.updating:
             return False
         items = list_items()
-        if not items:
-            self.prompts.notify("Your library", "Your library is empty. Save a previewed spec as a recipe, or a custom "
-                                "transform as one of your operations, with “Save to library…” on the Preview step.")
-            return False
-        labels = [i.label() + (f" — {i.description}" if i.description else "") for i in items]
-        picked = self.prompts.pick_item("Your library", "Use a saved recipe or one of your operations:", labels)
+        labels = [i.label() + (f" — {i.description}" if i.description else "") for i in items] + [NEW_SNIPPET]
+        intro = ("Use a saved recipe, one of your operations or a snippet:" if items else
+                 "Your library is empty. Save a previewed spec as a recipe, or a custom transform as one of your "
+                 "operations, with “Save to library…” on the Preview step — or add a paragraph you insert often:")
+        picked = self.prompts.pick_item("Your library", intro, labels)
         if not picked:
             return False
+        if picked == NEW_SNIPPET:
+            return self._new_snippet()
         item = items[labels.index(picked)]
         s = self.session
+        if item.kind == "snippet":
+            return self._use_snippet(item.name)
         if item.kind == "recipe":
             try:
                 spec = s.load_recipe(item.name)
@@ -1427,6 +1442,46 @@ class MainWindow(QMainWindow):
             self._refresh_spec_bar()
             self._after_preview(text, wkey)
         return self._work("Use your operation", fn, on_done=done, page=self.request_page)
+
+    def _new_snippet(self) -> bool:
+        """Your library… → New snippet…: a name and the paragraph's exact text (one plain paragraph)."""
+        from ..library import LibraryError
+        name = self.prompts.ask_text("New snippet", "Name (you pick it from Your library later):")
+        if not name:
+            return False
+        text = self.prompts.ask_text("New snippet", "The paragraph's exact text (inserted word for word; no tabs):")
+        if not text:
+            return False
+        try:
+            item = self.session.new_snippet(name, text)
+        except LibraryError as e:
+            self.prompts.warn("Spec Surgeon", f"Nothing was saved to your library:\n{e}")
+            return False
+        self.write(f"Saved to your library: {item.label()} ({item.path})")
+        self.prompts.notify("Your library", f"Saved {item.label()}. Use it from Your library…: pick it and say which "
+                                            f"paragraph it goes after.")
+        return True
+
+    def _use_snippet(self, name: str) -> bool:
+        """One of your snippets: ask which paragraph it goes after, then it is the outcome (like a loaded recipe)."""
+        anchor = self.prompts.ask_text(
+            f"Insert your snippet “{name}”",
+            "It goes after the paragraph whose text matches (a regular expression — plain words match a paragraph "
+            "containing them), in every file that has one:")
+        if not anchor:
+            return False
+        try:
+            spec = self.session.use_snippet(name, anchor)
+        except Exception as e:  # noqa: BLE001 — a LibraryError, or a snippet file that cannot be read
+            self.prompts.warn("Spec Surgeon", f"Cannot use this snippet:\n{e}")
+            return False
+        self._clear_request()
+        self.write(f"\nLoaded snippet {name!r}: {spec.get('summary')}\nPress Preview.")
+        self._show_loaded_spec()
+        self._refresh_chat()
+        self._inputs_changed()
+        self.go(1)
+        return True
 
     @Slot()
     def do_save_to_library(self) -> bool:

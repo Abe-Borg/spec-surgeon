@@ -27,7 +27,9 @@ What makes it safe:
   Claude may also NAME one of the user's library items (``recipe`` / ``operation``, chat mode only): the app builds
   that choice from the library alone (``_library_choice``) — the words a recipe places are shown on it and become
   approved only when the user picks it (``take_library_choice``), each its own source; Claude's label and wording never
-  reach it; the item is pinned by its content hash, and a pick refuses one that changed (``LibraryChanged``).
+  reach it; the item is pinned by its content hash, and a pick refuses one that changed (``LibraryChanged``). A
+  ``snippet`` (a saved paragraph) is named and built the same way, but picking it is a reply: its words are approved
+  (the hash checked first) and Claude writes the ``insert_paragraph`` spec that places them.
 
 ``mode="compile"`` is the one-shot behaviour ``compiler.compile_request`` keeps (a plain-text answer gets one nudge,
 then fails); ``mode="chat"`` (the window, the interactive command line) treats Claude's plain text as a message to the
@@ -56,6 +58,8 @@ from . import compiler, llm
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from Claude's own label and wording
 LIBRARY_CHOICE_KINDS = ("recipe", "operation")                       # named by Claude, built from the library (rule 13)
 APP_CHOICE_KINDS = ("custom_transform",) + LIBRARY_CHOICE_KINDS      # carried out by the app, never sent as a reply
+SNIPPET_CHOICE_KIND = "snippet"                                      # named by Claude, built from the library, picked
+NAMED_LIBRARY_KINDS = LIBRARY_CHOICE_KINDS + (SNIPPET_CHOICE_KIND,)  # as a REPLY: Claude writes the insert_paragraph
 MAX_CALLS_PER_TURN = compiler.MAX_TURNS
 NUDGE = "Finish by calling submit_editspec (or ask_user)."
 # the tool result an accepted spec gets (the user's next message, if any, says what the preview found)
@@ -84,7 +88,8 @@ class Choice:
                                                      # Claude's choices, the placed words of a recipe
     name: str = ""                                # a library choice: the item's exact name …
     item_hash: str = ""                           # … and its content hash as offered (library.item_hash)
-    snapshot: Optional[Dict[str, Any]] = None     # a recipe choice: the spec as validated when offered (not recorded)
+    snapshot: Optional[Dict[str, Any]] = None     # a recipe choice: the spec as validated when offered; a snippet
+                                                  # choice: the snippet as read when offered (neither is recorded)
 
     def __post_init__(self) -> None:
         if self.wording and not self.words:
@@ -310,6 +315,8 @@ class Conversation:
             raise ValueError("that choice is carried out by the app, not sent to Claude")
         if not text and chosen is None:
             raise ValueError("type a reply or pick one of the choices")
+        if chosen is not None and chosen.kind == SNIPPET_CHOICE_KIND:
+            self._check_item(chosen)          # LibraryChanged: nothing approved, nothing sent — the turn stays open
         if chosen is not None and chosen.words:
             self.sources += list(chosen.words)   # each its own source: never stitched together
         if text:
@@ -319,6 +326,12 @@ class Conversation:
         if chosen is not None:
             said.append(f"The user chose: «{chosen.label}»" +
                         (f" — approving these exact words: {chosen.exact_words()}" if chosen.words else ""))
+            if chosen.kind == SNIPPET_CHOICE_KIND:
+                sn = chosen.snapshot or {}
+                said.append("Insert it with insert_paragraph: text exactly those words, style "
+                            + (repr(sn["style"]) if sn.get("style") else "'inherit'")
+                            + f", formatting {sn.get('formatting', 'inherit')!r}; ask the user which paragraph it goes "
+                              f"after (or before) if that is not clear yet.")
         if text:
             said.append(f"The user replied: {text}")
         said_text = "\n".join(said)
@@ -348,20 +361,12 @@ class Conversation:
         recipe the spec to use — a copy of the snapshot validated when it was offered (never a re-read file), its placed
         words asserted to be the words the choice showed, carrying THIS conversation's ``request`` (rule 13: the spec a
         conversation hands the app carries the user's request); None for an operation."""
-        from . import library
         chosen = self.choice(choice_id)
+        if chosen.kind == SNIPPET_CHOICE_KIND:
+            raise ValueError("a snippet choice is sent as a reply (the pick approves its words; Claude writes the spec)")
         if chosen.kind not in LIBRARY_CHOICE_KINDS:
             raise ValueError("that choice is not one of your library items")
-        try:
-            now = library.item_hash(library.find(chosen.name, chosen.kind))
-        except (library.LibraryError, OSError) as e:
-            now = f"unreadable: {e}"
-        if not chosen.item_hash or now != chosen.item_hash:
-            why = (f"your {chosen.kind} «{chosen.name}» changed since Claude offered it — nothing was used; ask again, "
-                   f"or use Your library…")
-            self.entries.append(Entry("app", f"Not used: {why}"))
-            self.notes.append(f"The user chose «{chosen.label}», but {why}")
-            raise LibraryChanged(why)
+        self._check_item(chosen)
         spec = None
         if chosen.kind == "recipe":
             spec = copy.deepcopy(chosen.snapshot)
@@ -375,6 +380,22 @@ class Conversation:
                           + (f" — approving these exact words: {chosen.exact_words()}" if chosen.words else "")
                           + ". The app carried it out; the outcome follows.")
         return chosen, spec
+
+    def _check_item(self, chosen: Choice) -> None:
+        """The library item a choice offers must be exactly what was offered (``library.item_hash`` equal to the
+        choice's): a changed, renamed or missing item is ``LibraryChanged`` — nothing used, nothing approved, said to the
+        user (an app entry) and to Claude (a note with the next message)."""
+        from . import library
+        try:
+            now = library.item_hash(library.find(chosen.name, chosen.kind))
+        except (library.LibraryError, OSError) as e:
+            now = f"unreadable: {e}"
+        if not chosen.item_hash or now != chosen.item_hash:
+            why = (f"your {chosen.kind} «{chosen.name}» changed since Claude offered it — nothing was used; ask again, "
+                   f"or use Your library…")
+            self.entries.append(Entry("app", f"Not used: {why}"))
+            self.notes.append(f"The user chose «{chosen.label}», but {why}")
+            raise LibraryChanged(why)
 
     def note(self, text: str, display: Optional[str] = None) -> None:
         """Tell Claude something with the next user message (what a preview found, what a custom transform did).
@@ -621,7 +642,7 @@ class Conversation:
                 errors.append("a choice that was not an object was dropped")
                 continue
             label, kind = str(c.get("label") or "").strip(), str(c.get("kind") or "").strip()
-            if kind in LIBRARY_CHOICE_KINDS:
+            if kind in NAMED_LIBRARY_KINDS:
                 if self.mode != "chat":               # the one-shot compile: nobody is there to pick it
                     errors.append(f"a choice was dropped (kind {kind!r} is offered in a conversation only)")
                     continue
@@ -679,8 +700,21 @@ class Conversation:
         saved = (item.saved_at or "")[:10]
         origin = (f"saved {saved}" if saved else "saved earlier") + \
             (f" from the request «{compiler._cut(item.request, 120)}»" if item.request else "")
-        head = (f"{'Use your recipe' if kind == 'recipe' else 'Try your operation'} “{item.name}”"
+        verb = {"recipe": "Use your recipe", "operation": "Try your operation", "snippet": "Insert your snippet"}[kind]
+        head = (f"{verb} “{item.name}”"
                 + (f" — {compiler._cut(item.description, compiler.DESCRIPTION_CHARS)}" if item.description else ""))
+        if kind == SNIPPET_CHOICE_KIND:
+            try:
+                sn = library.read_snippet(item)
+                clean_wording(sn["text"])
+            except library.LibraryError as e:
+                drop(str(e))
+                return None
+            except (OSError, ValueError) as e:              # a file that is gone, not JSON, or unreadable words
+                drop(f"it cannot be used ({e})")
+                return None
+            return Choice(self._next_choice_id(), f"{head} ({origin}; Claude then writes where it goes)", "snippet",
+                          None, detail, words=[sn["text"]], name=item.name, item_hash=item_hash, snapshot=sn)
         if kind == "operation":
             try:
                 library.load_operation(item.name)          # the manifest's sha256 and the whitelist

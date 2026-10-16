@@ -18,11 +18,16 @@
     spec-surgeon retry OUT_DIR [--request "..."] [--template T] [--answer A]... [--out DIR] [--yes] [--no-render]
                                [--no-review] [--ack-review] [--in-place] [--allow-codegen]
                                                              (rinse & repeat: run next pass on set-aside files only)
-    spec-surgeon library list|show NAME|delete NAME [--kind recipe|operation] [--yes]
-                                                             (your saved recipes and operations)
-    spec-surgeon library use NAME FILES... [--kind recipe|operation] [--out DIR] [--yes] [--in-place] [--no-render]
+    spec-surgeon library list|show NAME|delete NAME [--kind recipe|operation|snippet] [--yes]
+                                                             (your saved recipes, operations and snippets)
+    spec-surgeon library use NAME FILES... [--kind recipe|operation|snippet] [--out DIR] [--yes] [--in-place]
+                                           [--no-render] [--after REGEX | --before REGEX] [--untracked]
                                                              (one of them on these files — no API key needed:
-                                                              preview → approve → verified run)
+                                                              preview → approve → verified run; a snippet goes after
+                                                              (or before) the paragraph matching REGEX)
+    spec-surgeon library add-snippet NAME (--text "…" | --from FILE --paragraph REGEX) [--style ID]
+                                          [--formatting inherit|none] [--description "…"] [--replace]
+                                                             (save a paragraph to insert later)
     spec-surgeon gui                                         (the window; also: spec-surgeon-gui)
     spec-surgeon advise OUT_DIR [--file NAME]                (Claude: per exception a recommendation or a re-compiled spec)
     spec-surgeon diagnose OUT_DIR [--file NAME] [--bundle ZIP] (why each file failed, where and how; a zip to send)
@@ -618,7 +623,11 @@ def _talk(conv, save, out_dir, files):
             if picked is None:                    # its trials failed: said, noted to Claude, the conversation goes on
                 continue
             return "operation", picked, conv
-        turn = conv.reply(choice_id=choice.id)
+        try:
+            turn = conv.reply(choice_id=choice.id)
+        except LibraryChanged as e:               # a snippet that changed since Claude offered it: nothing approved
+            print(f"Not used: {e}")
+            save()
 
 
 def _try_saved_operation(conv, name, files, out_dir):
@@ -815,13 +824,14 @@ def _changed_while_writing(before: dict, *later: dict) -> list:
 
 
 def cmd_library(args):
-    """Your library: list it, show one item, delete one (recipes and your own operations; local to this computer)."""
-    from .library import LibraryError, delete, find, library_dir, list_items
+    """Your library: list it, show one item, delete one, add a snippet (recipes, your own operations and snippets;
+    local to this computer)."""
+    from .library import LibraryError, delete, find, library_dir, list_items, read_snippet
     if args.action == "list":
         items = list_items(args.kind)
         if not items:
             print("Your library is empty — save a previewed spec or a custom transform (window: Save to library…; "
-                  "command line: do … --save-as NAME).")
+                  "command line: do … --save-as NAME), or a paragraph (library add-snippet NAME --text …).")
         for i in items:
             print(f"{i.label():<52} saved {i.saved_at or '?'}" + (f"  — {i.description}" if i.description else ""))
         print(f"\n(library folder: {library_dir()})")
@@ -831,8 +841,19 @@ def cmd_library(args):
         return 2
     if args.action == "use":
         return _use_library_item(args)
+    if args.action == "add-snippet":
+        return _add_snippet(args)
     try:
         item = find(args.name, args.kind)
+        if args.action == "show" and item.kind == "snippet":
+            sn = read_snippet(item)
+            print(f"{item.label()}\n  saved:   {item.saved_at}" + (f"  ({sn['source']})" if sn["source"] else "")
+                  + f"\n  text:    «{sn['text']}»\n  style:   {sn['style'] or 'the anchor’s'}\n  formatting: "
+                  f"{sn['formatting']}\n  path:    {item.path}" + (f"\n  about:   {item.description}"
+                                                                     if item.description else ""))
+            print(f"\nuse it:   spec-surgeon library use \"{item.name}\" FILES… --after REGEX   (no API key needed; "
+                  f"after — or --before — the paragraph whose text matches REGEX, in every file that has it)")
+            return 0
         if args.action == "show":
             print(f"{item.label()}\n  saved:   {item.saved_at}\n  request: {item.request}\n  path:    {item.path}")
             if item.description:
@@ -858,14 +879,43 @@ def cmd_library(args):
         return 2
 
 
+def _add_snippet(args):
+    """``library add-snippet NAME``: a paragraph saved to insert later — typed (``--text``) or the one paragraph of a
+    document whose text matches ``--paragraph`` (``--from``)."""
+    from .library import LibraryError, save_snippet, snippet_from_document
+    if bool(args.text) == bool(args.source_file):
+        print("library add-snippet: give the paragraph as --text \"…\" or as --from FILE --paragraph REGEX",
+              file=sys.stderr)
+        return 2
+    try:
+        if args.source_file:
+            if not args.paragraph:
+                print("library add-snippet: --from needs --paragraph REGEX (the paragraph's text)", file=sys.stderr)
+                return 2
+            text = snippet_from_document(args.source_file, args.paragraph)
+            source = f"{Path(args.source_file).name}: the paragraph matching {args.paragraph!r}"
+        else:
+            text, source = args.text, "typed"
+        item = save_snippet(args.name, text, style=args.style, formatting=args.formatting,
+                            description=args.description or "", source=source, replace=args.replace)
+    except LibraryError as e:
+        print(f"library add-snippet: {e} — nothing was saved", file=sys.stderr)
+        return 2
+    print(f"Saved to your library: {item.label()} ({item.path})\n  text: «{text.strip()}»\nuse it: spec-surgeon "
+          f"library use \"{item.name}\" FILES… --after REGEX")
+    return 0
+
+
 def _use_library_item(args):
-    """``library use NAME FILES…``: one of your recipes or operations on these files, with no API key needed (Claude's
-    visual check runs only when there is one). A recipe takes ``do``'s path after the compile (``_preview_and_run``:
-    preview, approval — y/N, or --yes —, the token re-checked, the verified batch; --in-place guarded as always). An
-    operation is tried on the files' samples first (CLAUDE.md rule 17: a failing one changes nothing), then previewed,
-    approved and run like a custom transform (``_run_saved_operation``) — edited copies only."""
+    """``library use NAME FILES…``: one of your recipes, operations or snippets on these files, with no API key needed
+    (Claude's visual check runs only when there is one). A recipe — and a snippet, as the ``insert_paragraph`` spec
+    ``library.snippet_spec`` builds (after/before the paragraph matching --after/--before, in every file that has it, at
+    most once per file) — takes ``do``'s path after the compile (``_preview_and_run``: preview, approval — y/N, or
+    --yes —, the token re-checked, the verified batch; --in-place guarded as always). An operation is tried on the
+    files' samples first (CLAUDE.md rule 17: a failing one changes nothing), then previewed, approved and run like a
+    custom transform (``_run_saved_operation``) — edited copies only."""
     from .editspec import is_template_file, spec_templates
-    from .library import LibraryError, find, load_recipe
+    from .library import LibraryError, find, load_recipe, read_snippet, snippet_spec
     if not args.files:
         print("library use: which files? (spec-surgeon library use NAME FILES…)", file=sys.stderr)
         return 2
@@ -876,6 +926,13 @@ def _use_library_item(args):
             spec = _load_valid_spec(str(load_recipe(item.name)))
             if spec is None:
                 return 2
+        elif item.kind == "snippet":
+            if bool(args.after) == bool(args.before):
+                print("library use: say where the snippet goes — --after REGEX or --before REGEX (the text of the "
+                      "paragraph it follows or precedes)", file=sys.stderr)
+                return 2
+            spec = snippet_spec(item.name, read_snippet(item), args.after or args.before,
+                                "after" if args.after else "before", tracked=not args.untracked)
     except LibraryError as e:
         print(str(e), file=sys.stderr)
         return 2
@@ -1066,11 +1123,28 @@ def main(argv=None) -> int:
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)
 
-    p = sub.add_parser("library", help="your library of saved recipes (specs) and operations (custom transforms); "
-                                       "`library use NAME FILES…` runs one without an API key")
-    p.add_argument("action", choices=["list", "show", "delete", "use"]); p.add_argument("name", nargs="?", default=None)
+    p = sub.add_parser("library", help="your library of saved recipes (specs), operations (custom transforms) and "
+                                       "snippets (paragraphs); `library use NAME FILES…` runs one without an API key")
+    p.add_argument("action", choices=["list", "show", "delete", "use", "add-snippet"])
+    p.add_argument("name", nargs="?", default=None)
     p.add_argument("files", nargs="*", help="use: the .docx files or folders to run it on")
-    p.add_argument("--kind", choices=["recipe", "operation"], default=None)
+    p.add_argument("--kind", choices=["recipe", "operation", "snippet"], default=None)
+    p.add_argument("--after", default=None, help="use, a snippet: insert it after the paragraph whose text matches "
+                                                 "this regular expression (in every file that has one)")
+    p.add_argument("--before", default=None, help="use, a snippet: insert it before that paragraph instead")
+    p.add_argument("--untracked", action="store_true", help="use, a snippet: insert it as plain text, not as a "
+                                                            "tracked insertion")
+    p.add_argument("--text", default=None, help="add-snippet: the paragraph's exact text")
+    p.add_argument("--from", dest="source_file", default=None,
+                   help="add-snippet: take the paragraph from this .docx (with --paragraph)")
+    p.add_argument("--paragraph", default=None, help="add-snippet: the regular expression that finds the ONE "
+                                                     "paragraph to take (--from)")
+    p.add_argument("--style", default=None, help="add-snippet: a paragraph style id for the inserted paragraph "
+                                                 "(default: the anchor's)")
+    p.add_argument("--formatting", default="inherit", choices=["inherit", "none"],
+                   help="add-snippet: inherit = look like the anchor paragraph (default); none = only the style")
+    p.add_argument("--description", default=None, help="add-snippet: a few words about it")
+    p.add_argument("--replace", action="store_true", help="add-snippet: replace a snippet of the same name")
     p.add_argument("--yes", action="store_true",
                    help="delete: without asking; use: run after the preview without asking")
     p.add_argument("--out", default=None, help="use: output directory (default ./SpecSurgeon_out/<timestamp>)")

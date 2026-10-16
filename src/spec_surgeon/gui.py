@@ -502,6 +502,22 @@ class Session:
         from .library import load_recipe
         return self.load_spec(load_recipe(name))
 
+    def use_snippet(self, name: str, anchor: str, position: str = "after", tracked: bool = True) -> Dict[str, Any]:
+        """One of your snippets as the outcome (Your library…): the ``insert_paragraph`` spec ``library.snippet_spec``
+        builds — its text exactly as saved, ``position`` the body paragraph whose text matches ``anchor``, in every file
+        that has one, at most once per file. Like a loaded recipe it ends the conversation; Preview shows it."""
+        from .library import load_snippet, snippet_spec
+        item, sn = load_snippet(name)
+        spec = snippet_spec(item.name, sn, anchor, position, tracked)
+        self._set_outcome(spec=spec, source=f"your snippet {item.name!r}")
+        self.end_conversation()
+        return spec
+
+    def new_snippet(self, name: str, text: str, description: str = "", replace: bool = False):
+        """Save a typed paragraph as a snippet (Your library… → New snippet…)."""
+        from .library import save_snippet
+        return save_snippet(name, text, description=description, replace=replace)
+
     def use_operation(self, name: str, log: Log, render: bool = False) -> str:
         """Run one of your saved operations on this batch (Your library…): first on its sample files (sandbox + the
         full suite — it must pass here, not only where it was made), then its preview; Run writes edited copies only.
