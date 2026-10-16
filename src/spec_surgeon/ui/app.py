@@ -27,9 +27,9 @@ from PySide6.QtWidgets import (QApplication, QFileDialog, QFrame, QHBoxLayout, Q
                                QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar, QPushButton, QSplitter,
                                QStackedWidget, QVBoxLayout, QWidget)
 
-from .. import __version__, about, credentials, winapp
+from .. import __version__, about, credentials, llm, winapp
 from .. import diagnostics as diag
-from ..gui import Session, open_folder
+from ..gui import NEEDS_KEY, NEEDS_KEY_ADVICE, NEEDS_KEY_REPLY, Session, open_folder
 from ..settings import Settings, load_settings, logs_dir, save_settings
 from . import theme
 from .about_dialog import AboutDialog, about_text
@@ -52,6 +52,8 @@ EXAMPLES = ["remove all headers and footers", "change all fonts to Arial",
             "replace \u201cNFPA 13, 2022 Edition\u201d with \u201cNFPA 13, 2025 Edition\u201d"]
 STEPS = ["Files", "Describe the change", "Preview", "Run & results"]
 STEP_HINTS = ["Pick the specs folder", "Say what should change", "Check before anything runs", "Apply and verify"]
+# keyless mode (no API key): step 2 is choosing a saved spec or an item of Your library
+KEYLESS_STEP, KEYLESS_HINT = "Choose the change", "A saved spec or Your library"
 NO_RESULTS = {"PASS": 0, "FAIL": 0, "EXCEPTION": 0}
 READY, ERROR = "Ready.", "Error — see the log."
 
@@ -168,6 +170,9 @@ class MainWindow(QMainWindow):
         self._files_count = 0
         self._result_counts = dict(NO_RESULTS)
         self.key_origin = self._init_key()
+        self.claude_ok = True                  # Claude can be called (Session.claude_ready); set by refresh_key_label
+        self.signed_in = False                 # no key here, but the SDK found a sign-in (``ant auth login``)
+        self._advise_gated = False             # keyless mode turned Advise off (``_gate_claude_buttons``)
         self.setWindowTitle(f"Spec Surgeon {__version__}")
         self.setWindowIcon(app_icon())
         self.setMinimumSize(900, 560)          # every step scrolls; fits a 1366×768 laptop at 125 % scaling
@@ -274,6 +279,13 @@ class MainWindow(QMainWindow):
         self.check_btn.setToolTip("Spec Surgeon also checks once a day on its own")
         self.about_btn = QPushButton("About Spec Surgeon")
         self.about_btn.setToolTip("Version, license, and how to reach the author")
+        # keyless mode: one line on the rail, all the time, so the missing Claude features never come as a surprise
+        self.keyless_note = label("No API key: saved specs and Your library work; Claude's features are off "
+                                  "(Settings).", "SideNote")
+        self.keyless_note.setToolTip("Claude's features need an Anthropic API key:\n" +
+                                     "\n".join(f"\u2022 {f}" for f in llm.CLAUDE_FEATURES))
+        self.keyless_note.hide()
+        v.addWidget(self.keyless_note)
         for b in (self.settings_btn, self.check_btn, self.about_btn):
             b.setObjectName("NavButton")
             b.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -375,6 +387,7 @@ class MainWindow(QMainWindow):
         r.load_btn.clicked.connect(self.do_load_spec)
         r.preview_btn.clicked.connect(self.do_preview)
         r.key_btn.clicked.connect(self.open_settings)
+        r.keyless_key_btn.clicked.connect(self.open_settings)
         r.render_cb.toggled.connect(self._inputs_changed)
         p.open_btn.clicked.connect(self._open_preview_folder)
         p.review_ack_btn.clicked.connect(self.do_ack_review)
@@ -480,7 +493,7 @@ class MainWindow(QMainWindow):
         (``Session.use_operation``); the key is still taken before the job, from the widgets the trial is made of.
         ``request``: the request box as it will read (one of your operations clears it once it passes)."""
         f, r, s = self.files_page, self.request_page, self.session
-        request = r.request.toPlainText().strip() if request is None else request.strip()
+        request = self.typed_request() if request is None else request.strip()
         loaded = s.spec_source if (keep_spec and not request and s.spec is not None and s.spec_source != "compiled") \
             else ""
         return (f.folder.text(), f.template.text(), f.out.text(), request, loaded,
@@ -507,17 +520,70 @@ class MainWindow(QMainWindow):
         return "none"
 
     def key_status_text(self) -> str:
+        if self.signed_in:                     # no key here, but the SDK found an `ant auth login` profile
+            return "No API key set here — Claude uses your Anthropic sign-in (ant auth login) ✓"
         return {"environment": "Anthropic API key: from your Windows environment ✓",
                 "saved": "Anthropic API key: saved on this computer ✓",
                 "session": "Anthropic API key: set for this session only",
-                "none": "No Anthropic API key — typed requests need one; saved specs don't."}[self.key_origin]
+                "none": "No Anthropic API key — saved specs and Your library work; Claude's features are off."
+                }[self.key_origin]
 
     def refresh_key_label(self) -> None:
+        """The key's status line and pill — and the window's mode: with Claude, or keyless (``_apply_claude_mode``).
+        Called at start and whenever Settings changes or forgets the key."""
+        self.claude_ok = self.session.claude_ready()
+        self.signed_in = self.key_origin == "none" and llm.credentials_found()
         r = self.request_page
         r.key_label.setText(self.key_status_text())
         r.key_btn.setText("Change…" if self.key_origin != "none" else "Set API key…")
-        set_pill(r.key_pill, "API key" if self.key_origin != "none" else "No API key",
-                 "ok" if self.key_origin != "none" else "warn")
+        has = self.key_origin != "none" or self.signed_in
+        set_pill(r.key_pill, "API key" if self.key_origin != "none" else ("Signed in" if self.signed_in else
+                                                                          "No API key"),
+                 "ok" if has else "warn")
+        self._apply_claude_mode()
+
+    def typed_request(self) -> str:
+        """The request typed in the box — "" in keyless mode: the box is hidden there (its draft is kept for when a key
+        is set), so a request is never compiled, and a loaded spec counts as it would with the box empty."""
+        return self.request_page.request.toPlainText().strip() if self.claude_ok else ""
+
+    def _apply_claude_mode(self) -> None:
+        """Keyless mode (no API key) or not: the Describe step's layout and wording, the rail, the Preview step's empty
+        state, the rail's note and the Claude-only buttons. Nothing is cleared: a key set later brings it all back."""
+        on = self.claude_ok
+        r, p = self.request_page, self.preview_page
+        r.set_claude(on, list(llm.CLAUDE_FEATURES))
+        step = STEPS[1] if on else KEYLESS_STEP
+        item = self.nav.item(1)
+        item.setText(step)
+        item.setToolTip(f"Go to {step}")
+        p.empty.text.setText("Describe the change (or load a saved spec) and press Preview. The plan for every file "
+                             "and the verified sample files appear here." if on else
+                             "Choose a saved spec or one from Your library and press Preview. The plan for every file "
+                             "and the verified sample files appear here.")
+        if p.empty.button is not None:
+            p.empty.button.setText(f"Go to {step}")
+        p.back_btn.setText("\u2190  Change request" if on else f"\u2190  {step}")
+        self.keyless_note.setVisible(not on)
+        self._gate_claude_buttons()
+        self._show_set_aside()
+        self._inputs_changed()
+
+    def _gate_claude_buttons(self) -> None:
+        """Buttons that only Claude can serve stay off in keyless mode, with the reason as their tooltip. When a key
+        comes back (Settings), a button the gate turned off is turned on again as the last run left it: Advise while
+        that run set files aside and no job is running (Codex on #20: it used to stay off until the next job)."""
+        adv = self.run_page.advise_btn
+        if not self.claude_ok:
+            adv.setEnabled(False)
+            adv.setToolTip(NEEDS_KEY_ADVICE)
+            self._advise_gated = True
+        else:
+            adv.setToolTip("Claude writes a recommendation or a corrected spec per set-aside file (advice/)")
+            if self._advise_gated:
+                c = self._result_counts
+                adv.setEnabled(bool(c["FAIL"] + c["EXCEPTION"]) and not self.busy and not self.updating)
+                self._advise_gated = False
 
     # ---- navigation ------------------------------------------------------------------------------------
     def go(self, index: int) -> None:
@@ -555,7 +621,7 @@ class MainWindow(QMainWindow):
     def _refresh_nav(self) -> None:
         """The rail: a check mark for every step that is done, and under each title where it stands."""
         s = self.session
-        request = " ".join(self.request_page.request.toPlainText().split())
+        request = " ".join(self.typed_request().split())
         loaded = s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled"
         current = self._preview_current()
         has_preview = s.generated is not None or (s.preview is not None and s.spec is not None)
@@ -578,7 +644,7 @@ class MainWindow(QMainWindow):
         elif loaded:
             describe = f"Saved spec: {Path(s.spec_source).name}"
         else:
-            describe = STEP_HINTS[1]
+            describe = STEP_HINTS[1] if self.claude_ok else KEYLESS_HINT
         if current and s.generated is not None:
             preview = "AI-written transform, verified on samples"
         elif current:
@@ -633,12 +699,13 @@ class MainWindow(QMainWindow):
         live = current and not self.busy and not self.updating     # both refuse anything but the current preview:
         p.save_btn.setEnabled(live)                                # never a live button that silently does nothing
         p.review_ack_btn.setEnabled(live)
-        request = r.request.toPlainText().strip()
+        request = self.typed_request()
         loaded = s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled"
         if not self._files_ok:
             r.preview_hint.setText("Choose the specs folder first (step 1)")
         elif not (request or loaded or s.generated is not None):
-            r.preview_hint.setText("Type a request or load a saved spec")
+            r.preview_hint.setText("Type a request or load a saved spec" if self.claude_ok else
+                                   "Load a saved spec or use Your library")
         elif (waiting_for_user(s) and s.conversation is not None
               and s.conversation.request.strip() == request):          # cheap: runs on every keystroke
             r.preview_hint.setText("Claude is waiting for your reply")
@@ -688,7 +755,9 @@ class MainWindow(QMainWindow):
         c = s.conversation
         typed = self.request_page.request.toPlainText().strip()
         reason = ""
-        if c is not None and typed != c.request.strip():
+        if c is not None and not self.claude_ok:
+            reason = NEEDS_KEY_REPLY
+        elif c is not None and typed != c.request.strip():
             reason = ("The request above is not the one this conversation is about — press Preview to start a new "
                       "conversation, or Start over.")
         for view in (self.request_page.chat, self.preview_page.chat):
@@ -774,7 +843,8 @@ class MainWindow(QMainWindow):
             return
         bar.show_message("warn", "Set-aside pass",
                          f"Only the {len(s.selected_files)} file(s) set aside in the last run will be previewed and "
-                         "run. Their failure reasons go to Claude with the request.",
+                         "run. " + ("Their failure reasons go to Claude with the request." if self.claude_ok else
+                                    "Load a saved spec or use Your library for them on the next step."),
                          [("Use the whole folder again", self._clear_set_aside)])
 
     @Slot()
@@ -829,6 +899,7 @@ class MainWindow(QMainWindow):
         self.busy = on
         for b in self.job_buttons:
             b.setEnabled(not on and not self.updating)
+        self._gate_claude_buttons()
         for view in (self.request_page.chat, self.preview_page.chat):
             view.set_busy(on or self.updating)
         self.busy_bar.setVisible(on)
@@ -840,6 +911,7 @@ class MainWindow(QMainWindow):
         self.updating = on
         for b in self.job_buttons:
             b.setEnabled(not on and not self.busy)
+        self._gate_claude_buttons()
         for view in (self.request_page.chat, self.preview_page.chat):
             view.set_busy(on or self.busy)
         self._refresh_run_state()
@@ -937,7 +1009,7 @@ class MainWindow(QMainWindow):
     @Slot()
     def do_preview(self) -> bool:
         r = self.request_page
-        req = r.request.toPlainText().strip()
+        req = self.typed_request()
         render = r.render_cb.isChecked()
         s = self.session
         if self.busy or self.updating:
@@ -948,6 +1020,13 @@ class MainWindow(QMainWindow):
         # a custom transform or one of your operations with no request typed: preview it again (make_preview tries it
         # again on the files as they are now) — never "type what you want done"
         transform = not loaded and not req and s.generated is not None
+        if not self.claude_ok and not loaded and not transform:
+            # keyless: nothing to preview but a saved spec or one of your operations — never a compile that must fail
+            r.info.show_message("info", "Choose a saved spec", NEEDS_KEY,
+                                [("Your library…", self.do_library), ("Load saved spec…", self.do_load_spec),
+                                 ("Set API key…", self.open_settings)])
+            self.go(1)
+            return False
         continuing = not loaded and not transform and s.conversation is not None and s.conversation_matches(req)
         if continuing and s.spec is None and s.generated is None:
             r.info.show_message("info", "Claude is waiting for your reply",
@@ -976,7 +1055,7 @@ class MainWindow(QMainWindow):
         s = self.session
         if self.busy or self.updating or s.conversation is None:
             return False
-        if self.request_page.request.toPlainText().strip() != s.conversation.request.strip():
+        if not self.claude_ok or self.request_page.request.toPlainText().strip() != s.conversation.request.strip():
             self._refresh_chat_block()
             return False
         render = self.request_page.render_cb.isChecked()
@@ -1153,6 +1232,7 @@ class MainWindow(QMainWindow):
             p.review_card.hide()
             return
         p.review_card.show()
+        p.review_card.helper.setText(p.REVIEW_HELP[not rv.skipped])
         lines = []
         if rv.skipped:
             lines.append(f"Skipped: {rv.skipped}")
@@ -1243,7 +1323,8 @@ class MainWindow(QMainWindow):
         else:
             msg = f"Edited copies that passed every check are in {where / 'outputs'} — your files were not changed."
         if problems:
-            msg += " Files with problems were left untouched: load them for the next pass, or ask for advice."
+            msg += (" Files with problems were left untouched: load them for the next pass"
+                    + (", or ask for advice." if self.claude_ok else " (View diagnostics says why)."))
         run.summary.show_message("error" if c["FAIL"] else ("warn" if problems else "ok"),
                                  "Done" if not problems else "Done, with files set aside", msg)
         run.failed_btn.setVisible(bool(where and (where / "failed").is_dir()))
@@ -1251,6 +1332,7 @@ class MainWindow(QMainWindow):
         run.diag_btn.setEnabled(bool(where and (where / "DIAGNOSTICS.md").exists()))
         run.set_aside_btn.setEnabled(bool(problems))
         run.advise_btn.setEnabled(bool(problems))
+        self._gate_claude_buttons()
         run.empty.hide()
         run.results.show()
         self.go(3)
@@ -1508,6 +1590,10 @@ class MainWindow(QMainWindow):
     @Slot()
     def do_advise(self) -> bool:
         s = self.session
+        if not self.claude_ok:
+            self.run_page.info.show_message("info", "Advice needs an API key", NEEDS_KEY_ADVICE,
+                                            [("Set API key…", self.open_settings)])
+            return False
 
         def done(text):
             self.write(text or "")
@@ -1708,7 +1794,7 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
         "choices": lambda: [(b.property("choice_id"), b) for b in r.chat.choice_buttons()],
         "log": Var(w.log.toPlainText, lambda t: w.log.setPlainText(t)),
         "status": Var(w.status_lbl.text, w.set_status),
-        "busy": lambda: w.busy, "banner": w.updates.banner,
+        "busy": lambda: w.busy, "banner": w.updates.banner, "claude": lambda: w.claude_ok,
         "preview_model": w.preview_page.model, "results_model": w.run_page.model,
     }
     return w

@@ -30,8 +30,10 @@ class SettingsDialog(QDialog):
         card.add(self.out)
         lay.addWidget(card)
 
-        card = Card("Anthropic API key", "Needed for typed requests (the conversation with Claude), AI-written "
-                                          "transforms, the visual check and advice. Saved specs run without one.")
+        card = Card("Anthropic API key", "Optional. Needed for typed requests (the conversation with Claude), "
+                                          "AI-written transforms, the visual check and advice. Without one the app "
+                                          "runs saved specs and Your library — preview, run and verification work "
+                                          "the same.")
         self.key = QLineEdit()
         self.key.setEchoMode(QLineEdit.EchoMode.Password)
         self.key.setPlaceholderText("a key is set — type a new one to replace it" if os.environ.get(credentials.ENV)

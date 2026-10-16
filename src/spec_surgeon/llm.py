@@ -62,6 +62,42 @@ def client():
     return anthropic.Anthropic()
 
 
+# ---- running without an API key -----------------------------------------------------------------------------------
+# Everything that calls Claude, as the user reads it. Without credentials these are off; everything else — saved specs,
+# your library's recipes and operations, the preview, the run and its verification, set-aside passes, diagnostics — runs
+# without a key (README → "Running without an API key").
+CLAUDE_FEATURES = ("describing a change in plain English (the conversation with Claude)",
+                   "custom transforms Claude writes when no built-in operation fits",
+                   "Claude's visual check of the preview pages",
+                   "advice on set-aside files")
+CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
+
+
+def credentials_found() -> bool:
+    """Whether a call to Claude could authenticate — decided without calling: ``ANTHROPIC_API_KEY`` or
+    ``ANTHROPIC_AUTH_TOKEN`` in the environment (the window puts the key from Settings or Credential Manager there), or
+    a credentials profile the SDK finds on its own (``ant auth login``, ``ANTHROPIC_PROFILE``, workload identity). False
+    means the app runs keyless: the features in ``CLAUDE_FEATURES`` are off and say so, nothing else changes. (The tests
+    script their Claude clients: ``tests/conftest.py`` makes this True unless a test of keyless mode says otherwise.)"""
+    if any(os.environ.get(v) for v in CREDENTIAL_ENV):
+        return True
+    return _sdk_credentials()
+
+
+def _sdk_credentials() -> bool:
+    """A credentials profile the ``anthropic`` SDK would use with no key in the environment. False without the SDK (or
+    one too old to have profiles), or when its lookup fails — a profile that cannot be read cannot authenticate either.
+    It reads files only; it never calls the API."""
+    try:
+        from anthropic.lib.credentials import default_credentials
+    except Exception:  # noqa: BLE001 — no SDK, or one without credential profiles
+        return False
+    try:
+        return default_credentials() is not None
+    except Exception:  # noqa: BLE001 — an explicitly selected profile that is broken
+        return False
+
+
 def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], messages: List[Dict[str, Any]]):
     """One streamed request; returns the final message. Raises whatever the SDK raises: the caller classifies it with
     ``is_api_error`` (an API error is a recorded failure, anything else a defect that propagates) and never half-appends
