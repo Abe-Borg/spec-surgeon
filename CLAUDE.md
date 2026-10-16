@@ -1054,8 +1054,8 @@ properties" is the user's view):
 
 Abraham: "most users either not have or will not want an api key … give the user [the option] to run this software API
 keyless. And inform them that some functions are unavailable." README → "Running without an API key" is the user's view;
-`tests/test_keyless.py` pins every rule (16 tests; 756 in total with `set_properties` and the Qt teardown fix merged; each fails without the code it
-pins). Rules:
+`tests/test_keyless.py` pins every rule (16 tests, each failing without the code it pins; 756 in total with
+`set_properties` and the Qt teardown fix merged). Rules:
 
 1. **One decision.** `llm.credentials_found()`: `ANTHROPIC_API_KEY`/`ANTHROPIC_AUTH_TOKEN` (`CREDENTIAL_ENV`, non-empty)
    or a profile the SDK finds (`_sdk_credentials`: `anthropic.lib.credentials.default_credentials`, files only, never a
