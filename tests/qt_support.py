@@ -33,6 +33,16 @@ def flush_deferred_deletes(app) -> None:
     app.processEvents()
 
 
+KEPT_ALIVE: list = []      # windows a thread was still using at the deadline: never deleted, never collected
+
+
+def _idle(w) -> bool:
+    """No job, update check or download thread of the window is running (the flags the window's own ``wait`` uses)."""
+    u = getattr(w, "updates", None)
+    return not (getattr(w, "busy", False)
+                or (u is not None and (getattr(u, "checking", False) or getattr(u, "downloading", False))))
+
+
 def destroy_windows(app, windows, timeout: float = 30.0) -> None:
     """Close every window in ``windows``, delete its Qt object on this (the main) thread, empty the list, and free the
     Python garbage this leaves on this thread too.
@@ -45,21 +55,33 @@ def destroy_windows(app, windows, timeout: float = 30.0) -> None:
     second ``delete`` runs after Qt has already deleted them with their parent: the segmentation fault in
     ``Shiboken::BindingManager::runDeletionInMainThread`` of 2026-10-16, in whatever test ran next. Deleted here, while
     the test still holds them, the Qt objects go in the right order on the right thread, and every wrapper is invalid
-    before any collector sees it. A window whose job is still running is given ``timeout`` seconds to finish first.
-    The ``gc.collect()`` at the end frees any other Qt object the test made and dropped (a dialog, a view) here as well,
-    instead of on a job thread or a pool thread later.
+    before any collector sees it. A window whose job, update check or download thread is still running is given
+    ``timeout`` seconds to finish first; one still running at the deadline is NOT deleted (its thread still emits
+    through the window's ``Bridge`` and ``UpdateController`` — a deleted one would raise ``RuntimeError: Signal source
+    has been deleted`` in that thread): it is kept alive in ``KEPT_ALIVE``, where no collector ever frees it, and a
+    ``TimeoutError`` names it. The ``gc.collect()`` at the end frees any other Qt object the test made and dropped (a
+    dialog, a view) here as well, instead of on a job thread or a pool thread later.
     """
     import shiboken6
     deadline = time.monotonic() + timeout
+    still_busy = []
     for w in list(windows):
         if not shiboken6.isValid(w):
             continue
-        while getattr(w, "busy", False) and time.monotonic() < deadline:    # a job still running: let it finish
+        while not _idle(w) and time.monotonic() < deadline:
             app.processEvents()
             time.sleep(0.02)
+        if not _idle(w):
+            still_busy.append(w)
+            KEPT_ALIVE.append(w)
+            continue
         w.force_close = True
         w.close()
         w.deleteLater()
     flush_deferred_deletes(app)
     windows.clear()
     gc.collect()
+    if still_busy:
+        raise TimeoutError(f"destroy_windows: {len(still_busy)} window(s) still had a job, update check or download "
+                           f"running after {timeout:g} s — kept alive (qt_support.KEPT_ALIVE), not deleted, because a "
+                           "thread was still using their Qt objects")

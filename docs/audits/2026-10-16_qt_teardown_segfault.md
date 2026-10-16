@@ -66,8 +66,10 @@ posted it); it merely moved ownership to C++, so the collector found nothing of 
 
 ## 3. Fix
 
-- **`tests/qt_support.destroy_windows(app, windows)`**: for each window, wait while a job is still running (bounded),
-  `force_close`, `close()`, `deleteLater()`; then `QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)` and
+- **`tests/qt_support.destroy_windows(app, windows)`**: for each window, wait while a job, update check or download
+  thread is still running (bounded; at the deadline the window is kept alive in `KEPT_ALIVE`, never deleted — its
+  thread still emits through the window's `Bridge`/`UpdateController` — and a `TimeoutError` names it; Codex's finding
+  on the PR), `force_close`, `close()`, `deleteLater()`; then `QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)` and
   `processEvents()` — the Qt objects are deleted now, on the main thread, in Qt's order, while the test still holds
   every wrapper, so every wrapper is invalid before any collector sees it; then `gc.collect()` on the main thread, so
   any other Qt object the test dropped is freed here and not on a job or pool thread later. Every `qt` fixture
@@ -75,8 +77,9 @@ posted it); it merely moved ownership to C++, so the collector found nothing of 
   the one try/finally window test tear down through it.
 - **`ui/pages.py`**: `RowsModel` and `ProblemsFilter` get their page as parent — the only QObjects the window made
   without one (Python subclasses, so the collector would have deleted them on whatever thread it ran).
-- **`tests/test_qt_lifetime.py`** (5 tests): after the teardown no wrapper of the window or of anything it owns is valid;
-  the models belong to their page; the crash's scenario (teardown, then a collection on a worker thread, then Python on
+- **`tests/test_qt_lifetime.py`** (6 tests): after the teardown no wrapper of the window or of anything it owns is valid;
+  the models belong to their page; a window whose job still runs at the deadline is kept alive and named, never deleted
+  under its thread; the crash's scenario (teardown, then a collection on a worker thread, then Python on
   the main thread) survives, in a subprocess; every test module that builds a window imports `destroy_windows`; the
   window's garbage after the teardown holds only invalid wrappers.
 

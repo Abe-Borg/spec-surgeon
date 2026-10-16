@@ -108,6 +108,31 @@ SCENARIO = textwrap.dedent("""
 """)
 
 
+def test_a_window_whose_job_still_runs_is_kept_alive_not_deleted(tmp_path, monkeypatch):
+    """A thread still emits through the window's Bridge: deleting the window would hand it an invalid wrapper
+    (``RuntimeError: Signal source has been deleted`` in that thread). The helper waits, and at the deadline keeps the
+    window alive — where no collector frees it — and says so; once the job is over, the window is deleted as usual."""
+    import threading
+    import shiboken6
+    import qt_support
+    from qt_support import destroy_windows
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    app, w = _window(tmp_path)
+    gate = threading.Event()
+    assert w._work("Something long", lambda log: gate.wait(30) and "finished")
+    windows = [w]
+    try:
+        with pytest.raises(TimeoutError, match=r"still had a job.*kept alive"):
+            destroy_windows(app, windows, timeout=0.3)
+        assert windows == [] and shiboken6.isValid(w) and w in qt_support.KEPT_ALIVE and w.busy
+    finally:
+        gate.set()
+        w._spec_surgeon["wait"]()
+        qt_support.KEPT_ALIVE.remove(w)
+    destroy_windows(app, [w])
+    assert not shiboken6.isValid(w)
+
+
 def test_a_destroyed_window_collected_on_another_thread_leaves_the_process_alive(tmp_path):
     """The crash's own scenario, in a subprocess: build a window, tear it down with ``destroy_windows``, then free its
     Python object on a worker thread and run Python on the main thread. With ``close()`` alone this dies with SIGSEGV
