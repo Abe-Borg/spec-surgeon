@@ -76,17 +76,20 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "existing-revisions": (
         "Paragraph Already Has Pending Revisions",
-        "Tracked deletion of a paragraph that already carries someone's tracked changes would stack revisions. "
-        "Accept or reject them in Word first, or use an untracked deletion.",
+        "Tracked deletion of a paragraph that already carries someone's tracked changes would stack revisions — or a "
+        "field or watermark to change lies in someone's pending tracked change. Accept or reject them in Word first, "
+        "or use an untracked deletion.",
     ),
     "structure": (
         "Paragraph Holds Unsupported Content",
         "The paragraph contains elements the operation does not handle in this mode (a hyperlink, content control, "
-        "comment anchor or similar). Bookmarks and proofing markers are fine.",
+        "comment anchor or similar) — or the file holds something the operation cannot tell apart safely (two comments "
+        "with one id, a watermark sharing its run with other content). Bookmarks and proofing markers are fine.",
     ),
     "textbox": (
         "Target Inside a Text Box",
-        "The selected paragraph lives inside a text box; the operation only edits body paragraphs.",
+        "The selected paragraph — or a comment mark, link or field to remove — lives inside a text box (Word keeps two "
+        "copies of a text box); the operation only edits body paragraphs. Change that one in Word.",
     ),
     "table-cell": (
         "Would Empty a Table Cell",
@@ -250,6 +253,60 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "image-changed": (
         "Your Picture File Changed During the Run",
         "The new (or old) logo picture was edited after the plan read it. Preview again, then run.",
+    ),
+    # ---- built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md) ----
+    "field-span": (
+        "Field Runs Over Several Paragraphs",
+        "The field to convert or remove begins in one paragraph and ends in another (a table of contents, an index) or "
+        "never ends. It is turned into text only inside one paragraph; update or unlink it in Word (select it, "
+        "Ctrl+Shift+F9).",
+    ),
+    "nested-field": (
+        "Field Inside Another Field's Code",
+        "The field holds another field in its code, or sits inside another field's code (an IF or a formula built from "
+        "it). Turning one of them into text would change what the other does; convert the outer field in Word.",
+    ),
+    "form-field": (
+        "Form Field",
+        "The field is a form field someone fills in (a text box, check box or drop-down of a protected form); turning it "
+        "into text would remove the control. Leave it, or convert it in Word.",
+    ),
+    "watermark-exists": (
+        "A Watermark Is Already There",
+        "The file already has a watermark (its words are in the reason). Nothing was changed. To swap it for the new "
+        "words, ask to replace the watermark; to keep both, add the new one in Word.",
+    ),
+    "no-header": (
+        "No Header to Carry a Watermark",
+        "Word draws a watermark from the page header, and this file has no header at all. Spec Surgeon never creates a "
+        "header; add one in Word (even an empty one), then run again.",
+    ),
+    "watermark-size": (
+        "Watermark Too Large for This Page",
+        "The font size asked for makes the watermark larger than this file's text area (its page size and margins are in "
+        "the reason). Use a smaller size, or 'auto' to fit every page.",
+    ),
+    "no-part": (
+        "The File Has No Such Properties Part",
+        "The file has no document-properties part (or no settings part) for what was asked — another program wrote it "
+        "without one. Open it in Word, save it, and run again.",
+    ),
+    "protected": (
+        "Track Changes Is Locked",
+        "Track Changes is locked in this file with a password (Review → Track Changes → Lock Tracking), so it cannot be "
+        "turned off here. Unlock it in Word, then run again.",
+    ),
+    "property-type": (
+        "A Custom Property Is Not Text",
+        "The custom property to set holds a number, a date or a yes/no value in this file (or Mark as Final's property "
+        "is not a yes/no), so a text value cannot replace it. Change it in Word (File → Info → Properties → Advanced → "
+        "Custom), or leave it out.",
+    ),
+    "malformed-properties": (
+        "The File's Properties Part Is Irregular",
+        "This file's document properties or settings hold something Word itself does not write — one property twice, "
+        "two custom properties with the same name, an unreadable property number, or a custom-properties file nothing "
+        "refers to. Open the file in Word, save it, and run again.",
     ),
 }
 

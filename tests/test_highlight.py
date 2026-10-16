@@ -125,6 +125,33 @@ def test_tracked_removal_refuses_a_run_that_already_carries_a_tracked_formatting
     assert [c.get(W + "author") for c in member(out, DOC).iter(W + "rPrChange")] == ["Jeremy"]
 
 
+def test_tracked_removal_refuses_a_paragraph_mark_that_is_itself_a_pending_insertion():
+    """The rPrChange snapshot would copy the mark's own w:ins: a second revision with the same id (V4 caught it as an
+    unpredicted ins_mark and a duplicate id) — the op refuses that mark instead; plain removal is fine."""
+    from docx import Document
+    from docx.enum.text import WD_COLOR_INDEX
+    from docx.oxml import OxmlElement
+    from docx.oxml.ns import qn
+    from make_fixtures import docx_bytes
+    doc = Document()
+    p = doc.add_paragraph()
+    p.add_run("inserted and highlighted").font.highlight_color = WD_COLOR_INDEX.YELLOW
+    mark = OxmlElement("w:rPr")
+    ins = OxmlElement("w:ins")
+    for k, v in (("w:id", "5"), ("w:author", "Jeremy"), ("w:date", "2026-01-01T00:00:00Z")):
+        ins.set(qn(k), v)
+    hl = OxmlElement("w:highlight"); hl.set(qn("w:val"), "yellow")
+    mark.append(ins); mark.append(hl)
+    p._p.get_or_add_pPr().append(mark)
+    data = docx_bytes(doc)
+    with pytest.raises(JobException) as e:
+        plan_spec(DocxPackage(data, "s.docx"), spec(unhighlight(tracked=True)))
+    assert e.value.code == "tracked-format" and "pending tracked change" in e.value.reason
+    plan, out, rec = run(data, spec(unhighlight()))
+    assert rec.passed, failed(rec)
+    assert highlights(out) == []
+
+
 def test_the_scope_limits_where_it_comes_off():
     data = build_highlighted()
     plan, out, rec = run(data, spec(unhighlight({"scope": ["headers"]})))

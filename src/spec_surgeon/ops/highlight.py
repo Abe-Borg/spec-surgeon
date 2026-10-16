@@ -173,6 +173,11 @@ class RemoveHighlight(Op):
             raise JobException(f"{where} already carries a pending tracked formatting change (w:rPrChange); a second "
                                f"tracked change cannot be expressed — accept or reject it first, or remove the "
                                f"highlight untracked", "tracked-format", {"where": where})
+        if tracked and any(rpr.find(W + t) is not None for t in ("ins", "del", "moveFrom", "moveTo")):
+            # the snapshot would copy the mark's own revision marker: a second revision with the same id (V4)
+            raise JobException(f"{where} is itself a pending tracked change (an inserted, deleted or moved paragraph "
+                               f"mark); its formatting change cannot be tracked as well — accept or reject it first, or "
+                               f"remove the highlight untracked", "tracked-format", {"where": where})
 
     @staticmethod
     def _flag_styles(pkg: DocxPackage, frag: PlanFragment, parts: List[str], colors: List[str]) -> None:
