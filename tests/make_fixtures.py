@@ -854,6 +854,69 @@ def build_batch1(section_number: str = "21 13 19", title: str = "PREACTION SPRIN
     return _post_process(buf.getvalue())
 
 
+# ---- built-in batch 2: generic package surgery for fixtures (docs/BUILTIN_OPS_BATCH2_DESIGN.md) -----------------------
+
+def docx_bytes(doc) -> bytes:
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
+def patch_docx(data: bytes, edits: dict) -> bytes:
+    """``data`` with each part in ``edits`` ({part name: fn(root) → None}) parsed, changed by its function and written
+    back (fixture surgery only — the engine never edits XML this way)."""
+    zin = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as zout:
+        for info in zin.infolist():
+            payload = zin.read(info.filename)
+            if info.filename in edits:
+                root = etree.fromstring(payload)
+                edits[info.filename](root)
+                payload = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            zi = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zout.writestr(zi, payload)
+    return out.getvalue()
+
+
+CT_NS = "http://schemas.openxmlformats.org/package/2006/content-types"
+REL_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
+
+
+def add_parts(data: bytes, parts: dict, rels=(), overrides: dict = None) -> bytes:
+    """``data`` with new members ``parts`` ({name: bytes}), relationships ``rels`` ((rels member, Id, Type, Target)
+    — the rels member is created when missing) and content-type ``overrides`` ({member: content type})."""
+    zin = zipfile.ZipFile(io.BytesIO(data))
+    members = {i.filename: zin.read(i.filename) for i in zin.infolist()}
+    order = [i.filename for i in zin.infolist()]
+    for rels_member, rid, typ, target in rels:
+        if rels_member in members:
+            root = etree.fromstring(members[rels_member])
+        else:
+            root = etree.Element("{%s}Relationships" % REL_NS, nsmap={None: REL_NS})
+            order.append(rels_member)
+        el = etree.SubElement(root, "{%s}Relationship" % REL_NS)
+        el.set("Id", rid); el.set("Type", typ); el.set("Target", target)
+        members[rels_member] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    if overrides:
+        root = etree.fromstring(members["[Content_Types].xml"])
+        for name, ct in overrides.items():
+            el = etree.SubElement(root, "{%s}Override" % CT_NS)
+            el.set("PartName", "/" + name); el.set("ContentType", ct)
+        members["[Content_Types].xml"] = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    for name, payload in parts.items():
+        members[name] = payload
+        if name not in order:
+            order.append(name)
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as zout:
+        for name in order:
+            zi = zipfile.ZipInfo(name, date_time=(2026, 1, 1, 0, 0, 0))
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zout.writestr(zi, members[name])
+    return out.getvalue()
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir")

@@ -31,6 +31,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 from .ooxml import CELL_REV_TAGS, CONTENT_REV_TAGS, PROPERTY_REV_TAGS
 from .ops import OPS, JobException, Plan, PlanFragment, get_op, merge_fragments
+from .ops.base import text_diffs
 from .ops.selectors import DEFAULT_PRESERVE_FONTS, size_values
 from .package import DocxPackage
 
@@ -357,10 +358,11 @@ def _check_expect(i: int, o: Dict[str, Any], frag: PlanFragment, plan_notes: Lis
     exp = o.get("expect") or {}
     label = f"op #{i} ({o['op']})"
     removed, added = set(frag.members_removed), set(frag.members_added)
+    diffs = text_diffs(frag.diffs)                  # structure-only declarations are not text diffs
     actual = {
-        "text_diffs": len(frag.diffs),
-        "text_diffs_outside_removed_parts": sum(1 for d in frag.diffs if d.part not in removed),
-        "text_diffs_in_kept_parts": sum(1 for d in frag.diffs if d.part not in removed and d.part not in added),
+        "text_diffs": len(diffs),
+        "text_diffs_outside_removed_parts": sum(1 for d in diffs if d.part not in removed),
+        "text_diffs_in_kept_parts": sum(1 for d in diffs if d.part not in removed and d.part not in added),
         "members_added": len(frag.members_added),
         "members_removed": len(frag.members_removed),
     }

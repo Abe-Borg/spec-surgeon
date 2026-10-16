@@ -36,7 +36,19 @@ REL_CONTENT_TYPES = {k: _WML_CT.format(k) for k in ("header", "footer", "styles"
                                                     "endnotes", "comments", "fontTable", "webSettings")}
 REL_CONTENT_TYPES["theme"] = "application/vnd.openxmlformats-officedocument.theme+xml"
 REL_CONTENT_TYPES["image"] = "image/*"
+# built-in batch 2: the comment side parts and the document-properties parts (keyed, like the rest, by the last segment
+# of the relationship type)
+REL_CONTENT_TYPES.update({k: _WML_CT.format(k) for k in ("commentsExtended", "commentsIds", "commentsExtensible",
+                                                         "people")})
+REL_CONTENT_TYPES["core-properties"] = "application/vnd.openxmlformats-package.core-properties+xml"
+REL_CONTENT_TYPES["extended-properties"] = "application/vnd.openxmlformats-officedocument.extended-properties+xml"
+REL_CONTENT_TYPES["custom-properties"] = "application/vnd.openxmlformats-officedocument.custom-properties+xml"
 THEME_REL = _REL_BASE + "theme"
+SETTINGS_REL = _REL_BASE + "settings"
+# the members the method kept away from every op until batch 2 (settings and document properties): V10's member
+# residual checks any change to them (verify/props._residual_members)
+PACKAGE_PROPERTY_RELS = ("http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties",
+                         _REL_BASE + "extended-properties", _REL_BASE + "custom-properties")
 
 
 class VPackage:
@@ -118,6 +130,17 @@ class VPackage:
         for r in self.rels_targets(self.main_part()).values():
             if r["type"] == rel_type and r["target"] in self.names:
                 return r["target"]
+        return None
+
+    def package_related(self, rel_type: str) -> Optional[str]:
+        """The member the package relationships (``_rels/.rels``) give for ``rel_type``, or None."""
+        if "_rels/.rels" not in self.names:
+            return None
+        for rel in self.xml("_rels/.rels").findall(REL + "Relationship"):
+            if rel.get("Type") == rel_type and rel.get("TargetMode", "Internal") == "Internal":
+                t = (rel.get("Target") or "").lstrip("/")
+                if t in self.names:
+                    return t
         return None
 
     def all_relationships(self) -> List[Tuple[str, str, str, Optional[str]]]:
@@ -207,3 +230,17 @@ class VPackage:
                 if k.startswith(R) and v not in ids:
                     out.add(f"{part}: {etree.QName(el).localname}/@r:{k[len(R):]}={v} names no relationship")
         return out
+
+
+def protected_members(pkg: "VPackage") -> Set[str]:
+    """``settings.xml`` (through the main part's relationships) and the document-properties parts (through the package
+    relationships) of this package — whatever their names."""
+    out = set()
+    s = pkg.related(SETTINGS_REL)
+    if s:
+        out.add(s)
+    for t in PACKAGE_PROPERTY_RELS:
+        m = pkg.package_related(t)
+        if m:
+            out.add(m)
+    return out

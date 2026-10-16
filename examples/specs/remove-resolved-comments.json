@@ -1,0 +1,22 @@
+{
+  "request": "Before these go to the client, take out the comments that were resolved; leave the open ones",
+  "summary": "Every resolved comment thread is removed with its replies and its marks in the text; open comments stay; the document's text is unchanged.",
+  "assumptions": [
+    "a thread is resolved when Word marked it resolved (Resolve on the comment); a file that keeps no resolved state (Word 2010 or older) has none",
+    "a removed comment takes its replies with it",
+    "a file with no resolved comment is left as it is"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "remove_comments",
+      "params": {
+        "which": "resolved"
+      }
+    }
+  ]
+}

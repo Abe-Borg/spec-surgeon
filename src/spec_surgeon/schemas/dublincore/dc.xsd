@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Spec Surgeon: a local definition of the Dublin Core element set (namespace http://purl.org/dc/elements/1.1/) as
+     the OPC core-properties schema (ecma/fouth-edition/opc-coreProperties.xsd) references it — written to the shape of
+     DCMI's 2003-04-02 dc.xsd (every element a SimpleLiteral: text, an optional xml:lang, no child elements), so V5a can
+     validate docProps/core.xml without the network. Not a copy of DCMI's file. -->
+<xs:schema xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns="http://purl.org/dc/elements/1.1/"
+           targetNamespace="http://purl.org/dc/elements/1.1/" elementFormDefault="qualified"
+           attributeFormDefault="unqualified">
+  <xs:import namespace="http://www.w3.org/XML/1998/namespace" schemaLocation="../ISO-IEC29500-4_2016/xml.xsd"/>
+  <xs:complexType name="SimpleLiteral">
+    <xs:complexContent mixed="true">
+      <xs:restriction base="xs:anyType">
+        <xs:sequence>
+          <xs:any processContents="lax" minOccurs="0" maxOccurs="0"/>
+        </xs:sequence>
+        <xs:attribute ref="xml:lang" use="optional"/>
+      </xs:restriction>
+    </xs:complexContent>
+  </xs:complexType>
+  <xs:element name="any" type="SimpleLiteral" abstract="true"/>
+  <xs:element name="title" substitutionGroup="any"/>
+  <xs:element name="creator" substitutionGroup="any"/>
+  <xs:element name="subject" substitutionGroup="any"/>
+  <xs:element name="description" substitutionGroup="any"/>
+  <xs:element name="publisher" substitutionGroup="any"/>
+  <xs:element name="contributor" substitutionGroup="any"/>
+  <xs:element name="date" substitutionGroup="any"/>
+  <xs:element name="type" substitutionGroup="any"/>
+  <xs:element name="format" substitutionGroup="any"/>
+  <xs:element name="identifier" substitutionGroup="any"/>
+  <xs:element name="source" substitutionGroup="any"/>
+  <xs:element name="language" substitutionGroup="any"/>
+  <xs:element name="relation" substitutionGroup="any"/>
+  <xs:element name="coverage" substitutionGroup="any"/>
+  <xs:element name="rights" substitutionGroup="any"/>
+</xs:schema>

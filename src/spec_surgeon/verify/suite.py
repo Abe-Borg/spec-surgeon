@@ -135,6 +135,14 @@ OTHER_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChang
 PROPERTY_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange")
 
 
+def structure_only(d: Dict[str, Any]) -> bool:
+    """A predicted block diff that declares a change of structural children only (built-in batch 2: a comment's
+    reference mark removed, a hidden tab removed): the block's text is the same before and after, ``struct_after``
+    says the counts. V2 leaves it out of the expected text changes; V3 accepts it for that block only."""
+    return (d.get("before") is not None and d.get("before") == d.get("after")
+            and d.get("struct_after") is not None)
+
+
 def _rev_kind(el) -> Optional[str]:
     if not isinstance(el.tag, str) or not el.tag.startswith(W):
         return None
@@ -296,6 +304,7 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
     parts = [p for p in scope if p in src_tp and p in out_tp]
     actual_text_changes = []
     struct_changes = []
+    struct_only_seen = set()           # (part, block index) of every structure-only declaration a real change matched
     n_blocks = 0
     src_xml = {p: src.xml(p) for p in src_tp}
     out_xml = {p: out.xml(p) for p in out_tp}
@@ -312,16 +321,29 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
                 actual_text_changes.append({"part": part, "before": ch.before, "after": ch.after,
                                             "before_index": ch.before_index, "after_index": ch.after_index})
             if ch.before is not None and ch.after is not None and ch.struct_before != ch.struct_after:
+                # a structure-only declaration (before == after) counts for its own block only (source index); one
+                # beside a text change keeps the older text match
                 declared = [d for d in plan.get("diffs", []) if d["part"] == part and d.get("before") == ch.before
                             and d.get("after") == ch.after and d.get("struct_after") is not None
-                            and {k: v for k, v in d["struct_after"].items() if v} == ch.struct_after]
+                            and {k: v for k, v in d["struct_after"].items() if v} == ch.struct_after
+                            and (not structure_only(d) or d.get("block_index") == ch.before_index)]
                 if not declared:
                     struct_changes.append({"part": part, "block": ch.before_index,
                                            "before": ch.struct_before, "after": ch.struct_after,
                                            "text": (ch.before or "")[:160]})
+                struct_only_seen |= {(part, d.get("block_index")) for d in declared if structure_only(d)}
+    # a structure-only declaration is a prediction like any other: the change it declares must have happened
+    for d in plan.get("diffs", []):
+        if structure_only(d) and (d.get("part"), d.get("block_index")) not in struct_only_seen:
+            struct_changes.append({"part": d.get("part"), "block": d.get("block_index"),
+                                   "declared": {k: v for k, v in (d.get("struct_after") or {}).items() if v},
+                                   "text": (d.get("before") or "")[:160],
+                                   "problem": "declared structure change not found in the output"})
     # the same multisets as ever, sorted with a total key: a part whose changes mix an inserted or removed block (None
     # on one side) with a changed one sorts instead of raising
-    expected = sorted(((d["part"], d.get("before"), d.get("after")) for d in plan.get("diffs", [])), key=_total_key)
+    # a structure-only declaration (V3's business) is not a text change
+    expected = sorted(((d["part"], d.get("before"), d.get("after")) for d in plan.get("diffs", [])
+                       if not structure_only(d)), key=_total_key)
     actual = sorted(((c["part"], c["before"], c["after"]) for c in actual_text_changes), key=_total_key)
     v2_ok = expected == actual
     missing = [e for e in expected if e not in actual]
@@ -339,7 +361,8 @@ def run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: s
     rec.set(CheckResult("V3", "Structural children", "PASS" if not struct_changes else "FAIL",
                         "w:tab(in w:r)/w:br/w:cr/noBreakHyphen/sym/fldChar/… per block: "
                         + ("identical on every aligned block, or changed exactly as the plan declared" if not struct_changes
-                           else f"{len(struct_changes)} block(s) differ without a plan declaration"),
+                           else f"{len(struct_changes)} block(s) differ from the plan's declarations (changed without "
+                                f"one, or declared and not changed)"),
                         {"changes": struct_changes}))
 
     # V4 — revision accounting, every kind: source text parts before, output text parts after

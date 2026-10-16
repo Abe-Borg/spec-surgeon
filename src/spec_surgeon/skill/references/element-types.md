@@ -73,6 +73,6 @@ Collect text per block as the concatenation of all of these in document order, a
 
 ## Settings and properties — leave alone
 
-* `settings.xml`: `w:trackRevisions` is the user's choice — never toggle it. `w:rsids`, `w:proofState`, compatibility settings: not yours.
-* `docProps/core.xml` (`lastModifiedBy`, `modified`) and `docProps/app.xml` (page/word counts): Word recomputes them on save. Do not update them; V1 expects them unchanged.
+* `settings.xml`: `w:trackRevisions` is the user's choice — never toggle it on your own. When the user asks for exactly that ("turn track changes off before it goes out"), change `w:trackRevisions` and nothing else (schema order — `CT_Settings` is a sequence; a `w:documentProtection w:edit="trackedChanges"` that is enforced locks it: refuse). `w:rsids`, `w:proofState`, compatibility settings: not yours.
+* `docProps/core.xml` (`lastModifiedBy`, `modified`) and `docProps/app.xml` (page/word counts): Word recomputes them on save. Do not update them as a side effect; V1 expects them unchanged. When the user asks for a property (a title, the company, clearing the author names, *Mark as Final* — custom property `_MarkAsFinal` true plus `cp:contentStatus` "Final"), change exactly the named properties, verify everything else in the part unchanged, and say that fields showing a property (DOCPROPERTY, TITLE, AUTHOR …) keep their old result until Word updates fields. `docProps/custom.xml` may be created for it, holding only the asked properties.
 * `customXml/`: data-binding sources and SharePoint/property metadata; untouched unless a bound control is the job.

@@ -261,6 +261,12 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "counts": counts,
         "first_paragraphs": first,
     }
+    try:
+        marked = markup(pkg)
+    except Exception as e:  # noqa: BLE001 — descriptive only: a file the summary cannot read still profiles
+        marked = {"error": f"{type(e).__name__}: {e}"}
+    if marked:
+        prof["markup"] = marked
     hygiene = fp.get("body_hygiene") or {}
     anomalies = {}
     if hygiene.get("has_nbsp"):
@@ -278,6 +284,146 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
     if anomalies not in ({}, {"style_regime": "normal_only"}) and anomalies != {"style_regime": "styled"}:
         prof["hygiene"] = anomalies
     return bound(prof)
+
+
+W15 = "{http://schemas.microsoft.com/office/word/2012/wordml}"
+VML = "{urn:schemas-microsoft-com:vml}"
+COMMENTS_EX_REL = "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"
+CORE_REL = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"
+APP_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties"
+CUSTOM_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties"
+DC = "{http://purl.org/dc/elements/1.1/}"
+CP = "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}"
+
+
+def _package_part(pkg: DocxPackage, rel_type: str) -> Optional[str]:
+    for r in pkg.rels("").values() if pkg.has("_rels/.rels") else []:
+        if r.type == rel_type and r.resolved and pkg.has(r.resolved):
+            return r.resolved
+    return None
+
+
+def markup(pkg: DocxPackage) -> Dict[str, Any]:
+    """What built-in batch 2's clean-up operations would find (descriptive; the ops read the file themselves):
+    comments (count, resolved threads, authors), pending tracked changes by author (and the dates they span), highlight
+    colours, hidden runs, hyperlinks, field types, a watermark's words, direct run colours, the document properties
+    and whether the file is marked final. Only what the file has is listed."""
+    from .ops.fields import fields_of
+    from .ops.markup import Look
+    from .ooxml import revision_kind
+    out: Dict[str, Any] = {}
+    kinds = pkg.parts_by_kind()
+    look = Look(StyleSheet(pkg))
+    comments = kinds.get("comments") or []
+    if comments:
+        croot = pkg.xml(comments[0])
+        authors = Counter(c.get(W + "author") or "?" for c in croot.findall(W + "comment"))
+        if authors:
+            entry: Dict[str, Any] = {"count": sum(authors.values()), "authors": dict(authors.most_common(6))}
+            ex = [r.resolved for r in pkg.rels(pkg.main_part()).values()
+                  if r.type == COMMENTS_EX_REL and r.resolved and pkg.has(r.resolved)]
+            if ex:
+                done = sum(1 for e in pkg.xml(ex[0]).iter(W15 + "commentEx")
+                           if e.get(W15 + "done") in ("1", "true", "on") and not e.get(W15 + "paraIdParent"))
+                entry["resolved_threads"] = done
+            out["comments"] = entry
+    revs: Dict[str, Counter] = {}
+    dates: List[str] = []
+    highlight: Counter = Counter()
+    colors: Counter = Counter()
+    hidden = 0
+    links = Counter()
+    fields: Counter = Counter()
+    for part in pkg.text_parts():
+        root = pkg.xml(part)
+        for el in root.iter():
+            k = revision_kind(el)
+            if k:
+                revs.setdefault(el.get(W + "author") or "?", Counter())[k] += 1
+                if el.get(W + "date"):
+                    dates.append(el.get(W + "date")[:10])
+        if part in comments:
+            continue
+        for h in root.iter(W + "highlight"):
+            holder = h.getparent().getparent() if h.getparent() is not None else None
+            if holder is not None and holder.tag in (W + "r", W + "pPr") and h.get(W + "val") not in (None, "none"):
+                highlight[h.get(W + "val")] += 1
+        for p in paragraphs(root):
+            for r in p.findall(f".//{W}r"):
+                if nearest_p(r) is not p or not any(c.tag == W + "t" for c in r):
+                    continue
+                rpr = r.find(W + "rPr")
+                c = rpr.find(W + "color") if rpr is not None else None
+                if c is not None and (c.get(W + "val") or "auto").lower() != "auto":
+                    colors[c.get(W + "themeColor") or c.get(W + "val")] += 1
+                try:
+                    if look.hidden(rpr, p):
+                        hidden += 1
+                except Exception:  # noqa: BLE001 — descriptive only
+                    pass
+        for hl in root.iter(W + "hyperlink"):
+            links["external" if hl.get(f"{{{NS['r']}}}id") else "internal"] += 1
+        for f in fields_of(root):
+            fields[f.type or "?"] += 1
+            if f.type == "HYPERLINK":
+                links["field"] += 1
+    if revs:
+        out["tracked_changes"] = {a: dict(c) for a, c in sorted(revs.items(), key=lambda kv: -sum(kv[1].values()))[:6]}
+        if dates:
+            out["tracked_change_dates"] = [min(dates), max(dates)]
+    if highlight:
+        out["highlight_colors"] = dict(highlight.most_common(8))
+    if hidden:
+        out["hidden_runs"] = hidden
+    if colors:
+        out["run_colors"] = dict(colors.most_common(6))
+    if links:
+        out["hyperlinks"] = dict(links)
+    if fields:
+        out["fields"] = dict(fields.most_common(10))
+    marks = []
+    for part in kinds.get("headers") or []:
+        for shape in pkg.xml(part).iter(VML + "shape"):
+            sid = shape.get("id") or ""
+            if sid.startswith("PowerPlusWaterMarkObject"):
+                tp = shape.find(VML + "textpath")
+                marks.append(_clip(tp.get("string") if tp is not None else "", 40))
+            elif sid.startswith("WordPictureWatermark"):
+                marks.append("(picture)")
+    if marks:
+        out["watermark"] = list(dict.fromkeys(marks))
+    props: Dict[str, Any] = {}
+    core = _package_part(pkg, CORE_REL)
+    if core:
+        root = pkg.xml(core)
+        for key, tag in (("title", DC + "title"), ("author", DC + "creator"), ("last_modified_by", CP + "lastModifiedBy"),
+                         ("status", CP + "contentStatus")):
+            el = root.find(tag)
+            if el is not None and (el.text or "").strip():
+                props[key] = _clip(el.text, 50)
+    app = _package_part(pkg, APP_REL)
+    if app:
+        el = pkg.xml(app).find("{http://schemas.openxmlformats.org/officeDocument/2006/extended-properties}Company")
+        if el is not None and (el.text or "").strip():
+            props["company"] = _clip(el.text, 50)
+    custom = _package_part(pkg, CUSTOM_REL)
+    if custom:
+        names = [p.get("name") for p in pkg.xml(custom) if isinstance(p.tag, str) and p.get("name")]
+        if "_MarkAsFinal" in names:
+            out["marked_final"] = True
+        names = [n for n in names if n != "_MarkAsFinal"]
+        if names:
+            props["custom"] = names[:10]
+    if props:
+        out["properties"] = props
+    settings = next((r.resolved for r in pkg.rels(pkg.main_part()).values()
+                     if r.type.endswith("/settings") and r.resolved and pkg.has(r.resolved)), None)
+    if settings:
+        prot = pkg.xml(settings).find(W + "documentProtection")
+        if prot is not None and prot.get(W + "edit") == "trackedChanges" and \
+                prot.get(W + "enforcement") in ("1", "true", "on"):
+            out["track_changes_locked"] = True
+    return out
 
 
 def body_text_fonts(pkg: DocxPackage, limit: int = 3) -> List[Dict[str, Any]]:
@@ -389,6 +535,21 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         prof["styles_in_use"] = [{k: st[k] for k in ("id", "count", "font", "size_pt") if k in st}
                                  for st in prof["styles_in_use"][:6]]
 
+    def thin_markup():
+        m = prof.get("markup")
+        if not m:
+            return
+        cut = False
+        for k, v in list(m.items()):
+            if isinstance(v, dict) and len(v) > 3:
+                m[k] = dict(list(v.items())[:3])
+                cut = True
+            elif isinstance(v, list) and len(v) > 3 and k != "tracked_change_dates":
+                m[k] = v[:3]
+                cut = True
+        if cut:
+            omitted.append("markup details beyond the first three of each kind")
+
     steps = [
         lambda: prof.__setitem__("first_paragraphs", prof["first_paragraphs"][:3]),
         lambda: [st.pop("sample", None) for st in prof["styles_in_use"]],
@@ -397,6 +558,7 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         lambda: prof.__setitem__("first_paragraphs", []),
         lambda: prof["fonts"].__setitem__("direct_in_runs", dict(list(prof["fonts"]["direct_in_runs"].items())[:4])),
         lambda: prof.pop("hygiene", None),
+        thin_markup,
         drop_part_text,
         thin_styles,
         lambda: cut_sections(6),
@@ -411,7 +573,7 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         step()
     prof["truncated"] = omitted
     if size() > limit:
-        keep = {k: prof[k] for k in ("file", "pattern_id", "settings", "counts") if k in prof}
+        keep = {k: prof[k] for k in ("file", "pattern_id", "settings", "counts", "markup") if k in prof}
         body = (prof.get("fonts") or {}).get("body_text")
         prof.clear()
         prof.update(keep)
@@ -419,7 +581,7 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
             prof["fonts"] = {"body_text": body}
         prof["truncated"] = omitted + ["everything but identity, settings, counts and the body text's font/size "
                                        "(profile limit)"]
-        for k in ("counts", "settings", "fonts"):     # an absurdly small limit: identity only
+        for k in ("markup", "counts", "settings", "fonts"):     # an absurdly small limit: identity only
             if size() <= limit:
                 break
             prof.pop(k, None)
