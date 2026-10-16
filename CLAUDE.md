@@ -1365,6 +1365,10 @@ trial, final checks and reuse around them.
 5. **Unsupported final requirements are refused, not discarded.** Source-relative final font requirements such
    as preservation exceptions or sizes derived from the original source cannot currently be represented by the
    supported independent final assertions. Recovery refuses them; a note or visual check is not a substitute.
+   Normalize EditSpec defaults before inferring final checks: omitted `preserve_fonts` means the engine's
+   symbol-font exceptions, while an explicitly empty list has none. Candidate validation uses the same rule
+   against the original goal; a candidate cannot opt out of the original preservation contract. EditSpec size
+   assertions exempt runs holding `w:sym` even with an empty preservation list and cannot become universal checks.
    Declared final assertions check only what they express. Never equate stage PASS, final assertion PASS, READY,
    delivery or a model's "no findings" with satisfaction of arbitrary natural-language intent.
 6. **Custom recovery is narrower than ordinary custom formatting.** It requires explicit opt-in and currently
@@ -1378,6 +1382,8 @@ trial, final checks and reuse around them.
    does not imply `--ack-review`. No generated-plan success or reused case can automatically acknowledge findings.
 8. **Memory is evidence, not authority.** `repair_memory.CaseStore` uses bounded local SQLite JSON records, never
    executable serialized code. Store structural verification, visual evidence and user feedback separately.
+   Cases and model tool results retain only their own trial's visual review, never the aggregate batch review
+   or stale findings from another attempt. A trial without verified output explicitly records no review.
    Similarity retrieves suggestions; automatic eligibility also checks the current request, goal, structural
    pattern, template hashes and application version. Every reuse still requires current wording validation and
    fresh planning/verification on EVERY file. Negative feedback blocks the repair identity across duplicate cases;

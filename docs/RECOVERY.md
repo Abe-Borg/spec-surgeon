@@ -91,6 +91,12 @@ semantic or visual requirements still need review.
 Source-relative final font requirements, including preservation exceptions or sizes derived
 from the original source, are currently refused by recovery when they cannot be represented
 by its independent final checks. They are not silently dropped or replaced by a visual check.
+An EditSpec font assertion that omits `preserve_fonts` still has the engine's default symbol-font
+exceptions (including Symbol and Wingdings), so the same limitation applies. An explicitly empty
+`preserve_fonts` list has no font-name exceptions and can become a universal final-font check.
+EditSpec size assertions still exempt runs containing symbols, so recovery cannot translate
+those into universal final-size checks even with an empty preservation list. Recovery cannot
+remove preservation rules from the original request to make a candidate pass.
 
 Custom recovery is opt-in and currently restricted to a goal made entirely of page-setup
 operations. Generated code remains sandboxed and subject to the existing formatting limits.
@@ -105,6 +111,9 @@ configuration directory. `SPEC_SURGEON_CONFIG_DIR` can select a separate directo
 It records requests, failure categories, candidate repairs, applicability conditions, verification
 evidence, visual-review evidence, costs and user corrections. It is bounded in size and stores
 descriptors rather than document packages or executable saved code.
+Each case retains only the visual review of that candidate's verified outputs. Findings from
+other document groups or earlier attempts remain in the investigation where relevant, but are
+not attributed to a new repair case. An attempt without verified output is recorded as not reviewed.
 
 Freeform requests, notes and feedback are retained locally; the store is not an anonymizer.
 When memory is enabled, relevant previous cases can be included in a recovery model request.
