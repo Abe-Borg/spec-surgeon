@@ -383,8 +383,10 @@ class RemoveHyperlinks(Op):
             data[part] = {"blocks": {str(bi): _locate(pars[bi], fields, e["links"], e["fields"])
                                      for bi, e in sorted(by_par.items())},
                           "remove_rels": remove}
+        # the user's own words (scope, which, keep_style as asked; absent = the default): the verifier reads them itself
         frag.property_assertions.append({
-            "kind": "removed_hyperlinks", "scope": scope, "which": which, "keep_style": keep,
+            "kind": "removed_hyperlinks", "scope": select.get("scope") or params.get("scope"),
+            **{k: params[k] for k in ("which", "keep_style") if k in params},
             "expected_blocks": blocks, "expected_links": n_links, "expected_fields": n_fields,
             "removed_relationships": removed_rels})
         if not n_links and not n_fields:
@@ -522,7 +524,8 @@ class UnlinkFields(Op):
                 _predict_paragraph(frag, part, bi, p, gone, f"{len(fs)} field(s) turned into text")
             expected[part] = {str(bi): [f.instruction for f in fs] for bi, fs in sorted(by_par.items())}
             data[part] = {"blocks": {str(bi): _locate(pars[bi], fields, [], fs) for bi, fs in sorted(by_par.items())}}
-        frag.property_assertions.append({"kind": "unlinked_fields", "scope": scope, "types": params.get("types"),
+        frag.property_assertions.append({"kind": "unlinked_fields", "scope": select.get("scope") or params.get("scope"),
+                                         "types": params.get("types"),
                                          "expected": expected})
         total = sum(per_type.values())
         if not total:

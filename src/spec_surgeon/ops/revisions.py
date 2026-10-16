@@ -664,7 +664,8 @@ class ResolveTrackedChanges(Op):
             frag.notes.append(f"{left_alone} tracked change(s) not chosen stay as they are")
         frag.property_assertions.append({
             "kind": "resolved_changes", "action": action, "authors": list(authors or []),
-            "on_or_after": params.get("on_or_after"), "before": params.get("before"), "scope": scope,
+            "on_or_after": params.get("on_or_after"), "before": params.get("before"),
+            "asked_scope": select.get("scope") or params.get("scope"),          # as asked: the verifier's default if none
             "parts": changed, "expected_gone": expected_gone, "expected_selected": expected_selected})
         frag.geometry_reference = "none"
         frag.geometry_reason = "accepting or rejecting tracked changes reflows the text"

@@ -52,6 +52,8 @@ _NOTE_MARKS = (W + "footnoteReference", W + "endnoteReference", W + "commentRefe
 _PAIRS = {W + "bookmarkStart": "bookmark", W + "bookmarkEnd": "bookmark", W + "permStart": "permission",
           W + "permEnd": "permission", _FROM_START: "moveFrom range", _FROM_END: "moveFrom range",
           _TO_START: "moveTo range", _TO_END: "moveTo range"}
+# the scope when the user names none: every text part
+_V_EVERY_PART = ("document", "headers", "footers", "footnotes", "endnotes", "comments")
 _DAY = r"(\d{4})-(\d{2})-(\d{2})"
 _V_USER = re.compile(_DAY + r"(?:T(\d{2}):(\d{2})(?::(\d{2}))?)?")
 _V_WORD = re.compile(_DAY + r"(?:T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?)?(?:Z|[+-]\d{2}:?\d{2})?")
@@ -358,7 +360,8 @@ def _resolved_changes(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     gone: Dict[str, Dict[str, int]] = {}
     picked: Dict[str, int] = {}
     total = 0
-    for part in ctx.scope_parts(a.get("scope") or []):
+    scope = a.get("asked_scope") or _V_EVERY_PART
+    for part in ctx.scope_parts([scope] if isinstance(scope, str) else scope):
         if part not in ctx.out.names:
             errs.append(f"resolved_changes: {part} is missing from the output")
             continue

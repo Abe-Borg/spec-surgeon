@@ -149,6 +149,12 @@ def _v_check_part_rels(ctx: Ctx, part: str, removed: List[str], kind: str, errs:
         ctx.verified_members.add(member)
 
 
+def _v_scope(a: Dict[str, Any]) -> List[str]:
+    """The scope as the user asked it (absent: this module's default)."""
+    s = a.get("scope") or V_DEFAULT_SCOPE
+    return [s] if isinstance(s, str) else list(s)
+
+
 def _removed_hyperlinks(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     which = a.get("which", "external")
     if which not in ("external", "internal", "all"):
@@ -159,7 +165,7 @@ def _removed_hyperlinks(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     n_links = n_fields = 0
     blocks: Dict[str, List[int]] = {}
     removed_rels: Dict[str, List[str]] = {}
-    for part in ctx.scope_parts(a.get("scope") or V_DEFAULT_SCOPE):
+    for part in ctx.scope_parts(_v_scope(a)):
         if part not in ctx.both:
             errs.append(f"removed_hyperlinks: {part} missing from the output")
             continue
@@ -246,7 +252,7 @@ def _unlinked_fields(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     pick = (lambda t: t not in V_NEVER_UNLINK) if types == "all" else (lambda t: t in types)
     found: Dict[str, Dict[str, List[str]]] = {}
     n = 0
-    for part in ctx.scope_parts(a.get("scope") or V_DEFAULT_SCOPE):
+    for part in ctx.scope_parts(_v_scope(a)):
         if part not in ctx.both:
             errs.append(f"unlinked_fields: {part} missing from the output")
             continue
