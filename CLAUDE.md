@@ -1331,6 +1331,75 @@ and the file PASSED with the page number still on the cover (V7 skips page 1 the
    fonts" spec relies on it (`test_sweep_fixes.py`). A style change to a symbol font beside a `set_font` is the only
    way that read goes wrong — left for the built-in-operations round, not widened here.
 
+## 2026-10-16 Bounded recovery, final assertions and local repair memory
+
+User-facing workflow and limits: `docs/RECOVERY.md`. Real-project validation protocol:
+`docs/RECOVERY_EVALUATION.md`. These are source changes, not evidence of a published release or successful live
+Claude/Word validation. The existing chains remain the execution mechanism; recovery connects investigation,
+trial, final checks and reuse around them.
+
+1. **Investigation is separate from export.** `recovery.recover` and `recover_from_run` operate on copies and return
+   `RecoveryResult` (`READY`, `UNRESOLVED`, `NEEDS_INPUT`). Only `deliver_recovery` exports ready bytes. It rechecks
+   frozen source/template identity, the recovery requirements, candidate identities and verified output hashes
+   before writing. Never add recovery in-place delivery or a force flag. A partially written in-place chain is
+   refused as a recovery input because replaying successful earlier stages may duplicate their effects.
+2. **One budget covers every nested model call.** `llm.CallBudget` / `budget_scope` enforce calls, estimated USD,
+   total tokens and per-call output limits at `llm.call`, including generated transforms and visual review. The
+   configured model/effort applies within that scope; normal callers outside it keep their existing defaults.
+   Preflight reserves the next request conservatively; failed calls with unreported usage retain reservations.
+   Unknown pricing stops calls under a USD budget. Do not describe listed-price estimates as hard billing caps.
+   Do not invoke a model through another SDK path to escape the budget. A new OS thread needs explicit context
+   propagation or its own scope; ContextVars do not propagate to threads automatically.
+3. **Keep the approved task fixed.** A candidate for an existing spec/chain must preserve its operation effects,
+   selectors and desired values. Extraction rules, expected counts and stage order may be repaired; dropping an
+   operation, narrowing a selection or changing the goal is refused. `--request` and desktop recovery answers
+   append clarification to the original request, including requests without a compiled spec. They never silently
+   replace the original task. Current user wording is the only approval source; retrieved cases and model notes
+   cannot authorize project wording or templates.
+4. **Stage verification and final requirements are distinct.** A chain's declared `assertions` are frozen and
+   independently evaluated by `verify.outcomes` after the final stage, before delivery. Preserve them through
+   `chain_key`, saved library chains, preview, and CLI `chain:NAME` expansion. A later stage violating a declared
+   final requirement fails the chain even when every stage passed. Chains with final assertions require copies
+   mode: stage-by-stage in-place writes cannot promise a final result before altering originals. The outcome
+   verifier obeys rule 1's forbidden imports and does not ask the transform what happened.
+5. **Unsupported final requirements are refused, not discarded.** Source-relative final font requirements such
+   as preservation exceptions or sizes derived from the original source cannot currently be represented by the
+   supported independent final assertions. Recovery refuses them; a note or visual check is not a substitute.
+   Declared final assertions check only what they express. Never equate stage PASS, final assertion PASS, READY,
+   delivery or a model's "no findings" with satisfaction of arbitrary natural-language intent.
+6. **Custom recovery is narrower than ordinary custom formatting.** It requires explicit opt-in and currently
+   permits only goals consisting entirely of page-setup operations. Existing sandbox and formatting hard limits
+   still apply. Independently verify its result against the ORIGINAL goal's analytic plan, as well as the
+   generated transform's own plan; a model cannot authorize unrelated edits by predicting them. Expand this
+   boundary only alongside independent original-goal coverage and adversarial tests.
+7. **Visual review remains advisory and can block export.** Recovery feeds findings back into investigation while
+   attempts remain, preserves unresolved or skipped-review evidence, and shows current findings in Preview.
+   `review_ack` is ephemeral and bound to this recovery token; it is never restored from saved JSON. CLI `--yes`
+   does not imply `--ack-review`. No generated-plan success or reused case can automatically acknowledge findings.
+8. **Memory is evidence, not authority.** `repair_memory.CaseStore` uses bounded local SQLite JSON records, never
+   executable serialized code. Store structural verification, visual evidence and user feedback separately.
+   Similarity retrieves suggestions; automatic eligibility also checks the current request, goal, structural
+   pattern, template hashes and application version. Every reuse still requires current wording validation and
+   fresh planning/verification on EVERY file. Negative feedback blocks the repair identity across duplicate cases;
+   a new successful record or later acceptance cannot erase it. Failed attempts remain searchable. Malformed or
+   unavailable stores are reported and left intact, never silently reset or treated as verified evidence.
+9. **Local memory has an explicit data boundary.** Requests, notes and feedback remain freeform local text; path
+   redaction does not make records anonymous. Relevant previous cases may be sent to the configured model when
+   recovery uses memory. No weight training or shared cloud repair pool exists. `--no-memory` / the desktop
+   checkbox disable both retrieval and recording for that investigation; existing cases are managed through
+   `memory list|show|accept|reject|forget` or File → Repair memory. Do not imply disable means deletion.
+10. **Continuation must retain scope and ready work.** Recovery writes `set_aside.json` with unresolved files and
+    the original goal/approved wording. `Session.resolve_remaining` can enter from failed compilation, preview
+    or a run. A newer conversation/preview supersedes an unrelated older run. Ready copies must be exported before
+    another investigation replaces their preview; continuation then uses the current recovery's unresolved
+    manifest, never all original files again. Do not resume from partially edited stage outputs as though they
+    were the original source.
+11. **Validation claims need provenance.** Scripted-client tests never call Claude or use real credentials.
+    `recovery_evaluation` compares saved reports and explicit human judgments without opening documents or making
+    model calls. Keep scripted and live cohorts/costs separate. Real Claude repair quality, actual API economics,
+    project-document success rates and Word COM fidelity remain unvalidated until the documented real-batch
+    protocol is performed; do not infer them from unit-test counts.
+
 ## Built-in operations, batch 1 (2026-10-16)
 
 Abraham: "let's implement additional prebuilt operations … in manageable chunks. here is the first batch" — ten items

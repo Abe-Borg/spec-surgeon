@@ -50,6 +50,24 @@ def preview_counts(preview: Any) -> dict:
             "patterns": len(bp.patterns)}
 
 
+def recovery_rows(result: Any, *, preview: bool = False) -> List[Row]:
+    """A ready candidate is mechanically verified; it still needs the user's outcome review."""
+    rows = []
+    for f in result.files:
+        ready = f.status == "READY"
+        status = "Ready" if ready else ("Needs input" if f.status == "NEEDS_INPUT" else "Unresolved")
+        detail = f.reason or ("Verification completed; inspect the intended result." if ready else "")
+        if f.case_id:
+            detail += f"\nRepair memory case: {f.case_id}"
+        output = getattr(f, "delivered_to", None) or f.output
+        cells = ([Path(f.source).name, "Recovery", status, detail] if preview else
+                 [Path(f.source).name, "PASS" if ready else status, detail, str(output or "—")])
+        rows.append(Row(cells, "planned" if preview and ready else "pass" if ready else "exception",
+                        tooltip=detail, open_path=Path(output) if output else None,
+                        status_col=2 if preview else 1))
+    return rows
+
+
 def result_rows(batch: Any) -> List[Row]:
     from ..report import explain_failure, file_diagnosis
     rows = []
