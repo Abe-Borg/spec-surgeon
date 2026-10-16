@@ -53,17 +53,13 @@ def folder(tmp_path) -> Path:
 @pytest.fixture
 def qt(monkeypatch):
     """A Qt application (skipped when Qt cannot load, unless SPEC_SURGEON_REQUIRE_QT=1); every window a test appends
-    to the list is closed after it."""
-    from qt_support import qt_app_or_skip
+    to the list is deleted after it, on the main thread (``qt_support.destroy_windows``)."""
+    from qt_support import destroy_windows, qt_app_or_skip
     app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     windows = []
     yield app, windows
-    for w in windows:
-        w.force_close = True
-        w.close()
-        w.deleteLater()
-    app.processEvents()
+    destroy_windows(app, windows)      # deleted now, on the main thread — never left to the garbage collector
 
 
 def window(qt, session=None, **kw):

@@ -190,17 +190,13 @@ def folder(tmp_path) -> Path:
 @pytest.fixture
 def qt(monkeypatch):
     """A Qt application (the test skips when Qt cannot load, unless SPEC_SURGEON_REQUIRE_QT=1); every window a test
-    appends to the list is closed after it."""
-    from qt_support import qt_app_or_skip
+    appends to the list is deleted after it, on the main thread (``qt_support.destroy_windows``)."""
+    from qt_support import destroy_windows, qt_app_or_skip
     app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     windows = []
     yield app, windows
-    for w in windows:
-        w.force_close = True
-        w.close()
-        w.deleteLater()
-    app.processEvents()
+    destroy_windows(app, windows)      # deleted now, on the main thread — never left to the garbage collector
 
 
 def docx(d: Path):
@@ -1751,8 +1747,8 @@ def test_no_test_reads_or_writes_the_key_saved_on_this_computer(machine_with_a_s
 
 
 def test_a_window_never_loads_or_overwrites_the_saved_key(machine_with_a_saved_key, monkeypatch):
-    from qt_support import qt_app_or_skip
-    qt_app_or_skip()
+    from qt_support import destroy_windows, qt_app_or_skip
+    app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     from spec_surgeon.gui import build_window
     from spec_surgeon.ui.app import RecordingPrompts
@@ -1770,9 +1766,7 @@ def test_a_window_never_loads_or_overwrites_the_saved_key(machine_with_a_saved_k
         dlg._forget()
         assert fake.calls == [] and fake.store == {credentials.TARGET: REAL_KEY}
     finally:
-        w.force_close = True
-        w.close()
-        w.deleteLater()
+        destroy_windows(app, [w])
 
 
 def test_credentials_py_is_the_only_way_to_credential_manager():

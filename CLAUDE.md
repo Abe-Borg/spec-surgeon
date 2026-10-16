@@ -372,6 +372,10 @@ proposals and recorded in the plan's status sections.
 - `guard.py` — identity, drift (size, mtime, then md5), lock file, read-only refusal (`is_read_only`: the file's mode, never `os.access`, so
   root/administrator see the same answer), atomic write; every reason a write-back cannot happen is a `GuardError`
   (a refused `os.replace` included), which `batch.py` records as that file's V9 failure — never a crashed batch.
+- `tests/qt_support.py` — `qt_app_or_skip()` (offscreen Qt, or skip unless `SPEC_SURGEON_REQUIRE_QT`) and
+  `destroy_windows(app, windows)` — the ONLY way a test lets go of a window (see the Qt rules under `ui/`, and
+  `docs/audits/2026-10-16_qt_teardown_segfault.md`); `flush_deferred_deletes(app)` delivers pending `deleteLater()`s,
+  which `processEvents()` alone never does outside an event loop.
 - `tests/make_fixtures.py` — synthetic specs with the hard cases; `build_rich()` is the op fixture (first/even
   headers, shared footer part, inheriting section, header-only and shared media, theme/explicit/symbol fonts,
   runs inside revisions, an earlier rPrChange). `build_template()` is the template fixture (both slot
@@ -518,7 +522,15 @@ proposals and recorded in the plan's status sections.
   **Qt rules:** PySide6 is imported at module level only inside `ui/` (never `ui/__init__.py` or `ui/rows.py`) —
   the CLI, `Session` and pool workers must load without Qt (`test_gui.py` checks both ways). Background work runs
   on a daemon thread (`worker.start_job`); its signals connect only to `@Slot` methods of GUI-thread QObjects, never
-  to lambdas; read every widget value before the job starts; never touch a widget from the job.
+  to lambdas; read every widget value before the job starts; never touch a widget from the job. **Every QObject the
+  window makes has a Qt parent in the window** (or goes to Qt through a layout or `deleteLater()`), so Qt deletes it with
+  the window, on the GUI thread; never leave a Qt object to the garbage collector — it runs on whatever thread happens
+  to allocate, and PySide6 6.12 deletes a Python subclass of a Qt class right there and defers a plain widget's deletion
+  to a pointer its parent already freed (the 2026-10-16 segmentation fault, below). **Tests let go of a window only
+  through `tests/qt_support.destroy_windows`** (close, `deleteLater`, the deferred deletes flushed, `gc.collect()` — on
+  the main thread, while the test still holds every wrapper); `close()` alone, or `deleteLater()` + `processEvents()`
+  (which deletes nothing outside an event loop), is the crash coming back. `tests/test_qt_lifetime.py` checks every
+  test module that builds a window.
 - `updater.py` — GitHub release check / verified download / detached Setup launch (no Qt; every network and
   process call injectable). `settings.py` — `settings.json` (+ `config_dir`/`data_dir`/`updates_dir`/`logs_dir`;
   `SPEC_SURGEON_CONFIG_DIR` moves them). `winapp.py` — app mutex, AppUserModelID, message box (ctypes; no-ops off
@@ -535,7 +547,8 @@ planted-defect test proving the verifier catches a wrong implementation of it �
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
-merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`) — all pass but
+merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 690 with the Qt
+teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -867,6 +880,31 @@ The second pass's tests are `tests/test_phase8_fixes_window.py` (the window and 
   `tests/test_phase8_fixes.py` feeds the bypass shapes to `check_source` as text (never executes them) and runs the
   guard on throw-away files.
 - `codegen.generate_op` lists the samples to the writer by `compiler._Batch.label` (the labels its tools take).
+
+## 2026-10-16 Qt teardown: the test suite's segmentation fault
+
+`docs/audits/2026-10-16_qt_teardown_segfault.md` is the record; `tests/test_qt_lifetime.py` pins the fix. The pair
+`python3 -m pytest -q tests/test_diagnostics.py tests/test_editspec.py` (and, sometimes, the full suite) died with
+SIGSEGV in `Shiboken::BindingManager::runDeletionInMainThread` during the 24-file batch of `test_editspec.py`, leaving
+four pool workers orphaned. Cause: `test_diagnostics.py`'s `qt` fixture only closed its windows, so the cyclic garbage
+collector freed them later, on whatever thread was allocating — the pool's manager thread. PySide6 6.12 deletes a
+Python subclass of a Qt class (`MainWindow`) on that thread at once (the `delete_in_main_thread` deferral applies to
+plain Qt types only: `QWidget`, `QMainWindow`, `QDialog` are deferred to the main thread; `QObject`, `QTimer` and every
+Python subclass are not) and defers the 44 plain widgets the window still "owns" by Shiboken's books (the parentless
+`QLabel`/`QPushButton`/`QCheckBox` placed through layouts) to the main thread, where that second `delete` ran on memory
+Qt had freed with the window. Rules that came out of it (also under "Qt rules"):
+
+- A test lets go of a window only through `tests/qt_support.destroy_windows`: the Qt objects die now, on the main
+  thread, in Qt's order, while the test holds every wrapper; `gc.collect()` there frees the rest of the test's Qt garbage
+  on the main thread too. Never `close()` alone; `deleteLater()` + `processEvents()` deletes nothing outside a running
+  event loop (Qt holds a DeferredDelete back until control returns to the loop that posted it) — `test_gui.py`'s old
+  fixture leaked its windows, which is why it never crashed anything. `flush_deferred_deletes` is
+  `QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)`.
+- Every QObject the window makes has a Qt parent in the window: `RowsModel` and `ProblemsFilter` were the only ones
+  without (`ui/pages.py` now parents them to their page).
+- The regression tests run the crash's own scenario (teardown, a collection on a worker thread, Python on the main
+  thread) in a subprocess — with `close()` alone it segfaults three times in three; never assert on PySide crashing,
+  assert on the invariant: after the teardown no wrapper of the window or of anything it owns is valid.
 
 ## v0.4.0 additions: template specs and font sizes
 
