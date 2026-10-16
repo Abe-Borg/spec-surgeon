@@ -89,6 +89,36 @@ def test_a_structure_only_declaration_whose_change_did_not_happen_fails():
     assert any("declared structure change not found" in x for _, _, _, d in rec.failures() for x in d)
 
 
+def test_a_structure_only_block_stays_in_the_residual(monkeypatch):
+    """A structure-only declaration satisfies V2/V3 but never exempts its paragraph from V10: the kind that removed the
+    mark checks the paragraph item by item (verified_blocks), or the residual compares it — so another change in the
+    same paragraph (an attribute, a bookmark id) cannot hide behind the declaration (Codex on #27)."""
+    src = _commented()
+
+    def fn(root, also=False):
+        for ref in list(root.iter(W + "commentReference")):
+            p = ref.getparent().getparent()
+            p.remove(ref.getparent())
+            if also:
+                p.set(W + "rsidR", "00BADBAD")
+    bi = next(b.index for b in blocks(VPackage(src).xml(DOC)) if b.text == "Beta paragraph")
+    plan = _plan(diffs=[{"part": DOC, "block_index": bi, "before": "Beta paragraph", "after": "Beta paragraph",
+                         "struct_after": {}}])
+    hidden = patch_docx(src, {DOC: lambda r: fn(r, also=True)})
+    rec = run_suite(src, hidden, plan, "s.docx", "o.docx")
+    assert rec.get("V3").status == "PASS" and rec.get("V10").status == "FAIL"
+    # with no kind checking the paragraph, even the declared change alone is the residual's to see (fail closed)
+    clean = patch_docx(src, {DOC: fn})
+    assert run_suite(src, clean, plan, "s.docx", "o.docx").get("V10").status == "FAIL"
+
+    def kind(ctx, a, errs):                          # a kind that checked the paragraph item by item takes it out
+        ctx.verified_blocks.setdefault(DOC, {})[bi] = bi
+        return "test: paragraph checked item by item"
+    monkeypatch.setitem(props.KINDS, "test_items", kind)
+    plan["property_assertions"] = [{"kind": "test_items"}]
+    assert run_suite(src, clean, plan, "s.docx", "o.docx").get("V10").status == "PASS"
+
+
 def test_a_text_change_hiding_behind_a_structure_only_declaration_still_fails_v2():
     src = _commented()
 

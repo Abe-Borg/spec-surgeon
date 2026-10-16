@@ -440,8 +440,11 @@ Built-in operations batch 2 (2026-10-16; `docs/BUILTIN_OPS_BATCH2_DESIGN.md` —
 - **Structure-only declarations** (V2/V3): a `BlockDiff` with `before == after` (not None) and `struct_after` declares a
   change of structural children only (a comment's reference mark, a hidden tab). V2 leaves it out of the text changes;
   V3 accepts it for its own block only (`block_index` = the changed block's source index) with exactly those counts, and
-  FAILS one whose change did not happen. Transform: `BlockDiff.structure_only`, `base.text_diffs` (the `expect` counts
-  and `planner.summarize_plan` leave them out); verifier: `suite.structure_only`.
+  FAILS one whose change did not happen. It never exempts its paragraph from V10 (`Ctx.text_changed` leaves it out):
+  the kind that made the change checks the paragraph item by item and registers it in `verified_blocks`, or the
+  residual compares it whole (Codex on #27: an attribute or bookmark change in the same paragraph must not hide behind
+  a mark removal). Transform: `BlockDiff.structure_only`, `base.text_diffs` (the `expect` counts and
+  `planner.summarize_plan` leave them out); verifier: `suite.structure_only`.
 - **Block text and structure without some elements** (transform side of the block-text definition): `ooxml.
   block_text_without(p, gone)` / `block_struct_counts(p, gone)` — the block's text elements / structural children whose
   nearest `w:p` is `p` and that lie in none of `gone`; with `gone` empty they equal `textcheck.blocks` (a test compares

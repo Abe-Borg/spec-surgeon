@@ -42,8 +42,11 @@ without changing its text (V2). Until now a structural change could only be decl
 `BlockDiff` whose `before == after` (both not None) **with** `struct_after` is now a *structure-only declaration*: V2
 leaves it out of the expected text changes (it is not one), and V3 accepts it only for that block (`block_index` equal
 to the changed block's source index, a stricter match than the text-only match the older declarations use) with exactly
-the declared counts. A declaration without `struct_after`, or one whose block changes text after all, still fails. The
-`expect` counts (`text_diffs` …) and the plan summary leave structure-only declarations out of "text diffs".
+the declared counts; a declared change that did not happen fails V3. A declaration without `struct_after`, or one whose
+block changes text after all, still fails. It never exempts the paragraph from V10's residual: the kind that made the
+change checks the paragraph item by item (`verified_blocks`), or the residual compares it whole — so nothing else in that
+paragraph can change unseen (Codex on #27). The `expect` counts (`text_diffs` …) and the plan summary leave
+structure-only declarations out of "text diffs".
 
 ### 1.2 Verified parts, members and removed elements (V10)
 

@@ -476,7 +476,10 @@ class Ctx:
         self.out_theme = Theme(out.xml(tq) if tq else None)
         self.text_changed: Dict[str, Set[int]] = {}
         for d in plan.get("diffs", []):
-            if d.get("before") is not None and d.get("after") is not None:
+            # a structure-only declaration (batch 2: before == after, struct_after) never exempts its paragraph: the
+            # kind that made the change checks it item by item (verified_blocks), or the residual compares it whole
+            if d.get("before") is not None and d.get("after") is not None and not (
+                    d.get("before") == d.get("after") and d.get("struct_after") is not None):
                 self.text_changed.setdefault(d["part"], set()).add(int(d["block_index"]))
         for d in plan.get("accepted_views", []):
             self.text_changed.setdefault(d["part"], set()).add(int(d["block_index"]))
