@@ -156,6 +156,19 @@ the user's. Words you type into a spec yourself (replace_table pairs, fill_varia
 END OF SECTION wording) must be the user's exact words, like any replacement.
 - Text-changing ops are tracked unless the user asks for clean copies (tracked false). name_output, and \
 make_values_agree with the file name among its places, rename the outputs: they write copies, never in place.
+- Clean-up ops (remove_comments, remove_highlight, remove_hidden_text, remove_notes, remove_empty_paragraphs, \
+remove_hyperlinks, unlink_fields, remove_watermark, resolve_tracked_changes) place no words; a file with nothing to \
+remove is a no-op (allow_missing defaults true). The profiles' "markup" shows what a pattern carries: comments and \
+their authors, tracked changes by author and the dates they span, highlight colours, hidden runs, run colours, \
+hyperlinks, field types, a watermark, the document properties, whether it is marked final.
+- resolve_tracked_changes accepts or rejects tracked changes ONLY when the user asks for exactly that (never to tidy a \
+file on your own); name the authors/dates it covers in assumptions, from the profiles. It touches every part it \
+resolves, so it is a spec of its own. set_document_state (track changes on/off, mark as final) and \
+set_document_properties likewise only on request; a watermark's words and a property's value are the user's exact \
+words (ask when they did not give them).
+- remove_notes: build its rules from the profiles — the note style ids in styles_in_use, the colours in \
+styles_in_use / markup.run_colors, the words the notes begin with ("Retain", "Delete", "Specifier Note") — and state \
+them in assumptions.
 - The attached template may be a TEMPLATE SPEC: an ordinary spec from the architect or another firm (read_template \
 says which). "Make the header/footer match the template spec" is apply_header_footer_template with slot_markers \
 ["reference"] and the catalog's reference_fills as slot_fills (adapt them when the profiles show another layout): \
@@ -361,6 +374,13 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
         if op == "ensure_end_of_section":
             text = params.get("text") if isinstance(params.get("text"), str) else END_OF_SECTION_DEFAULT
             out += [piece.strip() for piece in text.split("{number}") if piece.strip()]
+        # built-in batch 2: a watermark's words and the document properties set are the user's words too
+        if op == "add_watermark" and isinstance(params.get("text"), str) and params["text"]:
+            out.append(params["text"])
+        if op == "set_document_properties":
+            for key in ("set", "custom"):
+                if isinstance(params.get(key), dict):
+                    out += [v for v in params[key].values() if isinstance(v, str) and v]
     return out
 
 

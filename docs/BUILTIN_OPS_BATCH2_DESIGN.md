@@ -110,6 +110,15 @@ that sets it, default `("auto", None, None, None)` — `set_properties`' colour 
 (`w:val`, case-insensitive), a theme colour name (`w:themeColor`, case-insensitive) or `auto`. Transform:
 `ops/effective.PropResolver` levels; verifier: `verify/props._v_run_levels`/`_v_para_levels` with this module's toggle.
 
+### 1.7 A file with nothing to remove
+
+The clean-up operations (`remove_comments`, `remove_highlight`, `resolve_tracked_changes`, `remove_hidden_text`,
+`remove_notes`, `remove_empty_paragraphs`, `remove_hyperlinks`, `unlink_fields`, `remove_watermark`) run over whole
+batches in which many files have nothing to remove. Their `allow_missing` defaults to **true**: such a file plans as a
+no-op with a note saying so ("no comment matched: nothing to do") and is reported unchanged — never set aside as
+`not-found`. `allow_missing: false` makes it an exception again, for a user who wants to hear about those files.
+(Batch 1's ops keep `false`: a replacement that finds nothing usually means the wrong words.)
+
 ## 2. `remove_comments` (item 11)
 
 `which`: `all` (default) | `resolved` | `authors` (+ `authors`: names, compared casefolded with whitespace collapsed);
@@ -319,6 +328,7 @@ Kind `document_properties`; mode untracked when words are set, formatting for cl
 9. Fields: listed types or all-but-page-numbers; paragraph-spanning fields (a TOC) refused.
 10. Properties: core, app and custom (text) only; custom.xml may be created.
 11. State: track changes on/off; mark as final (Word's two markers).
+12. Clean-up ops: a file with nothing to remove is a no-op, not an exception (`allow_missing` true by default, §1.7).
 
 Not in this batch, recorded: picture watermarks (adding), comments in text boxes, joining paragraphs on accept/reject,
 table row revisions, highlight in styles, removing a document's personal information on save (`w:removePersonalInformation`).
