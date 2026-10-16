@@ -648,8 +648,11 @@ def test_without_qt_a_message_box_only_when_there_is_no_console(monkeypatch, cap
     monkeypatch.setitem(sys.modules, "PySide6", None)
     assert gui.main() == 2 and shown == []
     assert 'pip install "spec-surgeon[gui]"' in capsys.readouterr().err
-    monkeypatch.setattr(sys, "stderr", None)
-    assert gui.main() == 2 and len(shown) == 1 and "spec-surgeon[gui]" in shown[0]
+    # Restore stderr while capsys is still open. The monkeypatch fixture tears down after capsys; restoring
+    # its captured stream then would leave sys.stderr closed for subsequent tests when pytest runs with -s.
+    with monkeypatch.context() as no_console:
+        no_console.setattr(sys, "stderr", None)
+        assert gui.main() == 2 and len(shown) == 1 and "spec-surgeon[gui]" in shown[0]
 
 
 def test_the_engine_and_command_line_never_load_qt():
