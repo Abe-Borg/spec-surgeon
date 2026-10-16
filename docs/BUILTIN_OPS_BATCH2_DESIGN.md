@@ -238,8 +238,8 @@ removed from the paragraphs that stay (runs inside a hyperlink are never taken: 
   A section page type that shows no header (a first page without one) gets no watermark: flagged.
 * Size `auto`: the box takes the text's proportions (advance widths of the font — Calibri, Arial or Times New Roman
   metrics; another font uses Calibri's, flagged — height 1.55 em) and is as large as fits the smallest text area of the
-  sections showing that header (diagonal: (w + h)/√2 ≤ the shorter side). A size in points that does not fit is refused
-  (`bad-params`).
+  sections showing that header (diagonal: (w + h)/√2 ≤ the shorter side). A size in points that does not fit this file's
+  page is refused (`watermark-size` — it depends on the file, so it is not a spec mistake).
 * `remove_watermark` (`text` optional — only watermarks with that text; `allow_missing`): every run in a header part whose
   one content element is a `w:pict`, `w:drawing` or `mc:AlternateContent` holding a shape named
   `PowerPlusWaterMarkObject…` (text) or `WordPictureWatermark…` (picture) is removed. The paragraph (and any
@@ -295,7 +295,7 @@ names. Core properties live in `docProps/core.xml` (`dc:title`, `dc:subject`, `d
 custom ones in `docProps/custom.xml` (`vt:lpwstr`, fmtid `{D5CDD505-2E9C-101B-9397-08002B2CF9AE}`, the next pid). A value
 is the user's words: one line, no control or invisible character, ≤ 255 characters (`compiler.placed_words`). A missing
 `core.xml`/`app.xml` is refused (`no-part`); a missing `custom.xml` is created with only the asked properties (rule 10's
-third case: the op's purpose is the member). A custom property of another type is refused (`bad-params`). "Clear the
+third case: the op's purpose is the member). A custom property of another type in this file is refused (`property-type`). "Clear the
 author names" = `clear: ["author", "last_modified_by"]`; tracked changes and comments keep their authors (flagged).
 Fields showing a changed property keep their saved result until Word updates fields (flagged).
 Kind `document_properties`; mode untracked when words are set, formatting for clears only.

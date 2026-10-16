@@ -435,6 +435,49 @@ definition):
   of unequal-length replacement, the plan's predicted untracked deletions/insertions are set aside and, when the counts
   then match, the rest is paired in order and compared exactly; any other shape falls back to the old reporting.
 
+Built-in operations batch 2 (2026-10-16; `docs/BUILTIN_OPS_BATCH2_DESIGN.md` — the shared machinery, §1):
+
+- **Structure-only declarations** (V2/V3): a `BlockDiff` with `before == after` (not None) and `struct_after` declares a
+  change of structural children only (a comment's reference mark, a hidden tab). V2 leaves it out of the text changes;
+  V3 accepts it for its own block only (`block_index` = the changed block's source index) with exactly those counts, and
+  FAILS one whose change did not happen. Transform: `BlockDiff.structure_only`, `base.text_diffs` (the `expect` counts
+  and `planner.summarize_plan` leave them out); verifier: `suite.structure_only`.
+- **Block text and structure without some elements** (transform side of the block-text definition): `ooxml.
+  block_text_without(p, gone)` / `block_struct_counts(p, gone)` — the block's text elements / structural children whose
+  nearest `w:p` is `p` and that lie in none of `gone`; with `gone` empty they equal `textcheck.blocks` (a test compares
+  them on three fixtures). Plans predict removals with them, never by applying.
+- **Fields** (§1.5): complex fields by `w:fldChar` begin/separate/end in document order over the whole part (an open
+  field nests the next; instruction = its own code's `w:instrText`/`w:delInstrText`; a field beginning in another's code
+  is nested in that code), simple fields `w:fldSimple`; type = the instruction's first word upper-cased (`=` counts);
+  local = begin, separate, end in one paragraph that is not in a text box. Unlinking removes the three `w:fldChar` and
+  its own instruction elements (then runs left with only `w:rPr`), a simple field is replaced by its children. Refusals
+  in this order: `field-span`, `nested-field`, `form-field`, `existing-revisions`; page numbers (PAGE, NUMPAGES,
+  SECTIONPAGES, PAGEREF) never. Transform: `ops/fields.py` (`fields_of`, `Field.refusal`, `unlink`); verifier:
+  `verify/fields.py` (`v_fields`, `VField.refusal`). `tests/test_batch2_infra.py` compares the two parsers.
+- **Effective hidden and colour** (§1.6): `w:vanish` a toggle over set_properties' levels (direct wins; exactly one
+  style level → that; none → off; more → None = ambiguous, refused `toggle-ambiguous`); a paragraph mark read through
+  its `w:pPr/w:rPr`; colour the nearest level's `w:color`, default `("auto", None, None, None)`; a colour list matches
+  a 6-hex `w:val`, a `w:themeColor` name or `auto`, casefolded. Transform: `ops/markup.Look`, `color_in`; verifier:
+  `verify/markup.v_hidden`/`v_mark_hidden`/`v_color`/`v_color_in`. Compared on three fixtures.
+- **Whole-run removal and paragraph deletion** (§1.4): untracked — the run removed where it sits (containers stay);
+  tracked — a `w:del` of its own around it in place, `w:t` → `w:delText`, `w:instrText` → `w:delInstrText`; paragraph
+  deletion is `filter_tagged_paragraphs`' (moved to `ops/removal.py`: `deletable`, `plan_paragraph_deletion`,
+  `delete_paragraph`, `plan_run_removal`, `remove_runs`). Verifier: `verify/markup.tracked_delete`/`drop` over the item
+  model, `verify/edits.check_deleted_paragraph`.
+- **V10's batch-2 hooks** (verifier only, `verify/props.Ctx`): `verified_parts` (text parts a kind compared whole — the
+  residual skips them), `expected_removed` (paths of elements OUTSIDE paragraphs a kind expects gone — resolved in the
+  residual's source copy before any stripping, removed after; a path inside a paragraph is a failure; the residual runs
+  for such a part even when its bytes did not change), `verified_members` (non-text members compared whole: side parts,
+  rels, `[Content_Types].xml`, a created `docProps/custom.xml`), `member_strip` + `_residual_members`: **any change to
+  `settings.xml` or the document-properties parts** (core, app, custom — `reader.protected_members`) must be covered —
+  the keys a kind verified (`props.member_key`: a top-level child's Clark tag, `property:<name>` in custom.xml) are
+  stripped on both sides and the rest compared; a changed member nobody registered fails, a created one nobody compared
+  whole fails. Item-model transforms for the kinds: `verify/markup.drop`/`unwrap`/`restyle`/`tracked_delete`/`insert`/
+  `check_paragraph`; whole comparisons: `tree_difference`, `check_relationships`, `check_content_types`.
+- **V5a on the document properties**: `docProps/core.xml` validates against the vendored OPC schema whose Dublin Core
+  imports resolve to `schemas/dublincore/` (local definitions to the shape of DCMI's files; `xsd.LOCAL_IMPORTS`) —
+  validation never uses the network.
+
 ## Roadmap
 
 `docs/NL_SURGICAL_EDITOR_PLAN.md` is the design and phased plan for the natural-language editor built on
@@ -969,7 +1012,8 @@ AI-written transforms" checkbox is replaced by an offer at the point of need; Cl
 only (cost), and sample pages may go to Anthropic; custom operations write edited copies only; a local library of
 named recipes and operations (sharing later); a 64,000-token output cap, hence streaming. Decided by me (Abraham
 delegated): `ask`/`agent` and `agent.py` retired (`SKILL_DIR` moved to `spec_surgeon/__init__.py`); the method rules
-unchanged (no accept/reject of tracked changes, no docProps edits, no trackRevisions toggle); `set_properties` and a
+unchanged (no accept/reject of tracked changes, no docProps edits, no trackRevisions toggle — all three relaxed in
+built-in batch 2 at Abraham's request, to "only when the user asks, through a verified op"); `set_properties` and a
 generic V10 kind wait for the built-in-operations round; generated ops plain and limited to text parts + styles;
 model/effort/fallback/cache unchanged; no version bump in the PR. Rules 13–19 above are this phase's.
 
