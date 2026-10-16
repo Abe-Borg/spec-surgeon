@@ -102,3 +102,71 @@ def test_jobs_are_aliases_of_ops(tmp_path):
     assert via_job.job == "tracked-replace" and via_op.job == "replace_text"
     with pytest.raises(JobException):
         get_op("replace_text").plan(pkg, {}, {"find": "FM Global", "replace": "GRC", "tracked": False, "mode": "tracked"})
+
+
+# ---- reads: an op's prediction depends on what another op would change (2026-10-16) ------------------------------
+
+def test_a_whole_member_read_conflicts_with_any_change_inside_that_member_and_never_with_a_read():
+    templating = _frag("apply_header_footer_template", [("word/styles.xml", "*", "verify")])
+    for change in ([("word/styles.xml", "style:Normal", "rPr")], [("word/styles.xml", "docDefaults", "rPr")],
+                   [("word/styles.xml", "style:Normal", "pPr")], [("word/styles.xml", "*", "remove")]):
+        with pytest.raises(JobException) as e:
+            merge_fragments([templating, _frag("set_style_font", change)])
+        assert e.value.code == "conflict" and e.value.details["member"] == "word/styles.xml"
+        assert "split out ['#2 set_style_font']" in e.value.reason or "replaces, removes or restructures" in e.value.reason
+    # the other way round: the change first in the spec is the same conflict
+    with pytest.raises(JobException) as e:
+        merge_fragments([_frag("set_style_font", [("word/styles.xml", "style:Normal", "rPr")]), templating])
+    assert e.value.code == "conflict" and e.value.details["changes"] == ["#1 set_style_font"]
+    # two reads of one member never conflict: another whole-member read, a scope read, a family read
+    for other in ([("word/styles.xml", "*", "verify")], [("word/styles.xml", "scope", "verify")],
+                  [("word/styles.xml", "docDefaults", "verify:rPr")]):
+        plan = merge_fragments([templating, _frag("set_font", other)])
+        assert [o["op"] for o in plan.ops] == ["apply_header_footer_template", "set_font"]
+    # the reader's own change inside the member it reads (an imported style) is no conflict with its own read
+    own = _frag("apply_header_footer_template", [("word/styles.xml", "*", "verify"), ("word/styles.xml", "style:HFStamp", "add")])
+    assert merge_fragments([own, _frag("set_font", [("word/document.xml", "3", "rPr")])]).mode == "formatting"
+    # a change of another member is no conflict either
+    assert merge_fragments([templating, _frag("set_font", [("word/document.xml", "3", "rPr")])]).mode == "formatting"
+    # two readers of one member, one of which also changes something inside it: the other's read meets that change
+    with pytest.raises(JobException) as e:
+        merge_fragments([templating, own])
+    assert e.value.code == "conflict" and e.value.details["reads"] == ["#1 apply_header_footer_template"]
+    assert e.value.details["changes"] == ["#2 apply_header_footer_template"]
+    with pytest.raises(JobException) as e:
+        merge_fragments([own, templating])
+    assert e.value.details["reads"] == ["#2 apply_header_footer_template"] and e.value.details["changes"] == ["#1 apply_header_footer_template"]
+
+
+def test_a_family_read_of_a_target_conflicts_with_a_change_of_that_family_or_of_its_text_only():
+    sect = "word/document.xml", "sectPr:0"
+    templating = _frag("apply_header_footer_template", [(*sect, "verify:pgMar"), (*sect, "verify:pgSz"), (*sect, "hfref")])
+    numbering = _frag("fix_page_numbering", [(*sect, "pgNumType")])
+    assert [o["op"] for o in merge_fragments([templating, numbering]).ops] == ["apply_header_footer_template", "fix_page_numbering"]
+    for aspect in ("pgMar", "pgSz", "text"):
+        with pytest.raises(JobException) as e:
+            merge_fragments([templating, _frag("set_page_setup", [(*sect, aspect)])])
+        assert e.value.code == "conflict"
+        assert e.value.details == {"member": sect[0], "target": sect[1], "ops": ["#1 apply_header_footer_template", "#2 set_page_setup"],
+                                   "aspects": [f"verify:{aspect}" if aspect != "text" else "verify:pgMar", aspect],
+                                   "reads": ["#1 apply_header_footer_template"], "changes": ["#2 set_page_setup"]}
+        assert "split out #2 set_page_setup into a spec of its own and run it first, then #1 apply_header_footer_template on its outputs" in e.value.reason
+    # a read of every family of the target conflicts with any change of it
+    with pytest.raises(JobException) as e:
+        merge_fragments([_frag("x", [(*sect, "verify")]), numbering])
+    assert e.value.code == "conflict" and "plans from every property of word/document.xml [sectPr:0]" in e.value.reason
+    # a bare "verify:" reads every family too (never less than it says)
+    with pytest.raises(JobException):
+        merge_fragments([_frag("x", [(*sect, "verify:")]), numbering])
+    # the same target read by two ops, and an op's own change of what it reads: no conflict
+    both = _frag("fix_page_numbering", [(*sect, "verify:titlePg"), ("word/footer1.xml", "0", "text")])
+    own = _frag("apply_header_footer_template", [(*sect, "verify:titlePg"), (*sect, "verify:pgMar"), (*sect, "titlePg"), (*sect, "pgMar")])
+    assert merge_fragments([templating, both]).mode == "formatting"
+    with pytest.raises(JobException) as e:
+        merge_fragments([both, own])                 # the other op's change of titlePg meets the read
+    assert e.value.code == "conflict" and e.value.details["aspects"] == ["verify:titlePg", "titlePg"]
+    assert merge_fragments([own, _frag("set_page_setup", [("word/document.xml", "sectPr:1", "pgMar")])]).mode == "formatting"
+    # a whole-member change of the member still conflicts with a family read inside it (rule 1, as before)
+    with pytest.raises(JobException) as e:
+        merge_fragments([templating, _frag("delete_paragraphs", [("word/document.xml", "*", "text")])])
+    assert e.value.code == "conflict" and "would verify word/document.xml without changing it" not in e.value.reason

@@ -54,7 +54,24 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
    op removes/restructures. Ops declare what they touch in `touches`; keep that list honest — including a
    `(part, "scope", "verify")` touch for every part an op's V10 assertion re-resolves its selection over
    (`set_font`, `set_paragraph_props`: every part in scope, changed or not), so an op that removes that part is a
-   plan-time conflict rather than a V10 failure after apply. Two `verify` touches of one member never conflict.
+   plan-time conflict rather than a V10 failure after apply — and a `verify` touch for everything an op's prediction
+   READS from the source that another op could change (2026-10-16; `base.verify_family` is the grammar): a whole
+   member, `(member, "*", "verify")`, conflicts with any change inside it by another op; a family of a target,
+   `(member, target, "verify:<family>")`, with a change of that family or of the target's `text`; a bare `verify` on a
+   target with any change of it. `apply_header_footer_template` reads the styles part and the theme part whole (its
+   pins are the diff of template-effective vs TARGET-effective properties, resolved over every style chain and
+   docDefaults) and `verify:pgSz`/`verify:pgMar`/`verify:titlePg` of every section's sectPr (its tab rescale and
+   distance alignment read the section's text width and distances; `hf_template_refs` predicts every titlePg);
+   `fix_page_numbering`'s cover-unnumbered reads `verify:titlePg` of every section (which footer the cover shows,
+   whether a later section shows it by inheritance). So a `set_style_font`, `set_doc_defaults_font`, `set_properties`
+   on styles or `set_page_setup` beside the templating op is a plan-time `conflict` naming the op to split out (they
+   used to plan and fail V10 after apply, and the compiler's dry plan accepted them), and a template flipping the
+   cover's titlePg beside cover-unnumbered is one too (it used to PASS every check with the page number still on the
+   cover: the edit landed on a footer the cover no longer showed, and V7 skips page 1 there). Two reads of one member
+   or target never conflict, and an op's own change of what it reads is none. `fix_page_numbering continuous` beside
+   the templating op still plans: `pgNumType` is neither read nor changed by the templating op, and both ops' V10
+   assertions strip their own sectPr children before the residual compares the rest — decided right as is
+   (`tests/test_read_conflicts.py`).
 10. **Never create a part to make an edit work.** E.g. `remove_header_footer` refuses (`inheritance`) rather
     than add an empty header part. Adding members is allowed only when the op's whole purpose is the added
     member and it is predicted in `members_added` — today only `apply_header_footer_template`, whose new parts
@@ -350,7 +367,8 @@ proposals and recorded in the plan's status sections.
   `property_change` (rPrChange/pPrChange snapshot), `count_revisions`.
 - `ops/base.py` — `Op`, `Plan` (v0.1.0 fields + `members_removed/added`, `property_assertions`,
   `geometry_reference/reason/template`, `ops`), `PlanFragment` (+ `touches`, `rev_ids_needed`), `JobException`,
-  `merge_fragments` (conflicts, mode, revision-id ranges, geometry). `ops/__init__.py` — registry (`@register`).
+  `merge_fragments` (conflicts, mode, revision-id ranges, geometry), `check_conflicts` + `verify_family` (the read
+  grammar of `touches`: `verify`, `verify:<family>`; rule 9). `ops/__init__.py` — registry (`@register`).
 - `ops/selectors.py` — transform-side selector resolution, `DEFAULT_PRESERVE_FONTS`, font param parsing.
 - `ops/*.py` — `fix_page_numbering`, `replace_text`, `remove_header_footer`, `set_font`, `set_style_font`, `set_properties`,
   `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, `apply_header_footer_template`.
@@ -358,7 +376,8 @@ proposals and recorded in the plan's status sections.
   `apply_removal` (shared by `remove_header_footer` and templating: rels, members, overrides, orphaned media,
   revisions flagged). `ops/slots.py` — slots, display text, `apply_slot`, `expected_block_text`, `extract_fill`;
   reference slots (`located_text`, `bounded`, `reference_values`, `reference_slots`), `carve`, `mark_slots` (⟦ ⟧ for notes).
-  `ops/effective.py` — `Resolver` (effective pinnable properties), `theme_fonts`, `text_width`, `rescale_tabs`;
+  `ops/effective.py` — `Resolver` (effective pinnable properties), `theme_fonts` (+ `theme_part`, the part it reads —
+  what the templating op declares as a read), `text_width`, `rescale_tabs`;
   `PropResolver` (set_properties' effective value with provenance, with an `override` that simulates a style change).
 - `apply_header_footer_template` plan: copies keyed by (template part, template width, target width); pins are
   the diff of template-effective vs target-effective (with imported styles); `transform_data` carries pins,
@@ -599,7 +618,8 @@ Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its
 merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 709 with Claude and your library
 (`tests/test_library_choices.py`, 2026-10-16), 734 with `set_properties` (`tests/test_set_properties.py`), 740 with the Qt
 teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without an API key
-(`tests/test_keyless.py`, 2026-10-16) — all pass but
+(`tests/test_keyless.py`, 2026-10-16), 768 with the plan-time conflicts for what an op reads
+(`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -1086,3 +1106,37 @@ keyless. And inform them that some functions are unavailable." README → "Runni
 6. `packaging/gui_screenshot.py --keyless` writes `docs/gui-keyless.png` (refuses on a machine with an `ant auth login`
    sign-in). The other screenshots set a dummy `ANTHROPIC_API_KEY` in the script's own process (nothing calls Claude:
    a saved spec, *Render pages* off), so they keep the look with a key; `--chat` has its scripted client.
+
+## 2026-10-16 Plan-time conflicts for what an op reads
+
+The gap: rule 9 promised that overlapping ops are refused at plan time, but `apply_header_footer_template` computes
+its pins from the SOURCE's `styles.xml` while `set_style_font` / `set_doc_defaults_font` / `set_properties` on styles
+in the same spec change it underneath — its `touches` named only the imported styles, theirs the styles they change:
+different targets, no conflict, a clean plan, a V10 `template_parts` failure after apply (when the target's style
+already gave the template's font, so no pin was made) and a dry plan the compiler accepted. The same for the text
+width and distances it reads from each section's `pgSz`/`pgMar` under a `set_page_setup`; and worse, for the
+`titlePg` that `fix_page_numbering`'s cover-unnumbered reads: a headers-only templating op following its template's
+titlePg turned the cover's off, the PAGE paragraph was cleared from the first-page footer the cover no longer showed,
+and the file PASSED with the page number still on the cover (V7 skips page 1 there). Rules (rule 9 has the detail;
+`tests/test_read_conflicts.py` plants each old behaviour and pins each refusal; `tests/test_ops_base.py` the grammar):
+
+1. **An op declares what its prediction reads** as `verify` touches (`base.verify_family`): a whole member
+   `(member, "*", "verify")`, a family of a target `(member, target, "verify:<family>")`, every family of a target
+   `(member, target, "verify")`; `(member, "scope", "verify")` keeps its older, weaker meaning (the member must survive
+   as a whole). `check_conflicts` rule 1 pairs a whole-member read with any change inside the member by another op,
+   rule 2 a family read with a change of that family or of the target's `text`. Two reads never conflict; an op's own
+   change of what it reads is no conflict. The refusal names the op to split out and the order: "split out X into a
+   spec of its own and run it first, then Y on its outputs" — the second spec plans on the first's outputs.
+2. **The templating op reads** the styles part and the theme part whole, and `pgSz`, `pgMar`, `titlePg` of every
+   section (unconditionally: V10's `template_parts` reads the output's widths whether or not tabs are rescaled, and
+   `hf_template_refs` predicts every titlePg). A `set_page_setup` of any section beside it is refused, top/bottom
+   margins included (the aspect is the element, not the attribute).
+3. **Cover-unnumbered reads `titlePg` of every section**; not `hfref`: a footer-reference change by another op always
+   comes with the removal of the footer part it edits (rule 1 already) — `remove_header_footer` refuses to leave a
+   section inheriting (`inheritance`), and the templating op removes every old part of the kinds it replaces.
+4. **`continuous` beside the templating op is right as is** (neither reads nor changes the other's sectPr children;
+   both strip their own before V10's residual) and stays pinned as planning and verifying in both orders.
+5. **Not changed, recorded:** `set_font`'s symbol-run rule and `set_properties`' effective values with provenance also
+   read the style chains from the source; a `set_style_font` beside them plans today and the compiler's "change all
+   fonts" spec relies on it (`test_sweep_fixes.py`). A style change to a symbol font beside a `set_font` is the only
+   way that read goes wrong — left for the built-in-operations round, not widened here.

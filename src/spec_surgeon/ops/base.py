@@ -89,23 +89,47 @@ class Plan:
         return d
 
 
-Touch = Tuple[str, str, str]   # (member, target, aspect) — see merge_fragments for the conflict rules
+Touch = Tuple[str, str, str]   # (member, target, aspect) — see PlanFragment and check_conflicts for the grammar
+VERIFY = "verify"              # the aspect of a read: the op's prediction depends on the target as it is in the SOURCE
+
+
+def verify_family(aspect: str) -> Tuple[bool, Optional[str]]:
+    """(is a read, the property family it depends on — None for every family) of a touch's aspect:
+    ``verify`` → (True, None); ``verify:pgMar`` → (True, "pgMar"); ``rPr`` → (False, None)."""
+    if aspect == VERIFY:
+        return True, None
+    if aspect.startswith(VERIFY + ":"):
+        return True, aspect[len(VERIFY) + 1:] or None      # a bare "verify:" reads every family (never less)
+    return False, None
 
 
 @dataclass
 class PlanFragment(Plan):
     """One op's contribution to a plan: every Plan field, plus the bookkeeping the merge needs.
 
-    ``touches`` lists what the op will modify, as (member, target, aspect):
+    ``touches`` lists what the op will modify — and what its prediction READS — as (member, target, aspect):
       * target "*" means the whole member (removed, added, or blocks added/removed in it);
       * otherwise a block index (``"12"``), ``"sectPr:N"``, ``"style:<id>"``, ``"docDefaults"`` …;
       * aspect says which property family: ``text`` (run structure / characters), ``rPr`` (run properties),
         ``markRPr`` (paragraph-mark run properties), ``pPr``, ``hfref``, ``pgMar``, ``pgSz``, ``pgNumType``,
-        ``remove``, ``add``, ``rels``, ``ct`` …;
-      * ``(member, "scope", "verify")`` says the op's V10 assertion re-resolves its selection over that whole
-        member (every part in a font or paragraph op's scope, whether or not it changes anything there): the
-        member must still exist, unchanged by anyone else as a whole, when the verifier runs. Two ops may verify
-        the same member (their real touches decide), but an op that removes or restructures it is a conflict.
+        ``titlePg``, ``remove``, ``add``, ``rels``, ``ct`` …;
+      * a **read** has the aspect ``verify`` (or ``verify:<family>``): the op's prediction is computed from the
+        target as it is in the SOURCE (rule 2 of CLAUDE.md: predict first, analytically), so another op changing it
+        in the same spec would reach that prediction unverified — a plan-time ``conflict`` (rule 9), never a V10
+        failure after apply or, worse, a pass over an edit the prediction never saw.
+          - ``(member, "scope", "verify")``: the op's V10 assertion re-resolves its selection over that whole
+            member (every part in a font or paragraph op's scope, whether or not it changes anything there): the
+            member must still exist, unchanged by anyone else as a whole, when the verifier runs; other ops may
+            change things inside it (their real touches decide);
+          - ``(member, "*", "verify")``: the prediction depends on the whole member — ``apply_header_footer_template``
+            computes its pins from the target's ``styles.xml`` and theme part; any change inside the member by
+            another op (a style's font, docDefaults, a style's properties) is a conflict;
+          - ``(member, target, "verify:<family>")``: the prediction depends on that property family of that target —
+            the templating op's tab rescale and distance alignment read ``pgSz``/``pgMar`` of every section's
+            sectPr, and ``fix_page_numbering``'s cover-unnumbered reads every section's ``titlePg`` to know which
+            footer the cover shows; a change of that family (or ``text``) of that target by another op is a
+            conflict, a change of another family is not; ``(member, target, "verify")`` depends on every family.
+        Reads never conflict with reads, and an op's own change of what it reads is not a conflict.
     ``rev_ids_needed`` is how many new revision ids (w:ins/w:del/w:rPrChange/w:pPrChange …) apply() consumes;
     the merge hands each fragment a disjoint range starting at ``transform_data["first_rev_id"]``.
     """
@@ -153,42 +177,77 @@ def check_conflicts(fragments: Sequence[PlanFragment]) -> None:
     """Raise JobException(code="conflict") when two ops would touch the same thing.
 
     Rules (conservative on purpose — an order the engine had to guess is an order nobody verified):
-      1. a whole-member touch (target "*") by one op conflicts with ANY touch of that member by another op — a
-         ``verify`` touch included: an op whose assertion covers a member another op removes (``set_font`` over the
-         headers plus ``remove_header_footer``, say) is refused here, not left for V10 to fail on;
-      2. the same (member, target) touched by two ops conflicts when the aspects are equal, or either is "text"
-         (two ``verify`` touches of the same member are not a conflict: verifying is not changing);
+      1. a whole-member CHANGE (target "*", any aspect but a read) by one op conflicts with ANY touch of that
+         member by another op — a ``verify`` touch included: an op whose assertion covers a member another op
+         removes (``set_font`` over the headers plus ``remove_header_footer``, say) is refused here, not left for
+         V10 to fail on; a whole-member READ (``(member, "*", "verify")``) conflicts with any CHANGE of that member
+         by another op, whole or inside it (``apply_header_footer_template``'s pins read ``styles.xml`` whole, so a
+         ``set_style_font`` in the same spec is refused here, not left for V10 to fail on after apply);
+      2. the same (member, target) touched by two ops conflicts when the aspects are equal, or either is "text", or
+         one is a read of the other's family — ``verify`` (every family) or ``verify:<family>`` (that one; a change
+         of ``text`` restructures the target and conflicts with any read of it). Two reads never conflict
+         (verifying is not changing), and an op's own change of what it reads is not a conflict;
       3. two ops predicting text diffs for the same (part, block) conflict (defence in depth for rule 2).
     """
     whole: Dict[str, List[Tuple[int, str]]] = {}
     by_target: Dict[Tuple[str, str], List[Tuple[int, str]]] = {}
     any_touch: Dict[str, List[int]] = {}
+    changes: Dict[str, List[int]] = {}                  # member → ops with a non-read touch of it (any target)
     for f in fragments:
         for member, target, aspect in f.touches:
             any_touch.setdefault(member, []).append(f.op_index)
+            if not verify_family(aspect)[0]:
+                changes.setdefault(member, []).append(f.op_index)
             if target == "*":
                 whole.setdefault(member, []).append((f.op_index, aspect))
             else:
                 by_target.setdefault((member, str(target)), []).append((f.op_index, aspect))
     names = {f.op_index: _label(f) for f in fragments}
     for member, owners in whole.items():
-        others = sorted({i for i in any_touch.get(member, []) if i not in {o for o, _ in owners}})
-        if others or len({o for o, _ in owners}) > 1:
-            who = sorted({o for o, _ in owners} | set(others))
-            verifiers = sorted({f.op_index for f in fragments if f.op_index in others
-                                and all(a == "verify" for m, t, a in f.touches if m == member)})
-            hint = (f"; {[names[i] for i in verifiers]} would verify {member} without changing it — narrow its "
-                    f"scope to the parts that stay" if verifiers else
-                    "; split them into separate specs or narrow their selectors")
-            raise JobException(
-                f"ops {[names[i] for i in who]} both touch {member} and at least one of them replaces, removes or "
-                f"restructures it as a whole" + hint,
-                "conflict", {"member": member, "ops": [names[i] for i in who]})
+        changers = sorted({o for o, a in owners if not verify_family(a)[0]})
+        readers = sorted({o for o, a in owners if verify_family(a)[0]} - set(changers))
+        if changers:
+            others = sorted({i for i in any_touch.get(member, []) if i not in changers})
+            if others or len(changers) > 1:
+                who = sorted(set(changers) | set(others))
+                verifiers = sorted({f.op_index for f in fragments if f.op_index in others
+                                    and all(verify_family(a)[0] for m, t, a in f.touches if m == member)})
+                hint = (f"; {[names[i] for i in verifiers]} would verify {member} without changing it — narrow its "
+                        f"scope to the parts that stay" if verifiers else
+                        "; split them into separate specs or narrow their selectors")
+                raise JobException(
+                    f"ops {[names[i] for i in who]} both touch {member} and at least one of them replaces, removes or "
+                    f"restructures it as a whole" + hint,
+                    "conflict", {"member": member, "ops": [names[i] for i in who]})
+        for r in readers:                       # each reader on its own: another reader's change inside counts too
+            changing = sorted({i for i in changes.get(member, []) if i != r})
+            if changing:
+                who = sorted({r} | set(changing))
+                raise JobException(
+                    f"ops {[names[i] for i in who]} both touch {member}: {[names[r]]} plan from it "
+                    f"as it is in the source (the whole member) and {[names[i] for i in changing]} would change it "
+                    f"underneath, so the change would reach that plan unverified — split out "
+                    f"{[names[i] for i in changing]} into a spec of its own and run it first, then "
+                    f"{[names[r]]} on its outputs",
+                    "conflict", {"member": member, "ops": [names[i] for i in who],
+                                 "reads": [names[r]], "changes": [names[i] for i in changing]})
     for (member, target), owners in by_target.items():
         for a in range(len(owners)):
             for b in range(a + 1, len(owners)):
                 (ia, aa), (ib, ab) = owners[a], owners[b]
-                if ia == ib or (aa == ab == "verify"):
+                (ra, fa), (rb, fb) = verify_family(aa), verify_family(ab)
+                if ia == ib or (ra and rb):
+                    continue
+                if ra or rb:
+                    (ir, fam), (ic, change) = ((ia, fa), (ib, ab)) if ra else ((ib, fb), (ia, aa))
+                    if fam is None or fam == change or change == "text":
+                        raise JobException(
+                            f"op {names[ir]} plans from {fam or 'every property'} of {member} [{target}] as it is in "
+                            f"the source and {names[ic]} would change {change} there underneath, so the change would "
+                            f"reach that plan unverified — split out {names[ic]} into a spec of its own and run it "
+                            f"first, then {names[ir]} on its outputs",
+                            "conflict", {"member": member, "target": target, "ops": [names[ia], names[ib]],
+                                         "aspects": [aa, ab], "reads": [names[ir]], "changes": [names[ic]]})
                     continue
                 if aa == ab or "text" in (aa, ab):
                     raise JobException(
