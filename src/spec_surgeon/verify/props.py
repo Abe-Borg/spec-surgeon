@@ -494,7 +494,7 @@ class Ctx:
         # source block → output block of every paragraph an edit kind checked item by item (verify/edits.py): the
         # residual leaves exactly those out, by this mapping, whatever the text alignment paired them with
         self.verified_blocks: Dict[str, Dict[int, int]] = {}
-        self.masked_extents: Dict[str, Set[int]] = {}       # part → source blocks whose drawing sizes image_swaps checked
+        self.masked_extents: Dict[str, Set[int]] = {}       # part → ordinals of the w:drawings whose sizes image_swaps checked
 
     def view(self, part):
         if part not in self.views:
@@ -1630,10 +1630,37 @@ def _ppr_without_mark_del(ppr):
     return c if (len(c) or c.attrib) else None
 
 
+_WP_EXTENT = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent"
+_PIC_EXT = ("{http://schemas.openxmlformats.org/drawingml/2006/main}graphic/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicData/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/picture}pic/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/picture}spPr/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}xfrm/"
+            "{http://schemas.openxmlformats.org/drawingml/2006/main}ext")
+
+
+def mask_picture_sizes(drawing) -> None:
+    """Blank the two sizes of a picture (wp:extent and its pic:spPr a:xfrm/a:ext) — exactly what image_swaps checks."""
+    for frame in drawing:
+        if not isinstance(frame.tag, str):
+            continue
+        for e in [frame.find(_WP_EXTENT), frame.find(_PIC_EXT)]:
+            if e is not None:
+                e.set("cx", "masked")
+                e.set("cy", "masked")
+
+
 def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
     sv, ov = ctx.view(part)
     s_root = etree.fromstring(etree.tostring(sv.root))   # private copies: stripping must not disturb the views
     o_root = etree.fromstring(etree.tostring(ov.root))
+    masked = ctx.masked_extents.get(part, set())
+    if masked:                                         # the sizes image_swaps checked, by drawing ordinal (never moved)
+        for root in (s_root, o_root):
+            drawings = list(root.iter(W + "drawing"))
+            for k in masked:
+                if k < len(drawings):
+                    mask_picture_sizes(drawings[k])
     s, o = PartView(s_root), PartView(o_root)
     amap = ctx.maps[part]
     vb = ctx.verified_blocks.get(part, {})            # checked item by item by an edit kind (verify/edits.py)
@@ -1772,9 +1799,11 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_
 
 
 # header/footer templating kinds live in verify/template.py, built-in batch 1's word-changing kinds in verify/textops.py
-# (imported last: they use the helpers above)
+# and its picture swap in verify/images.py (imported last: they use the helpers above)
 from .template import TEMPLATE_KINDS  # noqa: E402
 from .textops import TEXT_OP_KINDS  # noqa: E402
+from .images import IMAGE_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
+KINDS.update(IMAGE_KINDS)
