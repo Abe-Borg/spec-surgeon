@@ -522,3 +522,75 @@ def test_the_terminal_operation_choice_tries_first_and_a_failure_returns_to_the_
     assert prompts2[1].startswith("\nRun it on 2 file(s) (edited copies only)? [y/N] ")
     assert "2 of 2 file(s) PASS" in printed and len(list((out2 / "run" / "outputs").glob("*.docx"))) == 2
     assert (out2 / "library-trial" / "preview").is_dir()
+
+
+# ---- Codex's review of the implementation (PR #17): containment, and results that stay valid JSON ------------------
+
+def _symlink_or_skip(target, link):
+    import os
+    try:
+        os.symlink(target, link, target_is_directory=target.is_dir())
+    except (OSError, NotImplementedError) as e:
+        pytest.skip(f"symlinks are not available here: {e}")
+
+
+def test_a_library_item_that_leads_outside_the_library_is_never_read(folder, tmp_path):
+    """A recipe file or an operation folder that is a symlink to somewhere outside the library lists (its target
+    exists) but every read — the index, read_library_item, the choice — goes through the containment check and refuses."""
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "evil.json").write_text(json.dumps(RECIPE), encoding="utf-8")
+    recipes = library._kind_dir("recipe")
+    recipes.mkdir(parents=True, exist_ok=True)
+    _symlink_or_skip(outside / "evil.json", recipes / "evil.json")
+    (recipes / "evil.meta.json").write_text(json.dumps({"name": "evil", "description": "", "request": "x",
+                                                        "saved_at": "2026-10-16T00:00:00"}), encoding="utf-8")
+    op_src = library.save_operation("Header distance", passing_op(folder, tmp_path))
+    moved = outside / "moved-op"
+    import shutil
+    shutil.move(str(op_src.path), str(moved))
+    _symlink_or_skip(moved, library._kind_dir("operation") / "header-distance")
+    assert sorted(i.name for i in library.list_items()) == ["Header distance", "evil"]
+    index = compiler_module.library_index()
+    by_name = {e["name"]: e for e in index["items"]}
+    assert "is not in your library" in by_name["evil"]["error"] and "spec" not in by_name["evil"]
+    assert "is not in your library" in by_name["Header distance"]["error"] and "op" not in by_name["Header distance"]
+    fake = FakeClient(resp(tool("read_library_item", {"name": "evil"}, "r1")),
+                      resp(tool("read_library_item", {"name": "Header distance"}, "r2")),
+                      ask("a1", choices=[{"kind": "recipe", "name": "evil"}, {"kind": "operation", "name": "Header distance"}]))
+    c = Conversation(REQUEST, files(folder), client=fake)
+    t = c.start()
+    for i in (1, 2):
+        result = fake.requests[i]["messages"][-1]["content"][0]
+        assert result["is_error"] and "is not in your library" in result["content"] and STAMP not in result["content"]
+    assert t.choices == [] and sum("is not in your library" in e for e in t.errors) == 2
+
+
+def test_an_oversized_recipe_detail_stays_valid_json_with_the_words_and_the_dry_plan(folder):
+    big = dict(RECIPE, assumptions=[f"assumption {i}: " + "x" * 400 for i in range(60)])    # ~25,000 characters
+    library.save_recipe("Big recipe", big)
+    fake = FakeClient(resp(tool("read_library_item", {"name": "Big recipe"}, "r1")), submit(REMOVE, "s1"))
+    c = Conversation(REQUEST, files(folder), client=fake)
+    assert c.start().status == "ok"
+    raw = fake.requests[1]["messages"][-1]["content"][0]["content"]
+    got = json.loads(raw)                                                     # not cut mid-JSON by the 20,000 cap
+    assert len(raw) <= compiler_module.DETAIL_BUDGET
+    assert got["placed_words"] == [STAMP] and got["dry_plan"]["accepted"] and got["templates"] == []
+    assert "too long for this tool" in got["spec"]["left_out"] and got["spec"]["ops"] == [
+        {"op": "replace_text", "select": {"scope": ["document"]}, "params": ["author", "find", "replace", "tracked"]}]
+    library.save_recipe("Small recipe", RECIPE)                             # a small recipe is returned whole
+    assert compiler_module.library_item_detail("Small recipe")["spec"]["ops"] == RECIPE["ops"]
+
+
+def test_an_oversized_index_entry_is_skipped_and_later_items_still_show():
+    library.save_recipe("A big one", dict(RECIPE, ops=[STAMP_OP] + [
+        dict(STAMP_OP, params=dict(STAMP_OP["params"], find=f"SECTION {i}")) for i in range(60)]),
+        "a recipe with more ops than an index entry lists")
+    library.save_recipe("Z small", RECIPE)
+    entries = [compiler_module.library_entry(i) for i in library.list_items()]
+    big = next(e for e in entries if e["name"] == "A big one")
+    assert len(big["ops"]) == compiler_module.ENTRY_OPS + 1 and big["ops"][-1] == "… and 31 more"
+    budget = len(json.dumps(next(e for e in entries if e["name"] == "Z small"), ensure_ascii=False)) + 2 + 2 + 10
+    index = compiler_module.library_index(budget=budget)
+    assert [e["name"] for e in index["items"]] == ["Z small"] and index["more"] == 1
+    assert compiler_module.library_index()["more"] == 0 and len(compiler_module.library_index()["items"]) == 2

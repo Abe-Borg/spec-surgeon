@@ -176,6 +176,8 @@ VIEW_PAGES_TOOL = {
 # ``operation``) that the app builds from the library itself (conversation._library_choice; CLAUDE.md rule 13).
 INDEX_LIMIT = 40                                   # items the first message's index shows; list_library has the rest
 INDEX_BUDGET = 18000                               # characters of a list_library result (the tool-result cap is 20,000)
+DETAIL_BUDGET = 18000                              # characters of a read_library_item result: the spec gives way first
+ENTRY_OPS = 30                                     # op names an index entry lists before it counts the rest
 DESCRIPTION_CHARS, REQUEST_CHARS, BRIEF_CHARS = 160, 200, 3000
 PLACED_WORDS_RULE = ("these words count as the user's ONLY once the user picks the choice offering this recipe; a spec "
                      "of yours that places them before that pick is refused like any words the user did not give")
@@ -550,17 +552,19 @@ def library_entry(item: Any) -> Dict[str, Any]:
     places (read_library_item shows those beside the rule that only the user's pick approves them, and the choice
     shows them to the user). An item that cannot be read is listed with its problem, never hidden."""
     from .editspec import load_spec, spec_templates
+    from .library import read_manifest, recipe_file
     e: Dict[str, Any] = {"kind": item.kind, "name": item.name, "description": _cut(item.description, DESCRIPTION_CHARS),
                          "saved": item.saved_at, "request": _cut(item.request, REQUEST_CHARS)}
     try:
         if item.kind == "recipe":
-            spec = load_spec(item.path)
-            e["ops"] = [str(o.get("op")) for o in spec.get("ops") or [] if isinstance(o, dict)]
+            spec = load_spec(recipe_file(item))           # every read goes through the library's containment check
+            ops = [str(o.get("op")) for o in spec.get("ops") or [] if isinstance(o, dict)]
+            e["ops"] = ops[:ENTRY_OPS] + ([f"… and {len(ops) - ENTRY_OPS} more"] if len(ops) > ENTRY_OPS else [])
             e["mode"] = spec.get("mode")
             e["places_words"] = len(placed_words(spec))
             e["templates"] = [{"path": str(t), "exists": t.is_file()} for t in spec_templates(spec)]
         else:
-            manifest = json.loads((Path(item.path) / "manifest.json").read_text(encoding="utf-8"))
+            manifest = read_manifest(item)
             e["op"] = manifest.get("op_name")
             e["proposal"] = _cut(manifest.get("proposal"), DESCRIPTION_CHARS)
     except Exception as ex:  # noqa: BLE001 — a broken item is said, and never stops the index
@@ -574,9 +578,15 @@ def library_index(limit: Optional[int] = INDEX_LIMIT, budget: int = INDEX_BUDGET
     mode); ``list_library`` is the same without the item limit."""
     from .library import list_items
     items = list_items()
-    shown = [library_entry(i) for i in (items if limit is None else items[:limit])]
-    while shown and len(json.dumps(shown, ensure_ascii=False)) > budget:
-        shown.pop()
+    shown: List[Dict[str, Any]] = []
+    size = 2                                       # the list's brackets
+    for item in (items if limit is None else items[:limit]):
+        e = library_entry(item)
+        n = len(json.dumps(e, ensure_ascii=False)) + 2
+        if size + n > budget:                      # an entry that does not fit is left out; the ones after it still show
+            continue
+        shown.append(e)
+        size += n
     return {"items": shown, "more": len(items) - len(shown)}
 
 
@@ -608,12 +618,12 @@ def library_item_detail(name: str, batch: Optional["_Batch"] = None) -> Dict[str
     operation: its manifest without ``op.py`` — Claude has nothing to do with the code — the brief cut at
     ``BRIEF_CHARS``. A name that is not in the library, a recipe that does not load or validate: the tool's error."""
     from .editspec import load_spec, spec_templates, validate_spec
-    from .library import find
+    from .library import find, read_manifest, recipe_file
     item = find(name)
     out: Dict[str, Any] = {"kind": item.kind, "name": item.name, "description": item.description,
                            "saved": item.saved_at, "request": item.request}
     if item.kind == "recipe":
-        spec = load_spec(item.path)
+        spec = load_spec(recipe_file(item))           # every read goes through the library's containment check
         validate_spec(spec)
         out["spec"] = spec
         out["placed_words"] = placed_words(spec)
@@ -621,10 +631,42 @@ def library_item_detail(name: str, batch: Optional["_Batch"] = None) -> Dict[str
         out["templates"] = [{"path": str(t), "exists": t.is_file()} for t in spec_templates(spec)]
         if batch is not None:
             out["dry_plan"] = dry_plan_summary(spec, batch)
-        return out
-    manifest = json.loads((Path(item.path) / "manifest.json").read_text(encoding="utf-8"))
+        return _fit_detail(out, DETAIL_BUDGET)
+    manifest = read_manifest(item)
     out.update({k: manifest.get(k) for k in ("op_name", "proposal", "select", "params", "model", "attempts")})
     out["brief"] = _cut(manifest.get("brief"), BRIEF_CHARS)
+    return _fit_detail(out, DETAIL_BUDGET)
+
+
+def _fit_detail(out: Dict[str, Any], budget: int) -> Dict[str, Any]:
+    """A read_library_item result that stays valid JSON within ``budget`` characters (``Conversation._dispatch`` cuts a
+    longer result as a string, mid-JSON). What Claude needs to offer the item — the words it places, its templates,
+    the dry plan — stays; the spec as saved gives way first (to an outline of its ops), then over-long words are cut
+    and said to be (the choice shows them whole), then the outline and the brief."""
+    def size() -> int:
+        return len(json.dumps(out, ensure_ascii=False))
+    if size() <= budget:
+        return out
+    if isinstance(out.get("spec"), dict):
+        spec = out["spec"]
+        out["spec"] = {"left_out": f"the spec as saved is {len(json.dumps(spec, ensure_ascii=False))} characters — too "
+                                   f"long for this tool; this is its outline", "mode": spec.get("mode"),
+                       "ops": [{"op": o.get("op"), "select": o.get("select"),
+                                "params": sorted((o.get("params") or {}).keys()) if isinstance(o.get("params"), dict)
+                                else []} for o in spec.get("ops") or [] if isinstance(o, dict)]}
+        if size() <= budget:
+            return out
+    words = out.get("placed_words")
+    if isinstance(words, list):
+        out["placed_words"] = [w if not isinstance(w, str) or len(w) <= 200 else w[:200] + f"… ({len(w)} characters)"
+                               for w in words]
+        out["placed_words_cut"] = "long words are shown cut here; the choice the user sees shows them whole"
+        if size() <= budget:
+            return out
+    if isinstance(out.get("spec"), dict):
+        out["spec"]["ops"] = f"{len(out['spec'].get('ops') or [])} ops (left out)"
+    if "brief" in out:
+        out["brief"] = _cut(out["brief"], 500)
     return out
 
 

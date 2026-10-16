@@ -455,7 +455,8 @@ proposals and recorded in the plan's status sections.
 - `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`) and operations (`operations/<slug>/op.py` +
   `manifest.json`) under `config_dir()/library` (rule 17). `other_kind_holding(kind, slug)`; `_check_free` refuses the
   other kind's name even with `replace` ("… cannot take that name, not even with replace …"). `item_hash(item)`: the
-  content hash a conversation's library choice pins (2026-10-16).
+  content hash a conversation's library choice pins; `recipe_file(item)` / `read_manifest(item)`: the `_inside`-checked
+  reads the compiler's index and `read_library_item` use (2026-10-16).
 - `codegen.py` + `sandbox_runner.py` — custom transforms (Tier B; offered in the conversation, or `do
   --allow-codegen` without a terminal): AST whitelist (`ALLOWED_FROM`, `ALLOWED_IMPORT`, `FORBIDDEN_*`,
   `EXCLUDED_FROM_EXAMPLES`), isolated subprocess on copies, `hard_limits` (rule 16), the full suite as the test, 3
@@ -552,7 +553,7 @@ planted-defect test proving the verifier catches a wrong implementation of it �
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
-merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 706 with Claude and your library
+merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 709 with Claude and your library
 (`tests/test_library_choices.py`, 2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
@@ -912,7 +913,7 @@ Abraham: "when I type something a saved item already does ('strip the headers an
 find my recipe or operation and offer it as a choice, so I reuse it instead of getting a fresh spec." The design note
 `docs/design/2026-10-16_claude_and_your_library.md` was approved as recommended (after Codex's two findings on it: the
 offered item pinned by hash, a failing terminal operation back to the conversation); `tests/test_library_choices.py`
-pins every rule (21 tests, 706 in total); README → "Your library → Claude and your library" is the user's view. Rules:
+pins every rule (24 tests, 709 in total); README → "Your library → Claude and your library" is the user's view. Rules:
 
 1. **Chat only.** `compiler.library_index()` goes into the first message (`build_messages(library=)`, `YOUR LIBRARY`,
    at most `INDEX_LIMIT` 40 items within `INDEX_BUDGET`; `library_entry` counts a recipe's words, never shows them) and
@@ -921,6 +922,12 @@ pins every rule (21 tests, 706 in total); README → "Your library → Claude an
    templates' existence, `dry_plan_summary`; an operation's manifest without `op.py`) — and `ASK_USER_CHAT` (the one-shot
    `ask_user` plus the kinds `recipe`/`operation` and `name`). `TOOLS`, `mode="compile"`, `ADVISOR_TOOLS` and
    `CODEGEN_TOOLS` are unchanged; a library kind in compile mode is dropped ("offered in a conversation only").
+   Every read goes through the library's containment check (`library.recipe_file` / `read_manifest`, `_inside`; rule
+   17): a listed item that is a symlink leading outside the library is an `error` entry in the index, the tool's
+   error, and no choice. Results stay valid JSON: an index entry lists at most `ENTRY_OPS` op names and one that does
+   not fit `INDEX_BUDGET` is skipped (the items after it still show); `_fit_detail` keeps a `read_library_item` result
+   within `DETAIL_BUDGET` — the spec as saved gives way to an outline of its ops first, then over-long placed words are
+   cut and said to be (the choice shows them whole) — never cut mid-JSON by `_dispatch`'s cap (Codex on #17).
 2. **Named by Claude, built by code** (rule 13, "Library choices"): `conversation._library_choice`; a drop is said in the
    turn's `errors`, to the user as an app `Entry` (`_dropped`, appended by `_finish` after Claude's entry) and to Claude
    as a note with the next message. The label comes from the item (name, description cut at `DESCRIPTION_CHARS`, saved

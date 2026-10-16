@@ -205,6 +205,18 @@ def item_hash(item: Item) -> str:
     return h.hexdigest()
 
 
+def recipe_file(item: Item) -> Path:
+    """A listed recipe's spec file, checked to lie directly inside the library (``_inside``) — the one way to read it
+    (a symlink that leads outside is refused, as ``load_recipe`` refuses it)."""
+    return _inside(item.path, "recipe")
+
+
+def read_manifest(item: Item) -> Dict[str, Any]:
+    """A listed operation's manifest, read from a folder checked to lie directly inside the library (``_inside``)."""
+    folder = _inside(item.path, "operation")
+    return json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+
+
 def load_recipe(name: str) -> Path:
     """The recipe's spec file (load it with ``Session.load_spec`` / ``run-spec``)."""
     return _inside(find(name, "recipe").path, "recipe")
