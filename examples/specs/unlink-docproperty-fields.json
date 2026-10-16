@@ -1,0 +1,25 @@
+{
+  "request": "Convert the DOCPROPERTY fields to plain text",
+  "summary": "Every DOCPROPERTY field in the body, headers, footers and notes becomes the text it shows now, with its formatting; page numbers are never touched.",
+  "assumptions": [
+    "each field keeps exactly the text it shows now; Word no longer updates it from the document properties",
+    "page-number fields (PAGE, NUMPAGES, SECTIONPAGES, PAGEREF) are never converted",
+    "a DOCPROPERTY field inside a text box, over two paragraphs, inside another field's code or in a pending tracked change sets the file aside",
+    "a file with no DOCPROPERTY field is left as it is"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "unlink_fields",
+      "params": {
+        "types": [
+          "DOCPROPERTY"
+        ]
+      }
+    }
+  ]
+}
