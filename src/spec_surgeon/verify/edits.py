@@ -293,16 +293,16 @@ def v_deletable(p, tracked: bool) -> Optional[str]:
     return None
 
 
-def _ppr_norm(ppr, drop_new_del_author: Optional[str] = None, old_ids: Set[str] = frozenset()):
-    """(signature of the pPr with a NEW mark w:del by ``author`` removed — empty rPr / pPr dropped, whether that del was
-    there)."""
+def ppr_norm(ppr, drop_new_del_author: Optional[str] = None, old_ids: Set[str] = frozenset(), mark: str = "del"):
+    """(signature of the pPr with a NEW paragraph-mark w:del — or ``mark`` w:ins — by ``author`` removed, empty rPr / pPr
+    dropped; whether that mark was there)."""
     if ppr is None:
         return None, False
     c = copy.deepcopy(ppr)
     found = False
     rpr = c.find(W + "rPr")
     if rpr is not None and drop_new_del_author is not None:
-        for d in rpr.findall(W + "del"):
+        for d in rpr.findall(W + mark):
             if d.get(W + "author") == drop_new_del_author and d.get(W + "date") and d.get(W + "id") is not None \
                     and d.get(W + "id") not in old_ids:
                 rpr.remove(d)
@@ -334,8 +334,8 @@ def check_deleted_paragraph(src_p, out_p, author: Optional[str], old_ids: Set[st
     d = compare_items(expected, v_items(out_p), old_ids)
     if d:
         errs.append(f"{where}: not exactly a tracked deletion of the paragraph — {d}")
-    src_sig, _ = _ppr_norm(src_p.find(W + "pPr"))
-    out_sig, marked = _ppr_norm(out_p.find(W + "pPr"), author, old_ids)
+    src_sig, _ = ppr_norm(src_p.find(W + "pPr"))
+    out_sig, marked = ppr_norm(out_p.find(W + "pPr"), author, old_ids)
     if not marked:
         errs.append(f"{where}: the paragraph mark carries no new w:del by {author!r}")
     if src_sig != out_sig:

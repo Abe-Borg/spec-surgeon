@@ -92,6 +92,14 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "only tagged paragraphs are deleted — the untagged paragraphs of a system's article are not (delete those with "
         "delete_paragraphs and a between_paragraphs selector)",
     ],
+    "ensure_end_of_section": [
+        "the number is each file's own, read by the stated rule (the SECTION title line, or the footer) — never typed",
+        "a last line that reads otherwise (another number, other capitals) is replaced by the user's line; a missing one "
+        "is added after the last content — with the file's own end-line style when it has one, or the title line's "
+        "formatting, else plain",
+        "an END OF SECTION line with content after it sets the file aside",
+        "tracked unless the user asked for clean copies",
+    ],
     "resolve_options": [
         "an option group is [option] [option] … separated by spaces; for each group the first rule that matches one of "
         "its options decides; groups no rule matches stay as they are",

@@ -10,11 +10,13 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from lxml import etree
+
 from .reader import W
-from .props import Ctx, para_matches
-from .template import _v_field_runs, display_of, slots_of
-from .edits import (check_deleted_paragraph, check_edited_paragraph, part_revision_ids, v_deletable, v_items,
-                    v_paragraph_text, v_run_text, v_shown)
+from .props import Ctx, _v_inherit_ppr, _v_inherit_rpr, para_matches, sig
+from .template import _v_field_runs, display_of, fill_value, slots_of
+from .edits import (check_deleted_paragraph, check_edited_paragraph, part_revision_ids, ppr_norm, v_deletable,
+                    v_items, v_paragraph_text, v_run_text, v_shown)
 from .tables import table_md5, table_pairs, table_variables, usable_text
 
 
@@ -421,9 +423,120 @@ def _tagged_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             f"({'tracked' if tracked else 'untracked'})")
 
 
+# ---- END OF SECTION --------------------------------------------------------------------------------------------------
+
+_V_BLANK = " \t\n "
+
+
+def _v_empty_p(el) -> bool:
+    return (el.tag == W + "p" and el.find(f"{W}pPr/{W}sectPr") is None
+            and not v_paragraph_text(el).strip(_V_BLANK))
+
+
+def _v_copy_ppr(anchor):
+    """insert_paragraph's inherit rule (this module's reading, via props) without the numbering."""
+    c = _v_inherit_ppr(anchor)
+    if c is not None:
+        for n in c.findall(W + "numPr"):
+            c.remove(n)
+        if not len(c) and not c.attrib:
+            return None
+    return c
+
+
+def _end_of_section(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    main = ctx.src.main_part()
+    try:
+        number = usable_text(fill_value(ctx.src, "number", a.get("number") or {}))
+    except (ValueError, KeyError, re.error) as e:
+        errs.append(f"end_of_section: the number cannot be extracted here ({e})")
+        return "end_of_section: no number"
+    line = (a.get("text") or "").replace("{number}", number)
+    if line != a.get("expected_line"):
+        errs.append(f"end_of_section: the line is {line!r} here, the plan says {a.get('expected_line')!r}")
+    sv, ov = ctx.view(main)
+    body = sv.root.find(W + "body")
+    kids = [c for c in body if isinstance(c.tag, str) and c.tag != W + "sectPr"]
+    last = next((c for c in reversed(kids) if not _v_empty_p(c)), None)
+    detect = re.compile(a.get("detect_regex") or r"(?i)^\s*END\s+OF\s+SECTION\b")
+    tracked, author = bool(a.get("tracked", True)), a.get("author")
+    old_ids = part_revision_ids(sv.root)
+    if last is None:
+        errs.append("end_of_section: the body is empty — the op must refuse")
+        return "end_of_section"
+    if last.tag == W + "p" and detect.search(v_paragraph_text(last)):
+        text = v_paragraph_text(last)
+        bare = text.strip(_V_BLANK)
+        case = "none" if bare == line else "replace"
+    elif any(detect.search(v_paragraph_text(p)) for p in sv.pars):
+        errs.append("end_of_section: an END OF SECTION line sits before other content — the op must refuse")
+        return "end_of_section"
+    elif last.tag == W + "p" and last.find(f"{W}pPr/{W}sectPr") is not None:
+        errs.append("end_of_section: the last content carries a section break — the op must refuse")
+        return "end_of_section"
+    else:
+        case = "insert"
+    if case != a.get("expected_case"):
+        errs.append(f"end_of_section: {case} here, the plan says {a.get('expected_case')}")
+        return f"end_of_section: {case}"
+    if case == "replace":
+        bi = sv.pars.index(last)
+        lo = len(text) - len(text.lstrip(_V_BLANK))
+        check_edited_paragraph(last, ov.pars[bi], [(lo, lo + len(bare), line, False)], tracked, author,
+                               _v_field_runs(sv.root), old_ids, f"end_of_section {main} block {bi}", errs)
+        ctx.verified_blocks.setdefault(main, {})[bi] = bi
+    elif case == "insert":
+        okids = [c for c in ov.root.find(W + "body") if isinstance(c.tag, str) and c.tag != W + "sectPr"]
+        k = kids.index(last)
+        if len(okids) != len(kids) + 1 or okids[k + 1].tag != W + "p":
+            errs.append("end_of_section: the output body is not the source with one paragraph after the last content")
+            return "end_of_section: insert"
+        new = okids[k + 1]
+        oi = ov.pars.index(new)
+        ctx.inserted_out_blocks.setdefault(main, set()).add(oi)
+        where = f"end_of_section {main} new block {oi}"
+        if v_paragraph_text(new) != line:
+            errs.append(f"{where}: reads {v_paragraph_text(new)!r}, expected {line!r}")
+        if a.get("formatting") == "copy":
+            hits = [p for p in sv.pars if p.getparent() is body and re.search(a.get("copy_from_regex") or "(?!)",
+                                                                             v_paragraph_text(p))]
+            if len(hits) != 1:
+                errs.append(f"{where}: copy_from_regex matches {len(hits)} paragraph(s) here — the op must refuse")
+                return "end_of_section: insert"
+            want_ppr = _v_copy_ppr(hits[0])
+            want_rpr = _v_inherit_rpr(hits[0], sv.runs[sv.pars.index(hits[0])])
+        else:
+            want_ppr = None
+            if a.get("style"):
+                if a["style"] not in ctx.src_styles.by_id:
+                    errs.append(f"{where}: the file has no style {a['style']!r} — the op must refuse")
+                want_ppr = etree.Element(W + "pPr")
+                etree.SubElement(want_ppr, W + "pStyle").set(W + "val", a["style"])
+            want_rpr = None
+        got_ppr, marked = ppr_norm(new.find(W + "pPr"), author if tracked else None, old_ids, mark="ins")
+        if got_ppr != ppr_norm(want_ppr)[0]:
+            errs.append(f"{where}: paragraph properties are not the ones the rule gives")
+        if tracked and not marked:
+            errs.append(f"{where}: the paragraph mark carries no new w:ins by {author!r}")
+        holder = [c for c in new if isinstance(c.tag, str) and c.tag != W + "pPr"]
+        if tracked:
+            ins = holder[0] if len(holder) == 1 and holder[0].tag == W + "ins" else None
+            if ins is None or ins.get(W + "author") != author or ins.get(W + "id") in old_ids or not ins.get(W + "date"):
+                errs.append(f"{where}: the text is not in one new w:ins by {author!r}")
+                return "end_of_section: insert"
+            holder = [c for c in ins if isinstance(c.tag, str)]
+        if len(holder) != 1 or holder[0].tag != W + "r" or \
+                [c.tag for c in holder[0] if isinstance(c.tag, str) and c.tag != W + "rPr"] != [W + "t"]:
+            errs.append(f"{where}: the line must be one run holding one w:t")
+        elif sig(holder[0].find(W + "rPr")) != sig(want_rpr):
+            errs.append(f"{where}: run properties are not the ones the rule gives")
+    return f"end_of_section: {case} ({line!r})"
+
+
 TEXT_OP_KINDS = {
     "replaced_text": _replaced_text,
     "filled_variables": _filled_variables,
     "resolved_options": _resolved_options,
     "tagged_paragraphs": _tagged_paragraphs,
+    "end_of_section": _end_of_section,
 }
