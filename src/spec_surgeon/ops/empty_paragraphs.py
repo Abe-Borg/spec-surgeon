@@ -158,6 +158,7 @@ class RemoveEmptyParagraphs(Op):
         data: Dict[str, List[int]] = {}
         kept = 0
         for part in parts:
+            frag.touches.append((part, "scope", "verify"))          # V10 re-derives over every part in scope
             root = pkg.xml(part)
             pars = paragraphs(root)
             index = {id(p): bi for bi, p in enumerate(pars)}
@@ -171,8 +172,11 @@ class RemoveEmptyParagraphs(Op):
                 data[part] = bis
                 if not tracked:
                     frag.touches.append((part, "*", "text"))
-        frag.property_assertions.append({"kind": "removed_empty_paragraphs", "scope": scope, "mode": mode,
-                                         "tracked": tracked, "author": author, "expected": data})
+        # the user's own words (scope, mode, tracked as asked; absent = the default): the verifier reads them itself
+        frag.property_assertions.append({"kind": "removed_empty_paragraphs",
+                                         "scope": select.get("scope") or params.get("scope"),
+                                         **{k: params[k] for k in ("mode", "tracked") if k in params},
+                                         "author": author, "expected": data})
         n = sum(len(v) for v in data.values())
         if not n:
             if allow_missing:

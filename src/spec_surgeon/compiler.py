@@ -168,7 +168,29 @@ set_document_properties likewise only on request; a watermark's words and a prop
 words (ask when they did not give them).
 - remove_notes: build its rules from the profiles — the note style ids in styles_in_use, the colours in \
 styles_in_use / markup.run_colors, the words the notes begin with ("Retain", "Delete", "Specifier Note") — and state \
-them in assumptions.
+them in assumptions. One rule per way a note is marked ({"style_in": ["CMT"]}, {"text_regex": "^(Retain|Delete)\\\\b", \
+"color_in": ["0000FF"]}); colours as the profile shows them (hex 0000FF or a theme name like accent1); never a bare \
+color_in rule for black or auto text; "runs" only when the user speaks of inline notes or blue words inside paragraphs \
+that stay. Bracketed notes in plain text ("[Note to specifier: …]") are a replace_table regex pair with an empty \
+replacement.
+- remove_comments: which "all", "resolved" or "authors" (with authors as the profiles name them). remove_highlight: \
+colors only when the user named colours (Word's names: yellow, green, cyan …); shading is not highlighting. \
+remove_hyperlinks: which "external" (the default; web and e-mail), "internal" (bookmarks, a table of contents) or \
+"all"; keep_style true only when the words should keep looking like links. unlink_fields: types from the profiles' \
+markup.fields ("DOCPROPERTY", "REF" …) or "all" — page numbers never; a table of contents cannot be converted. \
+remove_empty_paragraphs: mode "collapse" for double or extra blank lines, "all" when the user wants none. Tracked, \
+the clean-up ops share one spec; untracked (clean copies), an op that deletes paragraphs (remove_hidden_text, \
+remove_notes, remove_empty_paragraphs) restructures the part, so it cannot share a spec with another op over that part \
+— offer a chain, one stage each.
+- add_watermark: text = the user's exact words, Word's look unless the user describes another (color 6 hex digits, \
+layout diagonal or horizontal, size in points or "auto"); "change the watermark to X" is add_watermark with replace \
+true; "remove the watermark" is remove_watermark (text only when the user names which). A watermark is untracked: \
+beside tracked word changes it is a second spec — offer a chain.
+- set_document_properties: "clear the author names" is clear ["author", "last_modified_by"] (tracked changes and \
+comments keep their authors); leave review.geometry_reference out (the op chooses it per file). Say in assumptions that \
+a field showing a changed property keeps its saved value until Word updates fields, and that turning Track Changes off \
+(set_document_state) accepts nothing. set_document_properties and set_document_state on the same property (the \
+Status with Mark as Final) are two specs.
 - The attached template may be a TEMPLATE SPEC: an ordinary spec from the architect or another firm (read_template \
 says which). "Make the header/footer match the template spec" is apply_header_footer_template with slot_markers \
 ["reference"] and the catalog's reference_fills as slot_fills (adapt them when the profiles show another layout): \

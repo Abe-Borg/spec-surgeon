@@ -16,7 +16,7 @@
 | 20 | Set document properties (title, company) or clear author names | `set_document_properties` | untracked / formatting |
 | 21 | Turn off the track-changes setting, or mark the file as final | `set_document_state` | formatting |
 
-Status: **built** on branch `claude/sweet-goodall-e3v622`. Decisions below were taken on Abraham's behalf, as in batch 1, and
+Status: **built** (see "Built: departures from this note" at the end). Decisions below were taken on Abraham's behalf, as in batch 1, and
 can each be changed. Reading order: CLAUDE.md hard rules 1–4 and 8–13, "Run text and in-paragraph edits" (the item
 model), `docs/BUILTIN_OPS_BATCH1_DESIGN.md` §0.
 
@@ -335,3 +335,71 @@ Kind `document_properties`; mode untracked when words are set, formatting for cl
 
 Not in this batch, recorded: picture watermarks (adding), comments in text boxes, joining paragraphs on accept/reject,
 table row revisions, highlight in styles, removing a document's personal information on save (`w:removePersonalInformation`).
+
+## Built: departures from this note
+
+Built by six builders in parallel (one per group of items, each in its own worktree on the shared machinery of §1),
+then integrated and reviewed. Every departure below is pinned by a test; README → "Built-in operations, batch 2" is the
+user's view and CLAUDE.md lists every both-sides definition.
+
+**Across the batch (integration):**
+
+1. `allow_missing` defaults to **true** for every clean-up op (§1.7, decision 12), as the note says — the builders'
+   sections were written before that decision and each now says so.
+2. **An assertion carries the user's own words** (scope, `which`, `colors`, `tracked`, `mode`, note rules — absent = the
+   default), and each V10 kind applies its own defaults: a wrong default shared by plan and apply would otherwise reach
+   the check as the plan's resolved value. The comments, highlight and watermark kinds were built so; the links, fields,
+   accept/reject, hidden-text, notes and blank-paragraph kinds were changed to it at integration.
+3. **Scope reads are declared** (rule 9): `remove_highlight`, `resolve_tracked_changes`, `remove_hidden_text`,
+   `remove_notes` and `remove_empty_paragraphs` touch `(part, "scope", "verify")` for every part in scope, as the links
+   and fields ops did — beside a `remove_header_footer` they used to plan and then fail V10 on the missing header.
+4. File-specific refusals are never `bad-params` (the compiler treats `bad-params` as a mistake of the spec for the whole
+   batch): `watermark-size` and `property-type` are their own codes.
+5. `tests/test_batch2_integration.py` scans the batch's operation modules (with `ast`, not a regular expression — a dict
+   literal after a computed code was read as a code) and fails on a refusal code without a plain-words explanation.
+
+**§2 Comments:** a mark inside `w:txbxContent` but outside any nested paragraph is `textbox` too; highlight colours in a
+spec are Word's exact names (the schema's enum), `canonical_colors` folds case for direct callers.
+
+**§3 Highlight:** a tracked removal on a paragraph mark that is itself a pending insertion/deletion/move is refused
+(`tracked-format`) — the `rPrChange` snapshot would copy the mark's revision marker and V4 would see one id twice.
+
+**§4 Accept/reject:** a new refusal `marks-in-change` (content that goes may hold no note/comment mark, no single end of a
+bookmark/permission/move range — Word's `_GoBack` goes whole — and no part of a complex field); a paragraph that would go
+with a section break is `section-break`; rejecting a `pPrChange` whose snapshot holds tracked changes is `revision-kind`;
+"a paragraph follows it" skips block-level marks; an empty still-pending wrapper goes with its paragraph (counted in the
+V4 delta).
+
+**§5–§6, §8 Hidden text, notes, blank paragraphs:** the keep rules apply to hidden text and notes too (a kept paragraph
+loses its content and keeps its mark, flagged); a hidden paragraph that cannot be deleted for any reason but a text box
+is handled the same way (notes still refuse); an empty paragraph whose mark is hidden is a hidden paragraph; inline notes
+never take a run holding a picture; within `color_in` space-only runs are ignored; every removed piece is a flag. V2's
+pairing changed (CLAUDE.md "V2's plan-assisted pairing"): the predicted untracked deletions/insertions are set aside
+before the alignment, so a deleted blank paragraph cannot pair with another blank far away.
+
+**§7 Watermarks:** the anchor is the first paragraph whose containers below `w:hdr` are only content controls (Word's
+"Watermarks" control); the text is the first `v:textpath` that has a `string`; the shapetype check covers every VML
+shapetype; a DrawingML watermark with a text box deletes its text-box paragraphs (predicted) and declares the holding
+paragraph structure-only; a shape outside a run or in a text-box paragraph is `structure`, one in a pending tracked
+change `existing-revisions`; `add_watermark` reads `pgSz`/`pgMar`/`hfref` of every showing section; the verifier checks
+the box is the asserted one, inside every showing text area and filling it as the `auto` rule says, without
+re-deriving the font proportions.
+
+**§9–§10 Links and fields:** `nested-field` also when a selected field sits inside another field's code; `textbox` is
+checked before the field's own refusal; links and fields are found again at apply by paragraph (place + identity), not
+by whole-part ordinals (the two ops in one spec shift them); an unterminated quote in an instruction runs to the end;
+links and fields inside what an unconverted field shows (a table of contents) are flagged; only hyperlink-type
+relationships are removed.
+
+**§11–§12 Properties and state:** the layout reference is `source`, but `none` for a file where a field shows a changed
+property (LibreOffice draws it with the new value); an empty property element is already clear; a new code
+`malformed-properties` (a property twice, two custom properties with one name, an unreadable pid, a custom part without
+relationship, two `w:trackRevisions`); custom names matched casefolded, an existing property keeps its stored name and
+value tag; setting `keywords` replaces any `cp:value` children; `set_document_state` checks the settings order itself
+(V5a cannot — below) and refuses `off` on a locked file even when tracking is already off.
+
+**Recorded, not changed:** `verify/xsd.py` drops every V5a message containing `hyphenationZone` (an old false alarm),
+which also hides an out-of-order `settings.xml` element before it; narrowing the filter could unmask latent errors of
+sources the check never reached (python-docx's `<w:zoom w:val="bestFit"/>` without `w:percent`) and fail correct
+outputs, so it waits for its own change. The clean-up ops' reads of the style chains (effective hidden and colour) are
+not declared as reads, like `set_font`'s (CLAUDE.md "Plan-time conflicts for what an op reads" 5).

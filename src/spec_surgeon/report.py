@@ -53,7 +53,8 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "field-result": (
         "Target Inside a Word Field",
         "The matched text is inside a live field instruction or cached field result (such as a TOC or REF field) "
-        "and is skipped to avoid corrupting field codes.",
+        "and is skipped to avoid corrupting field codes — or text to remove is part of a field that is not removed as "
+        "a whole: Word would show the field's result again when it updates fields.",
     ),
     "nested-container": (
         "Target Inside Nested Container",
@@ -96,9 +97,10 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Deleting every paragraph of a table cell would leave invalid OOXML; keep one paragraph per cell.",
     ),
     "toggle-ambiguous": (
-        "Bold/Italic/Caps Set at Several Style Levels",
-        "The effective toggle property cannot be resolved without Word's XOR rule; the file needs a human look. For a "
-        "style change, set the formatting directly on the selected paragraphs instead (direct formatting always wins).",
+        "Bold/Italic/Caps/Hidden Set at Several Style Levels",
+        "Whether the text is bold, italic, in capitals or hidden depends on that setting appearing at several style "
+        "levels, which Word combines by a rule the engine does not model (XOR); the file needs a human look. For a style "
+        "change, set the formatting directly on the selected paragraphs instead (direct formatting always wins).",
     ),
     "conflict-property": (
         "Another Setting Would Override the Requested Value",
@@ -301,6 +303,31 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The custom property to set holds a number, a date or a yes/no value in this file (or Mark as Final's property "
         "is not a yes/no), so a text value cannot replace it. Change it in Word (File → Info → Properties → Advanced → "
         "Custom), or leave it out.",
+    ),
+    "revision-kind": (
+        "Tracked Change Left for Word",
+        "The file holds a tracked change this operation does not accept or reject: a table row or cell insertion or "
+        "deletion, a change inside an equation, or (when rejecting) a change of section or table properties. Accept or "
+        "reject that one in Word (Review tab), then run again — or name other authors or dates.",
+    ),
+    "paragraph-merge": (
+        "Accepting Would Join Paragraphs",
+        "Accepting or rejecting a paragraph mark here would join the paragraph to the next one: it still holds text, a "
+        "bookmark, a picture or a comment, or it is the last paragraph of its cell, before a table, or of the document. "
+        "Word decides whose formatting a joined paragraph keeps, so this change is left for Word: resolve it there, then "
+        "run again.",
+    ),
+    "partial-move": (
+        "Move Only Partly Chosen",
+        "A moved passage (cut and pasted with Track Changes on) has its two ends or its pieces by different authors or "
+        "dates, so the authors or dates asked choose only part of it. A move is accepted or rejected whole: resolve it in "
+        "Word, or widen the request to include it.",
+    ),
+    "marks-in-change": (
+        "Change Holds an Anchor",
+        "The text this accept or reject would remove holds a footnote or comment mark, one end of a bookmark, or part of "
+        "a field. Removing it would leave the note or comment without its place in the text, or break the bookmark or "
+        "field. Resolve this change in Word, then run again.",
     ),
     "malformed-properties": (
         "The File's Properties Part Is Irregular",

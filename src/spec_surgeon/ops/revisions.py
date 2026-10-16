@@ -618,6 +618,7 @@ class ResolveTrackedChanges(Op):
         expected_selected: Dict[str, int] = {}
         changed: List[str] = []
         for part in parts:
+            frag.touches.append((part, "scope", "verify"))          # V10 re-derives over every part in scope
             root = pkg.xml(part)
             res = analyze(root, part, action, sel)
             sel_revs = res.selected()

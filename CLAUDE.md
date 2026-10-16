@@ -27,7 +27,12 @@ edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inpu
    (`verify/props.py`), and its own slot detection, fill extraction and effective-property resolver
    (`verify/template.py`), and (built-in batch 1) its own run text and item model (`verify/edits.py`), table readers
    (`verify/tables.py`), word-changing kinds (`verify/textops.py`) and picture reader, matching and fitted size
-   (`verify/images.py`). Do not "deduplicate" these into shared helpers — the duplication is the point: a
+   (`verify/images.py`), and (built-in batch 2) its own field parser (`verify/fields.py`), effective hidden/colour and
+   item-model edits (`verify/markup.py`), comment model (`verify/comments.py`), highlight targets
+   (`verify/highlight.py`), resolution of tracked changes — a rebuild, never an in-place edit
+   (`verify/revisions.py`) —, hidden/note/blank rules (`verify/removal.py`), watermark reader and shape template
+   (`verify/watermark.py`), link readers (`verify/links.py`) and property tables and settings order
+   (`verify/docprops.py`). Do not "deduplicate" these into shared helpers — the duplication is the point: a
    transform-side bug must not be able to hide behind the same bug in the check.
 2. **Predict first.** `Op.plan()` (and `Job.plan()`) must compute every prediction (diffs, parts, members
    removed/added, revision delta of every kind, structural changes, accepted views, property assertions and
@@ -53,6 +58,11 @@ edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inpu
    `verify/props.py` first (selection re-resolved independently, target count checked, "exactly this change and
    nothing else" on each target). Never add a kind that strips without checking. Spec-level `assertions` in an
    EditSpec are post-conditions only (`effective_font`) — a spec must never be able to exempt anything from V10.
+   Since built-in batch 2 the residual also covers `settings.xml` and the document-properties parts (core, app, custom
+   — the member residual, `props._residual_members`): any change there must be registered by a kind that checked it,
+   and a part a kind compares whole (`ctx.verified_parts`) is skipped by the residual only because the kind compared
+   ALL of it. A kind is handed the user's own words (scope, options, defaults absent) and applies its own defaults —
+   never the transform's resolved copy (see "Built-in operations, batch 2").
 9. **Overlapping ops are refused, never ordered by guess.** `merge_fragments` raises `conflict` when two ops
    touch the same block's text, the same property family of the same target, or anything in a member another
    op removes/restructures. Ops declare what they touch in `touches`; keep that list honest — including a
@@ -85,13 +95,32 @@ edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inpu
    `make_values_agree` of every paragraph a place matched, `ensure_end_of_section` its `copy_from_regex` paragraph
    (`verify`) and the body's end (`(main, "end", "verify")`, so a paragraph added after its line by another op is a
    conflict), and `make_values_agree` with a file-name place reads `OUTPUT_NAME_TOUCH`'s member.
+   Batch 2: every clean-up op whose V10 kind re-derives its decisions over every part in scope declares `(part,
+   "scope", "verify")` for each (`remove_highlight`, `resolve_tracked_changes`, `remove_hidden_text`, `remove_notes`,
+   `remove_empty_paragraphs`, `remove_hyperlinks`, `unlink_fields`) — so a `remove_header_footer` beside them is a
+   plan-time `conflict` even where they have nothing to do in the removed part (they used to plan and fail V10 on the
+   missing part; `tests/test_batch2_integration.py`). Changes: `(part, bi, "text")` per changed or deleted paragraph,
+   `(part, "*", "text")` for a part with untracked paragraph deletions and for every part `resolve_tracked_changes`
+   resolves (a spec of its own), `(part, bi, "rPr")`/`"markRPr"` for a highlight, `(member, "*", "remove")` for the
+   comment parts and `(part, "comment-mark:<id>", "remove")` per comment mark between blocks, the rels member as
+   `(rels, "*", "rels")` when an address goes, `(member, "property:<name>", "value")`, `(settings, "trackRevisions",
+   "value")` and `(custom part, "pid", "add")` for the property ops (a created `custom.xml`, `_rels/.rels` and
+   `[Content_Types].xml` as whole members); `add_watermark` reads `verify:pgSz`/`verify:pgMar`/`verify:hfref` of every
+   section showing a header it sizes for. Not declared, as for `set_font` (see "Plan-time conflicts for what an op
+   reads" 5): the clean-up ops' reads of the style chains (hidden, colour) — their kinds re-derive from the SOURCE.
 10. **Never create a part to make an edit work.** E.g. `remove_header_footer` refuses (`inheritance`) rather
     than add an empty header part. Adding members is allowed only when the op's whole purpose is the added
     member and it is predicted in `members_added` — today `apply_header_footer_template`, whose new parts
     are copies of the template's parts (never synthesized), each with a V5a template baseline and a
     `template_parts` assertion, and `swap_image`, whose one new media member is the user's picture file byte for
-    byte (`image_swaps` compares it with the file). A new part's content type must match its relationship type (V1
-    checks it).
+    byte (`image_swaps` compares it with the file), and (built-in batch 2) `set_document_properties` /
+    `set_document_state`, which may add **`docProps/custom.xml`** — only that member, only when the file has no
+    custom-properties part, holding only the asked properties, with its package relationship and its content-type
+    override, predicted in `members_added`; V10 compares the created part whole with the verifier's own expected part
+    and the package rels and `[Content_Types].xml` with the source plus exactly those entries (`verified_members`). A
+    `docProps/custom.xml` no relationship names is refused (`malformed-properties`), never overwritten. `add_watermark`
+    adds runs to existing header parts and never a header (`no-header`). A new part's content type must match its
+    relationship type (V1 checks it).
 11. **Fills are extracted, never typed.** A template slot gets its value from the target by a declared rule
     (`regex`, `paragraph_after`) or is the user's approved wording (`literal` → the op is `untracked` and the
     plan flags the words). V10 re-extracts every fill from the SOURCE by the same rule, independently. A
@@ -431,9 +460,13 @@ definition):
   (`v_picture`, `v_fit`, `_scan`, `_why_not`); the residual masks exactly the checked drawings' two sizes
   (`props.mask_picture_sizes`, `ctx.masked_extents` by ordinal). `tests/test_swap_image.py` compares the readers and
   the fitted sizes and plants shared defects.
-- **V2's plan-assisted pairing** (verifier only, `textcheck.diff_blocks(…, deleted_hint, inserted_hint)`): in a region
-  of unequal-length replacement, the plan's predicted untracked deletions/insertions are set aside and, when the counts
-  then match, the rest is paired in order and compared exactly; any other shape falls back to the old reporting.
+- **V2's plan-assisted pairing** (verifier only, `textcheck.diff_blocks(…, deleted_hint, inserted_hint)`): the plan's
+  predicted untracked block deletions (source indices) and insertions (output indices) are set aside FIRST — reported as
+  the deletions and insertions they are, whatever the output holds — and the rest is aligned on text (since built-in
+  batch 2: it used to happen only inside an unequal-length replace region, and a deleted blank paragraph could pair with
+  another blank paragraph far away and throw every block between them out of alignment). Not weaker: a predicted
+  deletion that did not happen leaves its block in the output, an insertion nobody predicted
+  (`tests/test_empty_paragraphs.py::test_v2_a_predicted_deletion_that_did_not_happen_still_fails`).
 
 Built-in operations batch 2 (2026-10-16; `docs/BUILTIN_OPS_BATCH2_DESIGN.md` — the shared machinery, §1):
 
@@ -480,6 +513,131 @@ Built-in operations batch 2 (2026-10-16; `docs/BUILTIN_OPS_BATCH2_DESIGN.md` —
 - **V5a on the document properties**: `docProps/core.xml` validates against the vendored OPC schema whose Dublin Core
   imports resolve to `schemas/dublincore/` (local definitions to the shape of DCMI's files; `xsd.LOCAL_IMPORTS`) —
   validation never uses the network.
+
+Batch 2's operations (each module's docstring is the full definition; `docs/BUILTIN_OPS_BATCH2_DESIGN.md` §2–§12):
+
+- **Comments** (`remove_comments`). A comment = a `w:comment` child of the comments part (the main part's `comments`
+  relationship); its paraIds = the `w14:paraId` of its paragraphs. Its entry = the first `w15:commentEx` (direct child of
+  `commentsExtended.xml`'s root) whose `w15:paraId` is one of its paraIds; its parent = the comment owning the entry's
+  `w15:paraIdParent` (none when no comment owns it, or itself); its root = parents followed, cycle-safe; resolved = the
+  root's entry has `w15:done` in `1/true/on`. Selection: `all` | `resolved` (root resolved) | `authors` (casefolded,
+  whitespace collapsed); then every reply below a selected comment, recursively. Removed: those `w:comment`; every
+  `w15:commentEx` / `w16cid:commentId` whose paraId is a removed comment's; every `w16cex:commentExtensible` whose
+  `durableId` such a `commentId` carried; in every other text part every `w:commentRangeStart`/`End`/`w:commentReference`
+  with a removed id, and a reference's run when it then holds only `w:rPr`. Parts and relationships never removed.
+  Refused: a mark in a text box (`textbox`); duplicate or missing comment ids, a paraId two comments share, a reference
+  outside a run (`structure`). Transform: `ops/comments.CommentBook` (`select`, `parent`, `root_of`, `resolved`),
+  `side_removals`, `marks_of`, `in_text_box`; verifier: `verify/comments._VComments`, `_v_side_expected`.
+  `tests/test_comments.py` compares the two selections on both fixtures for every `which` and plants shared defects.
+- **Highlight targets** (`remove_highlight`). Every `w:r` whose nearest paragraph is in scope (deleted runs, hyperlinks,
+  text-box copies included) and every paragraph mark (`w:pPr/w:rPr`) whose OWN `w:rPr` has a direct `w:highlight` with
+  `w:val` in the colours (default: Word's 16; `none` never). Result: that element removed; plain — an emptied run `w:rPr`
+  removed, an emptied mark `w:rPr` removed and then an emptied `w:pPr`; tracked — `w:rPrChange` (snapshot = the source
+  rPr) appended; a target already carrying one, or a mark rPr holding its own `ins`/`del`/`moveFrom`/`moveTo`, is refused
+  (`tracked-format`: the snapshot would copy the marker and V4 would see one id twice). Styles are flagged, never changed.
+  Transform: `ops/highlight.highlighted`, `strip_highlight`, `canonical_colors`; verifier: `verify/highlight._v_lit`,
+  `_v_check`, `_v_colors`.
+- **Resolving tracked changes** (`resolve_tracked_changes`). Revision elements: `ins`/`del`/`moveFrom`/`moveTo`, the
+  property changes and the cell revisions, outside any property change's snapshot. By parent: under a `w:rPr` a paragraph
+  mark's when that rPr is a `w:pPr`'s, else an equation's (refused); under `w:trPr` a row's, under `w:numPr` a numbering
+  marker's (refused); else content. Chosen: author listed (casefolded, whitespace collapsed) and wall-clock `w:date` in
+  range (`YYYY-MM-DD[THH:MM[:SS[.f]]]` then an optional `Z`/offset, ignored; user dates `YYYY-MM-DD[THH:MM[:SS]]`;
+  `on_or_after` inclusive, `before` exclusive; an unreadable date under a date filter → not chosen). Moves: a piece
+  belongs to the innermost open range of its kind (document order, paired by id); the ranges sharing a name and their
+  pieces are chosen whole (`partial-move`), their range marks go with them. Order: content (accept unwraps ins/moveTo,
+  drops del/moveFrom; reject the reverse), then deleted text left in no deletion becomes live (`delText`→`t`,
+  `delInstrText`→`instrText`, only what was inside an unwrapped deletion), the move ranges, property changes (accept
+  drops; reject: rPr = the mark's own markers then the snapshot, pPr = the snapshot then rPr and sectPr; any other kind
+  refused, `revision-kind`), marks (kept side: the marker goes; other side: the paragraph goes when its resolved content
+  is only empty runs (`rPr`/`lastRenderedPageBreak`), proofing marks, wrappers of those and `_GoBack`, a paragraph
+  follows it — block-level marks skipped — and it has no sectPr; else `paragraph-merge` / `section-break`), then an
+  emptied rPr then pPr goes. Content that goes may hold no note/comment mark, no single end of a bookmark/permission/move
+  range (`_GoBack` goes whole) and no part of a complex field (`marks-in-change`). Transform: `ops/revisions.classify`,
+  `Selection`, `_moves`, `_marks_in_removed`, `_leftover`, `analyze`, `predict`/`gone_revisions`, `resolve` (in place);
+  verifier: `verify/revisions._v_class`, `_v_when`, `_v_decide`, `_v_bare`, `_v_build` (a REBUILD of the part from the
+  decisions), `_resolved_changes` (every part in scope compared WHOLE — `ctx.verified_parts` —, the revision counts per V4
+  kind and the number chosen equal to the plan's). `apply` re-runs `analyze` on the working copy and refuses (`internal`)
+  a different count. `tests/test_revisions.py` checks the outputs against pandoc's accept/reject and plants shared
+  defects (selection, semantics, the wrong paragraph, a skipped join or anchor check, a wrong count).
+- **Hidden text, notes and blank paragraphs** (`remove_hidden_text`, `remove_notes`, `remove_empty_paragraphs`).
+  *Content runs* of a paragraph: its runs (nearest `w:p`) that are live (no `w:del`/`w:moveFrom` above them) and hold
+  something besides `w:rPr`. *Hidden paragraph*: mark hidden and every content run hidden (none counts); hidden runs by
+  the effective-hidden definition above, ambiguous → `toggle-ambiguous` (on every content run; the mark only when every
+  content run is hidden). *Note rules*: OR of rules, AND within a rule — `style_in` (pStyle, else the default paragraph
+  style), `text_regex` (batch-1 run text), `color_in` (a content run with visible text exists and every such run's
+  effective colour is listed; space-only runs ignored), `hidden` (a content run exists and all are hidden); evaluated in
+  that order. Inline notes (`runs`): content runs of a listed colour and/or hidden, never inside a `w:hyperlink`, never
+  holding `w:drawing`/`w:pict`/`w:object`. *Blank*: not in a text box, no `w:sectPr`, no revision element, no numbering
+  (the first `w:numPr/w:numId` of own pPr → style chain → docDefaults decides; 0 = off), no `w:pBdr` with a child and no
+  `w:framePr` on that chain, only `w:pPr`, `w:proofErr` and runs of `w:rPr`/`w:lastRenderedPageBreak`/`w:t` of spaces
+  and NBSPs; collapse = every blank whose previous block is blank. *Keep rules* (per container = the paragraph's parent,
+  over its blocks `w:p`/`w:tbl`/`w:sdt`/`w:customXml`/`w:altChunk`): the first block between two tables the deletions
+  would join; the last block when tracked, or untracked when the rest would leave the container empty or ending in a
+  non-paragraph. Hidden text and notes: a kept paragraph (and, hidden text only, one `deletable` refuses for anything
+  but a text box) loses its content runs instead; notes refuse what `deletable` refuses. *Fields*: a run to remove in a
+  complex field's span (begin→end over the part's runs) goes only with the whole outermost field (local, every content
+  run of the span chosen and live, no `w:fldSimple` in it); in a `w:fldSimple` only with the whole outermost simple field
+  (untracked; tracked refused); not reachable through containers → `structure`; in a text box → `textbox`. Transform:
+  `ops/hidden.py` (`content_runs`, `RemoveHiddenText.choose`, `RemoveNotes.choose/_matches`, `keep_rules`, `FieldSpans`,
+  `apply_field_rules`), `ops/empty_paragraphs.py` (`is_empty`, `numbered`, `bordered_or_framed`, `blank_paragraphs`);
+  verifier: `verify/removal.py` (`_v_content`, `_v_choose_hidden`, `_v_choose_note`, `_v_note_rule`, `_v_keep`, `_VSpans`,
+  `_v_field_rules`, `_v_blank`, `_v_numbered`, `_v_boxed`, `_v_blank_decisions`). The assertion carries the user's raw
+  note rules and `expected` per part (`delete`, `runs` — own-run indices —, `simple`); the kinds compare their own
+  decisions with it, check changed paragraphs by the item model and register them in `verified_blocks`, deleted ones by
+  `check_deleted_paragraph` (tracked) or `deleted_src_blocks` + the paragraph count (untracked).
+  `tests/test_hidden_notes.py` and `tests/test_empty_paragraphs.py` plant shared defects in each rule.
+- **Watermarks** (`add_watermark`, `remove_watermark`). A watermark is a run of a header part whose one content element
+  (any child but `w:rPr`) is a `w:pict`, `w:drawing` or `mc:AlternateContent` holding a VML `v:shape` whose `id` starts
+  with `PowerPlusWaterMarkObject` (text) or `WordPictureWatermark` (picture), or a DrawingML `wp:docPr` whose `name`
+  does; its text is the `string` of the first `v:textpath` that has one, else the `w:t` of its first `w:txbxContent`,
+  else none. Refused: a watermark shape outside a run, in a run with other content, in a text-box paragraph
+  (`structure`) or under `w:ins`/`w:del`/`w:moveFrom`/`w:moveTo` (`existing-revisions`). Headers (add): every header
+  part some section shows, any type. Anchor: the part's first `w:p` whose every container below `w:hdr` is
+  `w:sdt`/`w:sdtContent`; the new run goes first after its `w:pPr`. The run: `w:rPr/w:noProof` + `w:pict` holding the
+  `_x0000_t136` shapetype (only when the part keeps none outside the replaced watermarks) and Word's text-watermark
+  `v:shape` (id `PowerPlusWaterMarkObject<N>` new to the package, `o:spid` `_x0000_s<M>` above every `_x0000_s` number
+  of the package, from 2049). Text area: (pgSz w − left − right − gutter, pgSz h − |top| − |bottom|) in points. Size:
+  h/w = 1.55 / the advance width in em (`ops/watermark.WIDTHS`, measured once from Carlito / Liberation Sans / Liberation
+  Serif; not re-derived by the verifier — a wrong proportion distorts the letters, which the render shows); auto
+  diagonal: (w + h)/√2 = 0.98 × the shorter side of the smallest text area of the showing sections; auto horizontal:
+  w = min(0.9 × width, 0.98 × height / proportion); points: h = 1.55 × size, and it must fit (else `watermark-size`).
+  Numbers rounded to 2 decimals, written without trailing zeros. Removing never takes out the only definition of a VML
+  shapetype a shape staying in the part still uses (unless the op brings `_x0000_t136` back). Transform:
+  `ops/watermark.watermark_runs/watermark_text/first_paragraph/headers_shown/text_area/box/number/build_run/
+  check_shapetype_users`; verifier: `verify/watermark._v_watermarks/_v_text/_v_anchor/_v_shows/_v_area/_fits/_v_num/
+  _v_pict/_v_definition_still_used`. `tests/test_watermark.py` compares the two readings (5,000 random numbers) and plants
+  shared defects.
+- **Links** (`remove_hyperlinks`). Link element = `w:hyperlink`: external with an `r:id`, internal without. Link field =
+  a HYPERLINK field: internal when its instruction holds the switch `\l` — an unquoted token, any case; tokens are `"…"`
+  (an unterminated quote runs to the end) or runs of other non-space characters. Link style = a character style whose
+  `w:name` is Hyperlink or FollowedHyperlink (casefolded). The runs of a link element: its `w:r` whose nearest `w:p` is
+  the link's paragraph; of a link field: its result runs (holding a child other than `w:rPr`, after `separate`, before
+  `end`; a simple field: the runs in it). Removed addresses: hyperlink-type relationships a removed link element named
+  that no other element of the part names (any attribute in the r: namespace). Transform: `ops/links.
+  instruction_switches/field_is_internal/link_style_ids/link_runs/result_runs/addresses_to_remove`; verifier:
+  `verify/links.v_switches/v_field_internal/v_link_styles/_v_link_runs/v_result_runs`. `tests/test_links.py` compares the
+  switch readers on 600 random instructions and plants shared defects.
+- **Unlinking fields** (`unlink_fields`, and `remove_hyperlinks` for link fields). `types` upper-cased, `"all"` = every
+  type but PAGE/NUMPAGES/SECTIONPAGES/PAGEREF (never converted; refused when named, `bad-params`). A selected field is
+  refused in a text box (`textbox`), then by `Field.refusal`/`VField.refusal`, then when it sits in another field's code
+  (`nested-field`). Both ops store per paragraph the place of each chosen link and field with its identity (`r:id`/anchor,
+  instruction); apply finds them again by paragraph and refuses (`internal`) if they moved — never whole-part ordinals
+  (the other op in the same spec shifts them). Transform: `ops/links.normalize_types/type_selected/_field_refusal`,
+  `ops/fields.unlink`; verifier: `verify/links.v_types/_v_refusal`.
+- **Document properties and state** (`set_document_properties`, `set_document_state`). Core (the package's
+  `core-properties` relationship): `title` dc:title, `subject` dc:subject, `author` dc:creator, `keywords` cp:keywords,
+  `comments` dc:description, `category` cp:category, `status` cp:contentStatus, `last_modified_by` cp:lastModifiedBy; app
+  (`extended-properties`): `company` Company, `manager` Manager. Set: the top-level element's children go, its text is
+  the value, its attributes stay; a missing one is created at the end of the root; clear: removed — absent or empty is
+  already clear. Custom (`custom-properties`): matched by name casefolded; an existing text property keeps its value tag;
+  another type → `property-type`; a new one appended with fmtid `{D5CDD505-2E9C-101B-9397-08002B2CF9AE}`, pid = the
+  source's largest pid (at least 1) + 1, +1 per earlier new one in the request's order, `vt:lpwstr`. Mark as Final =
+  custom `_MarkAsFinal` `<vt:bool>true</vt:bool>` + `cp:contentStatus` `Final`; unmarking removes `_MarkAsFinal` and a
+  `Final` status only. Track Changes: off removes `w:trackRevisions` (on unless w:val is 0/false/off); on inserts
+  `<w:trackRevisions/>` in CT_Settings order or removes an off one's w:val; a lock (`w:documentProtection
+  w:edit="trackedChanges"`, enforcement 1/true/on) refuses off (`protected`). Transform: `ops/docprops.PROPERTIES`,
+  `Changes`, `CustomProps`, `SETTINGS_ORDER`; verifier: `verify/docprops._V_PROPERTIES`, `_Check`, `_settings_order()`
+  (read from the bundled `wml.xsd` itself). `tests/test_docprops.py` pins the tables equal and plants shared defects.
 
 ## Roadmap
 
@@ -528,7 +686,14 @@ proposals and recorded in the plan's status sections.
   `replace_table.py` (`replace_table`, `set_issue_stamp`, `_Replacing`, `find_all`, `resolve_scope`, `tracked_of`),
   `fill_variables.py`, `resolve_options.py`, `filter_tagged.py`, `end_of_section.py`, `agree.py`
   (`make_values_agree`), `naming.py` (`name_output`, `check_name`, `transform`, `OUTPUT_NAME_TOUCH`), `swap_image.py`
-  (`match_rule`, `picture_of`, `picture_problem`, `shared_use`, `unused_after`, `free_media_name`).
+  (`match_rule`, `picture_of`, `picture_problem`, `shared_use`, `unused_after`, `free_media_name`); built-in batch 2:
+  `comments.py` (`remove_comments`, `CommentBook`), `highlight.py` (`remove_highlight`), `revisions.py`
+  (`resolve_tracked_changes`, `analyze`, `predict`, `resolve`), `hidden.py` (`remove_hidden_text`, `remove_notes`,
+  `CLEANUP_PARAMS`, `keep_rules`, `FieldSpans`, `describe`), `empty_paragraphs.py` (`remove_empty_paragraphs`),
+  `watermark.py` (`add_watermark`, `remove_watermark`, `WIDTHS`), `links.py` (`remove_hyperlinks`, `unlink_fields`),
+  `docprops.py` (`set_document_properties`, `set_document_state`, `PROPERTIES`, `Changes`, `CustomProps`), and the shared
+  pieces `fields.py` (`fields_of`, `Field`, `unlink`, `NEVER_UNLINK`, `REFUSAL_TEXT`), `markup.py` (`Look`, `color_in`),
+  `removal.py` (`deletable`, `plan_paragraph_deletion`, `delete_paragraph`, `plan_run_removal`, `remove_runs`).
 - `ops/textedit.py` — the in-paragraph edit core (batch 1): `RunText`, `Edit`, `check_edits`, `predict`,
   `apply_untracked`/`apply_tracked`, `plan_paragraph` (BlockDiff or accepted view, rev delta, touch),
   `apply_part_edits`, `edits_to_data`/`edits_from_data`. `ops/tables.py` — table files (`xlsx_rows`, `csv_rows`,
@@ -574,7 +739,13 @@ proposals and recorded in the plan's status sections.
   `replaced_text`, `filled_variables`, `resolved_options`, `tagged_paragraphs`, `end_of_section`, `output_name`,
   `agreed_values`), `verify/images.py` (`IMAGE_KINDS`: `image_swaps`) — built-in batch 1's V10 kinds, registered into
   `props.KINDS` at the end of `props.py`. `props.Ctx` carries `source_name`/`output_name` (the names the suite was given
-  — `output_name` checks the written name), `verified_blocks` and `masked_extents`.
+  — `output_name` checks the written name), `verified_blocks` and `masked_extents`. Built-in batch 2's kinds:
+  `verify/comments.py` (`COMMENT_KINDS`: `removed_comments`), `verify/highlight.py` (`removed_highlight`),
+  `verify/revisions.py` (`REVISION_KINDS`: `resolved_changes`), `verify/removal.py` (`REMOVAL_KINDS`:
+  `removed_hidden_text`, `removed_notes`, `removed_empty_paragraphs`), `verify/watermark.py` (`added_watermark`,
+  `removed_watermark`), `verify/links.py` (`removed_hyperlinks`, `unlinked_fields`), `verify/docprops.py`
+  (`document_properties`, `document_state`), over the shared `verify/fields.py` and `verify/markup.py`; `Ctx` gained
+  `verified_parts`, `expected_removed`, `verified_members`, `member_strip` (see "V10's batch-2 hooks").
 - `verify/explain.py` — why a check failed, in specifics, from the check's own data and the record's predictions
   (`failure_details`, `text_change` word diffs with ⇥ ⍽ ⏎ made visible); `VerificationRecord.failures()` and the
   record's "WHY IT FAILED" section use it. It is verifier code: the independence rule applies to it too.
@@ -787,8 +958,10 @@ proposals and recorded in the plan's status sections.
 - `inputs.py` — the tables and pictures beside the documents (batch 1): `near` (the folders of the batch and the
   template, non-recursive, ≤ 30), `overview`/`listing` (the first message's INPUT FILES), `read` (`read_input_file`:
   only a listed file).
-- `profile.py` — bounded per-pattern profiles (descriptive only; no op reads them), incl. `fonts.body_text`;
-  `template_spec_summary()` is `read_template`'s `template_spec`. `planner.py` — `plan_batch` dry run +
+- `profile.py` — bounded per-pattern profiles (descriptive only; no op reads them), incl. `fonts.body_text` and (built-in
+  batch 2) `markup` (`profile.markup`: comments by author and resolved, tracked changes by author/kind and their dates,
+  highlight colours, hidden runs, run colours, hyperlinks, field types, watermark, document properties, marked final,
+  tracking locked — thinned by the bound like the rest); `template_spec_summary()` is `read_template`'s `template_spec`. `planner.py` — `plan_batch` dry run +
   `summarize_plan`. `catalog.py` — `op_catalog()` (+ `COMMON_ASSUMPTIONS` per op — add one for every new op;
   `REFERENCE_FILLS`, the CSI number/title rules for template specs) and `editspec_json_schema()`.
 
@@ -1497,3 +1670,49 @@ user's view; the both-sides definitions are listed above. Rules that came out of
     stage before anything is written (`chain.run_chain`). The approval token of a chain covers every stage's tables and
     pictures (`preview.key_templates` → `spec_input_files`); snippets are offerable (`compiler.OFFERABLE_KINDS`), chains
     never are.
+
+## Built-in operations, batch 2 (2026-10-16)
+
+Abraham: "Let's add some more prebuilt operations" — items 11–21 (remove comments ★, remove highlighting ★, accept or
+reject tracked changes, remove hidden text, remove specifier notes, add/remove a watermark, remove blank paragraphs,
+remove hyperlinks, convert fields to text, set document properties, track changes off / mark as final).
+`docs/BUILTIN_OPS_BATCH2_DESIGN.md` is the design with every decision (taken on his behalf, each changeable) and, at its
+end, what the build changed; README → "Built-in operations, batch 2" is the user's view; the both-sides definitions are
+listed above. Built by six parallel builders on the shared machinery (§1), then integrated. Rules that came out of it:
+
+1. **Three method rules changed — only this far** (design §0; `skill/SKILL.md`, `references/element-types.md`):
+   accepting/rejecting tracked changes, editing the document properties and toggling Track Changes happen **never on the
+   engine's or Claude's own initiative, only when the user asks for it by name**, through `resolve_tracked_changes`,
+   `set_document_properties`, `set_document_state` — each previewed with exactly what it does and verified like every
+   other op. `codegen.hard_limits` is unchanged: a custom transform still can never do any of the three. Claude's
+   prompt says so; never offer them as a side effect of another request.
+2. **Clean-up runs over whole batches**: every op of the batch that removes something defaults `allow_missing` to true —
+   a file with nothing to remove plans as a no-op with a note and passes; `false` keeps `not-found`.
+3. **An assertion carries the user's own words**: scope, options and rules exactly as the spec gave them (absent = the
+   default); the V10 kind applies its OWN defaults and normalisation and compares its decisions with the plan's. Never
+   hand a kind the transform's resolved copy of a parameter (a wrong default would reach plan, apply and check alike).
+   Tests plant exactly that (`test_a_default_scope_that_forgets_the_headers_is_caught` and siblings).
+4. **A kind that re-derives over every part in scope declares `(part, "scope", "verify")`** (rule 9) — whether or not
+   it changes the part.
+5. **File-specific refusals are never `bad-params`** (`compiler.FATAL_SPEC_CODES` rejects a whole spec on it): a value
+   that does not fit one file (`watermark-size`), a property of another type in one file (`property-type`) get codes of
+   their own. Every code has a plain-words explanation; `tests/test_batch2_integration.py` scans the batch's op
+   modules with `ast` (the code argument of every `JobException`; the one computed code, `links._field_refusal`, is a
+   key of `fields.REFUSAL_TEXT`).
+6. **Structure-only declarations never excuse a paragraph** (Codex on #27): the paragraph stays in V10's residual unless
+   the kind that made the change checked it item by item and registered it in `verified_blocks`.
+7. **Whole parts, whole members.** `resolve_tracked_changes` is checked by a REBUILD of each part (the verifier never
+   edits a copy in place as the transform does) compared element for element; the comment side parts, the rels part of
+   a removed address and a created `custom.xml` are compared whole (`verified_members`); `settings.xml` and the
+   properties parts by the member residual. Never register a part or member as verified without comparing all of it.
+8. **Words placed** (rule 13): `add_watermark.text`, `set_document_properties.set` and `custom` values
+   (`compiler.placed_words`); the other ops place none (accepting keeps the document's own inserted words, rejecting
+   brings back its own deleted words). Custom property NAMES are labels, not document text.
+9. **Recorded, not changed**: V5a drops messages containing `hyphenationZone`, hiding an out-of-order `settings.xml`
+   element before it (`document_state` checks the place of `w:trackRevisions` itself — `verify/docprops._in_order`);
+   narrowing the filter could unmask latent errors of sources and fail correct outputs, so it is its own change. The
+   clean-up ops' reads of the style chains are not declared as reads (as `set_font`'s). Not in this batch: adding a
+   picture watermark, comments whose marks sit in text boxes, joining paragraphs on accept/reject, table row/cell
+   revisions, rejecting section/table property changes, highlight in styles, `w:removePersonalInformation`.
+10. **Profiles show the markup** (`profile.markup`) so Claude can see what a clean-up op would find; it is descriptive
+    only (no op reads a profile).

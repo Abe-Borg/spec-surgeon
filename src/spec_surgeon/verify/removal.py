@@ -364,12 +364,26 @@ def _v_check_outputs(ctx: Ctx, part: str, sv, ov, dec: Dict[str, Any], tracked: 
     return len(delete), n_runs
 
 
+def _v_scope(a: Dict[str, Any], default: List[str]) -> List[str]:
+    """The scope as the user asked it (absent: this kind's default)."""
+    s = a.get("scope") or default
+    return [s] if isinstance(s, str) else list(s)
+
+
+def _v_tracked(a: Dict[str, Any], kind: str) -> bool:
+    """Tracked as the user asked it (absent: tracked)."""
+    t = a.get("tracked", True)
+    if not isinstance(t, bool):
+        raise ValueError(f"{kind}: 'tracked' {t!r} is not true or false — the op must refuse")
+    return t
+
+
 def _v_removed(ctx: Ctx, a: Dict[str, Any], errs: List[str], kind: str, choose, demote, args,
                refuse_undeletable: bool, default_scope: List[str]) -> str:
-    tracked, author = bool(a.get("tracked", True)), a.get("author")
+    tracked, author = _v_tracked(a, kind), a.get("author")
     expected = a.get("expected") or {}
     n_del = n_runs = 0
-    for part in ctx.scope_parts(a.get("scope") or default_scope):
+    for part in ctx.scope_parts(_v_scope(a, default_scope)):
         if part not in ctx.both:
             errs.append(f"{kind}: {part} missing from the output")
             continue
@@ -389,7 +403,7 @@ def _v_removed(ctx: Ctx, a: Dict[str, Any], errs: List[str], kind: str, choose, 
         n_del += d
         n_runs += r
     for part in expected:
-        if part not in ctx.scope_parts(a.get("scope") or default_scope):
+        if part not in ctx.scope_parts(_v_scope(a, default_scope)):
             errs.append(f"{kind}: the plan removes something from {part}, outside the scope")
     return f"{kind}: {n_del} paragraph(s) deleted, {n_runs} run(s)/field(s) removed ({'tracked' if tracked else 'untracked'})"
 
@@ -483,10 +497,10 @@ def _removed_empty_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> s
     if mode not in ("collapse", "all"):
         errs.append(f"removed_empty_paragraphs: unknown mode {mode!r}")
         return "removed_empty_paragraphs: bad mode"
-    tracked, author = bool(a.get("tracked", True)), a.get("author")
+    tracked, author = _v_tracked(a, "removed_empty_paragraphs"), a.get("author")
     expected = a.get("expected") or {}
     n = 0
-    scope = ctx.scope_parts(a.get("scope") or ["document"])
+    scope = ctx.scope_parts(_v_scope(a, ["document"]))
     for part in scope:
         if part not in ctx.both:
             errs.append(f"removed_empty_paragraphs: {part} missing from the output")

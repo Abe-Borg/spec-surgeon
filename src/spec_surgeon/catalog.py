@@ -142,6 +142,107 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "a template spec's own number or title written another way in its headers/footers, or shown by a field, is "
         "refused rather than copied into every spec",
     ],
+    # ---- built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md) ----
+    "remove_comments": [
+        "'all' removes every comment; 'resolved' only threads Word marked resolved (a file from Word 2010 or older keeps "
+        "no resolved state, so it has none); 'authors' the named authors' comments — a removed comment takes its replies",
+        "the document's text is unchanged: only the comments and their marks in the text go; the comment parts stay "
+        "(emptied if every comment goes), and a picture only a removed comment used stays in the file, unused",
+        "a file with no comment to remove is left as it is (allow_missing false sets it aside instead)",
+    ],
+    "remove_highlight": [
+        "highlighting is Word's highlighter (w:highlight) — every colour unless the user named colours; paragraph and "
+        "text shading are not highlighting and stay",
+        "body, headers, footers, footnotes and endnotes; highlighted text inside pending tracked changes and text boxes "
+        "is included; a style that highlights its text is not changed (flagged)",
+        "plain formatting change unless the user asked for it tracked; a file without such highlighting is left as it is",
+    ],
+    "resolve_tracked_changes": [
+        "only when the user asks to accept or reject tracked changes — never as a side effect of another request; "
+        "everyone's changes unless authors or dates are named",
+        "authors are matched by the name Word shows on each change (case and spacing ignored); dates by Word's own clock "
+        "on each change, on_or_after inclusive and before exclusive; under a date filter a change without a date stays "
+        "(flagged)",
+        "accept: inserted and moved text stays as plain text, deleted text and paragraphs go, new formatting stays; "
+        "reject: inserted text and paragraphs go, deleted text comes back, moved text returns, the old formatting comes "
+        "back",
+        "the body, headers, footers, footnotes, endnotes and comments are covered (scope narrows it); tracked changes "
+        "inside style or list definitions stay as they are",
+        "a file with no matching change is left as it is (allow_missing, the default); a table row/cell change, a change "
+        "in an equation, an accept that would join two paragraphs or take a footnote/comment anchor away sets the file "
+        "aside",
+        "it runs as a spec of its own (or the first stage of a chain): it changes the parts it touches as a whole",
+    ],
+    "remove_hidden_text": [
+        "hidden text is text with Word's Hidden font setting (directly or by a style) — white or tiny text is not hidden",
+        "the body, headers, footers, footnotes and endnotes are searched; every removed piece is listed in the preview",
+        "a paragraph whose words and mark are all hidden is deleted; one that must stay (the last of a cell or of the "
+        "document, between two tables, with a section break) keeps its mark and loses its hidden words",
+        "a hidden field goes whole; hidden text inside a field that is otherwise shown, or in a text box, sets the file "
+        "aside",
+        "tracked unless the user asked for clean copies; a file with no hidden text is left as it is",
+    ],
+    "remove_notes": [
+        "a note is what the rules say — fitted to these files: their note style (CMT, SpecifierNote …), the words notes "
+        "start with (Retain, Delete, Revise, Coordinate …), their colour; check the samples",
+        "inline notes are runs of the note colour inside paragraphs that stay; hyperlink text and pictures are never "
+        "taken",
+        "a note that is a table cell's only paragraph leaves the cell empty",
+        "a note paragraph with a section break, a field or a text box sets the file aside",
+        "tracked unless the user asked for clean copies; a file without notes is left as it is",
+    ],
+    "add_watermark": [
+        "the watermark's words are exactly the user's (one line); Word's look unless asked otherwise: diagonal, Calibri, "
+        "silver (C0C0C0), half transparent, sized to fit the page",
+        "it goes into every header the document shows (cover first-page header included), first in each header's first "
+        "paragraph; pages without a header get none (flagged); a file without any header is set aside",
+        "a file that already has a watermark is set aside unless the user asked to replace it (replace true)",
+        "a watermark is not a tracked change in Word: the spec is untracked",
+    ],
+    "remove_watermark": [
+        "every watermark in every header goes (text, picture or drawing), or only those showing the stated words",
+        "the header's paragraphs stay, so nothing in the header moves",
+        "a file without a watermark is left as it is (allow_missing defaults to true)",
+    ],
+    "remove_empty_paragraphs": [
+        "a blank paragraph holds nothing but spaces — a numbered, bordered or bookmarked empty line, or one with a tab or "
+        "a page break, is not blank",
+        "collapse (default) leaves one blank line where several stand together; all removes every blank paragraph",
+        "a cell and the document keep their last paragraph and two tables are never joined",
+        "the body only unless headers/footers are asked for; tracked unless the user asked for clean copies; a file with "
+        "nothing to remove is left as it is",
+    ],
+    "remove_hyperlinks": [
+        "external links (web addresses, e-mail) only unless the user said internal links or all — links to a place in "
+        "the document (bookmarks, a table of contents) stay",
+        "the linked words stay exactly and lose the blue underlined Hyperlink style (keep_style keeps it); words with "
+        "their own blue or underline keep it (flagged); a picture's click link stays",
+        "an address no link uses any more is removed from the file",
+        "a link in a text box, or a link field over two paragraphs or in a pending tracked change, sets the file aside; a "
+        "file with no such link is left as it is",
+    ],
+    "unlink_fields": [
+        "only the named field types (or all but the page numbers) become the text they show now, with its formatting; "
+        "Word no longer updates that text",
+        "page numbers (PAGE, NUMPAGES, SECTIONPAGES, PAGEREF) are never converted",
+        "a field over two paragraphs (a table of contents), inside another field's code, a form field or one in a "
+        "pending tracked change sets the file aside; a field that shows nothing is removed (flagged); a file with no "
+        "such field is left as it is",
+    ],
+    "set_document_properties": [
+        "only the named properties change, to the user's exact words; a property already as asked is left alone",
+        "'clear the author names' means Author and Last Modified By; tracked changes and comments keep their authors' "
+        "names (flagged when the file has any)",
+        "fields that show a changed property (TITLE, DOCPROPERTY …) keep their saved value until Word updates fields "
+        "(flagged); custom properties are matched by name without case; a file without custom properties gets them",
+        "a custom property that holds a number, a date or yes/no in a file sets that file aside",
+    ],
+    "set_document_state": [
+        "only on the user's request: track changes off/on is the setting the file opens with — pending tracked changes "
+        "are neither accepted nor rejected; a file whose tracking is locked with a password is set aside",
+        "Mark as Final sets the custom property _MarkAsFinal and the Status 'Final', as Word does; unmarking removes both "
+        "(another Status stays)",
+    ],
 }
 
 # How a template slot gets its value (apply_header_footer_template.slot_fills). Transform: ops/slots.py; verifier:

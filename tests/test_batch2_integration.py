@@ -3,8 +3,10 @@ the user (compiler.placed_words — rule 13), the profiles show Claude what each
 and the method's three rules read as Abraham changed them."""
 from __future__ import annotations
 
+import ast
 from pathlib import Path
 
+import pytest
 from docx import Document
 from docx.enum.text import WD_COLOR_INDEX
 from docx.shared import RGBColor
@@ -12,8 +14,17 @@ from docx.shared import RGBColor
 from make_fixtures import build_rich, docx_bytes
 from spec_surgeon import SKILL_DIR
 from spec_surgeon.compiler import placed_words, system_prompt, untraceable
+from spec_surgeon.editspec import apply_spec, plan_spec
+from spec_surgeon.ops import JobException
+from spec_surgeon.ops import fields
 from spec_surgeon.package import DocxPackage
 from spec_surgeon.profile import markup, profile
+from spec_surgeon.report import FAILURE_EXPLANATIONS
+from spec_surgeon.verify import run_suite
+
+OPS_DIR = Path(__file__).resolve().parent.parent / "src" / "spec_surgeon" / "ops"
+BATCH2_MODULES = ["comments", "highlight", "revisions", "hidden", "empty_paragraphs", "watermark", "links", "fields",
+                  "docprops", "markup", "removal"]
 
 
 def test_the_words_batch2_places_are_traced_to_the_user():
@@ -61,3 +72,61 @@ def test_the_method_reads_as_abraham_changed_it():
     assert "by the model. The user accepts and rejects in Word." not in skill
     elements = (Path(SKILL_DIR) / "references" / "element-types.md").read_text(encoding="utf-8")
     assert "never toggle it on your own" in elements and "Mark as Final" in elements
+
+
+def _refusal_codes(module: str):
+    """(the code literals of every JobException the module raises, the calls whose code is not a literal)."""
+    tree = ast.parse((OPS_DIR / f"{module}.py").read_text(encoding="utf-8"))
+    literal, other = set(), []
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "JobException":
+            code = n.args[1] if len(n.args) > 1 else next((k.value for k in n.keywords if k.arg == "code"), None)
+            if isinstance(code, ast.Constant):
+                literal.add(code.value)
+            else:
+                other.append((module, n.lineno))
+    return literal, other
+
+
+def test_every_refusal_code_of_the_batch2_ops_is_explained():
+    codes, computed = set(), []
+    for m in BATCH2_MODULES:
+        literal, other = _refusal_codes(m)
+        codes |= literal
+        computed += other
+    # the one computed code: links._field_refusal raises Field.refusal(), a key of fields.REFUSAL_TEXT
+    assert [m for m, _ in computed] == ["links"]
+    codes |= set(fields.REFUSAL_TEXT)
+    codes.discard("internal")                                         # diagnostics.classify: an internal error
+    assert {"revision-kind", "paragraph-merge", "partial-move", "marks-in-change", "watermark-exists", "no-header",
+            "watermark-size", "field-span", "nested-field", "form-field", "no-part", "protected", "property-type",
+            "malformed-properties", "tracked-format", "toggle-ambiguous", "field-result"} <= codes
+    assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
+
+
+@pytest.mark.parametrize("op", [
+    {"op": "remove_highlight"},
+    {"op": "resolve_tracked_changes", "params": {"action": "accept", "authors": ["Nobody"]}},
+    {"op": "remove_hidden_text", "params": {"tracked": False}},
+    {"op": "remove_notes", "params": {"rules": [{"style_in": ["NoSuchStyle"]}], "tracked": False},
+     "select": {"scope": ["headers"]}},
+    {"op": "remove_empty_paragraphs", "params": {"tracked": False}, "select": {"scope": ["headers"]}},
+    {"op": "remove_hyperlinks"},
+    {"op": "unlink_fields", "params": {"types": ["DOCPROPERTY"]}},
+], ids=lambda o: o["op"])
+def test_a_clean_up_op_beside_a_header_removal_is_a_plan_time_conflict(op):
+    """Rule 9: each of these re-derives its decisions over every part in scope, so it declares (part, "scope",
+    "verify") — beside an op that removes a header part it is refused at plan time, even when it has nothing to do in
+    that header (it used to plan, and its V10 kind then failed on the missing part after apply)."""
+    pkg = DocxPackage(build_rich())
+    spec = {"request": "r", "summary": "s", "mode": "untracked" if op["op"] in (
+        "resolve_tracked_changes", "remove_hidden_text", "remove_notes", "remove_empty_paragraphs") else "formatting",
+        "ops": [{"op": "remove_header_footer", "select": {"sections": "all", "kinds": ["header"]}}, op]}
+    with pytest.raises(JobException) as e:
+        plan_spec(pkg, spec)
+    assert e.value.code == "conflict" and "remove_header_footer" in str(e.value)
+    alone = {**spec, "ops": [op]}
+    plan, frags = plan_spec(pkg, alone)                    # on its own the op plans (a no-op where nothing matches)
+    out = apply_spec(pkg, frags).output_bytes()
+    rec = run_suite(pkg.data, out, plan.to_dict(), "src.docx", "out.docx")
+    assert [c.id for c in rec.checks if c.status == "FAIL"] == []

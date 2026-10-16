@@ -42,9 +42,10 @@ def plan_and_check(src: bytes, op: str, params: Dict[str, Any], source: str, wri
 # ---- name_output -------------------------------------------------------------------------------------------------
 
 def test_the_convention_from_the_users_example():
-    plan, out, rec = plan_and_check(build_batch1(), "name_output", CONVENTION, "C:/specs/master 21.docx")
+    src = build_batch1()            # one build: two builds differ in their zip timestamps across a 2-second tick
+    plan, out, rec = plan_and_check(src, "name_output", CONVENTION, "C:/specs/master 21.docx")
     assert plan.output_name == "211319 - Preaction Sprinkler Systems.docx"
-    assert rec.passed and out == build_batch1()                       # the document itself is not changed
+    assert rec.passed and out == src                                  # the document itself is not changed
     assert plan.mode == "formatting"
 
 

@@ -116,6 +116,7 @@ class RemoveHighlight(Op):
         n_runs = n_marks = 0
         by_color: Dict[str, int] = {}
         for part in parts:
+            frag.touches.append((part, "scope", "verify"))          # V10 re-derives over every part in scope
             root = pkg.xml(part)
             pars = paragraphs(root)
             groups = runs_by_paragraph(root, pars)

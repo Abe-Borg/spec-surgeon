@@ -298,13 +298,16 @@ class _Removing(Op):
         data: Dict[str, Dict[str, Any]] = {}
         n_par = n_run = 0
         for part in parts:
+            frag.touches.append((part, "scope", "verify"))          # V10 re-derives over every part in scope
             root = pkg.xml(part)
             got = self._plan_part(frag, part, root, look, sheet, params, tracked)
             if got["delete"] or got["runs"] or got["simple"]:
                 data[part] = got
                 n_par += len(got["delete"])
                 n_run += sum(len(v) for v in got["runs"].values()) + sum(len(v) for v in got["simple"].values())
-        frag.property_assertions.append({"kind": self.kind, "scope": scope, "tracked": tracked, "author": author,
+        # the user's own words (scope and tracked as asked; absent = the default): the verifier reads them itself
+        frag.property_assertions.append({"kind": self.kind, "scope": select.get("scope") or params.get("scope"),
+                                         **{k: params[k] for k in ("tracked",) if k in params}, "author": author,
                                          **self.assertion(params), "expected": data})
         if not data:
             if allow_missing:
