@@ -273,6 +273,77 @@ def compare_items(expected: Sequence[Item], got: Sequence[Item], old_ids: Set[st
     return None
 
 
+V_INERT = {W + "bookmarkStart", W + "bookmarkEnd", W + "proofErr"}
+
+
+def v_deletable(p, tracked: bool) -> Optional[str]:
+    """Why the op had to refuse deleting this paragraph (None when it may): a section break, a field, a text box; tracked
+    also pending revisions and anything but pPr, runs, bookmarks and proofing marks."""
+    if p.find(f"{W}pPr/{W}sectPr") is not None:
+        return "it carries a section break"
+    if any(True for _ in p.iter(W + "fldChar", W + "fldSimple")):
+        return "it holds a field"
+    if any(q is not p for q in p.iter(W + "p")):
+        return "it holds a text box"
+    if tracked:
+        if any(isinstance(el.tag, str) and el.tag in V_REVISION_TAGS for el in p.iter()):
+            return "it carries pending revisions"
+        if any(isinstance(c.tag, str) and c.tag not in V_INERT | {W + "pPr", W + "r"} for c in p):
+            return "it holds content other than plain runs"
+    return None
+
+
+def _ppr_norm(ppr, drop_new_del_author: Optional[str] = None, old_ids: Set[str] = frozenset()):
+    """(signature of the pPr with a NEW mark w:del by ``author`` removed — empty rPr / pPr dropped, whether that del was
+    there)."""
+    if ppr is None:
+        return None, False
+    c = copy.deepcopy(ppr)
+    found = False
+    rpr = c.find(W + "rPr")
+    if rpr is not None and drop_new_del_author is not None:
+        for d in rpr.findall(W + "del"):
+            if d.get(W + "author") == drop_new_del_author and d.get(W + "date") and d.get(W + "id") is not None \
+                    and d.get(W + "id") not in old_ids:
+                rpr.remove(d)
+                found = True
+    if rpr is not None and not len(rpr) and not rpr.attrib:
+        c.remove(rpr)
+    if not len(c) and not c.attrib:
+        return None, found
+    return sig(c), found
+
+
+def check_deleted_paragraph(src_p, out_p, author: Optional[str], old_ids: Set[str], where: str,
+                            errs: List[str]) -> None:
+    """A tracked paragraph deletion: every run directly in the paragraph inside a NEW ``w:del`` of its own (its text as
+    ``w:delText``), the paragraph mark carrying a NEW ``w:del``, everything else — bookmarks, proofing marks, their
+    order — as it was."""
+    why = v_deletable(src_p, True)
+    if why:
+        errs.append(f"{where}: {why} — the op must refuse")
+        return
+    expected = []
+    for it in v_items(src_p):
+        if it.run is not None and it.run.getparent() is src_p:
+            expected.append(Item("dt" if it.kind == "t" else it.kind, it.value,
+                                 (it.ctx[0], it.ctx[1], it.ctx[2] + (("NEW", W + "del", author),)),
+                                 None, it.tag, it.run, it.el, False, it.chain_els + (None,)))
+        else:
+            expected.append(it)
+    d = compare_items(expected, v_items(out_p), old_ids)
+    if d:
+        errs.append(f"{where}: not exactly a tracked deletion of the paragraph — {d}")
+    src_sig, _ = _ppr_norm(src_p.find(W + "pPr"))
+    out_sig, marked = _ppr_norm(out_p.find(W + "pPr"), author, old_ids)
+    if not marked:
+        errs.append(f"{where}: the paragraph mark carries no new w:del by {author!r}")
+    if src_sig != out_sig:
+        errs.append(f"{where}: paragraph properties changed beyond the deleted mark")
+    if dict(src_p.attrib) != dict(out_p.attrib):
+        errs.append(f"{where}: paragraph attributes changed")
+
+
 def check_edited_paragraph(src_p, out_p, edits: Sequence[Tuple[int, int, str, bool]], tracked: bool,
                            author: Optional[str], in_field: Set[Any], old_ids: Set[str], where: str,
                            errs: List[str]) -> None:

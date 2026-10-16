@@ -13,7 +13,8 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 from .reader import W
 from .props import Ctx, para_matches
 from .template import _v_field_runs, display_of, slots_of
-from .edits import check_edited_paragraph, part_revision_ids, v_items, v_paragraph_text, v_run_text, v_shown
+from .edits import (check_deleted_paragraph, check_edited_paragraph, part_revision_ids, v_deletable, v_items,
+                    v_paragraph_text, v_run_text, v_shown)
 from .tables import table_md5, table_pairs, table_variables, usable_text
 
 
@@ -339,8 +340,90 @@ def _resolved_options(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     return f"resolved_options: {n} deletion(s) ({'tracked' if tracked else 'untracked'})"
 
 
+# ---- tagged paragraphs -----------------------------------------------------------------------------------------------
+
+def _v_system(s: str) -> str:
+    return " ".join(s.split()).casefold()
+
+
+def _tagged_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    try:
+        rx = re.compile(a["tag_regex"])
+        sep = re.compile(a.get("tag_separator") or r"\s*[/,;]\s*")
+    except (KeyError, re.error) as e:
+        errs.append(f"tagged_paragraphs: {e}")
+        return "tagged_paragraphs: bad rule"
+    keep = {_v_system(s) for s in a.get("keep") or []}
+    delete = {_v_system(s) for s in a.get("delete") or []}
+    tracked, author, strip = bool(a.get("tracked", True)), a.get("author"), bool(a.get("strip_tags", True))
+    n_del = n_strip = 0
+    for part in ctx.scope_parts(a.get("scope") or ["document"]):
+        if part not in ctx.both:
+            errs.append(f"tagged_paragraphs: {part} missing from the output")
+            continue
+        sv, ov = ctx.view(part)
+        in_field, old_ids = _v_field_runs(sv.root), part_revision_ids(sv.root)
+        deleted: List[int] = []
+        stripped: Dict[int, Tuple[int, int, str, bool]] = {}
+        for bi, p in enumerate(sv.pars):
+            text = v_paragraph_text(p)
+            m = rx.search(text)
+            if m is None:
+                continue
+            where = f"tagged_paragraphs {part} block {bi}"
+            tag = m.group("tag") if "tag" in rx.groupindex else (m.group(1) if rx.groups else m.group(0))
+            systems = [_v_system(s) for s in sep.split(tag or "") if s.strip()]
+            if not systems or _v_owner(p) is not None:
+                errs.append(f"{where}: {'an empty tag' if not systems else 'a tag in a text box'} — the op must refuse")
+                continue
+            if any(s in keep for s in systems) if keep else any(s not in delete for s in systems):
+                if strip and m.end() > m.start():
+                    stripped[bi] = (m.start(), m.end(), "", False)
+                continue
+            why = v_deletable(p, tracked)
+            if why:
+                errs.append(f"{where}: {why} — the op must refuse")
+                continue
+            deleted.append(bi)
+        if deleted != list((a.get("expected_deleted") or {}).get(part, [])):
+            errs.append(f"tagged_paragraphs: {part}: deletes {deleted} here, the plan predicted "
+                        f"{(a.get('expected_deleted') or {}).get(part, [])}")
+        if sorted(stripped) != list((a.get("expected_stripped") or {}).get(part, [])):
+            errs.append(f"tagged_paragraphs: {part}: strips tags from {sorted(stripped)} here, the plan predicted "
+                        f"{(a.get('expected_stripped') or {}).get(part, [])}")
+        if tracked:
+            if len(ov.pars) != len(sv.pars):
+                errs.append(f"tagged_paragraphs: {part} has {len(ov.pars)} paragraphs, the source {len(sv.pars)}")
+                continue
+            to_out = {bi: bi for bi in range(len(sv.pars))}
+        else:
+            kept = [bi for bi in range(len(sv.pars)) if bi not in set(deleted)]
+            if len(ov.pars) != len(kept):
+                errs.append(f"tagged_paragraphs: {part} has {len(ov.pars)} paragraphs, expected {len(kept)} once "
+                            f"{len(deleted)} are deleted")
+                continue
+            to_out = {bi: k for k, bi in enumerate(kept)}
+        for bi in deleted:
+            n_del += 1
+            if tracked:
+                check_deleted_paragraph(sv.pars[bi], ov.pars[bi], author, old_ids,
+                                        f"tagged_paragraphs {part} block {bi}", errs)
+                ctx.verified_blocks.setdefault(part, {})[bi] = bi
+            else:
+                ctx.deleted_src_blocks.setdefault(part, set()).add(bi)
+        for bi, edit in sorted(stripped.items()):
+            n_strip += 1
+            check_edited_paragraph(sv.pars[bi], ov.pars[to_out[bi]], [edit], tracked, author, in_field, old_ids,
+                                   f"tagged_paragraphs {part} block {bi}", errs)
+            ctx.verified_blocks.setdefault(part, {})[bi] = to_out[bi]
+        # untracked: the residual comparison (deleted source blocks left out) proves every other paragraph unchanged
+    return (f"tagged_paragraphs: {n_del} paragraph(s) deleted, {n_strip} tag(s) taken off "
+            f"({'tracked' if tracked else 'untracked'})")
+
+
 TEXT_OP_KINDS = {
     "replaced_text": _replaced_text,
     "filled_variables": _filled_variables,
     "resolved_options": _resolved_options,
+    "tagged_paragraphs": _tagged_paragraphs,
 }

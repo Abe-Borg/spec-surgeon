@@ -82,6 +82,16 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "a placeholder with no value sets the file aside unless 'leave' was asked; highlights go from filled text",
         "tracked unless the user asked for clean copies (a master turned into a site set usually is untracked)",
     ],
+    "filter_tagged_paragraphs": [
+        "the tag is found by the stated pattern (fitted to how these files mark systems — check the samples); untagged "
+        "paragraphs always stay",
+        "a paragraph tagged for several systems ('WET/DRY') stays while one of its systems stays; the tag is taken off the "
+        "paragraphs that stay unless asked to keep it",
+        "a tagged paragraph carrying a section break, a field or a text box sets the file aside; tracked deletion (the "
+        "default) also refuses one holding pending revisions or a hyperlink",
+        "only tagged paragraphs are deleted — the untagged paragraphs of a system's article are not (delete those with "
+        "delete_paragraphs and a between_paragraphs selector)",
+    ],
     "resolve_options": [
         "an option group is [option] [option] … separated by spaces; for each group the first rule that matches one of "
         "its options decides; groups no rule matches stay as they are",
