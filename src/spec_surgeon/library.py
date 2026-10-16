@@ -189,6 +189,34 @@ def save_operation(name: str, g: Any, description: str = "", replace: bool = Fal
                 manifest["saved_at"])
 
 
+def item_hash(item: Item) -> str:
+    """A content hash of the item as it is on disk right now — a recipe: its spec file; an operation: ``op.py`` and
+    ``manifest.json``. A choice Claude offers in the conversation keeps it, and the user's pick refuses an item whose
+    hash differs (``conversation.LibraryChanged``): the item as offered is the item used — the words shown on the
+    choice are the words a recipe places, and the operation tried is the one described (CLAUDE.md rules 13 and 17)."""
+    if item.kind == "recipe":
+        files = [_inside(item.path, "recipe")]
+    else:
+        folder = _inside(item.path, "operation")
+        files = [folder / "op.py", folder / "manifest.json"]
+    h = hashlib.sha256()
+    for f in files:
+        h.update(f.name.encode("utf-8") + b"\0" + f.read_bytes() + b"\0")
+    return h.hexdigest()
+
+
+def recipe_file(item: Item) -> Path:
+    """A listed recipe's spec file, checked to lie directly inside the library (``_inside``) — the one way to read it
+    (a symlink that leads outside is refused, as ``load_recipe`` refuses it)."""
+    return _inside(item.path, "recipe")
+
+
+def read_manifest(item: Item) -> Dict[str, Any]:
+    """A listed operation's manifest, read from a folder checked to lie directly inside the library (``_inside``)."""
+    folder = _inside(item.path, "operation")
+    return json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+
+
 def load_recipe(name: str) -> Path:
     """The recipe's spec file (load it with ``Session.load_spec`` / ``run-spec``)."""
     return _inside(find(name, "recipe").path, "recipe")

@@ -4,7 +4,7 @@ Date: 2026-10-16. Branch: `claude/festive-hamilton-5o579l` from `master` at `3a4
 tests/test_diagnostics.py tests/test_editspec.py` dies with SIGSEGV (exit 139, sometimes SIGABRT) in
 `tests/test_editspec.py::test_run_spec_batch_24_files[remove-all-headers-footers]`, while the main process waits in
 `concurrent.futures.as_completed` for its four pool workers; the full suite the same, but only sometimes; four pool
-workers left orphaned (PPID 1), holding the output pipe open. Deliverables: this note, `tests/qt_support.destroy_windows`
+workers left orphaned (PPID 1), holding the output pipe open. Deliverables: this note, `tests/qt_support.close_windows`
 and the fixtures that use it, the table models parented to their page (`ui/pages.py`), `tests/test_qt_lifetime.py`.
 
 ## 1. Reproduction
@@ -66,7 +66,7 @@ posted it); it merely moved ownership to C++, so the collector found nothing of 
 
 ## 3. Fix
 
-- **`tests/qt_support.destroy_windows(app, windows)`**: for each window, wait while a job, update check or download
+- **`tests/qt_support.close_windows(app, windows)`**: for each window, wait while a job, update check or download
   thread is still running (bounded; at the deadline the window is kept alive in `KEPT_ALIVE`, never deleted — its
   thread still emits through the window's `Bridge`/`UpdateController` — and a `TimeoutError` names it; Codex's finding
   on the PR), `force_close`, `close()`, `deleteLater()`; then `QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)` and
@@ -80,8 +80,12 @@ posted it); it merely moved ownership to C++, so the collector found nothing of 
 - **`tests/test_qt_lifetime.py`** (6 tests): after the teardown no wrapper of the window or of anything it owns is valid;
   the models belong to their page; a window whose job still runs at the deadline is kept alive and named, never deleted
   under its thread; the crash's scenario (teardown, then a collection on a worker thread, then Python on
-  the main thread) survives, in a subprocess; every test module that builds a window imports `destroy_windows`; the
+  the main thread) survives, in a subprocess; every test module that builds a window imports `close_windows`; the
   window's garbage after the teardown holds only invalid wrappers.
+
+Master's commit `4058f10` (PR #18, the same day) had landed the same remedy from the symptom alone ("QObject::killTimer:
+Timers cannot be stopped from another thread" on a pool thread), as `qt_support.close_windows`; the two were merged
+under that name, with the wait for the window's threads, the mechanism above and the regression tests from this fix.
 
 ## 4. Proof
 

@@ -1,0 +1,26 @@
+{
+  "request": "Make every PART 1 - GENERAL / PART 2 - PRODUCTS / PART 3 - EXECUTION heading bold and keep it with the next paragraph",
+  "summary": "Bold every PART heading and keep it on the same page as the paragraph that follows, as tracked formatting changes the reviewer can see in Word; a heading that is already bold, or already kept with the next paragraph, is left alone.",
+  "assumptions": [
+    "the PART headings are the paragraphs whose whole text reads 'PART n - NAME' (any dash); nothing else changes",
+    "bold is written as Word writes it (w:b and w:bCs) on every run of those headings and on their paragraph marks; a run that is already bold is left alone",
+    "keep-with-next goes on each heading paragraph; one that already has it is left alone",
+    "targeted formatting is tracked (decision 14.1): Word shows 'Formatted: Bold, Keep with next' under All Markup",
+    "a symbol/Wingdings run in a heading would be bolded too (bold does not change a glyph)"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_properties",
+      "select": {
+        "scope": ["document"],
+        "paragraphs": {"text_regex": "^PART\\s+[1-9]\\s*[-–—]\\s*[A-Z][A-Z ,&/-]*$"}
+      },
+      "params": {"run": {"b": true}, "paragraph": {"keepNext": true}},
+      "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}
+    }
+  ],
+  "review": {"sample_files": 2, "geometry_reference": "none"}
+}

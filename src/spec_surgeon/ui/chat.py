@@ -4,8 +4,10 @@ notes (what a preview found), the choices Claude offers for the current turn, a 
 Layout and signals only — ``ui.app.MainWindow`` decides what a reply or a choice does (``gui.Session.reply``). Two
 instances show the same transcript: one on the Describe step, a compact one under the preview. Choice buttons are
 rebuilt every turn, so they are never put in the window's static ``job_buttons``; ``set_busy`` disables them.
-A choice that carries exact wording shows those words, built here from the choice's ``wording`` (never from Claude's
-label), with "Choosing approves these exact words": picking it is how wording Claude suggests becomes approved.
+A choice that carries exact words shows them, one line each, built here from the choice's ``words`` (never from
+Claude's label), with "choosing approves these exact words": picking it is how wording Claude suggests — or the words
+one of your recipes places — becomes approved. A library choice's button reads "Use it" (a recipe) or "Try it" (one
+of your operations, tried on the sample files first).
 """
 from __future__ import annotations
 
@@ -159,11 +161,12 @@ class ChatView(Card):
         h.setContentsMargins(10, 6, 10, 6)
         h.setSpacing(10)
         text = c.get("label", "")
-        if c.get("wording"):
-            text += f"\nExact words: «{c['wording']}» — choosing approves these exact words for your documents."
+        for w in c.get("words") or ([c["wording"]] if c.get("wording") else []):
+            text += f"\nExact words: «{w}» — choosing approves these exact words for your documents."
         lab = _plain(text, selectable=True)
         h.addWidget(lab, 1)
-        b = QPushButton("Do this" if c.get("kind") == "custom_transform" else "Choose")
+        b = QPushButton({"custom_transform": "Do this", "recipe": "Use it", "operation": "Try it"}.get(c.get("kind"),
+                                                                                                        "Choose"))
         b.setProperty("choice_id", c.get("id"))
         detail = c.get("detail") or ""        # Claude's words: a tooltip renders what looks like markup as rich text,
         b.setToolTip(f"<p style='white-space:pre-wrap'>{html.escape(detail)}</p>" if detail else "")   # so escape it

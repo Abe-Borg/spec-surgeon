@@ -224,3 +224,137 @@ class Resolver:
             return f"theme:{value}"
         script = {"HAnsi": "latin", "Ascii": "latin", "EastAsia": "ea", "Bidi": "cs"}[m.group(2)]
         return self.fonts.get(f"{m.group(1)}:{script}", f"theme:{value}")
+
+
+# ---- set_properties: the effective value of one property, with its provenance -----------------------------------
+# The op's own definition (docs/SET_PROPERTIES_DESIGN.md §3), apart from the pinnable resolver above: the verifier
+# re-implements it in verify/props.py (_v_run_prop / _v_para_prop) — CLAUDE.md lists the two among the definitions
+# that must stay identical. Toggles (b, bCs, i, iCs, caps, smallCaps, strike): direct formatting wins; specified at
+# exactly one style level (docDefaults, table, paragraph and character style chains) → that value; nowhere → off; more
+# than one → ambiguous (None; Word XORs them — not modelled). w:u, w:color and the paragraph flags: the nearest level
+# that specifies them, else the default. Provenance: "direct", "style:<id>", "docDefaults" or "default".
+
+PROP_PAIRS = {"b": ("b", "bCs"), "i": ("i", "iCs"), "caps": ("caps",), "smallCaps": ("smallCaps",),
+              "strike": ("strike",)}
+RUN_TOGGLE_ELEMENTS = ("b", "bCs", "i", "iCs", "caps", "smallCaps", "strike")
+PARA_FLAGS = ("keepNext", "keepLines", "widowControl", "pageBreakBefore")
+PARA_FLAG_DEFAULTS = {"keepNext": False, "keepLines": False, "widowControl": True, "pageBreakBefore": False}
+CASE_ELEMENTS = {"caps", "smallCaps"}          # never on a symbol run: case-mapping a dingbat changes the glyph
+REFLOW_ELEMENTS = {"b", "bCs", "i", "iCs", "caps", "smallCaps"}   # change glyph widths: the text reflows
+UNDERLINES = ("single", "double", "words", "dotted", "dash", "wave", "none")
+COLOR_DEFAULT = ("auto", None, None, None)
+
+
+def on_off(el) -> Optional[bool]:
+    """A CT_OnOff element's value: None when absent, else on unless w:val is 0/false/off."""
+    return None if el is None else el.get(W + "val") not in FALSE
+
+
+def prop_read(element: str, el):
+    """The value an element gives its property: on/off for toggles and paragraph flags, the (val, themeColor,
+    themeShade, themeTint) tuple for w:color, w:val for w:u (None when the attribute is missing)."""
+    if el is None:
+        return None
+    if element == "color":
+        return (el.get(W + "val"), el.get(W + "themeColor"), el.get(W + "themeShade"), el.get(W + "themeTint"))
+    if element == "u":
+        return el.get(W + "val")
+    return on_off(el)
+
+
+def run_elements(run_set: Dict[str, Any]) -> Dict[str, Any]:
+    """User-facing run properties (validated) → the asked value per element: b/i expand to the complex-script pairs
+    Word itself writes (a w:cs run draws its weight and slant from w:bCs/w:iCs), color to the effective tuple."""
+    out: Dict[str, Any] = {}
+    for k, v in (run_set or {}).items():
+        if k in PROP_PAIRS:
+            for e in PROP_PAIRS[k]:
+                out[e] = bool(v)
+        elif k == "color":
+            out["color"] = (v, None, None, None)
+        elif k == "u":
+            out["u"] = v
+        else:
+            raise ValueError(f"unknown run property {k!r}")
+    return out
+
+
+def para_elements(para_set: Dict[str, Any]) -> Dict[str, bool]:
+    out: Dict[str, bool] = {}
+    for k, v in (para_set or {}).items():
+        if k not in PARA_FLAGS:
+            raise ValueError(f"unknown paragraph property {k!r}")
+        out[k] = bool(v)
+    return out
+
+
+class PropResolver:
+    """Effective value and provenance of set_properties' properties. ``override`` {(style id, element): value} stands in
+    for a style's own element — the plan simulates a style change on the source with it."""
+
+    def __init__(self, sheet: StyleSheet, override: Optional[Dict[Tuple[str, str], Any]] = None):
+        self.res = Resolver(sheet, {})
+        self.override = dict(override or {})
+
+    def _levels_run(self, p, rpr) -> List[Tuple[str, Any]]:
+        out: List[Tuple[str, Any]] = [("docDefaults", self.res.dd_rpr)]
+        for chain in self.res._style_levels(p, rpr, for_run=True):
+            out += [(f"style:{st.get(W + 'styleId')}", st.find(W + "rPr")) for st in chain]
+        return out
+
+    def _levels_para(self, p) -> List[Tuple[str, Any]]:
+        out: List[Tuple[str, Any]] = [("docDefaults", self.res.dd_ppr)]
+        for chain in self.res._style_levels(p):
+            out += [(f"style:{st.get(W + 'styleId')}", st.find(W + "pPr")) for st in chain]
+        return out
+
+    def _spec(self, prov: str, container, element: str) -> Tuple[bool, Any]:
+        """(specified at this level, its value); the override replaces a style's own element."""
+        if prov.startswith("style:") and (prov[6:], element) in self.override:
+            return True, self.override[(prov[6:], element)]
+        el = container.find(W + element) if container is not None else None
+        return el is not None, (prop_read(element, el) if el is not None else None)
+
+    def _resolve(self, levels: List[Tuple[str, Any]], direct, element: str) -> Tuple[Any, str]:
+        d = direct.find(W + element) if direct is not None else None
+        if d is not None:
+            return prop_read(element, d), "direct"
+        if element in RUN_TOGGLE_ELEMENTS:
+            specs = []
+            for prov, c in levels:
+                ok, v = self._spec(prov, c, element)
+                if ok:
+                    specs.append((v, prov))
+            if len(specs) == 1:
+                return specs[0]
+            return (False, "default") if not specs else (None, "ambiguous")
+        for prov, c in reversed(levels):
+            ok, v = self._spec(prov, c, element)
+            if ok:
+                return v, prov
+        if element == "color":
+            return COLOR_DEFAULT, "default"
+        if element in PARA_FLAGS:
+            return PARA_FLAG_DEFAULTS[element], "default"
+        return "none", "default"
+
+    def run_prop(self, rpr, p, element: str) -> Tuple[Any, str]:
+        return self._resolve(self._levels_run(p, rpr), rpr, element)
+
+    def para_prop(self, p, element: str) -> Tuple[Any, str]:
+        return self._resolve(self._levels_para(p), p.find(W + "pPr"), element)
+
+    def gets_run(self, rpr, p, asked: Dict[str, Any], symbol: bool) -> Dict[str, Any]:
+        """The asked elements a run or mark gets: those whose effective value is not the asked one (an ambiguous
+        toggle gets it — direct formatting wins); caps/smallCaps never on a symbol run."""
+        return {e: v for e, v in asked.items()
+                if not (symbol and e in CASE_ELEMENTS) and self.run_prop(rpr, p, e)[0] != v}
+
+    def gets_para(self, p, asked: Dict[str, bool]) -> Dict[str, bool]:
+        return {e: v for e, v in asked.items() if self.para_prop(p, e)[0] != v}
+
+    @staticmethod
+    def style_gets(st, container: str, asked: Dict[str, Any]) -> Dict[str, Any]:
+        """A style definition's own values (its rPr or pPr): the asked elements whose own value is not the asked one."""
+        c = st.find(W + container)
+        return {e: v for e, v in asked.items() if prop_read(e, c.find(W + e) if c is not None else None) != v}

@@ -726,16 +726,14 @@ def test_app_logging_keeps_every_line(tmp_path):
 
 @pytest.fixture
 def qt(tmp_path, monkeypatch):
-    """A Qt application; every window a test appends to the list is deleted after it, on the main thread
-    (``qt_support.destroy_windows`` — a window merely closed was the segmentation fault of 2026-10-16)."""
-    from qt_support import destroy_windows, qt_app_or_skip
+    from qt_support import close_windows, qt_app_or_skip
     app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     windows = []
     yield app, windows
-    destroy_windows(app, windows)
+    close_windows(app, windows)
 
 
 def test_the_window_shows_why_a_file_did_not_pass(qt, tmp_path):

@@ -147,12 +147,12 @@ def test_the_command_line_library_and_save_as(folder, tmp_path, monkeypatch, cap
 
 @pytest.fixture
 def qt_env(tmp_path, monkeypatch):
-    from qt_support import destroy_windows, qt_app_or_skip
+    from qt_support import close_windows, qt_app_or_skip
     app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     windows = []
     yield app, windows
-    destroy_windows(app, windows)      # deleted now, on the main thread — never left to the garbage collector
+    close_windows(app, windows)
 
 
 def test_the_window_library_buttons(qt_env, folder, tmp_path):

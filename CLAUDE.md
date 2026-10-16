@@ -88,7 +88,16 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
     request or answer). The advisor's sources are the original spec's `placed_words`, the request and the answers,
     never the whole spec JSON (its docstring and `ADVISOR_SYSTEM` say so); a respec it accepts carries the ORIGINAL
     spec's `request` (`_respec_errors` pins it beside `applies_to`), never Claude's: `advice/<name>.spec.json` is run
-    and advised on again.
+    and advised on again. **Library choices (2026-10-16):** Claude may NAME one of the user's library items (`kind`
+    `recipe`/`operation` + `name`; chat mode only — `LIBRARY_CHOICE_KINDS`, part of `APP_CHOICE_KINDS`, never of
+    `CHOICE_KINDS_FROM_CLAUDE`); `_library_choice` builds the choice from the library alone — exact name via
+    `library.find`; a recipe loads, validates, keeps its templates, places only visible words and dry-plans on the batch
+    (`compiler._dry_errors`); an operation loads with its code unchanged; else dropped and said in the errors, to the
+    user (an app entry) and to Claude (a note) — with `words` = `compiler.placed_words` of the recipe (deduplicated),
+    `item_hash` = `library.item_hash`, `snapshot` = the validated spec; Claude's `label`/`wording` never reach it.
+    `take_library_choice` refuses an item whose hash changed (`LibraryChanged`: nothing approved), appends `Choice.words`
+    to `sources` (each its own source — `reply()` does the same for every choice) and hands the app a deep copy of the
+    snapshot with `placed_words == words` asserted and `Conversation.request` in `request`.
 14. **The conversation is append-only and every tool call is answered** (Phase 8). Opus 5.5 keeps its thinking,
     so history is never rewritten. `conversation.check_pairing` runs before every request: the last message is the
     user's and its leading `tool_result` ids equal the previous assistant turn's `tool_use` ids. The user message
@@ -137,7 +146,12 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
     changes nothing) — and refused when `op.py`'s sha256 differs from its manifest or it fails the whitelist. Only a
     current preview is saved. A name belongs to one item: `replace` works within a kind, and a name the other kind
     holds is refused even with it (`library.other_kind_holding` in `_check_free`; `cli._save_as_refusal` before
-    anything is written).
+    anything is written). An operation Claude offered and the user picked (2026-10-16) follows the same trial-first rule
+    with the conversation kept: `Session._take_library_choice` → `_use_saved_operation(end_conversation=False)`
+    (`use_operation` is the same with `True`); `_prove(…, exc=)` raises `TrialsFailed` / `OperationFailed`, and
+    `OperationFailed` is the ONE failure Claude hears (as `TransformFailed`), a defect withdraws the promised outcome; at
+    the terminal `cli._try_saved_operation` runs the trials inside `_talk` and a failure returns to the prompt. A recipe
+    picked there is used as the choice's snapshot, never a re-read file (`Session.recipe_name` says so).
 18. **One call site** (Phase 8). Every Claude call goes through `llm.call` (streamed, `MAX_TOKENS` 64000, effort
     `high`, `fallbacks="default"`, 5-minute cache). Callers resolve the client when the call is made, through
     `compiler._client()` (the advisor through `advisor._client`) or an injected `client` — never captured at import.
@@ -270,6 +284,30 @@ test that proves they agree.)
   `pos + (W_target − W_template)`; center: `floor(pos × W_target / W_template + 0.5)`; others unchanged; never in
   table paragraphs. Transform: `ops/effective.rescale_tabs/text_width`; verifier: `verify/template.rescaled/_width`.
 
+- **Formatting properties (`set_properties`, 2026-10-16; design `docs/SET_PROPERTIES_DESIGN.md`).** User-facing `run`
+  properties expand to elements — `b` → `b`+`bCs`, `i` → `i`+`iCs`, `caps`, `smallCaps`, `strike`, `u`, `color`;
+  `paragraph`: `keepNext`, `keepLines`, `widowControl`, `pageBreakBefore`. **Effective value with provenance**: toggles
+  (`b`, `bCs`, `i`, `iCs`, `caps`, `smallCaps`, `strike`) — direct wins; specified at exactly one style level (docDefaults,
+  table chain, paragraph chain, character chain: the level order of `effective_fonts`) → that value; nowhere → off;
+  more → ambiguous (`None`); `u`, `color` (the (val, themeColor, themeShade, themeTint) tuple) and the paragraph flags —
+  nearest level wins; defaults `"none"`, `("auto", None, None, None)`, flags off except `widowControl` on. Provenance:
+  `direct` | `style:<id>` | `docDefaults` | `default`. **Gets**: a direct target gets an element whose effective value in
+  the SOURCE differs from the asked one (ambiguous → gets); a symbol run (set_font's definition, plus `w:sym`) never gets
+  `caps`/`smallCaps`; a style target gets an element whose own value differs. **Expected element**: toggles and flags on →
+  no attributes, off → `w:val="0"`; `color` → exactly `{val}`; `u` → the source element's attributes with `val` replaced.
+  **Style-target partition** (plan refusals / V10 FAIL): provenance the selected style → affected; a nearer style → noted,
+  left alone; `direct` disagreeing → `conflict-property`; ambiguous → `toggle-ambiguous`; a style turning `caps`/`smallCaps`
+  ON for a symbol run → `conflict-property` (off is fine). **Exclusive pair**: Word shows all caps and ignores small caps
+  when both are in effect — an op asking `caps` or `smallCaps` on must leave at most one of them in effect on every
+  selected (direct) or using (style) run and mark after the change, an ambiguous toggle counting as in effect: plan
+  `conflict-property` (`caps_conflict`) / V10 FAIL (`_check_caps_exclusive`); both asked on → `bad-params` /
+  `ValueError`. Transform: `ops/effective.PropResolver` (+ `run_elements`/`para_elements`; an
+  `override` simulates the style change), `ops/set_properties.py`; verifier: `verify/props._v_run_prop`/`_v_para_prop`/
+  `_v_gets_run`/`_v_gets_para`/`_v_style_gets`/`_v_expected_attrs`/`_properties`. `tests/test_set_properties.py::
+  test_transform_and_verifier_property_resolvers_agree` compares them on every run, mark and paragraph of four fixtures;
+  the planted-defect tests there share a wrong pair table, "already" rule, symbol rule, certainty check and on/off writer
+  between plan and apply.
+
 ## Roadmap
 
 `docs/NL_SURGICAL_EDITOR_PLAN.md` is the design and phased plan for the natural-language editor built on
@@ -311,13 +349,14 @@ proposals and recorded in the plan's status sections.
   `geometry_reference/reason/template`, `ops`), `PlanFragment` (+ `touches`, `rev_ids_needed`), `JobException`,
   `merge_fragments` (conflicts, mode, revision-id ranges, geometry). `ops/__init__.py` — registry (`@register`).
 - `ops/selectors.py` — transform-side selector resolution, `DEFAULT_PRESERVE_FONTS`, font param parsing.
-- `ops/*.py` — `fix_page_numbering`, `replace_text`, `remove_header_footer`, `set_font`, `set_style_font`,
+- `ops/*.py` — `fix_page_numbering`, `replace_text`, `remove_header_footer`, `set_font`, `set_style_font`, `set_properties`,
   `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, `apply_header_footer_template`.
 - `ops/hf_common.py` — header/footer refs, `effective_refs` (what each section shows), `plan_removal`/
   `apply_removal` (shared by `remove_header_footer` and templating: rels, members, overrides, orphaned media,
   revisions flagged). `ops/slots.py` — slots, display text, `apply_slot`, `expected_block_text`, `extract_fill`;
   reference slots (`located_text`, `bounded`, `reference_values`, `reference_slots`), `carve`, `mark_slots` (⟦ ⟧ for notes).
-  `ops/effective.py` — `Resolver` (effective pinnable properties), `theme_fonts`, `text_width`, `rescale_tabs`.
+  `ops/effective.py` — `Resolver` (effective pinnable properties), `theme_fonts`, `text_width`, `rescale_tabs`;
+  `PropResolver` (set_properties' effective value with provenance, with an `override` that simulates a style change).
 - `apply_header_footer_template` plan: copies keyed by (template part, template width, target width); pins are
   the diff of template-effective vs target-effective (with imported styles); `transform_data` carries pins,
   slots, rels/media maps, docPr start ids, new refs, removal plan. Apply works on a fresh parse of the template.
@@ -339,7 +378,8 @@ proposals and recorded in the plan's status sections.
   `compare_template_bands()` pairs their pages by section (map from the spec's `template_sections`) and
   variant — never a "best page" search (a blank variant would stand in for anything) — and checks each
   templated region: blank ↔ blank, else outer edge + shared words, 2 pt window, footer from the page bottom.
-- `verify/props.py` — V10: assertion kinds, independent selectors/styles/theme, residual identity. `first_difference`
+- `verify/props.py` — V10: assertion kinds (the `properties` kind of `set_properties` included, with its own effective-value
+  resolver `_v_run_prop`/`_v_para_prop`), independent selectors/styles/theme, residual identity. `first_difference`
   names the paragraph (its text) or the style (its id) a difference lies in.
 - `verify/explain.py` — why a check failed, in specifics, from the check's own data and the record's predictions
   (`failure_details`, `text_change` word diffs with ⇥ ⍽ ⏎ made visible); `VerificationRecord.failures()` and the
@@ -373,7 +413,7 @@ proposals and recorded in the plan's status sections.
   root/administrator see the same answer), atomic write; every reason a write-back cannot happen is a `GuardError`
   (a refused `os.replace` included), which `batch.py` records as that file's V9 failure — never a crashed batch.
 - `tests/qt_support.py` — `qt_app_or_skip()` (offscreen Qt, or skip unless `SPEC_SURGEON_REQUIRE_QT`) and
-  `destroy_windows(app, windows)` — the ONLY way a test lets go of a window (see the Qt rules under `ui/`, and
+  `close_windows(app, windows)` — the ONLY way a test lets go of a window (see the Qt rules under `ui/`, and
   `docs/audits/2026-10-16_qt_teardown_segfault.md`); `flush_deferred_deletes(app)` delivers pending `deleteLater()`s,
   which `processEvents()` alone never does outside an event loop.
 - `tests/make_fixtures.py` — synthetic specs with the hard cases; `build_rich()` is the op fixture (first/even
@@ -423,7 +463,9 @@ proposals and recorded in the plan's status sections.
   seconds, request id, content via `block_dict`), `results_entry`, `error_entry`, `transcript_content` (total, no
   image data).
 - `conversation.py` — `Conversation` (start/reply/choice/note/brief/save/compile_result), `Turn`, `Choice`,
-  `check_pairing`, `clean_wording` (rules 13–14). At most 12 calls per turn; two rejections in one user turn end
+  `check_pairing`, `clean_wording` (rules 13–14). Since 2026-10-16: `LIBRARY_CHOICE_KINDS`, `LibraryChanged`,
+  `Choice.words/name/item_hash/snapshot`, `_library_choice`, `take_library_choice`, `_dropped` (see "2026-10-16 Claude
+  and your library" below). At most 12 calls per turn; two rejections in one user turn end
   it as `failed`; asks take precedence over a submission in the same assistant turn. `conversation.json` is a record,
   never replayed: `entries` is what the user saw, `exchange` the model exchange of every call (never the API
   `messages`), which `compile_result` hands to `CompileResult.transcript`. `ACCEPTED_RESULT` is the accepted spec's
@@ -442,7 +484,9 @@ proposals and recorded in the plan's status sections.
   `rasterize_pages` uses; a test derives the comment's figures).
 - `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`) and operations (`operations/<slug>/op.py` +
   `manifest.json`) under `config_dir()/library` (rule 17). `other_kind_holding(kind, slug)`; `_check_free` refuses the
-  other kind's name even with `replace` ("… cannot take that name, not even with replace …").
+  other kind's name even with `replace` ("… cannot take that name, not even with replace …"). `item_hash(item)`: the
+  content hash a conversation's library choice pins; `recipe_file(item)` / `read_manifest(item)`: the `_inside`-checked
+  reads the compiler's index and `read_library_item` use (2026-10-16).
 - `codegen.py` + `sandbox_runner.py` — custom transforms (Tier B; offered in the conversation, or `do
   --allow-codegen` without a terminal): AST whitelist (`ALLOWED_FROM`, `ALLOWED_IMPORT`, `FORBIDDEN_*`,
   `EXCLUDED_FROM_EXAMPLES`), isolated subprocess on copies, `hard_limits` (rule 16), the full suite as the test, 3
@@ -527,7 +571,7 @@ proposals and recorded in the plan's status sections.
   the window, on the GUI thread; never leave a Qt object to the garbage collector — it runs on whatever thread happens
   to allocate, and PySide6 6.12 deletes a Python subclass of a Qt class right there and defers a plain widget's deletion
   to a pointer its parent already freed (the 2026-10-16 segmentation fault, below). **Tests let go of a window only
-  through `tests/qt_support.destroy_windows`** (close, `deleteLater`, the deferred deletes flushed, `gc.collect()` — on
+  through `tests/qt_support.close_windows`** (close, `deleteLater`, the deferred deletes flushed, `gc.collect()` — on
   the main thread, while the test still holds every wrapper); `close()` alone, or `deleteLater()` + `processEvents()`
   (which deletes nothing outside an event loop), is the crash coming back. `tests/test_qt_lifetime.py` checks every
   test module that builds a window.
@@ -547,7 +591,8 @@ planted-defect test proving the verifier catches a wrong implementation of it �
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
-merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 691 with the Qt
+merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`), 709 with Claude and your library
+(`tests/test_library_choices.py`, 2026-10-16), 734 with `set_properties` (`tests/test_set_properties.py`), 740 with the Qt
 teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
@@ -586,7 +631,12 @@ tells you every other place that must follow.
   The container has no `py` launcher: use `python3`. `pip install -e ".[dev,gui]"` first (pytest is not
   preinstalled). Qt needs `apt-get install -y libegl1 libopengl0` in the container; run the suite with
   `QT_QPA_PLATFORM=offscreen` (no Xvfb needed). Qt tests skip when Qt can't load unless `SPEC_SURGEON_REQUIRE_QT=1`
-  (CI sets it — a broken Qt install must fail, not skip). `python3 packaging/gui_screenshot.py` regenerates
+  (CI sets it — a broken Qt install must fail, not skip). Every Qt fixture tears its windows down with
+  `tests/qt_support.close_windows` (close, the deferred deletes delivered, `gc.collect()` — all on the GUI thread): a
+  window left for a later garbage collection was destroyed on a batch's pool thread in an unrelated test
+  (`QObject::killTimer: Timers cannot be stopped from another thread`) and segfaulted the whole run, at a spot that
+  moved with allocation timing (2026-10-16: a new test module made it land in `test_editspec`'s perf test every time).
+  Never go back to a bare `w.close()` in a fixture. `python3 packaging/gui_screenshot.py` regenerates
   `docs/gui-files.png` / `docs/gui.png` / `docs/gui-results.png` (`--chat`: `docs/gui-chat.png`, scripted client;
   `SPEC_SURGEON_THEME=dark` + `SPEC_SURGEON_SCREENSHOT_SUFFIX=-dark` for the dark look) — run it with `PYTHONPATH=src`
   in a worktree (the editable install points at the main checkout); look at screenshots before changing layout. A grab
@@ -894,9 +944,12 @@ Python subclass are not) and defers the 44 plain widgets the window still "owns"
 `QLabel`/`QPushButton`/`QCheckBox` placed through layouts) to the main thread, where that second `delete` ran on memory
 Qt had freed with the window. Rules that came out of it (also under "Qt rules"):
 
-- A test lets go of a window only through `tests/qt_support.destroy_windows`: the Qt objects die now, on the main
-  thread, in Qt's order, while the test holds every wrapper; `gc.collect()` there frees the rest of the test's Qt garbage
-  on the main thread too. Never `close()` alone; `deleteLater()` + `processEvents()` deletes nothing outside a running
+- A test lets go of a window only through `tests/qt_support.close_windows` (master's commit `4058f10` landed the
+  remedy under that name the same day, from the symptom; this fix adds the mechanism, the wait for the window's threads
+  and the regression tests): the Qt objects die now, on the main thread, in Qt's order, while the test holds every
+  wrapper; `gc.collect()` there frees the rest of the test's Qt garbage on the main thread too. A window whose job,
+  update check or download thread still runs at the deadline is kept alive in `KEPT_ALIVE` and named in a
+  `TimeoutError`, never deleted under its thread (Codex's finding on the PR). Never `close()` alone; `deleteLater()` + `processEvents()` deletes nothing outside a running
   event loop (Qt holds a DeferredDelete back until control returns to the loop that posted it) — `test_gui.py`'s old
   fixture leaked its windows, which is why it never crashed anything. `flush_deferred_deletes` is
   `QCoreApplication.sendPostedEvents(None, QEvent.DeferredDelete)`.
@@ -920,3 +973,73 @@ Qt had freed with the window. Rules that came out of it (also under "Qt rules"):
 - Compiler: `read_template` returns `template_spec` (prepared slots, or own values by `REFERENCE_FILLS` + ⟦ ⟧
   occurrences + problems, body font/size); the SYSTEM prompt and the catalog's rules say how to compose "match the
   header/footer / font of the template spec". Window: the Files card is "Template spec (optional)"; two new chips.
+
+## 2026-10-16 Claude and your library
+
+Abraham: "when I type something a saved item already does ('strip the headers and footers like last time'), Claude can
+find my recipe or operation and offer it as a choice, so I reuse it instead of getting a fresh spec." The design note
+`docs/design/2026-10-16_claude_and_your_library.md` was approved as recommended (after Codex's two findings on it: the
+offered item pinned by hash, a failing terminal operation back to the conversation); `tests/test_library_choices.py`
+pins every rule (24 tests, 709 in total); README → "Your library → Claude and your library" is the user's view. Rules:
+
+1. **Chat only.** `compiler.library_index()` goes into the first message (`build_messages(library=)`, `YOUR LIBRARY`,
+   at most `INDEX_LIMIT` 40 items within `INDEX_BUDGET`; `library_entry` counts a recipe's words, never shows them) and
+   `CHAT_TOOLS` gets `LIBRARY_TOOLS` — `list_library` (`_Batch.list_library`) and `read_library_item`
+   (`_Batch.read_library_item` → `library_item_detail`: the spec as saved, `placed_words` under `PLACED_WORDS_RULE`, the
+   templates' existence, `dry_plan_summary`; an operation's manifest without `op.py`) — and `ASK_USER_CHAT` (the one-shot
+   `ask_user` plus the kinds `recipe`/`operation` and `name`). `TOOLS`, `mode="compile"`, `ADVISOR_TOOLS` and
+   `CODEGEN_TOOLS` are unchanged; a library kind in compile mode is dropped ("offered in a conversation only").
+   Every read goes through the library's containment check (`library.recipe_file` / `read_manifest`, `_inside`; rule
+   17): a listed item that is a symlink leading outside the library is an `error` entry in the index, the tool's
+   error, and no choice. Results stay valid JSON: an index entry lists at most `ENTRY_OPS` op names and one that does
+   not fit `INDEX_BUDGET` is skipped (the items after it still show); `_fit_detail` keeps a `read_library_item` result
+   within `DETAIL_BUDGET` — the spec as saved gives way to an outline of its ops first, then over-long placed words are
+   cut and said to be (the choice shows them whole) — never cut mid-JSON by `_dispatch`'s cap (Codex on #17).
+2. **Named by Claude, built by code** (rule 13, "Library choices"): `conversation._library_choice`; a drop is said in the
+   turn's `errors`, to the user as an app `Entry` (`_dropped`, appended by `_finish` after Claude's entry) and to Claude
+   as a note with the next message. The label comes from the item (name, description cut at `DESCRIPTION_CHARS`, saved
+   date, the request cut at 120); Claude's `detail` (or `label`) is the tooltip.
+3. **The pick approves, and only the pick** (rule 13): `take_library_choice`; `take_app_choice` refuses library kinds.
+   `Choice.words` is the truth of what a pick approves for every kind (`[wording]` for Claude's choices;
+   `__post_init__`); `describe()`/`exact_words()` show them; `to_dict` records `words`, `name`, `item_hash`, never the
+   snapshot.
+4. **A saved operation is proven first, the conversation kept** (rule 17): `Session._take_library_choice`,
+   `_use_saved_operation`, `TrialsFailed` / `OperationFailed`. A recipe: `_set_outcome(spec, source="compiled",
+   recipe=name)` → `Session.recipe_name` (the Preview step's heading, `_intent`, `_note_preview`'s heading "THE PREVIEW OF
+   YOUR RECIPE «NAME» (used as saved)"); `spec_source` stays `"compiled"` (the conversation's outcome: Preview with the
+   request typed continues the conversation and previews the recipe, never compiles).
+5. **Terminal**: `cli._talk(conv, save, out_dir, files)` — a choice's `words` approved in one prompt ("Approve these
+   exact words for your documents: «A»; «B»? [y/N]"); a recipe returns `("recipe", spec, conv)` and takes `cmd_do`'s
+   spec path; an operation is tried inside the loop (`_try_saved_operation`: `OUT/library-trial/try-N`, the token before
+   the trials; a failure prints "Not used: …", notes it and `continue`s) and a passing one returns
+   `("operation", (g, key, token, inputs), conv)` → `_run_saved_operation` → `_approve_and_run_generated`, the tail
+   `_do_codegen` now shares (visual check, `--save-as`, y/N, the token re-check, `run_generated`). `_print_turn` prints
+   one `exact words:` line per word.
+6. **Window**: `ui/chat.py` builds one *Exact words* line per word from `words` (never Claude's text) and the buttons
+   *Use it* / *Try it* (beside *Choose* / *Do this*); `ui/app.py` heads the Preview step *Your recipe “NAME” (as saved)
+   for “request”*. `Your library…` (`use_operation`, `load_recipe`) is unchanged.
+
+## Built-in operations round, part 1 (2026-10-16): `set_properties`
+
+Abraham approved the design note's recommendations (`docs/SET_PROPERTIES_DESIGN.md`; PR #16) and the op was built
+verifier-first. Rules that came out of it (the definition is in the both-sides list above; README → "Formatting
+properties" is the user's view):
+
+- **One op, two targets, never mixed in one call**: direct formatting (`scope`/`paragraphs`/`runs`; the compiler's
+  default, tracked when targeted) or style definitions (`styles: {ids}`; never tracked; `paragraph` flags on paragraph
+  styles only).
+- **Zero characters**: `caps` is a display property. Highlight (the slot marker), hidden text, borders, shading,
+  numbering, theme colours and the complex-script variants other than the `bCs`/`iCs` twins stay out until a verified
+  kind exists.
+- **Already as asked = untouched and uncounted**; the plan notes the count. Tracked mode records a change only where
+  Word itself would have.
+- **A style change is certain or refused** (`toggle-ambiguous`, `conflict-property`); V10 re-derives the partition on
+  the output. Word's §17.7.3 XOR is still not modelled anywhere in the engine.
+- **Rule 9 granularity unchanged**: a font change and `set_properties` on the same paragraphs are two specs; one
+  `set_properties` call carries all of its properties. Finer aspects (per property) are a recorded follow-up.
+- **Layout reference** `none` for `b`/`i`/`caps`/`smallCaps` and the paragraph flags, `source` for `color`/`u`/`strike`.
+- `report.FAILURE_EXPLANATIONS` gained `conflict-property`; `CUSTOM_TRANSFORM_LIMITS` maps the new family to
+  `properties` (the "cannot" list lost bold/italic/underline/caps and text colour); the profile's `styles_in_use` show
+  `italic`, `color` and `color_theme` (Word renders the theme colour, not the cached `w:val`); `examples/specs/bold-part-headings.json` is the worked example. The verifier's change-marker
+  tails of `run_fonts` and `paragraph_props` became `_check_rpr_change`/`_check_ppr_change` (shared with `properties`;
+  the same checks, byte for byte).

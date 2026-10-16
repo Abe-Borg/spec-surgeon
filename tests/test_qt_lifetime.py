@@ -7,7 +7,7 @@ subclass of a Qt class (``MainWindow``) right there, on that thread, and defers 
 books as Python-owned (44 of them in a window: the ``QLabel``/``QPushButton``/``QCheckBox`` placed through layouts) to
 the main thread — where that second ``delete`` runs on memory Qt freed with the window: SIGSEGV in
 ``Shiboken::BindingManager::runDeletionInMainThread``, in whatever test ran next, whenever a collection happened to run
-off the main thread (one run in five passed). ``qt_support.destroy_windows`` is the fix: close, ``deleteLater``, flush
+off the main thread (one run in five passed). ``qt_support.close_windows`` is the fix: close, ``deleteLater``, flush
 the deferred deletes (``processEvents()`` alone never delivers them outside an event loop — ``test_gui.py``'s old
 teardown only leaked its windows) and collect the garbage on the main thread, while the test still holds every wrapper.
 
@@ -47,12 +47,12 @@ def _under(o, w) -> bool:
     return False
 
 
-def test_destroy_windows_deletes_the_window_and_everything_it_owns_on_the_main_thread(tmp_path, monkeypatch):
+def test_close_windows_deletes_the_window_and_everything_it_owns_on_the_main_thread(tmp_path, monkeypatch):
     """After the teardown no wrapper of the window or of anything it made is valid: there is nothing left for a
     collection on another thread to delete (a valid, Python-owned wrapper would be deferred and deleted again)."""
     import shiboken6
     from PySide6.QtCore import QObject
-    from qt_support import destroy_windows
+    from qt_support import close_windows
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     app, w = _window(tmp_path)
     descendants = [o for o in shiboken6.getAllValidWrappers() if isinstance(o, QObject) and o is not w and _under(o, w)]
@@ -60,19 +60,19 @@ def test_destroy_windows_deletes_the_window_and_everything_it_owns_on_the_main_t
              w.run_page.model, w.run_page.proxy]
     assert len(descendants) > 100 and all(shiboken6.isValid(o) for o in owned)
     windows = [w]
-    destroy_windows(app, windows)
+    close_windows(app, windows)
     assert windows == [] and not shiboken6.isValid(w)
     assert not any(shiboken6.isValid(o) for o in descendants)
     assert not any(shiboken6.isValid(o) for o in owned)
     assert not any(isinstance(o, QObject) and shiboken6.isValid(o) and shiboken6.ownedByPython(o) and _under(o, w)
                    for o in shiboken6.getAllValidWrappers())
-    destroy_windows(app, [w])                      # a second time is harmless (an invalid window is skipped)
+    close_windows(app, [w])                      # a second time is harmless (an invalid window is skipped)
 
 
 def test_the_table_models_belong_to_their_pages(tmp_path, monkeypatch):
     """A QObject the window makes has a Qt parent in the window, so Qt deletes it with the window on the GUI thread —
     the models were the only parentless ones, left to the garbage collector (which runs on any thread)."""
-    from qt_support import destroy_windows
+    from qt_support import close_windows
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     app, w = _window(tmp_path)
     try:
@@ -80,14 +80,14 @@ def test_the_table_models_belong_to_their_pages(tmp_path, monkeypatch):
             assert page.model.parent() is page and page.proxy.parent() is page
             assert page.proxy.sourceModel() is page.model and page.table.model() is page.proxy
     finally:
-        destroy_windows(app, [w])
+        close_windows(app, [w])
 
 
 SCENARIO = textwrap.dedent("""
     import faulthandler, gc, sys, threading, weakref
     from pathlib import Path
     faulthandler.enable()
-    from qt_support import destroy_windows
+    from qt_support import close_windows
     from spec_surgeon.gui import Session, build_window
     from spec_surgeon.ui.app import RecordingPrompts
     w = build_window(Session(out_root=Path(sys.argv[1])), prompts=RecordingPrompts())
@@ -96,7 +96,7 @@ SCENARIO = textwrap.dedent("""
     ui["wait"]()
     freed = []
     weakref.finalize(w, lambda: freed.append(threading.current_thread().name))
-    destroy_windows(app, [w])
+    close_windows(app, [w])
     del w, ui
     t = threading.Thread(target=gc.collect, name="worker")       # the collector on another thread, as in a batch
     t.start()
@@ -115,7 +115,7 @@ def test_a_window_whose_job_still_runs_is_kept_alive_not_deleted(tmp_path, monke
     import threading
     import shiboken6
     import qt_support
-    from qt_support import destroy_windows
+    from qt_support import close_windows
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     app, w = _window(tmp_path)
     gate = threading.Event()
@@ -123,18 +123,18 @@ def test_a_window_whose_job_still_runs_is_kept_alive_not_deleted(tmp_path, monke
     windows = [w]
     try:
         with pytest.raises(TimeoutError, match=r"still had a job.*kept alive"):
-            destroy_windows(app, windows, timeout=0.3)
+            close_windows(app, windows, timeout=0.3)
         assert windows == [] and shiboken6.isValid(w) and w in qt_support.KEPT_ALIVE and w.busy
     finally:
         gate.set()
         w._spec_surgeon["wait"]()
         qt_support.KEPT_ALIVE.remove(w)
-    destroy_windows(app, [w])
+    close_windows(app, [w])
     assert not shiboken6.isValid(w)
 
 
 def test_a_destroyed_window_collected_on_another_thread_leaves_the_process_alive(tmp_path):
-    """The crash's own scenario, in a subprocess: build a window, tear it down with ``destroy_windows``, then free its
+    """The crash's own scenario, in a subprocess: build a window, tear it down with ``close_windows``, then free its
     Python object on a worker thread and run Python on the main thread. With ``close()`` alone this dies with SIGSEGV
     three times in three (the probe of 2026-10-16); with the helper every wrapper is invalid before the collector sees
     it. A subprocess, so a regression is a failed test and not a dead pytest."""
@@ -150,16 +150,16 @@ def test_a_destroyed_window_collected_on_another_thread_leaves_the_process_alive
     assert "SURVIVED" in r.stdout, r.stdout + r.stderr
 
 
-def test_every_window_test_tears_down_through_destroy_windows():
-    """No test module builds a window without importing ``qt_support.destroy_windows``: a fixture that only closes its
+def test_every_window_test_tears_down_through_close_windows():
+    """No test module builds a window without importing ``qt_support.close_windows``: a fixture that only closes its
     windows (or that calls ``deleteLater`` and ``processEvents``, which deletes nothing) is how the crash came back."""
     for py in sorted(TESTS.glob("test_*.py")):
         tree = ast.parse(py.read_text(encoding="utf-8"))
         builds = any(isinstance(n, ast.Call) and getattr(n.func, "id", getattr(n.func, "attr", "")) == "build_window"
                      for n in ast.walk(tree))
         imports_helper = any(isinstance(n, ast.ImportFrom) and n.module == "qt_support"
-                             and any(a.name == "destroy_windows" for a in n.names) for n in ast.walk(tree))
-        assert not builds or imports_helper, f"{py.name} builds a window but never destroys it with destroy_windows"
+                             and any(a.name == "close_windows" for a in n.names) for n in ast.walk(tree))
+        assert not builds or imports_helper, f"{py.name} builds a window but never destroys it with close_windows"
 
 
 def test_gc_collect_on_the_main_thread_after_a_destroyed_window_frees_only_invalid_wrappers(tmp_path, monkeypatch):
@@ -167,10 +167,10 @@ def test_gc_collect_on_the_main_thread_after_a_destroyed_window_frees_only_inval
     holds no valid Qt object — so a later collection anywhere has nothing of Qt's to delete."""
     import shiboken6
     from PySide6.QtCore import QObject
-    from qt_support import destroy_windows
+    from qt_support import close_windows
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     app, w = _window(tmp_path)
-    destroy_windows(app, [w])
+    close_windows(app, [w])
     gc.set_debug(gc.DEBUG_SAVEALL)
     try:
         del w

@@ -154,6 +154,13 @@ def _style_entry(sheet: StyleSheet, res: Resolver, sid: str, count: int, sample_
             e["bold"] = True
         if eff["caps"]:
             e["caps"] = True
+        if eff["i"]:
+            e["italic"] = True
+        val, theme, shade, tint = eff["color"]
+        if val not in (None, "auto") or theme:
+            e["color"] = val or "auto"                 # explicit, or the RGB Word cached for the theme colour
+            if theme:                                  # Word renders the theme colour (shade/tint applied), not val
+                e["color_theme"] = theme + (f" shade {shade}" if shade else "") + (f" tint {tint}" if tint else "")
     except AmbiguousToggle:
         e["font"] = "(toggle set at several style levels)"
     para = res.paragraph(sample_p)

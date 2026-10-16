@@ -135,14 +135,14 @@ def test_errors_are_plain(tmp_path):
 @pytest.fixture
 def qt(tmp_path, monkeypatch):
     """A QApplication, a private settings folder, no update check and no API key from the developer's machine."""
-    from qt_support import destroy_windows, qt_app_or_skip
+    from qt_support import close_windows, qt_app_or_skip
     app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     windows = []
     yield app, windows
-    destroy_windows(app, windows)      # deleted now, on the main thread — never left to the garbage collector
+    close_windows(app, windows)
 
 
 def window(qt, session=None, **kw):

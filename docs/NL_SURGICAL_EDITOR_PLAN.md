@@ -527,7 +527,7 @@ Not a phase of §12: it came out of Abraham's questions about how the model fits
 **Cut from this round, recorded as next steps:**
 - More built-in operations (Abraham: "Let's do the additional built in operations later") — about 60 ideas were listed in the conversation, for example bold/italic/caps, colours, borders and shading, numbering and list levels, table formatting, keep-with-next / widow control, tracked-change acceptance with its own verification, document properties.
 - A generic `set_properties` op with a generic V10 kind (ideas #22–23): it belongs with the built-ins round, where its open question (two ops on one paragraph — touches are per block) is decided.
-- Claude browsing the library during the conversation (`read_recipe`, recipe/operation choices): it complicates the approved-words rule.
+- ~~Claude browsing the library during the conversation (`read_recipe`, recipe/operation choices): it complicates the approved-words rule.~~ Done 2026-10-16 — see "Claude and your library" below and `docs/design/2026-10-16_claude_and_your_library.md`.
 - CLI `run-op` / `run-recipe` (`library show` prints a recipe's `run-spec` command; operations run from the window).
 - Sharing the library between users.
 
@@ -543,7 +543,25 @@ Not a phase of §12: it came out of Abraham's questions about how the model fits
 - *The window and the command line*: *Render pages* is part of the preview key; Save to library… and I've looked — allow Run are live only while the preview is current; the "Saved spec" bar goes when its spec is replaced, and Preview with an empty request box previews the current custom transform again; the chat closes when the conversation ends (a folder change, *Use the whole folder again*); a choice's detail is shown as plain text; the end of input or Ctrl-C at a terminal prompt stops (or means no) instead of a traceback; the diagnostics bundle keeps the last run with its session and adds the newer session folders under `results-later/`; a scripted `do` (no terminal) writes `compile.json` only — `conversation.json` comes from a terminal conversation or the window.
 - *Hermetic tests* (step 1): the suite no longer reaches the Windows Credential Manager (it used to read and overwrite a saved key), restores the machine's key variables after each test, and pins the model whatever `SPEC_SURGEON_MODEL` says.
 
+**Claude and your library (2026-10-16):** Abraham's ask — "when I type something a saved item already does, Claude can find my recipe or operation and offer it as a choice". Decided by the design note `docs/design/2026-10-16_claude_and_your_library.md` (its recommendations approved; Codex's two findings on the note folded in): chat only — an index of the library in the conversation's first message and two read-only tools (`list_library`, `read_library_item`; the one-shot compile, the advisor and the transform writer unchanged); Claude only *names* a recipe or operation in a choice, the app builds the choice from the library (exact name; a recipe must load, validate, keep its templates, place only visible words and dry-plan on the batch; an operation must load with its code unchanged) and shows the words a recipe places — the pick is what approves them, each its own source, and a spec of Claude's that places them earlier is refused by the traceability check; the item is pinned by a content hash and the pick uses the validated snapshot the user saw (a changed item is refused); a picked recipe is previewed as saved with this conversation's `request` and the conversation stays open; a picked operation is re-proven on the batch's samples first, the conversation kept, a failure told to Claude (`OperationFailed`), at the terminal too (the trials run inside the loop). `tests/test_library_choices.py` (21 tests; 706 in total). Still later: `run-op` / `run-recipe`, Claude writing to the library, sharing.
+
 The custom-transform whitelist (review-7) is fixed too: `codegen.check_source` is now an allowlist for module attributes (`MODULE_ATTRS`) and refuses any other use of a module object, frame/generator internals, dunder names and lxml's file readers/writers; the sandbox runner installs an audit hook (`install_guard`) that keeps every file-system change inside its working folder and refuses processes, sockets and native code. The prototype's statement still stands: the sandbox is a whitelist plus an audit hook in a separate process, not an OS-level jail. The second pass's tests are `tests/test_phase8_fixes_window.py` and `tests/test_phase8_fixes_cli.py`.
+
+---
+
+## Built-in operations status, part 1 (2026-10-16) — `set_properties` and the `properties` V10 kind
+
+The first of the deferred built-ins (Phase 8 status: ideas #22–23). Design note `docs/SET_PROPERTIES_DESIGN.md` — two
+Codex findings on the first draft folded in (the complex-script pairs, the provenance rule for style targets) — with
+nine decisions, all approved by Abraham as recommended; built verifier-first on PR #16. `set_properties` sets
+b/i/caps/smallCaps/strike/u/color on runs and paragraph marks or in style definitions, and
+keepNext/keepLines/widowControl/pageBreakBefore on paragraphs or paragraph styles; it adds no characters (caps is a
+display property). V10's `properties` kind re-derives the targets and the elements each gets with the verifier's own
+effective-value resolver, checks every target whole, resolves the effective result in the output (and everything that
+uses a changed style) and strips only what it compared. The open question recorded in Phase 8 — two ops on one
+paragraph — is answered for this round by keeping rule 9's granularity: one `set_properties` carries all of its
+properties; a font change and `set_properties` on the same paragraphs are two specs; finer aspects are a follow-up.
+README → "Formatting properties" is the user's view; `tests/test_set_properties.py` (25 tests) pins it.
 
 ---
 
