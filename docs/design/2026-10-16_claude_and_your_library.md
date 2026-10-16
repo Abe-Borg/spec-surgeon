@@ -2,6 +2,10 @@
 
 **Status: proposal, waiting for Abraham's approval. No code written.**
 
+Revised 2026-10-16 after Codex's review of this note (two findings on the pull request): the item Claude offers is
+pinned by hash and re-checked at the pick, and the spec used is the snapshot the user saw (§2, §3, §4, test 10); a
+saved operation that fails its trials at the terminal returns to the conversation instead of exiting (§5, test 11).
+
 Today the library (`library.py`) works only by hand: *Save to library…* / *Your library…* in the window,
 `spec-surgeon library` and `do --save-as` on the command line. Claude cannot see it. Phase 8 cut "Claude browsing
 the library (`read_recipe`, recipe/operation choices)" because it complicates the approved-words rule.
@@ -66,6 +70,14 @@ on the choice — picking it is what approves them, exactly like a suggested wor
     not shown" / "…its template file is no longer at C:\… — save the recipe again" / "…it plans on none of these
     files: [not-found] …" / "…it changed since it was saved"), and to Claude as an app note with the next message, so
     it does not believe it offered something it did not.
+- **The item as offered is the item used.** The choice keeps a content hash of the item as it was read when the
+  choice was built (a recipe: its spec file; an operation: `op.py` and `manifest.json`) and, for a recipe, the
+  validated spec itself — the snapshot whose words the user saw. The pick re-reads the item and refuses when the
+  hash differs ("your recipe «X» changed since Claude offered it — nothing was used; ask again, or use Your
+  library…"), said to the user and to Claude, nothing changed. Even with the hash equal, the spec used is the
+  snapshot, and `compiler.placed_words(spec) == Choice.words` is asserted before `_set_outcome` (false would be a
+  defect: it propagates, nothing runs). So no replacement or insertion text can reach a preview or a run without
+  having been shown on the choice that was picked. (Codex's first finding on this note.)
 - **Built by code, from the library only.** Label: `Use your recipe “Permit stamp” — <description> (saved 2026-10-10
   from the request «stamp the cover ISSUED FOR PERMIT»)`; `Try your operation “Header distance” — … (tried on this
   batch's sample files first; edited copies only)`. `words` = `compiler.placed_words(recipe spec)` (deduplicated, in
@@ -89,8 +101,9 @@ conversation's request; the conversation stays open, so "adapt it" is one reply 
 through every check a fresh spec does.**
 
 - The pick is an app choice (`take_app_choice`: recorded in the chat, "the app carried it out; the outcome follows"
-  queued for Claude; the recipe's words appended to `sources`). The app loads the recipe (`library.load_recipe`),
-  makes it the session's outcome (`_set_outcome(spec=…, source=<the recipe's path>)` — not `Session.load_spec`, which
+  queued for Claude; the recipe's words appended to `sources`). The app re-reads the recipe and refuses a file whose hash
+  differs from the choice's (§2), takes the validated snapshot the choice holds, asserts its placed words are exactly
+  the choice's `words`, makes it the session's outcome (`_set_outcome(spec=…, source=<the recipe's path>)` — not `Session.load_spec`, which
   ends the conversation), previews it, and tells Claude what the preview found (`_note_preview`, headed *THE PREVIEW
   OF YOUR RECIPE «NAME» (used as saved)*). The window and the terminal do what they do after any preview.
 - **Why `request` is the current request:** CLAUDE.md rule 13 — the spec a conversation hands the app carries
@@ -121,8 +134,9 @@ kept, because Claude offered it and must hear the outcome.** Shared code (`Sessi
 *Your library…* (which still ends the conversation first) and by the chat.
 
 - The pick voids the previous outcome (every reply and choice does — the window's Run key counts user turns), records
-  the choice, then: `library.load_operation` (sha256 and whitelist checked again at pick time), `codegen.pick_samples`
-  over the batch, `_prove` in a **new** session folder (`library-trial/NN`; the approval token and inputs taken BEFORE
+  the choice, then: the operation's folder hashed against the choice's (a changed `op.py` or manifest refuses, §2),
+  `library.load_operation` (the manifest's sha256 and the whitelist checked again at pick time),
+  `codegen.pick_samples` over the batch, `_prove` in a **new** session folder (`library-trial/NN`; the approval token and inputs taken BEFORE
   the trials), and only when every sample passes: `_use_folder`, `_show_generated` (preview, Claude's visual check
   when rendering, the token set last) and a note to Claude — *"Your operation «NAME» passed verification on the sample
   files; the user reviews its preview"* + the preview text. Run writes **edited copies only** (`run_generated`).
@@ -149,10 +163,14 @@ kept, because Claude offered it and must hear the outcome.** Shared code (`Sessi
   one `exact words: «…»` line per word. `#n` asks **"Approve these exact words for your documents: «A»; «B»? [y/N]"**
   (one prompt; a typed `n` declines and the conversation goes on; Ctrl-C / end of input stops, as today) — a recipe
   without words asks nothing. A recipe then takes the normal path: preview, visual check, "Run this on N file(s)?
-  [y/N]", the token re-check, the run. An operation: "Trying your operation 'NAME' on [samples]…", a failing sample is
-  exit 2 with the reason, else its preview, "Run it on N file(s) (edited copies only)? [y/N]", the token re-check,
-  `run_generated` — the second half of `_do_codegen`, shared (`cli._do_saved_operation`). `--save-as` keeps working
-  (a recipe copied under a new name; an operation that passed here saved again).
+  [y/N]", the token re-check, the run. An operation is tried **inside the conversation loop** (`cli._talk`):
+  "Trying your operation 'NAME' on [samples]…"; a failing sample prints the refusal, notes it to Claude and returns to
+  the reply prompt — the conversation continues, as in the window (§4; Codex's second finding on this note: exiting
+  there lost the context) — and only a passing one ends the loop, for `cmd_do` to preview it: "Run it on N file(s)
+  (edited copies only)? [y/N]", the token re-check, `run_generated` — the second half of `_do_codegen`, shared
+  (`cli._do_saved_operation`). A recipe's preview, like a Claude-submitted spec's, is where a terminal conversation
+  ends: the command line has no reply-after-preview loop today (the window has). `--save-as` keeps working (a recipe
+  copied under a new name; an operation that passed here saved again).
 - Records: `conversation.json` entries show `Chose: Use your recipe “…” — exact words: «…»`, the app's lines (a
   dropped choice, the outcome), `approved_words` with the recipe's words; `compile.json` is unchanged in shape; the
   session folders follow the existing rules (a used folder's records are frozen; a trial opens a new one).
@@ -200,6 +218,12 @@ Planted, each failing without the code it pins:
    and Run is enabled; *Try it* runs the trials first.
 9. **The terminal**: `#n` asks for the words; `n` keeps the conversation going; `y` previews and reaches the Run
    question; an operation choice runs the trials, then its preview.
+10. **A recipe edited between the offer and the pick is refused**: the words shown are the old ones; the pick re-reads
+    the file, the hash differs, nothing changes, the user and Claude are told; and a snapshot whose placed words
+    differ from `Choice.words` never reaches `_set_outcome` (planted: a snapshot swapped under the choice trips the
+    assertion). The same for an operation whose `op.py` or manifest changed after it was offered.
+11. **A terminal operation that fails its trials returns to the conversation**: `#n`, the trials fail, the refusal is
+    printed and noted to Claude, the reply prompt comes back, and a typed reply reaches Claude with the note.
 
 ## 8. Not in this change
 
@@ -215,3 +239,6 @@ window's *Your library…* or `run-spec`); Claude saving, renaming or deleting l
 4. §4 — the pick voids the previous preview before the trials, as every reply does (R), rather than keeping an old
    preview runnable while a saved operation fails.
 5. §2 — a recipe that plans on none of these files is not offered (R), rather than offered and failed in the preview.
+6. §2 — the item Claude offers is pinned by hash and the pick uses the snapshot the user saw, refusing a changed file
+   (R), rather than re-reading the file at the pick and re-running every check on whatever it holds then (also safe,
+   but the words shown and the words used would come from two reads).
