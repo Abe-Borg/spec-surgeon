@@ -709,6 +709,151 @@ def build_formatted(section_number: str = "21 13 13", title: str = "WET-PIPE SPR
     return buf.getvalue()
 
 
+# ---- built-in batch 1 (docs/BUILTIN_OPS_BATCH1_DESIGN.md) ------------------------------------------------------------
+
+BATCH1_TAGS = ("WET", "DRY", "PREACTION", "WET/DRY", "CLEAN AGENT")
+
+
+def _hyperlink(paragraph, text: str, url: str = "https://example.com/owner"):
+    part = paragraph.part
+    rid = part.relate_to(url, "http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink",
+                         is_external=True)
+    h = OxmlElement("w:hyperlink"); h.set(qn("r:id"), rid)
+    r = OxmlElement("w:r"); t = OxmlElement("w:t"); t.text = text; r.append(t); h.append(r)
+    paragraph._p.append(h)
+
+
+def _textbox_run(paragraph, text: str):
+    """A run holding a text box (DrawingML + VML fallback, as Word writes it): the text exists twice."""
+    xml = (
+        '<w:r xmlns:w="%s" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+        'xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:inline><wp:extent cx="914400" cy="457200"/>'
+        '<wp:docPr id="901" name="Text Box 1"/><a:graphic><a:graphicData '
+        'uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:txbx><w:txbxContent>'
+        '<w:p><w:r><w:t>%s</w:t></w:r></w:p></w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData>'
+        '</a:graphic></wp:inline></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent>'
+        '<w:p><w:r><w:t>%s</w:t></w:r></w:p></w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback>'
+        '</mc:AlternateContent></w:r>') % (W_NS, text, text)
+    paragraph._p.append(etree.fromstring(xml))
+
+
+def _run_child(paragraph, run_text_before: str, element: str, run_text_after: str):
+    """One run: w:t, then an empty element (w:lastRenderedPageBreak, w:softHyphen …), then w:t."""
+    r = paragraph.add_run(run_text_before)._r
+    r.append(OxmlElement(f"w:{element}"))
+    t = OxmlElement("w:t"); t.text = run_text_after; t.set(qn("xml:space"), "preserve"); r.append(t)
+
+
+def build_batch1(section_number: str = "21 13 19", title: str = "PREACTION SPRINKLER SYSTEMS", *,
+                 stamp: str = "ISSUED FOR PERMIT 2026-01-15", cover_stamp: str = "ISSUED FOR BID",
+                 eos: str = "wrong", ends_with_table: bool = False, header_logo: bool = True,
+                 tracked_on: bool = True, textbox: bool = False) -> bytes:
+    """Hard cases for built-in batch 1 — every paragraph found by its text in the tests, never by index:
+
+    * header: ``ACME DATA CENTERS — {{SITE_NAME}}``, a tab, the issue ``stamp``; a logo (``header_logo``); footer
+      ``<section> - {PAGE}``;
+    * body: the title line ``SECTION <n> - <title>``; the cover ``cover_stamp`` (bold); placeholders — one split over
+      three runs, a highlighted ``PROJECT NO`` slot, one inside a field result; MasterSpec option groups, a nested one;
+      "Owner" before a tab ("The Owner<tab>shall"), in "Ownership", in a hyperlink, in a text box, inside Jeremy's
+      pending insertion, beside Jack's pending deletion, split by a page-break mark, in a text box (``textbox``);
+      tagged paragraphs (BATCH1_TAGS);
+    * the end: ``eos`` "right" (END OF SECTION <n>), "wrong" (another number), "missing", "early" (an END OF SECTION
+      line followed by a paragraph), "styled" (missing, and an ``EOS`` style exists); ``ends_with_table``: a table after
+      the last paragraph.
+    """
+    from docx.enum.style import WD_STYLE_TYPE
+    from docx.enum.text import WD_COLOR_INDEX
+    doc = Document()
+    styles = doc.styles
+    styles["Normal"].font.name = "Arial"
+    styles["Normal"].font.size = Pt(10)
+    if eos == "styled":
+        eos_style = styles.add_style("EOS", WD_STYLE_TYPE.PARAGRAPH)
+        eos_style.base_style = styles["Normal"]
+        eos_style.paragraph_format.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    sec = doc.sections[0]
+    hp = sec.header.paragraphs[0]
+    hp.add_run("ACME DATA CENTERS — ")
+    hp.add_run("{{SITE_NAME}}")
+    hp.add_run("\t")
+    hp.add_run(stamp)
+    if header_logo:
+        hp.add_run(" ").add_picture(io.BytesIO(png((10, 80, 160), size=8)), width=Pt(36))
+    sec.footer.paragraphs[0].add_run(f"{section_number} - ")
+    _page_field(sec.footer.paragraphs[0])
+
+    doc.add_paragraph(f"SECTION {section_number} - {title}")
+    if cover_stamp:
+        doc.add_paragraph().add_run(cover_stamp).bold = True
+    doc.add_paragraph("PART 1 - GENERAL")
+    doc.add_paragraph("1.01\tSUMMARY")
+    p = doc.add_paragraph()
+    p.add_run("A.\tThe Owner is {{OWNER_NAME}} for the ")
+    p.add_run("{{SI")
+    p.add_run("TE_")
+    p.add_run("NAME}} campus.")                                                     # a placeholder over three runs
+    p = doc.add_paragraph()
+    p.add_run("B.\tThe project number is ")
+    slot = p.add_run("PROJECT NO")
+    slot.font.highlight_color = WD_COLOR_INDEX.YELLOW                               # a highlighted slot
+    p.add_run(".")
+    p = doc.add_paragraph()
+    p.add_run("C.\tProvide [wet-pipe] [dry-pipe] [preaction] sprinkler systems for the data halls.")
+    p = doc.add_paragraph()
+    p.add_run("D.\t[Coordinate with the clean agent system.] Install hangers per NFPA 13.")
+    p = doc.add_paragraph()
+    p.add_run("E.\tPipe shall be [Schedule 40] [")
+    p.add_run("Schedule 10] black steel.")                                          # a group over two runs
+    doc.add_paragraph("F.\t[Provide [6] [8] inch mains.]")                         # nested
+    p = doc.add_paragraph()
+    p.add_run("G.\tThe Owner\tshall review the Ownership documents.")               # a tab inside "Owner shall"
+    p = doc.add_paragraph()
+    p.add_run("H.\tSee the ")
+    _hyperlink(p, "Owner portal")
+    p.add_run(".")
+    p = doc.add_paragraph()
+    p.add_run("I.\tThe insurer of the Owner is FM")
+    _run_child(p, "", "lastRenderedPageBreak", " Global.")                          # a page-break mark in the phrase
+    p = doc.add_paragraph()
+    p.add_run("J.\tSprinklers: ")
+    p.add_run("INS:listed per the Owner's insurer")                                 # Jeremy's pending insertion
+    p.add_run(" as indicated.")
+    p = doc.add_paragraph()
+    p.add_run("K.\tThe Owner ")
+    p.add_run("DEL:reserves ")                                                      # Jack's pending deletion
+    p.add_run("shall approve.")
+    p = doc.add_paragraph()
+    p.add_run("L.\tSee ")
+    _ref_field(p)                                                                    # REF field result "21 10 00"
+    p.add_run(" for the Owner.")
+    if textbox:
+        p = doc.add_paragraph()
+        p.add_run("M.\tOwner in a text box: ")
+        _textbox_run(p, "Owner box text")
+    for tag in BATCH1_TAGS:
+        doc.add_paragraph(f"[{tag}] {tag.title()} system paragraph.")
+    doc.add_paragraph("N.\tUntagged closing paragraph.")
+    if eos == "early":
+        doc.add_paragraph(f"END OF SECTION {section_number}")
+        doc.add_paragraph("O.\tA paragraph after the end line.")
+    elif eos == "right":
+        doc.add_paragraph(f"END OF SECTION {section_number}")
+    elif eos == "wrong":
+        doc.add_paragraph("End of Section 21 13 13")
+    doc.add_paragraph("")                                                           # an empty paragraph at the end
+    if ends_with_table:
+        t = doc.add_table(rows=1, cols=2)
+        t.cell(0, 0).text = "Item"; t.cell(0, 1).text = "Value"
+    if tracked_on:
+        doc.settings.element.insert(0, OxmlElement("w:trackRevisions"))
+    buf = io.BytesIO(); doc.save(buf)
+    return _post_process(buf.getvalue())
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir")

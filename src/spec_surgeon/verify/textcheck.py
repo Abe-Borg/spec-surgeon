@@ -80,12 +80,20 @@ class BlockChange:
     struct_after: Dict[str, int]
 
 
-def diff_blocks(before: List[Block], after: List[Block]) -> List[BlockChange]:
-    """Align the two block lists on text and report every difference (text or structural counts)."""
+def diff_blocks(before: List[Block], after: List[Block], deleted_hint: Optional[set] = None,
+                inserted_hint: Optional[set] = None) -> List[BlockChange]:
+    """Align the two block lists on text and report every difference (text or structural counts).
+
+    ``deleted_hint`` (source indices) and ``inserted_hint`` (output indices) are the plan's predicted untracked block
+    deletions and insertions. They only decide how an unequal-length region the text alignment could not pair is
+    reported: with those blocks set aside, when the remaining counts are equal the remaining blocks are paired in order
+    (an edited paragraph beside a deleted one reads as "changed", not "deleted + inserted"). Every pair is still reported
+    as a change when its text or structure differs, so nothing is excused; any other shape is reported as before."""
     a = [b.text for b in before]
     b = [c.text for c in after]
     sm = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
     changes: List[BlockChange] = []
+    dh, ih = set(deleted_hint or ()), set(inserted_hint or ())
     for op, i1, i2, j1, j2 in sm.get_opcodes():
         if op == "equal":
             for k in range(i2 - i1):
@@ -96,6 +104,20 @@ def diff_blocks(before: List[Block], after: List[Block]) -> List[BlockChange]:
             for k in range(i2 - i1):
                 x, y = before[i1 + k], after[j1 + k]
                 changes.append(BlockChange(x.index, y.index, x.text, y.text, x.struct, y.struct))
+        elif op == "replace" and (dh or ih) and (
+                len([x for x in before[i1:i2] if x.index not in dh]) == len([y for y in after[j1:j2] if y.index not in ih])
+                and any(x.index in dh for x in before[i1:i2]) | any(y.index in ih for y in after[j1:j2])):
+            rest_s = [x for x in before[i1:i2] if x.index not in dh]
+            rest_o = [y for y in after[j1:j2] if y.index not in ih]
+            for x in before[i1:i2]:
+                if x.index in dh:
+                    changes.append(BlockChange(x.index, None, x.text, None, x.struct, {}))
+            for y in after[j1:j2]:
+                if y.index in ih:
+                    changes.append(BlockChange(None, y.index, None, y.text, {}, y.struct))
+            for x, y in zip(rest_s, rest_o):
+                if x.text != y.text or x.struct != y.struct:
+                    changes.append(BlockChange(x.index, y.index, x.text, y.text, x.struct, y.struct))
         else:
             for x in before[i1:i2]:
                 changes.append(BlockChange(x.index, None, x.text, None, x.struct, {}))

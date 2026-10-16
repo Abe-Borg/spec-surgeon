@@ -316,7 +316,10 @@ def reference_slots(p, where: str, ref_values: Dict[str, str], in_field: Optiona
 
 
 def find_slots(p, markers: Sequence[str], colors: Sequence[str], where: str,
-               ref_values: Optional[Dict[str, str]] = None, in_field: Optional[set] = None) -> List[Slot]:
+               ref_values: Optional[Dict[str, str]] = None, in_field: Optional[set] = None,
+               text_only: bool = True) -> List[Slot]:
+    """``text_only`` False (fill_variables: the in-paragraph edit core places a value in any run) drops only the rule
+    that a highlight/braces slot's runs hold nothing but text; every other refusal stays."""
     text, segs = display_segments(p)
     spans: List[Slot] = []
     if "reference" in markers:
@@ -353,7 +356,7 @@ def find_slots(p, markers: Sequence[str], colors: Sequence[str], where: str,
                                    {"where": where, "text": text})
             spans.append(Slot(m.group(1), "braces", m.start(), m.end(), m.group(0)))
     for s in spans:
-        if s.marker != "reference":          # a reference slot never holds a separator; carve keeps what's beside it
+        if s.marker != "reference" and text_only:   # a reference slot never holds a separator; carve keeps what's beside it
             for t, r, a, b in segs:
                 if a < s.end and s.start < b and any(c.tag not in TEXT_ONLY for c in r):
                     raise JobException(f"{where}: slot {s.name!r} runs through a run holding more than text "

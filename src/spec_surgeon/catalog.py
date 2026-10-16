@@ -63,6 +63,33 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "tracked insertion unless untracked was requested",
     ],
     "fix_page_numbering": ["body page numbering restarts at 1 after the cover"],
+    "replace_table": [
+        "every replacement is exactly the user's wording; all pairs are found at once in the original text (two words "
+        "can swap), whole words and exact case unless the user says otherwise",
+        "the body, headers and footers are searched; text inside fields, text boxes and pending deletions is never "
+        "changed — an occurrence there (or split by a tab or line break) sets the file aside rather than being skipped",
+        "tracked unless the user asked for clean copies; a file with none of the words is set aside unless "
+        "allow_missing (say which)",
+    ],
+    "set_issue_stamp": [
+        "the stamp is found wherever it sits — the cover, a header or a footer — by its current wording (the pattern or "
+        "phrases); every occurrence becomes the user's new wording exactly",
+        "a file without the stamp is set aside unless allow_missing; tracked unless the user asked for clean copies",
+    ],
+    "fill_variables": [
+        "placeholders are the {{NAME}} markers and the yellow-highlighted text; each gets its value from the typed "
+        "values or the user's table (the named site/project column) — never invented",
+        "a placeholder with no value sets the file aside unless 'leave' was asked; highlights go from filled text",
+        "tracked unless the user asked for clean copies (a master turned into a site set usually is untracked)",
+    ],
+    "resolve_options": [
+        "an option group is [option] [option] … separated by spaces; for each group the first rule that matches one of "
+        "its options decides; groups no rule matches stay as they are",
+        "'pick' keeps the one matching option's own words and removes the brackets and the other options — nothing is "
+        "retyped; 'drop' removes matching options (a whole optional [text] with its space)",
+        "a nested group, a group shown by a field, or a pick that matches two options sets the file aside",
+        "tracked unless the user asked for clean copies",
+    ],
     "apply_header_footer_template": [
         "template slots are the yellow-highlighted placeholders and the {{NAME}} placeholders",
         "each fill is extracted from each document by a stated rule (or fallback rule chain), never typed",
