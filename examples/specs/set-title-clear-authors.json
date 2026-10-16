@@ -1,0 +1,17 @@
+{
+  "request": "Set the title to Wet-Pipe Sprinkler Systems and the company to ACME Fire Protection, and clear the author names",
+  "summary": "The document properties: title Wet-Pipe Sprinkler Systems, company ACME Fire Protection; the author and last-modified-by names removed. Nothing in the document's text changes.",
+  "assumptions": [
+    "'the author names' are the Author and Last Modified By properties; tracked changes and comments keep their authors' names (flagged where a file has any)",
+    "fields that show the title (TITLE, DOCPROPERTY Title) keep the value they showed until Word updates fields (flagged)"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "untracked",
+  "ops": [
+    {"op": "set_document_properties",
+     "params": {"set": {"title": "Wet-Pipe Sprinkler Systems", "company": "ACME Fire Protection"},
+                "clear": ["author", "last_modified_by"]}}
+  ],
+  "review": {"sample_files": 1}
+}
