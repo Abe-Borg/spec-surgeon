@@ -36,6 +36,7 @@ re-exported here). ``spec-surgeon do`` and the window write it to ``compile.json
 """
 from __future__ import annotations
 
+import copy
 import json
 import re
 from dataclasses import dataclass, field
@@ -151,6 +152,14 @@ CHAT_NOTE = """
 reply.
 - view_pages shows you rendered pages (of a batch file or the template) when what the user means depends on how the \
 pages look; the profiles cannot show you lines, boxes, logos or layout.
+- YOUR LIBRARY (in the first message; list_library for the rest) is the user's saved recipes — specs they previewed \
+before — and operations — custom transforms that passed. When the request matches one (the same change, by its name, \
+its description or the request it was saved from: "like last time"), read it with read_library_item and offer it as a \
+choice {"kind": "recipe" or "operation", "name": <its exact name>}: the app builds that choice from the library and \
+shows the user the exact words a recipe places; only the user's pick approves them. Never copy a recipe's words into a \
+spec of your own before that pick — they are refused like any words the user did not give. Offer your own reading \
+beside it when both fit. A picked recipe is previewed as saved and the user may then ask you for changes; a picked \
+operation is tried on the sample files first.
 """
 
 
@@ -162,7 +171,48 @@ VIEW_PAGES_TOOL = {
         "file": {"type": "string", "description": "a file name from the profiles, or \"template\""},
         "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 3}},
         "required": ["file"]}}
-CHAT_TOOLS = list(TOOLS) + [VIEW_PAGES_TOOL]   # the conversation's tools; the advisor never gets these
+# The user's library in the conversation (chat only — the one-shot compile has nobody to pick a choice): an index of it
+# in the first message (``library_index``), these two read-only tools, and two choice kinds Claude may NAME (``recipe``,
+# ``operation``) that the app builds from the library itself (conversation._library_choice; CLAUDE.md rule 13).
+INDEX_LIMIT = 40                                   # items the first message's index shows; list_library has the rest
+INDEX_BUDGET = 18000                               # characters of a list_library result (the tool-result cap is 20,000)
+DESCRIPTION_CHARS, REQUEST_CHARS, BRIEF_CHARS = 160, 200, 3000
+PLACED_WORDS_RULE = ("these words count as the user's ONLY once the user picks the choice offering this recipe; a spec "
+                     "of yours that places them before that pick is refused like any words the user did not give")
+
+LIBRARY_TOOLS = [
+    {"name": "list_library", "description": "The user's library: every saved recipe (a spec they previewed before: its "
+     "op names, mode, template files, how many words it places) and operation (a custom transform that passed: its "
+     "proposal), each with its name, description and the request it was saved from. The first message carries the "
+     "same index (up to 40 items); call this for the rest, or to look again.",
+     "input_schema": {"type": "object", "properties": {}}},
+    {"name": "read_library_item", "description": "One library item in full. A recipe: its spec as saved, the exact "
+     "words it places (they count as the user's ONLY if the user picks the choice that shows them), its template "
+     "files and whether each exists, and a dry plan over this batch. An operation: its manifest (request, proposal, "
+     "select/params, attempts, the conversation it came from) — never its code. Offer the item as a choice "
+     "{\"kind\": \"recipe\" | \"operation\", \"name\": <this exact name>} when it does what the user asks.",
+     "input_schema": {"type": "object", "properties": {
+         "name": {"type": "string", "description": "the item's exact name, from YOUR LIBRARY or list_library"}},
+         "required": ["name"]}},
+]
+
+
+def _chat_ask_user() -> Dict[str, Any]:
+    """ask_user as the conversation offers it: a choice may also NAME one of the user's library items (kinds ``recipe``
+    and ``operation``, with ``name``); the app builds that choice from the library. The one-shot tool is unchanged."""
+    tool = copy.deepcopy(next(t for t in TOOLS if t["name"] == "ask_user"))
+    choice = tool["input_schema"]["properties"]["choices"]["items"]
+    choice["properties"]["kind"]["enum"] = ["clarify", "alternative", "rephrase", "recipe", "operation"]
+    choice["properties"]["name"] = {
+        "type": "string", "description": "for kind recipe or operation only: the exact name of the user's library item "
+                                         "to offer (the app builds that choice from the library; your label and wording "
+                                         "are not used for it)"}
+    return tool
+
+
+ASK_USER_CHAT = _chat_ask_user()
+# the conversation's tools; the advisor and the transform writer never get these
+CHAT_TOOLS = [ASK_USER_CHAT if t["name"] == "ask_user" else t for t in TOOLS] + [VIEW_PAGES_TOOL] + LIBRARY_TOOLS
 
 
 def system_prompt(chat: bool = False) -> str:
@@ -481,6 +531,102 @@ class _Batch:
         pkg = DocxPackage.from_path(self.template)
         return {"path": str(self.template), "template_spec": template_spec_summary(pkg), "profile": profile(pkg)}
 
+    def list_library(self):
+        """The conversation's tool (chat only): the whole library, within the tool-result budget."""
+        return library_index(limit=None)
+
+    def read_library_item(self, name: str):
+        """The conversation's tool (chat only): one item in full, a recipe dry-planned over this batch."""
+        return library_item_detail(name, self)
+
+
+def _cut(text: Any, n: int) -> str:
+    text = " ".join(str(text or "").split())
+    return text if len(text) <= n else text[:n - 1] + "…"
+
+
+def library_entry(item: Any) -> Dict[str, Any]:
+    """One library item as the index shows it to Claude: what it is and where it came from — never the words a recipe
+    places (read_library_item shows those beside the rule that only the user's pick approves them, and the choice
+    shows them to the user). An item that cannot be read is listed with its problem, never hidden."""
+    from .editspec import load_spec, spec_templates
+    e: Dict[str, Any] = {"kind": item.kind, "name": item.name, "description": _cut(item.description, DESCRIPTION_CHARS),
+                         "saved": item.saved_at, "request": _cut(item.request, REQUEST_CHARS)}
+    try:
+        if item.kind == "recipe":
+            spec = load_spec(item.path)
+            e["ops"] = [str(o.get("op")) for o in spec.get("ops") or [] if isinstance(o, dict)]
+            e["mode"] = spec.get("mode")
+            e["places_words"] = len(placed_words(spec))
+            e["templates"] = [{"path": str(t), "exists": t.is_file()} for t in spec_templates(spec)]
+        else:
+            manifest = json.loads((Path(item.path) / "manifest.json").read_text(encoding="utf-8"))
+            e["op"] = manifest.get("op_name")
+            e["proposal"] = _cut(manifest.get("proposal"), DESCRIPTION_CHARS)
+    except Exception as ex:  # noqa: BLE001 — a broken item is said, and never stops the index
+        e["error"] = f"cannot be read ({type(ex).__name__}: {ex})"
+    return e
+
+
+def library_index(limit: Optional[int] = INDEX_LIMIT, budget: int = INDEX_BUDGET) -> Dict[str, Any]:
+    """The user's library for Claude: ``items`` (``library_entry`` each, at most ``limit``, and within ``budget``
+    characters of JSON) and ``more`` (how many were left out). The conversation's first message carries it (chat
+    mode); ``list_library`` is the same without the item limit."""
+    from .library import list_items
+    items = list_items()
+    shown = [library_entry(i) for i in (items if limit is None else items[:limit])]
+    while shown and len(json.dumps(shown, ensure_ascii=False)) > budget:
+        shown.pop()
+    return {"items": shown, "more": len(items) - len(shown)}
+
+
+def dry_plan_summary(spec: Dict[str, Any], batch: "_Batch") -> Dict[str, Any]:
+    """How a spec plans on this batch, for read_library_item: the gate's verdict (``_dry_errors``) and, per structure
+    pattern, 'plans' or the refusal of the last file tried — the pattern's files are tried in order until one plans,
+    as the gate does."""
+    per = []
+    for pat in batch.prof["patterns"]:
+        verdict = "no file could be tried"
+        for f in batch.pattern_paths(pat):
+            try:
+                pkg = DocxPackage.from_path(f)
+                plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+                verdict = "plans"
+                break
+            except JobException as e:
+                verdict = f"{batch.label(f)}: [{e.code}] {e.reason}"
+            except Exception as e:  # noqa: BLE001 — an unreadable file is said as such
+                verdict = f"{batch.label(f)}: cannot be read ({type(e).__name__}: {e})"
+        per.append({"pattern_id": pat["pattern_id"], "files": pat["count"], "result": verdict})
+    errs = _dry_errors(spec, batch)
+    return {"accepted": not errs, "errors": errs, "patterns": per}
+
+
+def library_item_detail(name: str, batch: Optional["_Batch"] = None) -> Dict[str, Any]:
+    """read_library_item: the item in full. A recipe: the spec exactly as saved, the words it places under
+    ``PLACED_WORDS_RULE``, its templates with whether each exists, and (with a batch) ``dry_plan_summary``. An
+    operation: its manifest without ``op.py`` — Claude has nothing to do with the code — the brief cut at
+    ``BRIEF_CHARS``. A name that is not in the library, a recipe that does not load or validate: the tool's error."""
+    from .editspec import load_spec, spec_templates, validate_spec
+    from .library import find
+    item = find(name)
+    out: Dict[str, Any] = {"kind": item.kind, "name": item.name, "description": item.description,
+                           "saved": item.saved_at, "request": item.request}
+    if item.kind == "recipe":
+        spec = load_spec(item.path)
+        validate_spec(spec)
+        out["spec"] = spec
+        out["placed_words"] = placed_words(spec)
+        out["placed_words_rule"] = PLACED_WORDS_RULE
+        out["templates"] = [{"path": str(t), "exists": t.is_file()} for t in spec_templates(spec)]
+        if batch is not None:
+            out["dry_plan"] = dry_plan_summary(spec, batch)
+        return out
+    manifest = json.loads((Path(item.path) / "manifest.json").read_text(encoding="utf-8"))
+    out.update({k: manifest.get(k) for k in ("op_name", "proposal", "select", "params", "model", "attempts")})
+    out["brief"] = _cut(manifest.get("brief"), BRIEF_CHARS)
+    return out
+
 
 def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     """Spec-level failures of a dry plan on one file per pattern.
@@ -548,7 +694,10 @@ def check_submission(spec: Any, batch: _Batch, sources: Sequence[str]) -> List[s
 
 
 def build_messages(request: str, batch: _Batch, answers: Sequence[str], memory: Dict[str, Any],
-                   prior_failures: Optional[Sequence[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+                   prior_failures: Optional[Sequence[Dict[str, Any]]] = None,
+                   library: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """The first user message. ``library`` (``library_index()``; the conversation passes it in chat mode only) adds
+    YOUR LIBRARY before the batch — an index, never the words a recipe places."""
     parts = [f"REQUEST:\n{request}"]
     if answers:
         parts.append("THE USER'S ANSWERS TO EARLIER QUESTIONS:\n" + "\n".join(f"- {a}" for a in answers))
@@ -563,6 +712,12 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str], memory: 
         parts.append(f"A TEMPLATE FILE IS ATTACHED: {batch.template} — a prepared header/footer template or a "
                      f"template spec (e.g. the architect's); call read_template to see which, and put this exact path "
                      f"in the op's 'template' param")
+    if library and library.get("items"):
+        parts.append("YOUR LIBRARY — the user's saved recipes (specs they previewed before) and operations (custom "
+                     "transforms that passed). When one does what the user asks, read it (read_library_item) and offer "
+                     "it as a choice {\"kind\": \"recipe\" | \"operation\", \"name\": <its exact name>}:\n"
+                     + json.dumps(library["items"], ensure_ascii=False)
+                     + (f"\n… and {library['more']} more — call list_library" if library.get("more") else ""))
     parts.append("THE BATCH (profiles per structure pattern):\n" + json.dumps(batch.summary(), ensure_ascii=False))
     return [{"role": "user", "content": "\n\n".join(parts)}]
 
