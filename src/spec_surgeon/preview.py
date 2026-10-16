@@ -358,6 +358,7 @@ class GeneratedPreview:
     review: Any = None
     review_ack: str = ""
     log_path: Optional[Path] = None                               # logs/preview.log
+    rendered: bool = False                                        # made with Render pages on (pages + visual check)
 
     def to_text(self) -> str:
         out = [f"PREVIEW — one-off custom transform {self.name!r} (AI-written, tested on sample files)"]
@@ -389,7 +390,7 @@ def preview_generated(g: Any, out_dir: Path, renderer: str = "auto", do_render: 
     name = getattr(g, "name", "") or "generated"
     log = _preview_log(out_dir, f"one-off custom transform {name!r}")
     try:
-        gp = GeneratedPreview(out_dir=out_dir, name=name, log_path=log.path)
+        gp = GeneratedPreview(out_dir=out_dir, name=name, log_path=log.path, rendered=bool(do_render))
         trials = list(getattr(g, "trials", None) or [])
         names = output_names([Path(t.source) for t in trials])
         for t in trials:

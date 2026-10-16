@@ -453,3 +453,28 @@ def test_the_window_tries_again_at_once_a_transform_whose_sample_was_edited_whil
     ui["buttons"]["run"].click()
     ui["wait"]()
     assert ui["results_model"].badges() == ["pass", "pass"]
+
+
+def test_turning_render_pages_on_makes_the_custom_transforms_preview_again_with_the_visual_check(folder, tmp_path,
+                                                                                                 monkeypatch):
+    """Codex on #12: a custom transform previewed with Render pages off, then previewed with it on, reused the old
+    preview — no page images, no visual check — while the window took the render-on key as current."""
+    import spec_surgeon.preview as pv
+    monkeypatch.setattr(pv, "render_samples", lambda *a, **k: None)   # no renderer in this test
+    reviews = []
+    monkeypatch.setattr(vision, "review_samples",
+                        lambda intent, samples, *a, **k: reviews.append(intent) or vision.VisualReview(summary="ok"))
+    s = offered(folder, tmp_path, WRITER)
+    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=quiet, render=False)
+    first, token = s.generated_preview, s.generated_token
+    assert first.rendered is False and first.review is None and reviews == [] and token
+    s.make_preview(render=True, log=quiet)
+    again = s.generated_preview
+    assert again is not first and again.rendered is True and again.out_dir != first.out_dir
+    assert len(reviews) == 1 and again.review is not None            # the visual check ran this time
+    assert s.generated_token == token                               # same files, same transform: same approval
+    s.make_preview(render=True, log=quiet)                          # nothing changed: the preview is reused
+    assert s.generated_preview is again and len(reviews) == 1
+    s.make_preview(render=False, log=quiet)                         # and back: made again without pages
+    assert s.generated_preview.rendered is False and len(reviews) == 1
+    assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)

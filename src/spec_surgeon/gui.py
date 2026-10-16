@@ -383,6 +383,20 @@ class Session:
             self._visual_check(self.generated_preview, intent, out / "preview", log)
         self.generated_token, self.generated_inputs = token, inputs
 
+    def _preview_again(self, render: bool, log: Log) -> None:
+        """The custom transform's files are as it was tried, but its preview was made with Render pages set the other way
+        (or is missing): make the preview again from the same passing trials, in a new folder, with page images and
+        Claude's visual check when rendering — never reuse a preview made without them. The token stays the same (the
+        files have not changed); ``_show_generated`` voids the old preview and its acknowledgement and sets it last."""
+        g = self.generated
+        token, inputs = self.generated_token, self.generated_inputs
+        out = self._next_session_dir()
+        log(f"Making the preview of the custom transform {g.name!r} again "
+            f"({'with' if render else 'without'} page images)…")
+        intent = self.generated_intent or f"A CUSTOM TRANSFORM ({g.name}) for: {g.request}\nWHAT IT DOES: {g.proposal}"
+        self._use_folder(out)
+        self._show_generated(g, out, token, inputs, intent, render, log)
+
     def _prove_again(self, files: List[Path], render: bool, log: Log) -> None:
         """A file changed (or was added or removed) since the custom transform was tried: try it again on the samples of
         the files as they are now, in a new folder, and preview that — the token is then current. One that no longer
@@ -450,6 +464,9 @@ class Session:
             files = self.files()
             if approval_token(self._generated_key(self.generated), files) != self.generated_token:
                 self._prove_again(files, render, log)   # stale: Run would refuse forever — re-prove, then preview
+            elif (self.generated_preview is None
+                  or bool(getattr(self.generated_preview, "rendered", False)) != bool(render)):
+                self._preview_again(render, log)        # Render pages changed: pages and the visual check follow it
             gp = self.generated_preview
             return ((gp.to_text() + "\n\n") if gp is not None else "") + \
                 "AI-written transform ready. Press Run to apply it to every file (edited copies only)."

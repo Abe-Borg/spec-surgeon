@@ -482,7 +482,9 @@ proposals and recorded in the plan's status sections.
   stops leaves nothing runnable); `_prove_again` (from `make_preview` when the token is stale) re-proves on the
   current samples in `_next_session_dir()/retrial/NN`, then `_use_folder` + `_show_generated`, or raises "the custom
   transform 'NAME' does not pass on the files as they are now — …" and changes nothing; `generated_intent` keeps the
-  visual-check intent for it. `use_operation` proves first in `_next_session_dir()/library-trial/NN` and only then
+  visual-check intent for it. `_preview_again` (from `make_preview` when the token is current but the preview was made with
+  *Render pages* set the other way — `GeneratedPreview.rendered`) makes the preview again from the same trials, in a new
+  folder, with pages and the visual check when rendering (Codex on #12). `use_operation` proves first in `_next_session_dir()/library-trial/NN` and only then
   `end_conversation`/`_use_folder`/`_show_generated`. `_use_folder(out)` (split from `_session_dir`) moves `out_dir`
   and the conversation's records. `conversation_matches` runs the conversation's files through the same template
   filter as `files()` (the attached template + `spec_templates(self.spec)`, `is_template_file`) and is False on
@@ -533,7 +535,7 @@ planted-defect test proving the verifier catches a wrong implementation of it �
 wrong implementation shared by plan and apply. Run `py -3 -m pytest -q -s` before and after (72 tests at the
 end of Phase 1, 116 at the end of Phase 2, 125 after Phase 3, 135 after Phase 4, 153 after Phase 5, 158 after Phase 6, 166 with the window, 178 with v0.3.0, 189 with the v0.3.1 audit fixes, 252 with v0.4.0, 316 with template specs and font sizes, 324 with the 2026-10-15 sweep fixes, 344 with the fixes from the external audit of v0.4.0, 356 with the 2026-10-15 GUI rework, license and About, 395 with diagnostics, 410 with
 Phase 8 (the conversation, visual check, library: 66 tests on top of 344, on its own branch), 481 with the two
-merged and the merge's own tests, 684 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`) — all pass but
+merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test_phase8_fixes*.py`) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -809,7 +811,7 @@ Both landed after v0.4.1 on separate branches; the merge keeps both sides' featu
 ## Phase 8 review fixes (2026-10-15)
 
 The merged branch was reviewed (an internal adversarially-verified review, Codex, the merge verifiers); every finding was
-reproduced first and `tests/test_phase8_fixes.py` pins each fix with a test that fails without it (684 tests in
+reproduced first and `tests/test_phase8_fixes.py` pins each fix with a test that fails without it (685 tests in
 total). README → "The Phase 8 review fixes" is the finding-by-finding table. Rules that came out of it (the details are
 in rules 13–17 and 19, Diagnostics rule 8 and "Where things are"):
 

@@ -1374,7 +1374,7 @@ Merged with the GUI rework and diagnostics (2026-10-15): master's model-side dia
 | `test_codegen.py` | + `codegen/history.json` keeping the exchange, and an API error as a recorded failure of the generation |
 | `test_gui.py` | + the GUI rework's window tests (the rail, Settings, Help, About, the update check) with the chat, Your library and the visual-check card in the reworked steps |
 
-The Phase 8 review fixes (2026-10-15; see ["The Phase 8 review fixes"](#the-phase-8-review-fixes-2026-10-15)): `tests/test_phase8_fixes.py` (with `test_phase8_fixes_window.py` and `test_phase8_fixes_cli.py` for the second pass) pins every fix — 684 tests in total, all of them pass but the Credential Manager round trip, which skips off Windows. Each test fails on the code before its fix:
+The Phase 8 review fixes (2026-10-15; see ["The Phase 8 review fixes"](#the-phase-8-review-fixes-2026-10-15)): `tests/test_phase8_fixes.py` (with `test_phase8_fixes_window.py` and `test_phase8_fixes_cli.py` for the second pass) pins every fix — 685 tests in total, all of them pass but the Credential Manager round trip, which skips off Windows. Each test fails on the code before its fix:
 
 | Covers | |
 |---|---|
@@ -1556,6 +1556,7 @@ After Phase 8 was merged with the GUI rework and diagnostics, the branch went th
 | review-21 the command line's gate on a blocking finding had no test | tests for a spec and for a custom transform (`--yes`, `--ack-review`, `--no-review`) |
 | review-10 two preview samples with one name (from two folders) were written to one output file, so a before/after picture and the visual check could pair a source with another file's output | sample outputs named by `batch.output_names` |
 | codex-2 turning *Render pages* on or off after a preview left Run enabled | the option is part of the window's preview key |
+| Codex on #12: a custom transform previewed with *Render pages* off and previewed again with it on reused the old preview — no page images, no visual check — while Run was enabled | `GeneratedPreview.rendered`; `Session.make_preview` makes the preview again from the same trials when the option differs (`_preview_again`) |
 | review-14 one of your operations picked after a loaded spec or recipe could neither run nor be previewed again, and the "Saved spec" bar stayed | the key is taken without the replaced spec; the bar goes when its spec is replaced; Preview with an empty request box previews the custom transform or operation again |
 | review-15 *Use the whole folder again* left an ended conversation's chat on screen, and a reply after the folder changed failed | the chat closes; a reply then says *The conversation ended* |
 | review-17 the end of every job re-enabled *Save to library…* and *I've looked — allow Run* whether or not the preview was current | both are live only while the preview is current |
