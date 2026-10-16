@@ -1,6 +1,7 @@
 # Claude and your library — design note (2026-10-16)
 
-**Status: proposal, waiting for Abraham's approval. No code written.**
+**Status: approved by Abraham on 2026-10-16 ("let's go with your recommendations") and implemented in the same pull
+request — `tests/test_library_choices.py` pins the rules of §7.**
 
 Revised 2026-10-16 after Codex's review of this note (two findings on the pull request): the item Claude offers is
 pinned by hash and re-checked at the pick, and the spec used is the snapshot the user saw (§2, §3, §4, test 10); a

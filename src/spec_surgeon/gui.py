@@ -36,6 +36,17 @@ class TransformFailed(RuntimeError):
         super().__init__(self.PREFIX + details)
 
 
+class TrialsFailed(RuntimeError):
+    """A transform tried on the batch's sample files (``Session._prove``: sandbox + the full suite) did not pass on
+    every one — a recorded refusal naming each failing sample, never a defect. Nothing changed in the session."""
+
+
+class OperationFailed(TrialsFailed):
+    """One of your saved operations does not pass on this batch's samples. When the conversation offered it (a choice
+    Claude named), this is the ONE outcome Claude hears — as ``TransformFailed`` is for a fresh custom transform; a
+    defect while trying it is never told to Claude as a result."""
+
+
 # ---- the logic (no widgets; tested on its own) ----------------------------------------------------
 
 @dataclass
@@ -68,6 +79,9 @@ class Session:
                                                   # (the compile record sits beside its preview); None once used
     generated_inputs: Dict[str, Any] = field(default_factory=dict)   # approval_inputs beside generated_token
     generated_intent: str = ""                    # what the custom transform's visual check is told it should do
+    recipe_name: str = ""                         # the outcome is one of your recipes, picked in the conversation and
+                                                  # used as saved (``spec_source`` "compiled": the conversation's
+                                                  # outcome)
 
     def _templates(self, outcome: bool = True) -> List[Path]:
         """The files that are never part of the batch: the attached template and (``outcome``) every template the
@@ -129,14 +143,17 @@ class Session:
 
     # ---- steps ----
     # ---- outcome: a spec XOR a custom transform, and what was previewed of it ----
-    def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "") -> None:
+    def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "",
+                     recipe: str = "") -> None:
         """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
         old one: a reply that turns a custom transform into a spec must never leave the transform runnable, and a reply
-        that only asks a question must never leave the old spec's preview runnable."""
+        that only asks a question must never leave the old spec's preview runnable. ``recipe``: the spec is one of your
+        recipes picked in the conversation (``recipe_name``; the Preview step and the visual check say so)."""
         if spec is not None and generated is not None:
             raise ValueError("a session runs either a spec or a custom transform, not both")
         self.spec, self.generated = spec, generated
         self.spec_source = source if spec is not None else ""
+        self.recipe_name = recipe if spec is not None else ""
         self.preview, self.generated_token, self.generated_preview = None, "", None
         self.generated_inputs, self.generated_intent = {}, ""
 
@@ -218,6 +235,9 @@ class Session:
             self.chat_dir = self._compiled_dir = self._next_session_dir()   # as they were; this reply's go here
             log(f"The conversation continues in {self.chat_dir} (conversation.json, compile.json)")
         self._set_outcome()                       # whatever was previewed before this reply is void now
+        from .conversation import LIBRARY_CHOICE_KINDS
+        if chosen is not None and chosen.kind in LIBRARY_CHOICE_KINDS:
+            return self._take_library_choice(c, chosen, log, render)
         if chosen is not None and chosen.kind == "custom_transform":
             queued = len(c.notes)
             c.take_app_choice(chosen.id)          # queues "…carried it out; the outcome follows." for Claude
@@ -250,6 +270,45 @@ class Session:
             self._save_chat()
             raise
         return self._after_turn(turn)
+
+    def _take_library_choice(self, c, chosen, log: Log, render: bool) -> str:
+        """One of your recipes or operations that Claude offered and you picked. ``Conversation.take_library_choice``
+        checks the item is exactly what was offered (a changed one is ``LibraryChanged``: nothing used, the conversation
+        goes on) and approves the words the choice showed. A recipe becomes the outcome as the validated snapshot the
+        choice holds (the window previews it next, as any spec; ``recipe_name`` says which). An operation follows
+        ``use_operation``'s trial-first rule with the conversation kept: its trials in a new session folder, the outcome
+        only when every sample passes, and Claude told either way — ``OperationFailed`` is the one failure it hears; a
+        defect withdraws the promised outcome and is never told as a result (as for a custom transform)."""
+        queued = len(c.notes)
+        try:
+            chosen, spec = c.take_library_choice(chosen.id)
+        except Exception:                         # LibraryChanged (a recorded refusal) or a defect: both saved first
+            self._save_chat()
+            raise
+        if chosen.kind == "recipe":
+            self._set_outcome(spec=spec, source="compiled", recipe=chosen.name)
+            self._save_chat()
+            log(f"Using your recipe {chosen.name!r} as saved.")
+            return f"Using your recipe {chosen.name!r} as saved — its preview follows."
+        try:
+            msg = self._use_saved_operation(chosen.name, log, render, end_conversation=False)
+            gp = self.generated_preview
+            c.note(f"Your operation {chosen.name!r} passed verification on the sample files; the user reviews its "
+                   f"preview.\n" + (gp.to_text()[:4000] if gp is not None else ""),
+                   display=f"Your operation {chosen.name!r} passed verification on the sample files.")
+        except OperationFailed as e:              # the recorded outcome: told to Claude, nothing changed
+            c.note(str(e))
+            self._save_chat()
+            raise
+        except Exception as e:                    # a defect: the promised outcome is withdrawn, the type alone is said
+            del c.notes[queued:]
+            c.notes.append(f"The user chose: «{chosen.label}». The app could not finish trying your operation: it "
+                           f"stopped with an internal error ({type(e).__name__}) before any result — nothing was "
+                           f"applied.")
+            self._save_chat()
+            raise
+        self._save_chat()
+        return msg
 
     def _after_turn(self, turn) -> str:
         self.turn = turn
@@ -355,10 +414,11 @@ class Session:
                 ("\nA file changed while it was written: press Preview to try it again on the files as they are now."
                  if moved else ""))
 
-    def _prove(self, g, files: List[Path], samples: List[Path], folder: Path, refusal: str):
+    def _prove(self, g, files: List[Path], samples: List[Path], folder: Path, refusal: str, exc=TrialsFailed):
         """Try ``g`` on ``samples`` (sandbox + the full suite) in ``folder``. The approval token and inputs of ``files``
-        are taken BEFORE the trials, so a file that changes while they run voids them. Raises naming every sample that
-        fails; changes nothing in the session. Returns (token, inputs, trials)."""
+        are taken BEFORE the trials, so a file that changes while they run voids them. Raises ``exc`` (``TrialsFailed``,
+        a RuntimeError) naming every sample that fails; changes nothing in the session. Returns (token, inputs,
+        trials)."""
         from .codegen import trial
         from .preview import approval_inputs, approval_token
         key = self._generated_key(g)
@@ -366,7 +426,7 @@ class Session:
         trials = [trial(g.source, f, g.select, g.params, folder / f"{i:02d}") for i, f in enumerate(samples)]
         bad = [f"{t.source.name}: {'; '.join(t.problems[:2])}" for t in trials if not t.passed]
         if bad:
-            raise RuntimeError(f"{refusal} — " + " | ".join(bad))
+            raise exc(f"{refusal} — " + " | ".join(bad))
         return token, inputs, trials
 
     def _show_generated(self, g, out: Path, token: str, inputs: Dict[str, Any], intent: str, render: bool,
@@ -420,21 +480,27 @@ class Session:
         return self.load_spec(load_recipe(name))
 
     def use_operation(self, name: str, log: Log, render: bool = False) -> str:
-        """Run one of your saved operations on this batch: first on its sample files (sandbox + the full suite — it
-        must pass here, not only where it was made), then its preview; Run writes edited copies only. The trials run in
-        a new folder; only an operation that passes there replaces the session's outcome and ends its conversation —
-        one that does not pass leaves the conversation, the outcome, its preview and ``out_dir`` as they were."""
+        """Run one of your saved operations on this batch (Your library…): first on its sample files (sandbox + the
+        full suite — it must pass here, not only where it was made), then its preview; Run writes edited copies only.
+        The trials run in a new folder; only an operation that passes there replaces the session's outcome and ends its
+        conversation — one that does not pass (``OperationFailed``) leaves the conversation, the outcome, its preview
+        and ``out_dir`` as they were. Picked in the conversation instead, the same rule keeps the conversation
+        (``_take_library_choice``)."""
+        return self._use_saved_operation(name, log, render, end_conversation=True)
+
+    def _use_saved_operation(self, name: str, log: Log, render: bool, end_conversation: bool) -> str:
         from .codegen import pick_samples
         from .library import load_operation
-        g = load_operation(name)
+        g = load_operation(name)                  # the manifest's sha256 and the whitelist, again, now
         files = self.files(outcome=False)         # the batch it runs once it replaces the outcome: a file the outgoing
         samples = pick_samples(files)             # spec read as its template is one of them (compile's rule)
         out = self._next_session_dir()            # never the current folder: nothing is replaced before it passes
         log(f"Trying your operation {name!r} on {[f.name for f in samples]}…")
         token, inputs, trials = self._prove(g, files, samples, out / "library-trial",
-                                            f"your operation {name!r} does not pass on these files")
+                                            f"your operation {name!r} does not pass on these files", OperationFailed)
         g.passed, g.trials = True, trials
-        self.end_conversation()                   # a saved operation is not part of the conversation
+        if end_conversation:
+            self.end_conversation()               # Your library…: a saved operation is not part of the conversation
         self._use_folder(out)
         self._show_generated(g, out, token, inputs, f"YOUR SAVED OPERATION {name!r} for: {g.request}\n"
                                                     f"WHAT IT DOES: {g.proposal}", render, log)
@@ -487,6 +553,8 @@ class Session:
     def _intent(self) -> str:
         spec = self.spec or {}
         lines = [f"REQUEST: {spec.get('request') or ''}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
+        if self.recipe_name:
+            lines.insert(1, f"YOUR RECIPE «{self.recipe_name}» (used as saved)")
         lines += [f"ASSUMPTION: {a}" for a in spec.get("assumptions") or []]
         if self.conversation is not None:
             lines.append("THE CONVERSATION:\n" + self.conversation.brief())
@@ -533,7 +601,9 @@ class Session:
         bp = pv.batch_plan
         total, planned = len(bp.files), len(bp.files) - len(bp.exceptions)
         flagged = len(pv.review.blocking()) if pv.review is not None else 0
-        self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + pv.to_text()[:6000],
+        head = (f"THE PREVIEW OF YOUR RECIPE «{self.recipe_name}» (used as saved):\n" if self.recipe_name
+                else "THE PREVIEW OF YOUR SPEC:\n")
+        self.conversation.note(head + pv.to_text()[:6000],
                                display=f"Preview made: {planned} of {total} file(s) plan cleanly." +
                                        (f" Claude's visual check flagged {flagged} problem(s)." if flagged else ""))
         self._save_chat()

@@ -326,7 +326,9 @@ def cmd_do(args):
             return value
         if outcome == "codegen":
             return _do_codegen(args, value, files, out_dir, brief=conv.brief())
-        spec = value
+        if outcome == "operation":                # one of your operations, passed its trials in the conversation
+            return _run_saved_operation(args, value, files, out_dir, brief=conv.brief())
+        spec = value                              # Claude's spec, or one of your recipes as saved
     else:
         print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
         res = compile_request(args.request, files, template=template, answers=args.answer or [],
@@ -494,7 +496,7 @@ def _print_turn(turn) -> None:
     for q in turn.questions:
         print(f"  ? {q}")
     for i, c in enumerate(turn.choices, 1):
-        print(f"  [#{i}] {c.label}" + (f"\n        exact words: «{c.wording}»" if c.wording else ""))
+        print(f"  [#{i}] {c.label}" + "".join(f"\n        exact words: «{w}»" for w in c.words))
 
 
 def _chat(args, files, template, out_dir, prior_failures, log):
@@ -519,14 +521,17 @@ def _chat(args, files, template, out_dir, prior_failures, log):
         return None
 
     try:
-        return _talk(conv, save, out_dir)
+        return _talk(conv, save, out_dir, files)
     except Exception:
         save()                                    # what was said before a defect stopped it, for the diagnosis
         raise
 
 
-def _talk(conv, save, out_dir):
-    """_chat's loop: one turn of Claude's, then the user's reply or choice, until a spec, a custom transform or stop."""
+def _talk(conv, save, out_dir, files):
+    """_chat's loop: one turn of Claude's, then the user's reply or choice, until a spec, a custom transform, one of
+    your recipes ("recipe": its spec as saved, with this request) or operations ("operation": passed its trials here —
+    one that fails returns to the prompt, the refusal noted to Claude) or stop."""
+    from .conversation import LIBRARY_CHOICE_KINDS, LibraryChanged
     turn = conv.start()
     told = False
     while True:
@@ -551,8 +556,9 @@ def _talk(conv, save, out_dir):
             print(f"There is no choice #{i}.")
             continue
         choice = turn.choices[i - 1]
-        if choice.wording:
-            ok = _confirm(f"Approve these exact words for your documents: «{choice.wording}»? [y/N] ")
+        if choice.words:
+            ok = _confirm("Approve these exact words for your documents: "
+                          + "; ".join(f"«{w}»" for w in choice.words) + "? [y/N] ")
             if ok is None:                        # the input ended or Ctrl-C: a stop, like an empty reply
                 print("Stopped — nothing was run.")
                 return "stop", 2, conv
@@ -562,7 +568,77 @@ def _talk(conv, save, out_dir):
             conv.take_app_choice(choice.id)
             save()
             return "codegen", conv.unsupported, conv
+        if choice.kind in LIBRARY_CHOICE_KINDS:
+            try:
+                chosen, spec = conv.take_library_choice(choice.id)
+            except LibraryChanged as e:           # the item changed since Claude offered it: nothing used
+                print(f"Not used: {e}")
+                save()
+                continue
+            if chosen.kind == "recipe":
+                save()
+                print(f"Using your recipe {chosen.name!r} as saved.")
+                return "recipe", spec, conv
+            picked = _try_saved_operation(conv, chosen.name, files, out_dir)
+            save()
+            if picked is None:                    # its trials failed: said, noted to Claude, the conversation goes on
+                continue
+            return "operation", picked, conv
         turn = conv.reply(choice_id=choice.id)
+
+
+def _try_saved_operation(conv, name, files, out_dir):
+    """One of your operations, picked in the terminal conversation: its trials on the batch's samples (sandbox + the
+    full suite) under OUT/library-trial, the approval token taken BEFORE them (CLAUDE.md rule 17, as the window's
+    ``Session._prove``). A failing sample — or an operation that no longer loads — is printed and noted to Claude, and
+    None returned: the conversation goes on. A passing one returns (g, key, token, inputs) for
+    ``_run_saved_operation``."""
+    from .codegen import pick_samples, trial
+    from .library import LibraryError, load_operation
+    from .preview import approval_inputs, approval_token, generated_key
+    try:
+        g = load_operation(name)
+    except LibraryError as e:
+        print(f"Not used: {e}")
+        conv.note(f"Your operation {name!r} could not be used: {e}")
+        return None
+    samples = pick_samples(files)
+    print(f"Trying your operation {name!r} on {[s.name for s in samples]} …", file=sys.stderr)
+    key = generated_key(g)
+    token, inputs = approval_token(key, files), approval_inputs(key, files)
+    n = 1
+    while (out_dir / "library-trial" / f"try-{n}").exists():
+        n += 1
+    folder = out_dir / "library-trial" / f"try-{n}"
+    trials = [trial(g.source, f, g.select, g.params, folder / f"{i:02d}") for i, f in enumerate(samples)]
+    bad = [f"{t.source.name}: {'; '.join(t.problems[:2])}" for t in trials if not t.passed]
+    if bad:
+        why = f"your operation {name!r} does not pass on these files — " + " | ".join(bad)
+        print(f"Not used: {why}")
+        conv.note(why)
+        return None
+    g.passed, g.trials = True, trials
+    print(f"your operation {name!r} passed on the samples")
+    return g, key, token, inputs
+
+
+def _run_saved_operation(args, picked, files, out_dir, brief=None):
+    """One of your operations that passed its trials in the terminal conversation: --save-as checked first (a copy
+    under another name), its preview, then the shared tail of a passing generated op (``_approve_and_run_generated``):
+    the visual check, the y/N question, the token re-check, the run — edited copies only."""
+    g, key, token, inputs = picked
+    if getattr(args, "save_as", None):
+        why = _save_as_refusal(args.save_as, "operation", getattr(args, "replace", False))
+        if why:
+            print(f"--save-as: {why}", file=sys.stderr)
+            return 2
+    from .preview import preview_generated
+    gp = preview_generated(g, out_dir / "library-trial" / "preview", renderer=args.renderer,
+                           do_render=not args.no_render)
+    intent = "\n".join([f"YOUR SAVED OPERATION ({g.name}) for: {g.request}", f"WHAT IT DOES: {g.proposal}"]
+                       + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
+    return _approve_and_run_generated(args, g, gp, files, out_dir, key, token, inputs, intent,
+                                      "a file changed since your operation was tried and previewed")
 
 
 def cmd_retry(args):
@@ -624,8 +700,7 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     except OSError:
         token = ""                                # a file vanished while the transform was written: Run refuses
     inputs = approval_inputs(key, files)
-    from . import compiler, vision
-    from .preview import preview_generated, write_preview_files
+    from .preview import preview_generated
     gp = preview_generated(g, out_dir / "codegen" / "preview", renderer=args.renderer, do_render=not args.no_render)
     drift = _changed_while_writing(before_writing, inputs, approval_inputs({}, files))
     if drift:
@@ -633,9 +708,21 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
               "show a result made from the old content. Run the command again."
               + "".join(f"\n  • {w}" for w in drift), file=sys.stderr)
         return 2
+    intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {args.request}",
+                        f"WHAT IT SHOULD DO: {spec.get('proposal') or ''}"]
+                       + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
+    return _approve_and_run_generated(args, g, gp, files, out_dir, key, token, inputs, intent,
+                                      "a file changed since the custom transform was tested and previewed")
+
+
+def _approve_and_run_generated(args, g, gp, files, out_dir, key, token, inputs, intent, changed_msg):
+    """The tail a passing generated op shares, fresh (``_do_codegen``) or saved (``_run_saved_operation``): Claude's
+    visual check of its preview ``gp``, the preview text, --save-as, the y/N question (a blocking finding needs a look),
+    the approval token checked again right before the run, and ``run_generated`` — edited copies only."""
+    from . import compiler, vision
+    from .codegen import run_generated
+    from .preview import changed_since_preview, write_preview_files
     if not args.no_render and not getattr(args, "no_review", False):
-        intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {args.request}",
-                            f"WHAT IT SHOULD DO: {spec.get('proposal') or ''}"] + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
         gp.review = vision.review_samples(intent, gp.samples, gp.out_dir, compiler._client, model=args.model,
                                           log=lambda m: print(m, file=sys.stderr))
         vision.save_review(gp.review, gp.out_dir)
@@ -667,7 +754,7 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
         return 0
     changed = changed_since_preview(key, files, token, inputs)
     if changed is not None:
-        print("Not run: a file changed since the custom transform was tested and previewed — run the command again."
+        print(f"Not run: {changed_msg} — run the command again."
               + "".join(f"\n  • {w}" for w in changed), file=sys.stderr)
         return 2
     results = run_generated(g, [str(f) for f in files], out_dir / "run", log=lambda m: print(m, file=sys.stderr))
