@@ -185,7 +185,9 @@ class SetProperties(Op):
         "author": {"type": "string"}}}
     select_schema = {"type": "object", "properties": {
         "scope": SCOPE_SCHEMA,
-        "runs": {"description": "'all' or {has_direct_font, font_in, not_in_revisions}"},
+        "runs": {"description": "'all' or {has_direct_font, font_in, not_in_revisions, color_in}; color_in [colours] "
+                                "chooses runs by their effective colour (direct or from a style): 6 hex digits, 'auto' "
+                                "or a theme colour name — e.g. the editor's blue text"},
         "paragraphs": {"description": "'all' or {style_in, text_regex, in_table, is_empty, index_range, has_bold, "
                                       "is_all_caps, after_heading_regex, between_paragraphs}"},
         "styles": {"description": "{ids: [styleId, …]} — change these style definitions instead of formatting text "
@@ -251,7 +253,7 @@ class SetProperties(Op):
                     for ri, r in enumerate(groups[bi]):
                         rpr = r.find(W + "rPr")
                         revised = in_revision(r, p)
-                        if (in_revs == "exclude" and revised) or not rpr_selected(runs_pred, rpr, revised):
+                        if (in_revs == "exclude" and revised) or not rpr_selected(runs_pred, rpr, revised, p, sheet):
                             continue
                         sym = is_symbol_rpr(rpr, p, sheet, preserve) or (skip_sym and r.find(W + "sym") is not None)
                         gets = resolver.gets_run(rpr, p, run_asked, sym)
@@ -265,7 +267,7 @@ class SetProperties(Op):
                     if marks_too:
                         mrpr = p.find(W + "pPr/" + W + "rPr")
                         revised = mark_in_revision(p)
-                        if not (in_revs == "exclude" and revised) and rpr_selected(runs_pred, mrpr, revised):
+                        if not (in_revs == "exclude" and revised) and rpr_selected(runs_pred, mrpr, revised, p, sheet):
                             msym = is_symbol_rpr(mrpr, p, sheet, preserve)
                             gets = resolver.gets_run(mrpr, p, run_asked, msym)
                             if not msym and caps_conflict(run_asked, lambda e, mrpr=mrpr, p=p: resolver.run_prop(mrpr, p, e)[0]):

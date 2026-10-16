@@ -164,6 +164,13 @@ def _style_entry(sheet: StyleSheet, res: Resolver, sid: str, count: int, sample_
     except AmbiguousToggle:
         e["font"] = "(toggle set at several style levels)"
     para = res.paragraph(sample_p)
+    try:
+        tabs = res.paragraph(sample_p, direct=False)["tabs"]     # the stops the style gives (set_tab_stops clears them)
+    except (TypeError, ValueError):
+        tabs = ()
+    if tabs:
+        e["tab_stops"] = [f"{val} {pos}" + (f" {leader}" if leader and leader != "none" else "")
+                          for pos, val, leader in tabs]
     if para["jc"] != "left":
         e["jc"] = para["jc"]
     if para["before"] != "0" or para["after"] != "0":

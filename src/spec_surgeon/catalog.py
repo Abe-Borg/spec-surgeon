@@ -50,6 +50,23 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "changes, a style based on it inherits the change, and a nearer style's own value keeps it",
         "a style change that Word's toggle rule, direct formatting or a symbol run would defeat is refused rather than "
         "applied half-way (set the formatting directly on the paragraphs instead)",
+        "text chosen by its colour (runs color_in) is every run whose colour — set directly or by its style — is one of "
+        "the listed colours (hex or a theme colour, as the profiles show them); other colours, hyperlinks included, stay; "
+        "'black' is Word's Automatic colour (auto) unless an explicit black was asked",
+        "'each PART on a new page' puts a page break before every PART heading after the first, so PART 1 stays under "
+        "the section title; widow/orphan control is on by default in Word, so turning it on changes only text that "
+        "turned it off",
+    ],
+    "set_tab_stops": [
+        "positions are measured from the left margin (1440 twips = 1 inch); 'right_margin' and 'center' are each file's "
+        "own text width (and half of it), measured per section — a header or footer shown by sections with different "
+        "margins sets the file aside",
+        "a paragraph that already has the asked stops is left alone; the paragraph's own stops and its style's both "
+        "count, and a stop inherited from the style is cleared with a clear entry, as Word does",
+        "clear_others leaves exactly the asked stops; on a numbered paragraph the list definition's own tab (after the "
+        "number) is not read and stays (flagged)",
+        "direct formatting on the selected paragraphs, tracked when they are targeted; the style definitions are not "
+        "changed",
     ],
     "set_page_setup": ["margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given"],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
@@ -312,7 +329,9 @@ SELECTOR_GRAMMAR = {
                   "re.search on the block text), in_table (bool), is_empty (bool), index_range [start, end), "
                   "has_bold (bool), is_all_caps (bool), after_heading_regex (str), "
                   "between_paragraphs {start_regex, end_regex?, include_bounds?}",
-    "runs": "'all' or {has_direct_font: bool, font_in: [names], not_in_revisions: bool}",
+    "runs": "'all' or {has_direct_font: bool, font_in: [names], not_in_revisions: bool, color_in: [colours]} — "
+            "color_in: the run's effective colour (direct, else its character/paragraph style's) is one of the listed "
+            "6-hex values, theme colour names (accent1, text2 …) or 'auto'",
     "sections": "'all' or [section indices]",
     "styles": "'all' | 'all-paragraph-and-character' | {ids: [...]} | {types: [...]}",
     "symbol_runs": "never changed by font ops: a run whose explicit font (direct, character style or paragraph "
@@ -336,6 +355,7 @@ CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
         "bold, italic, caps, small caps, strikethrough, underline and text colour of selected text or of styles; "
         "keep-with-next, keep lines together, widow control and page break before of paragraphs or of paragraph "
         "styles": "properties",
+        "tab stops of paragraphs (set, clear, clear the others)": "tab_stops",
     },
     "cannot": ["highlight, borders, shading", "numbering and lists",
                "tables", "images", "fields", "comments", "tracked changes", "any change of words"],

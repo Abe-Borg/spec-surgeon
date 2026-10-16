@@ -58,7 +58,7 @@ class SetFont(Op):
     }
     select_schema = {"type": "object", "properties": {
         "scope": {"type": "array", "items": {"type": "string", "enum": ["document", "headers", "footers", "footnotes", "endnotes", "comments"]}, "default": ["document"]},
-        "runs": {"description": "'all' or {has_direct_font, font_in, not_in_revisions}"},
+        "runs": {"description": "'all' or {has_direct_font, font_in, not_in_revisions, color_in}"},
         "paragraphs": {"description": "'all' or {style_in, text_regex, in_table, is_empty, index_range}"}}}
     verification_profile = {
         "V2": "zero text diffs", "V4": "tracked: +1 w:rPrChange per run/mark changed",
@@ -118,7 +118,7 @@ class SetFont(Op):
                         continue
                     if skip_sym and r.find(W + "sym") is not None:
                         continue
-                    if is_symbol_rpr(rpr, p, sheet, preserve) or not rpr_selected(runs_pred, rpr, revised):
+                    if is_symbol_rpr(rpr, p, sheet, preserve) or not rpr_selected(runs_pred, rpr, revised, p, sheet):
                         continue
                     if not any(changes(rpr)):
                         continue                         # nothing of this op applies to it (it inherits both)
@@ -128,7 +128,7 @@ class SetFont(Op):
                     mrpr = p.find(W + "pPr/" + W + "rPr")
                     revised = mark_in_revision(p)
                     if not (in_revs == "exclude" and revised) and not is_symbol_rpr(mrpr, p, sheet, preserve) \
-                            and rpr_selected(runs_pred, mrpr, revised) and any(changes(mrpr)):
+                            and rpr_selected(runs_pred, mrpr, revised, p, sheet) and any(changes(mrpr)):
                         t_marks.append(bi)
                         m_what.append(list(changes(mrpr)))
             t_what = r_what + m_what                 # same order as the runs then the marks

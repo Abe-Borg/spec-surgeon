@@ -1,0 +1,34 @@
+{
+  "request": "Start each PART on a new page and don't leave article titles stranded at the bottom of a page",
+  "summary": "Put a page break before every PART heading after the first (PART 1 stays under the section title) and keep every article title on the same page as the paragraph after it, as tracked formatting changes; a paragraph that already has the setting is left alone.",
+  "assumptions": [
+    "the PART headings are the paragraphs whose text reads 'PART n - NAME'; PART 1 is not moved — it stays on the first page under the section number and title",
+    "the article titles are the paragraphs whose text starts with a typed article number such as '1.01' followed by a tab or space",
+    "keep-with-next keeps a title on the page of the paragraph that follows it; the words and their look do not change",
+    "targeted formatting is tracked (decision 14.1): Word shows 'Formatted: Page break before' / 'Keep with next' under All Markup"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_properties",
+      "select": {
+        "scope": ["document"],
+        "paragraphs": {"text_regex": "^PART\\s+[1-9]\\s*[-–—]", "after_heading_regex": "^PART\\s+[1-9]\\s*[-–—]"}
+      },
+      "params": {"paragraph": {"pageBreakBefore": true}},
+      "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}
+    },
+    {
+      "op": "set_properties",
+      "select": {
+        "scope": ["document"],
+        "paragraphs": {"text_regex": "^\\d+\\.\\d{2}\\s"}
+      },
+      "params": {"paragraph": {"keepNext": true}},
+      "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}
+    }
+  ],
+  "review": {"sample_files": 2, "geometry_reference": "none"}
+}
