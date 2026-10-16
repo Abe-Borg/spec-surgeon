@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Optional, Sequence
 from .editspec import is_template_file, plan_spec, spec_templates, validate_spec
 from .fingerprint import fingerprint
 from .ops import Plan
+from .ops.base import text_diffs
 from .package import DocxPackage
 
 
@@ -43,7 +44,9 @@ def summarize_plan(plan: Plan) -> List[str]:
     lines: List[str] = []
     removed = set(plan.members_removed)
     added = set(plan.members_added)
-    kept_diffs = [d for d in plan.diffs if d.part not in removed and d.part not in added]
+    diffs = text_diffs(plan.diffs)                       # a structure-only declaration changes no text
+    marks_only = [d for d in plan.diffs if getattr(d, "structure_only", False)]
+    kept_diffs = [d for d in diffs if d.part not in removed and d.part not in added]
     if plan.members_removed:
         lines.append(f"members removed: {_names(plan.members_removed)}")
     if plan.members_added:
@@ -51,18 +54,22 @@ def summarize_plan(plan: Plan) -> List[str]:
     # a pure tracked deletion leaves the block text as it is (the words stay as w:delText): it shows up only as an
     # accepted view, and the summary must say so rather than "no block changes text"
     deletions = {(a["part"], a["block_index"]) for a in plan.accepted_views} - {(d.part, d.block_index) for d in plan.diffs}
-    if plan.diffs:
+    if diffs:
         by_part = Counter(d.part.rsplit("/", 1)[-1] for d in kept_diffs)
         lines.append(f"text: {len(kept_diffs)} block(s) change in kept parts"
                      + (f" ({', '.join(f'{p} {n}' for p, n in by_part.most_common(4))})" if by_part else "")
-                     + (f"; {len(plan.diffs) - len(kept_diffs)} block(s) go/come with removed/added parts"
-                        if len(plan.diffs) != len(kept_diffs) else ""))
+                     + (f"; {len(diffs) - len(kept_diffs)} block(s) go/come with removed/added parts"
+                        if len(diffs) != len(kept_diffs) else ""))
     if deletions:
         by_part = Counter(part.rsplit("/", 1)[-1] for part, _ in deletions)
         lines.append(f"text: {len(deletions)} block(s) get a tracked deletion (the deleted words stay visible as "
                      f"a redline until accepted) ({', '.join(f'{p} {n}' for p, n in by_part.most_common(4))})")
-    if not plan.diffs and not deletions:
+    if not diffs and not deletions:
         lines.append("text: no block changes text")
+    if marks_only:
+        by_part = Counter(d.part.rsplit("/", 1)[-1] for d in marks_only)
+        lines.append(f"structure: {len(marks_only)} block(s) lose or gain a mark that is not text (a comment mark, a "
+                     f"field character …) ({', '.join(f'{p} {n}' for p, n in by_part.most_common(4))})")
     rev = {k: v for k, v in plan.rev_delta.items() if v}
     if rev:
         lines.append("revisions: " + ", ".join(f"{k} {v:+d}" for k, v in sorted(rev.items())))

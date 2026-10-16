@@ -127,6 +127,8 @@ def _v3(d: Dict[str, Any], rec: Any) -> List[str]:
         b, a = c.get("before") or {}, c.get("after") or {}
         keys = sorted(k for k in set(b) | set(a) if b.get(k, 0) != a.get(k, 0))
         what = ", ".join(f"{k} {b.get(k, 0)}→{a.get(k, 0)}" for k in keys) or "structure differs"
+        if c.get("problem"):                       # a structure-only declaration whose change did not happen
+            what = f"{c['problem']} (declared {c.get('declared')})"
         text = c.get("text")
         out.append(f"{c.get('part')} block {c.get('block')}: {what}" + (f" (in paragraph {quote(text)})" if text else ""))
     return out

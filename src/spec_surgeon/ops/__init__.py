@@ -30,3 +30,5 @@ from . import (apply_header_footer_template, delete_paragraphs, fix_page_numberi
                set_font, set_page_setup, set_paragraph_props, set_properties, set_style_font)
 from . import (agree, end_of_section, fill_variables, filter_tagged, naming,  # noqa: E402,F401  — built-in batch 1
                replace_table, resolve_options, swap_image)
+from . import (comments, docprops, empty_paragraphs, hidden, highlight, links,  # noqa: E402,F401  — built-in batch 2
+               revisions, watermark)

@@ -50,11 +50,25 @@ SCHEMA_FOR = {
 }
 
 
+# Imports a vendored schema makes from the web, answered from the package instead (validation never uses the network):
+# the OPC core-properties schema imports Dublin Core's element set and terms (schemas/dublincore/ — local definitions
+# to the shape of DCMI's files).
+LOCAL_IMPORTS = {
+    "http://dublincore.org/schemas/xmls/qdc/2003/04/02/dc.xsd": "dublincore/dc.xsd",
+    "http://dublincore.org/schemas/xmls/qdc/2003/04/02/dcterms.xsd": "dublincore/dcterms.xsd",
+}
+XS = "{http://www.w3.org/2001/XMLSchema}"
+
+
 @functools.lru_cache(maxsize=16)
 def _schema(rel: str) -> etree.XMLSchema:
     path = SCHEMA_DIR / rel
     with open(path, "rb") as fh:
         doc = etree.parse(fh, base_url=str(path))
+    for imp in doc.getroot().iter(XS + "import"):
+        local = LOCAL_IMPORTS.get(imp.get("schemaLocation") or "")
+        if local:
+            imp.set("schemaLocation", (SCHEMA_DIR / local).as_uri())
     return etree.XMLSchema(doc)
 
 

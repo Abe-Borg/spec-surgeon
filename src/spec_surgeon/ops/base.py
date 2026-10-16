@@ -52,6 +52,17 @@ class BlockDiff:
     def to_dict(self):
         return asdict(self)
 
+    @property
+    def structure_only(self) -> bool:
+        """A declaration of a change of structural children only (built-in batch 2): the text stays the same,
+        ``struct_after`` gives the counts. Not a text diff — V2 leaves it out, V3 checks it for this block."""
+        return self.before is not None and self.before == self.after and self.struct_after is not None
+
+
+def text_diffs(diffs) -> list:
+    """The diffs that change text (structure-only declarations left out)."""
+    return [d for d in diffs if not (isinstance(d, BlockDiff) and d.structure_only)]
+
 
 GEOMETRY_REFERENCES = ("source", "template", "none")
 

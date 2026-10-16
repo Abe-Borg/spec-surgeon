@@ -132,6 +132,49 @@ def block_full_text(p: etree._Element) -> str:
     return "".join(parts)
 
 
+def block_struct_counts(p: etree._Element, without: Iterable[etree._Element] = ()) -> Dict[str, int]:
+    """The block's structural children by local name (CLAUDE.md "Block-text definition"): STRUCTURAL_RUN_CHILDREN whose
+    nearest w:p is ``p`` — a w:tab only when its parent is a w:r (tab-stop definitions share the name) — leaving out
+    any that lies in (or is) one of ``without`` (the elements a plan predicts gone). Zero counts are omitted."""
+    gone = {id(e) for e in without}
+    out: Dict[str, int] = {}
+    for el in p.iter():
+        if not isinstance(el.tag, str) or not el.tag.startswith(W):
+            continue
+        local = el.tag[len(W):]
+        if local not in STRUCTURAL_RUN_CHILDREN:
+            continue
+        if local == "tab" and (el.getparent() is None or el.getparent().tag != W + "r"):
+            continue
+        mine, in_gone = _belongs(el, p, gone)
+        if mine and not in_gone:
+            out[local] = out.get(local, 0) + 1
+    return out
+
+
+def _belongs(el: etree._Element, p: etree._Element, gone: set) -> Tuple[bool, bool]:
+    """(the element's nearest w:p is ``p``, the element or an ancestor below ``p`` is in ``gone``)."""
+    q, in_gone = el, False
+    while q is not None and q is not p:
+        if id(q) in gone:
+            in_gone = True
+        q = q.getparent()
+        if q is not None and q.tag == W + "p" and q is not p:
+            return False, in_gone                      # a nested paragraph's own (a text box): its own block
+    return q is p, in_gone
+
+
+def block_text_without(p: etree._Element, without: Iterable[etree._Element] = ()) -> str:
+    """The block text (``block_full_text``) leaving out the text elements that lie in (or are) one of ``without``."""
+    gone = {id(e) for e in without}
+    parts = []
+    for el in p.iter(*FULL_TEXT_TAGS):
+        mine, in_gone = _belongs(el, p, gone)
+        if mine and not in_gone:
+            parts.append(el.text or "")
+    return "".join(parts)
+
+
 def paragraphs(root: etree._Element) -> List[etree._Element]:
     """All w:p in document order, including inside tables, sdt, and textboxes (both mc branches)."""
     return list(root.iter(W + "p"))
