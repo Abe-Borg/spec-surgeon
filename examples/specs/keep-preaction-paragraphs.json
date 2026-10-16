@@ -1,0 +1,24 @@
+{
+  "request": "Delete the paragraphs tagged [WET] or [DRY]; keep [PREACTION] ones and remove their tags",
+  "summary": "Tagged paragraphs for wet-pipe or dry-pipe systems are deleted (tracked); a paragraph tagged for several systems stays while preaction is among them; the tags come off the paragraphs that stay.",
+  "assumptions": [
+    "a tag is a bracketed system name at the start of a paragraph, e.g. [WET] or [WET/DRY]",
+    "untagged paragraphs always stay"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "content",
+  "ops": [
+    {
+      "op": "filter_tagged_paragraphs",
+      "params": {
+        "tag_regex": "^\\[(?P<tag>[A-Z][A-Z /,]*)\\]\\s*",
+        "keep": [
+          "PREACTION"
+        ]
+      }
+    }
+  ]
+}

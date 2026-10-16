@@ -1,0 +1,27 @@
+{
+  "request": "Pick preaction wherever the spec offers [wet-pipe] [dry-pipe] [preaction] choices and drop the brackets",
+  "summary": "In every bracketed option group that offers a preaction option, keep that option's own words and remove the brackets and the other options; groups without one stay as they are; tracked.",
+  "assumptions": [
+    "an option group is [option] [option] … separated by spaces; only groups with a 'preaction' option change",
+    "nothing is retyped: the kept words are the document's own"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "content",
+  "ops": [
+    {
+      "op": "resolve_options",
+      "params": {
+        "rules": [
+          {
+            "match": "pre-?action",
+            "action": "pick"
+          }
+        ],
+        "allow_missing": true
+      }
+    }
+  ]
+}

@@ -122,7 +122,7 @@ def test_the_index_the_tools_and_the_kinds_are_chat_only(folder, recipe, tmp_pat
     assert names[-2:] == ["list_library", "read_library_item"] and "view_pages" in names
     ask_user = next(t for t in fake.requests[0]["tools"] if t["name"] == "ask_user")
     choice = ask_user["input_schema"]["properties"]["choices"]["items"]["properties"]
-    assert choice["kind"]["enum"][-2:] == ["recipe", "operation"] and "name" in choice
+    assert choice["kind"]["enum"][-3:] == ["recipe", "operation", "snippet"] and "name" in choice
     assert "YOUR LIBRARY" in fake.requests[0]["system"] and "read_library_item" in fake.requests[0]["system"]
     # the one-shot compile: no index, no library tool, no library kind, the same ask_user as ever
     fake2 = FakeClient(ask(choices=[{"kind": "recipe", "name": "Permit stamp"}]))
@@ -154,7 +154,7 @@ def test_the_tools_read_the_library_and_a_recipe_is_dry_planned_on_the_batch(fol
     op = json.loads(fake.requests[2]["messages"][-1]["content"][0]["content"])
     assert op["kind"] == "operation" and op["op_name"] == "set_header_distance" and "source" not in op and "op.py" not in json.dumps(op)
     missing = fake.requests[3]["messages"][-1]["content"][0]
-    assert missing["is_error"] and "there is no recipe, operation or chain named 'Nope'" in missing["content"]
+    assert missing["is_error"] and "there is no recipe, operation, chain or snippet named 'Nope'" in missing["content"]
     listing = json.loads(fake.requests[4]["messages"][-1]["content"][0]["content"])
     assert sorted(i["name"] for i in listing["items"]) == ["Header distance", "Permit stamp"] and listing["more"] == 0
     assert_well_formed(fake)

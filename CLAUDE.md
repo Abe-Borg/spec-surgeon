@@ -13,7 +13,9 @@ font ops **sizes**. The method it implements is the `docx-surgical-edit` skill b
 `src/spec_surgeon/skill/` — read `SKILL.md` and `references/verification-checklist.md` there before
 changing any job or check. Phase 8 turned the compile into a conversation (`conversation.py`), added Claude's visual
 check of the preview (`vision.py`, advisory), custom transforms as an offer, and a personal library (`library.py`);
-every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler designer; these files go to clients;
+every Claude call goes through `llm.py`. Built-in operations batch 1 (2026-10-16) added nine ops over one in-paragraph
+edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inputs, and snippets as a library kind
+(`docs/BUILTIN_OPS_BATCH1_DESIGN.md`). The user (Abraham) is a fire sprinkler designer; these files go to clients;
 "I will lose my job" if content is silently lost or invented is the spec.
 
 ## Hard rules
@@ -23,7 +25,9 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
    (`tests/test_independence.py`). It has its own zip reader (`verify/reader.py`), its own text extraction
    (`verify/textcheck.py`), and its own selector resolution, style-chain walk and theme lookup
    (`verify/props.py`), and its own slot detection, fill extraction and effective-property resolver
-   (`verify/template.py`). Do not "deduplicate" these into shared helpers — the duplication is the point: a
+   (`verify/template.py`), and (built-in batch 1) its own run text and item model (`verify/edits.py`), table readers
+   (`verify/tables.py`), word-changing kinds (`verify/textops.py`) and picture reader, matching and fitted size
+   (`verify/images.py`). Do not "deduplicate" these into shared helpers — the duplication is the point: a
    transform-side bug must not be able to hide behind the same bug in the check.
 2. **Predict first.** `Op.plan()` (and `Job.plan()`) must compute every prediction (diffs, parts, members
    removed/added, revision delta of every kind, structural changes, accepted views, property assertions and
@@ -72,22 +76,41 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
    the templating op still plans: `pgNumType` is neither read nor changed by the templating op, and both ops' V10
    assertions strip their own sectPr children before the residual compares the rest — decided right as is
    (`tests/test_read_conflicts.py`).
+   Batch 1: the in-paragraph edit ops touch `(part, block, "text")`; `swap_image` touches `(part, block, "drawing")`
+   for each paragraph holding a swapped picture (so a text edit of that paragraph conflicts: the item model would see
+   the drawing change), the part's rels and `[Content_Types].xml` as whole members, every part in scope as `verify`;
+   `name_output`/`make_values_agree` touch `naming.OUTPUT_NAME_TOUCH`, and `merge_fragments` refuses two ops that
+   both name the output. What they READ is declared too (`slots.fill_reads`): `name_output`'s and
+   `ensure_end_of_section`'s fill rules read `(part, block, "verify:text")` of every paragraph they take a value from,
+   `make_values_agree` of every paragraph a place matched, `ensure_end_of_section` its `copy_from_regex` paragraph
+   (`verify`) and the body's end (`(main, "end", "verify")`, so a paragraph added after its line by another op is a
+   conflict), and `make_values_agree` with a file-name place reads `OUTPUT_NAME_TOUCH`'s member.
 10. **Never create a part to make an edit work.** E.g. `remove_header_footer` refuses (`inheritance`) rather
     than add an empty header part. Adding members is allowed only when the op's whole purpose is the added
-    member and it is predicted in `members_added` — today only `apply_header_footer_template`, whose new parts
+    member and it is predicted in `members_added` — today `apply_header_footer_template`, whose new parts
     are copies of the template's parts (never synthesized), each with a V5a template baseline and a
-    `template_parts` assertion. A new part's content type must match its relationship type (V1 checks it).
+    `template_parts` assertion, and `swap_image`, whose one new media member is the user's picture file byte for
+    byte (`image_swaps` compares it with the file). A new part's content type must match its relationship type (V1
+    checks it).
 11. **Fills are extracted, never typed.** A template slot gets its value from the target by a declared rule
     (`regex`, `paragraph_after`) or is the user's approved wording (`literal` → the op is `untracked` and the
     plan flags the words). V10 re-extracts every fill from the SOURCE by the same rule, independently. A
     reference slot (template spec) is the template's OWN value: the same rule run on the TEMPLATE, or the rule's
     `in_template` text — V10 re-derives it the same way. Never convert a value (case, spacing, "087100" → "08 71
-    00"): a value the template shows in another form is refused (`template-value-left`), not normalised.
+    00"): a value the template shows in another form is refused (`template-value-left`), not normalised. The same
+    fill rules give `ensure_end_of_section`'s number and `name_output`'s values (`literal` refused there); a file NAME
+    may take a named transform (`digits`, `upper`, `lower`, `title`) — a document never does; `make_values_agree`
+    places the truth's text as written and leaves a value that agrees (letters and digits casefolded) alone.
 12. **The template file is an input like the source.** Pinned by md5 in the plan; apply refuses a changed
     template, V10 fails on one; the preview's approval token (`preview.approval_token`) hashes every template
     the spec reads (path, size, mtime, content) beside the batch files, so a template edited after the preview
     refuses to run until it is previewed again. A batch skips input files that are a spec's template (same path
-    or bytes).
+    or bytes). Tables and pictures (built-in batch 1) are inputs the same way: `editspec.spec_input_files` (every op's
+    `template` + `INPUT_FILE_PARAMS`: `fill_variables.table.file`, `replace_table.pairs_table.file`,
+    `swap_image.image` / `match.image`) is what the approval token and `approval_inputs` hash ("input file X: changed
+    since the preview"), `load_spec` resolves them against the spec's folder, `save_recipe` stores them absolute; the
+    ops pin their md5 (apply refuses `table-changed` / `image-changed`) and V10 re-reads them. `spec_templates` stays
+    templates only (the batch filter and `set_aside.json`'s `template`).
 13. **Claude's words are never the user's** (Phase 8). The words an op may place (`compiler.untraceable` over
     `placed_words`) must come from `Conversation.sources`: the request, `--answer` lines, every reply the user typed,
     the `wording` of a choice the user picked, and `PROJECT.json` without `_path` — each source checked on its own.
@@ -114,7 +137,17 @@ every Claude call goes through `llm.py`. The user (Abraham) is a fire sprinkler 
     `item_hash` = `library.item_hash`, `snapshot` = the validated spec; Claude's `label`/`wording` never reach it.
     `take_library_choice` refuses an item whose hash changed (`LibraryChanged`: nothing approved), appends `Choice.words`
     to `sources` (each its own source — `reply()` does the same for every choice) and hands the app a deep copy of the
-    snapshot with `placed_words == words` asserted and `Conversation.request` in `request`.
+    snapshot with `placed_words == words` asserted and `Conversation.request` in `request`. **Snippets (built-in batch
+    1):** `snippet` is a kind Claude may NAME too (`NAMED_LIBRARY_KINDS`, chat only), built by `_library_choice` from
+    the library alone (`words` = [its text], `item_hash`, `snapshot` = the snippet as read; its text must pass
+    `clean_wording`) — but it is NOT an app choice: picking it is a `reply()` that checks the hash first (`_check_item`:
+    `LibraryChanged`, nothing approved or sent, the turn stays open), approves the words and tells Claude to write the
+    `insert_paragraph`; `take_library_choice`/`take_app_choice` refuse it. `placed_words` also covers `replace_table`
+    pairs' `replace`, `set_issue_stamp.text`, `fill_variables.values` and `ensure_end_of_section`'s text around
+    `{number}` (its default `END OF SECTION {number}` too — `compiler.END_OF_SECTION_DEFAULT`, pinned equal); a value a
+    table file gives, the document's own words and a picked snippet's words are never Claude's. Claude reads tables and
+    pictures only through `read_input_file` over the files `inputs.near` listed (`_Batch.inputs`; never another
+    path).
 14. **The conversation is append-only and every tool call is answered** (Phase 8). Opus 5.5 keeps its thinking,
     so history is never rewritten. `conversation.check_pairing` runs before every request: the last message is the
     user's and its leading `tool_result` ids equal the previous assistant turn's `tool_use` ids. The user message
@@ -328,6 +361,80 @@ test that proves they agree.)
   the planted-defect tests there share a wrong pair table, "already" rule, symbol rule, certainty check and on/off writer
   between plan and apply.
 
+Built-in operations batch 1 (2026-10-16; `docs/BUILTIN_OPS_BATCH1_DESIGN.md` — each module's docstring is the full
+definition):
+
+- **Run text and in-paragraph edits.** Run text = the paragraph's runs (every ancestor below the `w:p` a container:
+  `ins`, `del`, `moveFrom`, `moveTo`, `hyperlink`, `smartTag`, `customXml`, `sdt`, `sdtContent`, `fldSimple`, `dir`,
+  `bdo`), runs under `w:del`/`w:moveFrom` skipped; per run child: `w:t` → its characters, `tab`/`ptab` → `\t`,
+  `br`/`cr` → `\n`, `noBreakHyphen` → `-`, `softHyphen`/`lastRenderedPageBreak` → nothing (transparent), `rPr` and
+  comments → nothing, anything else → `\x00`. An edit `(start, end, text, drop_highlight)` covers only `w:t`
+  characters (`structure`), no run in a field (`field-result`), no other text-bearing element inside (`structure`);
+  tracked: one parent for the touched runs — the paragraph, or a `w:ins` under it (`nested-container`) —, no
+  `rPrChange` (`tracked-format`). Untracked: the characters leave their runs, the text goes where the first one was, no
+  split. Tracked: each touched run split at the edges, each inside piece in its own `w:del`, the text after them in one
+  `w:ins` (the first touched run's properties); inside someone's pending `w:ins`: the deletions stay inside it, the new
+  `w:ins` follows it, the rest moves to a second `w:ins` (same attributes, fresh id) — only when text is placed.
+  Transparent elements inside the range stay (untracked) / go into the `w:del` (tracked). Delta: `del` +1 per touched
+  run, `ins` +1 per edit with text, +1 per split rest. Transform: `ops/textedit.py`; verifier: `verify/edits.py`
+  (`v_items` — the item model: one item per character / other run child / paragraph-level element, each with its rPr
+  signature, run attributes and container chain; `expected_items`, `compare_items`, `check_edited_paragraph`,
+  `check_deleted_paragraph`). The kinds register what they checked in `ctx.verified_blocks` (source → output block);
+  the residual leaves out exactly those. `tests/test_text_edits.py` plants shared defects in the matcher, the
+  whole-word rule and the core.
+- **Replacement pairs** (`replace_table`, `set_issue_stamp`): all pairs searched at once in the SOURCE run text of every
+  paragraph in scope; literal (`re.escape`; `flexible_whitespace`: spaces ↔ any run of spaces/tabs/NBSP, hyphens ↔ any
+  dash, quotes straight or curly) or regex; `match_case` default true; `whole_word` default true (a match starting or
+  ending with a word character must not touch another); overlap of two pairs → `ambiguous`; more matches in the reader
+  view (tabs and breaks as spaces) than in run text → `spans-structure`. Transform: `ops/replace_table.find_all`;
+  verifier: `verify/textops.v_find_pairs` (`_v_flexible`, `_v_hits`).
+- **Table files.** JSON (the object at a dotted `key`; pairs: a list of `{find, replace}` / `[find, replace]` or an
+  object), CSV (UTF-8, BOM allowed, first row headers), XLSX (the named sheet, else the first; shared/inline/formula
+  strings as stored; a number only in General/"0" format as ≤ 11 digits, else unusable; booleans, errors refused when
+  used); columns by header text (defaults: first, second); a used value must be non-empty and free of characters the
+  user cannot see (`table-value`). Transform: `ops/tables.py`; verifier: `verify/tables.py`.
+- **Slots for `fill_variables`**: the templating slots (`slots.find_slots(…, text_only=False)` /
+  `template.slots_of`); a slot's range in run text from its display offsets; highlight slots must be whole text runs and
+  lose `w:highlight`; names compared with whitespace collapsed; typed `values` win over the table.
+- **Option groups** (`resolve_options`): option = `[` text without `[ ] \t \n \x00`, not blank `]`; group = options
+  separated only by spaces/NBSP; nested when a `[` before it is still open; first rule whose `match` finds an option
+  decides; `pick` (exactly one match, else `ambiguous`) keeps that option's text; `drop` removes matching options (all:
+  the group plus the spaces after it, else before it; some: each with its separator after, or — after every kept option
+  — before). Transform: `ops/resolve_options.py`; verifier: `verify/textops._v_groups/_v_resolve`.
+- **Tagged paragraphs**: `tag_regex` in run text (group `tag`, else 1, else the match); systems split by
+  `tag_separator`, casefolded, whitespace collapsed; `keep` → stays when one system is listed, `delete` → stays when
+  one is not; stays → the whole match stripped (`strip_tags`); goes → tracked: each direct run in its own `w:del` +
+  the mark's `w:del` (bookmarks/proofErr stay; revisions or other content refused), untracked: removed (a table cell's
+  last paragraph refused); section break, field, text box refused either way. Transform: `ops/filter_tagged.py`;
+  verifier: `verify/textops._tagged_paragraphs`.
+- **End of section**: the number by a fill rule; the line `text` with `{number}` once; the last block = the body's last
+  child (before its `sectPr`) that is not an empty paragraph (run text only spaces/tabs/breaks, no `sectPr`); a matching
+  last paragraph is left / its stretch from the first to the last non-space character replaced; a matching paragraph
+  before the end → `eos-not-last`; else a new paragraph after the last block (`style`, or `copy`: the
+  `copy_from_regex` paragraph's pPr without `sectPr`, `numPr`, revisions + its first text run's rPr). Transform:
+  `ops/end_of_section.py`; verifier: `verify/textops._end_of_section` (`_v_empty_p`, `_v_copy_ppr`).
+- **Agreeing values and output names**: values agree when their `value_tokens` (letters/digits, casefolded) run
+  together are equal; a group's value is its span with surrounding whitespace left out; the file name place is the
+  source's stem (`PureWindowsPath`, `.docx` off); a name is refused for `\ / : * ? " < > |`, Cc/Cf/Co/Cs/Cn/Zl/Zp,
+  a leading space, a trailing space or dot, a device name, > 200 characters, empty; transforms `digits`/`upper`/
+  `lower`/`title` (title: each `[^\W\d_]+(?:['’][^\W\d_]+)*` capitalised, the rest lowered). Transform: `ops/agree.py`,
+  `ops/naming.py`; verifier: `verify/textops._agreed_values/_v_agree/_v_span`, `_output_name/_v_transformed/
+  _v_name_problem` (it compares with the name the output was written under: `Ctx.output_name`).
+- **Pictures** (`swap_image`): PNG (IHDR), GIF (logical screen), JPEG (markers to the first SOF other than C4/C8/CC;
+  the first Exif APP1's orientation — 5–8 refused); proportions = stored pixels; `contain`: `W·ph ≤ H·pw` → (W,
+  round(W·ph/pw)) else (round(H·pw/ph), H), halves up, a side of 0 refused; `stretch`: the box. A picture = a
+  `w:drawing` whose inline/anchor holds `a:graphic/a:graphicData/pic:pic/pic:blipFill/a:blip`; ordinal among all
+  `w:drawing` of the part; every other `a:blip` and every `v:imagedata` matched too and refused when matched; match by
+  the media's md5, docPr name/descr/title (VML: `o:title`, the shape's `alt`) or all; refusals: `mc:AlternateContent`,
+  linked, `svgBlip`, a non-zero `srcRect`, `rot`, missing or unequal sizes, a relationship another element uses;
+  already-new left alone. Transform: `ops/images.py`, `ops/swap_image.py`; verifier: `verify/images.py`
+  (`v_picture`, `v_fit`, `_scan`, `_why_not`); the residual masks exactly the checked drawings' two sizes
+  (`props.mask_picture_sizes`, `ctx.masked_extents` by ordinal). `tests/test_swap_image.py` compares the readers and
+  the fitted sizes and plants shared defects.
+- **V2's plan-assisted pairing** (verifier only, `textcheck.diff_blocks(…, deleted_hint, inserted_hint)`): in a region
+  of unequal-length replacement, the plan's predicted untracked deletions/insertions are set aside and, when the counts
+  then match, the rest is paired in order and compared exactly; any other shape falls back to the old reporting.
+
 ## Roadmap
 
 `docs/NL_SURGICAL_EDITOR_PLAN.md` is the design and phased plan for the natural-language editor built on
@@ -371,7 +478,16 @@ proposals and recorded in the plan's status sections.
   grammar of `touches`: `verify`, `verify:<family>`; rule 9). `ops/__init__.py` — registry (`@register`).
 - `ops/selectors.py` — transform-side selector resolution, `DEFAULT_PRESERVE_FONTS`, font param parsing.
 - `ops/*.py` — `fix_page_numbering`, `replace_text`, `remove_header_footer`, `set_font`, `set_style_font`, `set_properties`,
-  `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, `apply_header_footer_template`.
+  `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, `apply_header_footer_template`; built-in batch 1:
+  `replace_table.py` (`replace_table`, `set_issue_stamp`, `_Replacing`, `find_all`, `resolve_scope`, `tracked_of`),
+  `fill_variables.py`, `resolve_options.py`, `filter_tagged.py`, `end_of_section.py`, `agree.py`
+  (`make_values_agree`), `naming.py` (`name_output`, `check_name`, `transform`, `OUTPUT_NAME_TOUCH`), `swap_image.py`
+  (`match_rule`, `picture_of`, `picture_problem`, `shared_use`, `unused_after`, `free_media_name`).
+- `ops/textedit.py` — the in-paragraph edit core (batch 1): `RunText`, `Edit`, `check_edits`, `predict`,
+  `apply_untracked`/`apply_tracked`, `plan_paragraph` (BlockDiff or accepted view, rev delta, touch),
+  `apply_part_edits`, `edits_to_data`/`edits_from_data`. `ops/tables.py` — table files (`xlsx_rows`, `csv_rows`,
+  `xlsx_sheet_names`, `load`, `check_unchanged`, `variables`, `pairs`, `Bad`). `ops/images.py` — picture files
+  (`sniff`, `load_image`, `fitted`, `check_unchanged`, `CONTENT_TYPES`).
 - `ops/hf_common.py` — header/footer refs, `effective_refs` (what each section shows), `plan_removal`/
   `apply_removal` (shared by `remove_header_footer` and templating: rels, members, overrides, orphaned media,
   revisions flagged). `ops/slots.py` — slots, display text, `apply_slot`, `expected_block_text`, `extract_fill`;
@@ -408,11 +524,20 @@ proposals and recorded in the plan's status sections.
 - `verify/props.py` — V10: assertion kinds (the `properties` kind of `set_properties` included, with its own effective-value
   resolver `_v_run_prop`/`_v_para_prop`), independent selectors/styles/theme, residual identity. `first_difference`
   names the paragraph (its text) or the style (its id) a difference lies in.
+- `verify/edits.py` (the item model), `verify/tables.py` (table readers), `verify/textops.py` (`TEXT_OP_KINDS`:
+  `replaced_text`, `filled_variables`, `resolved_options`, `tagged_paragraphs`, `end_of_section`, `output_name`,
+  `agreed_values`), `verify/images.py` (`IMAGE_KINDS`: `image_swaps`) — built-in batch 1's V10 kinds, registered into
+  `props.KINDS` at the end of `props.py`. `props.Ctx` carries `source_name`/`output_name` (the names the suite was given
+  — `output_name` checks the written name), `verified_blocks` and `masked_extents`.
 - `verify/explain.py` — why a check failed, in specifics, from the check's own data and the record's predictions
   (`failure_details`, `text_change` word diffs with ⇥ ⍽ ⏎ made visible); `VerificationRecord.failures()` and the
   record's "WHY IT FAILED" section use it. It is verifier code: the independence rule applies to it too.
 - `batch.py` — the pipeline; `_process_one` is the per-file worker (must stay top-level and picklable); it
-  runs a named job or an EditSpec (`spec=`). `outputs/` holds only files that passed every check, V9 included: an output
+  runs a named job or an EditSpec (`spec=`). Batch 1: `planned_names(files, spec)` runs the naming op's plan per file
+  before the workers start (collisions → `name-collision` refusals handed to `_process_one(…, refuse=)`),
+  `output_names(files, fixed)` keeps those names, `run_batch` refuses `in_place` for a spec that renames
+  (`editspec.spec_renames_outputs`) before anything is written, and the worker checks `plan.output_name` is the name
+  it writes under; a rename-only file is delivered (not a no-op). `outputs/` holds only files that passed every check, V9 included: an output
   that fails verification is moved to `failed/` (`quarantine_failed_output`) before delivery, and one whose V9 guard
   fails afterwards (drift during the run, a refused in-place write-back) is moved the same way; V9 records where it went
   and `delivered_to` stays empty. The worker verifies in memory and writes the output only after the suite ran (a
@@ -511,9 +636,12 @@ proposals and recorded in the plan's status sections.
   22 one at a time, 21 in calls of three; 18 pages of 11×17 at 117 dpi, 3,312 each; `page_dpi` is the one dpi rule
   `rasterize_pages` uses; a test derives the comment's figures).
 - `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`), chains (`chains/<slug>.json` + `.meta.json`, the
-  stages' specs embedded as saved; `save_chain`/`load_chain`/`chain_file`, 2026-10-16) and operations
-  (`operations/<slug>/op.py` + `manifest.json`) under `config_dir()/library` (rule 17). `FILE_KINDS` are the two
-  file-backed kinds; `LABELS` the labels. `other_kind_holding(kind, slug)`; `_check_free` refuses the
+  stages' specs embedded as saved; `save_chain`/`load_chain`/`chain_file`, 2026-10-16), operations
+  (`operations/<slug>/op.py` + `manifest.json`) and snippets (`snippets/<slug>.json` + `.meta.json`; batch 1:
+  `save_snippet`, `snippet_from_document`, `read_snippet`, `load_snippet`, `snippet_spec`, `snippet_text_problem`) under
+  `config_dir()/library` (rule 17). `FILE_KINDS` are the file-backed kinds (recipe, chain, snippet); `LABELS` the
+  labels; `_portable_spec` makes a spec portable (every input-file path absolute — `editspec.input_slots` —, pattern
+  pins dropped) for a recipe and every chain stage. `other_kind_holding(kind, slug)`; `_check_free` refuses the
   other kind's name even with `replace` ("… cannot take that name, not even with replace …"). `item_hash(item)`: the
   content hash a conversation's library choice pins; `recipe_file(item)` / `read_manifest(item)`: the `_inside`-checked
   reads the compiler's index and `read_library_item` use (2026-10-16).
@@ -610,6 +738,9 @@ proposals and recorded in the plan's status sections.
   process call injectable). `settings.py` — `settings.json` (+ `config_dir`/`data_dir`/`updates_dir`/`logs_dir`;
   `SPEC_SURGEON_CONFIG_DIR` moves them). `winapp.py` — app mutex, AppUserModelID, message box (ctypes; no-ops off
   Windows). `credentials.py` — the API key in Windows Credential Manager (`win32cred`).
+- `inputs.py` — the tables and pictures beside the documents (batch 1): `near` (the folders of the batch and the
+  template, non-recursive, ≤ 30), `overview`/`listing` (the first message's INPUT FILES), `read` (`read_input_file`:
+  only a listed file).
 - `profile.py` — bounded per-pattern profiles (descriptive only; no op reads them), incl. `fonts.body_text`;
   `template_spec_summary()` is `read_template`'s `template_spec`. `planner.py` — `plan_batch` dry run +
   `summarize_plan`. `catalog.py` — `op_catalog()` (+ `COMMON_ASSUMPTIONS` per op — add one for every new op;
@@ -627,7 +758,7 @@ merged and the merge's own tests, 685 with the Phase 8 review fixes (`tests/test
 teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without an API key
 (`tests/test_keyless.py`, 2026-10-16), 768 with the plan-time conflicts for what an op reads
 (`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
-(`tests/test_chain.py`, 2026-10-16) — all pass but
+(`tests/test_chain.py`, 2026-10-16), 963 with built-in operations batch 1 (2026-10-16) — all pass but
 the Windows-only Credential Manager round trip, which skips elsewhere; in the Linux container `python3 -m pytest -q -s`).
 
 ## Updater rules (v0.4.0)
@@ -1199,3 +1330,48 @@ and the file PASSED with the page number still on the cover (V7 skips page 1 the
    read the style chains from the source; a `set_style_font` beside them plans today and the compiler's "change all
    fonts" spec relies on it (`test_sweep_fixes.py`). A style change to a symbol font beside a `set_font` is the only
    way that read goes wrong — left for the built-in-operations round, not widened here.
+
+## Built-in operations, batch 1 (2026-10-16)
+
+Abraham: "let's implement additional prebuilt operations … in manageable chunks. here is the first batch" — ten items
+(fill project variables, a replacement table, MasterSpec options, tagged paragraphs, the issue stamp, END OF SECTION,
+agreeing header/title/file name, a logo swap, a snippet library, output names). `docs/BUILTIN_OPS_BATCH1_DESIGN.md` is
+the design with every decision (taken on his behalf, each changeable); README → "Built-in operations, batch 1" is the
+user's view; the both-sides definitions are listed above. Rules that came out of it:
+
+1. **One edit core for every in-paragraph word change, one item model to check it.** A new op that changes words
+   inside paragraphs plans through `textedit.plan_paragraph` and applies through `textedit.apply_part_edits`; its V10
+   kind derives the edits again from the SOURCE with its own code and hands each paragraph to
+   `edits.check_edited_paragraph` (tracked deletions of whole paragraphs: `check_deleted_paragraph`), then records the
+   blocks in `ctx.verified_blocks`. `replace_text` is left as it was.
+2. **Text-changing ops are tracked by default**; `tracked: false` → mode `untracked` (clean copies). Formatting
+   (`swap_image`, `name_output`) stays `formatting`.
+3. **Tables and pictures are inputs like a template** (rule 12): pinned by md5, re-checked at apply, re-read by V10,
+   hashed by the approval token, absolute in a recipe. Readers on both sides, no new dependency; a number Excel formats
+   its own way, a boolean, an error or an invisible character is refused when used (`table-value`) — never converted.
+4. **A file name is not document text**: `name_output` may transform a value (named, visible transforms only), the
+   batch takes every name from the plans before the workers start, two files with one name are both set aside, a spec
+   that renames writes copies only (in place refused before anything is written), and V10 compares the derived name
+   with the name the copy was written under.
+5. **A logo swap adds exactly one member, a copy of the user's file**, keeps every relationship id, removes old media
+   only when nothing references it, and is refused for any picture whose swap Word would not show as fitted (linked,
+   SVG, cropped, turned, VML, `mc:AlternateContent`, a shared relationship). The residual masks only the two sizes of the
+   drawings `image_swaps` checked.
+6. **Snippets are a library kind, inserted by `insert_paragraph`** (`snippet_spec`: `allow_missing` and `expect`
+   `text_diffs` ≤ 1 — every file that has the anchor, never twice); one plain paragraph (`snippet_text_problem`); in a
+   conversation the pick is a reply (rule 13).
+7. **Claude sees the user's tables and pictures only as listed** (`inputs.py`): the first message's INPUT FILES and
+   `read_input_file` over exactly those paths; never a path Claude makes up.
+8. **Every refusal code has a plain-words explanation** (`report.FAILURE_EXPLANATIONS`); `tests/test_batch1_integration.py`
+   scans the batch-1 op modules for codes and fails on one without an explanation.
+9. **Not in this batch** (recorded): tags as styles/highlights or whole articles, text boxes, replacing across tabs or
+   breaks, a tab in a replacement or snippet, rich snippets, renaming in place, two logo swaps in one header in one spec.
+10. **Merged with master's reads and chains** (2026-10-16): the ops that extract a value declare what they read
+    (rule 9: `slots.fill_reads` → `(part, block, "verify:text")`; `ensure_end_of_section` also `(main, "end", "verify")`
+    and its copy-from paragraph; `make_values_agree` every matched paragraph and, with a file-name place, the output
+    name), so rewriting the title line a name or a number comes from — or adding a paragraph after an END OF SECTION
+    line — in the same spec is a plan-time conflict (`tests/test_naming.py`). A chain follows a renaming stage's name to
+    its `outputs/` (`ChainFile.out_name` takes each passing stage's `out_name`), and refuses `in_place` with a renaming
+    stage before anything is written (`chain.run_chain`). The approval token of a chain covers every stage's tables and
+    pictures (`preview.key_templates` → `spec_input_files`); snippets are offerable (`compiler.OFFERABLE_KINDS`), chains
+    never are.
