@@ -6,7 +6,8 @@ template's profile when one is attached, project memory (``PROJECT.json`` beside
 set-aside failure diagnostics, and answers by calling ``submit_editspec`` — or ``ask_user`` when the request is
 ambiguous. It can look closer with read-only tools (``inspect_profile``, ``list_styles``, ``sample_paragraphs``,
 ``show_part_text``, ``read_template``). It never edits a file and never sees XML; the engine plans, applies and
-verifies the spec per file.
+verifies the spec per file. Files are shown and addressed by label (``file_labels``): the file name, or — for files
+that share a name in different folders — the name with as many parent folders as tell them apart (``a/Spec.docx``).
 
 A submitted spec is checked before it is accepted:
 * ``validate_spec`` (unknown keys/ops/params, mode, assertions) — open ``questions`` or ``unsupported`` are
@@ -265,15 +266,83 @@ def untraceable(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
     return [w for w in placed_words(spec) if not any(_norm(w) in h for h in hay)]
 
 
+def file_labels(files: Sequence[Path]) -> Dict[str, str]:
+    """One label per input file, unique across the batch — what Claude is shown and addresses files by. A file whose
+    name no other input has is labelled by its name (a single-folder batch reads as before); files that share a name
+    (two folders) are labelled by as many trailing folders as tell them apart (``a/Spec.docx``, ``b/Spec.docx``) — by
+    name alone one would shadow the other and every tool would read the wrong document. Keyed by ``str(path)``."""
+    paths = [Path(f) for f in files]
+    by_name: Dict[str, List[Path]] = {}
+    for f in paths:
+        group = by_name.setdefault(f.name, [])
+        if all(str(g) != str(f) for g in group):        # the same path listed twice is one file
+            group.append(f)
+    out: Dict[str, str] = {}
+    for name, group in by_name.items():
+        if len(group) == 1:
+            out[str(group[0])] = name
+            continue
+        depth = max(len(g.parts) for g in group)
+        for k in range(2, depth + 1):
+            labels = ["/".join(g.parts[-k:]) for g in group]
+            if len(set(labels)) == len(labels):
+                break
+        else:
+            labels = [str(g) for g in group]
+        out.update({str(g): lab for g, lab in zip(group, labels)})
+    return out
+
+
 class _Batch:
-    """The batch as the tools see it: files by name, profiles by pattern."""
+    """The batch as the tools see it: files by label (``file_labels`` — the name, or the name with the folders that
+    tell two same-named files apart), profiles by pattern (the pattern's ``files`` are those labels)."""
 
     def __init__(self, files: Sequence[Path], template: Optional[Path]):
-        self.files = {Path(f).name: Path(f) for f in files}
-        self.prof = profile_batch([Path(f) for f in files])
+        paths = [Path(f) for f in files]
+        self.labels = file_labels(paths)                       # str(path) → label
+        self.files = {self.labels[str(f)]: f for f in paths}   # label → path
+        self.prof = profile_batch(paths)
+        self._relabel(paths)
         self.template = Path(template) if template else None
         self._pkgs: Dict[str, DocxPackage] = {}
         self.work_dir: Optional[Path] = None      # where a conversation keeps its page renders (chat only)
+
+    def label(self, path: Path) -> str:
+        """The label a batch file is shown and addressed by (its name when it is not one of the batch's files)."""
+        return self.labels.get(str(path), Path(path).name)
+
+    def _relabel(self, paths: List[Path]) -> None:
+        """The profiles name files by ``Path.name`` (profile.profile_batch); Claude must see the labels its tools take,
+        so every file named in them is renamed to its label: a pattern's ``files`` (from its ``paths``), the
+        representative profile's ``file``, the ``unprofiled`` notes and the ``unreadable`` entries. A note that does
+        not start with the expected file's name is left as it is."""
+        def swap(note: Any, path: str) -> Any:
+            name = Path(path).name
+            if isinstance(note, str) and note.startswith(name + ": "):
+                return self.labels.get(path, name) + note[len(name):]
+            return note
+        for pat in self.prof.get("patterns", []):
+            ps = [str(x) for x in pat.get("paths") or []]
+            if not ps:
+                continue
+            pat["files"] = [self.labels.get(x, Path(x).name) for x in ps]
+            prof = pat.get("profile")
+            if isinstance(prof, dict) and "error" not in prof and isinstance(prof.get("file"), str):
+                prof["file"] = self.labels.get(ps[0], prof["file"])
+            # profile_batch lists the files that would not profile in the pattern's order, before the representative
+            # that did (moved to the front of ``paths``); with none that profiled, ``paths`` is that order itself
+            offset = 0 if isinstance(prof, dict) and "error" in prof else 1
+            if pat.get("unprofiled"):
+                pat["unprofiled"] = [swap(n, ps[i + offset]) if i + offset < len(ps) else n
+                                     for i, n in enumerate(pat["unprofiled"])]
+            if isinstance(prof, dict) and "error" in prof and isinstance(prof.get("files"), list):
+                prof["files"] = [swap(n, ps[i]) if i < len(ps) else n for i, n in enumerate(prof["files"])]
+        if self.prof.get("unreadable"):
+            profiled = {str(x) for pat in self.prof.get("patterns", []) for x in pat.get("paths") or []}
+            rest = [str(f) for f in paths if str(f) not in profiled]
+            for e, path in zip(self.prof["unreadable"], rest):
+                if isinstance(e, dict) and e.get("file") == Path(path).name:
+                    e["file"] = self.labels.get(path, e["file"])
 
     def pkg(self, name: str) -> DocxPackage:
         if name not in self.files:
@@ -286,8 +355,7 @@ class _Batch:
         return [Path(p["paths"][0]) for p in self.prof["patterns"]]
 
     def pattern_paths(self, pat: Dict[str, Any]) -> List[Path]:
-        """The files of one profiled pattern, as paths: the name map (``files``) cannot tell two files of one name in
-        different folders apart, so anything that visits every file of a pattern goes by path."""
+        """The files of one profiled pattern, as paths (the pattern's ``paths``; its ``files`` are labels)."""
         return [Path(x) for x in pat.get("paths") or [self.files[n] for n in pat["files"] if n in self.files]]
 
     def summary(self) -> Dict[str, Any]:
@@ -445,11 +513,11 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
                 return [f"[{e.code}] {e.reason}"]
             except JobException as e:
                 if e.code in FATAL_SPEC_CODES:
-                    fatal_errs.append(f"{f.name}: [{e.code}] {e.reason}")
+                    fatal_errs.append(f"{batch.label(f)}: [{e.code}] {e.reason}")
                     break
-                tried.append(f"{f.name}: [{e.code}] {e.reason}")
+                tried.append(f"{batch.label(f)}: [{e.code}] {e.reason}")
             except Exception as e:  # noqa: BLE001 — an unreadable file is not the spec's fault; try the next one
-                tried.append(f"{f.name}: cannot be read ({type(e).__name__}: {e})")
+                tried.append(f"{batch.label(f)}: cannot be read ({type(e).__name__}: {e})")
         if planned:
             planned_ok += 1
         elif tried:

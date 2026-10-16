@@ -11,7 +11,7 @@ import pytest
 
 from fake_claude import FakeClient, api_error, raise_on_enter, resp, text, tool
 from make_fixtures import build
-from spec_surgeon import vision
+from spec_surgeon import llm, vision
 from spec_surgeon.gui import Session
 from spec_surgeon.preview import SampleView
 from spec_surgeon.vision import VisualReview, review_samples
@@ -76,7 +76,8 @@ def test_the_visual_check_sends_labelled_before_and_after_pages_and_validates_fi
 
 
 @pytest.mark.parametrize("client, why", [
-    (lambda: (_ for _ in ()).throw(RuntimeError("no key")), "not available"),
+    (lambda: (_ for _ in ()).throw(llm.ClaudeUnavailable("no key")), "Claude is not available: no key"),
+    (lambda: (_ for _ in ()).throw(RuntimeError("no key")), "Claude could not be set up: RuntimeError: no key"),
     (lambda: FakeClient(raise_on_enter(RuntimeError("503"))), "request to Claude failed"),
     (lambda: FakeClient(raise_on_enter(api_error("Overloaded", 503, "req_3"))), "HTTP 503 · request id req_3"),
     (lambda: FakeClient(resp(text("Looks fine to me."), stop="end_turn")), "without a review"),

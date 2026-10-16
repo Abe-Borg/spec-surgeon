@@ -17,7 +17,11 @@ What makes it safe:
   the preview of an accepted spec showed — wait in ``pending`` and go out first in the next user message.
 * **Approved words only.** ``sources`` — the words a spec may place in the documents — are the request, the user's
   ``--answer`` lines and replies, ``PROJECT.json``, and the exact ``wording`` of a choice the user picked. Never
-  Claude's own text: its understanding, messages, choice labels, notes or the custom-transform brief.
+  Claude's own text: its understanding, messages, choice labels, notes or the custom-transform brief. A wording with a
+  character the user cannot see (``invisible``) is never offered. conversation.json records the sources as
+  ``approved_words`` (beside ``answers``; never an empty one — without a PROJECT.json, or with an empty one, there is
+  no memory source), and the spec the app gets carries the user's ``request``, never the text
+  Claude wrote there (the advisor and the next pass count the spec's request as approved words).
 * **Choices are built by code.** Claude may offer ``clarify``/``alternative``/``rephrase`` choices; only the app adds
   the ``custom_transform`` choice, and only when Claude declared the request within ``CUSTOM_TRANSFORM_LIMITS``.
 
@@ -33,6 +37,7 @@ out). Both go into conversation.json; ``compile_result`` hands ``exchange`` on a
 """
 from __future__ import annotations
 
+import copy
 import json
 import time
 import unicodedata
@@ -144,17 +149,59 @@ def check_pairing(messages: Sequence[Dict[str, Any]]) -> None:
             raise ProtocolError(f"tool calls {ids} answered by {got}")
 
 
+# Unicode's Default_Ignorable_Code_Point ranges (DerivedCoreProperties.txt, Unicode 15): characters that render as
+# nothing — some are letters or marks (U+3164 HANGUL FILLER is Lo, U+FE0F VARIATION SELECTOR-16 and U+034F COMBINING
+# GRAPHEME JOINER are Mn), so the category test alone misses them — plus three that render blank without being
+# ignorable: U+2800 BRAILLE PATTERN BLANK (So), U+1D159 MUSICAL SYMBOL NULL NOTEHEAD (So) and U+16FE4 KHITAN SMALL
+# SCRIPT FILLER (Mn). The Zs spaces (U+00A0 NO-BREAK SPACE, U+2000–U+200A, U+3000…) are not here: they show as a space,
+# and spec text legitimately holds them.
+INVISIBLE_RANGES = ((0x00AD, 0x00AD), (0x034F, 0x034F), (0x061C, 0x061C), (0x115F, 0x1160), (0x17B4, 0x17B5),
+                    (0x180B, 0x180F), (0x200B, 0x200F), (0x202A, 0x202E), (0x2060, 0x206F), (0x3164, 0x3164),
+                    (0xFE00, 0xFE0F), (0xFEFF, 0xFEFF), (0xFFA0, 0xFFA0), (0xFFF0, 0xFFF8), (0x1BCA0, 0x1BCA3),
+                    (0x1D173, 0x1D17A), (0xE0000, 0xE0FFF),
+                    (0x2800, 0x2800), (0x1D159, 0x1D159), (0x16FE4, 0x16FE4))
+# control, format, line/paragraph separators, surrogates, private use, unassigned: none shows reliably as itself
+INVISIBLE_CATEGORIES = ("Cc", "Cf", "Cs", "Co", "Cn", "Zl", "Zp")
+
+
+def invisible(c: str) -> bool:
+    """A character the user cannot see as itself in the chat (tab aside: it shows as a gap and is ordinary text)."""
+    if c == "\t":
+        return False
+    o = ord(c)
+    return unicodedata.category(c) in INVISIBLE_CATEGORIES or any(a <= o <= b for a, b in INVISIBLE_RANGES)
+
+
 def clean_wording(w: Any) -> Optional[str]:
-    """Exact wording offered in a choice, or None when there is none. Control and invisible format characters (zero-width
-    spaces, bidi marks…) are refused: the user must see every character they approve."""
+    """Exact wording offered in a choice, or None when there is none. Control characters, line/paragraph separators and
+    every character that renders as nothing or blank (zero-width spaces, bidi marks, Hangul fillers, variation
+    selectors, the blank braille pattern, the null notehead, the Khitan filler…) are refused: the user must see every
+    character they approve. Spaces that show as a space (tab, no-break space, the other Zs spaces) are kept."""
     if w is None:
         return None
     if not isinstance(w, str) or not w.strip():
         raise ValueError("wording must be non-empty text")
-    bad = [c for c in w if unicodedata.category(c) in ("Cc", "Cf") and c != "\t"]
+    bad = [c for c in w if invisible(c)]
     if bad:
         raise ValueError(f"wording contains invisible or control characters {[hex(ord(c)) for c in bad][:5]}")
     return w
+
+
+def _texts(raw: Any, what: str, errors: List[str]) -> List[str]:
+    """A list of non-empty texts from what Claude sent where the tool schema asks for an array of strings: a single
+    string is one item (never one item per character), anything else is dropped — and the wrong shape is said."""
+    if raw is None:
+        return []
+    if isinstance(raw, str):
+        errors.append(f"the {what} came as one text, not a list — shown as one")
+        raw = [raw]
+    elif not isinstance(raw, list):
+        errors.append(f"the {what} were dropped: expected a list of texts, got {type(raw).__name__}")
+        return []
+    out = [x.strip() for x in raw if isinstance(x, str) and x.strip()]
+    if any(not isinstance(x, str) for x in raw):
+        errors.append(f"{sum(not isinstance(x, str) for x in raw)} of the {what} were not text and were dropped")
+    return out
 
 
 class Conversation:
@@ -178,7 +225,12 @@ class Conversation:
         self.memory = memory if memory is not None else compiler.load_project_memory(self.files)
         self.answers = list(answers)
         self.prior_failures = list(prior_failures or [])
-        self.sources: List[str] = [request, *self.answers, compiler.memory_source(self.memory)]
+        # never an empty source (conversation.json's approved_words lists them): no PROJECT.json — or one holding
+        # nothing — is no source (memory_source would be "{}", nobody's wording), nor is an empty request or answer
+        has_memory = any(k != "_path" for k in (self.memory or {}))
+        self.sources: List[str] = [w for w in (request, *self.answers,
+                                               compiler.memory_source(self.memory) if has_memory else "")
+                                   if isinstance(w, str) and w.strip()]
         # frozen for the whole conversation: rebuilding either between calls would invalidate the cache and the
         # model's earlier thinking
         self.tools = compiler.CHAT_TOOLS if mode == "chat" else compiler.TOOLS
@@ -236,6 +288,7 @@ class Conversation:
             self.sources.append(chosen.wording)
         if text:
             self.sources.append(text)
+        self.turn = None          # the turn being answered is over: its choices can no longer be picked
         said = []
         if chosen is not None:
             said.append(f"The user chose: «{chosen.label}»" +
@@ -290,6 +343,7 @@ class Conversation:
     def to_dict(self) -> Dict[str, Any]:
         return {"id": self.id, "request": self.request, "files": [str(f) for f in self.files],
                 "template": str(self.template) if self.template else None, "model": self.model, "mode": self.mode,
+                "approved_words": list(self.sources), "answers": list(self.answers),
                 "entries": [e.to_dict() for e in self.entries], "turn": self.turn.to_dict() if self.turn else None,
                 "unsupported": self.unsupported, "tool_calls": self.tool_calls, "usage": self.usage.to_dict(),
                 "calls": self.calls, "seconds": round(self.seconds, 2), "exchange": self.exchange}
@@ -349,7 +403,7 @@ class Conversation:
 
     def _finish(self, turn: Turn) -> Turn:
         self.turn = turn
-        shown = [turn.message or ("" if turn.questions else (turn.spec or {}).get("summary", "") or "")]
+        shown = [turn.message or ("" if turn.questions else str((turn.spec or {}).get("summary") or ""))]
         shown += [f"• {q}" for q in turn.questions]
         self.entries.append(Entry("claude", "\n".join(x for x in shown if x), status=turn.status,
                                   understanding=turn.understanding, choices=[c.to_dict() for c in turn.choices],
@@ -443,7 +497,13 @@ class Conversation:
                                             "content": "one submission per turn — this one was not considered"}
                         continue
                     spec = inp.get("spec")
-                    errs = compiler.check_submission(spec, self.batch, self.sources)
+                    try:
+                        errs = compiler.check_submission(spec, self.batch, self.sources)
+                    except Exception as e:  # noqa: BLE001 — the call must be answered (rule 14): a spec the checks
+                        # cannot even read goes back to Claude as rejected, with what went wrong
+                        self.log(f"Claude: the submitted spec could not be checked ({type(e).__name__})")
+                        errs = [f"[spec] the spec could not be checked ({type(e).__name__}: {e}) — fix its shape "
+                                f"(see the EditSpec JSON schema in the catalog)"]
                     if errs:
                         rejected += 1
                         rejections += errs
@@ -485,8 +545,12 @@ class Conversation:
     # ---- turns ----
     def _choices_from(self, raw: Any, errors: List[str]) -> List[Choice]:
         out: List[Choice] = []
+        if raw is not None and not isinstance(raw, list):
+            errors.append(f"the choices were dropped: expected a list of choices, got {type(raw).__name__}")
+            raw = []
         for c in raw or []:
             if not isinstance(c, dict):
+                errors.append("a choice that was not an object was dropped")
                 continue
             label, kind = str(c.get("label") or "").strip(), str(c.get("kind") or "").strip()
             if not label or kind not in CHOICE_KINDS_FROM_CLAUDE:
@@ -505,7 +569,7 @@ class Conversation:
         errors = list(rejections)
         questions, choices, messages, understanding = [], [], [], []
         for _b, inp in asks:
-            questions += [q.strip() for q in inp.get("questions") or [] if isinstance(q, str) and q.strip()]
+            questions += _texts(inp.get("questions"), "questions", errors)
             choices += self._choices_from(inp.get("choices"), errors)
             if isinstance(inp.get("message"), str) and inp["message"].strip():
                 messages.append(inp["message"].strip())
@@ -517,9 +581,14 @@ class Conversation:
                     questions=questions, choices=choices, errors=errors, images=images)
 
     def _spec_turn(self, spec, inp, rejections, images) -> Turn:
+        # The spec the app gets carries the USER's request, never the text Claude wrote in "request": the advisor and
+        # the next pass (set_aside.json → retry) count it among the approved words. A copy — the history keeps the
+        # tool call exactly as Claude made it.
+        spec = copy.deepcopy(spec)
+        spec["request"] = self.request
         summary = str(spec.get("summary") or "")
         if spec.get("unsupported"):
-            self.unsupported = {"request": spec.get("request") or self.request, "unsupported": spec.get("unsupported"),
+            self.unsupported = {"request": self.request, "unsupported": spec.get("unsupported"),
                                 "proposal": spec.get("proposal") or ""}
             verdict = str(inp.get("custom_transform") or "")
             reason = str(inp.get("custom_transform_reason") or "")
@@ -536,6 +605,8 @@ class Conversation:
                         errors=list(rejections), images=images, custom_transform=verdict,
                         custom_transform_reason=reason)
         if spec.get("questions"):
-            return Turn("questions", understanding=summary, questions=list(spec["questions"]),
-                        spec=spec, errors=list(rejections), images=images)
+            errors = list(rejections)
+            questions = _texts(spec["questions"], "spec's questions", errors) or ["(the model asked an empty question)"]
+            return Turn("questions", understanding=summary, questions=questions, spec=spec, errors=errors,
+                        images=images)
         return Turn("ok", message=summary, understanding=summary, spec=spec, errors=list(rejections), images=images)

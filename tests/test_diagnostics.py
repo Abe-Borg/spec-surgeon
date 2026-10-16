@@ -566,7 +566,7 @@ def test_every_preview_of_a_conversation_has_the_records_that_led_to_it(tmp_path
     def users(conversation):
         return sum(e["role"] == "user" for e in conversation["entries"])
 
-    s.compile("x", lambda m: None)
+    s.compile(spec["request"], lambda m: None)            # the spec the app gets carries the user's request
     f1 = s.out_dir
     assert s.chat_dir == f1 and records(f1)[0]["status"] == "unsupported"
     assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)

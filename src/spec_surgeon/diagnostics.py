@@ -740,7 +740,8 @@ its logs (logs/run.log and one trace per file), the verification records, plans 
 conversation with Claude (conversation.json: what was said, the choices offered and picked, the model's exchange) and
 the compile record (compile.json: the outcome of its last turn and the model's whole exchange), the preview's log and
 records, the Tier B history — and, under app-logs/, the application's own logs. environment.json describes the
-computer and the program.
+computer and the program. When the window's session moved on after that run (a reply, a new request or a newer
+preview opened a newer session folder), that folder is under results-later/<folder name>/, laid out the same way.
 
 Not in here: the documents — no source file, edited copy, failed copy, rendered PDF or page image. The records, plans
 and logs do quote document text (the paragraphs that changed or failed): share this bundle the way you would share
@@ -767,29 +768,61 @@ def _bundled(p: Path, root: Path) -> bool:
             and not p.name.startswith("~$"))
 
 
+LATER_PREFIX = "results-later/"
+
+
+def _within(p: Path, root: Path) -> bool:
+    return p == root or root in p.parents
+
+
 def make_bundle(dest: Path, run_dir: Optional[Path] = None, app_logs: Optional[Path] = None,
-                note: str = "") -> Dict[str, Any]:
+                note: str = "", also: Sequence[Path] = ()) -> Dict[str, Any]:
     """Zip the diagnostics of a run (``run_dir``: reports, logs, records, plans, exceptions, set-aside — with, for a
     session's ``run`` folder, the session's conversation, compile record, preview and Tier B history beside it;
     ``bundle_root``)
-    and the app's logs into ``dest`` — never the documents. Returns what went in and what was left out."""
+    and the app's logs into ``dest`` — never the documents. ``also``: more results folders, each mirrored the same way
+    under ``results-later/<folder name>/`` (the window: the newer session folder a conversation moved on to after the
+    run); a folder already bundled — the same, or inside one — is not bundled twice, and the files of one already
+    bundled are left out of a folder that holds it. Returns what went in and what was left out."""
     dest = Path(dest)
     dest.parent.mkdir(parents=True, exist_ok=True)
     tmp = dest.with_name(dest.name + ".part")
     included: List[str] = []
     left_out = 0
+    roots: List[Path] = []                        # every folder bundled so far (resolved)
+    later: List[Path] = []
+
+    def mirror(z: zipfile.ZipFile, root: Path, prefix: str) -> None:
+        nonlocal left_out
+        for p in sorted(root.rglob("*")):
+            if not p.is_file() or p.resolve() in (dest.resolve(), tmp.resolve()):
+                continue
+            if any(_within(p.resolve(), r) for r in roots):
+                continue                          # already in the bundle, under another folder
+            if not _bundled(p, root) or p.stat().st_size > MAX_BUNDLED_FILE:
+                left_out += 1
+                continue
+            arc = prefix + p.relative_to(root).as_posix()
+            z.write(p, arc)
+            included.append(arc)
+        roots.append(root.resolve())
+
     with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
         if run_dir is not None and Path(run_dir).is_dir():
-            root = bundle_root(Path(run_dir))
-            for p in sorted(root.rglob("*")):
-                if not p.is_file() or p.resolve() in (dest.resolve(), tmp.resolve()):
-                    continue
-                if not _bundled(p, root) or p.stat().st_size > MAX_BUNDLED_FILE:
-                    left_out += 1
-                    continue
-                arc = "results/" + p.relative_to(root).as_posix()
-                z.write(p, arc)
-                included.append(arc)
+            mirror(z, bundle_root(Path(run_dir)), "results/")
+        names: set = set()
+        for folder in also or ():
+            if folder is None or not Path(folder).is_dir():
+                continue
+            root = bundle_root(Path(folder))
+            if any(_within(root, r) for r in roots):
+                continue
+            name, n = root.name, 2
+            while name in names:
+                name, n = f"{root.name}-{n}", n + 1
+            names.add(name)
+            mirror(z, root, f"{LATER_PREFIX}{name}/")
+            later.append(root)
         if app_logs is not None and Path(app_logs).is_dir():
             for p in sorted(Path(app_logs).iterdir()):
                 if p.is_file() and (p.suffix == ".log" or ".log." in p.name or p.name.startswith("compile-")) \
@@ -800,12 +833,13 @@ def make_bundle(dest: Path, run_dir: Optional[Path] = None, app_logs: Optional[P
         manifest = {"made": datetime.now().astimezone().isoformat(timespec="seconds"), "note": note,
                     "run_dir": str(run_dir) if run_dir else None,
                     "results": str(bundle_root(Path(run_dir))) if run_dir else None,
+                    "also": [str(r) for r in later],
                     "app_logs": str(app_logs) if app_logs else None,
                     "included": included, "documents_left_out": left_out, "environment": environment()}
         z.writestr("environment.json", json.dumps(manifest, indent=2, ensure_ascii=False))
         z.writestr("README.txt", BUNDLE_README)
     os.replace(tmp, dest)
-    return {"path": dest, "included": included, "left_out": left_out}
+    return {"path": dest, "included": included, "left_out": left_out, "also": later}
 
 
 def write_json(path: Path, data: Any) -> Optional[Path]:

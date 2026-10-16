@@ -97,7 +97,7 @@ def test_a_reply_replaces_the_custom_transform_and_voids_old_previews(folder, tm
                                   resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})),
                                   resp(tool("submit_editspec", {"spec": REMOVE}, "s2")),
                                   resp(tool("ask_user", {"questions": ["Really?"]}, "a3"))))
-    s.compile("x", lambda m: None)
+    s.compile(REMOVE["request"], lambda m: None)          # the spec the app gets carries the user's request
     s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
     assert s.generated is not None
     assert s.reply("actually, just remove all headers and footers") == "Compiled."

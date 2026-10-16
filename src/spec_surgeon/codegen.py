@@ -8,10 +8,15 @@ Claude the whole conversation as its brief, read-only tools to look at the sampl
 ``Op`` interface, ``DocxPackage``, ``ooxml`` helpers, selectors, lxml); it tests it:
 
 1. ``check_source`` — an AST whitelist: imports only from ``ALLOWED_FROM`` (named symbols) and a few pure stdlib
-   modules; no dunder attributes (bar ``__init__``), no ``open``/``exec``/``eval``/``getattr``/``__import__``…,
-   no file-writing or file-reading attributes; exactly one ``Op`` subclass with ``plan`` and ``apply``;
+   modules, each usable only as ``module.name`` with ``name`` from ``MODULE_ATTRS`` (an allowlist — a module's other
+   attributes lead to other modules and the file system; since the 2026-10-15 review, finding review-7); no dunder
+   names or attributes (bar ``__init__``), no frame/code/generator internals (``FORBIDDEN_ATTR_PREFIXES``), no
+   ``open``/``exec``/``eval``/``getattr``/``__import__``…, no file-writing or file-reading attributes (lxml's
+   ``write_c14n``/``xinclude``/``xmlfile``… included); exactly one ``Op`` subclass with ``plan`` and ``apply``;
 2. ``run_in_sandbox`` — the module runs in a separate isolated process (``python -I``, temp working directory,
-   stripped environment, timeout) on a COPY of each sample file: plan (predict first), then apply;
+   stripped environment, timeout) on a COPY of each sample file: plan (predict first), then apply; the runner's
+   audit hook (``sandbox_runner.install_guard``) keeps every file-system change inside that directory and refuses
+   processes, sockets and native code;
 3. ``hard_limits`` — plain formatting only: the plan may not change text in surviving parts, add members, predict a
    revision of any kind (no tracked formatting either), change any part but the document's text parts and its styles
    part (V10's residual identity covers exactly those), or claim no layout reference without a reason;
@@ -76,7 +81,34 @@ FORBIDDEN_NAMES = {"open", "exec", "eval", "compile", "__import__", "globals", "
                    "delattr", "input", "breakpoint", "memoryview", "help", "exit", "quit", "type", "object"}
 FORBIDDEN_ATTRS = {"from_path", "write_bytes", "write_text", "read_bytes", "read_text", "unlink", "rmdir", "mkdir",
                    "system", "popen", "spawn", "fork", "parse", "iterparse", "XMLParser", "write", "repack",
-                   "output_bytes", "copy_tree", "rename", "replace_file", "chmod"}
+                   "output_bytes", "copy_tree", "rename", "replace_file", "chmod",
+                   # lxml's own readers and writers reach files without Python's open(): an element's tree
+                   # (getroottree()) can write_c14n/xinclude; a result tree can write_output
+                   "write_c14n", "write_output", "xinclude", "XInclude", "xmlfile", "htmlfile", "XSLT", "XMLSchema",
+                   "RelaxNG", "Schematron", "DTD", "parser", "resolvers"}
+# Frames, code objects and generator/coroutine internals lead from any function to the globals of the sandbox
+# runner itself (and its os/sys): no attribute with these prefixes, on anything.
+FORBIDDEN_ATTR_PREFIXES = ("f_", "gi_", "cr_", "ag_", "tb_", "co_", "im_", "func_")
+# A plainly imported module (or lxml's etree) may be used ONLY as ``module.name`` with ``name`` from this list — an
+# allowlist, not a denylist: a module's other attributes lead to other modules (``re.enum.sys.modules``,
+# ``json.codecs.open``) and from there to the file system. The module object itself never leaves that form (not
+# passed, assigned, returned or indexed), so nothing can reach its other attributes indirectly.
+MODULE_ATTRS: Dict[str, set] = {
+    "re": {"compile", "search", "match", "fullmatch", "sub", "subn", "split", "findall", "finditer", "escape",
+           "IGNORECASE", "I", "MULTILINE", "M", "DOTALL", "S", "VERBOSE", "X", "ASCII", "A", "UNICODE", "U",
+           "Pattern", "Match", "error"},
+    "json": {"dumps", "loads"},
+    "copy": {"copy", "deepcopy"},
+    "math": {"ceil", "floor", "trunc", "fabs", "sqrt", "isclose", "isfinite", "isnan", "isinf", "inf", "pi", "gcd",
+             "log", "log10", "exp", "pow", "hypot", "fsum", "prod", "comb", "copysign", "fmod"},
+    "itertools": {"chain", "groupby", "islice", "count", "cycle", "repeat", "accumulate", "product", "permutations",
+                  "combinations", "combinations_with_replacement", "zip_longest", "takewhile", "dropwhile",
+                  "filterfalse", "starmap", "tee", "pairwise", "compress", "batched"},
+    "functools": {"reduce", "partial", "lru_cache", "cache", "cmp_to_key", "total_ordering", "wraps",
+                  "cached_property"},
+    "etree": {"Element", "SubElement", "QName", "iselement", "fromstring", "tostring"},
+}
+MODULE_FROM_IMPORTS = {("lxml", "etree"): "etree"}
 SANDBOX_TIMEOUT = 60
 MAX_ITER = 3
 
@@ -88,11 +120,14 @@ def check_source(src: str) -> List[str]:
     except SyntaxError as e:
         return [f"syntax error: {e}"]
     probs: List[str] = []
+    modules: Dict[str, str] = {}                  # a name bound to a module → its MODULE_ATTRS key
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for a in node.names:
                 if a.name not in ALLOWED_IMPORT:
                     probs.append(f"line {node.lineno}: 'import {a.name}' is not allowed")
+                else:
+                    modules[a.asname or a.name] = a.name
         elif isinstance(node, ast.ImportFrom):
             if node.level or node.module not in ALLOWED_FROM:
                 probs.append(f"line {node.lineno}: 'from {'.' * node.level}{node.module} import …' is not allowed")
@@ -101,16 +136,38 @@ def check_source(src: str) -> List[str]:
                 if bad:
                     probs.append(f"line {node.lineno}: from {node.module} import {bad} is not allowed "
                                  f"(allowed: {sorted(ALLOWED_FROM[node.module])})")
+                for a in node.names:
+                    key = MODULE_FROM_IMPORTS.get((node.module, a.name))
+                    if key:
+                        modules[a.asname or a.name] = key
         elif isinstance(node, ast.Name) and node.id in FORBIDDEN_NAMES:
             probs.append(f"line {node.lineno}: '{node.id}' is not allowed")
+        elif isinstance(node, ast.Name) and node.id.startswith("__"):
+            probs.append(f"line {node.lineno}: the name '{node.id}' is not allowed")
         elif isinstance(node, ast.Attribute):
             if node.attr.startswith("__") and node.attr != "__init__":
                 probs.append(f"line {node.lineno}: dunder attribute '{node.attr}' is not allowed")
             elif node.attr in FORBIDDEN_ATTRS:
                 probs.append(f"line {node.lineno}: attribute '{node.attr}' is not allowed (use pkg.xml / "
                              f"pkg.write_xml on the working package)")
+            elif node.attr.startswith(FORBIDDEN_ATTR_PREFIXES):
+                probs.append(f"line {node.lineno}: attribute '{node.attr}' is not allowed (frame, code and generator "
+                             f"internals)")
         elif isinstance(node, (ast.Global, ast.Nonlocal)):
             probs.append(f"line {node.lineno}: global/nonlocal is not allowed")
+    # A module is used only as `module.name` with an allowed name; any other use of the module object (passed,
+    # assigned, returned, rebound, indexed) is refused, so its other attributes cannot be reached indirectly.
+    as_value = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in modules:
+            as_value.add(id(node.value))
+            key = modules[node.value.id]
+            if node.attr not in MODULE_ATTRS[key] and node.attr not in FORBIDDEN_ATTRS:
+                probs.append(f"line {node.lineno}: '{node.value.id}.{node.attr}' is not allowed (allowed from "
+                             f"{key}: {sorted(MODULE_ATTRS[key])})")
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and node.id in modules and id(node) not in as_value:
+            probs.append(f"line {node.lineno}: the module '{node.id}' may only be used as {node.id}.<name>")
     classes = [n for n in tree.body if isinstance(n, ast.ClassDef)]
     ops = [c for c in classes if any(isinstance(b, ast.Name) and b.id == "Op" for b in c.bases)]
     if len(ops) != 1:
@@ -288,7 +345,7 @@ brief say what they want; Claude's earlier understanding is context, not instruc
 
 Rules:
 - Imports: only `from <module> import <names>` from this whitelist: {allowed}; plus `import` of {plain}. No other \
-imports, no file or network access, no open/exec/eval/getattr, no dunder attributes except __init__.
+imports, no file or network access, no open/exec/eval/getattr, no dunder names or attributes except __init__. A plainly imported module (and etree) is used ONLY as `module.name` with these names: {module_attrs} — never passed, assigned or returned as an object. No attributes starting with f_, gi_, cr_, ag_, tb_, co_ (frames, generators).
 - Define exactly one class deriving from Op with: name, mode = "formatting", description, params_schema, \
 select_schema, plan(self, pkg, select, params) -> PlanFragment, apply(self, pkg, frag) -> None. No decorators \
 from the engine (no @register).
@@ -350,6 +407,7 @@ def system_prompt() -> str:
     from .catalog import CUSTOM_TRANSFORM_LIMITS
     return CODEGEN_SYSTEM.format(allowed=json.dumps({k: sorted(v) for k, v in ALLOWED_FROM.items()}),
                                  plain=sorted(ALLOWED_IMPORT), examples=_examples(),
+                                 module_attrs=json.dumps({k: sorted(v) for k, v in MODULE_ATTRS.items()}),
                                  limits=json.dumps(CUSTOM_TRANSFORM_LIMITS, ensure_ascii=False))
 
 
@@ -370,7 +428,8 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
              if brief else f"REQUEST: {request}")
     messages: List[Dict[str, Any]] = [{"role": "user", "content":
         f"{asked}\n\nWHY NO EXISTING OP FITS / PROPOSAL: {proposal}\n\nSAMPLE FILES (for the tools): "
-        f"{[Path(f).name for f in samples]}\n\nSAMPLE FILE PROFILES:\n" + json.dumps(profiles, ensure_ascii=False)}]
+        f"{[batch.label(Path(f)) for f in samples]}\n\nSAMPLE FILE PROFILES:\n"
+        + json.dumps(profiles, ensure_ascii=False)}]
     g = GeneratedOp(model=model, request=request, proposal=proposal or "", brief=brief or "")
     g.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"],
                          "samples": [str(f) for f in samples]})

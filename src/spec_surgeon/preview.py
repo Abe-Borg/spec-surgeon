@@ -5,14 +5,19 @@ Phase 4).
 1. plans the spec on every file (planner.plan_batch — summaries and exceptions, nothing written);
 2. picks sample files — the first plannable file of each structure pattern, up to ``review.sample_files``
    (default 2, at most 3, but always one per pattern up to 3) — and runs plan → apply → verify on them in memory,
-   writing the outputs into ``out_dir/samples`` (never over a source);
+   writing the outputs into ``out_dir/samples`` (never over a source) under names unique across the samples
+   (``batch.output_names``: two folders' ``Spec.docx`` are ``Spec.docx`` and ``Spec (1).docx``); the preview text (and
+   the note Claude gets) names each sample by ``sample_labels`` — ``a/Spec.docx`` and ``b/Spec.docx``, as Claude's
+   visual check labels its pages;
 3. renders source and output of each sample (Word when available, else LibreOffice — a visible warning says so:
    decision on §14.5, "fall back with a warning", never silently) and composes side-by-side PNGs of page 1 and of
    the first page whose words moved;
 4. writes ``spec.json`` and ``PREVIEW.md`` and computes an **approval token** — a hash of the spec and of every
    planned file's path, size and mtime. ``run-spec --approval TOKEN`` refuses to run when the spec or any file
    changed since the preview — and says which (``approval_inputs`` are kept in ``preview.json``;
-   ``explain_approval_change`` compares them with the files as they are now).
+   ``explain_approval_change`` compares them with the files as they are now). ``do`` re-checks it after the y/N (or
+   ``--yes``) and before the run (``changed_since_preview``) — for a custom transform with ``generated_key`` in place
+   of the spec.
 
 Diagnostics: ``logs/preview.log`` has every file's plan or refusal (with the stage, the op and the line of code), each
 sample's verification with the failing checks' specifics, and what the renderer said; a sample that fails in an
@@ -80,6 +85,26 @@ def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
     return h.hexdigest()[:16]
 
 
+def generated_key(g: Any) -> Dict[str, Any]:
+    """What a custom transform's approval token hashes beside the files (in place of a spec): its code, selection and
+    parameters — the same key as the window's ``Session._generated_key``."""
+    return {"generated_source": g.source, "select": g.select, "params": g.params}
+
+
+def changed_since_preview(key: Dict[str, Any], files: Sequence[Path], token: str,
+                          before: Optional[Dict[str, Any]] = None) -> Optional[List[str]]:
+    """None when ``key`` (a spec, or ``generated_key``) and ``files`` are exactly as they were when the preview's
+    ``token`` was taken; otherwise what changed, one line each (``explain_approval_change`` against ``before``, the
+    preview's ``approval_inputs`` — possibly empty when they were not kept). A previewed file that is gone is a
+    change, never an exception."""
+    try:
+        if token and approval_token(key, files) == token:
+            return None
+    except OSError:
+        pass                                      # a previewed file is missing now: changed
+    return explain_approval_change(before or {}, approval_inputs(key, files))
+
+
 def _stamp(ns: Any) -> str:
     from datetime import datetime
     try:
@@ -88,9 +113,11 @@ def _stamp(ns: Any) -> str:
         return "?"
 
 
-def explain_approval_change(before: Dict[str, Any], now: Dict[str, Any], limit: int = 12) -> List[str]:
+def explain_approval_change(before: Dict[str, Any], now: Dict[str, Any], limit: int = 12,
+                            since: str = "the preview") -> List[str]:
     """What changed between the preview's ``approval_inputs`` and the files as they are now, one line each — the
-    reason a run is refused, instead of "something changed"."""
+    reason a run is refused, instead of "something changed". ``since`` names the moment ``before`` was taken (the
+    command line's custom transform compares the files with how they were before it was written)."""
     out: List[str] = []
     if before.get("spec") != now.get("spec"):
         out.append("the EditSpec itself changed")
@@ -106,18 +133,26 @@ def explain_approval_change(before: Dict[str, Any], now: Dict[str, Any], limit: 
         if b == "missing" or a == "missing":
             out.append(f"{Path(f).name}: {'missing now' if b == 'missing' else 'back again'}")
         else:
-            out.append(f"{Path(f).name}: modified since the preview (size {a[0]:,} → {b[0]:,} bytes; saved "
+            out.append(f"{Path(f).name}: modified since {since} (size {a[0]:,} → {b[0]:,} bytes; saved "
                        f"{_stamp(a[1])} → {_stamp(b[1])})")
     bt, nt = before.get("templates") or {}, now.get("templates") or {}
     for t in sorted(set(bt) | set(nt)):
         a, b = bt.get(t), nt.get(t)
         if a != b:
             out.append(f"template {Path(t).name}: " + ("missing now" if b == "missing" or b is None else
-                                                       "changed since the preview" if a not in (None, "missing")
+                                                       f"changed since {since}" if a not in (None, "missing")
                                                        else "new"))
     if len(out) > limit:
         out = out[:limit] + [f"… and {len(out) - limit} more change(s)"]
     return out
+
+
+def sample_labels(samples: Sequence[Any]) -> Dict[str, str]:
+    """``str(source)`` → how the preview text (and the note Claude gets) names each sample: its name, or with the
+    folders that tell two same-named samples apart (``compiler.file_labels``, as Claude's visual check labels its
+    pages) — two folders' ``Spec.docx`` are ``a/Spec.docx`` and ``b/Spec.docx``, never two lines that read alike."""
+    from .compiler import file_labels
+    return file_labels([Path(s.source) for s in samples])
 
 
 @dataclass
@@ -159,12 +194,14 @@ class Preview:
         out.append("")
         out.append(self.batch_plan.to_text(per_file=False))
         out.append("\nSAMPLES (applied and verified in memory; sources untouched):")
+        labels = sample_labels(self.samples)
         for s in self.samples:
+            lab = labels[str(Path(s.source))]
             if s.exception:
-                out.append(f"   {s.source.name}: EXCEPTION [{s.exception['code']}] {s.exception['reason']}")
+                out.append(f"   {lab}: EXCEPTION [{s.exception['code']}] {s.exception['reason']}")
                 continue
             failed = [k for k, v in s.checks.items() if v == "FAIL"]
-            out.append(f"   {s.source.name}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
+            out.append(f"   {lab}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
                        + (f"; images: {[i.name for i in s.images]}" if s.images else ""))
         if self.review is not None:
             out.append("")
@@ -283,12 +320,13 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
     out_in = [staged(s.output, "output", n) for s, n in zip(done, unique)]
     # a renderer failure (Word that will not start, a file LibreOffice chokes on) is a warning beside the plan
     # summaries and verification, never a preview that dies without them
+    labels = sample_labels(samples)              # two folders' Spec.docx are told apart in the warnings too
     srcs = render_mod.render_pdfs(src_in, rdir / "source", backend, 2, log=warn, detail=detail)
     outs = render_mod.render_pdfs(out_in, rdir / "output", backend, 2, log=warn, detail=detail)
     for s, a, b, name in zip(done, src_in, out_in, unique):
         sp, op = srcs.get(a), outs.get(b)
         if not sp or not op:
-            warn(f"{s.source.name}: render failed")
+            warn(f"{labels[str(Path(s.source))]}: render failed")
             continue
         s.source_pdf, s.output_pdf = Path(sp), Path(op)
         s.look_pages = [1]                     # page 1 at least, even when the comparison below cannot run
@@ -301,7 +339,8 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
                 if img:
                     s.images.append(img)
         except Exception as e:  # noqa: BLE001 — pictures are a nicety; the plan and verification stand
-            warn(f"{s.source.name}: the before/after pictures could not be made ({type(e).__name__}: {e})")
+            warn(f"{labels[str(Path(s.source))]}: the before/after pictures could not be made "
+                 f"({type(e).__name__}: {e})")
             block(traceback.format_exc())
     return backend
 
@@ -319,14 +358,16 @@ class GeneratedPreview:
     review: Any = None
     review_ack: str = ""
     log_path: Optional[Path] = None                               # logs/preview.log
+    rendered: bool = False                                        # made with Render pages on (pages + visual check)
 
     def to_text(self) -> str:
         out = [f"PREVIEW — one-off custom transform {self.name!r} (AI-written, tested on sample files)"]
         out += [f"WARNING: {w}" for w in self.warnings]
         out.append("SAMPLES (run in the sandbox and verified; sources untouched):")
+        labels = sample_labels(self.samples)
         for s in self.samples:
             failed = [k for k, v in s.checks.items() if v == "FAIL"]
-            out.append(f"   {s.source.name}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
+            out.append(f"   {labels[str(Path(s.source))]}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
                        + (f"; images: {[i.name for i in s.images]}" if s.images else ""))
         if self.review is not None:
             out += ["", self.review.to_text()]
@@ -349,7 +390,7 @@ def preview_generated(g: Any, out_dir: Path, renderer: str = "auto", do_render: 
     name = getattr(g, "name", "") or "generated"
     log = _preview_log(out_dir, f"one-off custom transform {name!r}")
     try:
-        gp = GeneratedPreview(out_dir=out_dir, name=name, log_path=log.path)
+        gp = GeneratedPreview(out_dir=out_dir, name=name, log_path=log.path, rendered=bool(do_render))
         trials = list(getattr(g, "trials", None) or [])
         names = output_names([Path(t.source) for t in trials])
         for t in trials:
@@ -387,6 +428,7 @@ def write_preview_files(pv: Any) -> None:
 def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
                  do_render: bool = True) -> Preview:
     from . import diagnostics as diag
+    from .batch import output_names
     from .verify import run_suite
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -406,7 +448,11 @@ def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, ren
                            + f": {e.get('reason')}" + (f" (at {e['where']})" if e.get("where") else ""))
                 if e.get("traceback") and e.get("kind") in ("internal-error", "environment"):
                     log.block(e["traceback"])
-        for f in _pick_samples(bp):
+        picks = _pick_samples(bp)
+        # names unique across the samples (two folders can each hold a "Spec.docx"): one sample's output never
+        # overwrites another's, so each before/after picture and the visual check pair a source with its own output
+        names = output_names(picks)
+        for f in picks:
             sv = SampleView(source=f)
             stage, data = "open", None
             try:
@@ -417,7 +463,7 @@ def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, ren
                 stage = "apply"
                 out = apply_spec(pkg, frags).output_bytes()
                 stage = "write"
-                sv.output = out_dir / "samples" / f.name
+                sv.output = out_dir / "samples" / names[str(f)]
                 sv.output.parent.mkdir(parents=True, exist_ok=True)
                 sv.output.write_bytes(out)
                 stage = "verify"
