@@ -1,8 +1,8 @@
 # Built-in operations, batch 1 — design note
 
 2026-10-16. Abraham's request: ten prebuilt operations, the first batch of several ("let's do it in manageable chunks").
-Status: **built** on branch `claude/bold-cori-xrt4yw` (decisions below were taken on Abraham's behalf, as in earlier rounds,
-and can each be changed). Reading order: CLAUDE.md hard rules 1–4, 8–13, the "Block-text definition", "Slots" and "Fill
+Status: **built** on branch `claude/bold-cori-xrt4yw` — all ten items, with their tests (931 in the suite) — decisions below
+were taken on Abraham's behalf, as in earlier rounds, and can each be changed. Reading order: CLAUDE.md hard rules 1–4, 8–13, the "Block-text definition", "Slots" and "Fill
 rules"; `docs/SET_PROPERTIES_DESIGN.md` for the shape of a verifier-first op.
 
 | # | Asked for | Built as | Mode |
@@ -87,8 +87,12 @@ reporting.
 ### 0.2 Input files
 
 Tables (`.json`, `.csv`, `.xlsx`) and images are inputs exactly like a template (rule 12): pinned by md5 in the plan,
-apply refuses a changed file, V10 re-reads and compares, the approval token hashes them (`editspec.spec_input_files`,
-which `spec_templates` now returns), relative paths resolve against a spec file's folder, recipes store them absolute.
+apply refuses a changed file (`table-changed`, `image-changed`), V10 re-reads and compares, the approval token hashes
+them (`editspec.spec_input_files` — every op's `template` plus `INPUT_FILE_PARAMS`; `spec_templates` stays templates only,
+for the batch filter and `set_aside.json`), relative paths resolve against a spec file's folder, recipes store them
+absolute. In a conversation Claude sees them as **INPUT FILES beside the documents** (`inputs.py`: the tables and
+pictures in the folders of the batch files and the template — path, a table's sheets and headers, a picture's format
+and size) and reads one with `read_input_file` — only a listed file, by its exact path.
 Each side has its own reader (rule 1): `ops/tables.py` / `verify/tables.py`, `ops/images.py` / `verify/images.py`.
 
 **Table readers** (both sides, no new dependency): JSON — an object `{name: text}` (or the object at a dotted `key`),
@@ -224,7 +228,10 @@ A **snippet** is a third library kind (`snippets/<slug>.json` + `.meta.json`): `
 (`library use SNIPPET FILES… --after REGEX`), from the window (pick it in Your library…, give the anchor), or in the
 conversation: Claude may name it (`{"kind": "snippet", "name": …}`), the app builds the choice from the library (its
 words shown), and — unlike a recipe — picking it is a reply: the pick approves the words (each its own source, the item
-hash checked first) and Claude writes the spec. A name still belongs to one item across all kinds.
+hash checked first) and Claude writes the spec. A name still belongs to one item across all kinds. As built, the spec
+`library.snippet_spec` makes carries `allow_missing: true` and `expect: {"text_diffs": {"max": 1}}`: a file where the
+anchor matches twice is set aside, never given two copies. A snippet is one plain paragraph: no tab, line break, field
+or character the user cannot see (`snippet_text_problem`; insert_paragraph places it in one run).
 
 ## Decisions taken (each can be changed)
 

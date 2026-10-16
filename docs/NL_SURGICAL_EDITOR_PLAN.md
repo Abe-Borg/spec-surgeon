@@ -563,6 +563,33 @@ paragraph — is answered for this round by keeping rule 9's granularity: one `s
 properties; a font change and `set_properties` on the same paragraphs are two specs; finer aspects are a follow-up.
 README → "Formatting properties" is the user's view; `tests/test_set_properties.py` (25 tests) pins it.
 
+## Built-in operations status, part 2 (2026-10-16) — batch 1: ten prebuilt operations
+
+Abraham asked for prebuilt operations "in manageable chunks"; the first batch of ten is built (design note
+`docs/BUILTIN_OPS_BATCH1_DESIGN.md`, decisions taken on his behalf and each changeable): `fill_variables`,
+`replace_table`, `resolve_options`, `filter_tagged_paragraphs`, `set_issue_stamp`, `ensure_end_of_section`,
+`make_values_agree`, `swap_image`, snippets (a library kind inserted by `insert_paragraph`) and `name_output`. What the
+round added to the plan's architecture:
+
+* **One in-paragraph edit core and an item-model verifier** (`ops/textedit.py` ↔ `verify/edits.py`): every word change
+  inside a paragraph — tracked as Word records it, including inside someone's pending insertion — is checked character
+  by character against what the verifier derives itself; V2 gained plan-assisted pairing for regions with predicted
+  untracked paragraph deletions/insertions (strictly additive).
+* **Input files beside the spec**: tables (`.json`/`.csv`/`.xlsx`, read without a new dependency) and pictures are
+  inputs like a template (§9/rule 12): md5-pinned, in the approval token (`editspec.spec_input_files`), listed to Claude
+  as INPUT FILES and readable only as listed (`inputs.py`).
+* **Output names** (`Plan.output_name`): a batch pre-pass names every file from its plan, collisions refuse both files,
+  renaming specs write copies only; V10 compares the derived name with the written one.
+* **A second member-adding op** (`swap_image`, rule 10): one media member, the user's picture byte for byte.
+* **Snippets in the conversation**: a third library choice kind, picked as a reply (the words approved, Claude writes
+  the `insert_paragraph`).
+
+Eight new V10 kinds (`replaced_text`, `filled_variables`, `resolved_options`, `tagged_paragraphs`, `end_of_section`,
+`output_name`, `agreed_values`, `image_swaps`, plus the residual's `verified_blocks`/`masked_extents`), each with planted
+defects shared by plan and apply. README → "Built-in operations, batch 1" is the user's view; 931 tests in total. Not
+in this batch: the design note's list (tags as styles or whole articles, text boxes, replacing across tabs or breaks,
+rich snippets, renaming in place). The next batches come from Abraham's list.
+
 ---
 
 ## Appendix A — EditSpec JSON schema (draft)
