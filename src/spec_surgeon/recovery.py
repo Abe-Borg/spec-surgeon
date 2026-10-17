@@ -12,6 +12,7 @@ import hashlib
 import json
 import math
 import time
+import uuid
 from collections import Counter
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
@@ -924,6 +925,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
         messages.append({"role": "assistant", "content": body})
         _save(result)  # a process exit cannot lose the submitted tool calls
         answers, stop = [], False
+        unsupported_files = None
         for call in uses:
             answer = {"type": "tool_result", "tool_use_id": call.id}
             try:
@@ -996,7 +998,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
                             for f in selected:
                                 f.reason = text
                             out, stop = "recorded; investigation paused", True
-                            state["status"] = "unsupported"
+                            unsupported_files = {str(f.source) for f in selected}
                     elif call.name == "recovery_status":
                         out = _page([f.to_dict() for f in group], inp)
                     elif call.name == "trial_results":
@@ -1073,6 +1075,17 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
         checkpoint_history(messages, system=system, tools=tools, folder=batch.context_dir,
                            state=batch.context_state, authority=authority,
                            source_pins=scoped_pins)
+        if unsupported_files and unsupported_files != set(state["files"]):
+            # Split only after every tool call has its result and the signed history
+            # is checkpointed. The remaining files keep their own runnable scope.
+            identity = _hash([state["files"], sorted(unsupported_files), "unsupported", len(messages)])
+            child = _split_group(result, state, unsupported_files, identity)
+            child["status"] = "unsupported"
+            remaining = [f for f in group if str(f.source) in state["files"]]
+            state["status"] = ("active" if any(f.status == "UNRESOLVED" for f in remaining) else
+                               "needs_input" if any(f.status == "NEEDS_INPUT" for f in remaining) else "complete")
+        elif unsupported_files:
+            state["status"] = "unsupported"
         result.budget = ctx["budget"].to_dict()
         _save(result)
         if stop or state.get("status") == "paused":
@@ -1572,6 +1585,24 @@ def load_recovery(run_dir: Path) -> RecoveryResult:
     return result
 
 
+def _split_group(result, state, selected_files, identity):
+    """Partition a saved investigation without sharing mutable context archives."""
+    child = copy.deepcopy(state)
+    child["files"] = sorted(selected_files)
+    if child.get("context_folder"):
+        import shutil
+        old_folder = Path(child["context_folder"])
+        # A failed checkpoint can leave an unreferenced copy; never reuse its path.
+        new_folder = result.out_dir / "conversations" / uuid.uuid4().hex
+        if old_folder.exists():
+            shutil.copytree(old_folder, new_folder)
+        child["context_folder"] = str(new_folder)
+    child["resume_note"] = state["resume_note"] = True
+    state["files"] = sorted(set(state["files"]) - selected_files)
+    result.session_state["groups"][identity] = child
+    return child
+
+
 def _apply_decision(result, request):
     if request is None or request == "":
         return
@@ -1653,20 +1684,8 @@ def _apply_decision(result, request):
             continue
         untouched = set(state["files"]) - targets
         if untouched:
-            child = copy.deepcopy(state)
-            child["files"] = sorted(selected_files)
-            # A split gets its own append-only epoch files; concurrent group continuations
-            # must never rewrite a sibling's signed history checkpoint.
-            if child.get("context_folder"):
-                import shutil
-                old_folder = Path(child["context_folder"])
-                new_folder = result.out_dir / "conversations" / _hash([identity, decision["id"]])
-                if old_folder.exists():
-                    shutil.copytree(old_folder, new_folder)
-                child["context_folder"] = str(new_folder)
+            child = _split_group(result, state, selected_files, _hash([identity, decision["id"]]))
             child["status"], child["resume_note"] = "active", True
-            groups[_hash([identity, decision["id"]])] = child
-            state["files"] = sorted(untouched)
         else:
             state["status"], state["resume_note"] = "active", True
 
