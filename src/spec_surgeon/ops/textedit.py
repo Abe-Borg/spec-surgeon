@@ -227,7 +227,9 @@ def check_edits(rt: RunText, edits: Sequence[Edit], tracked: bool, in_field: Set
         bad = [i for i in range(e.start, e.end) if rt.positions[i].offset < 0
                and not (tabs and not e.text and is_tab_position(rt.positions[i]))]
         if bad:
-            raise JobException(f"{where}: {WHAT[rt.text[bad[0]]]} sits inside {shown(piece)!r}; only plain text is "
+            what = ("a positional tab (w:ptab)" if rt.positions[bad[0]].child.tag == W + "ptab"
+                    else WHAT[rt.text[bad[0]]])
+            raise JobException(f"{where}: {what} sits inside {shown(piece)!r}; only plain text is "
                                f"changed — change this one in Word", "structure",
                                {"where": where, "text": shown(rt.text)})
         touched = rt.runs_in(e.start, e.end)

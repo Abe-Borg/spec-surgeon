@@ -26,6 +26,17 @@ Definitions
   list at the right level). The **destination list** is its num; it must pass ``lists.list_is_clean`` against the
   SOURCE count (refused ``numbering-unsupported``: overrides, an abstractNum another num shares with counted paragraphs,
   an unsupported level).
+* **A held level must be the example file's** (F6 of the batch-5 review): with a template and ``existing: "keep"``, a
+  level whose style this file already has (the file's own definition stays) must number like the template's level —
+  the same ``level_pattern_sig`` (its text, legal, the formats of the levels its text names); else ``scheme``, naming the
+  styles and pointing at ``existing: "replace"`` (an architect's MasterSpec styles of the example file's ids would
+  otherwise leave the document unconverted and pass).
+* **No numbering part**: an import the scheme needs into a file without ``word/numbering.xml`` refuses
+  ``style-numbering`` with a plain reason (rule 10: a part is never created).
+* **The list number's look** (``look_of``, ``number_look``, ``number_symbolic``; convert_typed_numbers' display rule):
+  Word formats a list number with the paragraph mark's run properties — the mark's own rPr over ``planned_levels`` (the
+  NEW style's chain) — and the level's ``w:lvl/w:rPr`` on top. ``linked_level_styles``: level styles naming their list
+  without a ``w:ilvl`` (LibreOffice renders them at level 0: flagged).
 * **The number's own formatting** (``level_display_problem``): a scheme level whose ``w:lvl/w:rPr`` turns on
   ``w:vanish``, ``w:caps`` or ``w:smallCaps`` (the element present, ``w:val`` not 0/false/off) shows its number hidden or
   in capitals — not what the model renders: refused, ``bad-params`` in the template, ``scheme`` for a held list.
@@ -59,7 +70,8 @@ from ..package import W, DocxPackage
 from . import lists
 from .base import JobException
 from .effective import FALSE, PropResolver
-from .style_import import StyleImport, TemplateStyles, build_copies, plan_import, resolve_style
+from .selectors import explicit_font_names
+from .style_import import StyleImport, TemplateStyles, build_copies, numbering_part, plan_import, resolve_style
 
 DISPLAY_TOGGLES = ("vanish", "caps", "smallCaps")
 
@@ -97,28 +109,127 @@ def level_display_problem(abstract_el, k: int) -> Optional[str]:
     return None
 
 
-def _toggle(levels: Sequence[Any], direct, element: str) -> Optional[bool]:
-    d = direct.find(W + element) if direct is not None else None
-    if d is not None:
-        return d.get(W + "val") not in FALSE
+def _toggle(levels: Sequence[Any], direct, element: str, top=None) -> Optional[bool]:
+    for c in (top, direct):
+        d = c.find(W + element) if c is not None else None
+        if d is not None:
+            return d.get(W + "val") not in FALSE
     found = [c.find(W + element) for c in levels if c is not None and c.find(W + element) is not None]
     if not found:
         return False
     return found[0].get(W + "val") not in FALSE if len(found) == 1 else None
 
 
-def planned_mark_toggles(pr: PropResolver, p, style_id: str) -> Dict[str, Optional[bool]]:
-    """The paragraph mark's effective vanish/caps/smallCaps in the planned output, with ``style_id`` as its paragraph
-    style (``pr`` a ``PropResolver`` over the planned output's styles)."""
+def _color(el) -> Tuple[Any, ...]:
+    """A w:color as compared: (val upper-cased, auto ≡ 000000, themeColor, themeShade, themeTint); none → black."""
+    if el is None:
+        return ("000000", None, None, None)
+    val = (el.get(W + "val") or "auto").upper()
+    return ("000000" if val == "AUTO" else val, el.get(W + "themeColor"), el.get(W + "themeShade"),
+            el.get(W + "themeTint"))
+
+
+def look_of(levels: Sequence[Any], direct, top=None) -> Dict[str, Any]:
+    """How a run (or a list number) looks (F1 of the batch-5 review): ``levels`` the style levels' rPr elements, lowest
+    first (docDefaults, the table, paragraph and character style chains, each root-most first), ``direct`` its own rPr,
+    ``top`` — for a list number — the level's ``w:lvl/w:rPr`` (above the mark's properties). Toggles (``LOOK_TOGGLES``):
+    ``top``, then ``direct`` win; exactly one style level → that; none → off; more → None (ambiguous). The others: the
+    nearest of ``top``, ``direct``, the levels highest first that holds the element — ``vertAlign`` (default
+    ``baseline``), ``position`` (``0``), ``sz`` (``20``), ``u`` (``none``; present without a value: ``single``),
+    ``color`` (``_color``), ``font`` (``w:rFonts`` ascii, else ``theme:`` + asciiTheme; default none)."""
+    out: Dict[str, Any] = {e: _toggle(levels, direct, e, top) for e in LOOK_TOGGLES}
+    stack = [top, direct] + list(reversed(list(levels)))
+
+    def nearest(element: str):
+        return next((c.find(W + element) for c in stack if c is not None and c.find(W + element) is not None), None)
+    for e, default in (("vertAlign", "baseline"), ("position", "0"), ("sz", "20")):
+        el = nearest(e)
+        out[e] = (el.get(W + "val") if el is not None else None) or default
+    el = nearest("u")
+    out["u"] = "none" if el is None else (el.get(W + "val") or "single")
+    out["color"] = _color(nearest("color"))
+    out["font"] = None
+    for c in stack:
+        rf = c.find(W + "rFonts") if c is not None else None
+        if rf is not None and (rf.get(W + "ascii") or rf.get(W + "asciiTheme")):
+            out["font"] = rf.get(W + "ascii") or "theme:" + rf.get(W + "asciiTheme")
+            break
+    return out
+
+
+LOOK_TOGGLES = ("vanish", "specVanish", "caps", "smallCaps", "strike", "dstrike", "b", "i")
+LOOK_REFUSED = ("strike", "dstrike", "vertAlign", "position", "color", "sz")   # a difference refuses the file
+LOOK_FLAGGED = ("b", "i", "u", "font")                                          # a difference is flagged
+
+
+def planned_levels(pr: PropResolver, p, style_id: str, rpr) -> List[Any]:
+    """The style levels (rPr elements, lowest first) of a run or the paragraph mark (``rpr`` its own rPr) of ``p`` in
+    the planned output, with ``style_id`` as the paragraph's style: docDefaults, the table style chain, ``style_id``'s
+    chain, the character style chain (``w:rStyle``, else the default character style) — ``pr`` a ``PropResolver`` over
+    the planned output's styles."""
     res = pr.res
-    mrpr = p.find(f"{W}pPr/{W}rPr")
     levels = [res.dd_rpr]
     ts = res._table_style(p)
-    rs = mrpr.find(W + "rStyle") if mrpr is not None else None
+    rs = rpr.find(W + "rStyle") if rpr is not None else None
     for sid in ([ts] if ts else []) + [style_id, (rs.get(W + "val") if rs is not None else None)
                                        or res.defaults.get("character")]:
         levels += [st.find(W + "rPr") for st in res.chain(sid)]
+    return levels
+
+
+def planned_mark_toggles(pr: PropResolver, p, style_id: str) -> Dict[str, Optional[bool]]:
+    """The paragraph mark's effective vanish/caps/smallCaps in the planned output, with ``style_id`` as its paragraph
+    style (``pr`` a ``PropResolver`` over the planned output's styles)."""
+    mrpr = p.find(f"{W}pPr/{W}rPr")
+    levels = planned_levels(pr, p, style_id, mrpr)
     return {e: _toggle(levels, mrpr, e) for e in DISPLAY_TOGGLES}
+
+
+def number_look(pr: PropResolver, p, style_id: str, level_rpr) -> Dict[str, Any]:
+    """How the list number of ``p`` looks in the planned output: the paragraph mark's properties (its own rPr over
+    ``planned_levels``) with the level's ``w:lvl/w:rPr`` on top — Word and LibreOffice format the number so."""
+    mrpr = p.find(f"{W}pPr/{W}rPr")
+    return look_of(planned_levels(pr, p, style_id, mrpr), mrpr, level_rpr)
+
+
+def number_symbolic(sheet, p, style_id: str, level_rpr, preserve: Sequence[str]) -> bool:
+    """set_font's symbol rule for the list number in the planned output: an explicit font name (any slot) of the level's
+    rPr, the mark's own rPr, the mark's character style chain (``w:rStyle``) or ``style_id``'s chain is a preserved
+    (symbol) font. ``sheet`` the planned output's styles (``.styles``)."""
+    wanted = {f.casefold() for f in preserve}
+    mrpr = p.find(f"{W}pPr/{W}rPr")
+    names = explicit_font_names(level_rpr) + explicit_font_names(mrpr)
+    rs = mrpr.find(W + "rStyle") if mrpr is not None else None
+    for sid in (rs.get(W + "val") if rs is not None else None, style_id):
+        names += [n for _, st in lists.style_chain(sheet, sid) for n in explicit_font_names(st.find(W + "rPr"))]
+    return any(n.casefold() in wanted for n in names)
+
+
+def level_pattern_sig(level_defs: Dict[int, Any], k: int) -> Tuple[Any, ...]:
+    """What level ``k``'s numbers look like (F6): its text, legal, and the format of every level its text names
+    (decimal when legal)."""
+    lv = level_defs.get(k)
+    if lv is None:
+        return (None,)
+    return (lv.text, lv.legal, tuple((j, "decimal" if lv.legal else (level_defs[j].fmt if j in level_defs else None))
+                                     for j in lists.named_levels(lv.text)))
+
+
+def level_sample(level_defs: Dict[int, Any], k: int) -> str:
+    """Level ``k``'s number with every level it names at 1 — "PART 1 -", "1.1", "a." (for messages)."""
+    lv = level_defs.get(k)
+    if lv is None or lv.text is None:
+        return "?"
+    text, out, i = lv.text, [], 0
+    while i < len(text):
+        if text[i] == "%" and i + 1 < len(text) and text[i + 1] in "123456789":
+            ref = level_defs.get(int(text[i + 1]) - 1)
+            out.append(lists.format_value("decimal" if lv.legal or ref is None else ref.fmt, 1) or "?")
+            i += 2
+        else:
+            out.append(text[i])
+            i += 1
+    return "".join(out)
 
 
 def shows_lowercase(scheme: lists.Scheme, k: int) -> bool:
@@ -149,6 +260,41 @@ class Destination:
     imp: Optional[StyleImport] = None
     held: bool = True
     restart_levels: List[int] = field(default_factory=list)
+    level_rprs: Dict[int, Any] = field(default_factory=dict)    # level → its w:lvl/w:rPr (None when it has none)
+    linked: List[str] = field(default_factory=list)             # level styles (k ≥ 1) whose numPr names no w:ilvl (F3)
+
+
+def _level_rprs(abstract_el, n: int) -> Dict[int, Any]:
+    out: Dict[int, Any] = {k: None for k in range(n)}
+    for lvl in (abstract_el.findall(W + "lvl") if abstract_el is not None else []):
+        k = lists.whole(lvl.get(W + "ilvl"))
+        if k in out and out[k] is None:
+            out[k] = lvl.find(W + "rPr")
+    return out
+
+
+def replaced_in_chain(sheet, p, replaced) -> List[str]:
+    """F14: the styles of ``p``'s style chain (``lists.paragraph_style``, nearest first) whose definition the import
+    replaces (``existing: "replace"``, never tracked) — a tracked conversion of such a paragraph is refused: reject-all
+    would leave its old style under the new definition."""
+    return [s for s, _ in lists.style_chain(sheet, lists.paragraph_style(p, sheet)) if s in replaced]
+
+
+def linked_level_styles(sheet, sids: Sequence[str]) -> List[str]:
+    """The scheme's level styles (level 1 and deeper) whose numbering comes from a style ``w:numPr`` without ``w:ilvl``
+    — the level linked through ``w:lvl/w:pStyle``: Word shows them right, LibreOffice renders them at level 0
+    (ooxml-lessons §6; F3, a flag)."""
+    out = []
+    for k, sid in enumerate(sids):
+        if k == 0:
+            continue
+        for _, st in lists.style_chain(sheet, sid):
+            numpr = st.find(f"{W}pPr/{W}numPr")
+            if numpr is not None and numpr.find(W + "numId") is not None:
+                if numpr.find(W + "ilvl") is None:
+                    out.append(sid)
+                break
+    return out
 
 
 def scheme_params(params: Dict[str, Any]) -> Tuple[Any, Optional[str], str]:
@@ -197,6 +343,10 @@ def destination(pkg: DocxPackage, sheet, defs: lists.ListDefs, source_count: Seq
             else:
                 sids.append(did)
         if requested:
+            if numbering_part(pkg) is None:
+                raise JobException("this file has no list definitions part (word/numbering.xml); Word creates one when "
+                                   "any list is used — the engine never creates a part (rule 10): number one paragraph "
+                                   "in Word, save, and run again", "style-numbering")
             imp = plan_import(pkg, tpl, requested, existing)
             if imp.changes:
                 copies, abstracts, nums = build_copies(tpl, imp.imported, imp.replaced, imp.num_map, imp.abs_map)
@@ -213,13 +363,28 @@ def destination(pkg: DocxPackage, sheet, defs: lists.ListDefs, source_count: Seq
         why = next((x for x in (level_display_problem(own, k) for k in range(len(sids))) if x), None)
         if why:
             raise JobException(f"this file: {why}", "scheme", {"num_id": scheme.num_id})
+    else:
+        own = _abstract_el(list(tpl.numbering), tscheme.abstract_id)
+    if tpl is not None:
+        # F6: a level style this file holds (existing keep) must number as the example file's level does
+        differ = [(k, sid) for k, sid in enumerate(sids) if sid not in requested
+                  and level_pattern_sig(scheme.level_defs, k) != level_pattern_sig(tscheme.level_defs, k)]
+        if differ:
+            raise JobException("this file already has the scheme's style(s) "
+                               + ", ".join(f"{sid} (level {k}: this file numbers it like "
+                                           f"{level_sample(scheme.level_defs, k)!r}, the example file like "
+                                           f"{level_sample(tscheme.level_defs, k)!r})" for k, sid in differ)
+                               + " — with existing 'keep' this file's own definitions stay and the scheme would not be "
+                                 "applied; use existing 'replace' to take the example file's", "scheme",
+                               {"styles": [s for _, s in differ]})
     why = lists.list_is_clean(out_defs, scheme.num_id, source_count)
     if why:
         raise JobException(f"the destination list (list {scheme.num_id}{', this file’s own' if held else ''}) cannot "
                            f"number the converted paragraphs: {why}", "numbering-unsupported",
                            {"num_id": scheme.num_id})
     return Destination(scheme=scheme, sids=sids, sheet=planned, defs=out_defs, tpl=tpl, requested=requested, imp=imp,
-                       held=held, restart_levels=lists.has_restart_rule(out_defs, scheme.num_id))
+                       held=held, restart_levels=lists.has_restart_rule(out_defs, scheme.num_id),
+                       level_rprs=_level_rprs(own, len(sids)), linked=linked_level_styles(planned, sids))
 
 
 def row(np_: lists.NumberedPar) -> List[Any]:

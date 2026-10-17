@@ -42,12 +42,13 @@ from typing import Any, Dict, List, NamedTuple, Optional, Sequence, Set, Tuple
 from .reader import STYLES_REL, W
 from .props import Ctx, Styles
 from .clearing import check_cleared_ppr, check_runs_and_mark, v_cleared_sets, v_decide, v_expected_ppr, v_with_pstyle
-from .lists import (V_OFF, VListDefs, VNumbered, VScheme, _v_int, v_count, v_list_defs, v_list_is_clean,
-                    v_main_abstract, v_paragraph_style, v_resolve_scheme, v_visible_line)
+from .lists import (V_OFF, VListDefs, VNumbered, VScheme, _v_int, _v_placeholders, v_count, v_list_defs,
+                    v_list_is_clean, v_main_abstract, v_paragraph_style, v_resolve_scheme, v_visible_line)
 from .restyle import v_resolve_style
 from .styleimport import NUMBERING_REL, check_requested, v_derive_import, v_used_ids
 
 V_NUMPR_REVISIONS = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "numberingChange"}
+V_LEVEL_KNOWN = {"shared", "start-override", "skipped", "override"}   # not evaluated, the level known
 
 
 class VDest(NamedTuple):
@@ -57,6 +58,8 @@ class VDest(NamedTuple):
     defs: VListDefs              # the planned output's lists
     requested: List[str]
     template: Optional[str]
+    level_rprs: Dict[int, Any] = {}       # level → its w:lvl/w:rPr in the destination's abstractNum (None: none)
+    replaced: List[str] = []              # the styles the import replaces (existing "replace")
 
 
 def _v_scheme_params(params: Dict[str, Any]) -> Tuple[Any, Optional[str], str]:
@@ -112,7 +115,10 @@ def v_destination(ctx: Ctx, a: Dict[str, Any], params: Dict[str, Any], src_count
     s_num = ctx.src.xml(s_npart) if s_npart else None
     src_defs = VListDefs(s_num)
     requested: List[str] = []
+    replaced: List[str] = []
+    copied_abstracts: List[Any] = []
     new_nums: Set[str] = set()
+    t_scheme = None
     if template is not None:
         from .template import _template
         path = a.get("template") or template
@@ -159,6 +165,8 @@ def v_destination(ctx: Ctx, a: Dict[str, Any], params: Dict[str, Any], src_count
                 defs = src_defs.with_extra([copy.deepcopy(x) for x in d["abstracts"]],
                                            [copy.deepcopy(x) for x in d["nums"]])
                 new_nums = set(d["num_map"].values())
+                replaced = list(d["replaced"])
+                copied_abstracts = list(d["abstracts"])
     else:
         sids = list(levels)
         check_requested(ctx, a, [], existing, None, errs, tag)
@@ -171,10 +179,38 @@ def v_destination(ctx: Ctx, a: Dict[str, Any], params: Dict[str, Any], src_count
         why = _v_levels_shown(s_num, scheme.abstract_id, len(sids))
         if why:
             raise ValueError(f"destination list {scheme.num_id}: {why} (the op must refuse: scheme)")
+    sids = [x.style for x in scheme.levels]
+    if t_scheme is not None:
+        held = [(k, sid) for k, sid in enumerate(sids) if sid not in requested
+                and _v_level_sig(scheme.level_defs, k) != _v_level_sig(t_scheme.level_defs, k)]
+        if held:
+            raise ValueError(f"the file's own style(s) {[s for _, s in held]} number unlike the template's levels "
+                             f"{[k for k, _ in held]} and existing 'keep' keeps them (the op must refuse: scheme)")
     why = v_list_is_clean(defs, scheme.num_id, src_count)
     if why:
         raise ValueError(f"destination list {scheme.num_id}: {why} (the op must refuse: numbering-unsupported)")
-    return VDest(scheme, [x.style for x in scheme.levels], styles, defs, requested, template)
+    abstract = None
+    for a_el in list(s_num if s_num is not None else []) + copied_abstracts:
+        if isinstance(a_el.tag, str) and a_el.tag == W + "abstractNum" and \
+                _v_int(a_el.get(W + "abstractNumId")) == scheme.abstract_id:
+            abstract = a_el
+            break
+    level_rprs: Dict[int, Any] = {k: None for k in range(len(sids))}
+    for lvl in (abstract.findall(W + "lvl") if abstract is not None else []):
+        k = _v_int(lvl.get(W + "ilvl"))
+        if k in level_rprs and level_rprs[k] is None:
+            level_rprs[k] = lvl.find(W + "rPr")
+    return VDest(scheme, sids, styles, defs, requested, template, level_rprs, replaced)
+
+
+def _v_level_sig(level_defs, k: int) -> Tuple[Any, ...]:
+    """How level k numbers: its text, legal, the format of every level its text names (decimal when legal)."""
+    lv = level_defs.get(k)
+    if lv is None:
+        return (None,)
+    named = [x for kind, x in _v_placeholders(lv.text or "") if kind == "lvl"]
+    return (lv.text, lv.legal, tuple((j, "decimal" if lv.legal else (level_defs[j].fmt if j in level_defs else None))
+                                     for j in named))
 
 
 def v_first_difference(want: Sequence[Sequence[Any]], got: Sequence[Sequence[Any]]) -> Optional[str]:
@@ -260,16 +296,27 @@ def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             if st in level_of:
                 chosen.append((x, level_of[st]))
     converted: List[Tuple[VNumbered, int]] = []
+    picked = {x.index for x, _ in chosen}
     for x, src_level in chosen:
         p = sv.pars[x.index]
         where = f"{main} paragraph {x.index}"
         if x.not_evaluated is not None:
-            raise ValueError(f"{where}: {x.not_evaluated} (the op must refuse: numbering-unsupported)")
+            # a number the source cannot evaluate converts only when its level is known and its whole list goes
+            if x.issue not in V_LEVEL_KNOWN or x.ilvl is None or x.num_id is None or any(
+                    y.index not in picked for y in src_count if y.num_id == x.num_id):
+                raise ValueError(f"{where}: {x.not_evaluated} (the op must refuse: numbering-unsupported)")
         numpr = p.find(W + "pPr/" + W + "numPr")
-        if numpr is not None and numpr.find(W + "numId") is None and numpr.find(W + "ilvl") is not None:
-            raise ValueError(f"{where}: its own numPr has only an ilvl (the op must refuse: numbering-unsupported)")
         if numpr is not None and any(c.tag in V_NUMPR_REVISIONS for c in numpr.iter()):
             raise ValueError(f"{where}: a tracked change in its own numPr (the op must refuse: existing-revisions)")
+        if tracked:
+            seen, s = set(), v_paragraph_style(p, ctx.src_styles)
+            while s and s in ctx.src_styles.by_id and s not in seen:
+                if s in dest.replaced:
+                    raise ValueError(f"{where}: its style chain holds {s}, whose definition the import replaces "
+                                     f"untracked (the op must refuse: tracked-format)")
+                seen.add(s)
+                b = ctx.src_styles.by_id[s].find(W + "basedOn")
+                s = b.get(W + "val") if b is not None else None
         lvl = level_map.get(src_level, src_level)
         if lvl >= len(dest.scheme.levels):
             raise ValueError(f"{where}: level {lvl} is beyond the scheme (the op must refuse: scheme-depth)")
@@ -292,6 +339,17 @@ def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         if x.not_evaluated is None and y is not None and y.not_evaluated is not None:
             raise ValueError(f"{main} paragraph {x.index}: evaluated in the source, not after the conversion "
                              f"({y.not_evaluated}) (the op must refuse: numbering-unsupported)")
+    by_src = {x.index: x for x in src_count}
+    done = {x.index for x, _ in converted}
+    for i in sorted(set(by_src) | set(at)):
+        if i in done:
+            continue
+        b, c = by_src.get(i), at.get(i)
+        before = None if b is None else (b.text, b.suff, b.issue)
+        after = None if c is None else (c.text, c.suff, c.issue)
+        if before != after and not (c is not None and c.num_id == dest.scheme.num_id):
+            raise ValueError(f"{main} paragraph {i} is not converted and its number changes {before} → {after} "
+                             f"outside the destination list (the op must refuse: numbering-mismatch)")
     mine = [v_row(y) for y in predicted]
     diff = v_first_difference(mine, a.get("predicted") or [])
     if diff:

@@ -56,12 +56,6 @@ def _x(xml: str):
     return etree.fromstring(f"<w:x {W_DECL}>{xml}</w:x>")[0]
 
 
-def _no_ilvl_only(root):
-    p = find(root, "Product data.")
-    numpr = p.find(f"{W}pPr/{W}numPr")
-    numpr.getparent().remove(numpr)
-
-
 def _tyco(root):
     """'Tyco.' gets its own numPr (the same list, explicitly), an indent, a centring and a bold run."""
     p = find(root, "Tyco.")
@@ -83,11 +77,10 @@ _CACHE: Dict[str, bytes] = {}
 def fixture(name: str) -> bytes:
     if name not in _CACHE:
         base = build_numbering(shared_restart=False)
-        _CACHE[name] = {
-            "raw": lambda: base,
-            "clean": lambda: patch_docx(base, {MAIN: _no_ilvl_only}),
-            "variant": lambda: patch_docx(base, {MAIN: lambda r: (_no_ilvl_only(r), _tyco(r))}),
-            "shared": lambda: patch_docx(build_numbering(shared_restart=True), {MAIN: _no_ilvl_only}),
+        _CACHE[name] = {                    # the architect's file as built ("Product data." keeps its ilvl-only numPr)
+            "clean": lambda: base,
+            "variant": lambda: patch_docx(base, {MAIN: _tyco}),
+            "shared": lambda: build_numbering(shared_restart=True),
         }[name]()
     return _CACHE[name]
 
@@ -150,12 +143,15 @@ CONVERTED = {
     "Related requirements:": "B.", 'Division 21 Section "Common Work Results for Fire Suppression".': "1.",
     "Hangers.": "a.", "Supports.": "b.", 'Division 28 Section "Fire Detection and Alarm".': "2.", "": "C.",
     "Deferred submittal.": "D.", "REFERENCES": "1.2", "NFPA 13.": "A.", "Hidden requirement.": "B.",
-    "UL listings.": "C.", "SUBMITTALS": "1.3", "Product data.": "A.", "Shop drawings.": "B.",
-    "Calculations, as specified in Article 1.02.": "C.", "Comply with Article 1.02.": "D.", "PRODUCTS": "PART 2 -",
+    "UL listings.": "C.", "SUBMITTALS": "1.3", "Product data.": "1.", "Shop drawings.": "A.",
+    "Calculations, as specified in Article 1.02.": "B.", "Comply with Article 1.02.": "C.", "PRODUCTS": "PART 2 -",
     "MANUFACTURERS": "2.1", "Tyco.": "A.", "Viking.": "B.", "MATERIALS": "2.2", "Steel pipe.": "A.", "PIPING": "2.3",
     "Black steel.": "A.", "VALVES": "2.4", "Gate valves.": "A.", "B.\tCheck valves.": "B.", "EXECUTION": "PART 3 -",
     "INSTALLATION": "3.1", "Install per NFPA 13.": "A.", "Cell requirement.": "B.", "After the table.": "C.",
 }
+# from.styles puts every ArchPara paragraph at level 2 — "Product data." too, whose own numPr says level 3 (ilvl only)
+BY_STYLE = {**CONVERTED, "Product data.": "A.", "Shop drawings.": "B.", "Calculations, as specified in Article 1.02.": "C.",
+            "Comply with Article 1.02.": "D."}
 OTHER_LISTS = {"Bullet one": "•", "Bullet two": "•", "Appendix one": "APPENDIX III", "Zed": "Z.",
                "Legal one": "3.26.1", "Double A": "AA.", "Override sub": ("override",), "Zed again": "Z."}
 STYLE_OF = {"GENERAL": "PRT", "SUMMARY": "ART", "Section includes wet-pipe sprinkler systems.": "PR1",
@@ -229,7 +225,9 @@ def test_from_named_styles_and_a_level_map(tpl):
     styles = [["Arch Part"], ["ArchArt"], ["ArchPara", "ArchParaAlt"], ["ArchSub"], ["ArchSub2"]]
     plan, out, rec = converting(fixture("clean"), tpl, **{"from": {"styles": styles}})
     assert rec.passed, rec.to_markdown()
-    assert {k: numbers(out)[k] for k in CONVERTED} == CONVERTED
+    assert {k: numbers(out)[k] for k in BY_STYLE} == BY_STYLE
+    assert any("count differently than before" in f and "‘Product data.’ was '1.' and becomes 'A.'" in f
+               for f in plan.flags)
     plan, out, rec = converting(fixture("clean"), tpl, levels=SCHEME_LEVELS[:3], level_map={"3": 2, "4": 2})
     assert rec.passed, rec.to_markdown()
     got = numbers(out)
@@ -239,16 +237,20 @@ def test_from_named_styles_and_a_level_map(tpl):
 
 def test_a_held_scheme_without_template(tpl):
     """The document's own outline as the scheme (no template, nothing imported): only 'UL listings.' (ArchParaAlt, level 2
-    through its basedOn) is restyled; the numbering part is unchanged and every number stays."""
+    through its basedOn) and 'Product data.' (ArchPara whose own numPr names only level 3 — it takes ArchSub and loses
+    the numPr) change; the numbering part is unchanged and every number stays."""
     levels = ["ArchPart", "ArchArt", "ArchPara", "ArchSub", "ArchSub2"]
     src = fixture("clean")
     plan, out, rec = converting(src, levels=levels)
     assert rec.passed, rec.to_markdown()
     a = plan.property_assertions[0]
-    assert a["changed"] == [[a["changed"][0][0], 2, True, False]] and a["dest_num"] == 10
-    assert len(plan.property_assertions) == 1 and NUMBERING not in plan.intended_parts
+    root = DocxPackage(src).xml(MAIN)
+    at = {key(p): i for i, p in enumerate(root.iter(W + "p"))}
+    assert a["changed"] == [[at["UL listings."], 2, True, False], [at["Product data."], 3, True, True]]
+    assert a["dest_num"] == 10 and len(plan.property_assertions) == 1 and NUMBERING not in plan.intended_parts
     assert numbers(out) == numbers(src)
-    assert any("already as asked, left alone: 34" in n for n in plan.notes)
+    assert any("already as asked, left alone: 33" in n for n in plan.notes)
+    assert pstyle(find(DocxPackage(out).xml(MAIN), "Product data.")) == "ArchSub"
 
 
 def test_a_paragraph_another_list_numbers_converted_into_a_held_list_shifts_the_others_flagged(tmp_path):

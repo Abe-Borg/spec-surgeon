@@ -33,11 +33,14 @@ import copy
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from .reader import W
-from .props import Ctx, _has_ancestor, _local, _rstyle, _v_run_prop, _v_table_style_id, para_matches, sig
-from .clearing import check_cleared_ppr, check_cleared_rpr, v_cleared_sets, v_decide, v_expected_ppr, v_with_pstyle
+from .props import (FALSY as V_OFF_VALUES, Ctx, _explicit_names, _has_ancestor, _local, _rstyle, _v_run_levels,
+                    _v_run_prop, _v_table_style_id, para_matches, sig, symbolic)
+from .clearing import (V_DEFAULT_PRESERVE, check_cleared_ppr, check_cleared_rpr, v_cleared_sets, v_decide,
+                       v_expected_ppr, v_with_pstyle)
 from .edits import check_edited_paragraph, part_revision_ids, v_items, v_paragraph_text
-from .markup import v_hidden, v_mark_hidden, v_toggle
-from .lists import VNumbered, v_count, v_counted, v_list_defs, v_paragraph_numbering, v_typed_number
+from .markup import v_toggle
+from .lists import VNumbered, v_count, v_counted, v_list_defs, v_paragraph_numbering, v_paragraph_style, \
+    v_typed_number
 from .numberingconvert import V_NUMPR_REVISIONS, v_destination, v_first_difference, v_row, v_visible
 from .template import _v_field_runs
 
@@ -62,30 +65,123 @@ def _v_shows_lower(scheme, k: int) -> bool:
     return False
 
 
-def _v_display(p, prefix_runs: List[Any], styles, planned_styles, sid: str, scheme, level: int) -> Optional[str]:
-    """Why the typed number does not read as its run text, or its list number would not show as rendered (None: it
-    reads as typed) — this module's own reading: a prefix run's effective vanish (``markup.v_hidden``), caps or
-    smallCaps (``props._v_run_prop``) on or ambiguous; the mark hidden (``markup.v_mark_hidden``); in the planned output
-    the mark — its own rPr over docDefaults, the table style chain, the NEW style's chain, its character style chain —
-    hidden, or in capitals where the number can hold a lower-case letter."""
+V_LOOK_TOGGLES = ("vanish", "specVanish", "caps", "smallCaps", "strike", "dstrike", "b", "i")
+V_LOOK_REFUSED = ("strike", "dstrike", "vertAlign", "position", "color", "sz")
+
+
+def _v_tog(levels: List[Any], direct, top, element: str) -> Optional[bool]:
+    """A toggle: ``top`` (the level's w:lvl/w:rPr), then ``direct`` win; one style level → that; none → off; more →
+    None."""
+    for c in (top, direct):
+        el = c.find(W + element) if c is not None else None
+        if el is not None:
+            return el.get(W + "val") not in V_OFF_VALUES
+    specs = [L.find(W + element) for L in levels if L is not None and L.find(W + element) is not None]
+    if not specs:
+        return False
+    return specs[0].get(W + "val") not in V_OFF_VALUES if len(specs) == 1 else None
+
+
+def _v_look(levels: List[Any], direct, top=None) -> Dict[str, Any]:
+    """This module's own reading of how a run — or, with ``top``, a list number — looks: ``levels`` the style levels'
+    rPr, lowest first. Toggles by ``_v_tog``; vertAlign / position / sz / u / color / the ascii font: the nearest of
+    ``top``, ``direct``, the levels highest first (defaults baseline, 0, 20, none, black — auto counts as 000000)."""
+    out: Dict[str, Any] = {e: _v_tog(levels, direct, top, e) for e in V_LOOK_TOGGLES}
+    order = [c for c in [top, direct] + list(reversed(levels)) if c is not None]
+
+    def near(e: str):
+        for c in order:
+            el = c.find(W + e)
+            if el is not None:
+                return el
+        return None
+    for e, dflt in (("vertAlign", "baseline"), ("position", "0"), ("sz", "20")):
+        el = near(e)
+        out[e] = (el.get(W + "val") if el is not None else None) or dflt
+    el = near("u")
+    out["u"] = "none" if el is None else (el.get(W + "val") or "single")
+    el = near("color")
+    if el is None:
+        out["color"] = ("000000", None, None, None)
+    else:
+        v = (el.get(W + "val") or "auto").upper()
+        out["color"] = ("000000" if v == "AUTO" else v, el.get(W + "themeColor"), el.get(W + "themeShade"),
+                        el.get(W + "themeTint"))
+    out["font"] = None
+    for c in order:
+        rf = c.find(W + "rFonts")
+        if rf is not None and (rf.get(W + "ascii") or rf.get(W + "asciiTheme")):
+            out["font"] = rf.get(W + "ascii") or "theme:" + rf.get(W + "asciiTheme")
+            break
+    return out
+
+
+def _v_planned_levels(p, planned_styles, sid: str, rpr) -> List[Any]:
+    """The rPr of every style level of a run (or the mark) of ``p`` in the planned output with ``sid`` as its paragraph
+    style, lowest first: docDefaults, the table style chain, ``sid``'s chain, the character style chain (rStyle, else the
+    default) — each root-most first."""
+    levels = [planned_styles.doc_defaults_rpr()]
+    for x in (_v_table_style_id(p, planned_styles), sid, _rstyle(rpr) or planned_styles.default.get("character")):
+        levels += [st.find(W + "rPr") for st in reversed(planned_styles.chain(x))]
+    return levels
+
+
+def _v_hidden_any(rpr, p, styles) -> Optional[bool]:
+    """vanish or specVanish (the run levels' toggle rule): on → True; else either ambiguous → None; else False."""
+    levels = _v_run_levels(rpr, p, styles)
+    a, b = v_toggle(levels, rpr, "vanish"), v_toggle(levels, rpr, "specVanish")
+    if a is True or b is True:
+        return True
+    return None if (a is None or b is None) else False
+
+
+def _v_number_symbolic(p, planned_styles, sid: str, level_rpr) -> bool:
+    mrpr = p.find(W + "pPr/" + W + "rPr")
+    names = list(_explicit_names(level_rpr)) + list(_explicit_names(mrpr))
+    for x in (_rstyle(mrpr), sid):
+        for st in planned_styles.chain(x):
+            names += _explicit_names(st.find(W + "rPr"))
+    return any(n.casefold() in V_DEFAULT_PRESERVE for n in names)
+
+
+def _v_display(p, prefix_runs: List[Any], token_runs: List[Any], token: str, styles, planned_styles, sid: str, scheme,
+               level: int, level_rpr) -> Optional[str]:
+    """Why the typed number does not read as its run text, or its list number would not look like it (None: it does) —
+    this module's own reading, in this order: a prefix run hidden (vanish or specVanish on or ambiguous); a run holding a
+    character of the typed number in caps or smallCaps (on or ambiguous) when the typed number holds a lower-case
+    letter; the mark hidden; in the planned output the number (the mark's rPr over ``_v_planned_levels``, the level's
+    rPr on top) hidden, or in capitals where the level's number can hold a lower-case letter; the number in a symbol
+    font, or a typed run in one (``props.symbolic``); a typed run and the number (both over the planned chain) differing
+    in strike, dstrike, vertAlign, position, colour or size (an ambiguous toggle counts as a difference)."""
     for r in prefix_runs:
-        rpr = r.find(W + "rPr")
-        if v_hidden(rpr, p, styles) is not False:
+        if _v_hidden_any(r.find(W + "rPr"), p, styles) is not False:
             return "the typed number is hidden text"
-        for e in ("caps", "smallCaps"):
-            if _v_run_prop(rpr, p, styles, e)[0] is not False:
-                return f"the typed number is shown in {e}"
-    if v_mark_hidden(p, styles) is not False:
+    if any(ch.islower() for ch in token):
+        for r in token_runs:
+            for e in ("caps", "smallCaps"):
+                if _v_run_prop(r.find(W + "rPr"), p, styles, e)[0] is not False:
+                    return f"the typed number is shown in {e}"
+    ppr = p.find(W + "pPr")
+    if _v_hidden_any(ppr.find(W + "rPr") if ppr is not None else None, p, styles) is not False:
         return "the paragraph mark is hidden"
     mrpr = p.find(W + "pPr/" + W + "rPr")
-    levels: List[Tuple[str, Any]] = [("docDefaults", planned_styles.doc_defaults_rpr())]
-    for x in (_v_table_style_id(p, planned_styles), sid, _rstyle(mrpr) or planned_styles.default.get("character")):
-        levels += [("style", st.find(W + "rPr")) for st in reversed(planned_styles.chain(x))]
-    if v_toggle(levels, mrpr, "vanish") is not False:
-        return f"with style {sid} the paragraph mark (it formats the number) is hidden"
-    if _v_shows_lower(scheme, level) and (v_toggle(levels, mrpr, "caps") is not False
-                                          or v_toggle(levels, mrpr, "smallCaps") is not False):
-        return f"with style {sid} the paragraph mark (it formats the number) is in capitals"
+    num = _v_look(_v_planned_levels(p, planned_styles, sid, mrpr), mrpr, level_rpr)
+    if num["vanish"] is not False or num["specVanish"] is not False:
+        return f"with style {sid} the list number is hidden"
+    if _v_shows_lower(scheme, level) and (num["caps"] is not False or num["smallCaps"] is not False):
+        return f"with style {sid} the list number is in capitals"
+    if _v_number_symbolic(p, planned_styles, sid, level_rpr):
+        return f"with style {sid} the list number is in a symbol font"
+    for r in token_runs:
+        rpr = r.find(W + "rPr")
+        if symbolic(rpr, p, styles, V_DEFAULT_PRESERVE):
+            return "the typed number is in a symbol font"
+    for r in token_runs:
+        rpr = r.find(W + "rPr")
+        typed = _v_look(_v_planned_levels(p, planned_styles, sid, rpr), rpr)
+        for e in V_LOOK_REFUSED:
+            if typed[e] is None or typed[e] != num[e]:
+                return f"the list number's {e} ({num[e]!r}) is not the typed number's ({typed[e]!r})"
     return None
 
 
@@ -169,16 +265,32 @@ def _typed_numbers(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             raise ValueError(f"{main} paragraph {i}: level {tn.level} has no suffix (the op must refuse: "
                              f"numbering-mismatch)")
         prefix_runs: List[Any] = []
+        token_runs: List[Any] = []
+        t0, t1 = tn.token_start, tn.token_start + len(tn.token)
         for it in v_items(p):
-            if it.pos is not None and it.pos < tn.end and it.run is not None and all(it.run is not r for r in prefix_runs):
+            if it.pos is None or it.run is None:
+                continue
+            if it.pos < tn.end and all(it.run is not r for r in prefix_runs):
                 prefix_runs.append(it.run)
-        why = _v_display(p, prefix_runs, ctx.src_styles, dest.styles, dest.sids[tn.level], dest.scheme, tn.level)
+            if t0 <= it.pos < t1 and all(it.run is not r for r in token_runs):
+                token_runs.append(it.run)
+        why = _v_display(p, prefix_runs, token_runs, tn.token, ctx.src_styles, dest.styles, dest.sids[tn.level],
+                         dest.scheme, tn.level, dest.level_rprs.get(tn.level))
         if why:
             raise ValueError(f"{main} paragraph {i}: {why} (the op must refuse: typed-format)")
         numpr = p.find(W + "pPr/" + W + "numPr")
         if numpr is not None and any(c.tag in V_NUMPR_REVISIONS for c in numpr.iter()):
             raise ValueError(f"{main} paragraph {i}: a tracked change in its own numPr (the op must refuse: "
                              f"existing-revisions)")
+        if tracked:
+            seen, sid0 = set(), v_paragraph_style(p, ctx.src_styles)
+            while sid0 and sid0 in ctx.src_styles.by_id and sid0 not in seen:
+                if sid0 in dest.replaced:
+                    raise ValueError(f"{main} paragraph {i}: its style chain holds {sid0}, whose definition the import "
+                                     f"replaces untracked (the op must refuse: tracked-format)")
+                seen.add(sid0)
+                b = ctx.src_styles.by_id[sid0].find(W + "basedOn")
+                sid0 = b.get(W + "val") if b is not None else None
         found.append((i, tn))
     if [[i, tn.level, tn.end] for i, tn in found] != [list(c) for c in a.get("converted") or []]:
         errs.append(f"{tag}: the typed numbers found here {[[i, tn.level, tn.end] for i, tn in found][:12]} are not "

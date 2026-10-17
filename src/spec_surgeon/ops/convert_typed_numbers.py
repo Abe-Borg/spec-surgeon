@@ -65,16 +65,19 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..ooxml import RevisionStamp, block_full_text, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import W, DocxPackage
 from . import lists, register
+from .audit_numbering import typed_shape
 from .base import JobException, Op, PlanFragment
 from .clear_formatting import ClearSettings, ParagraphClearing, changes_needed, check_markers, clear_paragraph, \
     paragraph_clearing
 from .convert_numbering import REVISION_IN_NUMPR, restyle_edit
 from .effective import PropResolver
 from .markup import Look
-from .numbering_convert import destination, planned_mark_toggles, row, scheme_params, shown, shows_lowercase, visible
+from .numbering_convert import (LOOK_FLAGGED, LOOK_REFUSED, destination, level_sample, look_of, number_look,
+                                number_symbolic, planned_levels, replaced_in_chain, row, scheme_params, shown,
+                                shows_lowercase, visible)
 from .replace_text import default_author
-from .selectors import (StyleSheet, chain_reads, check_paragraph_selector, paragraph_selected, runs_by_paragraph,
-                        table_ordinals)
+from .selectors import (DEFAULT_PRESERVE_FONTS, StyleSheet, chain_reads, check_paragraph_selector, is_symbol_rpr,
+                        paragraph_selected, runs_by_paragraph, table_ordinals)
 from .slots import field_runs
 from .style_import import apply_import, check_template_unchanged
 from .textedit import Edit, RunText, apply_part_edits, edits_to_data, plan_paragraph, run_text
@@ -85,33 +88,81 @@ REFLOW_REASON = "the typed numbers become list numbers with the scheme's indents
 MISMATCH_SHOWN = 5
 
 
-def display_problem(look: Look, planned: PropResolver, p, runs, sid: str, scheme, level: int) -> Optional[str]:
-    """Why a typed number does not read as its run text says, or its list number would not show as the list renders
-    it (None: it reads as typed): a run of the prefix whose EFFECTIVE vanish, caps or smallCaps is on or ambiguous
-    (batch 2's hidden rule — ``markup.Look`` —, set_properties' toggles — ``PropResolver``); the paragraph mark
-    effectively hidden; in the planned output the mark — which formats the list number — hidden, or in capitals when
-    the level's number can hold a lower-case letter (``numbering_convert.planned_mark_toggles``/``shows_lowercase``)."""
-    for r in runs:
-        rpr = r.find(W + "rPr")
-        h = look.hidden(rpr, p)
+LOOK_WORDS = {"strike": "struck through", "dstrike": "double struck through", "vertAlign": "raised or lowered "
+              "(superscript / subscript)", "position": "raised or lowered (position)", "color": "in another colour",
+              "sz": "in another size"}
+FLAG_WORDS = {"b": "bold", "i": "italic", "u": "underline", "font": "font"}
+
+
+def hidden_toggle(look: Look, rpr, p) -> Optional[bool]:
+    """Hidden: the effective ``w:vanish`` or ``w:specVanish`` (batch 2's toggle rule) on; None when either is
+    ambiguous and neither is on."""
+    a, b = look.toggle(rpr, p, "vanish"), look.toggle(rpr, p, "specVanish")
+    if a is True or b is True:
+        return True
+    return None if (a is None or b is None) else False
+
+
+def display_problem(look: Look, planned: PropResolver, planned_sheet, sheet, p, prefix_runs, token_runs, token: str,
+                    sid: str, scheme, level: int, level_rpr) -> Tuple[Optional[str], List[str]]:
+    """(why the typed number does not read as its run text says, or its list number would not look like it — None when
+    it does; the properties that differ only in a way flagged). Refused, in this order:
+
+    * a run of the prefix effectively hidden (``hidden_toggle``: vanish or specVanish, on or ambiguous);
+    * a run holding a character of the typed number in capitals or small capitals (on or ambiguous) when the number
+      holds a lower-case letter ("a." reads "A."; "PART 1 -", "1.1", "A." read the same in capitals — F4);
+    * the paragraph mark effectively hidden (Word hides the number with it, LibreOffice joins the paragraph to the next);
+    * the list number in the planned output (``numbering_convert.number_look``: the mark's properties over the NEW
+      style's chain, the level's ``w:lvl/w:rPr`` on top) hidden, or in capitals when the level's number can hold a
+      lower-case letter (``shows_lowercase``); in a symbol font (``number_symbolic``), or a typed number in one
+      (``selectors.is_symbol_rpr``);
+    * a run of the typed number and the list number differing in ``numbering_convert.LOOK_REFUSED`` — strike, double
+      strike, vertical alignment, position, colour (auto ≡ 000000), size; an ambiguous toggle counts as a difference
+      (F1: a white, 1 pt, superscript or struck number passed before). Both are read in the planned output, over the
+      same chain (``planned_levels`` with the NEW style): the typed run's own rPr vs the mark's with the level's on top —
+      a style change alters the text and the number alike, so only what the mark (or the level) does differently from
+      the typed runs counts.
+
+    Flagged, not refused: a difference in ``LOOK_FLAGGED`` — bold, italic, underline, a (non-symbol) font."""
+    for r in prefix_runs:
+        h = hidden_toggle(look, r.find(W + "rPr"), p)
         if h is not False:
-            return "the typed number is hidden text" + ("" if h else " (its hidden setting is ambiguous)")
-        for e, what in (("caps", "capitals"), ("smallCaps", "small capitals")):
-            v = look.pr.run_prop(rpr, p, e)[0]
-            if v is not False:
-                return f"the typed number is shown in {what}" + ("" if v else " (ambiguous)") + \
-                       " — the reader does not see the letters it is typed with"
-    h = look.mark_hidden(p)
+            return "the typed number is hidden text" + ("" if h else " (its hidden setting is ambiguous)"), []
+    if any(ch.islower() for ch in token):
+        for r in token_runs:
+            rpr = r.find(W + "rPr")
+            for e, what in (("caps", "capitals"), ("smallCaps", "small capitals")):
+                v = look.pr.run_prop(rpr, p, e)[0]
+                if v is not False:
+                    return (f"the typed {token!r} is shown in {what}" + ("" if v else " (ambiguous)")
+                            + " — the reader does not see the letters it is typed with"), []
+    ppr = p.find(W + "pPr")
+    h = hidden_toggle(look, ppr.find(W + "rPr") if ppr is not None else None, p)
     if h is not False:
-        return "the paragraph mark is hidden" + ("" if h else " (ambiguous)") + \
-               " — Word would hide the list number with it, LibreOffice joins the paragraph to the next"
-    t = planned_mark_toggles(planned, p, sid)
-    if t["vanish"] is not False:
-        return f"with style {sid} the paragraph mark, which formats the list number, would be hidden"
-    if shows_lowercase(scheme, level) and (t["caps"] is not False or t["smallCaps"] is not False):
-        return f"with style {sid} the paragraph mark, which formats the list number, is in capitals: a lower-case " \
-               f"number would not show as typed"
-    return None
+        return ("the paragraph mark is hidden" + ("" if h else " (ambiguous)")
+                + " — Word would hide the list number with it, LibreOffice joins the paragraph to the next"), []
+    num = number_look(planned, p, sid, level_rpr)
+    if num["vanish"] is not False or num["specVanish"] is not False:
+        return (f"with style {sid} the list number would be hidden — Word formats it with the paragraph mark's "
+                f"run properties and the level's own"), []
+    if shows_lowercase(scheme, level) and (num["caps"] is not False or num["smallCaps"] is not False):
+        return (f"with style {sid} the list number would be in capitals — Word formats it with the paragraph mark's "
+                f"run properties and the level's own: a lower-case number would not show as typed"), []
+    if number_symbolic(planned_sheet, p, sid, level_rpr, DEFAULT_PRESERVE_FONTS):
+        return f"with style {sid} the list number would be in a symbol font (its glyphs are not letters)", []
+    if any(is_symbol_rpr(r.find(W + "rPr"), p, sheet, DEFAULT_PRESERVE_FONTS) for r in token_runs):
+        return "the typed number is in a symbol font", []
+    flagged: List[str] = []
+    for r in token_runs:
+        rpr = r.find(W + "rPr")
+        typed = look_of(planned_levels(planned, p, sid, rpr), rpr)      # as typed, under the same new style
+        for e in LOOK_REFUSED:
+            if typed[e] != num[e] or typed[e] is None:
+                return (f"the list number would be {LOOK_WORDS[e]} — it takes the paragraph mark's formatting "
+                        f"(with style {sid}), the typed {token!r} its own run's ({e}: typed {typed[e]!r}, number "
+                        f"{num[e]!r})"), []
+        flagged += [e for e in LOOK_FLAGGED if typed[e] != num[e] and e not in flagged]
+    return None, flagged
 
 
 def in_table(p) -> bool:
@@ -207,6 +258,9 @@ class ConvertTypedNumbers(Op):
         planned = PropResolver(dest.sheet)
         found: List[Tuple[int, lists.TypedNumber]] = []
         double: List[int] = []
+        look_flags: Dict[str, List[int]] = {}
+        caps_text: List[int] = []
+        replaced = set(dest.imp.replaced) if dest.imp is not None else set()
         for i, p in enumerate(pars):
             if not lists.counted(p):
                 continue
@@ -224,14 +278,22 @@ class ConvertTypedNumbers(Op):
                 continue
             where = f"{main} paragraph {i} ({shown(texts[i])!r})"
             if tn.ambiguous:
-                raise JobException(f"{where}: the typed {tn.token!r} fits levels {list(tn.levels)} of the scheme; its "
-                                   f"level cannot be told", "ambiguous", {"where": where, "levels": list(tn.levels)})
+                raise JobException(f"{where}: the typed {tn.token!r} fits "
+                                   + " and ".join(f"level {k} (numbered like {level_sample(dest.scheme.level_defs, k)!r})"
+                                                  for k in tn.levels)
+                                   + " of the scheme — a roman numeral is also a run of letters, so the typed text "
+                                     "cannot tell its level; type those numbers so they fit one level, or use a scheme "
+                                     "whose levels cannot be confused", "ambiguous",
+                                   {"where": where, "levels": list(tn.levels)})
             if dest.scheme.levels[tn.level].level.suff == "nothing":
                 raise JobException(f"{where}: level {tn.level} of the scheme puts nothing between the number and the "
                                    f"text (w:suff nothing), the typed number is followed by a space or tab — the "
                                    f"paragraph would read differently", "numbering-mismatch", {"where": where})
-            why = display_problem(look, planned, p, RunText(p).runs_in(0, tn.end), dest.sids[tn.level], dest.scheme,
-                                  tn.level)
+            sid = dest.sids[tn.level]
+            rt = RunText(p)
+            why, flagged = display_problem(look, planned, dest.sheet, sheet, p, rt.runs_in(0, tn.end),
+                                           rt.runs_in(tn.token_start, tn.token_start + len(tn.token)), tn.token, sid,
+                                           dest.scheme, tn.level, dest.level_rprs.get(tn.level))
             if why:
                 raise JobException(f"{where}: {why}; the typed number cannot become a list number that reads the same",
                                    "typed-format", {"where": where})
@@ -239,6 +301,24 @@ class ConvertTypedNumbers(Op):
             if numpr is not None and any(c.tag in REVISION_IN_NUMPR for c in numpr.iter()):
                 raise JobException(f"{where}: its own numbering carries a pending tracked change; accept or reject it "
                                    f"first", "existing-revisions", {"where": where})
+            hit = replaced_in_chain(sheet, p, replaced)
+            if tracked and hit:
+                raise JobException(f"{where}: its style {hit[0]} is one whose definition the example file replaces "
+                                   f"(existing 'replace', never tracked) — reject-all would bring the typed number back "
+                                   f"under the new numbered definition and show it twice; convert with tracked: false, "
+                                   f"or keep this file's definitions (existing 'keep')", "tracked-format",
+                                   {"where": where, "style": hit[0]})
+            for e in flagged:
+                look_flags.setdefault(e, []).append(i)
+            for r in rt.runs_in(tn.end, len(rt.text)):           # F9: capitals the new style brings to the text
+                rest = "".join(rt.text[k] for k, ps in enumerate(rt.positions) if ps.run is r and k >= tn.end)
+                rpr = r.find(W + "rPr")
+                if any(ch.islower() for ch in rest) and all(look.pr.run_prop(rpr, p, e)[0] is False
+                                                            for e in ("caps", "smallCaps")):
+                    after = look_of(planned_levels(planned, p, sid, rpr), rpr)
+                    if after["caps"] is not False or after["smallCaps"] is not False:
+                        caps_text.append(i)
+                        break
             found.append((i, tn))
         if not found and params.get("allow_missing", True) is False:
             raise JobException("no typed number to convert in this file", "not-found")
@@ -249,17 +329,24 @@ class ConvertTypedNumbers(Op):
         pred_at = {x.index: x for x in predicted}
         ends = {i: tn.end for i, tn in found}
         bad: List[str] = []
+        hint = None
         for i, p in enumerate(pars):
             if not lists.counted(p):
                 continue
             before = visible(by_src.get(i), texts[i])
-            after = visible(pred_at.get(i), texts[i][ends[i]:] if i in ends else texts[i])
+            y = pred_at.get(i)
+            after = visible(y, texts[i][ends[i]:] if i in ends else texts[i])
             if before != after:
+                if y is not None and y.issue == "skipped" and hint is None:
+                    hint = self._skipped_hint(pars, texts, i, y, by_src, ends, dest)
+                if y is not None and y.issue == "skipped":
+                    after = f"(no number: its level {y.ilvl} names a level no paragraph reached) {texts[i][ends.get(i, 0):]}"
                 bad.append(f"‘{shown(before)}’ would read ‘{shown(after)}’")
         if bad:
             raise JobException(f"the list would not show the typed numbers exactly — {len(bad)} paragraph(s) would read "
                                f"differently: " + "; ".join(bad[:MISMATCH_SHOWN]) + (" …" if len(bad) > MISMATCH_SHOWN
                                                                                        else "")
+                               + (f". {hint}" if hint else "")
                                + " (a typo in the typed numbers, a skipped level, or a list that already numbers "
                                  "paragraphs here; the audit shows where)", "numbering-mismatch",
                                {"paragraphs": bad[:20]})
@@ -309,8 +396,8 @@ class ConvertTypedNumbers(Op):
                 frag.touches.append((main, str(i), "rPr"))
             if d.mark:
                 frag.touches.append((main, str(i), "markRPr"))
-            # what the display rule read (rule 9): the prefix runs' and the mark's effective vanish/caps/smallCaps
-            # through their style chains, and the new style's chain for the planned mark
+            # what the display rule read (rule 9): the prefix runs' and the mark's effective formatting through their
+            # style chains, and the new style's chain for the planned mark
             mrpr = p.find(f"{W}pPr/{W}rPr")
             rprs = [r.find(W + "rPr") for r in RunText(p).runs_in(0, tn.end)] + [mrpr]
             frag.touches += sorted(chain_reads(sheet, main, p, tables_k, rprs, ("replace", "rPr")))
@@ -390,7 +477,39 @@ class ConvertTypedNumbers(Op):
             frag.flags.append(f"{older_r} changed run(s)/mark(s) and {older_p} paragraph(s) already carried a pending "
                               f"tracked formatting change from an earlier reviewer; reject-all would restore that older "
                               f"snapshot.")
+        for e, idx in sorted(look_flags.items()):
+            frag.flags.append(f"{len(idx)} list number(s) will differ in {FLAG_WORDS[e]} from the typed number they "
+                              f"replace — a list number takes the paragraph mark's formatting (and the scheme style's): "
+                              + "; ".join(f"‘{shown(texts[i], 40)}’" for i in idx[:6]))
+        if caps_text:
+            frag.flags.append(f"{len(caps_text)} paragraph(s) take a scheme style that shows text in capitals: their "
+                              f"words will read in capitals (‘General’ → ‘GENERAL’), the letters stay as typed: "
+                              + "; ".join(f"‘{shown(texts[i][ends[i]:], 40)}’" for i in caps_text[:6]))
+        if dest.linked:
+            frag.flags.append(f"your scheme's style(s) {dest.linked} do not name their level (w:ilvl) in their numbering; "
+                              f"Word shows them right, LibreOffice's proof PDFs show them at level 0 — add the level "
+                              f"to those styles in the example file to make the proofs agree")
+        frag.touches = list(dict.fromkeys(frag.touches))           # one per target and aspect (merge cost)
         return frag
+
+    @staticmethod
+    def _skipped_hint(pars, texts, i: int, y, by_src, ends, dest) -> Optional[str]:
+        """A converted paragraph whose level names a level no paragraph reached (an article "1.1" with no PART before
+        it): the nearest earlier unconverted, unnumbered paragraph that looks like a typed number by the audit's generic
+        grammar (``audit_numbering.typed_shape``) but matched no level of the scheme — and what the level needs."""
+        lv = dest.scheme.level_defs.get(y.ilvl)
+        named = [k for k in lists.named_levels(lv.text if lv is not None else None) if k < (y.ilvl or 0)]
+        gap = min(named) if named else 0
+        for j in range(i - 1, -1, -1):
+            if j in by_src or j in ends or not lists.counted(pars[j]):
+                continue
+            shape = typed_shape(texts[j])
+            if shape is not None:
+                return (f"The nearest line before it that looks like a typed number, ‘{shown(texts[j], 50)}’ "
+                        f"({shape.token!r}), matches no level of the scheme: level {gap} numbers like "
+                        f"{level_sample(dest.scheme.level_defs, gap)!r}")
+        return (f"No line before it is numbered at level {gap} (numbered like "
+                f"{level_sample(dest.scheme.level_defs, gap)!r})")
 
     def apply(self, pkg: DocxPackage, frag: PlanFragment) -> None:
         td = frag.transform_data

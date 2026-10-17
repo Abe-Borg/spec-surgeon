@@ -327,7 +327,21 @@ DISPLAY_CASES = {
     "caps": ({MAIN: _rpr("a.\tHangers.", "<w:caps/>")}, "capitals"),
     "small caps by style": ({STYLES: _add_style(SMALL_CAPS_PARA),
                              MAIN: _ppr("b.\tSupports.", '<w:pStyle w:val="SmallCapsPara"/>')}, "small capitals"),
+    # (4) the review's F1: the list number takes the MARK's formatting — white, 1 pt, superscript, struck, symbol glyphs
+    "white mark": ({MAIN: _ppr("A.\tTyco.", '<w:rPr><w:color w:val="FFFFFF"/></w:rPr>')}, "in another colour"),
+    "1 pt mark": ({MAIN: _ppr("B.\tViking.", '<w:rPr><w:sz w:val="2"/></w:rPr>')}, "in another size"),
+    "superscript mark": ({MAIN: _ppr("A.\tSteel pipe.", '<w:rPr><w:vertAlign w:val="superscript"/></w:rPr>')},
+                         "raised or lowered"),
+    "struck mark": ({MAIN: _ppr("A.\tNFPA 13.", "<w:rPr><w:strike/></w:rPr>")}, "struck through"),
+    "Wingdings mark": ({MAIN: _ppr("C.\tReliable.", '<w:rPr><w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings"/>'
+                                                    '</w:rPr>')}, "symbol font"),
+    # the review's suspicion: w:specVanish hides like w:vanish
+    "spec-vanished mark": ({MAIN: _ppr("A.\tInstall per NFPA 13.", "<w:rPr><w:specVanish/></w:rPr>")},
+                           "paragraph mark is hidden"),
+    "spec-vanished prefix": ({MAIN: _rpr("1.\tHangers per NFPA 13.", "<w:specVanish/>")}, "hidden text"),
 }
+F1_CASES = ["white mark", "1 pt mark", "superscript mark", "struck mark", "Wingdings mark", "spec-vanished mark",
+            "spec-vanished prefix"]
 
 
 def _display_case(name: str) -> bytes:
@@ -348,12 +362,12 @@ def test_a_typed_number_that_does_not_read_as_typed_refuses(tpl, name):
     assert "typed-format" in FAILURE_EXPLANATIONS
 
 
-@pytest.mark.parametrize("name", ["hidden prefix", "hidden mark", "caps", "small caps by style"])
+@pytest.mark.parametrize("name", ["hidden prefix", "hidden mark", "caps", "small caps by style"] + F1_CASES)
 def test_a_transform_that_ignores_the_display_rule_is_caught(tpl, name, monkeypatch):
     """A plan and apply that convert those paragraphs anyway: the reading check of the transform (run text) passes,
     V1–V9 pass — the verifier's own display rule says the op had to refuse."""
     from spec_surgeon.ops import convert_typed_numbers as ctn
-    monkeypatch.setattr(ctn, "display_problem", lambda *a: None)
+    monkeypatch.setattr(ctn, "display_problem", lambda *a: (None, []))
     plan, out, rec = converting(_display_case(name), tpl, tracked=False)
     assert "V10" in failed(rec) and "the op must refuse: typed-format" in v10(rec)
 
@@ -384,7 +398,9 @@ def test_a_scheme_level_whose_number_is_hidden_or_in_capitals_refuses(tmp_path, 
         r, 2).append(_x("<w:rPr><w:vanish/></w:rPr>"))})
     assert refused(held).code == "scheme"
     from spec_surgeon.ops import numbering_convert
+    from spec_surgeon.ops import convert_typed_numbers as ctn
     monkeypatch.setattr(numbering_convert, "level_display_problem", lambda *a: None)
+    monkeypatch.setattr(ctn, "display_problem", lambda *a: (None, []))      # its number check sees the level's vanish too
     plan, out, rec = converting(held, tracked=False)
     assert "V10" in failed(rec) and "the op must refuse: scheme" in v10(rec)
 
@@ -575,6 +591,194 @@ def test_the_numbering_examples_place_no_words():
     from spec_surgeon import compiler
     for name in ("convert-typed-numbers", "convert-numbering-to-scheme"):
         assert compiler.placed_words(load_spec(ROOT / "examples" / "specs" / f"{name}.json")) == [], name
+
+
+# ---- the adversarial review's fixes (F1, F3, F4, F6, F9–F14) ------------------------------------------------------------
+
+def _text(old: str, new: str):
+    """Replace the w:t text ``old`` (one w:t) by ``new``."""
+    def edit(root):
+        t = next(t for t in root.iter(W + "t") if t.text == old)
+        t.text = new
+    return edit
+
+
+def test_a_bold_mark_is_flagged_not_refused(tpl):
+    """F1: bold, italic, underline and a (non-symbol) font of the list number differing from the typed number's are
+    flagged; the mark's bold makes 'B.' bold where the typed 'B.' was not."""
+    plan, out, rec = converting(patch_docx(build_typed(), {MAIN: _ppr("b.\tSupports.", "<w:rPr><w:b/></w:rPr>")}),
+                                tpl, tracked=False)
+    assert rec.passed, rec.to_markdown()
+    assert any("differ in bold" in f and "‘b. Supports.’" in f for f in plan.flags), plan.flags
+
+
+def test_a_scheme_style_that_sizes_text_and_number_alike_converts(tmp_path):
+    """F1 compares the typed runs and the number over the SAME new style chain: an example file whose PR1 is 9 pt makes
+    the text and the number 9 pt alike — no refusal, the document reads as before."""
+    def small(root):
+        st = next(s for s in root.findall(W + "style") if s.get(W + "styleId") == "PR1")
+        etree.SubElement(st, W + "rPr").append(_x('<w:sz w:val="18"/>'))
+    t = tmp_path / "SCHEME (9 pt).docx"
+    t.write_bytes(patch_docx(build_scheme_example(), {STYLES: small}))
+    plan, out, rec = converting(build_typed(), str(t), tracked=False)
+    assert rec.passed, rec.to_markdown()
+
+
+@pytest.mark.parametrize("edit", [_rpr("PART 1 - GENERAL", "<w:b/><w:caps/>"), _rpr("1.1\tSUMMARY", "<w:caps/>"),
+                                  _rpr("A.\tTyco.", "<w:caps/>")], ids=["PART", "article", "upper letter"])
+def test_capitals_on_a_typed_number_without_lower_case_letters_convert(tpl, edit):
+    """F4: "PART 1 -", "1.1" and "A." read the same in capitals — converted and verified (V10's own rule agrees); a
+    typed "a." in capitals still refuses (DISPLAY_CASES "caps")."""
+    plan, out, rec = converting(patch_docx(build_typed(), {MAIN: edit}), tpl, tracked=False)
+    assert rec.passed, rec.to_markdown()
+    assert numbers(out)["Tyco."] == "A."
+
+
+def test_the_new_styles_capitals_are_flagged(tpl):
+    """F9: the example file's PRT shows its text in capitals — a typed "PART 1 - General" reads "GENERAL" afterwards."""
+    plan, out, rec = converting(patch_docx(build_typed(), {MAIN: _text("PART 1 - GENERAL", "PART 1 - General")}), tpl,
+                                tracked=False)
+    assert rec.passed, rec.to_markdown()
+    assert any("capitals" in f and "‘General’" in f for f in plan.flags), plan.flags
+
+
+def _linked(root):
+    for st in root.findall(W + "style"):
+        if st.get(W + "styleId") in ("PR1", "PR2", "PR3"):
+            numpr = st.find(f"{W}pPr/{W}numPr")
+            numpr.remove(numpr.find(W + "ilvl"))
+
+
+def test_a_scheme_whose_styles_do_not_name_their_level_is_flagged(tpl, tmp_path):
+    """F3: PR1–PR3 name their list without w:ilvl (the level linked through w:lvl/w:pStyle): Word numbers them right,
+    LibreOffice at level 0 — flagged, in both ops; the example file as built names every level: no flag."""
+    t = tmp_path / "LINKED.docx"
+    t.write_bytes(patch_docx(build_scheme_example(), {STYLES: _linked}))
+    plan, out, rec = converting(build_typed(), str(t), tracked=False)
+    assert rec.passed, rec.to_markdown()
+    want = "your scheme's style(s) ['PR1', 'PR2', 'PR3'] do not name their level"
+    assert any(want in f and "LibreOffice" in f for f in plan.flags), plan.flags
+    from make_fixtures import build_numbering
+    frag = get_op("convert_numbering").plan(DocxPackage(build_numbering(False)), {},
+                                            {"levels": SCHEME_LEVELS, "template": str(t)})
+    assert any(want in f for f in frag.flags)
+    frag = get_op("convert_typed_numbers").plan(DocxPackage(build_typed()), {}, {"levels": SCHEME_LEVELS,
+                                                                                 "template": tpl})
+    assert not any("do not name their level" in f for f in frag.flags)
+
+
+def _zero_articles(root):
+    _level(root, 1).find(W + "numFmt").set(W + "val", "decimalZero")
+
+
+def test_held_styles_that_number_unlike_the_example_file_refuse_with_keep(tpl, monkeypatch):
+    """F6: the example file's own style ids with this file's own list ("1.01" articles): with the default existing
+    "keep" the scheme would silently not apply — refused (scheme), naming ART and pointing at "replace", in both ops
+    (test_convert_numbering converts it with "replace"). A transform without the rule is caught by V10."""
+    arch = patch_docx(build_scheme_example(), {NUMBERING: _zero_articles})
+    for op in ("convert_typed_numbers", "convert_numbering"):
+        with pytest.raises(JobException) as e:
+            get_op(op).plan(DocxPackage(arch), {}, {"levels": SCHEME_LEVELS, "template": tpl})
+        assert e.value.code == "scheme" and "ART" in e.value.reason and "'1.01'" in e.value.reason \
+            and "existing 'replace'" in e.value.reason, op
+    src = patch_docx(_scheme_doc_with("B.\tSecond paragraph under part 2.", False), {NUMBERING: _zero_articles})
+    assert refused(src, tpl).code == "scheme"
+    from spec_surgeon.ops import numbering_convert
+    monkeypatch.setattr(numbering_convert, "level_pattern_sig", lambda *a: 0)
+    plan, out, rec = converting(src, tpl, tracked=False)
+    assert "V10" in failed(rec) and "the op must refuse: scheme" in v10(rec)
+
+
+def test_an_unmatched_part_line_is_named_in_the_reason(tpl):
+    """F11: "PART 1 – GENERAL" (an en dash) matches no level: the article after it names a level no paragraph reached —
+    the reason names the PART line, what it was typed as and what the level needs."""
+    e = refused(patch_docx(build_typed(), {MAIN: _text("PART 1 - GENERAL", "PART 1 – GENERAL")}), tpl)
+    assert e.code == "numbering-mismatch"
+    assert "‘PART 1 – GENERAL’ ('PART 1 –')" in e.reason and "level 0 numbers like 'PART 1 -'" in e.reason, e.reason
+    assert "names a level no paragraph reached" in e.reason
+
+
+def test_a_positional_tab_is_named(tpl):
+    """F11: a w:ptab after the typed number is called a positional tab, not a tab."""
+    def ptab(root):
+        tab = find(root, "A.\tTyco.").find(f"{W}r/{W}tab")
+        tab.getparent().replace(tab, _x('<w:ptab w:relativeTo="margin" w:alignment="left" w:leader="none"/>'))
+    e = refused(patch_docx(build_typed(), {MAIN: ptab}), tpl)
+    assert e.code == "structure" and "a positional tab (w:ptab)" in e.reason, e.reason
+
+
+REL_NUMBERING = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
+
+
+def _without_numbering(data: bytes) -> bytes:
+    zin = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as z:
+        for info in zin.infolist():
+            if info.filename == NUMBERING:
+                continue
+            payload = zin.read(info.filename)
+            if info.filename in ("word/_rels/document.xml.rels", "[Content_Types].xml"):
+                root = etree.fromstring(payload)
+                for el in list(root):
+                    if el.get("Type") == REL_NUMBERING or el.get("PartName") == "/" + NUMBERING:
+                        root.remove(el)
+                payload = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            z.writestr(info, payload)
+    return out.getvalue()
+
+
+def test_a_file_without_list_definitions_is_refused_plainly(tpl):
+    """F12 (kept): Word writes word/numbering.xml once a list is used; the engine never creates a part (rule 10) — the
+    reason says so in plain words."""
+    e = refused(_without_numbering(build_typed()), tpl)
+    assert e.code == "style-numbering" and "no list definitions part" in e.reason and "rule 10" in e.reason
+
+
+def test_a_roman_and_a_letter_level_refuse_with_a_clear_reason(tmp_path):
+    """F13 (kept): the classic outline (I. / … / A.) — "II." fits the roman level 0 and the letter level 2."""
+    def outline(root):
+        lv = _level(root, 0)
+        lv.find(W + "numFmt").set(W + "val", "upperRoman")
+        lv.find(W + "lvlText").set(W + "val", "%1.")
+    e = refused(patch_docx(build_typed(), {MAIN: _text("PART 1 - GENERAL", "II. GENERAL")}),
+                _patched_template(tmp_path, outline))
+    assert e.code == "ambiguous" and "'II.'" in e.reason and "level 0 (numbered like 'I.')" in e.reason \
+        and "a roman numeral is also a run of letters" in e.reason, e.reason
+
+
+def _scheme_styles_without_numbering(root):
+    for sid in SCHEME_LEVELS:
+        root.append(etree.fromstring(f'<w:style {W_DECL} w:type="paragraph" w:styleId="{sid}"><w:name w:val="{sid}"/>'
+                                     f'<w:basedOn w:val="Normal"/></w:style>'))
+
+
+def _styled(text: str, sid: str):
+    return _ppr(text, f'<w:pStyle w:val="{sid}"/>')
+
+
+def test_a_tracked_conversion_over_replaced_styles_refuses(tpl, monkeypatch):
+    """F14: typed paragraphs that already carry the scheme's style ids (unnumbered here) with existing "replace": the
+    definitions are replaced untracked — reject-all would bring the typed numbers back under numbered styles ("A. A.").
+    Tracked is refused (tracked-format); plain converts; a transform without the rule is caught by V10."""
+    src = patch_docx(build_typed(), {STYLES: _scheme_styles_without_numbering,
+                                     MAIN: lambda r: (_styled("PART 1 - GENERAL", "PRT")(r),
+                                                      _styled("1.1\tSUMMARY", "ART")(r))})
+    e = refused(src, tpl, existing="replace")
+    assert e.code == "tracked-format" and "PRT" in e.reason and "reject-all" in e.reason
+    plan, out, rec = converting(src, tpl, existing="replace", tracked=False)
+    assert rec.passed, rec.to_markdown()
+    from spec_surgeon.ops import convert_typed_numbers as ctn
+    monkeypatch.setattr(ctn, "replaced_in_chain", lambda *a: [])
+    plan, out, rec = converting(src, tpl, existing="replace")
+    assert "V10" in failed(rec) and "the op must refuse: tracked-format" in v10(rec)
+
+
+def test_touches_are_declared_once(tpl):
+    """F10: one touch per target and aspect — merge_fragments' pairwise owner loop stays linear."""
+    frag = get_op("convert_typed_numbers").plan(DocxPackage(build_typed()), {},
+                                                {"levels": SCHEME_LEVELS, "template": tpl})
+    assert len(frag.touches) == len(set(frag.touches))
 
 
 # ---- the LibreOffice proof ---------------------------------------------------------------------------------------------

@@ -53,6 +53,7 @@ Verified by V10's ``converted_numbering`` kind (verify/numberingconvert.py) — 
 """
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -65,12 +66,13 @@ from .base import JobException, Op, PlanFragment
 from .clear_formatting import ClearSettings, ParagraphClearing, changes_needed, check_markers, clear_paragraph, \
     paragraph_clearing
 from .fields import fields_of
+from .effective import PropResolver
 from .markup import Look
-from .numbering_convert import destination, row, scheme_params, shown
+from .numbering_convert import destination, look_of, planned_levels, replaced_in_chain, row, scheme_params, shown
 from .replace_text import default_author
 from .selectors import StyleSheet, runs_by_paragraph
 from .style_import import apply_import, check_template_unchanged, resolve_style
-from .textedit import run_text
+from .textedit import RunText, run_text
 
 PARAM_KEYS = {"from", "level_map", "template", "levels", "existing", "direct_formatting", "tracked", "author",
               "allow_missing"}
@@ -116,6 +118,26 @@ def clean_level_map(lm: Any, n_levels: int) -> Dict[int, int]:
             isinstance(v, int) and not isinstance(v, bool) and 0 <= v < n_levels for v in lm.values()):
         raise JobException(f"level_map maps source levels ('0'–'8') to scheme levels (0–{n_levels - 1})", "bad-params")
     return {int(k): v for k, v in lm.items()}
+
+
+LEVEL_KNOWN = ("shared", "start-override", "skipped", "override")    # F8: not evaluated, its level known
+
+
+def shows(x: Optional[lists.NumberedPar]) -> Optional[Tuple[Any, ...]]:
+    """What a paragraph's number shows, as F7 compares it: None (unnumbered), else (text, suffix, issue) — a number
+    that is not evaluated equals only a number with the same issue."""
+    return None if x is None else (x.text, x.suff, x.issue)
+
+
+def whole_list_chosen(x: lists.NumberedPar, src, chosen_at) -> bool:
+    """F8: every counted paragraph of ``x``'s list (its num) is among the chosen ones."""
+    return all(y.index in chosen_at for y in src if y.num_id == x.num_id)
+
+
+def number_words(x: Optional[lists.NumberedPar]) -> str:
+    if x is None:
+        return "unnumbered"
+    return repr(x.text) if x.evaluated else f"(not predictable: {x.issue})"
 
 
 def _bookmark_paragraph(root, name: str):
@@ -249,19 +271,32 @@ class ConvertNumbering(Op):
 
         # ---- refusals and levels ----
         converted: List[Tuple[lists.NumberedPar, int]] = []
+        unpredicted: List[int] = []                      # F8: converted, their source number not predictable
+        chosen_at = {x.index for x, _ in chosen}
+        replaced = set(dest.imp.replaced) if dest.imp is not None else set()
         for x, src_level in chosen:
             p = pars[x.index]
             where = f"{main} paragraph {x.index} ({shown(run_text(p))!r})"
             if not x.evaluated:
-                raise JobException(f"{where}: its number cannot be read with certainty — {x.not_evaluated}",
-                                   "numbering-unsupported", {"where": where, "issue": x.issue})
+                known = x.issue in LEVEL_KNOWN and x.ilvl is not None and x.num_id is not None
+                if not (known and whole_list_chosen(x, src, chosen_at)):
+                    raise JobException(f"{where}: its number cannot be read with certainty — {x.not_evaluated}"
+                                       + (f"; it can be converted only with every paragraph of list {x.num_id} "
+                                          f"(from: \"main\", or every level's styles in from.styles)"
+                                          if known else ""),
+                                       "numbering-unsupported", {"where": where, "issue": x.issue})
+                unpredicted.append(x.index)
             numpr = p.find(f"{W}pPr/{W}numPr")
-            if numpr is not None and numpr.find(W + "numId") is None and numpr.find(W + "ilvl") is not None:
-                raise JobException(f"{where}: its own numbering names only a level (w:ilvl) and relies on its style "
-                                   f"for the list", "numbering-unsupported", {"where": where})
             if numpr is not None and any(c.tag in REVISION_IN_NUMPR for c in numpr.iter()):
                 raise JobException(f"{where}: its own numbering carries a pending tracked change; accept or reject it "
                                    f"first", "existing-revisions", {"where": where})
+            hit = replaced_in_chain(sheet, p, replaced)
+            if tracked and hit:
+                raise JobException(f"{where}: its style {hit[0]} is one whose definition the example file replaces "
+                                   f"(existing 'replace', never tracked) — reject-all would give the paragraph back its "
+                                   f"old style under the new numbered definition; convert with tracked: false, or keep "
+                                   f"this file's definitions (existing 'keep')", "tracked-format",
+                                   {"where": where, "style": hit[0]})
             lvl = level_map.get(src_level, src_level)
             if lvl >= len(dest.scheme.levels):
                 raise JobException(f"{where}: source level {src_level} maps to scheme level {lvl}, and the scheme has "
@@ -288,6 +323,20 @@ class ConvertNumbering(Op):
                 raise JobException(f"{main} paragraph {x.index} ({shown(run_text(pars[x.index]))!r}): the conversion "
                                    f"would leave its number unpredictable — {y.not_evaluated}",
                                    "numbering-unsupported", {"index": x.index})
+        # F7: a paragraph left out shows the number it showed (the destination list's own: flagged by name below)
+        conv_at = {x.index for x, _ in converted}
+        moved = [i for i in sorted(set(by_index) | set(pred_at))
+                 if i not in conv_at and shows(by_index.get(i)) != shows(pred_at.get(i))
+                 and not (i in pred_at and pred_at[i].num_id == dest.scheme.num_id)]
+        if moved:
+            raise JobException(f"{main}: the conversion would change the number of {len(moved)} paragraph(s) it does "
+                               f"not convert — "
+                               + "; ".join(f"‘{shown(run_text(pars[i]), 40)}’ {number_words(by_index.get(i))} → "
+                                           f"{number_words(pred_at.get(i))}" for i in moved[:6])
+                               + (" …" if len(moved) > 6 else "")
+                               + " — their list no longer counts the converted paragraphs; convert every level of that "
+                                 "list (from: \"main\", or every level's styles in from.styles)",
+                               "numbering-mismatch", {"paragraphs": moved[:20]})
 
         # ---- the changes ----
         settings = ClearSettings() if direct == "clear" else None
@@ -333,6 +382,7 @@ class ConvertNumbering(Op):
         frag.touches += [(sheet.part, f"style:{s}", "verify") for s in dict.fromkeys(dest.sids)
                          if s in sheet.styles and s not in dest.requested]
         frag.touches.append((main, "scope", "verify"))
+        frag.touches = list(dict.fromkeys(frag.touches))
         if changed:
             frag.intended_parts.append(main)
 
@@ -383,7 +433,7 @@ class ConvertNumbering(Op):
             frag.notes.append(f"already as asked, left alone: {already} paragraph(s)")
         if not converted:
             frag.notes.append("nothing numbered to convert in this file; no change")
-        self._flags(frag, root, pars, src, predicted, converted, dest, main)
+        self._flags(frag, root, pars, src, predicted, converted, dest, main, unpredicted)
         look = Look(sheet)
         hidden = [x.index for x, _ in converted if look.mark_hidden(pars[x.index]) is not False]
         if hidden:
@@ -391,6 +441,15 @@ class ConvertNumbering(Op):
                               f"and the prediction follows Word, LibreOffice does not — its render proof numbers the "
                               f"paragraphs after them differently: "
                               + "; ".join(f"‘{shown(run_text(pars[i]), 40)}’" for i in hidden[:6]))
+        caps_text = self._caps_text(look, PropResolver(dest.sheet), pars, groups, changed, dest)
+        if caps_text:
+            frag.flags.append(f"{len(caps_text)} paragraph(s) take a scheme style that shows text in capitals: their "
+                              f"words will read in capitals (‘General’ → ‘GENERAL’), the letters stay as typed: "
+                              + "; ".join(f"‘{shown(run_text(pars[i]), 40)}’" for i in caps_text[:6]))
+        if dest.linked:
+            frag.flags.append(f"your scheme's style(s) {dest.linked} do not name their level (w:ilvl) in their numbering; "
+                              f"Word shows them right, LibreOffice's proof PDFs show them at level 0 — add the level "
+                              f"to those styles in the example file to make the proofs agree")
         if older_r or older_p:
             frag.flags.append(f"{older_r} changed run(s)/mark(s) and {older_p} paragraph(s) already carried a pending "
                               f"tracked formatting change from an earlier reviewer; reject-all would restore that older "
@@ -398,13 +457,44 @@ class ConvertNumbering(Op):
         return frag
 
     @staticmethod
-    def _flags(frag: PlanFragment, root, pars, src, predicted, converted, dest, main: str) -> None:
+    def _caps_text(look: Look, planned: PropResolver, pars, groups, changed, dest) -> List[int]:
+        """F9: restyled paragraphs holding a run of lower-case text that is not in capitals now (caps and smallCaps
+        off) and will be under the level's style — its own rPr less what ``clear`` removes, over the planned chain."""
+        out: List[int] = []
+        for bi, lvl, restyle, own, runs_, mark, ppr in changed:
+            if not restyle:
+                continue
+            p, sid = pars[bi], dest.sids[lvl]
+            cleared = {ri: set(names) for ri, names in runs_}
+            rt = RunText(p)
+            for ri, r in enumerate(groups[bi]):
+                text = "".join(rt.text[k] for k, ps in enumerate(rt.positions) if ps.run is r)
+                rpr = r.find(W + "rPr")
+                if not any(ch.islower() for ch in text) or any(look.pr.run_prop(rpr, p, e)[0] is not False
+                                                               for e in ("caps", "smallCaps")):
+                    continue
+                after = rpr
+                if ri in cleared and rpr is not None:
+                    after = copy.deepcopy(rpr)
+                    for c in list(after):
+                        if etree.QName(c).localname in cleared[ri] and c.tag.startswith(W):
+                            after.remove(c)
+                now = look_of(planned_levels(planned, p, sid, after), after)
+                if now["caps"] is not False or now["smallCaps"] is not False:
+                    out.append(bi)
+                    break
+        return out
+
+    @staticmethod
+    def _flags(frag: PlanFragment, root, pars, src, predicted, converted, dest, main: str, unpredicted=()) -> None:
         by_src = {x.index: x for x in src}
         by_pred = {x.index: x for x in predicted}
         conv = {x.index for x, _ in converted}
         shifts = []
         for x, _ in converted:
             y = by_pred[x.index]
+            if not x.evaluated:
+                continue                                  # F8: flagged on its own
             if tuple(y.counters) != tuple(x.counters):
                 shifts.append(f"‘{shown(run_text(pars[x.index]), 40)}’ was {x.text!r} and becomes {y.text!r}")
         if shifts:
@@ -453,14 +543,20 @@ class ConvertNumbering(Op):
             if i in conv:
                 continue
             a, b = by_src.get(i), by_pred.get(i)
-            sa = (a.counters, a.text, a.issue) if a is not None else None
-            sb = (b.counters, b.text, b.issue) if b is not None else None
-            if sa != sb:
-                moved.append(f"‘{shown(run_text(pars[i]), 40)}’ {a.text if a else 'unnumbered'!r} → "
-                             f"{b.text if b else 'unnumbered'!r}")
+            if shows(a) != shows(b):                     # F7: only the destination list's own get here (else refused)
+                moved.append(f"‘{shown(run_text(pars[i]), 40)}’ {number_words(a)} → {number_words(b)}")
         if moved:
-            frag.flags.append(f"{len(moved)} paragraph(s) not converted change their number (the destination list "
-                              f"already numbered them, or a replaced style): " + "; ".join(moved[:6]))
+            frag.flags.append(f"{len(moved)} paragraph(s) not converted change their number: the destination list "
+                              f"{dest.scheme.num_id} numbers them too ({'this file’s own list' if dest.held else 'a style the import brings or replaces'}), "
+                              f"and the converted paragraphs now count in it: " + "; ".join(moved[:6])
+                              + (" …" if len(moved) > 6 else ""))
+        if unpredicted:
+            frag.flags.append(f"{len(unpredicted)} paragraph(s) had numbers the engine could not predict before the "
+                              f"conversion (a restarted or shared list): their new numbers are predicted, whether they "
+                              f"changed is not known — check them: "
+                              + "; ".join(f"‘{shown(run_text(pars[i]), 40)}’ → {by_pred[i].text!r}"
+                                          for i in unpredicted[:6])
+                              + (" …" if len(unpredicted) > 6 else ""))
         if dest.restart_levels:
             frag.flags.append(f"levels {dest.restart_levels} of the destination list carry a restart rule "
                               f"(w:lvlRestart) that LibreOffice ignores: the render proof may number them differently "
