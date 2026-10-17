@@ -39,7 +39,25 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "set_style_font": ["only styles that already name a font (or set a size) change; the others inherit it"],
     "set_doc_defaults_font": ["the document default font (and size) changes, so inheriting text follows; with size_from "
                               "its size changes only when it is one of those sizes"],
-    "set_paragraph_props": ["values merge into existing spacing/indents; unspecified attributes stay"],
+    "set_paragraph_props": [
+        "values merge into existing spacing/indents; unspecified attributes stay",
+        "with select.styles the values go into the paragraph style definitions instead (never tracked): every paragraph "
+        "of that style follows unless it sets its own value (flagged); a style already as asked is left alone; spacing "
+        "the style (or a style it is based on, or the document defaults) gives in lines, or as 'auto', sets the file "
+        "aside rather than being silently ignored by Word",
+    ],
+    "set_borders_shading": [
+        "the asked borders are the paragraph's whole border box: a side not named has no border, so a side its style "
+        "shows is cancelled with a 'nil' side (the style keeps its definition); 'none' removes every border (or the "
+        "shading)",
+        "border size is in eighths of a point (4 = ½ pt, Word's default; 2–96), the space between border and text in "
+        "points (1 by default); colours are 6 hex digits or 'auto'",
+        "a paragraph or style that already looks as asked is left alone (no change, no tracked-change marker)",
+        "direct formatting on the selected paragraphs by default (tracked when they are targeted, so the reviewer sees "
+        "'Formatted: Border'); with select.styles the paragraph style definitions change instead (never tracked) — "
+        "paragraphs with their own direct borders/shading and styles based on it that define their own keep theirs "
+        "(flagged)",
+    ],
     "set_properties": [
         "'all caps' is the w:caps display property — the letters are not retyped; bold and italic are written as the "
         "pairs Word itself writes (w:b + w:bCs, w:i + w:iCs)",
@@ -67,6 +85,71 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "number) is not read and stays (flagged)",
         "direct formatting on the selected paragraphs, tracked when they are targeted; the style definitions are not "
         "changed",
+    ],
+    "clear_direct_formatting": [
+        "clearing direct formatting makes the text follow its styles again: fonts, sizes, bold/italic/underline, colour, "
+        "caps and the like go from the selected runs and paragraph marks; spacing, indents, alignment, borders, shading, "
+        "tab stops and keep/page-break flags from the selected paragraphs — the styles themselves are not changed",
+        "hidden text stays hidden, list numbers (numPr), character and paragraph styles and the proofing language are "
+        "never touched; highlight, superscript/subscript (vertAlign, position) and outline levels stay unless asked "
+        "('also')",
+        "symbol and Wingdings runs (and w:sym runs) keep their font and caps — their glyphs depend on them; their other "
+        "direct formatting is cleared",
+        "'keep' and 'also' take element names: bold is b and bCs, italic i and iCs, size sz and szCs — name both twins "
+        "to keep bold, italic or the size; shd and spacing name the run's and the paragraph's alike",
+        "a run or paragraph with nothing to clear is left alone; plain for the whole document, tracked (Formatted: …) "
+        "when particular paragraphs are targeted",
+    ],
+    "set_language": [
+        "the proofing language changes on every style, run and paragraph mark that names a language, and on the "
+        "document default; text that names none inherits the default — nothing else changes and no text is retyped",
+        "replace_only changes only the listed languages (e.g. British English to US English, French quotations stay "
+        "French); without it every named language becomes the asked one",
+        "language is the Latin-text language (w:val); east_asian and complex_script set the East Asian and "
+        "complex-script languages only when asked",
+        "never tracked (Word does not track a language change); a spec of its own — beside another operation that "
+        "changes run properties or styles it is a conflict (offer a chain)",
+    ],
+    "map_styles": [
+        "every use of the style changes: paragraphs whose style it is (with the default paragraph style — Normal — also "
+        "the paragraphs that name no style), runs and paragraph marks in a character style, tables in a table style, in "
+        "the body, headers, footers, footnotes, endnotes and comments unless a scope is given",
+        "your styles come from the template file: a style this file lacks is imported with the styles it is based on, "
+        "linked to and followed by, and its list numbering (copied with new list ids); a style this file already has "
+        "keeps this file's definition unless existing is 'replace'",
+        "nothing else changes: the architect's style definitions stay (removing unused styles is its own operation, a "
+        "second stage), and field codes that name a style (a TOC \\t switch, STYLEREF) are flagged, not edited",
+        "a style the file lacks, or that nothing uses, is skipped and noted (allow_missing); a 'to' of another type, or a "
+        "name two styles share, sets the file aside",
+        "plain formatting (a whole-document change); tracked on request — one Formatted: Style revision per paragraph, "
+        "run or mark (a table's style cannot be tracked)",
+    ],
+    "apply_style": [
+        "the paragraphs are chosen by how they look (bold, all caps), by a text pattern, by what comes before them or by "
+        "their current style — the selection rules say which; a paragraph that already has the style is left alone",
+        "the style is named by its id or name as the profiles show it; a style this file lacks comes from the template "
+        "file with the styles it is based on, links to and is followed by, and its numbering (existing 'replace' takes "
+        "the template's definition even where this file has one)",
+        "direct_formatting 'keep' (the default) leaves the paragraphs' own formatting, which wins over the style; "
+        "'clear' removes it by clear_direct_formatting's default rules (hidden text, list numbers, superscripts, "
+        "highlight and symbol fonts stay) so the paragraphs look exactly like the style",
+        "tracked (Formatted: Style) when particular paragraphs are chosen, plain for the whole document; a paragraph "
+        "numbered by its own list keeps that numbering (flagged)",
+    ],
+    "remove_unused_styles": [
+        "a style is used when a paragraph, run or table names it (body, headers, footers, footnotes, endnotes, comments — "
+        "pending tracked changes included, a reject-all would bring them back), when the numbering or the settings name "
+        "it, when a field instruction names it (STYLEREF, TOC \\t — by id, name or alias, any case), or when it is a "
+        "default style",
+        "a style that a staying style is based on, followed by (next) or linked to stays too",
+        "a TOC, INDEX or TOA field keeps the TOC 1–9 / Table of Figures, Index 1–9 / Index Heading, Table of Authorities / "
+        "TOA Heading styles a field update would apply",
+        "which: all removes unused Word built-in styles too (Word brings back its own definition when one is used later); "
+        "which: custom removes only the document's own (customStyle) styles — say which in the assumptions",
+        "'keep' names styles never removed (ids or names, any case); styles the user mentions as theirs go there",
+        "used is judged on the file before this spec: after mapping or applying styles, remove unused styles as a chain's "
+        "last stage",
+        "styles.xml only, never tracked; a file with nothing unused is left as it is",
     ],
     "set_page_setup": ["margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given"],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
@@ -341,23 +424,24 @@ SELECTOR_GRAMMAR = {
 
 # What a one-off custom transform (codegen.py) can change and still be verified: each family maps to the V10 assertion
 # kind that checks it (tests/test_conversation.py pins the mapping against verify/props.KINDS). Anything else —
-# highlight, borders, shading, numbering and lists, tables, images, fields, comments, tracked changes, any change of
-# words — has no verified check yet, so a custom transform cannot do it: it needs a new built-in operation (the next
-# round). Shown to Claude in the compiler's and the transform writer's instructions.
+# highlight, numbering and lists, tables, images, fields, comments, tracked changes, any change of words — has no
+# verified check for a custom transform, so a custom transform cannot do it: it needs a built-in operation. Shown to
+# Claude in the compiler's and the transform writer's instructions.
 CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
     "families": {
         "run fonts and font sizes of selected text": "run_fonts",
         "fonts and sizes defined in styles": "style_fonts",
         "the document default font and size": "doc_defaults_fonts",
-        "paragraph spacing, indents and alignment": "paragraph_props",
+        "paragraph spacing, indents and alignment of paragraphs or of paragraph styles": "paragraph_props",
         "page size, margins and orientation of sections": "section_props",
         "which header/footer each section shows": "section_hf_refs",
         "bold, italic, caps, small caps, strikethrough, underline and text colour of selected text or of styles; "
         "keep-with-next, keep lines together, widow control and page break before of paragraphs or of paragraph "
         "styles": "properties",
         "tab stops of paragraphs (set, clear, clear the others)": "tab_stops",
+        "paragraph borders and shading of paragraphs or of paragraph styles": "borders_shading",
     },
-    "cannot": ["highlight, borders, shading", "numbering and lists",
+    "cannot": ["highlight", "numbering and lists",
                "tables", "images", "fields", "comments", "tracked changes", "any change of words"],
     "rules": ["plain (untracked) formatting only", "only the document's text parts (body, headers, footers, footnotes, "
               "endnotes, comments) and its styles part may change", "edited copies only — never written over the "

@@ -212,6 +212,9 @@ class InsertParagraph(Op):
             raise JobException(f"no anchor paragraphs matched selector {para_pred} in {scope}", "not-found",
                                {"scope": scope, "paragraphs": para_pred})
 
+        if style not in (None, "inherit") and sheet.part:
+            # the new paragraphs name this style: another op removing it (remove_unused_styles) is a plan-time conflict
+            frag.touches.append((sheet.part, f"style:{style}", "verify"))
         if tracked:
             frag.rev_delta["ins"] = frag.rev_delta.get("ins", 0) + total
             frag.rev_delta["ins_mark"] = frag.rev_delta.get("ins_mark", 0) + total

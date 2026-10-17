@@ -1,0 +1,64 @@
+{
+  "request": "Put a box and light grey shading around the specifier notes",
+  "summary": "Every specifier note paragraph (its text begins 'NOTE TO SPECIFIER') gets a single ½ pt box with Word's 15% grey shading behind it, as tracked formatting; a note that already looks like that is left alone.",
+  "assumptions": [
+    "the specifier notes are the paragraphs whose text begins 'NOTE TO SPECIFIER'",
+    "the box is the note's whole border box: single lines, ½ pt (size 4), 1 pt from the text on top and bottom, 4 pt on the sides; any other border the note shows is removed",
+    "the shading is D9D9D9 (Word's 15% grey) behind the text; no words change",
+    "targeted formatting is tracked (decision 14.1): Word shows 'Formatted: Border, Shading'"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_borders_shading",
+      "select": {
+        "scope": [
+          "document"
+        ],
+        "paragraphs": {
+          "text_regex": "^NOTE TO SPECIFIER"
+        }
+      },
+      "params": {
+        "borders": {
+          "top": {
+            "style": "single",
+            "size": 4,
+            "space": 1
+          },
+          "left": {
+            "style": "single",
+            "size": 4,
+            "space": 4
+          },
+          "bottom": {
+            "style": "single",
+            "size": 4,
+            "space": 1
+          },
+          "right": {
+            "style": "single",
+            "size": 4,
+            "space": 4
+          }
+        },
+        "shading": {
+          "fill": "D9D9D9"
+        }
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

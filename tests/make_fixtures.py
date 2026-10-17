@@ -968,6 +968,316 @@ def build_batch1(section_number: str = "21 13 19", title: str = "PREACTION SPRIN
     return _post_process(buf.getvalue())
 
 
+# ---- built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md) ------------------------------------------------------------
+
+_W_DECL = f'xmlns:w="{W_NS}"'
+
+
+def _add_style(doc, xml: str):
+    """Append a style written as XML (``<w:style …>…</w:style>``, the w: prefix undeclared) to the styles part."""
+    el = etree.fromstring(xml.replace("<w:style ", f"<w:style {_W_DECL} ", 1))
+    doc.styles.element.append(el)
+    return el
+
+
+def _style_el(doc, sid: str):
+    return next(s for s in doc.styles.element.findall(qn("w:style")) if s.get(qn("w:styleId")) == sid)
+
+
+def _rpr_add(run, xml: str):
+    """Add rPr children written as XML (``<w:b/><w:sz w:val="28"/>``) to a python-docx run, in that order."""
+    rpr = run._r.get_or_add_rPr()
+    for el in etree.fromstring(f"<w:x {_W_DECL}>{xml}</w:x>"):
+        rpr.append(el)
+    return rpr
+
+
+def _ppr_add(paragraph, xml: str):
+    """Add pPr children written as XML to a python-docx paragraph (appended — give them in schema order, after pStyle)."""
+    ppr = paragraph._p.get_or_add_pPr()
+    for el in etree.fromstring(f"<w:x {_W_DECL}>{xml}</w:x>"):
+        ppr.append(el)
+    return ppr
+
+
+def _mark_add(paragraph, xml: str):
+    ppr = paragraph._p.get_or_add_pPr()
+    rpr = ppr.find(qn("w:rPr"))
+    if rpr is None:
+        rpr = OxmlElement("w:rPr")
+        ppr.append(rpr)
+    for el in etree.fromstring(f"<w:x {_W_DECL}>{xml}</w:x>"):
+        rpr.append(el)
+    return rpr
+
+
+def _field_run(paragraph, instr: str, result: str):
+    """A complex field begin/instr/separate/result/end in five runs."""
+    def r(xml):
+        el = etree.fromstring(f"<w:r {_W_DECL}>{xml}</w:r>")
+        paragraph._p.append(el)
+    r('<w:fldChar w:fldCharType="begin"/>')
+    r(f'<w:instrText xml:space="preserve"> {instr} </w:instrText>')
+    r('<w:fldChar w:fldCharType="separate"/>')
+    r(f"<w:t>{result}</w:t>")
+    r('<w:fldChar w:fldCharType="end"/>')
+
+
+def build_styles(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS") -> bytes:
+    """The batch-4 fixture: an architect's spec (docs/BUILTIN_OPS_BATCH4_DESIGN.md). Every paragraph is found by its text
+    in the tests. python-docx's template underneath: 164 styles, numbering.xml (9 lists), stylesWithEffects.xml.
+
+    Styles (the architect's): ``ArchArticle`` ("Arch Article", spacing before 240 after 60, keepNext, next
+    ``ArchNextOnly``), ``ArchPara`` ("Arch Para", left 720 hanging 360), ``ArchNote`` ("Arch Note", a box border and
+    D9D9D9 shading), ``ArchNoteChild`` (based on ArchNote, its own bottom border nil — inherits the rest), ``ArchStrong``
+    (bold character style), ``ArchTable`` (a table style), ``ArchLines`` (spacing after in lines: afterLines 100),
+    ``ArchAuto`` (beforeAutospacing on), ``ArchStart`` (indentation written w:start/w:end); unused on purpose:
+    ``ArchUnused`` (custom, based on ArchPara), ``ArchUnusedChar`` (custom character), ``ArchLinkedPara`` + its linked
+    ``ArchLinkedChar`` (both unused), ``ArchNextOnly`` (used only as ArchArticle's next), ``ArchFieldOnly`` ("Arch Field
+    Only", named only by a STYLEREF field in the header), ``ArchSnapshotOnly`` (named only by a pending w:pPrChange's
+    snapshot). Heading1 (python-docx's, with its linked Heading1Char) carries w:lang en-GB in its rPr; docDefaults'
+    language is en-GB.
+
+    Body: "SECTION 21 13 13" (Normal; direct b, caps, sz 28, rFonts Arial, lang en-GB; direct jc center — bold and all
+    caps); the title (Normal; direct b; spacing after 240; a direct bottom border); "PART 1 - GENERAL" (Heading1, a run in
+    Heading1Char); "1.01 SUMMARY" (ArchArticle, "SUMMARY" in ArchStrong); "A. Section includes …" (ArchPara: direct ind
+    left 1080, spacing after 120; runs: direct italic + colour 0000FF, a superscript "2" (vertAlign), a yellow
+    highlight, a hidden run (vanish), lang fr-FR, lang en-GB, a Wingdings bullet run with direct caps, a w:sym run;
+    its mark: direct b and sz 20, lang en-GB); "NOTE TO SPECIFIER …" (ArchNote); "NOTE child …" (ArchNoteChild);
+    "Coordinate with …" (Normal; direct box border and direct shading FFFF00); "Earlier change" (Normal, direct keepNext
+    and a pending w:pPrChange by Jeremy whose snapshot names ArchSnapshotOnly; its run with direct b under a pending
+    w:rPrChange); "Manual list item" (direct numPr numId 1 + direct ind); "PART 2 - PRODUCTS" (Normal, typed in capitals,
+    direct b — the appearance of a PART heading); "2.01 MATERIALS" (ArchArticle); "Lines spacing" (ArchLines); "Auto
+    spacing" (ArchAuto); "Start indent" (ArchStart); a TOC field naming "Arch Article" in its \t switch; a table in
+    ArchTable whose cell paragraph is ArchPara; "PART 3 - EXECUTION" (Heading1). Header: "SECTION 21 13 13" (Header
+    style) with a STYLEREF "Arch Field Only" field. Footer: Footer style with a direct tab.
+    """
+    from docx.shared import Pt
+    doc = Document()
+    styles_el = doc.styles.element
+    dd = styles_el.find(qn("w:docDefaults") + "/" + qn("w:rPrDefault") + "/" + qn("w:rPr") + "/" + qn("w:lang"))
+    dd.set(qn("w:val"), "en-GB")
+    h1 = _style_el(doc, "Heading1")
+    lang = OxmlElement("w:lang"); lang.set(qn("w:val"), "en-GB")
+    h1.find(qn("w:rPr")).append(lang)
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchArticle"><w:name w:val="Arch Article"/>'
+                    '<w:basedOn w:val="Normal"/><w:next w:val="ArchNextOnly"/><w:qFormat/><w:pPr><w:keepNext/>'
+                    '<w:spacing w:before="240" w:after="60"/></w:pPr><w:rPr><w:b/></w:rPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchNextOnly"><w:name w:val="Arch Next Only"/>'
+                    '<w:basedOn w:val="Normal"/></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchPara"><w:name w:val="Arch Para"/>'
+                    '<w:basedOn w:val="Normal"/><w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchNote"><w:name w:val="Arch Note"/>'
+                    '<w:basedOn w:val="Normal"/><w:pPr><w:pBdr>'
+                    '<w:top w:val="single" w:sz="4" w:space="1" w:color="auto"/>'
+                    '<w:left w:val="single" w:sz="4" w:space="4" w:color="auto"/>'
+                    '<w:bottom w:val="single" w:sz="4" w:space="1" w:color="auto"/>'
+                    '<w:right w:val="single" w:sz="4" w:space="4" w:color="auto"/></w:pBdr>'
+                    '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/></w:pPr>'
+                    '<w:rPr><w:i/></w:rPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchNoteChild"><w:name w:val="Arch Note Child"/>'
+                    '<w:basedOn w:val="ArchNote"/><w:pPr><w:pBdr><w:bottom w:val="nil"/></w:pBdr></w:pPr></w:style>')
+    _add_style(doc, '<w:style w:type="character" w:customStyle="1" w:styleId="ArchStrong"><w:name w:val="Arch Strong"/>'
+                    '<w:basedOn w:val="DefaultParagraphFont"/><w:rPr><w:b/><w:bCs/></w:rPr></w:style>')
+    _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="ArchTable"><w:name w:val="Arch Table"/>'
+                    '<w:basedOn w:val="TableNormal"/><w:pPr><w:spacing w:after="0"/></w:pPr><w:tblPr><w:tblBorders>'
+                    '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchLines"><w:name w:val="Arch Lines"/>'
+                    '<w:basedOn w:val="Normal"/><w:pPr><w:spacing w:afterLines="100"/></w:pPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchAuto"><w:name w:val="Arch Auto"/>'
+                    '<w:basedOn w:val="Normal"/><w:pPr><w:spacing w:before="100" w:beforeAutospacing="1"/></w:pPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchStart"><w:name w:val="Arch Start"/>'
+                    '<w:basedOn w:val="Normal"/><w:pPr><w:ind w:start="360" w:end="0"/></w:pPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchUnused"><w:name w:val="Arch Unused"/>'
+                    '<w:basedOn w:val="ArchPara"/></w:style>')
+    _add_style(doc, '<w:style w:type="character" w:customStyle="1" w:styleId="ArchUnusedChar"><w:name w:val="Arch Unused Char"/>'
+                    '<w:basedOn w:val="DefaultParagraphFont"/><w:rPr><w:i/></w:rPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchLinkedPara"><w:name w:val="Arch Linked Para"/>'
+                    '<w:basedOn w:val="Normal"/><w:link w:val="ArchLinkedChar"/></w:style>')
+    _add_style(doc, '<w:style w:type="character" w:customStyle="1" w:styleId="ArchLinkedChar"><w:name w:val="Arch Linked Char"/>'
+                    '<w:basedOn w:val="DefaultParagraphFont"/><w:link w:val="ArchLinkedPara"/></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchFieldOnly"><w:name w:val="Arch Field Only"/>'
+                    '<w:basedOn w:val="Normal"/></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchSnapshotOnly"><w:name w:val="Arch Snapshot Only"/>'
+                    '<w:basedOn w:val="Normal"/></w:style>')
+
+    hp = doc.sections[0].header.paragraphs[0]
+    hp.style = doc.styles["Header"]
+    hp.add_run(f"SECTION {section_number}\t")
+    _field_run(hp, 'STYLEREF "Arch Field Only" \\* MERGEFORMAT', "WET-PIPE")
+    fp = doc.sections[0].footer.paragraphs[0]
+    fp.style = doc.styles["Footer"]
+    fp.add_run("Page\tend")
+    _ppr_add(fp, '<w:tabs><w:tab w:val="right" w:pos="9000"/></w:tabs>')
+
+    p = doc.add_paragraph()
+    _ppr_add(p, '<w:jc w:val="center"/>')
+    r = p.add_run(f"SECTION {section_number}")
+    _rpr_add(r, '<w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/><w:caps/><w:sz w:val="28"/><w:lang w:val="en-GB"/>')
+    p = doc.add_paragraph()
+    _ppr_add(p, '<w:pBdr><w:bottom w:val="single" w:sz="8" w:space="1" w:color="auto"/></w:pBdr>'
+                '<w:spacing w:after="240"/>')
+    r = p.add_run(title)
+    _rpr_add(r, "<w:b/>")
+    p = doc.add_paragraph("PART 1 - GENERAL", style="Heading 1")
+    r = p.add_run(" (general)")
+    r.style = doc.styles["Heading 1 Char"]
+    p = doc.add_paragraph("1.01\t", style="Arch Article")
+    p.add_run("SUMMARY").style = doc.styles["Arch Strong"]
+    p = doc.add_paragraph(style="Arch Para")
+    _ppr_add(p, '<w:spacing w:after="120"/><w:ind w:left="1080"/>')
+    p.add_run("A.\tSection includes ")
+    r = p.add_run("wet-pipe")
+    _rpr_add(r, '<w:i/><w:color w:val="0000FF"/>')
+    p.add_run(" systems for 1000 ft")
+    r = p.add_run("2")
+    _rpr_add(r, '<w:vertAlign w:val="superscript"/>')
+    p.add_run(" areas; ")
+    r = p.add_run("[verify]")
+    _rpr_add(r, '<w:highlight w:val="yellow"/>')
+    r = p.add_run(" hidden note")
+    _rpr_add(r, "<w:vanish/>")
+    r = p.add_run(" voir annexe")
+    _rpr_add(r, '<w:lang w:val="fr-FR"/>')
+    r = p.add_run(" colour")
+    _rpr_add(r, '<w:sz w:val="22"/><w:lang w:val="en-GB"/>')
+    r = p.add_run("l")
+    _rpr_add(r, '<w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings"/><w:caps/><w:sz w:val="16"/>')
+    r = p.add_run()
+    sym = OxmlElement("w:sym"); sym.set(qn("w:font"), "Symbol"); sym.set(qn("w:char"), "F0B7"); r._r.append(sym)
+    _rpr_add(r, '<w:color w:val="FF0000"/>')
+    _mark_add(p, '<w:b/><w:sz w:val="20"/><w:lang w:val="en-GB"/>')
+    doc.add_paragraph("NOTE TO SPECIFIER: delete the article that does not apply.", style="Arch Note")
+    doc.add_paragraph("NOTE child: inherits the box without its bottom.", style="Arch Note Child")
+    p = doc.add_paragraph("Coordinate with the fire alarm contractor.")
+    _ppr_add(p, '<w:pBdr><w:top w:val="double" w:sz="4" w:space="1" w:color="auto"/>'
+                '<w:bottom w:val="double" w:sz="4" w:space="1" w:color="auto"/></w:pBdr>'
+                '<w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/>')
+    p = doc.add_paragraph()
+    _ppr_add(p, '<w:keepNext/>')
+    r = p.add_run("Earlier change by Jeremy.")
+    _rpr_add(r, "<w:b/>")
+    rchg = etree.fromstring(f'<w:rPrChange {_W_DECL} w:id="301" w:author="Jeremy" w:date="2026-09-22T11:00:00Z"><w:rPr/></w:rPrChange>')
+    r._r.rPr.append(rchg)
+    pchg = etree.fromstring(f'<w:pPrChange {_W_DECL} w:id="302" w:author="Jeremy" w:date="2026-09-22T11:00:00Z">'
+                            '<w:pPr><w:pStyle w:val="ArchSnapshotOnly"/></w:pPr></w:pPrChange>')
+    p._p.pPr.append(pchg)
+    p = doc.add_paragraph("Manual list item")
+    _ppr_add(p, '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="1"/></w:numPr><w:ind w:left="720" w:hanging="360"/>')
+    p = doc.add_paragraph()
+    r = p.add_run("PART 2 - PRODUCTS")
+    _rpr_add(r, "<w:b/>")
+    doc.add_paragraph("2.01\tMATERIALS", style="Arch Article")
+    doc.add_paragraph("Lines spacing", style="Arch Lines")
+    doc.add_paragraph("Auto spacing", style="Arch Auto")
+    doc.add_paragraph("Start indent", style="Arch Start")
+    p = doc.add_paragraph()
+    _field_run(p, 'TOC \\o "1-3" \\t "Arch Article,2"', "Table of contents")
+    t = doc.add_table(rows=1, cols=2)
+    tbl_pr = t._tbl.tblPr
+    ts = tbl_pr.find(qn("w:tblStyle"))
+    if ts is None:
+        ts = OxmlElement("w:tblStyle"); tbl_pr.insert(0, ts)
+    ts.set(qn("w:val"), "ArchTable")
+    t.cell(0, 0).paragraphs[0].style = doc.styles["Arch Para"]
+    t.cell(0, 0).paragraphs[0].add_run("Cell item")
+    t.cell(0, 1).text = "175 psi"
+    doc.add_paragraph("PART 3 - EXECUTION", style="Heading 1")
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
+def build_style_template() -> bytes:
+    """The office styles template (``examples/templates/OFFICE STYLES.docx``): "your" styles for map_styles / apply_style.
+
+    ``PRT``, ``ART``, ``PR1``, ``PR2`` — paragraph styles numbered by one list (num 10 → abstractNum 10, levels 0–3, each
+    level's w:pStyle naming its style); ``PRT`` links the character style ``PRTChar``; ``ART``'s next is ``PR1``; ``PR2``
+    is based on ``PR1``. ``SpecNote`` — a box border and F2F2F2 shading. ``CMT`` — an unnumbered comment style based on
+    ``CMTBase``. ``MyBody`` is named "Body Text" (python-docx's BodyText holds that name: a name clash). ``Heading1`` is
+    redefined (Arial 14 bold, no theme fonts). ``Normal`` differs from python-docx's (Times New Roman 11). ``PicList`` is
+    numbered by a picture-bullet list (num 11 → abstractNum 11, w:lvlPicBulletId); ``LinkList`` by a list whose
+    abstractNum names a numbering style (num 12 → abstractNum 12, w:numStyleLink). ``TblMine`` is a table style;
+    ``CharMine`` a character style.
+    """
+    doc = Document()
+    normal = _style_el(doc, "Normal")
+    rpr = normal.find(qn("w:rPr"))
+    if rpr is None:
+        rpr = OxmlElement("w:rPr"); normal.append(rpr)
+    for el in etree.fromstring(f'<w:x {_W_DECL}><w:rFonts w:ascii="Times New Roman" w:hAnsi="Times New Roman"/>'
+                               f'<w:sz w:val="22"/></w:x>'):
+        rpr.append(el)
+    h1 = _style_el(doc, "Heading1")
+    h1rpr = h1.find(qn("w:rPr"))
+    for c in list(h1rpr):
+        h1rpr.remove(c)
+    for el in etree.fromstring(f'<w:x {_W_DECL}><w:rFonts w:ascii="Arial" w:hAnsi="Arial"/><w:b/>'
+                               f'<w:sz w:val="28"/></w:x>'):
+        h1rpr.append(el)
+
+    def numbered(sid, name, ilvl, extra="", based="Normal", rpr_xml=""):
+        _add_style(doc, f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{sid}"><w:name w:val="{name}"/>'
+                        f'<w:basedOn w:val="{based}"/>{extra}<w:qFormat/><w:pPr><w:numPr><w:ilvl w:val="{ilvl}"/>'
+                        f'<w:numId w:val="10"/></w:numPr><w:spacing w:before="120" w:after="0"/></w:pPr>{rpr_xml}</w:style>')
+    numbered("PRT", "PRT", 0, '<w:next w:val="ART"/><w:link w:val="PRTChar"/>', rpr_xml="<w:rPr><w:caps/></w:rPr>")
+    numbered("ART", "ART", 1, '<w:next w:val="PR1"/>', rpr_xml="<w:rPr><w:b/></w:rPr>")
+    numbered("PR1", "PR1", 2)
+    numbered("PR2", "PR2", 3, based="PR1")
+    _add_style(doc, '<w:style w:type="character" w:customStyle="1" w:styleId="PRTChar"><w:name w:val="PRT Char"/>'
+                    '<w:basedOn w:val="DefaultParagraphFont"/><w:link w:val="PRT"/><w:rPr><w:caps/></w:rPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="SpecNote"><w:name w:val="Spec Note"/>'
+                    '<w:basedOn w:val="Normal"/><w:pPr><w:pBdr>'
+                    '<w:top w:val="single" w:sz="4" w:space="1" w:color="auto"/>'
+                    '<w:left w:val="single" w:sz="4" w:space="4" w:color="auto"/>'
+                    '<w:bottom w:val="single" w:sz="4" w:space="1" w:color="auto"/>'
+                    '<w:right w:val="single" w:sz="4" w:space="4" w:color="auto"/></w:pBdr>'
+                    '<w:shd w:val="clear" w:color="auto" w:fill="F2F2F2"/></w:pPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="CMTBase"><w:name w:val="CMT Base"/>'
+                    '<w:basedOn w:val="Normal"/><w:rPr><w:color w:val="0000FF"/></w:rPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="CMT"><w:name w:val="CMT"/>'
+                    '<w:basedOn w:val="CMTBase"/><w:rPr><w:i/></w:rPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="MyBody"><w:name w:val="Body Text"/>'
+                    '<w:basedOn w:val="Normal"/></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="PicList"><w:name w:val="Pic List"/>'
+                    '<w:basedOn w:val="Normal"/><w:pPr><w:numPr><w:numId w:val="11"/></w:numPr></w:pPr></w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="LinkList"><w:name w:val="Link List"/>'
+                    '<w:basedOn w:val="Normal"/><w:pPr><w:numPr><w:numId w:val="12"/></w:numPr></w:pPr></w:style>')
+    _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="TblMine"><w:name w:val="Tbl Mine"/>'
+                    '<w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders>'
+                    '<w:bottom w:val="single" w:sz="8" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style>')
+    _add_style(doc, '<w:style w:type="character" w:customStyle="1" w:styleId="CharMine"><w:name w:val="Char Mine"/>'
+                    '<w:basedOn w:val="DefaultParagraphFont"/><w:rPr><w:u w:val="single"/></w:rPr></w:style>')
+
+    numbering = doc.part.numbering_part.element
+    lvls = "".join(f'<w:lvl w:ilvl="{i}"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:pStyle w:val="{sid}"/>'
+                   f'<w:lvlText w:val="{text}"/><w:lvlJc w:val="left"/><w:pPr><w:ind w:left="{720 * i}" '
+                   f'w:hanging="720"/></w:pPr></w:lvl>'
+                   for i, (sid, fmt, text) in enumerate([("PRT", "decimal", "PART %1 -"), ("ART", "decimal", "%1.%2"),
+                                                         ("PR1", "upperLetter", "%3."), ("PR2", "decimal", "%4.")]))
+    new_abs = [
+        f'<w:abstractNum {_W_DECL} w:abstractNumId="10"><w:nsid w:val="1A2B3C4D"/><w:multiLevelType '
+        f'w:val="multilevel"/>{lvls}</w:abstractNum>',
+        f'<w:abstractNum {_W_DECL} w:abstractNumId="11"><w:multiLevelType w:val="singleLevel"/><w:lvl w:ilvl="0">'
+        f'<w:start w:val="1"/><w:numFmt w:val="bullet"/><w:lvlText w:val=""/><w:lvlPicBulletId w:val="0"/>'
+        f'<w:lvlJc w:val="left"/></w:lvl></w:abstractNum>',
+        f'<w:abstractNum {_W_DECL} w:abstractNumId="12"><w:multiLevelType w:val="multilevel"/>'
+        f'<w:numStyleLink w:val="NoList"/></w:abstractNum>',
+    ]
+    last_abs = numbering.findall(qn("w:abstractNum"))[-1]
+    at = list(numbering).index(last_abs) + 1
+    for k, x in enumerate(new_abs):
+        numbering.insert(at + k, etree.fromstring(x))
+    for nid in (10, 11, 12):
+        numbering.append(etree.fromstring(f'<w:num {_W_DECL} w:numId="{nid}"><w:abstractNumId w:val="{nid}"/></w:num>'))
+
+    doc.add_paragraph("OFFICE STYLES", style="Title")
+    for sid, text in (("PRT", "GENERAL"), ("ART", "SUMMARY"), ("PR1", "Item"), ("PR2", "Sub item"),
+                      ("SpecNote", "A note."), ("CMT", "A comment.")):
+        doc.add_paragraph(text, style=doc.styles[next(s.name for s in doc.styles if s.style_id == sid)])
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
 # ---- built-in batch 2: generic package surgery for fixtures (docs/BUILTIN_OPS_BATCH2_DESIGN.md) -----------------------
 
 def docx_bytes(doc) -> bytes:
@@ -1038,8 +1348,14 @@ def main(argv=None):
     ap.add_argument("--rich", action="store_true", help="build the NL-editor op fixture (build_rich) instead")
     ap.add_argument("--template", action="store_true", help="write the header/footer template fixture only")
     ap.add_argument("--reference", action="store_true", help="write the template-spec fixture (an architect's spec) only")
+    ap.add_argument("--styles-template", action="store_true",
+                    help="write the office styles template (map_styles / apply_style) only")
     args = ap.parse_args(argv)
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
+    if args.styles_template:
+        (out / "OFFICE STYLES.docx").write_bytes(build_style_template())
+        print(f"wrote {out / 'OFFICE STYLES.docx'}")
+        return
     if args.reference:
         (out / "08 71 00 - DOOR HARDWARE (ACME).docx").write_bytes(build_reference_spec())
         print(f"wrote {out / '08 71 00 - DOOR HARDWARE (ACME).docx'}")

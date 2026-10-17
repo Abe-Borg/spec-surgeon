@@ -1,0 +1,33 @@
+{
+  "request": "Change the proofing language from British English to US English",
+  "summary": "Every style, run and paragraph mark marked English (United Kingdom), and the document default when it is, becomes English (United States); text in other languages keeps its language.",
+  "assumptions": [
+    "only text marked en-GB changes (replace_only); a French quotation stays French",
+    "the language is proofing information: no words change, nothing is retyped",
+    "never tracked (Word does not track a language change); a spec of its own"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_language",
+      "params": {
+        "language": "en-US",
+        "replace_only": [
+          "en-GB"
+        ]
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2
+  }
+}

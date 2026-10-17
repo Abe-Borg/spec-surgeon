@@ -103,16 +103,65 @@ class Plan:
 
 Touch = Tuple[str, str, str]   # (member, target, aspect) — see PlanFragment and check_conflicts for the grammar
 VERIFY = "verify"              # the aspect of a read: the op's prediction depends on the target as it is in the SOURCE
+VERIFY_PROPS = "verify-props"  # a soft read: that property family only — a change of the target's text does not reach it
 
 
 def verify_family(aspect: str) -> Tuple[bool, Optional[str]]:
     """(is a read, the property family it depends on — None for every family) of a touch's aspect:
-    ``verify`` → (True, None); ``verify:pgMar`` → (True, "pgMar"); ``rPr`` → (False, None)."""
+    ``verify`` → (True, None); ``verify:pgMar`` → (True, "pgMar"); ``verify-props:pStyle`` → (True, "pStyle");
+    ``rPr`` → (False, None)."""
     if aspect == VERIFY:
         return True, None
-    if aspect.startswith(VERIFY + ":"):
-        return True, aspect[len(VERIFY) + 1:] or None      # a bare "verify:" reads every family (never less)
+    for prefix in (VERIFY_PROPS, VERIFY):
+        if aspect.startswith(prefix + ":"):
+            return True, aspect[len(prefix) + 1:] or None  # a bare "verify:" reads every family (never less)
     return False, None
+
+
+def soft_read(aspect: str) -> bool:
+    """A ``verify-props:<family>`` read depends on that property family only: a change of the target's ``text`` (run
+    structure, characters — an in-paragraph edit, a tracked deletion of the paragraph) leaves the family as it was, and
+    the reading op's V10 kind re-resolves its targets over the OUTPUT (built-in batch 4: ``set_properties``' reads of
+    the runs it finds already as asked, the ``pStyle`` reads of the restyling ops' neighbours)."""
+    return aspect.startswith(VERIFY_PROPS + ":")
+
+
+def incremental(aspect: str) -> Optional[Tuple[str, str]]:
+    """(family, sign) of an incremental change — ``uses+`` adds references to a style (a paragraph now names it),
+    ``uses-`` takes some away (built-in batch 4) — else None. Incremental changes of one family in one direction
+    commute (two ops each adding uses of Heading2 give the same file in either order); opposite directions do not."""
+    if len(aspect) > 1 and aspect[-1] in "+-" and not verify_family(aspect)[0]:
+        return aspect[:-1], aspect[-1]
+    return None
+
+
+def read_covers(read: str, change: str) -> bool:
+    """Whether a change of ``change`` by another op reaches a prediction read through ``read`` (same target):
+    a bare read covers every family of the target's content — not counted references (an incremental change is not
+    the target's content: a style's definition stays what it was when another paragraph names it); a family read
+    covers that family, both directions of an incremental change of it, and — unless it is a soft read — ``text``."""
+    fam = verify_family(read)[1]
+    inc = incremental(change)
+    if fam is None:
+        return inc is None and not (change == "text" and soft_read(read))
+    if change == "text":
+        return not soft_read(read)
+    return fam == change or (inc is not None and inc[0] == fam)
+
+
+def changes_collide(a: str, b: str) -> bool:
+    """Whether two ops changing aspects ``a`` and ``b`` of one target would make the order decide the result: equal
+    aspects or ``text``; incremental changes of one family only in opposite directions (and against a plain change of
+    that family)."""
+    if "text" in (a, b):
+        return True
+    ia, ib = incremental(a), incremental(b)
+    if ia and ib:
+        return ia[0] == ib[0] and ia[1] != ib[1]
+    if ia or ib:
+        inc, plain = (ia, b) if ia else (ib, a)
+        return inc[0] == plain
+    return a == b
 
 
 @dataclass
@@ -140,8 +189,17 @@ class PlanFragment(Plan):
             the templating op's tab rescale and distance alignment read ``pgSz``/``pgMar`` of every section's
             sectPr, and ``fix_page_numbering``'s cover-unnumbered reads every section's ``titlePg`` to know which
             footer the cover shows; a change of that family (or ``text``) of that target by another op is a
-            conflict, a change of another family is not; ``(member, target, "verify")`` depends on every family.
-        Reads never conflict with reads, and an op's own change of what it reads is not a conflict.
+            conflict, a change of another family is not; ``(member, target, "verify")`` depends on every family;
+          - ``(member, "*", "verify:<family>")``: the prediction depends on that family of EVERY target in the member —
+            a selection by ``style_in``/``has_bold``/``is_all_caps`` reads every paragraph's ``pStyle`` (built-in
+            batch 4); a change of that family anywhere in the member by another op is a conflict;
+          - ``verify-props:<family>`` (``soft_read``): the same, except that a ``text`` change of the target does not
+            reach it — the reading op's V10 kind re-resolves its targets over the output.
+        Incremental changes (``incremental``: ``uses+``/``uses-`` of a style — which paragraphs name it) commute in one
+        direction and collide in opposite ones; a bare ``verify`` read of a style (its definition) is not reached by
+        them, a ``verify:uses`` read (a selection by that style) is by both, ``verify:uses-`` (remove_unused_styles'
+        judgement) only by a removal. Reads never conflict with reads, and an op's own change of what it reads is not
+        a conflict.
     ``rev_ids_needed`` is how many new revision ids (w:ins/w:del/w:rPrChange/w:pPrChange …) apply() consumes;
     the merge hands each fragment a disjoint range starting at ``transform_data["first_rev_id"]``.
     """
@@ -194,22 +252,26 @@ def check_conflicts(fragments: Sequence[PlanFragment]) -> None:
          removes (``set_font`` over the headers plus ``remove_header_footer``, say) is refused here, not left for
          V10 to fail on; a whole-member READ (``(member, "*", "verify")``) conflicts with any CHANGE of that member
          by another op, whole or inside it (``apply_header_footer_template``'s pins read ``styles.xml`` whole, so a
-         ``set_style_font`` in the same spec is refused here, not left for V10 to fail on after apply);
-      2. the same (member, target) touched by two ops conflicts when the aspects are equal, or either is "text", or
-         one is a read of the other's family — ``verify`` (every family) or ``verify:<family>`` (that one; a change
-         of ``text`` restructures the target and conflicts with any read of it). Two reads never conflict
-         (verifying is not changing), and an op's own change of what it reads is not a conflict;
+         ``set_style_font`` in the same spec is refused here, not left for V10 to fail on after apply) — a whole-member
+         FAMILY read (``(member, "*", "verify:<family>")``) only with a change inside the member that it covers
+         (``read_covers``);
+      2. the same (member, target) touched by two ops conflicts when the changes collide (``changes_collide``: equal
+         aspects, either "text", incremental changes in opposite directions), or one is a read the other's change
+         reaches (``read_covers``: ``verify`` every family of the content, ``verify:<family>`` that one — a change of
+         ``text`` restructures the target and conflicts with any read of it but a soft ``verify-props`` one). Two
+         reads never conflict (verifying is not changing), and an op's own change of what it reads is not a
+         conflict;
       3. two ops predicting text diffs for the same (part, block) conflict (defence in depth for rule 2).
     """
     whole: Dict[str, List[Tuple[int, str]]] = {}
     by_target: Dict[Tuple[str, str], List[Tuple[int, str]]] = {}
     any_touch: Dict[str, List[int]] = {}
-    changes: Dict[str, List[int]] = {}                  # member → ops with a non-read touch of it (any target)
+    changes: Dict[str, List[Tuple[int, str]]] = {}      # member → (op, aspect) of every non-read touch (any target)
     for f in fragments:
         for member, target, aspect in f.touches:
             any_touch.setdefault(member, []).append(f.op_index)
             if not verify_family(aspect)[0]:
-                changes.setdefault(member, []).append(f.op_index)
+                changes.setdefault(member, []).append((f.op_index, aspect))
             if target == "*":
                 whole.setdefault(member, []).append((f.op_index, aspect))
             else:
@@ -217,7 +279,7 @@ def check_conflicts(fragments: Sequence[PlanFragment]) -> None:
     names = {f.op_index: _label(f) for f in fragments}
     for member, owners in whole.items():
         changers = sorted({o for o, a in owners if not verify_family(a)[0]})
-        readers = sorted({o for o, a in owners if verify_family(a)[0]} - set(changers))
+        readers = sorted({(o, a) for o, a in owners if verify_family(a)[0] and o not in changers})
         if changers:
             others = sorted({i for i in any_touch.get(member, []) if i not in changers})
             if others or len(changers) > 1:
@@ -231,13 +293,15 @@ def check_conflicts(fragments: Sequence[PlanFragment]) -> None:
                     f"ops {[names[i] for i in who]} both touch {member} and at least one of them replaces, removes or "
                     f"restructures it as a whole" + hint,
                     "conflict", {"member": member, "ops": [names[i] for i in who]})
-        for r in readers:                       # each reader on its own: another reader's change inside counts too
-            changing = sorted({i for i in changes.get(member, []) if i != r})
+        for r, read in readers:                 # each reader on its own: another reader's change inside counts too
+            fam = verify_family(read)[1]
+            changing = sorted({i for i, a in changes.get(member, []) if i != r and read_covers(read, a)})
             if changing:
                 who = sorted({r} | set(changing))
+                what = f"the {fam} of every target in it" if fam else "the whole member"
                 raise JobException(
                     f"ops {[names[i] for i in who]} both touch {member}: {[names[r]]} plan from it "
-                    f"as it is in the source (the whole member) and {[names[i] for i in changing]} would change it "
+                    f"as it is in the source ({what}) and {[names[i] for i in changing]} would change it "
                     f"underneath, so the change would reach that plan unverified — split out "
                     f"{[names[i] for i in changing]} into a spec of its own and run it first, then "
                     f"{[names[r]]} on its outputs",
@@ -251,8 +315,8 @@ def check_conflicts(fragments: Sequence[PlanFragment]) -> None:
                 if ia == ib or (ra and rb):
                     continue
                 if ra or rb:
-                    (ir, fam), (ic, change) = ((ia, fa), (ib, ab)) if ra else ((ib, fb), (ia, aa))
-                    if fam is None or fam == change or change == "text":
+                    (ir, fam, read), (ic, change) = ((ia, fa, aa), (ib, ab)) if ra else ((ib, fb, ab), (ia, aa))
+                    if read_covers(read, change):
                         raise JobException(
                             f"op {names[ir]} plans from {fam or 'every property'} of {member} [{target}] as it is in "
                             f"the source and {names[ic]} would change {change} there underneath, so the change would "
@@ -261,7 +325,7 @@ def check_conflicts(fragments: Sequence[PlanFragment]) -> None:
                             "conflict", {"member": member, "target": target, "ops": [names[ia], names[ib]],
                                          "aspects": [aa, ab], "reads": [names[ir]], "changes": [names[ic]]})
                     continue
-                if aa == ab or "text" in (aa, ab):
+                if changes_collide(aa, ab):
                     raise JobException(
                         f"ops {names[ia]} and {names[ib]} both change {aa if aa == ab else aa + '/' + ab} of "
                         f"{member} [{target}]; the order would decide the result — split into separate specs",

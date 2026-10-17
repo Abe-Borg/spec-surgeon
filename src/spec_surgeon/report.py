@@ -85,7 +85,8 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Paragraph Holds Unsupported Content",
         "The paragraph contains elements the operation does not handle in this mode (a hyperlink, content control, "
         "comment anchor or similar) — or the file holds something the operation cannot tell apart safely (two comments "
-        "with one id, a watermark sharing its run with other content). Bookmarks and proofing markers are fine.",
+        "with one id, a watermark sharing its run with other content, a style named by a content control, an equation "
+        "or a list level that a style mapping cannot reach). Bookmarks and proofing markers are fine.",
     ),
     "textbox": (
         "Target Inside a Text Box",
@@ -239,8 +240,9 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "missing-style": (
         "A Style the Operation Needs Is Missing",
-        "The style named in the spec does not exist in this file. Use a style the file has, or let the new paragraph "
-        "copy its neighbour's formatting.",
+        "The style named in the spec does not exist in this file. Use a style the file has, let the new paragraph "
+        "copy its neighbour's formatting, or — to apply or map to your own style — give the template file that holds "
+        "it, so it is imported.",
     ),
     "bad-name": (
         "The New File Name Cannot Be Used",
@@ -294,6 +296,30 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "width to measure it from: a header or footer shown by sections with different margins, a section without page "
         "size and margins, a footnote or comment — or the margin position lands on another asked position. Give the "
         "position in inches (twips) for this file, or make the sections' margins agree in Word.",
+    ),
+    # ---- built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md) ----
+    "style-mismatch": (
+        "The Style Does Not Fit Here",
+        "In this file the style named in the spec is of another kind (a character or table style where a paragraph "
+        "style is needed, or the two styles of a mapping pair are of different kinds), two styles answer to the name, "
+        "or the mapping would map a default character or table style, which nothing names. Use the style's id as the "
+        "profiles show it, or fix the styles in Word.",
+    ),
+    "style-import": (
+        "Your Style Cannot Be Imported Into This File",
+        "A style from your template cannot be copied in as it is: it is a default style this file lacks, it would "
+        "replace this file's default style, another style here already has its name under a different id, this file "
+        "has a different style under the same id, or it holds extension or alternate-content markup Word would read "
+        "differently once copied. The reason names the style. Rename it in the template or in this file, or import it "
+        "in Word (Organizer).",
+    ),
+    "style-numbering": (
+        "Your Style's Numbering Cannot Be Imported",
+        "The style from your template is numbered by a list this file cannot take as it is: this file has no numbering "
+        "definitions at all, the list uses picture bullets, it is defined through a numbering style, its levels name a "
+        "style this file already numbers with its own list (the import would split that list), it holds alternate-"
+        "content markup, or the template lacks part of its definition. Import the style in Word once (Organizer), or "
+        "use a style without numbering.",
     ),
     "no-part": (
         "The File Has No Such Properties Part",
