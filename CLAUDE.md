@@ -1448,7 +1448,8 @@ teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without
 (`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
 (`tests/test_chain.py`, 2026-10-16), 963 with built-in operations batch 1 (2026-10-16), 1556 with master's bounded
 recovery and built-in operations batch 2 (2026-10-16), 1600 with built-in operations batch 3
-(`tests/test_tab_stops.py`, `tests/test_color_selector.py`, 2026-10-16), 1938 with built-in operations batch 4 and its review round (2026-10-17) —
+(`tests/test_tab_stops.py`, `tests/test_color_selector.py`, 2026-10-16), 1938 with built-in operations batch 4 and its review round (2026-10-17), 2429 with built-in operations batch 5 and its
+review rounds, 2838 with batch 5 merged with master's adaptive workspaces and correlated diagnostics (2026-10-17) —
 all pass but four that skip in the Linux container: the
 Windows-only Credential Manager round trip and three `tests/test_llm.py` tests that need the `anthropic` package; in the
 container `python3 -m pytest -q -s`).
@@ -2344,3 +2345,11 @@ reproduced before they were fixed. Rules that came out of it:
     instances; tracked table or numbering changes; numbering in headers/footers/text boxes; numStyleLink/styleLink lists;
     custom (`001`) formats; rotating margins for landscape; Word itself (nothing here was checked in Word — the LibreOffice
     proofs were).
+11. **The op catalog has a size budget** (found merging batch 5 with master's context epochs). `compiler.system_prompt`
+    carries the whole `op_catalog()` — ops, the EditSpec schema, every worked example — in every conversation, and
+    `contexts.estimate_context_tokens` (3 bytes a token, 4,784 an image) starts a new epoch past
+    `resources.DEFAULT_CONTEXT_TOKENS` (120,000). Batch 5 took the first request from about 86,500 to about 105,000.
+    `tests/test_contexts.py::test_the_default_allowance_leaves_a_conversation_room_for_two_page_images` fails when the
+    first request plus two page images no longer fits: then compact the catalog or raise the allowance — Abraham's call,
+    a documented default (`docs/ADAPTIVE_WORKSPACES.md`) — never loosen the guard. A test whose subject is not rollover
+    sets its own `max_context_tokens` (as `tests/test_vision.py`'s image-allowance test and master's rollover test do).

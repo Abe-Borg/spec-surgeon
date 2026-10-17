@@ -170,8 +170,10 @@ def test_page_investigation_accepts_a_configured_larger_allowance(folder, tmp_pa
     fake = FakeClient(resp(tool("view_pages", {"file": name, "pages": [1, 2]}, "v1")),
                       resp(tool("view_pages", {"file": name, "pages": [3, 4]}, "v2")),
                       resp(tool("submit_editspec", {"spec": REMOVE}, "s1")))
+    # The full operation catalog and four page images must fit in one epoch: this test is about the image
+    # allowance, a new epoch is test_contexts' subject (the headroom itself: test_contexts' headroom guard).
     conversation = Conversation("remove all headers and footers", sorted(folder.glob("*.docx")), client=fake,
-                                work_dir=tmp_path / "chat", max_image_tokens=12000)
+                                work_dir=tmp_path / "chat", max_image_tokens=12000, max_context_tokens=200000)
     result = conversation.start()
     second = fake.requests[2]["messages"][-1]["content"][0]
     assert not second.get("is_error") and len(result.images) == 4
