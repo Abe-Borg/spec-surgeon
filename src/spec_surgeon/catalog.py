@@ -68,6 +68,21 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "direct formatting on the selected paragraphs, tracked when they are targeted; the style definitions are not "
         "changed",
     ],
+    "remove_unused_styles": [
+        "a style is used when a paragraph, run or table names it (body, headers, footers, footnotes, endnotes, comments — "
+        "pending tracked changes included, a reject-all would bring them back), when the numbering or the settings name "
+        "it, when a field instruction names it (STYLEREF, TOC \\t — by id, name or alias, any case), or when it is a "
+        "default style",
+        "a style that a staying style is based on, followed by (next) or linked to stays too",
+        "a TOC, INDEX or TOA field keeps the TOC 1–9 / Table of Figures, Index 1–9 / Index Heading, Table of Authorities / "
+        "TOA Heading styles a field update would apply",
+        "which: all removes unused Word built-in styles too (Word brings back its own definition when one is used later); "
+        "which: custom removes only the document's own (customStyle) styles — say which in the assumptions",
+        "'keep' names styles never removed (ids or names, any case); styles the user mentions as theirs go there",
+        "used is judged on the file before this spec: after mapping or applying styles, remove unused styles as a chain's "
+        "last stage",
+        "styles.xml only, never tracked; a file with nothing unused is left as it is",
+    ],
     "set_page_setup": ["margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given"],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
                      "tracked unless the user said otherwise"],
