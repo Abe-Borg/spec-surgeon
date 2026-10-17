@@ -308,7 +308,7 @@ def test_every_refusal_code_is_known():
                 if isinstance(n.args[1], ast.Constant):
                     codes.add(n.args[1].value)
     assert codes == {"bad-params", "style-mismatch", "style-import", "style-numbering", "missing-style", "not-found",
-                     "tracked-format", "internal"}
+                     "tracked-format", "internal", "structure"}
     # the three new codes get their plain-words explanations at integration (docs/batch4_notes/)
     assert set(c for c in codes if c not in FAILURE_EXPLANATIONS) <= {"style-mismatch", "style-import",
                                                                       "style-numbering", "internal"}
@@ -495,6 +495,86 @@ def test_restyling_beside_the_header_footer_templating_op_conflicts(tpl):
     assert "styles.xml" in _conflict(data, hf, importing)                    # it plans from styles.xml as a whole
     everywhere = {"op": "map_styles", "params": {"map": [{"from": "Normal", "to": "Heading 2"}]}}
     _conflict(data, everywhere, hf)                                         # it removes the header parts mapped over
+
+
+# ---- fix round (adversarial review): the template pinned without an import, uses it cannot restyle, the mark ---------
+
+def test_c8_apply_refuses_a_changed_template_even_with_nothing_imported(src, tpl):
+    """The pairs were resolved through the template (rule 12): apply refuses a changed one although the mapping uses the
+    file's own Heading1 and imports nothing."""
+    pkg = DocxPackage(src)
+    f = get_op("map_styles").plan(pkg, {}, {"map": [{"from": "ArchArticle", "to": "Heading 1"}], "template": tpl})
+    assert f.transform_data["import"] is None and f.transform_data["template_md5"]
+    Path(tpl).write_bytes(mutate(Path(tpl).read_bytes(), STYLES,
+                                 lambda r: r.append(etree.Element(W + "style", {W + "styleId": "Extra"}))))
+    with pytest.raises(JobException) as e:
+        get_op("map_styles").apply(pkg.copy(), f)
+    assert e.value.code == "internal" and "changed between plan and apply" in str(e.value)
+
+
+def _strong_used_by(src, where):
+    """The architect's Arch Strong also used by a content control's run properties, an equation run or a list level."""
+    m = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+
+    def body(root):
+        p = para(root, "Coordinate")
+        if where == "sdt":
+            sdt = etree.SubElement(p, W + "sdt")
+            pr = etree.SubElement(sdt, W + "sdtPr")
+            etree.SubElement(etree.SubElement(pr, W + "rPr"), W + "rStyle", {W + "val": "ArchStrong"})
+            r = etree.SubElement(etree.SubElement(sdt, W + "sdtContent"), W + "r")
+            etree.SubElement(r, W + "t").text = " (control)"
+        else:
+            om = etree.SubElement(p, f"{{{m}}}oMath")
+            mr = etree.SubElement(om, f"{{{m}}}r")
+            etree.SubElement(etree.SubElement(mr, W + "rPr"), W + "rStyle", {W + "val": "ArchStrong"})
+            etree.SubElement(mr, f"{{{m}}}t").text = "x"
+
+    def level(root):
+        lvl = root.find(f"{W}abstractNum/{W}lvl")
+        rpr = lvl.find(W + "rPr")
+        if rpr is None:
+            rpr = etree.SubElement(lvl, W + "rPr")
+        rpr.insert(0, etree.Element(W + "rStyle", {W + "val": "ArchStrong"}))
+    return mutate(src, "word/numbering.xml", level) if where == "lvl" else mutate(src, MAIN, body)
+
+
+@pytest.mark.parametrize("where,needle", [("sdt", "content control"), ("math", "equation"), ("lvl", "list level")])
+def test_c9_uses_the_op_cannot_restyle_are_refused(src, tpl, where, needle):
+    with pytest.raises(JobException) as e:
+        plan_only(_strong_used_by(src, where), [("ArchStrong", "CharMine")], template=tpl)
+    assert e.value.code == "structure" and needle in str(e.value) and "ArchStrong" in str(e.value)
+
+
+def test_c9_a_shared_scan_that_misses_them_is_caught(src, tpl, monkeypatch):
+    monkeypatch.setattr(map_module, "unmapped_uses", lambda pkg, parts, styles: [])
+    for where in ("sdt", "math", "lvl"):
+        data = _strong_used_by(src, where)
+        plan, out, rec = mapping(data, [("ArchStrong", "CharMine")], template=tpl)
+        assert "V10" in failed(rec) and "does not restyle" in v10(rec), where
+
+
+def test_d2_a_run_property_op_on_the_restyled_paragraphs_mark_plans_and_passes(src, tpl):
+    """set_font over everything changes the paragraph marks of the paragraphs map_styles restyles: its own kind checks
+    the marks; mapped_styles leaves the mark's rPr to the residual (it did not restyle the mark)."""
+    spec = {"request": "r", "summary": "s", "mode": "formatting",
+            "ops": [{"op": "set_font", "params": {"font": "Arial"}},
+                    {"op": "map_styles", "params": {"map": [{"from": "Arch Para", "to": "Arch Unused"}]}}]}
+    plan, frags = plan_spec(DocxPackage(src), spec)
+    out = apply_spec(DocxPackage(src), frags).output_bytes()
+    rec = run_suite(src, out, plan.to_dict(), "src.docx", "out.docx")
+    assert rec.passed, rec.to_markdown()
+
+
+def test_d2_a_mark_changed_by_nobody_s_kind_still_fails(src, tpl):
+    """map_styles alone: a w:caps added to a restyled paragraph's mark is no one's change — the residual catches it."""
+    plan, out, rec = mapping(src, [("Arch Para", "Arch Unused")])
+    assert rec.passed
+
+    def caps(root):
+        rpr = para(root, "A.").find(f"{W}pPr/{W}rPr")
+        rpr.insert(0, etree.Element(W + "caps"))
+    _caught(src, plan, out, MAIN, caps, "unpredicted change")
 
 
 # ---- through a spec and a batch ------------------------------------------------------------------------------------

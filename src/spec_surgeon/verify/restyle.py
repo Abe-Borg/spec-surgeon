@@ -5,7 +5,10 @@ This module's own reading of the op's definitions (transform side: ops/map_style
 definitions that must stay identical on both sides). Nothing here comes from ops/ (rule 1):
 
 * **Resolution** (``v_resolve_style``): the style whose ``w:styleId`` equals the reference exactly; else the one whose
-  ``w:name`` equals it casefolded (two → ValueError: the op must refuse ``style-mismatch``); else none.
+  ``w:name`` equals it with whitespace collapsed and casefolded (two → ValueError: the op must refuse
+  ``style-mismatch``); else none.
+* **Uses the op does not restyle** (``_v_unmapped``): a character ``from`` in ``w:sdtPr/w:rPr``, ``w:sdtEndPr/w:rPr`` or
+  ``m:r/w:rPr`` of a part in scope, or in ``w:lvl/w:rPr`` of the numbering part — the op must refuse (``structure``).
 * **The pairs**, from the user's own ``map`` / ``template`` / ``existing`` / ``allow_missing`` / ``tracked`` with this
   module's defaults (keep, true, false): the parameter rules (one ``from`` twice, a ``to`` that is another pair's
   ``from``, replace without a template), every ``to`` in the template when one is given, ``from`` in the SOURCE (none →
@@ -19,7 +22,8 @@ definitions that must stay identical on both sides). Nothing here comes from ops
 
 Fails when the pairs (status and the two styles), the changed elements or their counts differ from the plan's; when a
 changed paragraph's output pPr is not the first child of the paragraph, does not begin with a ``w:pStyle`` that is the
-source's with ``w:val`` the style mapped to (``{w:val}`` when the source had none), or differs in any other child; when a
+source's with ``w:val`` the style mapped to (``{w:val}`` when the source had none), or differs in any other child but the
+paragraph mark's rPr (the residual compares that, unless the kind that changed it registered it); when a
 changed run's or mark's output rPr is not the source's with exactly ``w:rStyle/@w:val`` changed (children in the same
 order); when a changed table's ``w:tblStyle`` is not the source's with ``w:val`` changed, in its place; when a change marker
 breaks the shared rules (tracked: one ``w:pPrChange`` / ``w:rPrChange`` per element, its snapshot the source; plain:
@@ -39,16 +43,20 @@ from .template import _template
 
 V_SCOPE = ("document", "headers", "footers", "footnotes", "endnotes", "comments")
 V_MAPPABLE = {"paragraph", "character", "table"}
+V_MATH_RUN = "{http://schemas.openxmlformats.org/officeDocument/2006/math}r"
+V_NUMBERING_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
 
 
 def v_resolve_style(styles: Styles, ref: Any) -> Optional[str]:
-    """The id of the style ``ref`` names: exact w:styleId, else the one w:name equal casefolded, else None; two styles of
-    that name → ValueError (the op must refuse: style-mismatch)."""
+    """The id of the style ``ref`` names: exact w:styleId, else the one w:name equal with whitespace collapsed and
+    casefolded, else None; two styles of that name → ValueError (the op must refuse: style-mismatch)."""
     if not isinstance(ref, str) or not ref:
         return None
     if ref in styles.by_id:
         return ref
-    named = sorted(sid for sid, st in styles.by_id.items() if (v_name(st) or "").casefold() == ref.casefold())
+    want = " ".join(ref.split()).casefold()
+    named = sorted(sid for sid, st in styles.by_id.items()
+                   if v_name(st) is not None and " ".join(v_name(st).split()).casefold() == want)
     if len(named) > 1:
         raise ValueError(f"two styles are named {ref!r}: {named} (the op must refuse: style-mismatch)")
     return named[0] if named else None
@@ -78,6 +86,22 @@ def _v_holders(p, view_runs) -> List[Tuple[str, Optional[int], Any]]:
 def _v_rstyle(rpr) -> Optional[str]:
     e = rpr.find(W + "rStyle") if rpr is not None else None
     return e.get(W + "val") if e is not None else None
+
+
+def _v_unmapped(ctx: Ctx, parts: List[str], chars) -> List[Tuple[str, str]]:
+    """(part, style) of every use of a character ``from`` the op does not restyle: w:sdtPr/w:rPr, w:sdtEndPr/w:rPr and
+    m:r/w:rPr in the parts in scope, w:lvl/w:rPr in the numbering part (the op must refuse them)."""
+    found: List[Tuple[str, str]] = []
+    for part in parts:
+        for el in ctx.src.xml(part).iter():
+            if el.tag in (W + "sdtPr", W + "sdtEndPr", V_MATH_RUN) and _v_rstyle(el.find(W + "rPr")) in chars:
+                found.append((part, _v_rstyle(el.find(W + "rPr"))))
+    npart = ctx.src.related(V_NUMBERING_REL)
+    if npart:
+        for lvl in ctx.src.xml(npart).iter(W + "lvl"):
+            if _v_rstyle(lvl.find(W + "rPr")) in chars:
+                found.append((npart, _v_rstyle(lvl.find(W + "rPr"))))
+    return found
 
 
 def _v_tblstyle(tbl) -> Optional[str]:
@@ -128,7 +152,11 @@ def _v_pairs(ctx: Ctx, pairs, t_styles: Optional[Styles], existing: str) -> List
 
 
 def _check_paragraph(S, o_p, to: str, tracked: bool, author, where: str, errs: List[str], mark_checked: bool) -> None:
-    """``mark_checked``: the paragraph mark is restyled too — its rPr is checked whole by ``_check_rpr``."""
+    """The paragraph's pPr: w:pStyle as expected, first; every other child identical — except the paragraph mark's rPr,
+    which this check never compares: ``_check_rpr`` checks it whole when this kind restyled the mark
+    (``mark_checked``), and otherwise the residual compares it (``strip_ppr`` leaves it in) — unless another op's kind
+    changed it and registered it (``set_font``, ``set_language`` on the same paragraph: their change is theirs to check,
+    rule 9 lets the two ops share the paragraph)."""
     O = o_p.find(W + "pPr")
     kids = [c for c in o_p if isinstance(c.tag, str)]
     if O is None or not kids or kids[0] is not O:
@@ -141,7 +169,7 @@ def _check_paragraph(S, o_p, to: str, tracked: bool, author, where: str, errs: L
     if ps is None or not o_kids or o_kids[0] is not ps or dict(ps.attrib) != want or len(ps):
         errs.append(f"{where}: w:pStyle should be the first child of the pPr with {_plain(want)}, got "
                     f"{_plain(dict(ps.attrib)) if ps is not None else None}")
-    skip = ("pStyle", "pPrChange") + (("rPr",) if mark_checked else ())
+    skip = ("pStyle", "pPrChange", "rPr")
     rest_s = [sig(c) for c in (S if S is not None else []) if _local(c) not in skip]
     rest_o = [sig(c) for c in O if _local(c) not in skip]
     if mark_checked and [_local(c) for c in (S if S is not None else []) if _local(c) != "pPrChange"] != \
@@ -207,6 +235,10 @@ def _mapped_styles(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         raise ValueError("existing 'replace' without a template (the op must refuse: bad-params)")
     rows = _v_pairs(ctx, pairs, t_styles, existing)
     live = [r for r in rows if r["status"] == "mapped"]
+    left = _v_unmapped(ctx, parts, {r["from_id"] for r in live if r["type"] == "character"})
+    if left:
+        raise ValueError(f"character style {left[0][1]} is also used in {left[0][0]} where the op does not restyle "
+                         f"it (a content control, an equation or a list level; the op must refuse: structure)")
     by_type = {k: {r["from_id"]: r["to_id"] for r in live if r["type"] == k} for k in V_MAPPABLE}
     default_p = ctx.src_styles.default.get("paragraph")
     author = a.get("author")

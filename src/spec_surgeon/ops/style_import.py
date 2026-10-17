@@ -7,8 +7,9 @@ with its own code (verify/styleimport.py, V10 kind ``styles_imported``); nothing
 
 Definitions (CLAUDE.md lists them among the definitions that must stay identical on both sides):
 
+* **Names** are compared one way everywhere (``name_key``): whitespace collapsed, casefolded.
 * **Resolution of a style reference** (``resolve_style``): the style whose ``w:styleId`` equals the reference exactly;
-  else the one whose ``w:name`` equals it casefolded (two such styles → ``style-mismatch``); else none.
+  else the one whose ``w:name`` equals it by ``name_key`` (two such styles → ``style-mismatch``); else none.
 * **Copied** styles = imported ∪ replaced. **Closure** from the requested template styles: a requested style is in it;
   for every COPIED closure style, its ``w:basedOn`` / ``w:link`` / ``w:next`` targets and the ``w:pStyle`` of every level
   of the numbering definition it uses (the abstractNum's ``w:lvl`` and the num's ``w:lvlOverride/w:lvl``) are in it — to a
@@ -18,28 +19,39 @@ Definitions (CLAUDE.md lists them among the definitions that must stay identical
 * **Imported** = closure styles whose id the document lacks, in the template's style order; **replaced** (only with
   ``existing: "replace"``) = the requested styles the document holds, in the template's style order; **held** = the other
   closure styles (the document's own definitions are used).
-* Refused (``style-import``): the document has no styles part; an imported style that is a default (``w:default``) in the
-  template; a replaced style that is a default in the document, or whose template definition is a default (two defaults
-  of one type), or whose template definition is of another type (every reference to it would point at the wrong kind); a
-  copied style whose name (casefolded) another style holds after the import (a document style with another id, or another
-  copy); an extension element carrying text (``strip_foreign``).
+* Refused (``style-import``): the document has no styles part; a HELD style that is not the template's style — the file
+  holds the template style's id under another name (``same_style``: names by ``name_key``; keeping the file's would put
+  another style where the template's was meant); an imported style that is a default (``w:default``) in the template; a
+  replaced style that is a default in the document, or whose template definition is a default (two defaults of one
+  type), or whose template definition is of another type (every reference to it would point at the wrong kind); a copied
+  style whose name (``name_key``) another style holds after the import (a document style with another id, or another
+  copy); an extension element carrying text (``strip_foreign``); ``mc:AlternateContent`` in a copy (stripping drops its
+  Fallback with the Choice; keeping the Fallback alone changes what Word 2010+ shows).
 * **Copies** = the template's definitions with extension markup stripped (``apply_header_footer_template.strip_foreign``
   ↔ ``verify/template.strip_extensions``), the style's own ``w:pPr/w:numPr/w:numId/@w:val`` set to its new numId.
 * **Numbering**: a copied style whose own ``w:pPr/w:numPr/w:numId`` is a whole number other than 0 brings the template's
   ``w:num`` with that id and its ``w:abstractNum``. Refused (``style-numbering``): the document has no numbering part; the
   numId is not a whole number; the template's num or abstractNum is missing; the abstractNum has ``w:numStyleLink`` or
-  ``w:styleLink``; a level (``w:abstractNum/w:lvl`` or ``w:num/w:lvlOverride/w:lvl``) has ``w:lvlPicBulletId``; an
-  extension element in a copy carries text. **New ids** (``allocate_ids``): through the copied styles in the template's
-  style order, each template numId met for the first time gets the next numId above the document's largest (largest + 1,
-  …; none → 1) and its abstractNum, met for the first time, the next abstractNumId above the document's largest (none →
-  0). Copies stripped; ``w:abstractNum/@w:abstractNumId``, ``w:num/@w:numId`` and ``w:num/w:abstractNumId/@w:val`` set to
-  the new ids. **Places** (``insert_numbering``): new abstractNums right after the document's last abstractNum (none:
+  ``w:styleLink``; a level (``w:abstractNum/w:lvl`` or ``w:num/w:lvlOverride/w:lvl``) has ``w:lvlPicBulletId``; the num
+  or abstractNum holds ``mc:AlternateContent``; an extension element in a copy carries text; a level's ``w:pStyle``
+  names a HELD style that the file numbers with a list of its own (``numbered_in``: the first ``w:pPr/w:numPr/w:numId``
+  on its basedOn chain, a whole number other than 0) — the copied list would split that numbering (a held level style the
+  file does not number is flagged). **New ids** (``allocate_ids``): through the copied styles in the template's style
+  order, each template numId met for the first time gets the next numId above every numId the document DEFINES OR REFERS
+  TO (``used_ids``: ``w:num/@w:numId``, ``w:numIdMacAtCleanup``, every ``w:numId/@w:val`` of the text parts, the styles
+  part and the numbering part — a dangling id is never captured; none → 1) and its abstractNum, met for the first time,
+  the next abstractNumId above every one defined or referred to (``w:abstractNum/@w:abstractNumId``, every
+  ``w:abstractNumId/@w:val``; none → 0). Copies stripped; ``w:abstractNum/@w:abstractNumId``, ``w:num/@w:numId`` and
+  ``w:num/w:abstractNumId/@w:val`` set to the new ids. **Places** (``insert_numbering``): new abstractNums right after the document's last abstractNum (none:
   before its first num; none either: before ``w:numIdMacAtCleanup``, else at the end), new nums right after its last num
   (none: before ``w:numIdMacAtCleanup``, else at the end) — each group in allocation order.
 * Imported styles are appended to the styles part in the template's style order; a replaced style takes its old place.
 
 The template is an input (rule 12): read once at plan time and pinned by md5; ``apply_import`` reads it again, refuses a
-changed file (``internal``) and rebuilds every copy from that fresh read with the plan's decisions; V10 re-reads it.
+changed file (``internal``, ``check_template_unchanged`` — an op that resolved anything through the template calls it in
+its apply even when nothing is imported) and rebuilds every copy from that fresh read with the plan's decisions; V10
+re-reads it. Its numbering part is read only when a copied style is numbered (a malformed one refuses ``bad-params``
+then: a template problem, the same for every file, like an unreadable template).
 
 API (reused by apply_style)
 ---------------------------
@@ -48,8 +60,12 @@ API (reused by apply_style)
     two styles carry the name.
 ``TemplateStyles.load(path) -> TemplateStyles``
     The template read once: ``.path`` (resolved, a str), ``.data``, ``.md5``, ``.pkg``, ``.sheet`` (``StyleSheet``),
-    ``.numbering`` (its numbering root or None), ``.order`` (style ids in document order). ``bad-params`` when the file is
-    missing, is not a .docx, or has no styles part.
+    ``.numbering`` (its numbering root or None, parsed when first used), ``.order`` (style ids in document order).
+    ``bad-params`` when the file is missing, is not a .docx, or has no styles part (or, when used, a malformed numbering
+    part).
+``check_template_unchanged(path, md5) -> bytes``
+    ``internal`` when the template is not the one the plan read; call it first in ``apply`` whenever the plan read a
+    template, imported or not (rule 12).
 ``style_type(st) -> str``
     ``w:type`` (default ``paragraph``).
 ``plan_import(pkg, tpl, requested, existing="keep") -> StyleImport``
@@ -64,6 +80,8 @@ API (reused by apply_style)
     every style the document already holds that a copy names (basedOn / link / next) or an imported list level names
     (``w:pStyle``): a copy relies on it, so another op removing or changing it in the same spec (remove_unused_styles,
     a style-definition op) is a plan-time conflict, never a dangling reference or a V10 failure after apply;
+    ``(styles, "name:<name_key>", "add")`` per name the import brings (every imported copy, a replaced style whose name
+    changes — two ops bringing one name from two templates are a plan-time conflict);
     ``.intended_parts()`` — the styles part, and the
     numbering part when numbering is copied; ``.assertion()`` — the ``styles_imported`` V10 assertion (``requested``,
     ``existing``, the template and its md5, and the predictions ``imported``, ``replaced``, ``num_map``, ``abs_map``);
@@ -88,6 +106,7 @@ from .selectors import StyleSheet
 
 NUMBERING_REL = REL_TYPE_BASE + "numbering"
 STYLES_WITH_EFFECTS_REL = "http://schemas.microsoft.com/office/2007/relationships/stylesWithEffects"
+MC_ALTERNATE = "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"
 LINK_TAGS = ("basedOn", "link", "next")
 TRUTHY = ("1", "true", "on")
 REPLACED_ASPECTS = ("replace", "rPr", "pPr", "tblPr")
@@ -104,19 +123,34 @@ def style_name(st) -> Optional[str]:
     return n.get(W + "val") if n is not None else None
 
 
+def name_key(name: Optional[str]) -> Optional[str]:
+    """A style name as the import compares names (clashes, the same style on both sides, the ``name:`` touches):
+    whitespace collapsed, casefolded; None for no name."""
+    return " ".join(name.split()).casefold() if name is not None else None
+
+
+def check_template_unchanged(path: str, md5: str) -> bytes:
+    """The template's bytes now — ``internal`` when they are not the ones the plan read (rule 12)."""
+    raw = Path(path).read_bytes()
+    if hashlib.md5(raw).hexdigest() != md5:
+        raise JobException("the template file changed between plan and apply", "internal", {"template": path})
+    return raw
+
+
 def is_default(st) -> bool:
     return st.get(W + "default") in TRUTHY
 
 
 def resolve_style(styles: Dict[str, Any], ref: str, where: str = "") -> Optional[str]:
     """The id of the style ``ref`` names in ``styles`` (``{styleId: w:style}``): exact ``w:styleId``, else the one style
-    whose ``w:name`` equals ``ref`` casefolded (two → ``style-mismatch``), else None."""
+    whose ``w:name`` equals ``ref`` compared by ``name_key`` (whitespace collapsed, casefolded — the import's one way of
+    comparing names; two → ``style-mismatch``), else None."""
     if not isinstance(ref, str) or not ref:
         return None
     if ref in styles:
         return ref
-    key = ref.casefold()
-    hits = [sid for sid, st in styles.items() if (style_name(st) or "").casefold() == key]
+    key = name_key(ref)
+    hits = [sid for sid, st in styles.items() if style_name(st) is not None and name_key(style_name(st)) == key]
     if len(hits) > 1:
         raise JobException(f"{where or 'the file'}: two styles are named {ref!r} ({hits}); name it by its id",
                            "style-mismatch", {"reference": ref, "styles": hits})
@@ -191,6 +225,23 @@ def numbering_styles(num, abstract) -> List[str]:
     return out
 
 
+def same_style(mine, theirs) -> bool:
+    """A style the file holds under a template style's id is that style when their names agree (``name_key``; both
+    unnamed counts) — else it is another style under the same id, and keeping the file's would put it where the
+    template's was meant."""
+    return name_key(style_name(mine)) == name_key(style_name(theirs))
+
+
+def numbered_in(sheet: StyleSheet, sid: str) -> Optional[int]:
+    """The list a style of this file numbers its paragraphs with: the first ``w:pPr/w:numPr/w:numId`` along its basedOn
+    chain (the style itself first), when a whole number other than 0; else None."""
+    for st in sheet.lineage(sid):
+        e = st.find(f"{W}pPr/{W}numPr/{W}numId")
+        if e is not None:
+            return _int_attr(e, "val") or None
+    return None
+
+
 def check_definition(num, abstract, num_id: int) -> None:
     if abstract.find(W + "numStyleLink") is not None or abstract.find(W + "styleLink") is not None:
         raise JobException(f"the template's list {num_id} is defined through a numbering style (w:numStyleLink / "
@@ -212,23 +263,45 @@ def _shape(el) -> Any:
 
 
 def stripped(el, where: str, code: str):
-    try:
-        return strip_foreign(el, where)
-    except JobException as e:
-        raise JobException(f"{e}; not imported", code, {"where": where})
+    """The copy of a template definition: extension markup stripped (``strip_foreign``). Refused (``code``) when an
+    extension element carries text, or when it holds ``mc:AlternateContent`` — stripping would drop its Fallback (the
+    baseline content, e.g. a custom number format's ``w:numFmt``) with the Choice, and keeping the Fallback alone
+    would change what Word 2010+ shows (a "01, 02" format becoming "1, 2")."""
+    if any(True for _ in el.iter(MC_ALTERNATE)):
+        reason = (f"{where} holds Word 2010+ markup (mc:AlternateContent, e.g. a custom number format) that cannot be "
+                  f"copied as the template shows it; not imported")
+    else:
+        try:
+            return strip_foreign(el, where)
+        except JobException as e:
+            reason = f"{e}; not imported"
+    raise JobException(reason, code, {"where": where})
 
 
 # ---- the template --------------------------------------------------------------------------------------------------
 
-@dataclass
 class TemplateStyles:
-    path: str
-    data: bytes
-    md5: str
-    pkg: DocxPackage
-    sheet: StyleSheet
-    numbering: Any
-    order: List[str]
+    """The template read once: ``path`` (resolved), ``data``, ``md5``, ``pkg``, ``sheet`` (``StyleSheet``), ``order``
+    (style ids in document order) and ``numbering`` — its numbering root, parsed when first needed (a malformed one
+    refuses ``bad-params`` then: a template problem, the same for every file), None when it has none."""
+
+    def __init__(self, path: str, data: bytes, pkg: DocxPackage, sheet: StyleSheet, order: List[str]):
+        self.path, self.data, self.pkg, self.sheet, self.order = path, data, pkg, sheet, order
+        self.md5 = hashlib.md5(data).hexdigest()
+        self.numbering_part = numbering_part(pkg)
+        self._numbering: Any = None
+
+    @property
+    def numbering(self):
+        if self.numbering_part is None:
+            return None
+        if self._numbering is None:
+            try:
+                self._numbering = self.pkg.xml(self.numbering_part)
+            except etree.XMLSyntaxError as e:
+                raise JobException(f"the template {Path(self.path).name!r} has a numbering part that is not well-formed "
+                                   f"XML ({e}); its lists cannot be read", "bad-params", {"template": self.path})
+        return self._numbering
 
     @classmethod
     def load(cls, path) -> "TemplateStyles":
@@ -246,11 +319,9 @@ class TemplateStyles:
                                "bad-params")
         if sheet.root is None:
             raise JobException(f"the template {Path(path).name!r} has no styles part", "bad-params")
-        npart = numbering_part(pkg)
         order = list(dict.fromkeys(st.get(W + "styleId") for st in sheet.root.findall(W + "style")
                                    if st.get(W + "styleId")))
-        return cls(path=path, data=data, md5=hashlib.md5(data).hexdigest(), pkg=pkg, sheet=sheet,
-                   numbering=pkg.xml(npart) if npart else None, order=order)
+        return cls(path=path, data=data, pkg=pkg, sheet=sheet, order=order)
 
 
 # ---- the plan ------------------------------------------------------------------------------------------------------
@@ -271,6 +342,7 @@ class StyleImport:
     abs_map: Dict[str, str] = field(default_factory=dict)
     flags: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
+    new_names: List[str] = field(default_factory=list)   # name_key of every imported copy and every changed name
 
     @property
     def changes(self) -> bool:
@@ -284,6 +356,9 @@ class StyleImport:
         if self.num_map:
             out.append((self.numbering_part, "*", "add"))
         out += [(self.styles_part, f"style:{sid}", "verify") for sid in self.held]
+        # a name the import brings into the styles part: two ops bringing one name (from two templates, under two ids)
+        # are a plan-time conflict — the one-op check (a name another style holds after the import) cannot see the other
+        out += [(self.styles_part, f"name:{key}", "add") for key in self.new_names]
         return out
 
     def intended_parts(self) -> List[str]:
@@ -305,7 +380,8 @@ class StyleImport:
 
 def closure_of(tsheet: StyleSheet, requested: Sequence[str], copied, tnum) -> List[str]:
     """The closure (template ids, in the order first reached): requested styles, then what every COPIED closure style
-    names (basedOn/link/next) and the level styles of the numbering definition it uses."""
+    names (basedOn/link/next) and the level styles of the numbering definition it uses. ``tnum`` is the template's
+    numbering root, or a function giving it (read only when a copied style is numbered)."""
     out: List[str] = []
     seen = set()
     todo = list(requested)
@@ -323,8 +399,9 @@ def closure_of(tsheet: StyleSheet, requested: Sequence[str], copied, tnum) -> Li
         todo += style_links(st)
         n = own_num_id(st, f"template style {sid}")
         if n is not None:
-            num = find_num(tnum, n)
-            a = find_abstract(tnum, num_abstract_id(num)) if num is not None else None
+            root = tnum() if callable(tnum) else tnum
+            num = find_num(root, n)
+            a = find_abstract(root, num_abstract_id(num)) if num is not None else None
             if num is None or a is None:
                 raise JobException(f"template style {sid} is numbered by list {n}, which the template's numbering does "
                                    f"not define" + (" (its abstractNum is missing)" if num is not None else ""),
@@ -333,19 +410,36 @@ def closure_of(tsheet: StyleSheet, requested: Sequence[str], copied, tnum) -> Li
     return out
 
 
-def next_ids(numbering_root) -> Tuple[int, int]:
-    """(the first new numId, the first new abstractNumId) — above the document's largest of each."""
-    nums = [_int_attr(n, "numId") for n in numbering_root.findall(W + "num")]
-    absn = [_int_attr(a, "abstractNumId") for a in numbering_root.findall(W + "abstractNum")]
-    nums = [n for n in nums if n is not None]
-    absn = [a for a in absn if a is not None]
+def used_ids(pkg: DocxPackage, numbering_root) -> Tuple[List[int], List[int]]:
+    """(every numId, every abstractNumId) the document DEFINES or REFERS to — a new list must never take an id a
+    paragraph or a level already points at, defined or not (it would capture that paragraph). numIds:
+    ``w:num/@w:numId``, ``w:numIdMacAtCleanup/@w:val`` and every ``w:numId/@w:val`` (a paragraph's or a style's numPr,
+    snapshots included) in the text parts, the styles part and the numbering part; abstractNumIds:
+    ``w:abstractNum/@w:abstractNumId`` and every ``w:abstractNumId/@w:val`` (a num's) in the numbering part. Whole
+    numbers only."""
+    nums: List[int] = []
+    absn: List[int] = []
+    sheet = StyleSheet(pkg)
+    for part in list(pkg.text_parts()) + ([sheet.part] if sheet.part else []):
+        nums += [_int_attr(e, "val") for e in pkg.xml(part).iter(W + "numId")]
+    nums += [_int_attr(e, "val") for e in numbering_root.iter(W + "numId", W + "numIdMacAtCleanup")]
+    nums += [_int_attr(n, "numId") for n in numbering_root.iter(W + "num")]
+    absn += [_int_attr(a, "abstractNumId") for a in numbering_root.iter(W + "abstractNum")]
+    absn += [_int_attr(e, "val") for e in numbering_root.iter(W + "abstractNumId")]
+    return [n for n in nums if n is not None], [a for a in absn if a is not None]
+
+
+def next_ids(pkg: DocxPackage, numbering_root) -> Tuple[int, int]:
+    """(the first new numId, the first new abstractNumId) — above every one the document defines or refers to
+    (``used_ids``; none → 1 and 0)."""
+    nums, absn = used_ids(pkg, numbering_root)
     return (max(nums) if nums else 0) + 1, (max(absn) if absn else -1) + 1
 
 
-def allocate_ids(tsheet: StyleSheet, tnum, copied_in_order: Sequence[str], numbering_root
+def allocate_ids(tsheet: StyleSheet, tnum, copied_in_order: Sequence[str], pkg: DocxPackage, numbering_root
                  ) -> Tuple[Dict[str, str], Dict[str, str]]:
     """(template numId → new numId, template abstractNumId → new abstractNumId), first met first."""
-    next_num, next_abs = next_ids(numbering_root)
+    next_num, next_abs = next_ids(pkg, numbering_root)
     num_map: Dict[str, str] = {}
     abs_map: Dict[str, str] = {}
     for sid in copied_in_order:
@@ -354,7 +448,7 @@ def allocate_ids(tsheet: StyleSheet, tnum, copied_in_order: Sequence[str], numbe
             continue
         num_map[str(n)] = str(next_num)
         next_num += 1
-        a = num_abstract_id(find_num(tnum, n))
+        a = num_abstract_id(find_num(tnum() if callable(tnum) else tnum, n))
         if str(a) not in abs_map:
             abs_map[str(a)] = str(next_abs)
             next_abs += 1
@@ -425,7 +519,7 @@ def plan_import(pkg: DocxPackage, tpl: TemplateStyles, requested: Sequence[str],
 
     def copied(sid: str) -> bool:
         return sid not in sheet.styles or (existing == "replace" and sid in req)
-    closure = closure_of(tpl.sheet, requested, copied, tpl.numbering)
+    closure = closure_of(tpl.sheet, requested, copied, lambda: tpl.numbering)
     inside = set(closure)
     imp.closure = closure
     imp.imported = [sid for sid in tpl.order if sid in inside and sid not in sheet.styles]
@@ -435,6 +529,13 @@ def plan_import(pkg: DocxPackage, tpl: TemplateStyles, requested: Sequence[str],
     copied_order = [sid for sid in tpl.order if sid in set(imp.imported) | set(imp.replaced)]
 
     # ---- refusals (style-import) ----
+    for sid in imp.held:                    # kept as this file defines it: it must BE the template's style
+        mine, theirs = style_name(sheet.styles[sid]), style_name(tpl.sheet.styles[sid])
+        if not same_style(sheet.styles[sid], tpl.sheet.styles[sid]):
+            raise JobException(f"the template's style {sid} ({theirs!r}) and this file's style {sid} ({mine!r}) share "
+                               f"an id but are different styles: keeping this file's would put {mine!r} where "
+                               f"{theirs!r} was meant — rename one of them first",
+                               "style-import", {"style": sid, "template_name": theirs, "file_name": mine})
     for sid in imp.imported:
         if is_default(tpl.sheet.styles[sid]):
             raise JobException(f"template style {sid} is a default style ({style_type(tpl.sheet.styles[sid])}) that "
@@ -453,17 +554,19 @@ def plan_import(pkg: DocxPackage, tpl: TemplateStyles, requested: Sequence[str],
     names: Dict[str, List[str]] = {}
     for sid, st in sheet.styles.items():
         if sid not in copies and style_name(st):
-            names.setdefault(style_name(st).casefold(), []).append(sid)
+            names.setdefault(name_key(style_name(st)), []).append(sid)
     for sid, c in copies.items():
         if style_name(c):
-            names.setdefault(style_name(c).casefold(), []).append(sid)
+            names.setdefault(name_key(style_name(c)), []).append(sid)
     for sid, c in copies.items():
         n = style_name(c)
-        others = [o for o in names.get((n or "").casefold(), []) if o != sid] if n else []
+        others = [o for o in names.get(name_key(n), []) if o != sid] if n else []
         if others:
             raise JobException(f"template style {sid} is named {n!r}, a name style {others[0]!r} holds after the "
                                f"import; Word finds styles by name — rename one of them first", "style-import",
                                {"style": sid, "name": n, "other": others[0]})
+        if n and (sid in imp.imported or name_key(n) != name_key(style_name(sheet.styles[sid]))):
+            imp.new_names.append(name_key(n))
 
     # ---- numbering ----
     numbered = [sid for sid in copied_order if own_num_id(tpl.sheet.styles[sid], f"template style {sid}") is not None]
@@ -471,12 +574,31 @@ def plan_import(pkg: DocxPackage, tpl: TemplateStyles, requested: Sequence[str],
         if npart is None:
             raise JobException(f"style(s) {numbered} are numbered and this file has no numbering part to import the "
                                f"list into (a part is never created)", "style-numbering", {"styles": numbered})
+        held = set(imp.held)
+        unnumbered_levels: List[str] = []
         for sid in numbered:                            # closure_of found num and abstractNum for every copy
             n = own_num_id(tpl.sheet.styles[sid], sid)
             num = find_num(tpl.numbering, n)
-            check_definition(num, find_abstract(tpl.numbering, num_abstract_id(num)), n)
+            a = find_abstract(tpl.numbering, num_abstract_id(num))
+            check_definition(num, a, n)
+            for lvl_style in numbering_styles(num, a):
+                if lvl_style not in held:
+                    continue
+                own = numbered_in(sheet, lvl_style)
+                if own is not None:
+                    raise JobException(f"the template's list {n} (style {sid}) names {lvl_style} for one of its levels, "
+                                       f"and this file's own {lvl_style} is numbered by its list {own}: importing the "
+                                       f"list would split that numbering between two lists — map to this file's own "
+                                       f"styles, or bring the template's list family in with Word's Organizer first",
+                                       "style-numbering",
+                                       {"style": lvl_style, "numId": n, "file_numId": own})
+                if lvl_style not in unnumbered_levels:
+                    unnumbered_levels.append(lvl_style)
+        if unnumbered_levels:
+            imp.flags.append(f"the imported list's levels name {unnumbered_levels}, which this file already has (kept as "
+                             f"its own, not numbered): those paragraphs are not numbered by the imported list")
         nroot = pkg.xml(npart)
-        imp.num_map, imp.abs_map = allocate_ids(tpl.sheet, tpl.numbering, copied_order, nroot)
+        imp.num_map, imp.abs_map = allocate_ids(tpl.sheet, tpl.numbering, copied_order, pkg, nroot)
         _, abstracts, _ = build_copies(tpl, imp.imported, imp.replaced, imp.num_map, imp.abs_map)
         doc_nsids = {e.get(W + "val") for e in nroot.iter(W + "nsid") if e.get(W + "val")}
         clash = sorted({a.find(W + "nsid").get(W + "val") for a in abstracts
@@ -489,7 +611,7 @@ def plan_import(pkg: DocxPackage, tpl: TemplateStyles, requested: Sequence[str],
     copied_set = set(copies)
     flagged = set()
     for sid in copied_order:
-        chain, seen = [], {sid}
+        seen = {sid}
         b = tpl.sheet.styles[sid].find(W + "basedOn")
         while b is not None and b.get(W + "val") and b.get(W + "val") not in seen:
             aid = b.get(W + "val")
@@ -521,9 +643,7 @@ def apply_import(pkg: DocxPackage, data: Optional[Dict[str, Any]]) -> None:
     """Write a planned import into the working package; the template is read again and must be the planned one."""
     if not data or not (data.get("imported") or data.get("replaced")):
         return
-    raw = Path(data["template"]).read_bytes()
-    if hashlib.md5(raw).hexdigest() != data["template_md5"]:
-        raise JobException("the template file changed between plan and apply", "internal")
+    raw = check_template_unchanged(data["template"], data["template_md5"])
     tpl = TemplateStyles.from_bytes(raw, data["template"])
     styles, abstracts, nums = build_copies(tpl, data["imported"], data["replaced"], data["num_map"], data["abs_map"])
     sroot = pkg.xml(data["styles_part"])

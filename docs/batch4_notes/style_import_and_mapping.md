@@ -253,3 +253,51 @@ skipped, 3 failed — `test_planner.py::test_catalog_and_schema_cover_every_op` 
 entry, checked in memory) and two `test_audit2_fixes.py` sandbox tests whose subprocess imported the MAIN checkout while it
 held merge-conflict markers (`/home/user/spec-surgeon/src/spec_surgeon/ops/__init__.py`, line 36); re-run, both pass. So
 1663 pass + 4 skip (1600 + 63) once (a) is integrated.
+
+## Fix round (adversarial review, 2026-10-17)
+
+Merged `origin/claude/nifty-curie-cf22ol` (880ac35) first; each finding was reproduced with the reviewer's script before
+the fix, and each fix has a test (a planted defect where the rule is new). Tests: `tests/test_style_import.py` 41 → 59,
+`tests/test_map_styles.py` 22 → 29.
+
+| # | Fix | Where (transform ↔ verifier) | Tests |
+|---|---|---|---|
+| C1 | numbering.xml compared whole even when no list is copied: `styles_imported` with an empty derived `num_map`, and `check_requested` when the op needs no import (so apply_style is covered too), require source == output and register the member — unless another `styles_imported` assertion of the plan copies lists (that one compares source + its lists) | `verify/styleimport.check_numbering_unchanged` | `test_c1_*` (4) |
+| C2 | a HELD style (requested or closure) that is another style under the template style's id (names by `name_key`) refuses `style-import`, naming both; names now resolve by `name_key` on both sides (whitespace collapsed, casefolded — the import's one way of comparing names), so the same style under a whitespace variant resolves to the file's own and nothing is requested | `style_import.same_style`, `resolve_style` ↔ `styleimport.v_derive_import`, `restyle.v_resolve_style` | `test_c2_*` (3), agreement test |
+| C3 | `(styles, "name:<name_key>", "add")` per imported copy and per replaced style whose name changes | `StyleImport.touches` / `new_names` | `test_c3_*` (2) |
+| C5a | new numIds/abstractNumIds above every id DEFINED OR REFERENCED (every `w:numId/@w:val` of the text parts, styles and numbering parts, `w:numIdMacAtCleanup`; every `w:abstractNumId/@w:val`) | `style_import.used_ids`/`next_ids` ↔ `styleimport.v_used_ids` | `test_c5a_*` (2) |
+| C5b | **refused** (`style-numbering`): a copied list's level naming a HELD style the file numbers with its own list (first numId on its basedOn chain) — it would split that numbering; a held level style the file does not number is flagged | `style_import.numbered_in` ↔ `styleimport._v_chain_list` | `test_c5b_*` (3) |
+| C5c | **refused**: `mc:AlternateContent` anywhere in a copy (`style-import` for a style, `style-numbering` for a list) — stripping drops the Fallback with the Choice, keeping the Fallback alone turns "01, 02" into "1, 2" | `style_import.stripped` ↔ `styleimport._v_has_alternate` | `test_c5c_*` (2) |
+| C6 | the template's numbering part is parsed only when a copied style is numbered; malformed → **`bad-params`** (not `style-import`) | `TemplateStyles.numbering` (lazy), verifier `t_num()` lazy | `test_c6_*` |
+| C8 | map_styles' apply refuses a changed template (`internal`) whenever the plan read one, imported or not | `style_import.check_template_unchanged`, `map_styles.apply` | `test_c8_*` |
+| C9 | **refused** (`structure`): a character `from` also used in `w:sdtPr/w:rPr`, `w:sdtEndPr/w:rPr`, `m:r/w:rPr` (parts in scope) or `w:lvl/w:rPr` (numbering) | `map_styles.unmapped_uses` ↔ `restyle._v_unmapped` | `test_c9_*` (4) |
+| D2 | `_check_paragraph` never compares the paragraph mark's rPr: `_check_rpr` checks it when the kind restyled the mark, else the residual does (unless the kind that changed it registered it) | `verify/restyle._check_paragraph` | `test_d2_*` (2) |
+
+Decided differently from the request:
+
+* **C6 uses `bad-params`**, not `style-import`: an unreadable template (not a zip, no styles part) already refuses
+  `bad-params`, which `compiler.FATAL_SPEC_CODES` holds (the same for every file); `style-import` stays file-specific (a
+  name clash depends on the file), so it cannot be fatal. And the numbering part is read lazily: a template with a broken
+  numbering part still serves an unnumbered style.
+* **Name resolution changed with C2**: `resolve_style` ↔ `v_resolve_style` match `w:name` whitespace-collapsed and
+  casefolded (design §5 said "casefolded"). Without it, a file holding the template's style under a whitespace variant
+  of its name would request an import with nothing to copy, and apply_style (which emits the import only when it changes
+  something) would then fail V10. CLAUDE.md's "Style import" definition should say "by name_key (whitespace collapsed,
+  casefolded)".
+* **C9 refuses with `structure`** (no new code); its explanation text in report.py could name content controls,
+  equations and list levels.
+
+For the coordinator (files I may not edit):
+
+* `verify/applystyle.py` has the D2 pattern too: review_d's `combos.py` (with `SRCROOT` at this worktree) still shows
+  `apply_style + set_font (all)` planning and failing V10 ("paragraph properties are ['pStyle', 'rPr'], expected
+  ['pStyle']") — 4 combinations.
+* review_c's `pREP.py` (replace Heading1 by map_styles + set_properties `i: false` on a Heading1 paragraph) plans and fails
+  V10: set_properties (direct) reads the paragraph's style chain (its post-condition) but declares no read of the style
+  definitions, so the `replace`/`rPr` touches of the replaced Heading1 meet nothing.
+* CLAUDE.md definitions to update: the import's names (`name_key`), the held-identity refusal, the level-style refusal,
+  `used_ids`, `mc:AlternateContent`, lazy template numbering (`bad-params`), `check_numbering_unchanged` (numbering is
+  compared by the import kinds even with no list copied), map_styles' `unmapped_uses`.
+
+Full suite after the fix round (`PYTHONPATH=src QT_QPA_PLATFORM=offscreen python3 -m pytest -q -s -p no:cacheprovider`):
+1895 passed, 4 skipped (the container's usual four).

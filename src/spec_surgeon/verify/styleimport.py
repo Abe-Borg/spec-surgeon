@@ -10,12 +10,15 @@ alone this module re-derives
   ``w:num/w:lvlOverride/w:lvl`` — to a fixpoint; a style the document holds and does not replace is not walked);
 * imported (closure styles the SOURCE lacks, template order), replaced (``existing: "replace"``: the requested styles the
   source holds), held (the rest);
-* every refusal the op must have raised (a ValueError here: a default style imported or replaced, a replaced style of
-  another type, a name another style holds after the import, numbering the op cannot copy — no numbering part, a missing
-  num/abstractNum, ``w:numStyleLink`` / ``w:styleLink``, ``w:lvlPicBulletId``, a numId that is not a whole number);
-* the new numbering ids (template numId first met → the source's largest numId + 1, …; its abstractNum first met → the
-  source's largest abstractNumId + 1, …; none → 1 / 0) and every expected copy (the template's definition, extension
-  markup stripped — ``template.strip_extensions`` —, the ids set).
+* every refusal the op must have raised (a ValueError here: a held style that is another style under the template
+  style's id (names compared whitespace-collapsed and casefolded), a default style imported or replaced, a replaced
+  style of another type, a name another style holds after the import, ``mc:AlternateContent`` in a copy, numbering the op
+  cannot copy — no numbering part, a missing num/abstractNum, ``w:numStyleLink`` / ``w:styleLink``,
+  ``w:lvlPicBulletId``, a numId that is not a whole number, a level naming a held style the document numbers with its
+  own list);
+* the new numbering ids (template numId first met → above every numId the source defines or refers to — ``v_used_ids``
+  —, …; its abstractNum first met → above every abstractNumId defined or referred to, …; none → 1 / 0) and every expected
+  copy (the template's definition, extension markup stripped — ``template.strip_extensions`` —, the ids set).
 
 It fails when those differ from the plan's predictions; when an imported style is not new, not there exactly once, not
 equal to its expected copy, or not appended (after every style the source had, in the template's order); when a replaced
@@ -23,12 +26,15 @@ style is not equal to its expected copy or left its place (the source styles kee
 held style the copies name is missing from the output; and — the
 numbering member is under no residual — when the output's numbering part is not exactly the source's with the expected
 abstractNums after its last abstractNum (else before its first num, else before ``w:numIdMacAtCleanup``, else at the end)
-and the expected nums after its last num (else before ``w:numIdMacAtCleanup``, else at the end). It registers the
-imported styles (``added_styles``), the replaced ones (``replaced_styles``) and the numbering part (``verified_members``).
+and the expected nums after its last num (else before ``w:numIdMacAtCleanup``, else at the end) — and, when it copies no
+list, when the numbering part changed at all (``check_numbering_unchanged``; skipped only when another
+``styles_imported`` assertion of the plan copies lists and so owns the member's comparison). It registers the imported
+styles (``added_styles``), the replaced ones (``replaced_styles``) and the numbering part (``verified_members``).
 
 ``check_requested`` (reused by every op kind over the import — ``mapped_styles`` and apply_style's): the op's own kind
 derives which template styles the op needed and this checks the ``styles_imported`` assertion of the same op carries
-exactly those (and the same mode and template), or that there is none when nothing is needed.
+exactly those (and the same mode and template), or that there is none when nothing is needed — and then that the
+numbering part is unchanged (``check_numbering_unchanged``: numbering.xml is under no residual).
 """
 from __future__ import annotations
 
@@ -36,11 +42,14 @@ import copy
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
+from lxml import etree
+
 from .reader import STYLES_REL, W
 from .props import Ctx, Styles, first_difference, sig
 from .template import _template, strip_extensions
 
 NUMBERING_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
+MC_ALTERNATE = "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"
 V_TRUE = {"1", "true", "on"}
 
 
@@ -113,11 +122,61 @@ def _v_levels(num, absn) -> List[Any]:
         [lv for o in num if o.tag == W + "lvlOverride" for lv in o if lv.tag == W + "lvl"]
 
 
+def _v_key(name: Optional[str]) -> Optional[str]:
+    """A style name as this module compares names: whitespace collapsed, casefolded (None for none)."""
+    return " ".join(name.split()).casefold() if name is not None else None
+
+
+def _v_has_alternate(el) -> bool:
+    return any(True for _ in el.iter(MC_ALTERNATE))
+
+
+def _v_chain_list(styles: Styles, sid: str) -> Optional[int]:
+    """The list a style of the document numbers with: the first w:pPr/w:numPr/w:numId on its basedOn chain (itself
+    first), a whole number other than 0; else None."""
+    for st in styles.chain(sid):
+        e = st.find(W + "pPr/" + W + "numPr/" + W + "numId")
+        if e is not None:
+            n = _v_whole(e.get(W + "val"))
+            return n if n else None
+    return None
+
+
+def v_used_ids(pkg, numbering_root) -> Tuple[int, int]:
+    """(largest numId, largest abstractNumId) the document defines OR refers to (-1 when none): every w:numId/@w:val of
+    its text parts, its styles part and its numbering part, w:num/@w:numId, w:numIdMacAtCleanup/@w:val;
+    w:abstractNum/@w:abstractNumId and every w:abstractNumId/@w:val."""
+    num_ids: List[int] = []
+    abs_ids: List[int] = []
+    parts = list(pkg.text_parts())
+    sp = pkg.related(STYLES_REL)
+    if sp:
+        parts.append(sp)
+    for part in parts:
+        for e in pkg.xml(part).iter():
+            if e.tag == W + "numId":
+                num_ids.append(_v_whole(e.get(W + "val")))
+    if numbering_root is not None:
+        for e in numbering_root.iter():
+            if e.tag in (W + "numId", W + "numIdMacAtCleanup"):
+                num_ids.append(_v_whole(e.get(W + "val")))
+            elif e.tag == W + "num":
+                num_ids.append(_v_whole(e.get(W + "numId")))
+            elif e.tag == W + "abstractNum":
+                abs_ids.append(_v_whole(e.get(W + "abstractNumId")))
+            elif e.tag == W + "abstractNumId":
+                abs_ids.append(_v_whole(e.get(W + "val")))
+    return (max([n for n in num_ids if n is not None], default=-1),
+            max([a for a in abs_ids if a is not None], default=-1))
+
+
 def v_derive_import(src_styles: Styles, src_numbering, t_styles: Styles, t_numbering, requested: Sequence[str],
-                    existing: str) -> Dict[str, Any]:
+                    existing: str, used: Optional[Tuple[int, int]] = None) -> Dict[str, Any]:
     """The import re-derived from the SOURCE and the template: closure, imported, replaced, held, num_map, abs_map, the
     expected copies (``styles``: id → element, ``abstracts`` / ``nums``: in new-id order). ValueError where the op must
-    refuse."""
+    refuse. ``t_numbering``: the template's numbering root, or a function giving it (read only when a copied style is
+    numbered). ``used``: ``v_used_ids`` of the document (the largest numId and abstractNumId it defines or refers to);
+    None reads the numbering root's own definitions only."""
     if existing not in ("keep", "replace"):
         raise ValueError(f"existing {existing!r} (the op must refuse)")
     if t_styles.root is None:
@@ -131,7 +190,12 @@ def v_derive_import(src_styles: Styles, src_numbering, t_styles: Styles, t_numbe
         sid = st.get(W + "styleId")
         if sid and sid not in t_order:
             t_order.append(sid)
-    t_nums, t_abs = _v_lists(t_numbering)
+    lists: Dict[str, Any] = {}
+
+    def t_lists() -> Tuple[Dict[int, Any], Dict[int, Any]]:
+        if "v" not in lists:
+            lists["v"] = _v_lists(t_numbering() if callable(t_numbering) else t_numbering)
+        return lists["v"]
 
     def is_copied(sid: str) -> bool:
         return sid not in src_styles.by_id or (existing == "replace" and sid in req)
@@ -150,7 +214,7 @@ def v_derive_import(src_styles: Styles, src_numbering, t_styles: Styles, t_numbe
             reached.update(_v_refs(st))
             n = _v_num_id(st)
             if n is not None:
-                num, absn = _v_definition(t_nums, t_abs, n, sid)
+                num, absn = _v_definition(*t_lists(), n, sid)
                 for lv in _v_levels(num, absn):
                     ps = lv.find(W + "pStyle")
                     if ps is not None and ps.get(W + "val"):
@@ -162,6 +226,10 @@ def v_derive_import(src_styles: Styles, src_numbering, t_styles: Styles, t_numbe
     copied = [s for s in t_order if s in set(imported) | set(replaced)]
     if req and src_styles.root is None:
         raise ValueError("the document has no styles part (the op must refuse: style-import)")
+    for s in held:
+        if _v_key(v_name(src_styles.by_id[s])) != _v_key(v_name(t_styles.by_id[s])):
+            raise ValueError(f"{s} is {v_name(t_styles.by_id[s])!r} in the template and {v_name(src_styles.by_id[s])!r} "
+                             f"in the document — two styles under one id (the op must refuse: style-import)")
     for s in imported:
         if _v_is_default(t_styles.by_id[s]):
             raise ValueError(f"{s} is a default style in the template (the op must refuse: style-import)")
@@ -170,16 +238,19 @@ def v_derive_import(src_styles: Styles, src_numbering, t_styles: Styles, t_numbe
         if _v_is_default(a) or _v_is_default(b) or v_type(a) != v_type(b):
             raise ValueError(f"{s} cannot be replaced: a default style, or of another type (the op must refuse: "
                              f"style-import)")
+    for s in copied:
+        if _v_has_alternate(t_styles.by_id[s]):
+            raise ValueError(f"{s} holds mc:AlternateContent (the op must refuse: style-import)")
     copies = {s: strip_extensions(t_styles.by_id[s]) for s in copied}
     owners: Dict[str, Set[str]] = {}
     for s, st in list(src_styles.by_id.items()):
         if s not in copies and v_name(st):
-            owners.setdefault(v_name(st).casefold(), set()).add(s)
+            owners.setdefault(_v_key(v_name(st)), set()).add(s)
     for s, c in copies.items():
         if v_name(c):
-            owners.setdefault(v_name(c).casefold(), set()).add(s)
+            owners.setdefault(_v_key(v_name(c)), set()).add(s)
     for s, c in copies.items():
-        if v_name(c) and owners[v_name(c).casefold()] - {s}:
+        if v_name(c) and owners[_v_key(v_name(c))] - {s}:
             raise ValueError(f"{s} is named {v_name(c)!r}, which another style holds after the import (the op must "
                              f"refuse: style-import)")
     # numbering
@@ -193,15 +264,27 @@ def v_derive_import(src_styles: Styles, src_numbering, t_styles: Styles, t_numbe
         if src_numbering is None:
             raise ValueError("numbered styles and no numbering part in the document (the op must refuse: "
                              "style-numbering)")
+        t_nums, t_abs = t_lists()
+        held_set = set(held)
         for s, n in numbered:
             num, absn = _v_definition(t_nums, t_abs, n, s)
             if absn.find(W + "numStyleLink") is not None or absn.find(W + "styleLink") is not None:
                 raise ValueError(f"list {n} links a numbering style (the op must refuse: style-numbering)")
             if any(lv.find(W + "lvlPicBulletId") is not None for lv in _v_levels(num, absn)):
                 raise ValueError(f"list {n} has a picture bullet (the op must refuse: style-numbering)")
-        s_nums, s_abs = _v_lists(src_numbering)
-        new_num = max(s_nums, default=0) + 1
-        new_abs = max(s_abs, default=-1) + 1
+            if _v_has_alternate(num) or _v_has_alternate(absn):
+                raise ValueError(f"list {n} holds mc:AlternateContent (the op must refuse: style-numbering)")
+            for lv in _v_levels(num, absn):
+                ps = lv.find(W + "pStyle")
+                lvl_style = ps.get(W + "val") if ps is not None else None
+                if lvl_style in held_set and _v_chain_list(src_styles, lvl_style) is not None:
+                    raise ValueError(f"list {n} names {lvl_style} for a level, which the document numbers with its own "
+                                     f"list (the op must refuse: style-numbering)")
+        if used is None:
+            s_nums, s_abs = _v_lists(src_numbering)
+            used = (max(s_nums, default=-1), max(s_abs, default=-1))
+        new_num = max(used[0], 0) + 1
+        new_abs = used[1] + 1
         for s, n in numbered:
             if str(n) in num_map:
                 continue
@@ -275,10 +358,17 @@ def check_styles_imported(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         return tag
     tsp = tpl.related(STYLES_REL)
     t_styles = Styles(tpl.xml(tsp) if tsp else None)
-    _, t_num = _v_numbering_root(tpl)
+
+    def t_num():                                       # read only when a copied style is numbered
+        part = tpl.related(NUMBERING_REL)
+        try:
+            return tpl.xml(part) if part else None
+        except etree.XMLSyntaxError as e:
+            raise ValueError(f"the template's numbering part is not well-formed ({e}) (the op must refuse)")
     s_npart, s_num = _v_numbering_root(ctx.src)
     o_npart, _ = _v_numbering_root(ctx.out)
-    d = v_derive_import(ctx.src_styles, s_num, t_styles, t_num, a.get("requested") or [], a.get("existing", "keep"))
+    d = v_derive_import(ctx.src_styles, s_num, t_styles, t_num, a.get("requested") or [], a.get("existing", "keep"),
+                        used=v_used_ids(ctx.src, s_num))
     for key in ("imported", "replaced"):
         if list(d[key]) != list(a.get(key) or []):
             errs.append(f"{tag}: {key} {d[key]} here, plan predicted {a.get(key)}")
@@ -322,19 +412,44 @@ def check_styles_imported(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 errs.append(f"{tag}: {o_npart} is not the source's with exactly the imported lists in their places: "
                             f"{first_difference(want, got)}")
             ctx.verified_members.add(o_npart)
+    else:
+        check_numbering_unchanged(ctx, errs, tag, a)
     return (f"{tag}: from {Path(a['template']).name} imported {d['imported']}, replaced {d['replaced']}"
             + (f", lists {d['num_map']} / {d['abs_map']}" if d["num_map"] else ""))
+
+
+def check_numbering_unchanged(ctx: Ctx, errs: List[str], tag: str, exclude: Optional[Dict[str, Any]] = None) -> None:
+    """``numbering.xml`` is under no residual: an op over the style import that copies no list must leave it exactly as
+    it was — compared whole and registered (``verified_members``) — unless another ``styles_imported`` assertion of the
+    plan copies lists, whose own check then compares the member whole with the source plus its lists (two ops copying
+    lists are a plan-time conflict: both add to the member as a whole)."""
+    for x in ctx.plan.get("property_assertions", []) or []:
+        if x is not exclude and x.get("kind") == "styles_imported" and x.get("num_map"):
+            return
+    s_part, o_part = ctx.src.related(NUMBERING_REL), ctx.out.related(NUMBERING_REL)
+    if s_part is None and o_part is None:
+        return
+    if s_part != o_part:
+        errs.append(f"{tag}: the numbering part is {s_part!r} in the source and {o_part!r} in the output")
+        return
+    if ctx.src.read(s_part) != ctx.out.read(o_part):
+        want, got = ctx.src.xml(s_part), ctx.out.xml(o_part)
+        if sig(want) != sig(got):
+            errs.append(f"{tag}: {o_part} changed although no list is copied: {first_difference(want, got)}")
+    ctx.verified_members.add(o_part)
 
 
 def check_requested(ctx: Ctx, a: Dict[str, Any], requested: Sequence[str], existing: str, template: Optional[str],
                     errs: List[str], tag: str) -> None:
     """``requested`` — the template styles the op's own kind derived it needed: the ``styles_imported`` assertion of the
-    same op (``op_index``) must carry exactly those, the same ``existing`` and the same template; none when none."""
+    same op (``op_index``) must carry exactly those, the same ``existing`` and the same template; none when none — and
+    then the numbering part is left exactly as it was (``check_numbering_unchanged``)."""
     mine = [x for x in ctx.plan.get("property_assertions", []) or []
             if x.get("kind") == "styles_imported" and x.get("op_index") == a.get("op_index")]
     if not requested:
         if mine:
             errs.append(f"{tag}: a style import is asserted ({mine[0].get('requested')}) but nothing needs one here")
+        check_numbering_unchanged(ctx, errs, tag)
         return
     if len(mine) != 1:
         errs.append(f"{tag}: the template styles {list(requested)} are needed here and {len(mine)} styles_imported "
