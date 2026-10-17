@@ -35,3 +35,4 @@ from . import (comments, docprops, empty_paragraphs, hidden, highlight, links,  
 from . import set_tab_stops  # noqa: E402,F401  — built-in batch 3
 from . import remove_unused_styles  # noqa: E402,F401  — built-in batch 4
 from . import set_borders_shading  # noqa: E402,F401  — built-in batch 4
+from . import clear_formatting, set_language  # noqa: E402,F401  — built-in batch 4 (items 28, 29)

@@ -2052,6 +2052,8 @@ from .tabs import TAB_KINDS  # noqa: E402
 # built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md)
 from .unused import UNUSED_KINDS  # noqa: E402
 from .borders import BORDER_KINDS  # noqa: E402
+from .clearing import CLEARING_KINDS  # noqa: E402
+from .language import LANGUAGE_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -2061,3 +2063,5 @@ for _batch2 in (COMMENT_KINDS, HIGHLIGHT_KINDS, REVISION_KINDS, REMOVAL_KINDS, W
 KINDS.update(TAB_KINDS)
 KINDS.update(UNUSED_KINDS)
 KINDS.update(BORDER_KINDS)
+KINDS.update(CLEARING_KINDS)
+KINDS.update(LANGUAGE_KINDS)
