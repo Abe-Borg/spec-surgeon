@@ -171,6 +171,26 @@ def _style_entry(sheet: StyleSheet, res: Resolver, sid: str, count: int, sample_
     if tabs:
         e["tab_stops"] = [f"{val} {pos}" + (f" {leader}" if leader and leader != "none" else "")
                           for pos, val, leader in tabs]
+    if st is not None:                       # batch 4: the border box and shading the style gives (set_borders_shading)
+        sides, shd = [], None
+        for level in reversed(sheet.lineage(sid)):
+            ppr = level.find(W + "pPr")
+            bdr = ppr.find(W + "pBdr") if ppr is not None else None
+            for side in (bdr if bdr is not None else []):
+                if not isinstance(side.tag, str):
+                    continue
+                name = etree_local(side.tag)
+                if name in sides:
+                    sides.remove(name)
+                if side.get(W + "val") not in ("nil", "none"):
+                    sides.append(name)
+            sh = ppr.find(W + "shd") if ppr is not None else None
+            if sh is not None:
+                shd = sh.get(W + "fill") if sh.get(W + "val") not in ("nil",) else None
+        if sides:
+            e["borders"] = sides
+        if shd and shd != "auto":
+            e["shading"] = shd
     if para["jc"] != "left":
         e["jc"] = para["jc"]
     if para["before"] != "0" or para["after"] != "0":
@@ -178,6 +198,17 @@ def _style_entry(sheet: StyleSheet, res: Resolver, sid: str, count: int, sample_
     txt = display_text(sample_p)
     if txt.strip():
         e["sample"] = _clip(txt, 70)
+    return e
+
+
+def _named(sheet: StyleSheet, sid: str, count: int) -> Dict[str, Any]:
+    e: Dict[str, Any] = {"id": sid, "count": count}
+    st = sheet.styles.get(sid)
+    name = st.find(W + "name") if st is not None else None
+    if name is not None and name.get(W + "val") and name.get(W + "val") != sid:
+        e["name"] = name.get(W + "val")
+    if st is None:
+        e["missing_definition"] = True
     return e
 
 
@@ -218,6 +249,14 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
     for sid, ps_ in sorted(by_style.items(), key=lambda kv: -len(kv[1]))[:25]:
         sample = next((p for p in ps_ if display_text(p).strip()), ps_[0])
         styles_in_use.append(_style_entry(sheet, res, sid, len(ps_), sample))
+    other_styles: Dict[str, Counter] = {"character": Counter(), "table": Counter()}   # batch 4: what map_styles can map
+    for el in root.iter(W + "rStyle"):
+        if el.getparent() is not None and el.getparent().getparent() is not None \
+                and el.getparent().getparent().tag == W + "r" and el.get(W + "val"):
+            other_styles["character"][el.get(W + "val")] += 1
+    for el in root.iter(W + "tblStyle"):
+        if el.get(W + "val"):
+            other_styles["table"][el.get(W + "val")] += 1
 
     direct = Counter()
     for part in pkg.text_parts():
@@ -265,6 +304,8 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "fonts": {"theme": fonts, "doc_defaults": dd, "direct_in_runs": dict(direct.most_common(10)),
                   "body_text": body_text_fonts(pkg)},
         "styles_in_use": styles_in_use,
+        **{f"{kind}_styles_in_use": [_named(sheet, sid, n) for sid, n in c.most_common(10)]
+           for kind, c in other_styles.items() if c},
         "counts": counts,
         "first_paragraphs": first,
     }
@@ -374,6 +415,9 @@ def markup(pkg: DocxPackage) -> Dict[str, Any]:
             fields[f.type or "?"] += 1
             if f.type == "HYPERLINK":
                 links["field"] += 1
+    langs = _languages(pkg, kinds)
+    if langs:
+        out["languages"] = langs
     if revs:
         out["tracked_changes"] = {a: dict(c) for a, c in sorted(revs.items(), key=lambda kv: -sum(kv[1].values()))[:6]}
         if dates:
@@ -433,6 +477,31 @@ def markup(pkg: DocxPackage) -> Dict[str, Any]:
     return out
 
 
+def _languages(pkg: DocxPackage, kinds) -> Dict[str, Any]:
+    """The proofing languages the file names (set_language): the document default, and the w:lang values runs/marks
+    and styles carry directly (counted)."""
+    out: Dict[str, Any] = {}
+    sheet = StyleSheet(pkg)
+    if sheet.root is not None:
+        dd = sheet.root.find(f"{W}docDefaults/{W}rPrDefault/{W}rPr/{W}lang")
+        if dd is not None and dd.get(W + "val"):
+            out["default"] = dd.get(W + "val")
+        in_styles = Counter(st.find(f"{W}rPr/{W}lang").get(W + "val") for st in sheet.styles.values()
+                            if st.find(f"{W}rPr/{W}lang") is not None and st.find(f"{W}rPr/{W}lang").get(W + "val"))
+        if in_styles:
+            out["styles"] = dict(in_styles.most_common(5))
+    direct: Counter = Counter()
+    for part in pkg.text_parts():
+        for el in pkg.xml(part).iter(W + "lang"):
+            holder = el.getparent().getparent() if el.getparent() is not None else None
+            if el.getparent().tag == W + "rPr" and holder is not None and holder.tag in (W + "r", W + "pPr") \
+                    and el.get(W + "val"):
+                direct[el.get(W + "val")] += 1
+    if direct:
+        out["direct"] = dict(direct.most_common(5))
+    return out
+
+
 def body_text_fonts(pkg: DocxPackage, limit: int = 3) -> List[Dict[str, Any]]:
     """The body text's effective (font, size) by share of characters, most used first."""
     sheet = StyleSheet(pkg)
@@ -454,6 +523,34 @@ def body_text_fonts(pkg: DocxPackage, limit: int = 3) -> List[Dict[str, Any]]:
     return [{"font": f, "size_pt": sz / 2, "share": round(c / total, 2)} for (f, sz), c in count.most_common(limit)]
 
 
+def template_styles(pkg: DocxPackage, limit: int = 60) -> List[Dict[str, Any]]:
+    """The styles a template offers apply_style / map_styles (batch 4): custom styles first, then the ones its body
+    uses — id, name when it differs, type, basedOn, numbered (its own numPr). Descriptive only."""
+    sheet = StyleSheet(pkg)
+    if sheet.root is None:
+        return []
+    used = {el.get(W + "val") for part in pkg.text_parts() for tag in ("pStyle", "rStyle", "tblStyle")
+            for el in pkg.xml(part).iter(W + tag)}
+    rows = []
+    for sid, st in sheet.styles.items():
+        custom = st.get(W + "customStyle") in ("1", "true", "on")
+        if not custom and sid not in used:
+            continue
+        e: Dict[str, Any] = {"id": sid, "type": st.get(W + "type", "paragraph")}
+        name = st.find(W + "name")
+        if name is not None and name.get(W + "val") and name.get(W + "val") != sid:
+            e["name"] = name.get(W + "val")
+        based = st.find(W + "basedOn")
+        if based is not None and based.get(W + "val"):
+            e["basedOn"] = based.get(W + "val")
+        num = st.find(f"{W}pPr/{W}numPr/{W}numId")
+        if num is not None and num.get(W + "val") not in (None, "0"):
+            e["numbered"] = True
+        rows.append((not custom, e))
+    rows.sort(key=lambda r: r[0])
+    return [e for _, e in rows[:limit]]
+
+
 def template_spec_summary(pkg: DocxPackage) -> Dict[str, Any]:
     """What a template file offers the compiler (descriptive only; the op re-derives everything it uses)."""
     from .catalog import REFERENCE_FILLS
@@ -471,6 +568,9 @@ def template_spec_summary(pkg: DocxPackage) -> Dict[str, Any]:
             except JobException:
                 prepared.append("(unusable)")
     out: Dict[str, Any] = {"body_text": body_text_fonts(pkg)}
+    styles = template_styles(pkg)
+    if styles:
+        out["styles"] = styles
     if prepared:
         out["kind"] = "prepared template: use the default slot_markers"
         out["prepared_slots"] = list(dict.fromkeys(prepared))
