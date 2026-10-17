@@ -164,6 +164,36 @@ remain); pos in twips from the left margin (1440 = 1 inch) or "right_margin" / "
 use them for "at the right margin". styles_in_use show each style's tab_stops. set_tab_stops, set_paragraph_props and \
 set_properties' paragraph flags all change paragraph properties: on the same paragraphs they are separate specs (offer \
 a chain).
+- Paragraph borders and shading are set_borders_shading: borders is the paragraph's WHOLE border box — name every side \
+that should show (top, left, bottom, right, between, bar; size in eighths of a point, 4 = ½ pt; space in points; colour \
+6 hex digits or auto), a side not named is removed even where the style shows it, "none" removes every border; shading \
+{fill} (D9D9D9 is Word's 15% grey) or "none". Spacing, indents and alignment IN A STYLE ("make the PR1 style 6 pt \
+after") are set_paragraph_props with select {"styles": {"ids": [...]}} (alone, paragraph styles only, never tracked); \
+set_borders_shading takes the same styles target ("the note style gets a box"). The profiles' styles_in_use show each \
+style's borders, shading, spacing and alignment.
+- "Clear the direct/manual formatting", "make the text follow its styles again" is clear_direct_formatting (scope, \
+paragraphs, runs): run formatting of runs and marks and paragraph formatting go; styles, list numbers, hidden text and \
+the language never change; highlight, superscripts (vertAlign, position) and outline levels only when the user asks \
+(also). keep takes element names: "but keep the bold" is keep ["b", "bCs"]. Say in assumptions what stays.
+- The proofing language ("set the language to US English") is set_language {language: "en-US"}; "British spelling to \
+US" keeps other languages with replace_only ["en-GB"] — the profiles' markup.languages shows the languages in use. It \
+changes run properties and styles everywhere: a spec of its own (offer a chain). Never tracked.
+- Applying a style to paragraphs picked by appearance or pattern ("make every bold all-caps paragraph Heading 1", "the \
+paragraphs after PART 2 become PR1") is apply_style: select.paragraphs with the selection rules (has_bold, is_all_caps, \
+text_regex, after_heading_regex, between_paragraphs, style_in), style = the style's id or name; direct_formatting \
+"clear" when the paragraphs should look exactly like the style (their own bold, sizes, spacing go — by the clear rules), \
+"keep" (default) otherwise. Style mapping ("the architect's Heading 1 becomes our PRT everywhere") is map_styles with \
+map [{from, to}] — from: the architect's style ids from styles_in_use / character_styles_in_use / table_styles_in_use. \
+The user's own ("our office") styles come from the ATTACHED TEMPLATE: read_template lists its styles; put its exact path \
+in template, and a style the file lacks is imported with the styles it is based on, linked to and followed by, and its \
+list numbering. existing "keep" (default) leaves a style the file already has as the file defines it; "replace" only \
+when the user says their definition must win. A default paragraph style as from (Normal) maps every paragraph without \
+a style too. "Remove unused styles" is remove_unused_styles (which "all", or "custom" for the document's own styles; \
+keep for styles to spare). Restyling a paragraph changes how all its properties resolve: apply_style or map_styles \
+beside set_properties, set_tab_stops, set_paragraph_props or set_borders_shading on the same paragraphs, or beside a \
+change of the style definitions they use, are separate specs; removing the architect's styles that mapping left unused \
+is a chain's LAST stage (in the same spec it would see them still in use). Field codes naming a mapped style (TOC \\t, \
+STYLEREF) are flagged, not edited — say so in assumptions.
 - Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
 in fill_variables.table.file, replace_table.pairs_table.file or swap_image.image / match.image — what a table holds is \
 the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
@@ -895,9 +925,10 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str], memory: 
                      "inspect their structure and compile an EditSpec tailored to them):\n"
                      + json.dumps(list(prior_failures)[:20], ensure_ascii=False))
     if batch.template:
-        parts.append(f"A TEMPLATE FILE IS ATTACHED: {batch.template} — a prepared header/footer template or a "
-                     f"template spec (e.g. the architect's); call read_template to see which, and put this exact path "
-                     f"in the op's 'template' param")
+        parts.append(f"A TEMPLATE FILE IS ATTACHED: {batch.template} — a prepared header/footer template, a "
+                     f"template spec (e.g. the architect's) or a file holding the user's own styles (apply_style, "
+                     f"map_styles); call read_template to see which (it lists the template's styles), and put this exact "
+                     f"path in the op's 'template' param")
     if batch.inputs:
         parts.append("INPUT FILES beside the documents — tables and pictures an op can read (read_input_file shows one; "
                      "put the exact path in the op's params):\n"

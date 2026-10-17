@@ -1,0 +1,30 @@
+{
+  "request": "Remove the architect's leftover styles that nothing uses",
+  "summary": "Every custom style (the document's own, not Word's built-ins) that no paragraph, run, table, list, setting or field uses — and that no used style is based on, followed by or linked to — is removed from the styles; nothing on any page changes.",
+  "assumptions": [
+    "only the document's own (custom) styles are considered; Word's unused built-in styles stay",
+    "a style named by a field (STYLEREF, a TOC switch) or by a pending tracked change counts as used",
+    "styles.xml only, never tracked; a file with nothing unused is left as it is"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "remove_unused_styles",
+      "params": {
+        "which": "custom"
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2
+  }
+}

@@ -1,0 +1,36 @@
+{
+  "request": "Strip the manual formatting so everything follows the styles again",
+  "summary": "Every run, paragraph mark and paragraph of the body loses its direct formatting (fonts, sizes, bold, colour, spacing, indents, alignment, borders, shading, tab stops, keep/page-break flags), so the styles apply again; hidden text, list numbers, highlights, superscripts and symbol fonts stay.",
+  "assumptions": [
+    "the styles themselves are not changed; character and paragraph styles stay applied",
+    "hidden text stays hidden, list numbers stay, highlight and superscript/subscript stay (not asked), the proofing language stays",
+    "symbol and Wingdings runs keep their font and caps; their other direct formatting is cleared",
+    "a whole-document change is plain formatting (decision 14.1)"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "clear_direct_formatting",
+      "select": {
+        "scope": [
+          "document"
+        ],
+        "paragraphs": "all"
+      },
+      "params": {},
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}
