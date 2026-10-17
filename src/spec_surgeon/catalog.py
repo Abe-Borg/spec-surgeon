@@ -176,6 +176,29 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "row, banding — w:tblLook) stays as it is",
         "never tracked",
     ],
+    # built-in batch 5 (list levels and the audit, docs/BUILTIN_OPS_BATCH5_DESIGN.md §3, §4)
+    "set_list_level": [
+        "the level is the one the named paragraph style numbers with (level names another level of the same list); "
+        "the change is made in the list's definition, so every paragraph at that level follows — in every list that "
+        "shares the definition (flagged)",
+        "zero padding: true turns 1, 2 into 01, 02 (decimalZero) and '1.1' into '1.01'; false the reverse; a level "
+        "numbered by letters or roman numerals is left alone",
+        "'restart per PART' is restart 'after_higher' (a level restarts after any higher level — usually already so); "
+        "when the PART headings are typed or numbered by another list the restart changes nothing (flagged): convert "
+        "the numbering first",
+        "a start or restart is refused on a list whose definition several lists share (Word and LibreOffice count them "
+        "differently); LibreOffice ignores restart rules, so the proof PDFs may differ from Word (flagged)",
+        "never tracked; a file whose style is missing or not numbered is left as it is and noted",
+    ],
+    "audit_numbering": [
+        "report only: the findings are flagged for review and the file is not changed",
+        "the main document only; numbers are those the engine predicts as Word shows them — a list it cannot predict "
+        "is reported as not evaluated, with the reason",
+        "typed numbers (PART 1, 1.1, A., 1., a., (a), II. …) at the start of unnumbered paragraphs are read with the "
+        "automatic numbers of the main list; other lists are checked each on its own",
+        "unnumber_empty turns the number off on each empty numbered paragraph (the paragraph and its spacing stay); the "
+        "later numbers of its list move up (predicted and flagged); plain unless tracked",
+    ],
     "set_page_setup": [
         "margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given",
         "the header's and footer's distance from the page edge are margins.header and margins.footer (twips)",

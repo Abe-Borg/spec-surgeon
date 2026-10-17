@@ -377,6 +377,27 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "custom XML (so they cannot be counted safely), or no table properties at all. Ask for fewer header rows, or "
         "fix the table in Word (remove the content control around its rows), then run again.",
     ),
+    # built-in batch 5 (list levels and the audit)
+    "numbering-unsupported": (
+        "Numbering the Engine Cannot Predict",
+        "The list this change needs cannot be read or predicted safely: its definition is unreadable, is defined through "
+        "a numbering style, uses a number format the engine does not model, or is shared by several lists that all "
+        "number paragraphs (Word continues one count across them, LibreOffice keeps them apart). Nothing was changed. "
+        "Restart or redefine the list in Word (Define New Multilevel List), or run the numbering audit to see where.",
+    ),
+    "numbering-override": (
+        "A List Overrides This Level",
+        "A list using this definition replaces the level with one of its own (a level override). Word does not read "
+        "such overrides as the standard says, so a change to the shared definition would not show there, or not "
+        "predictably. Nothing was changed. Remove the override in Word (restart the list with Set Numbering Value "
+        "instead), then run again.",
+    ),
+    "list-level": (
+        "The Level Cannot Take This Change",
+        "The asked change does not fit this file's list level: a letter or roman level cannot start at 0, a restart "
+        "rule must name a higher level, or after the change some numbers could no longer be shown or predicted. Nothing "
+        "was changed. Ask for another start or restart rule for this file.",
+    ),
 }
 
 
