@@ -440,10 +440,11 @@ CHAT_TOOLS = [ASK_USER_CHAT if t["name"] == "ask_user" else t for t in TOOLS] + 
 
 def system_prompt(chat: bool = False) -> str:
     """The system prompt — built once per conversation and never changed during it."""
+    # Keep every catalog entry while leaving room for the visual inspection exchange.
     return (SYSTEM + (CHAT_NOTE if chat else "")
             + "\nOP CATALOG (ops, selector grammar, common assumptions, custom_transform_limits, the EditSpec JSON schema, "
             "worked examples):\n"
-            + json.dumps(op_catalog(), ensure_ascii=False))
+            + json.dumps(op_catalog(), ensure_ascii=False, separators=(",", ":")))
 
 
 @dataclass
