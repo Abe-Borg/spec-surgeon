@@ -172,7 +172,7 @@ class RequestPage(Page):
                        "every file before anything runs. No API key? Load a saved spec instead.",
                  False: "Use a saved spec or one from Your library — they preview, run and verify without an API key. "
                         "Describing a change in plain English needs one."}
-    SAVED_TITLES = {True: "Or use a saved spec", False: "Use a saved spec"}
+    SAVED_TITLES = {True: "Or choose a workflow or saved spec", False: "Choose a workflow or saved spec"}
     REQUEST_TITLES = {True: "What should change?", False: "Describe it in plain English"}
 
     def __init__(self, parent=None):
@@ -211,11 +211,16 @@ class RequestPage(Page):
         self.chat = ChatView()                    # Claude's reply and choices sit right under the request they are about
         self.content.addWidget(self.chat)
 
-        card = Card(self.SAVED_TITLES[True], "An edit spec file (.json) runs without an API key: an example from the "
+        card = Card(self.SAVED_TITLES[True], "Built-in workflows guide you through common style, numbering, table and "
+                                             "proofing changes without an API key. An edit spec file (.json) also runs "
+                                             "without a key: an example from the "
                                              "Start menu's Example edit specs, the spec.json saved in an earlier "
                                              "preview folder, or a recipe, chain or operation from Your library. "
                                              "Chain recipes… runs several recipes one after another.")
         self.saved_card = card
+        self.workflows_btn = QPushButton("Built-in workflows\u2026")
+        self.workflows_btn.setToolTip("Choose a common workflow, supply your settings, then preview and verify it")
+        card.add(self.workflows_btn)
         row = QHBoxLayout()
         self.load_btn = QPushButton("Load saved spec\u2026")
         self.load_btn.setToolTip("Use an EditSpec (.json) — e.g. one from the Start menu's Example edit specs, or the "
@@ -278,7 +283,7 @@ class RequestPage(Page):
             w.setVisible(on)
         self.keyless_lbl.setText("An Anthropic API key adds:\n" + "\n".join(f"\u2022 {f[:1].upper()}{f[1:]}"
                                                                            for f in features)
-                                 + "\nEverything else — saved specs, Your library, Preview, Run and its verification — "
+                                 + "\nEverything else — built-in workflows, saved specs, Your library, Preview, Run and its verification — "
                                    "works without one.")
         self.keyless.setVisible(not on)
         # keyless: the saved specs first — what this step is about without a key

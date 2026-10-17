@@ -1,0 +1,2 @@
+# These example reports are pinned by their exact byte hashes in the paired manifest.
+examples/evaluation/*.json text eol=lf

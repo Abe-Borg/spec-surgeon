@@ -1491,6 +1491,31 @@ Any implementation change: update README.md (don't shorten it — add). Dependen
 update this file. Name, links, email, license: change `about.py` only (and `LICENSE` with it) — `tests/test_about.py`
 tells you every other place that must follow.
 
+### Integrated workflows and approved outcomes (2026-10-17)
+
+- `workflows.py` ships named, parameterized chains in the installed package; `workflows list|show|use` and the
+  desktop workflow dialog expose them without model credentials or a populated personal library. Building or loading
+  a workflow never executes it. Use the ordinary chain preview/approval/delivery path. Optional style cleanup is an
+  explicit input; two-stage table workflows must use a selector that remains stable after applying a style.
+- `goal_operations.py` validates and compiles reviewed style, language, table and numbering effects.
+  `verify/goal_operations.py` and `verify/goal_numbering.py` derive their own assertions from the original source and
+  approved settings, reusing only verifier-side definitions. Never feed a transform-produced plan into the final goal
+  proof. Only independently checked properties may be stripped from the original/final residual.
+- Each operation effect has an exact `expected_count` or `"all"`, with a per-source count in its approved binding;
+  counts are independently re-derived. Every external exemplar is explicitly attached and SHA-256 pinned. The planner's
+  `inspect_goal_effect` reads source evidence without approval or editing. Content/paragraph/header-footer graph changes
+  require separate goals alongside these effects until their composition has independent coverage.
+- Paired evaluation v2 pins reports, revisions, sources and requested outcomes. Different legacy recipes require an
+  explicit reviewed common-outcome declaration. Keep scripted/live cohorts, unknown measurements, human review and
+  engine readiness distinct. End-to-end workflow measurements explicitly include additional model spend and human work
+  outside recovery. Never describe the scripted demonstration as measured customer or model performance.
+  Version 2 requires a nonblank reviewer name before counting completed review or human acceptance; unnamed
+  judgments remain recorded and their runs remain in cost/time totals, with acceptance rates unknown.
+- Working context defaults to 900,000 estimated input tokens. Prioritize agent capability during development;
+  resource optimization comes later. Preserve rollover, archival integrity and explicitly saved resource overrides.
+  `do` and `retry` expose context/output token overrides for smaller models and carry them through chat,
+  noninteractive compilation and an approved custom-transform handoff.
+
 ## Environment notes
 
 - Developed in a Linux container with LibreOffice, pandoc, poppler; Word path untested (marked [unproven]).
@@ -2353,12 +2378,14 @@ reproduced before they were fixed. Rules that came out of it:
     instances; tracked table or numbering changes; numbering in headers/footers/text boxes; numStyleLink/styleLink lists;
     custom (`001`) formats; rotating margins for landscape; Word itself (nothing here was checked in Word — the LibreOffice
     proofs were).
-11. **The op catalog has a size budget** (found merging batch 5 with master's context epochs). `compiler.system_prompt`
+11. **Give agents ample working context.** Capability takes priority over resource optimization during development;
+    tune costs later. `compiler.system_prompt`
     carries the whole `op_catalog()` — ops, the EditSpec schema, every worked example — in every conversation, and
     `contexts.estimate_context_tokens` (3 bytes a token, 4,784 an image) starts a new epoch past
-    `resources.DEFAULT_CONTEXT_TOKENS` (120,000). Batch 5 took the first request from about 86,500 to about 105,000.
+    `resources.DEFAULT_CONTEXT_TOKENS` (900,000). The old 120,000 threshold was an application choice, not the model's
+    limit; Opus 5.5 supports 1M context. The default leaves room for 64k output and estimation error. Smaller-window
+    model overrides also need an explicit context allowance. Batch 5 took the first request from about 86,500 to about 105,000.
     `tests/test_contexts.py::test_the_default_allowance_leaves_a_conversation_room_for_two_page_images` runs a real
-    two-page `view_pages` exchange and fails when it starts a new epoch (about 5,300 estimated tokens of room are left
-    after batch 5): then compact the catalog or raise the allowance — Abraham's call,
-    a documented default (`docs/ADAPTIVE_WORKSPACES.md`) — never loosen the guard. A test whose subject is not rollover
+    two-page `view_pages` exchange and fails when it starts a new epoch. Preserve that guard and the sustained-evidence
+    regression; document default changes in `docs/ADAPTIVE_WORKSPACES.md`. A test whose subject is not rollover
     sets its own `max_context_tokens` (as `tests/test_vision.py`'s image-allowance test and master's rollover test do).

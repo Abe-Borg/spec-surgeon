@@ -633,6 +633,15 @@ class Session:
 
     # ---- chains: several recipes, one after another (chain.py) ----
     @_session_action
+    def use_workflow(self, name: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
+        """Configure a built-in workflow. It still needs the ordinary Preview and Run approval."""
+        from .workflows import build_workflow
+        chain = build_workflow(name, inputs)
+        self._set_outcome(chain=chain, source=f"workflow:{name}")
+        self.end_conversation()
+        return chain
+
+    @_session_action
     def load_chain(self, name: str) -> Dict[str, Any]:
         """One of your saved chains (Your library…) as the outcome: its stages' specs as saved, previewed and run
         stage by stage. Ends the conversation like a loaded spec does."""

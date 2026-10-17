@@ -26,6 +26,12 @@ assumptions, evidence, and risks. Ask scoped questions when intent is ambiguous.
 only for a specific missing capability, with its reason. You can revise invalid proposals as
 many times as needed within your resource allowance. Finish with propose_plan, need_user or
 unsupported. An accepted proposal is a DRAFT, never permission to execute.
+Style, language, table and numbering outcomes have explicit select/params plus expected_count.
+Use inspect_goal_effect to inspect original eligibility/counts before proposing these effects;
+never guess a count. expected_count:'all' deliberately covers every original eligible match in
+each scoped file, whose exact count is bound separately, and supports heterogeneous batches.
+Templates must be explicitly attached and pinned by their exact SHA256 at effect level. Read
+the composition limits in the contract catalog and explain required separate approvals.
 """
 
 
@@ -46,9 +52,42 @@ PLAN_TOOLS = [
           {"reason": {"type": "string"}}, ("reason",)),
     _tool("list_documents", "Page through inventory and classification evidence for the selected document scope.", {
         "start": {"type": "integer", "minimum": 0}, "count": {"type": "integer", "minimum": 1, "maximum": 100}}),
+    _tool("inspect_goal_effect", "Resolve one proposed style/language/table/numbering effect against an original scoped document. "
+          "Returns source count and selection evidence without editing or approving anything; expected_count may be omitted here.", {
+        "document_id": {"type": "string"}, "effect": {"type": "object"}}, ("document_id", "effect")),
 ]
 READ_NAMES = {"inspect_profile", "list_styles", "sample_paragraphs", "show_part_text", "read_template",
               "list_parts", "read_paragraphs", "read_xml_page", "run_analysis", "read_analysis_result", "read_context_archive"}
+
+
+def inspect_goal_effect(documents, document_id, effect, *, template=None, author="Abraham Borg"):
+    """Read-only original-source preflight; it cannot save a goal or authorize execution."""
+    from .goal_operations import COUNTS, OPERATIONS
+    from .inventory import digest
+
+    document = next((d for d in documents if d["id"] == document_id), None)
+    if document is None or document.get("status") == "UNREADABLE":
+        raise ValueError("Choose a readable document ID inside this project planning scope.")
+    if not isinstance(effect, dict) or effect.get("type") not in OPERATIONS:
+        raise ValueError("Inspect one supported style, language, table or numbering effect.")
+    proposed = copy.deepcopy(effect)
+    proposed.setdefault("id", "inspection")
+    proposed.setdefault("expected_count", "all")
+    contract = {"kind": "document_effects", "author": author, "effects": [proposed]}
+    goals.validate_contract(contract)
+    for attachment in goals.goal_templates(contract):
+        if template is None or attachment.resolve() != Path(template).resolve():
+            raise ValueError("A template must be explicitly attached to this project planning scope.")
+    source = Path(document["source"])
+    if document.get("source_sha256") and digest(source) != document["source_sha256"]:
+        raise ValueError("The source changed since inventory; refresh the document evidence before planning.")
+    result = goals.resolve_goal(source, contract)
+    row = result["effects"][proposed["id"]]
+    return {"document_id": document_id, "source_sha256": result["source_sha256"],
+            "type": proposed["type"], "select": proposed.get("select", {}),
+            "source_count": row["source_count"], "count_meaning": COUNTS[proposed["type"]],
+            "status": row["status"], "reason": row["reason"],
+            "notice": "Read-only original-source evidence. No goal was approved and no document was edited."}
 
 
 def propose(project, documents, request, options, *, client=None, log=None, prior=None, checkpoint=None):
@@ -111,11 +150,28 @@ def propose(project, documents, request, options, *, client=None, log=None, prio
             and d["status"] != "UNREADABLE"]
     if template:
         pins.append({"path": template, "sha256": digest(Path(template))})
+    desired_system, desired_tools = system, tools
+    # Older planning states did not persist these fields. Recover the exact
+    # provider schema from the immutable active epoch before a schema upgrade.
+    if batch.context_dir and ("system" not in state or "tools" not in state):
+        active = Path(batch.context_dir) / "context" / f"active-{batch.context_state.get('epoch', 0)}.json"
+        if active.exists():
+            saved = json.loads(active.read_text(encoding="utf-8"))
+            state.setdefault("system", saved["system"])
+            state.setdefault("tools", saved["tools"])
+    system, tools = state.setdefault("system", system), state.setdefault("tools", tools)
     try:
         with llm.budget_scope(budget):
             while True:
                 if batch.context_dir:
-                    from .contexts import manage_context
+                    from .contexts import manage_context, start_epoch
+                    if system != desired_system or tools != desired_tools:
+                        state["messages"] = start_epoch(state["messages"], system=system, tools=tools,
+                            folder=batch.context_dir, state=batch.context_state, authority=authority,
+                            source_pins=pins, max_tokens=options.max_context_tokens,
+                            next_system=desired_system, next_tools=desired_tools)
+                        system, tools = desired_system, desired_tools
+                        state["system"], state["tools"] = system, tools
                     state["messages"] = manage_context(state["messages"], system=system, tools=tools,
                         folder=batch.context_dir, state=batch.context_state, authority=authority,
                         source_pins=pins, max_tokens=options.max_context_tokens)
@@ -148,7 +204,7 @@ def propose(project, documents, request, options, *, client=None, log=None, prio
                                 if template is None or Path(attachment).resolve() != Path(template).resolve():
                                     raise ValueError("A proposed template must be explicitly attached to this project planning scope.")
                             for effect in params["contract"].get("effects", []):
-                                if effect.get("type") == "header_footer_template" and digest(Path(effect["template"])) != effect["template_sha256"]:
+                                if "template" in effect and digest(Path(effect["template"])) != effect["template_sha256"]:
                                     raise ValueError("The proposed template hash does not match the inspected attachment.")
                             if not isinstance(params.get("rationale"), str) or not params["rationale"].strip():
                                 raise ValueError("Explain the proposed outcomes and target scope for review.")
@@ -179,6 +235,9 @@ def propose(project, documents, request, options, *, client=None, log=None, prio
                                 raise ValueError("Use a nonnegative start and count from 1 to 100.")
                             result["content"] = json.dumps({"documents": records[start:start + count], "total": len(records),
                                 "next_start": start + count if start + count < len(records) else None}, ensure_ascii=False)
+                        elif name == "inspect_goal_effect":
+                            result["content"] = json.dumps(inspect_goal_effect(documents, params.get("document_id"),
+                                params.get("effect"), template=template), ensure_ascii=False)
                         elif name == "view_pages":
                             if not options.render or options.renderer == "none":
                                 raise ValueError("Page rendering is disabled for this planning investigation.")

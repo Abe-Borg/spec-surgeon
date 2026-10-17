@@ -48,3 +48,27 @@ def test_review_explains_effective_defaults_roles_and_real_page_units():
     assert "section title identified from this document's SECTION marker" in review
     assert "Position: after the selected paragraph" in review and "Tracked change: yes" in review
     assert "Left margin: 1 inch" in review
+
+
+def test_review_exposes_built_in_scope_counts_inputs_and_template_pins():
+    effects = [
+        {"id": "styles", "type": "style_mapping", "expected_count": "all", "select": {},
+         "params": {"map": [{"from": "ArchitectHeading", "to": "OfficeHeading"}]},
+         "template": "/approved/office.docx", "template_sha256": "b" * 64},
+        {"id": "tables", "type": "table_format", "expected_count": 2,
+         "select": {"tables": {"index_range": [0, 2]}}, "params": {"repeat_header_rows": 1}},
+        {"id": "language", "type": "proofing_language", "expected_count": 1,
+         "params": {"language": "en-GB"}},
+        {"id": "numbers", "type": "typed_numbering", "expected_count": 4,
+         "params": {"levels": ["PART", "ARTICLE"]}},
+        {"id": "first", "type": "page_setup", "different_first_page": False},
+    ]
+    review = plan_text({"contract": {"kind": "document_effects", "effects": effects}}, {})
+    assert 'Map style "ArchitectHeading" to "OfficeHeading"' in review
+    assert "Required scope: all matching style usages" in review
+    assert "Required scope: 2 tables" in review and '"index_range"' in review
+    assert "Pinned template SHA-256: " + "b" * 64 in review
+    assert "Proofing language: en-GB" in review
+    assert "preserves the visible numbers" in review
+    assert "Different first page: off" in review
+    assert '"repeat_header_rows": 1' in review

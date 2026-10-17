@@ -72,6 +72,11 @@ verification against the original analytically predicted plan as well as the gen
 
 ## Compare saved reports without running a model
 
+For a pinned baseline/current comparison, explicit end-to-end time and intervention measurements,
+and costs outside recovery, use the version 2 paired manifest described in
+[WORKFLOW_EVALUATION.md](WORKFLOW_EVALUATION.md). The version 1 report summary below remains
+supported and measures recovery only.
+
 Create a local manifest next to the experiment folders:
 
 ```json

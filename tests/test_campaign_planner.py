@@ -122,3 +122,40 @@ def test_planner_forwards_host_analysis_limits_to_real_read_only_runner(tmp_path
     assert any(attempt["tool"] == "run_analysis" and "input allowance" in attempt["error"].lower() for attempt in state["attempts"])
     assert campaign.projects[pid]["proposed_plan"]["status"] == "PROPOSED"
     assert not campaign.projects[pid]["runs"]
+
+
+def test_resumed_legacy_planner_seals_old_signed_schema_before_upgrade(tmp_path, monkeypatch):
+    import copy
+    from spec_surgeon import campaign_planner
+    from spec_surgeon.conversation import check_pairing
+
+    campaign, pid, _ = campaign_source(tmp_path)
+    old_tools = [t for t in campaign_planner.PLAN_TOOLS if t["name"] != "inspect_goal_effect"]
+    monkeypatch.setattr(campaign_planner, "PLAN_TOOLS", old_tools)
+    monkeypatch.setattr(campaign_planner, "SYSTEM", "Legacy planner system: planning only, no approval.")
+    options = RecoveryOptions(render=False, use_memory=False)
+    campaign.plan(pid, "Inspect margins", options=options,
+                  client=FakeClient(resp(thinking("original-signed-planner-evidence"),
+                       tool("need_user", {"question": "Confirm the margin?"}))))
+    state = campaign.projects[pid]["planning_state"]
+    old_system, old_provider_tools = state.pop("system"), state.pop("tools")
+    old_messages = copy.deepcopy(state["messages"])
+    # Simulate a saved pre-upgrade workspace: provider schemas existed only in
+    # its immutable active manifest, not in the planning_state object.
+    campaign._save("legacy_planning_fixture")
+    monkeypatch.undo()
+    reopened = load_campaign(campaign.out_dir)
+    client = FakeClient(proposed())
+    reopened.plan(pid, client=client)
+    current = reopened.projects[pid]["planning_state"]
+    assert reopened.projects[pid]["proposed_plan"]["status"] == "PROPOSED", reopened.to_text()
+    assert current["context"]["epoch"] == 1
+    artifact = current["context"]["archives"][0]["artifact_id"]
+    sealed = json.loads((Path(current["context"]["folder"]) / f"{artifact}.json").read_text(encoding="utf-8"))
+    assert sealed["system"] == old_system and sealed["tools"] == old_provider_tools
+    assert sealed["messages"][:len(old_messages)] == old_messages
+    assert "original-signed-planner-evidence" in json.dumps(sealed["messages"])
+    assert "inspect_goal_effect" in {t["name"] for t in client.requests[0]["tools"]}
+    assert client.requests[0]["system"] != old_system
+    check_pairing(client.requests[0]["messages"])
+    assert not reopened.projects[pid]["runs"]

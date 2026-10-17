@@ -103,7 +103,7 @@ before acknowledging export. A changed goal or input requires fresh dependent ve
 | Estimated total tokens | 20,000,000 |
 | Estimated model spend per investigation | $250 |
 | Reasoning effort | Maximum |
-| Estimated working context before a new epoch | 120,000 tokens |
+| Estimated working context before a new epoch | 900,000 tokens |
 | Read-only analyzer time / memory | 120 seconds / 1 GiB |
 | Read-only analyzer input / result | 128 MiB / 16 MiB |
 
@@ -112,9 +112,20 @@ allowances shared by their document investigations; ten projects can therefore u
 the other limits. Review actual usage in investigation records. Provider usage, fallback models,
 and incomplete responses can make accounting estimates differ from the final bill.
 
+The context allowance controls when a conversation archives its complete history and starts a new
+epoch; it is separate from the investigation's 20-million-token total allowance. The default prioritizes
+sustained investigation with the configured [Opus 5.5 model's 1-million-token context](https://platform.claude.com/docs/en/models/opus-5-5/overview),
+leaving room for the configured 64,000-token output and estimation error. It is an application estimate,
+not a provider token count. When choosing a model with a smaller context window, also set
+`--max-context-tokens` to fit that model with output headroom. Saved investigations retain their saved
+settings; resume with `--max-context-tokens 900000` to increase an older investigation's allowance.
+
 Use `--budget`, `--max-attempts`, `--max-calls`, `--max-output-tokens`, `--max-total-tokens`,
 `--max-context-tokens`, `--model`, and `--effort` on `workspace plan`, `workspace run` or `resolve`. The desktop exposes budget, iteration,
 token, and effort controls and preserves a previously selected model.
+The `do` and `retry` commands also accept `--max-context-tokens` and `--max-output-tokens` alongside `--model`;
+both chat and noninteractive compilation, plus an approved custom-transform handoff, honor those token limits.
+Choose a response limit supported by the model and leave additional room for token-estimation error.
 Resource pauses preserve work. Increasing an allowance does not weaken validation.
 Saved resource settings are restored when reopening a workspace or investigation. CLI flags
 override only the settings supplied: lowering a budget remains effective on later continuations.
@@ -151,9 +162,35 @@ independently verified effect families are:
 | Section-title role | The title associated with that source's SECTION marker, including table layouts |
 | Text replacement | Exact old/new wording, scope, match count and tracked-change choice |
 | Paragraph insertion/deletion | Exact inserted wording or selected deletions, position, scope and tracking |
-| Page setup | Section selection, margins, page size and orientation |
+| Page setup | Section selection (including content selectors), margins, page size, orientation and different-first-page choice |
 | Header/footer template | Template SHA-256, section mapping, fills and alignment rules |
 | Header/footer removal | Sections, header/footer kinds and reference types |
+| Paragraph style and style mapping | Source selection, destination styles, import policy and pinned template |
+| Proofing language | Exact language tags and optional existing-language filter across the document |
+| Table properties and style | Source table selection, explicit formatting/style settings and any pinned template |
+| Automatic and typed numbering conversion | Source numbering, destination level styles, conversion policy and any pinned exemplar |
+
+The additional effect types are `paragraph_style`, `style_mapping`, `proofing_language`, `table_format`,
+`table_style`, `numbering`, and `typed_numbering`. Each uses explicit `select` and `params` settings from the
+corresponding operation and `expected_count`: an exact count or `"all"` original matches. For `"all"`, each file's
+binding freezes its own count. Template paths and SHA-256 hashes live on the effect, not inside `params`.
+The planner's read-only `inspect_goal_effect` tool returns count evidence for one document within the approved
+planning scope. It does not approve the effect or edit the document.
+
+These effects require stable paragraph and package structure. Wording changes, paragraph insertions/deletions,
+and header/footer replacement/removal must be approved separately when combined with them. Final independent
+checks may refuse overlapping effects whose joint result cannot satisfy both requirements. A source-bound count,
+template pin, or final effect is never dropped to make a candidate pass. [Built-in workflows](BUILTIN_WORKFLOWS.md)
+provide a separate keyless way to configure common chains using the existing preview and approval path.
+
+Within one outcome contract, table styling can combine with repeat-header-row and row-splitting settings.
+Table styling plus borders, margins, width or cell overrides requires separate approved goals because the
+independent proof checks each original table property container as a whole. The built-in table workflow handles
+that sequence as an ordinary two-stage chain with per-stage verification.
+
+Proofing language can combine with page setup, table properties and paragraph-only formatting; run/font formatting
+and style changes require separate goals. An effect that clears direct formatting can combine only with page setup.
+These combinations are checked before approval so a plan does not promise an unsupported joint proof.
 
 For example, this applies the same role to differently titled specifications:
 

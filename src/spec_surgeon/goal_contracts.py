@@ -14,6 +14,8 @@ from pathlib import Path
 from typing import Any, Dict
 
 from .goals import GoalError, NeedsInput, _digest, _visible_text
+from .goal_operations import (OPERATIONS, operation_catalog, operation_spec,
+                              source_operation_count, validate_operation_effect)
 from .ooxml import block_full_text, paragraphs
 from .ops.selectors import StyleSheet
 from .package import DocxPackage, W
@@ -22,7 +24,7 @@ from .package import DocxPackage, W
 KIND = "document_effects"
 SCOPES = ("document", "headers", "footers", "footnotes", "endnotes", "comments")
 EFFECTS = ("format", "replace_text", "page_setup", "insert_paragraph", "delete_paragraphs",
-           "header_footer_template", "remove_header_footer")
+           "header_footer_template", "remove_header_footer", *OPERATIONS)
 RUN = {"b", "i", "caps", "smallCaps", "strike"}
 PARAGRAPH = {"keepNext", "keepLines", "widowControl", "pageBreakBefore"}
 LOCATORS = {"exact_text", "contains_text", "text_regex", "style_id", "role"}
@@ -57,7 +59,15 @@ def _boolean_map(value, allowed, where):
         raise GoalError(f"{where} needs explicit boolean properties")
 
 
-def _sections(sections):
+def _sections(sections, *, content=False):
+    if content and isinstance(sections, dict):
+        from .ops import JobException
+        from .ops.selectors import check_section_selector
+        try:
+            check_section_selector(sections)
+        except JobException as exc:
+            raise GoalError(str(exc)) from exc
+        return
     if sections != "all" and (not isinstance(sections, list) or not sections
             or any(type(x) is not int or x < 0 for x in sections) or len(set(sections)) != len(sections)):
         raise GoalError("sections must be all or distinct non-negative section indices")
@@ -205,9 +215,12 @@ def validate_contract(contract):
         kind = effect.get("type")
         if kind not in EFFECTS:
             raise GoalError(f"unsupported effect type {kind!r}; supported: {list(EFFECTS)}")
+        if kind in OPERATIONS:
+            validate_operation_effect(effect)
+            continue
         fields = {"format": {"target", "font", "run", "paragraph", "tracked", "author"},
                   "replace_text": {"target", "find", "replace", "expected_matches", "tracked", "author"},
-                  "page_setup": {"sections", "margins", "size", "orientation"},
+                  "page_setup": {"sections", "margins", "size", "orientation", "different_first_page"},
                   "insert_paragraph": {"target", "text", "position", "formatting", "style", "tracked", "author"},
                   "delete_paragraphs": {"target", "tracked", "author"},
                   "header_footer_template": {"template", "template_sha256", "params", "sections"},
@@ -257,9 +270,11 @@ def validate_contract(contract):
             if "style" in effect and effect["style"] is not None:
                 _text(effect["style"], "insert style")
         elif kind == "page_setup":
-            _sections(effect.get("sections", "all"))
-            if not any(effect.get(k) for k in ("margins", "size", "orientation")):
-                raise GoalError("page_setup needs margins, size or orientation")
+            _sections(effect.get("sections", "all"), content=True)
+            if not any(effect.get(k) for k in ("margins", "size", "orientation")) and "different_first_page" not in effect:
+                raise GoalError("page_setup needs margins, size, orientation or different_first_page")
+            if "different_first_page" in effect and type(effect["different_first_page"]) is not bool:
+                raise GoalError("different_first_page must be boolean")
             for key, allowed in (("margins", MARGINS), ("size", {"w", "h"})):
                 if key not in effect:
                     continue
@@ -278,6 +293,26 @@ def validate_contract(contract):
             _sections(effect.get("sections", "all"))
             _enum_list(effect.get("kinds", ["header", "footer"]), {"header", "footer"}, "kinds")
             _enum_list(effect.get("types", ["default", "first", "even"]), {"default", "first", "even"}, "types")
+    if any(e["type"] in OPERATIONS for e in effects) and any(e["type"] in {
+            "replace_text", "insert_paragraph", "delete_paragraphs", "header_footer_template", "remove_header_footer"
+            } for e in effects):
+        raise GoalError("style, language, table and numbering effects require stable paragraph and package structure; "
+                        "approve wording, paragraph insertion/deletion and header/footer graph effects separately")
+    if any(e["type"] == "table_style" for e in effects) and any(e["type"] == "table_format"
+            and set(e["params"]) & {"borders", "cell_margins", "width", "clear_cell_overrides"} for e in effects):
+        raise GoalError("table style plus table borders, margins, width or cell overrides requires separate approved goals; "
+                        "the independent proof compares each original table property container whole. "
+                        "Table style may combine with row-only repeat_header_rows/cant_split formatting")
+    if any(e["type"] == "proofing_language" for e in effects) and any(
+            e["type"] in {"paragraph_style", "style_mapping", "table_style", "numbering", "typed_numbering"}
+            or (e["type"] == "format" and (e.get("font") or e.get("run"))) for e in effects):
+        raise GoalError("proofing language and run/font formatting or style changes require separate approved goals; "
+                        "the independent language proof compares each original run/style property container whole")
+    for effect in effects:
+        if effect["type"] in OPERATIONS and effect["params"].get("direct_formatting") == "clear" and any(
+                other["id"] != effect["id"] and other["type"] != "page_setup" for other in effects):
+            raise GoalError("clearing direct formatting and other formatting/style/language/numbering effects require "
+                            "separate approved goals; the cleared-property proof permits page setup alongside it")
     hf = [e for e in effects if e["type"] in {"header_footer_template", "remove_header_footer"}]
     if len(hf) > 1:
         raise GoalError("use one header/footer graph effect per approved contract")
@@ -375,6 +410,21 @@ def resolve_goal(source, contract):
     resolutions = {}
     try:
         for effect in contract["effects"]:
+            if effect["type"] in OPERATIONS:
+                from .ops import JobException
+                try:
+                    count = source_operation_count(pkg, effect, author=contract.get("author", "Abraham Borg"))
+                except JobException as exc:
+                    raise GoalMethodRequired(f"cannot bind original {effect['type']} targets: {exc}") from exc
+                expected_count = effect["expected_count"]
+                resolved = expected_count == "all" or count == expected_count
+                reason = (f"bound all {count} original eligible target(s)" if resolved else
+                          f"expected {expected_count} original target(s), found {count}; revise the approved scope or count")
+                resolutions[effect["id"]] = {"status": "resolved" if resolved else "needs_input", "reason": reason,
+                                             "candidates": [], "expected": 0, "source_count": count}
+                if resolved:
+                    binding["effects"][effect["id"]] = {"targets": [], "choice": "unique", "source_count": count}
+                continue
             target = effect.get("target")
             candidates = _candidates(pkg, source_hash, target) if target else []
             expected = (len(candidates) if target and (target.get("cardinality") == "all"
@@ -392,7 +442,7 @@ def resolve_goal(source, contract):
         pkg.close()
     complete = len(binding["effects"]) == len(contract["effects"])
     return {"status": "resolved" if complete else "needs_input", "reason": "all approved effects resolved" if complete
-            else "one or more effects need a source-bound target choice", "source": str(source.resolve()),
+            else "one or more effects need clarification of the approved scope, count or source-bound target choice", "source": str(source.resolve()),
             "source_sha256": source_hash, "contract_sha256": _digest(contract), "effects": resolutions,
             "candidates": [{**candidate, "effect_id": eid} for eid, row in resolutions.items() for candidate in row["candidates"]],
             "proposed_binding": copy.deepcopy(binding), "binding": binding if complete else None}
@@ -408,8 +458,12 @@ def _checked_binding(resolution, contract, binding, require_complete=True):
             raise GoalError("binding has unknown or invalid effects", "stale-binding")
         effects = {e["id"]: e for e in contract["effects"]}
         for eid, choice in binding["effects"].items():
-            _object(choice, {"targets", "choice"}, "effect binding")
+            extended = effects[eid]["type"] in OPERATIONS
+            _object(choice, {"targets", "choice"} | ({"source_count"} if extended else set()), "effect binding")
             row = resolution["effects"][eid]
+            if extended and (choice.get("choice") != "unique" or type(choice.get("source_count")) is not int
+                             or choice["source_count"] != row["source_count"] or row["status"] != "resolved"):
+                raise GoalError("bound operation count differs from the current source or approved count", "stale-binding")
             if choice.get("choice") not in ("unique", "user") or not isinstance(choice.get("targets"), list):
                 raise GoalError("invalid effect target choice", "stale-binding")
             selected = choice["targets"]
@@ -438,6 +492,8 @@ def choose_goal(source, contract, candidate_ids, *, effect_id=None, binding=None
         effect_id = unresolved[0]
     if effect_id not in resolution["effects"]:
         raise GoalError("unknown effect_id", "goal-target")
+    if next(e for e in contract["effects"] if e["id"] == effect_id)["type"] in OPERATIONS:
+        raise GoalError("operation target counts cannot be changed by choosing paragraphs; revise the reviewed scope or count", "goal-target")
     ids = [candidate_ids] if isinstance(candidate_ids, str) else candidate_ids
     if not isinstance(ids, list) or any(not isinstance(i, str) for i in ids) or len(set(ids)) != len(ids):
         raise GoalError("candidate_ids must be distinct source candidate identifiers", "goal-target")
@@ -478,7 +534,8 @@ def compile_goal_candidate(source, contract, binding=None):
     stages = []
     effects = sorted(enumerate(contract["effects"]), key=lambda pair: (
         {"page_setup": 0, "header_footer_template": 1, "remove_header_footer": 1,
-         "format": 2, "replace_text": 3, "delete_paragraphs": 4, "insert_paragraph": 4}[pair[1]["type"]], pair[0]))
+         **{kind: 2 for kind in OPERATIONS}, "format": 3, "replace_text": 4,
+         "delete_paragraphs": 5, "insert_paragraph": 5}[pair[1]["type"]], pair[0]))
     touched_text, structural = set(), []
     request = contract.get("request", "Carry out the explicitly approved document effects")
 
@@ -500,9 +557,18 @@ def compile_goal_candidate(source, contract, binding=None):
             kind = effect["type"]
             author = effect.get("author", contract.get("author", "Abraham Borg"))
             targets = bound["effects"][effect["id"]]["targets"]
+            if kind in OPERATIONS:
+                spec = operation_spec(effect, request, contract.get("author", "Abraham Borg"))
+                try:
+                    validate_spec(spec)
+                    plan_spec(pkg, spec)
+                except (JobException, ValueError) as exc:
+                    raise GoalMethodRequired(f"built-in {OPERATIONS[kind]} cannot realize effect {effect['id']}: {exc}", bound) from exc
+                stages.append({"name": effect["id"] + " — " + OPERATIONS[kind], "spec": spec})
+                continue
             if kind == "page_setup":
                 add(effect, "set_page_setup", {"sections": effect.get("sections", "all")},
-                    {k: copy.deepcopy(effect[k]) for k in ("margins", "size", "orientation") if k in effect})
+                    {k: copy.deepcopy(effect[k]) for k in ("margins", "size", "orientation", "different_first_page") if k in effect})
                 continue
             if kind == "header_footer_template":
                 add(effect, "apply_header_footer_template", {"sections": "all"},
@@ -589,13 +655,13 @@ def _literal_fills(params):
 
 def goal_templates(contract):
     validate_contract(contract)
-    return list(dict.fromkeys(Path(e["template"]).resolve() for e in contract["effects"] if e["type"] == "header_footer_template"))
+    return list(dict.fromkeys(Path(e["template"]).resolve() for e in contract["effects"] if "template" in e))
 
 
 def _check_templates(contract):
     import hashlib
     for effect in contract["effects"]:
-        if effect["type"] != "header_footer_template":
+        if "template" not in effect:
             continue
         try:
             actual = hashlib.sha256(Path(effect["template"]).read_bytes()).hexdigest()
@@ -612,7 +678,9 @@ def goal_catalog():
                    "font": "name sets effective ascii/hAnsi/eastAsia/cs slots; size sets effective normal w:sz in whole/half points; symbol fonts preserved; w:szCs unchanged"},
         "replace_text": {"fields": ["target", "find", "replace", "expected_matches", "tracked", "author"],
                          "matching": "exact case-sensitive literal, every source occurrence", "tracked_default": True},
-        "page_setup": {"fields": ["sections", "margins", "size{w,h}", "orientation"], "units": "twips", "tracked": False},
+        "page_setup": {"fields": ["sections", "margins", "size{w,h}", "orientation", "different_first_page"],
+                       "sections": "all, distinct section indices, or {containing: paragraph predicate, with_tables: boolean, index_range:[first,last]}; all supplied conditions apply",
+                       "units": "twips", "tracked": False},
         "insert_paragraph": {"fields": ["target", "text", "position", "formatting", "style", "tracked", "author"],
                              "position_default": "after", "formatting_default": "inherit", "tracked_default": True},
         "delete_paragraphs": {"fields": ["target", "tracked", "author"], "tracked_default": True},
@@ -624,7 +692,9 @@ def goal_catalog():
             "slot_fills": "{name: {rule: literal, value} | {rule: regex, pattern, source?} | {rule: paragraph_after, anchor_regex, source?} | {rule: first_match, rules: [...]}}",
             "composition": "body effects allowed; effects targeting overwritten headers/footers must be separate goals"},
         "remove_header_footer": {"fields": ["sections", "kinds", "types"], "sections_default": "all",
-            "kinds_default": ["header", "footer"], "types_default": ["default", "first", "even"]}},
+            "kinds_default": ["header", "footer"], "types_default": ["default", "first", "even"]},
+        **operation_catalog()},
+        "composition": "style/language/table/numbering effects require separate approval from wording, paragraph insertion/deletion and header/footer graph effects. Page setup may accompany each family. Paragraph style mapping with kept direct formatting may combine with run formatting; table_style with kept direct formatting may combine with table_format row properties only. Proofing language requires separate approval from run/font formatting and style-changing effects; it may combine with paragraph-only formatting and table_format. An effect that clears direct formatting may combine only with page setup. Table borders/margins/width/cell overrides require separate approval from table_style. Other overlapping property changes fail closed",
         "target": {"scopes": list(SCOPES), "all": "all:true binds every original scoped paragraph",
                    "locators": sorted(LOCATORS), "anchors": sorted(ANCHORS),
                    "cardinality": "positive exact count (default 1), or 'all' for all original matches",

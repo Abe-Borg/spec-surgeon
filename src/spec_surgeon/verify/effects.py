@@ -25,6 +25,8 @@ from .props import (Styles, Theme, _check_effective_para, _check_effective_run, 
                     effective_fonts, effective_size, first_difference, sect_prs, sig, symbolic)
 from .reader import STYLES_REL, THEME_REL, VPackage, W
 from .template import _v_field_runs
+from .goal_operations import (TYPES as OPERATION_EFFECTS, validate as validate_operation,
+                              verify_operations, normalize_operations, paragraph_selector)
 
 
 SCOPES = {"document", "headers", "footers", "footnotes", "endnotes", "comments"}
@@ -40,7 +42,8 @@ ROLE_MARKER = re.compile(r"SECTION\s+(?P<number>[0-9]{2}\s?[0-9]{2}\s?[0-9]{2})"
                          r"(?:\s*[-–—:]\s*(?P<title>.*))?")
 TYPES = {"format", "replace_text", "page_setup", "insert_paragraph", "delete_paragraphs",
          "header_footer_template", "remove_header_footer"}
-PACKAGE_EFFECTS = {"page_setup", "header_footer_template", "remove_header_footer"}
+TYPES |= OPERATION_EFFECTS
+PACKAGE_EFFECTS = {"page_setup", "header_footer_template", "remove_header_footer"} | OPERATION_EFFECTS
 
 
 def _keys(value, allowed, where):
@@ -186,11 +189,13 @@ def _validate(contract):
     common = {"id", "type", "author", "tracked"}
     extra = {"format": {"target", "font", "run", "paragraph"},
              "replace_text": {"target", "find", "replace", "expected_matches"},
-             "page_setup": {"sections", "margins", "size", "orientation"},
+             "page_setup": {"sections", "margins", "size", "orientation", "different_first_page"},
              "insert_paragraph": {"target", "text", "position", "formatting", "style"},
              "delete_paragraphs": {"target"},
              "header_footer_template": {"template", "template_sha256", "params", "sections"},
              "remove_header_footer": {"sections", "kinds", "types"}}
+    extra.update({kind: {"select", "params", "expected_count", "template", "template_sha256"}
+                  for kind in OPERATION_EFFECTS})
     for effect in effects:
         if not isinstance(effect, dict) or effect.get("type") not in TYPES:
             raise ValueError("unsupported effect type")
@@ -206,7 +211,9 @@ def _validate(contract):
             raise ValueError("effect.tracked must be boolean")
         if kind not in PACKAGE_EFFECTS:
             _target_schema(effect.get("target"))
-        if kind == "format":
+        if kind in OPERATION_EFFECTS:
+            validate_operation(effect)
+        elif kind == "format":
             if not any(effect.get(key) for key in ("font", "run", "paragraph")):
                 raise ValueError("format needs at least one property")
             for key, allowed in (("run", RUN_KEYS), ("paragraph", PARA_KEYS)):
@@ -249,11 +256,25 @@ def _validate(contract):
             if effect.get("tracked", False):
                 raise ValueError("tracked page setup is unsupported")
             sections = effect.get("sections", "all")
-            if sections != "all" and (not isinstance(sections, list) or not sections
+            if isinstance(sections, dict):
+                _keys(sections, {"index_range", "with_tables", "containing"}, "page sections")
+                if not sections:
+                    raise ValueError("section selection cannot be empty")
+                if "with_tables" in sections and type(sections["with_tables"]) is not bool:
+                    raise ValueError("sections.with_tables must be boolean")
+                if "containing" in sections:
+                    paragraph_selector(sections["containing"])
+                    if not isinstance(sections["containing"], dict) or not sections["containing"]:
+                        raise ValueError("sections.containing needs a paragraph predicate")
+                if "index_range" in sections:
+                    paragraph_selector({"index_range": sections["index_range"]})
+            elif sections != "all" and (not isinstance(sections, list) or not sections
                     or any(type(s) is not int or s < 0 for s in sections) or len(sections) != len(set(sections))):
                 raise ValueError("invalid page section indices")
-            if not any(effect.get(key) for key in ("margins", "size", "orientation")):
-                raise ValueError("page setup needs margins, size or orientation")
+            if "different_first_page" in effect and type(effect["different_first_page"]) is not bool:
+                raise ValueError("different_first_page must be boolean")
+            if not any(effect.get(key) for key in ("margins", "size", "orientation")) and "different_first_page" not in effect:
+                raise ValueError("page setup needs margins, size, orientation or different_first_page")
             for key, allowed in (("margins", MARGIN_KEYS), ("size", {"w", "h"})):
                 if key in effect:
                     _keys(effect[key], allowed, key)
@@ -275,6 +296,22 @@ def _validate(contract):
             if kind == "remove_header_footer":
                 for key, allowed in (("kinds", {"header", "footer"}), ("types", {"default", "first", "even"})):
                     _enum_values(effect.get(key, list(allowed)), allowed, "header/footer " + key)
+    if any(effect["type"] in OPERATION_EFFECTS for effect in effects) and any(
+            effect["type"] in {"insert_paragraph", "delete_paragraphs", "replace_text", "header_footer_template",
+                               "remove_header_footer"} for effect in effects):
+        raise ValueError("operation outcomes need stable source structure; separate wording/paragraph/header graph effects")
+    if any(effect["type"] == "table_style" for effect in effects) and any(
+            effect["type"] == "table_format" and set(effect["params"]) &
+            {"width", "borders", "cell_margins", "clear_cell_overrides"} for effect in effects):
+        raise ValueError("table style and table-level properties need separate approved goals for independent table-property proofs; row-only table formatting may compose")
+    if any(effect["type"] == "proofing_language" for effect in effects) and any(
+            effect["type"] in {"paragraph_style", "style_mapping", "table_style", "numbering", "typed_numbering"}
+            or (effect["type"] == "format" and (effect.get("font") or effect.get("run"))) for effect in effects):
+        raise ValueError("proofing language and run/style formatting need separate approved goals because their independent proofs inspect complete property containers")
+    for effect in effects:
+        if effect["type"] in OPERATION_EFFECTS and effect["params"].get("direct_formatting") == "clear" and any(
+                other is not effect and other["type"] != "page_setup" for other in effects):
+            raise ValueError("clearing direct formatting needs a separate approved goal; only page setup may compose")
     graph = [effect for effect in effects if effect["type"] in {"header_footer_template", "remove_header_footer"}]
     if len(graph) > 1:
         raise ValueError("only one approved header/footer graph effect may be composed")
@@ -372,8 +409,11 @@ def _bound_targets(source, roots, styles, contract, binding, source_hash):
         targets = [] if effect["type"] in PACKAGE_EFFECTS else _resolve(
             source, roots, styles, effect["target"], source_hash)
         entry = binding["effects"][effect["id"]]
-        if not isinstance(entry, dict) or set(entry) != {"targets", "choice"} or entry.get("choice") not in ("unique", "user"):
+        entry_keys = {"targets", "choice", "source_count"} if effect["type"] in OPERATION_EFFECTS else {"targets", "choice"}
+        if not isinstance(entry, dict) or set(entry) != entry_keys or entry.get("choice") not in ("unique", "user"):
             raise ValueError("invalid effect binding")
+        if effect["type"] in OPERATION_EFFECTS and (type(entry["source_count"]) is not int or entry["source_count"] < 0):
+            raise ValueError("operation binding needs a nonnegative source_count")
         selected = entry["targets"]
         target = effect.get("target", {})
         if not target and entry["choice"] != "unique":
@@ -585,15 +625,19 @@ def _normalize_format(source_p, output_p, fmt, source_styles, output_styles, out
             _empty_cleanup(ppr)
 
 
-def _page_permissions(source_main, effects):
+def _page_permissions(source_main, effects, source=None, styles=None):
     sections = sect_prs(source_main)
     permissions = {}
     for effect in effects.values():
-        selected = list(range(len(sections))) if effect.get("sections", "all") == "all" else effect["sections"]
+        from .props import _v_resolve_sections
+        selected = (_v_resolve_sections(source, effect.get("sections", "all"), styles) if source is not None else
+                    list(range(len(sections))) if effect.get("sections", "all") == "all" else effect["sections"])
         if not selected or any(index >= len(sections) for index in selected):
             raise ValueError("page setup selects a missing source section")
         for index in selected:
             spec = permissions.setdefault(index, {})
+            if "different_first_page" in effect:
+                _merge_values(spec.setdefault("titlePg", {}), {"enabled": effect["different_first_page"]}, f"section {index} titlePg")
             if effect.get("margins"):
                 _merge_values(spec.setdefault("pgMar", {}), effect["margins"], f"section {index} margins")
             if effect.get("size") or effect.get("orientation"):
@@ -623,6 +667,19 @@ def _normalize_pages(source_root, output_root, permissions, errors):
         for name, attrs in elements.items():
             source_element = source_sections[index].find(W + name)
             output_element = output_sections[index].find(W + name)
+            if name == "titlePg":
+                duplicates = len(output_sections[index].findall(W + name))
+                enabled = output_element is not None and output_element.get(W + "val", "true") not in {"0", "false", "off"}
+                if duplicates > 1 or len(source_sections[index].findall(W + name)) > 1 or enabled != attrs["enabled"]:
+                    errors.append(f"section {index}: different_first_page is not {attrs['enabled']}")
+                if output_element is not None and (set(output_element.attrib) - {W + "val"} or len(output_element)
+                        or (output_element.text or "").strip()
+                        or output_element.get(W + "val", "true") not in {"1", "true", "on", "0", "false", "off"}):
+                    errors.append(f"section {index}: unsupported titlePg contents")
+                for parent in (source_sections[index], output_sections[index]):
+                    for element in list(parent.findall(W + name)):
+                        parent.remove(element)
+                continue
             if output_element is None or len(output_sections[index].findall(W + name)) != 1:
                 errors.append(f"section {index}: missing or duplicate {name}")
                 continue
@@ -934,7 +991,7 @@ def verify_effects(original: bytes | Path, candidate: bytes | Path, contract: di
                                  hashlib.sha256(source_data).hexdigest())
         programs = _programs(source_roots, contract, targets)
         formats, replacements, insertions, deletions, pages = programs
-        page_permissions = _page_permissions(source_roots[main], pages)
+        page_permissions = _page_permissions(source_roots[main], pages, source, source_styles)
         record(phase, len(errors), "every approved effect is independently bound to the original source")
         phase = "E3"
         start = len(errors)
@@ -960,7 +1017,34 @@ def verify_effects(original: bytes | Path, candidate: bytes | Path, contract: di
             for target in targets[effect["id"]]:
                 if target["part"] in allowed_removed:
                     raise ValueError("an effect targets a header/footer replaced or removed by another approved effect")
+        operation_effects = [effect for effect in contract["effects"] if effect["type"] in OPERATION_EFFECTS]
+        operation_context = None
+        if operation_effects:
+            operation_context = verify_operations(source, output, operation_effects,
+                                                  contract.get("author", "Abraham Borg"), errors, binding)
+            allowed_changed.update(operation_context.verified_members)
+            if operation_context.styles_part:
+                allowed_changed.add(operation_context.styles_part)
         used_ids = _revision_ids(source)
+        if operation_context is not None:
+            from .clearing import v_cleared_sets, v_decide
+            from .typednumbers import _v_cleared_copy
+            envelope_ids = set().union(*(part_revision_ids(root) for root in source_roots.values()))
+            for assertion in operation_context.plan["property_assertions"]:
+                if assertion["kind"] != "typed_numbers":
+                    continue
+                part = assertion["part"]
+                sv, ov = operation_context.view(part)
+                clear = assertion["params"].get("direct_formatting", "keep") == "clear"
+                rn, pn = v_cleared_sets() if clear else (set(), set())
+                for index, *_ in assertion["converted"]:
+                    before = sv.pars[index]
+                    if clear:
+                        clearing = v_decide(before, sv.runs[index], source_styles, rn, pn)
+                        if clearing.runs:
+                            before = _v_cleared_copy(before, sv.runs[index], clearing.runs)
+                    _check_edit_envelope(before, ov.pars[index], envelope_ids,
+                                         f"{part} original paragraph {index}", errors)
         pairs, removed_nodes = _structural_pairs(source_roots, output_roots, formats, insertions, deletions,
                                                  source_styles, output_styles, output_theme, used_ids, errors)
         record(phase, start, "approved paragraph and package-graph effects independently checked")
@@ -972,6 +1056,8 @@ def verify_effects(original: bytes | Path, candidate: bytes | Path, contract: di
                 continue
             _normalize_format(*pairs[key], fmt, source_styles, output_styles, output_theme,
                               used_ids, f"{key[0]} original paragraph {key[1]}", errors)
+        if operation_context is not None:
+            normalize_operations(operation_context, source_roots, output_roots)
         _normalize_pages(source_roots[main], output_roots[main], page_permissions, errors)
         for mask in masks:
             _apply_section_masks(source_roots[main], output_roots[main], mask)

@@ -65,7 +65,7 @@ def loaded_name(source: str) -> str:
     """How a loaded spec is named: a spec file by its name, one of your snippets as itself (its name is free text)."""
     return source if is_snippet_source(source) else Path(source).name
 # keyless mode (no API key): step 2 is choosing a saved spec or an item of Your library
-KEYLESS_STEP, KEYLESS_HINT = "Choose the change", "A saved spec or Your library"
+KEYLESS_STEP, KEYLESS_HINT = "Choose the change", "A workflow, saved spec or Your library"
 NO_RESULTS = {"PASS": 0, "FAIL": 0, "EXCEPTION": 0}
 READY, ERROR = "Ready.", "Error — see the log."
 
@@ -105,6 +105,14 @@ class Prompts:
 
     def save_file(self, title: str, start: str, filter_: str) -> str:
         return QFileDialog.getSaveFileName(self.parent, title, start or str(Path.home()), filter_)[0]
+
+    def workflow_inputs(self, workflow_id: str) -> Optional[dict]:
+        from .workflow_dialog import WorkflowDialog
+        dlg = WorkflowDialog(workflow_id, self, self.parent)
+        try:
+            return dlg.values() if dlg.exec() == QDialog.DialogCode.Accepted else None
+        finally:
+            dlg.deleteLater()
 
     def pick_sequence(self, title: str, label_: str, items: List[str]) -> List[str]:
         """Several of ``items`` in an order the user builds (Chain recipes…): [] when cancelled or empty."""
@@ -196,13 +204,18 @@ class RecordingPrompts:
 
     def __init__(self, answers: Optional[List[bool]] = None, files: Optional[List[str]] = None,
                  texts: Optional[List[str]] = None, items: Optional[List[str]] = None,
-                 sequences: Optional[List[List[str]]] = None):
+                 sequences: Optional[List[List[str]]] = None, workflows: Optional[List[Optional[dict]]] = None):
         self.answers = list(answers or [])
         self.files = list(files or [])
         self.texts = list(texts or [])
         self.items = list(items or [])
         self.sequences = [list(x) for x in (sequences or [])]
+        self.workflows = list(workflows or [])
         self.shown: List[tuple] = []
+
+    def workflow_inputs(self, workflow_id):
+        self.shown.append(("workflow_inputs", workflow_id))
+        return self.workflows.pop(0) if self.workflows else None
 
     def pick_sequence(self, title, label_, items):
         self.shown.append(("pick_sequence", title, "\n".join(items)))
@@ -430,6 +443,7 @@ class MainWindow(QMainWindow):
         self.act_load = QAction("Load saved spec…", self, shortcut=QKeySequence("Ctrl+O"))
         self.act_library = QAction("Your library…", self, shortcut=QKeySequence("Ctrl+L"))
         self.act_chain = QAction("Chain recipes…", self)
+        self.act_workflows = QAction("Built-in workflows…", self)
         self.act_library_folder = QAction("Open library folder", self)
         self.act_memory = QAction("Repair memory…", self)
         self.act_campaign = QAction("Multi-project workspace…", self)
@@ -438,7 +452,7 @@ class MainWindow(QMainWindow):
         self.act_open = QAction("Open results folder", self)
         self.act_settings = QAction("Settings…", self, shortcut=QKeySequence("Ctrl+,"))
         self.act_exit = QAction("Exit", self, shortcut=QKeySequence("Ctrl+Q"))
-        for a in (self.act_campaign, self.act_recovery, self.act_audit, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
+        for a in (self.act_campaign, self.act_recovery, self.act_audit, self.act_workflows, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
                   self.act_settings):
             m.addAction(a)
         m.addSeparator()
@@ -526,6 +540,8 @@ class MainWindow(QMainWindow):
         self.act_recovery.triggered.connect(self.do_load_recovery)
         r.library_btn.clicked.connect(self.do_library)
         r.chain_btn.clicked.connect(self.do_chain)
+        r.workflows_btn.clicked.connect(self.do_workflow)
+        self.act_workflows.triggered.connect(self.do_workflow)
         self.act_chain.triggered.connect(self.do_chain)
         p.save_btn.clicked.connect(self.do_save_to_library)
         self.act_open.triggered.connect(self.do_open)
@@ -547,7 +563,7 @@ class MainWindow(QMainWindow):
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn, run.resolve_btn,
                             p.review_ack_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
-                            self.act_chain, self.act_memory, self.act_campaign, self.act_recovery, self.act_audit,
+                            self.act_chain, self.act_workflows, r.workflows_btn, self.act_memory, self.act_campaign, self.act_recovery, self.act_audit,
                             run.load_recovery_btn]
 
     # ---- values ---------------------------------------------------------------------------------------
@@ -1720,6 +1736,35 @@ class MainWindow(QMainWindow):
         return True
 
     @Slot()
+    def do_workflow(self) -> bool:
+        """Choose a packaged workflow and its explicit inputs; ordinary Preview and Run follow."""
+        from ..workflows import workflow_catalog
+        if self.busy or self.updating:
+            return False
+        workflows = workflow_catalog()
+        labels = [w["name"] + " — " + w["description"] for w in workflows]
+        picked = self.prompts.pick_item("Built-in workflows", "Choose a workflow. Each uses the verified engine without an API key:", labels)
+        if picked not in labels:
+            return False
+        workflow = workflows[labels.index(picked)]
+        inputs = self.prompts.workflow_inputs(workflow["id"])
+        if inputs is None:
+            return False
+        try:
+            chain = self.session.use_workflow(workflow["id"], inputs)
+        except Exception as e:
+            self.prompts.warn("Built-in workflows", f"Cannot use this workflow:\n{e}")
+            return False
+        self._clear_request()
+        self.write(f"\nWorkflow {workflow['name']!r}: " + " → ".join(st["name"] for st in chain["stages"])
+                   + "\nPress Preview to inspect the changes before Run.")
+        self._show_loaded_chain()
+        self._refresh_chat()
+        self._inputs_changed()
+        self.go(1)
+        return True
+
+    @Slot()
     def do_chain(self) -> bool:
         """Chain recipes…: pick several of your recipes in the order they should run; the chain becomes the outcome
         (previewed and run stage by stage — ``Session.build_chain``)."""
@@ -2273,6 +2318,7 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
                     "install_update": w.updates.banner.btn_install, "settings": w.settings_btn,
                     "send": r.chat.send_btn, "start_over": r.chat.start_over_btn,
                     "review_ack": w.preview_page.review_ack_btn, "library": r.library_btn, "chain": r.chain_btn,
+                    "workflows": r.workflows_btn,
                     "save_to_library": w.preview_page.save_btn, "about": w.about_btn, "next": f.next_btn},
         "vars": {"folder": Var(f.folder.text, f.folder.setText), "template": Var(f.template.text, f.template.setText),
                  "out": Var(f.out.text, f.out.setText),

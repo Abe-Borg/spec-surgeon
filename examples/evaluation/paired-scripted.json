@@ -1,0 +1,58 @@
+{
+  "version": 2,
+  "measurement_scope": "workflow",
+  "cases": [
+    {
+      "id": "office-style-example-baseline",
+      "pair_id": "office-style-example",
+      "variant": "baseline",
+      "cohort": "scripted-schema-example",
+      "execution": "scripted",
+      "revision": "0000000000000000000000000000000000000000",
+      "report": "baseline-scripted-recovery.json",
+      "report_sha256": "84a52eb7702b50057387c954df02e60b80c041f1645cb2e64bbe1bdc185e7293",
+      "workflow": {
+        "elapsed_seconds": null,
+        "human_interventions": null,
+        "additional_model_cost_usd": null
+      },
+      "human_review": {
+        "request_satisfied": null,
+        "content_preserved": null,
+        "visual_checked": null,
+        "reviewer": "",
+        "notes": "Not reviewed. Placeholder revisions and synthetic reports are not benchmark evidence."
+      },
+      "expect": {
+        "ready": 0,
+        "unresolved": 1
+      }
+    },
+    {
+      "id": "office-style-example-current",
+      "pair_id": "office-style-example",
+      "variant": "current",
+      "cohort": "scripted-schema-example",
+      "execution": "scripted",
+      "revision": "1111111111111111111111111111111111111111",
+      "report": "current-scripted-recovery.json",
+      "report_sha256": "a2f3ba4daa825f9104ff01362fb33cc5113d2774bf2e7d6fa6214cbbea3e8186",
+      "workflow": {
+        "elapsed_seconds": null,
+        "human_interventions": null,
+        "additional_model_cost_usd": null
+      },
+      "human_review": {
+        "request_satisfied": null,
+        "content_preserved": null,
+        "visual_checked": null,
+        "reviewer": "",
+        "notes": "Not reviewed. Placeholder revisions and synthetic reports are not benchmark evidence."
+      },
+      "expect": {
+        "ready": 0,
+        "unresolved": 1
+      }
+    }
+  ]
+}

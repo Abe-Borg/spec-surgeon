@@ -56,6 +56,37 @@ def _target(target):
     return lines
 
 
+def _built_in_effect(effect):
+    """Keep scope, cardinality and chosen inputs readable before approving a built-in outcome."""
+    kind = effect["type"]
+    params = effect.get("params") or {}
+    count = effect.get("expected_count", "not specified")
+    units = {"paragraph_style": "paragraphs", "style_mapping": "style usages", "proofing_language": "documents",
+             "table_format": "tables", "table_style": "tables", "numbering": "paragraphs",
+             "typed_numbering": "paragraphs"}
+    lines = ["Required scope: " + ("all matching " if count == "all" else str(count) + " ") + units[kind],
+             "Selection rules: " + _json(effect.get("select") or {})]
+    if effect.get("template"):
+        lines += ["Template file: " + str(effect["template"]),
+                  "Pinned template SHA-256: " + str(effect.get("template_sha256", ""))]
+    if kind == "style_mapping":
+        for mapping in params.get("map") or []:
+            lines.append("Map style " + _json(mapping.get("from")) + " to " + _json(mapping.get("to")))
+    elif kind in {"paragraph_style", "table_style"}:
+        lines.append("Apply style: " + _json(params.get("style", "not specified")))
+    elif kind == "proofing_language":
+        for key, label in (("language", "Proofing language"), ("east_asian", "East Asian language"),
+                           ("complex_script", "Complex script language")):
+            if key in params:
+                lines.append(label + ": " + str(params[key]))
+    elif kind in {"numbering", "typed_numbering"}:
+        lines.append("Numbering level styles: " + _json(params.get("levels", [])))
+        if kind == "typed_numbering":
+            lines.append("Remove typed number prefixes only when the automatic numbering preserves the visible numbers.")
+    lines.append("Requested settings: " + _json(params))
+    return lines
+
+
 def plan_text(plan, documents):
     """Show the complete proposed effect contract; no model-written summary can hide an effect."""
     if not plan:
@@ -98,6 +129,8 @@ def plan_text(plan, documents):
                              + _inches(value))
             if "orientation" in effect:
                 lines.append("Orientation: " + str(effect["orientation"]))
+            if "different_first_page" in effect:
+                lines.append("Different first page: " + ("on" if effect["different_first_page"] else "off"))
         elif kind == "header_footer_template":
             lines += ["Template file: " + str(effect.get("template", "")),
                       "Pinned template SHA-256: " + str(effect.get("template_sha256", "")),
@@ -107,6 +140,9 @@ def plan_text(plan, documents):
                     lines.append("Exact approved wording for slot " + _json(slot) + ": " + _json(wording))
         elif kind == "remove_header_footer":
             lines.append("Remove the selected header/footer references and their unused parts.")
+        elif kind in {"paragraph_style", "style_mapping", "proofing_language", "table_format", "table_style",
+                      "numbering", "typed_numbering"}:
+            lines += _built_in_effect(effect)
         if "target" in effect:
             lines += _target(effect["target"])
         if kind in {"format", "replace_text", "insert_paragraph", "delete_paragraphs"}:

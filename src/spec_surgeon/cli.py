@@ -6,6 +6,9 @@
     spec-surgeon run  JOB FILES... --params JSON|@file --out DIR [--in-place] [--workers N]
                                    [--renderer auto|word|libreoffice|none] [--no-render]
     spec-surgeon ops [--catalog]                             (list the operation library; --catalog: JSON for the compiler)
+    spec-surgeon workflows list|show ID [--json]             (discover built-in workflows and required inputs)
+    spec-surgeon workflows use ID FILES... --inputs JSON|@file [--out DIR] [--yes] [--no-render]
+                                                             (keyless workflow → preview → approve → verified copies)
     spec-surgeon profile FILES... [--json]                   (per-structure-pattern document profiles, no model)
     spec-surgeon audit FILES... [--audit NAME]... [--identity JSON|@file] [--json] [--out REPORT.md|REPORT.json]
                                                              (read-only specification QA across the batch)
@@ -105,6 +108,53 @@ def cmd_ops(args):
         for check, how in cls.verification_profile.items():
             print(f"    {check}: {how}")
     return 0
+
+
+def cmd_workflows(args):
+    """Discover and execute built-in workflows through the existing chain approval path."""
+    from .chain import chain_templates
+    from .editspec import SpecError, is_template_file
+    from .workflows import build_workflow, get_workflow, load_workflow_inputs, workflow_catalog
+
+    try:
+        if args.action == "list":
+            catalog = workflow_catalog()
+            if args.json:
+                print(json.dumps(catalog, indent=2, ensure_ascii=False))
+            else:
+                for entry in catalog:
+                    print(f"{entry['id']} — {entry['name']}\n  {entry['description']}")
+                print("\nInspect inputs: spec-surgeon workflows show ID")
+            return 0
+        if not args.name:
+            raise ValueError(f"workflows {args.action} requires a workflow ID; use workflows list")
+        entry = get_workflow(args.name)
+        if args.action == "show":
+            if args.json:
+                print(json.dumps(entry, indent=2, ensure_ascii=False))
+            else:
+                print(f"{entry['name']}\n{entry['description']}")
+                for field in entry["inputs"]:
+                    default = f" (default: {field['default']!r})" if "default" in field else ""
+                    print(f"  {field['name']}: {field['description']}{default}")
+                print(f"\nPreview: spec-surgeon workflows use {args.name} FILES... --inputs @inputs.json")
+                print("Add --yes after reviewing the preview to run; --save-as NAME retains the configured chain.")
+            return 0
+        if not args.files:
+            raise ValueError("workflows use requires DOCX files or folders")
+        inputs, base_dir = load_workflow_inputs(args.inputs)
+        chain = build_workflow(args.name, inputs, base_dir=base_dir)
+        templates = chain_templates(chain)
+        files = [f for f in expand_inputs(args.files) if not is_template_file(f, templates)]
+        if not files:
+            raise ValueError("no input DOCX files remain after excluding workflow templates")
+        out_dir = Path(args.out) if args.out else Path.cwd() / "SpecSurgeon_out" / datetime.now().strftime("%Y%m%d-%H%M%S")
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except (OSError, ValueError, SpecError) as exc:
+        print(f"Workflow refused: {exc}", file=sys.stderr)
+        return 2
+    print(f"Workflow: {entry['name']} — {len(files)} file(s)")
+    return _preview_and_run_chain(args, chain, files, out_dir)
 
 
 def cmd_run_spec(args):
@@ -346,6 +396,11 @@ def cmd_run(args, spec=None):
     return 0 if c["FAIL"] == 0 and c["EXCEPTION"] == 0 else 1
 
 
+def _conversation_token_limits(args):
+    return {name: getattr(args, name) for name in ("max_context_tokens", "max_output_tokens")
+            if getattr(args, name, None) is not None}
+
+
 def cmd_do(args):
     """Natural language end to end: compile (Claude) → preview (dry plan + sample apply/verify/render) → approval →
     the verified batch. Nothing touches a source before approval; --in-place delivery is guarded as always."""
@@ -404,7 +459,8 @@ def cmd_do(args):
     else:
         print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
         res = compile_request(args.request, files, template=template, answers=args.answer or [],
-                              model=args.model, log=log, prior_failures=prior_failures)
+                              model=args.model, log=log, prior_failures=prior_failures,
+                              **_conversation_token_limits(args))
         if write_json(out_dir / "compile.json", {"request": args.request, "answers": args.answer or [],
                                                  **res.to_dict()}):
             print(f"compile record (the model's whole exchange): {out_dir / 'compile.json'}", file=sys.stderr)
@@ -749,7 +805,8 @@ def _chat(args, files, template, out_dir, prior_failures, log):
     from .diagnostics import write_json
     print(f"talking {args.request!r} through with Claude ({args.model}) over {len(files)} file(s) …", file=sys.stderr)
     conv = Conversation(args.request, files, template=template, model=args.model, prior_failures=prior_failures,
-                        answers=args.answer or [], work_dir=out_dir / "chat", log=log)
+                        answers=args.answer or [], work_dir=out_dir / "chat", log=log,
+                        **_conversation_token_limits(args))
 
     def save(turn=None):
         try:
@@ -990,7 +1047,8 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     before_writing = approval_inputs({}, files)
     print(f"Tier B: generating a transform, tested on {[s.name for s in samples]} …", file=sys.stderr)
     g = generate_op(args.request, spec.get("proposal") or spec.get("unsupported") or "", samples, out_dir / "codegen",
-                    model=args.model, log=lambda m: print(m, file=sys.stderr), brief=brief)
+                    model=args.model, log=lambda m: print(m, file=sys.stderr), brief=brief,
+                    **_conversation_token_limits(args))
     for a in g.attempts:
         print(f"  attempt {a['attempt']}: " + ("PASS" if not a["problems"] else f"{len(a['problems'])} problem(s): "
                                                 + "; ".join(a["problems"][:3])))
@@ -1335,6 +1393,27 @@ def cmd_verify(args):
     return 0 if rec.passed else 1
 
 
+def _add_conversation_token_arguments(parser):
+    from .resources import DEFAULT_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS
+
+    def positive(value):
+        try:
+            number = int(value)
+            if number > 0:
+                return number
+        except ValueError:
+            pass
+        raise argparse.ArgumentTypeError("must be a positive integer")
+
+    parser.add_argument("--max-context-tokens", type=positive, default=None,
+                        help=f"estimated conversation/custom-transform input limit before history rollover (default "
+                             f"{DEFAULT_CONTEXT_TOKENS}); set with --model for smaller windows, leaving "
+                             "room for output and estimation error")
+    parser.add_argument("--max-output-tokens", type=positive, default=None,
+                        help=f"maximum output tokens per conversation/custom-transform call (default {DEFAULT_MAX_OUTPUT_TOKENS}); "
+                             "must fit the selected model's output limit")
+
+
 def main(argv=None) -> int:
     from .settings import logs_dir
     diag.setup_app_logging(logs_dir())
@@ -1362,6 +1441,25 @@ def main(argv=None) -> int:
     p = sub.add_parser("ops", help="list the operation library (EditSpec building blocks)")
     p.add_argument("--catalog", action="store_true", help="the machine-readable op catalog + EditSpec schema (JSON)")
     p.set_defaults(fn=cmd_ops)
+
+    p = sub.add_parser("workflows", help="discover and use built-in workflows without an API key")
+    p.add_argument("action", choices=["list", "show", "use"])
+    p.add_argument("name", nargs="?", help="workflow ID from workflows list")
+    p.add_argument("files", nargs="*", help="use: DOCX files or folders")
+    p.add_argument("--json", action="store_true", help="list/show: machine-readable workflow descriptions")
+    p.add_argument("--inputs", default="{}", help="use: JSON object or @file.json; relative template paths resolve beside the JSON file")
+    p.add_argument("--out", default=None)
+    p.add_argument("--yes", action="store_true", help="run after preview without an interactive confirmation")
+    p.add_argument("--in-place", action="store_true", help="guarded write-back after preview approval; default is copies")
+    p.add_argument("--workers", type=int, default=0)
+    p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
+    p.add_argument("--no-render", action="store_true")
+    p.add_argument("--no-review", action="store_true", help="skip the optional model visual review")
+    p.add_argument("--ack-review", action="store_true")
+    p.add_argument("--model", default=None)
+    p.add_argument("--save-as", default=None, help="save the configured workflow as a chain in Your library")
+    p.add_argument("--replace", action="store_true", help="replace a saved chain of the same name")
+    p.set_defaults(fn=cmd_workflows)
 
     p = sub.add_parser("profile", help="document profiles per structure pattern (what the compiler sees)")
     p.add_argument("files", nargs="+"); p.add_argument("--json", action="store_true"); p.set_defaults(fn=cmd_profile)
@@ -1408,6 +1506,7 @@ def main(argv=None) -> int:
     p.add_argument("--model", default=None)
     p.add_argument("--no-review", action="store_true",
                    help="skip Claude's visual check of the rendered sample pages (--no-render skips it too)")
+    _add_conversation_token_arguments(p)
     p.add_argument("--ack-review", action="store_true",
                    help="run even when Claude's visual check flagged a blocking problem (you have looked at it)")
     p.add_argument("--save-as", default=None, metavar="NAME",
@@ -1435,6 +1534,7 @@ def main(argv=None) -> int:
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--model", default=None)
     p.add_argument("--no-review", action="store_true", help="skip Claude's visual check of the sample pages")
+    _add_conversation_token_arguments(p)
     p.add_argument("--ack-review", action="store_true", help="run even when Claude's visual check flagged a problem")
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)
