@@ -132,3 +132,26 @@ def test_real_conversation_continues_after_multiple_context_rollovers(tmp_path):
                                        messages=request["messages"]) <= chat.max_context_tokens + 100
     assert chat.sources == ["remove all headers and footers"]
     assert chat.to_dict()["context"]["archives"]
+
+
+def test_the_default_allowance_leaves_a_conversation_room_for_two_page_images(tmp_path):
+    """Headroom guard. Every conversation's system prompt carries the whole op catalog (ops, schema, worked
+    examples), so each batch of operations shrinks what is left of the default context allowance before a first
+    new epoch (built-in batch 5 took it from about 33,500 estimated tokens to about 15,000). The first request
+    plus two page images (one ``view_pages`` call) must still fit; when this fails, compacting the catalog or
+    raising ``resources.DEFAULT_CONTEXT_TOKENS`` is the owner's decision — never loosen this guard to pass."""
+    from spec_surgeon.resources import DEFAULT_CONTEXT_TOKENS
+    source = tmp_path / "spec.docx"
+    source.write_bytes(build("21 00 00", "FIRE SUPPRESSION"))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}, "done")))
+    chat = Conversation("remove all headers and footers", [source], client=fake, work_dir=tmp_path / "work")
+    assert chat.max_context_tokens == DEFAULT_CONTEXT_TOKENS
+    assert chat.start().status == "ok"
+    first = fake.requests[0]
+    used = estimate_context_tokens(system=first["system"], tools=first["tools"], messages=first["messages"])
+    image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": ""}}
+    per_image = (estimate_context_tokens(system="", tools=[], messages=[{"role": "user", "content": [image]}])
+                 - estimate_context_tokens(system="", tools=[], messages=[{"role": "user", "content": []}]))
+    assert used + 2 * per_image <= DEFAULT_CONTEXT_TOKENS, (
+        f"the first request is {used} estimated tokens; two page images ({2 * per_image}) would pass the default "
+        f"allowance of {DEFAULT_CONTEXT_TOKENS} — compact the op catalog or raise the allowance")
