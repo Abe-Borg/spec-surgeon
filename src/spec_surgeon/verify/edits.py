@@ -23,6 +23,11 @@ The expected output of an edit (start, end, text, drop_highlight), from the SOUR
   NEW ``w:del``, the new text is NOT in it (it follows it), and — when text is placed — every later item of that
   insertion is in a SPLIT of it: a ``w:ins`` with the same attributes but a ``w:id`` the source part does not have.
 The output paragraph's items must equal the expected items one for one; its ``w:pPr`` and attributes are the source's.
+
+**Tabs** (built-in batch 5, docs/BUILTIN_OPS_BATCH5_DESIGN.md §2.3; this module's own reading): with ``tabs=True``
+(``v_check_edits``, ``expected_items``, ``check_edited_paragraph`` — off by default) a PURE deletion (no text placed) may
+also cover ``x`` items of a ``w:tab`` (never ``w:ptab``, a break or anything else). Untracked: those items vanish with the
+characters; tracked: each stays an ``x`` item (no longer a run-text position) whose chain gains the NEW ``w:del``.
 """
 from __future__ import annotations
 
@@ -141,9 +146,15 @@ def part_revision_ids(root) -> Set[str]:
 
 # ---- the rules every edit obeys (this module's own reading) ------------------------------------------------
 
+def _v_tab_ok(it: Item, text: str, tabs: bool) -> bool:
+    """A w:tab item a pure deletion may cover (``tabs=True`` only)."""
+    return tabs and not text and it.kind == "x" and it.tag == W + "tab"
+
+
 def v_check_edits(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str, bool]], tracked: bool,
-                  in_field: Set[Any]) -> List[Tuple[int, int, str, bool]]:
-    """The edits sorted, after the rules; a ValueError says the plan should have refused."""
+                  in_field: Set[Any], tabs: bool = False) -> List[Tuple[int, int, str, bool]]:
+    """The edits sorted, after the rules; a ValueError says the plan should have refused. ``tabs``: a pure deletion may
+    cover w:tab items."""
     by_pos = {it.pos: k for k, it in enumerate(items) if it.pos is not None}
     out = sorted(edits, key=lambda e: (e[0], e[1]))
     for a, b in zip(out, out[1:]):
@@ -155,8 +166,9 @@ def v_check_edits(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str,
         if any(ord(c) < 32 or c == "\x7f" for c in text):
             raise ValueError(f"edit text {text!r} holds a control character")
         ks = [by_pos[i] for i in range(start, end)]
-        if any(items[k].kind != "t" for k in ks):
-            raise ValueError(f"edit ({start}, {end}) covers something other than plain text")
+        if any(items[k].kind != "t" and not _v_tab_ok(items[k], text, tabs) for k in ks):
+            raise ValueError(f"edit ({start}, {end}) covers something other than plain text"
+                             + (" or a tab" if tabs and not text else ""))
         runs: List[Any] = []
         for k in ks:
             if items[k].run not in runs:
@@ -186,12 +198,14 @@ def v_check_edits(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str,
 
 
 def expected_items(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str, bool]], tracked: bool,
-                   author: Optional[str]) -> List[Item]:
+                   author: Optional[str], tabs: bool = False) -> List[Item]:
     out = list(items)
     for start, end, text, drop in sorted(edits, key=lambda e: -e[0]):
         by_pos = {it.pos: k for k, it in enumerate(out) if it.pos is not None}
         ks = [by_pos[i] for i in range(start, end)]
-        first = out[ks[0]]
+        if any(out[k].kind != "t" and not _v_tab_ok(out[k], text, tabs) for k in ks):
+            raise ValueError(f"edit ({start}, {end}) covers something other than plain text")
+        first = next((out[k] for k in ks if out[k].kind == "t"), out[ks[0]])
         rs = _rpr_sig(first.run.find(W + "rPr"), drop_highlight=drop)
         base = (rs, first.ctx[1], first.ctx[2])
         if tracked:
@@ -199,6 +213,10 @@ def expected_items(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str
             pending = parent if parent.tag == W + "ins" and parent.getparent() is p else None
             for k in ks:
                 it = out[k]
+                if it.kind == "x":                        # a w:tab (tabs=True): deleted with the characters around it
+                    out[k] = Item("x", it.value, (it.ctx[0], it.ctx[1], it.ctx[2] + (("NEW", W + "del", author),)),
+                                  None, it.tag, it.run, it.el, False, it.chain_els + (None,))
+                    continue
                 out[k] = Item("dt", it.value, (it.ctx[0], it.ctx[1], it.ctx[2] + (("NEW", W + "del", author),)),
                               chain_els=it.chain_els + (None,))
             for k in range(ks[0] + 1, ks[-1]):            # a page-break mark or soft hyphen inside goes with the text
@@ -346,18 +364,30 @@ def check_deleted_paragraph(src_p, out_p, author: Optional[str], old_ids: Set[st
 
 def check_edited_paragraph(src_p, out_p, edits: Sequence[Tuple[int, int, str, bool]], tracked: bool,
                            author: Optional[str], in_field: Set[Any], old_ids: Set[str], where: str,
-                           errs: List[str]) -> None:
-    """``out_p`` must be ``src_p`` with exactly ``edits`` (the verifier's own derivation), item for item."""
+                           errs: List[str], tabs: bool = False, ppr: bool = True, base=None) -> None:
+    """``out_p`` must be ``src_p`` with exactly ``edits`` (the verifier's own derivation), item for item.
+    ``tabs``: pure deletions may cover w:tab items (built-in batch 5). ``ppr=False``: the caller checks the paragraph's
+    ``w:pPr`` itself (an op that also restyles it). ``base``: a copy of ``src_p`` the caller changed in the run
+    properties its op also changes (cleared formatting) — the expected items are built from it; the rules are always
+    judged on ``src_p``."""
     items = v_items(src_p)
     try:
-        edits = v_check_edits(src_p, items, edits, tracked, in_field)
+        edits = v_check_edits(src_p, items, edits, tracked, in_field, tabs=tabs)
     except ValueError as e:
         errs.append(f"{where}: {e} — the op must refuse this paragraph")
         return
-    if sig(src_p.find(W + "pPr")) != sig(out_p.find(W + "pPr")):
+    if ppr and sig(src_p.find(W + "pPr")) != sig(out_p.find(W + "pPr")):
         errs.append(f"{where}: paragraph properties changed")
     if dict(src_p.attrib) != dict(out_p.attrib):
         errs.append(f"{where}: paragraph attributes changed")
-    d = compare_items(expected_items(src_p, items, edits, tracked, author), v_items(out_p), old_ids)
+    if base is not None:
+        b_items = v_items(base)
+        if [(it.kind, it.value, it.pos) for it in b_items] != [(it.kind, it.value, it.pos) for it in items]:
+            errs.append(f"{where}: the expected base paragraph is not the source's content")
+            return
+        expected = expected_items(base, b_items, edits, tracked, author, tabs=tabs)
+    else:
+        expected = expected_items(src_p, items, edits, tracked, author, tabs=tabs)
+    d = compare_items(expected, v_items(out_p), old_ids)
     if d:
         errs.append(f"{where}: not exactly the predicted change — {d}")

@@ -176,6 +176,33 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "row, banding — w:tblLook) stays as it is",
         "never tracked",
     ],
+    # built-in batch 5 (numbering conversions, docs/BUILTIN_OPS_BATCH5_DESIGN.md §1, §2)
+    "convert_numbering": [
+        "your scheme's levels are the numbered paragraph styles of your example file (level 0 first, as read_template "
+        "shows them); a style this file lacks is imported with its list (new list ids) — the numbering text such as "
+        "'PART %1 -' is always yours, never written by the engine",
+        "the paragraphs converted are those of the list numbering the most paragraphs here, each at its own level "
+        "(from 'main'), or the paragraphs of named styles per level (from.styles); level_map when the levels differ",
+        "each converted paragraph gets its level's style and loses its own list numbering; its own indents and fonts "
+        "stay unless direct_formatting is 'clear'",
+        "every paragraph's new number is predicted and checked; numbers that shift (a glitch in the source corrected), "
+        "cross-reference fields and written references such as 'as specified in 1.05' are flagged, never edited",
+        "a list the engine cannot predict (shared list definitions, overridden levels, a level with no value yet) sets "
+        "the file aside; plain formatting (not tracked) unless asked",
+    ],
+    "convert_typed_numbers": [
+        "your scheme's levels are the numbered paragraph styles of your example file (level 0 first); a typed number "
+        "('PART 1 -', '1.1', 'A.', '1.', 'a.') at the start of a paragraph becomes that level's real list number",
+        "the typed number and the space or tab after it are removed and nothing is written: the list shows the same "
+        "number — only when every paragraph of the document then reads exactly as before; a typo (two 'B.'s, a skipped "
+        "letter) or a list that would renumber other paragraphs sets the file aside (the audit shows where)",
+        "typed numbers in table cells stay as typed unless include_tables; paragraphs already numbered are never "
+        "touched (a typed number on one is flagged)",
+        "tracked by default (the removed numbers show as deletions); tracked false removes them outright; "
+        "direct_formatting 'clear' needs tracked false",
+        "a spec of its own: beside another operation that changes text, styles or numbering of the body it is a "
+        "conflict (offer a chain)",
+    ],
     "set_page_setup": [
         "margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given",
         "the header's and footer's distance from the page edge are margins.header and margins.footer (twips)",

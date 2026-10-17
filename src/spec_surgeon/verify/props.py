@@ -2379,6 +2379,9 @@ from .applystyle import APPLY_KINDS  # noqa: E402
 # built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §5): tables
 from .tableprops import TABLE_PROP_KINDS  # noqa: E402
 from .applytablestyle import APPLY_TABLE_KINDS  # noqa: E402
+# built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §1, §2): numbering conversions
+from .numberingconvert import CONVERT_KINDS  # noqa: E402
+from .typednumbers import TYPED_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -2395,3 +2398,5 @@ KINDS.update(RESTYLE_KINDS)
 KINDS.update(APPLY_KINDS)
 KINDS.update(TABLE_PROP_KINDS)
 KINDS.update(APPLY_TABLE_KINDS)
+KINDS.update(CONVERT_KINDS)
+KINDS.update(TYPED_KINDS)

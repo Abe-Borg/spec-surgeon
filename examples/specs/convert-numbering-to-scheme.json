@@ -1,0 +1,40 @@
+{
+  "request": "Convert the architect's numbering to our PART / 1.1 / A. / 1. / a. scheme from the example file",
+  "summary": "Every paragraph numbered by the document's main list gets the matching level style of the example file (PRT, ART, PR1, PR2, PR3 — imported with their list when the file lacks them) and loses its own list numbering, so the scheme's list numbers it; every paragraph's new number is predicted and checked, shifts and written cross-references are flagged.",
+  "assumptions": [
+    "the scheme's levels are the example file NUMBERING SCHEME.docx's numbered styles PRT, ART, PR1, PR2, PR3 (level 0 first); a style this file lacks is imported with its list, a style it already has keeps this file's definition (existing keep)",
+    "the paragraphs converted are those of the list numbering the most paragraphs, each at its own level",
+    "the paragraphs' own indents and fonts stay (direct formatting kept)",
+    "numbers that shift, cross-reference fields and written references to old numbers are flagged, never edited",
+    "a whole-document change is plain formatting (decision 14.1)"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "convert_numbering",
+      "params": {
+        "template": "../templates/NUMBERING SCHEME.docx",
+        "levels": [
+          "PRT",
+          "ART",
+          "PR1",
+          "PR2",
+          "PR3"
+        ]
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}
