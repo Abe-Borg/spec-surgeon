@@ -384,9 +384,16 @@ def test_campaign_resume_reuses_saved_resource_policy_and_validates_before_savin
     campaign = create_campaign([str(source)], tmp_path / "workspace")
     pid = next(iter(campaign.projects))
     campaign.set_goal(pid, goal()["request"], spec=goal())
+    # Leave room for the full operation catalog; the one-call limit is what
+    # intentionally pauses this test before the successful continuation.
     policy = RecoveryOptions(max_attempts=2, max_calls=1, max_cost_usd=12.5, max_output_tokens=8000,
-                             max_total_tokens=150000, effort="high", render=False, use_memory=False)
-    campaign.run(options=policy, client=FakeClient(resp(tool("list_styles", {"file": source.name}))))
+                             max_total_tokens=500000, effort="high", render=False, use_memory=False)
+    inspection_client = FakeClient(resp(tool("list_styles", {"file": source.name})))
+    campaign.run(options=policy, client=inspection_client)
+    assert len(inspection_client.requests) == 1
+    run_dir = Path(campaign.projects[pid]["runs"][-1]["path"])
+    paused = recovery.load_recovery(run_dir)
+    assert paused.budget["calls"] == 1 and "call limit" in paused.paused_reason
     loaded = load_campaign(campaign.out_dir)
     assert loaded.to_dict()["resource_options"] == asdict(policy)
     real_resume = recovery.resume_recovery
@@ -397,7 +404,9 @@ def test_campaign_resume_reuses_saved_resource_policy_and_validates_before_savin
         return real_resume(*args, **kwargs)
 
     monkeypatch.setattr(recovery, "resume_recovery", resume)
-    loaded.run(client=FakeClient(submit()))
+    repair_client = FakeClient(submit())
+    loaded.run(client=repair_client)
+    assert len(repair_client.requests) == 1
     assert observed == [asdict(policy)]
     assert next(iter(loaded.documents.values()))["status"] == "READY", loaded.to_text()
     before = (loaded.out_dir / "campaign.json").read_bytes()
