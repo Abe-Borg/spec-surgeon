@@ -224,3 +224,21 @@ None. The codes raised are `bad-params`, `not-found`, `structure`, `tracked-form
 62 new tests (37 in `tests/test_borders_shading.py`, 25 in `tests/test_style_paragraph_props.py`). Full suite in the
 container: see the builder's report (1661 pass, 4 skip, and `test_catalog_and_schema_cover_every_op` failing until (a) is
 pasted into `catalog.py` → 1662 pass).
+
+## (h) Fix round after the adversarial review (A2, A3, A4, A6, A7)
+
+* **A2 — `…Chars` win in Word.** `ind` takes `leftChars`, `rightChars`, `startChars`, `endChars`, `firstLineChars`,
+  `hangingChars`; an indentation side asked in twips where the target or a level it inherits from gives that side in
+  characters is `conflict-property` unless the spec gives it in characters too (Chars the merge itself removes from the
+  target excepted). The first-line and hanging families are exclusive as wholes (`firstLineChars` + `hanging` is
+  `bad-params`) and the merge drops the whole other family. Both targets; `inherited_refusal` ↔ `_v_inherited_refusal`.
+* **A3 — Autospacing through the ancestors.** The nearest level naming `…Autospacing` decides (an explicit `0` on the
+  style turns an inherited `1` off — written and verified), on both targets.
+* **Levels**: one definition for both targets and both sides — a paragraph's own pPr, its paragraph style chain, its
+  table's style chain, docDefaults; a style's own pPr, its ancestors, docDefaults. The direct path therefore now also
+  reads the table style chain and docDefaults for the lines rule (it read only the paragraph style chain), and declares
+  those reads; V10's direct branch re-derives the refusals too (it did not before).
+* **A4** — `verify/borders._v_paragraph_style_id`: an empty or missing `w:pStyle/@w:val` names no style (template.Eff).
+* **A6** — the styles assertion carries the raw `params` and `select`; `_v_ppr_values` reads them; `tracked: true`
+  fails; each asked element must occur once (styles and direct branch).
+* **A7** — a style id of another type in this file is `style-mismatch` (both style targets).

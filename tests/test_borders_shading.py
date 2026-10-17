@@ -408,6 +408,36 @@ def test_a_shared_default_scope_is_caught(src, monkeypatch):
 
 # ---- the two readings agree ----------------------------------------------------------------------------------------
 
+def _empty_pstyles(src):
+    """Normal shows a box and yellow shading; "PART 2 - PRODUCTS" names an empty paragraph style (w:val="") and "Lines
+    spacing" a w:pStyle without w:val — both name NO style (template.Eff / effective.Resolver), not the default."""
+    def styles(root):
+        style(root, "Normal").append(etree.fromstring(
+            f'<w:pPr xmlns:w="{W[1:-1]}"><w:pBdr><w:top w:val="single"/></w:pBdr>'
+            f'<w:shd w:val="clear" w:color="auto" w:fill="FFFF00"/></w:pPr>'))
+
+    def doc(root):
+        para(root, "PART 2").insert(0, etree.fromstring(f'<w:pPr xmlns:w="{W[1:-1]}"><w:pStyle w:val=""/></w:pPr>'))
+        para(root, "Lines spacing").find(W + "pPr/" + W + "pStyle").attrib.clear()
+    return mutate(mutate(src, STYLES, styles), MAIN, doc)
+
+
+def test_an_empty_paragraph_style_names_no_style_on_both_sides(src):
+    """A4: an empty (or valueless) w:pStyle names no style — the levels below the paragraph are docDefaults alone — on
+    the transform side (effective.Resolver) and the verifier's (template.Eff's reading); the verifier used to take the
+    default paragraph style there and failed a correct output."""
+    data = _empty_pstyles(src)
+    plan, out, rec = bs(data, {"paragraphs": {"text_regex": "^(PART 2|Lines spacing|1\\.01)"}},
+                        {"borders": "none", "shading": "none", "tracked": False})
+    assert rec.passed, rec.to_markdown()
+    a = plan.property_assertions[0]
+    changed = {bi for bi, _ in a["changed"][MAIN]}
+    root = root_of(data)
+    pars = paragraphs(root)
+    assert pars.index(para(root, "1.01")) in changed                 # Normal's box and shading cancelled there …
+    assert not changed & {pars.index(para(root, "PART 2")), pars.index(para(root, "Lines spacing"))}   # … not here
+
+
 def test_transform_and_verifier_decide_alike_on_every_paragraph_and_style(src):
     """The expected elements of both sides, for a spread of asks, on every paragraph of every text part and every
     paragraph style of the fixture (and of a variant whose table style and document defaults show borders/shading)."""
@@ -422,7 +452,7 @@ def test_transform_and_verifier_decide_alike_on_every_paragraph_and_style(src):
         root.find(W + "docDefaults/" + W + "pPrDefault/" + W + "pPr").insert(0, el("shd", val="pct5", fill="auto"))
     asks = [{"borders": "none"}, {"shading": "none"}, {"borders": BOX, "shading": {"fill": "D9D9D9"}},
             {"borders": {"bar": {"style": "wave", "color": "00ff00"}}, "shading": {"fill": "auto", "pattern": "solid"}}]
-    for data in (src, mutate(src, STYLES, lower)):
+    for data in (src, mutate(src, STYLES, lower), _empty_pstyles(src)):
         pkg, vpkg = DocxPackage(data), VPackage(data)
         sheet = StyleSheet(pkg)
         res, vst = Resolver(sheet, {}), Styles(vpkg.xml(STYLES))
@@ -554,7 +584,7 @@ def test_parameters_are_checked(src):
     assert e.value.code == "bad-params"
     with pytest.raises(JobException) as e:                                      # a character style
         get_op("set_borders_shading").plan(pkg, {"styles": {"ids": ["ArchStrong"]}}, {"borders": "none"})
-    assert e.value.code == "bad-params"
+    assert e.value.code == "style-mismatch"                                   # this file's ArchStrong: file-specific
     with pytest.raises(JobException) as e:
         get_op("set_borders_shading").plan(pkg, {"styles": {"ids": ["NoSuchStyle"]}}, {"borders": "none"})
     assert e.value.code == "not-found"
@@ -577,7 +607,7 @@ def test_every_refusal_code_of_set_borders_shading_is_explained():
         if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "JobException" and len(n.args) > 1:
             assert isinstance(n.args[1], ast.Constant)
             codes.add(n.args[1].value)
-    assert codes == {"bad-params", "not-found", "structure", "tracked-format"}
+    assert codes == {"bad-params", "not-found", "structure", "style-mismatch", "tracked-format"}
     assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
 
 

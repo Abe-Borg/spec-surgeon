@@ -26,7 +26,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from lxml import etree
 
 from .reader import W
-from .props import Ctx, Styles, _check_ppr_change, _local, _plain, _pstyle, para_matches, sig
+from .props import Ctx, Styles, _check_ppr_change, _local, _plain, para_matches, sig
 
 V_SIDES = ("top", "left", "bottom", "right", "between", "bar")
 V_STYLES = {"single", "thick", "double", "dotted", "dashed", "dotDash", "dotDotDash", "triple", "thinThickSmallGap",
@@ -96,15 +96,23 @@ def _v_table_chain_id(p, styles: Styles) -> Optional[str]:
     return None
 
 
+def _v_paragraph_style_id(p, styles: Styles) -> Optional[str]:
+    """The paragraph style a paragraph's levels come from: its w:pStyle's value — an empty or missing value names no
+    style —, else (no w:pStyle) the default paragraph style. template.Eff's reading (the agreed counterpart of the
+    transform's effective.Resolver), not the selector's ``style_in`` one."""
+    ps = p.find(W + "pPr/" + W + "pStyle")
+    return ps.get(W + "val") if ps is not None else styles.default.get("paragraph")
+
+
 def _v_below_paragraph(p, styles: Styles) -> List[Any]:
     """The pPr of every level below a paragraph's direct formatting, lowest first: docDefaults, the table style chain
-    (its table's tblStyle, else the default table style), the paragraph style chain (pStyle, else the default) — each
+    (its table's tblStyle, else the default table style), the paragraph style chain (``_v_paragraph_style_id``) — each
     chain root-most first."""
     out = [styles.doc_defaults_ppr()]
     tsid = _v_table_chain_id(p, styles)
     if tsid:
         out += [st.find(W + "pPr") for st in reversed(styles.chain(tsid))]
-    out += [st.find(W + "pPr") for st in reversed(styles.chain(_pstyle(p) or styles.default.get("paragraph")))]
+    out += [st.find(W + "pPr") for st in reversed(styles.chain(_v_paragraph_style_id(p, styles)))]
     return out
 
 

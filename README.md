@@ -1243,11 +1243,17 @@ The values merge into each style's own paragraph properties exactly as they woul
 asked set, the others kept; `firstLine` removes `hanging` and vice versa); every paragraph of the style — and of the
 styles based on it — follows unless it sets the value itself (flagged in the preview: "1 paragraph(s) using style
 ArchPara … keep their own direct spacing/indentation/alignment"). Never tracked; a style already as asked is left alone.
-A style whose spacing is `auto` (`…Autospacing`), or given in lines on the style, a style it is based on or the document
-defaults (`beforeLines`/`afterLines` win over points in Word), is set aside (`conflict-property`) unless the spec sets
-the lines value too; so is an indentation asked as `left` where the style writes `start` (and the reverse). V10's
-`paragraph_props` kind checks each changed style's paragraph properties (the merge, nothing else changed), re-derives
-the refusals, and checks that every selected style shows the asked values in the output.
+A style whose spacing is `auto` (`…Autospacing` — its own or inherited from a style it is based on, such as Word's
+"Normal (Web)"), or given in lines on the style, a style it is based on or the document defaults
+(`beforeLines`/`afterLines` win over points in Word), is set aside (`conflict-property`) unless the spec sets the lines
+value too; so is an indentation asked in twips where the style, a style it is based on or the document defaults give
+that side in characters (`leftChars`, `firstLineChars` … — Word uses the character value; East Asian templates write
+them) unless the spec gives it in characters too (`ind` takes `leftChars`, `rightChars`, `startChars`, `endChars`,
+`firstLineChars`, `hangingChars`, in hundredths of a character), and an indentation asked as `left` where the style
+writes `start` (and the reverse). The same rules hold for paragraphs, through their style and table style. A style id
+that is not a paragraph style in a file sets that file aside (`style-mismatch`). V10's `paragraph_props` kind reads the
+spec's own parameters, checks each changed style's paragraph properties (the merge, each element once, nothing else
+changed), re-derives the refusals, and checks that every selected style shows the asked values in the output.
 
 #### `clear_direct_formatting` — text follows its styles again (item 28)
 
