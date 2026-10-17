@@ -955,8 +955,10 @@ definition):
   A paragraph's numbering: own `w:pPr/w:numPr` numId/ilvl when present, else the first style on its chain (pStyle — an
   empty value names none —, else the default paragraph style) whose own numPr holds a numId, with that style's ilvl, else
   the **linked level** (the lowest level whose `w:pStyle` names the style), else 0; numId 0 → unnumbered; a numId no
-  `w:num` defines → dangling; an own numId without ilvl while the first ilvl on the style chain is not 0 → not evaluated
-  (`ambiguous-level`). Level = the abstractNum's `w:lvl` (start default 0, numFmt default decimal, lvlText, lvlRestart,
+  `w:num` defines → dangling; when the two readings of numPr inheritance — as a unit (the numId-supplying level's own
+  ilvl) and element by element (the nearest ilvl along direct → chain; the link at the numId-supplying style counts as
+  its own level) — give different levels → not evaluated (`ambiguous-level`; `element_ilvl` ↔ `_v_by_element`);
+  `Numbering.linked` says the level came from a link (LibreOffice shows those at level 0 — flagged). Level = the abstractNum's `w:lvl` (start default 0, numFmt default decimal, lvlText, lvlRestart,
   isLgl, suff default tab, pStyle). **Counting** over the main part's paragraphs in `root.iter(w:p)` order, text boxes and
   paragraphs whose mark is a pending deletion left out, hidden paragraphs counted (Word; LibreOffice does not — flagged),
   per numId: deeper levels restart after level L (lvlRestart none → yes; 0 → never; r → when L ≤ r−1, ignored when r−1 ≥
@@ -966,8 +968,10 @@ definition):
   bullet (the text), none; negative values and other formats unsupported. **Not evaluated** (never predicted through):
   unreadable, an earlier unreadable paragraph of the list (`earlier`), numStyleLink/styleLink lists, a full override
   level (`w:lvlOverride/w:lvl`, `override`), an abstractNum two nums share with counted paragraphs (`shared`: Word
-  continues one count, LibreOffice keeps them apart), a `%j` naming a level with no current value (`skipped`), a
-  startOverride level starting a second time (`start-override`), an unsupported format or value. `count(root, sheet,
+  continues one count, LibreOffice keeps them apart), a `%j` naming a level with no current value (`skipped`) — and a
+  level a deeper paragraph reached while it had no value stays uncertain until a restart resets it: the next paragraph
+  AT it, or naming it, is `skipped` too (`skipped_below` ↔ `_v_skipped_below`; LibreOffice gives it its start then and
+  continues) —, a startOverride level starting a second time (`start-override`), an unsupported format or value. `count(root, sheet,
   defs, override)` simulates a planned output; `count_reads` is what a counting op declares (rule 9). **Scheme**: 1–9
   paragraph styles numbered by ONE num at levels 0…n−1 (`resolve_scheme`), each level's **pattern** its lvlText with
   `%j` → the format's pattern. **Typed number**: on batch 1's run text, `^[ \t]*` + exactly one level's pattern +
@@ -1002,7 +1006,8 @@ definition):
   tab left behind, a tab outside the range taken, a ptab accepted.
 - **List levels** (§3; `ops/set_list_level.py` ↔ `verify/listlevel.py`): the level = the style's own numbering
   (`style_numbering`), `level` replacing the ilvl; changes (`changes_for` ↔ `_v_changes`) against the level's own fields —
-  restart **in effect** (`restart_in_effect` ↔ `_v_in_effect`: none, or an r Word ignores, is "after any higher level");
+  restart **in effect** (`restart_in_effect` ↔ `_v_in_effect`: none, an r Word ignores, or `{after_level: level−1}`, is
+  "after any higher level" — only the normal form is written);
   the written level (`expected_level` ↔ `_v_expected_lvl`): the source `w:lvl` with each changed element a fresh one
   holding only `w:val`, in CT_Lvl order (the verifier reads the order from the bundled schema), `w:lvlRestart` removed for
   "after any higher level". Refusals: `numbering-unsupported` (unreadable/linked list, missing or unsupported level,
@@ -1011,8 +1016,12 @@ definition):
 - **The numbering audit** (§4; `ops/audit_numbering.py`, report only; the fix ↔ `verify/numberingaudit.py`): blank
   content (`blank_content` ↔ `_v_blank_content`: only pPr, proofErr, bookmarks, runs of rPr/lastRenderedPageBreak/`w:t` of
   spaces and NBSPs), an empty numbered paragraph = counted, evaluated, a non-empty non-bullet number, blank content
-  (`empty_numbered` ↔ `_v_empties`); `unnumber_empty` writes exactly `<w:numPr><w:numId w:val="0"/></w:numPr>`. The visible
-  sequence walk and the typed grammar are advisory (transform side only).
+  (`empty_numbered` ↔ `_v_empties`); `unnumber_empty` writes exactly `<w:numPr><w:numId w:val="0"/></w:numPr>` and its kind
+  checks only that (numPr, its place, the pPrChange rules) — the mark's rPr, a sectPr and every other child are the
+  residual's, compared there with the other ops' strips. The visible sequence walk (typed numbers judged, the main
+  list's automatic numbers as context; table cells skipped; keyword shapes without their dash) and the typed grammar are
+  advisory (transform side only). Renumbering flags (stale REF/PAGEREF/NOTEREF fields, written references to an old
+  number) are shared by the numbering ops: `ops/numbering_flags.py`.
 - **The table selector** (§5.1; `ops/table_select.py` ↔ `verify/tableselect.py`): ordinal = index among `root.iter(w:tbl)`
   of the part (nested included); a table's style = tblStyle's value (empty names none), else (no tblStyle) the default
   table style; `index_range` inclusive, `style_in`, `first_row_regex` (the first own row's cells' paragraphs' block texts:
