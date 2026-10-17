@@ -33,3 +33,8 @@ from . import (agree, end_of_section, fill_variables, filter_tagged, naming,  # 
 from . import (comments, docprops, empty_paragraphs, hidden, highlight, links,  # noqa: E402,F401  — built-in batch 2
                revisions, watermark)
 from . import set_tab_stops  # noqa: E402,F401  — built-in batch 3
+from . import remove_unused_styles  # noqa: E402,F401  — built-in batch 4
+from . import set_borders_shading  # noqa: E402,F401  — built-in batch 4
+from . import clear_formatting, set_language  # noqa: E402,F401  — built-in batch 4 (items 28, 29)
+from . import map_styles  # noqa: E402,F401  — built-in batch 4 (style mapping over ops/style_import.py)
+from . import apply_style  # noqa: E402,F401  — built-in batch 4 (item 30, over clear_formatting and style_import)

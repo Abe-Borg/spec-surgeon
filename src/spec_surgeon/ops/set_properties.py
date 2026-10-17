@@ -45,9 +45,9 @@ from .base import JobException, Op, PlanFragment
 from .effective import (CASE_ELEMENTS, PARA_FLAGS, REFLOW_ELEMENTS, UNDERLINES, PropResolver, para_elements,
                         run_elements)
 from .replace_text import default_author
-from .selectors import (DEFAULT_PRESERVE_FONTS, StyleSheet, check_paragraph_selector, check_run_selector,
+from .selectors import (DEFAULT_PRESERVE_FONTS, StyleSheet, chain_reads, check_paragraph_selector, check_run_selector,
                         in_revision, is_symbol_rpr, is_targeted, mark_in_revision, paragraph_selected, rpr_selected,
-                        runs_by_paragraph, scope_parts)
+                        runs_by_paragraph, scope_parts, table_ordinals)
 
 BOOL_RUN = ("b", "i", "caps", "smallCaps", "strike")
 HEX_COLOR = re.compile(r"[0-9A-Fa-f]{6}")
@@ -236,6 +236,11 @@ class SetProperties(Op):
         resolver = PropResolver(sheet)
         frag = self.fragment(select, {**params, "tracked": tracked, "author": author})
         targets: Dict[str, Dict[str, list]] = {}
+        # V10's post-condition reads every selected run, mark and paragraph in the OUTPUT, an "already as asked" one
+        # included: another op changing its properties (clear_direct_formatting, set_font), its style or its style chain
+        # (an import replacing a style, set_properties on a style, a table style remapped) is a plan-time conflict, never
+        # a failure after apply (batch 4). The reads are soft: an in-paragraph text edit leaves them as they were.
+        reads: set = set()
         n_runs = n_marks = n_paras = 0
         already = Counter()
         older_r = older_p = 0
@@ -243,18 +248,26 @@ class SetProperties(Op):
             root = pkg.xml(part)
             pars = paragraphs(root)
             groups = runs_by_paragraph(root, pars)
+            tables = table_ordinals(root)
             t_runs: List[list] = []          # [block, run, [elements]]
             t_marks: List[list] = []         # [block, [elements]]
             t_paras: List[list] = []         # [block, [flags]]
             for bi, p in enumerate(pars):
                 if not paragraph_selected(para_pred, p, bi, block_full_text(p), sheet):
                     continue
+                chain_rprs: list = []
+                if para_asked or (run_asked and (marks_too or groups[bi])):
+                    # the effective values (before) and V10's post-condition (after) read this paragraph's style chain:
+                    # another op restyling it (apply_style, map_styles) is a plan-time conflict, never a failure after apply
+                    reads.add((part, str(bi), "verify-props:pStyle"))
                 if run_asked:
                     for ri, r in enumerate(groups[bi]):
                         rpr = r.find(W + "rPr")
                         revised = in_revision(r, p)
                         if (in_revs == "exclude" and revised) or not rpr_selected(runs_pred, rpr, revised, p, sheet):
                             continue
+                        reads.update({(part, str(bi), "verify-props:rPr"), (part, str(bi), "verify-props:rStyle")})
+                        chain_rprs.append(rpr)
                         sym = is_symbol_rpr(rpr, p, sheet, preserve) or (skip_sym and r.find(W + "sym") is not None)
                         gets = resolver.gets_run(rpr, p, run_asked, sym)
                         if not sym and caps_conflict(run_asked, lambda e, rpr=rpr, p=p: resolver.run_prop(rpr, p, e)[0]):
@@ -268,6 +281,9 @@ class SetProperties(Op):
                         mrpr = p.find(W + "pPr/" + W + "rPr")
                         revised = mark_in_revision(p)
                         if not (in_revs == "exclude" and revised) and rpr_selected(runs_pred, mrpr, revised, p, sheet):
+                            reads.update({(part, str(bi), "verify-props:markRPr"),
+                                          (part, str(bi), "verify-props:rStyle")})
+                            chain_rprs.append(mrpr)
                             msym = is_symbol_rpr(mrpr, p, sheet, preserve)
                             gets = resolver.gets_run(mrpr, p, run_asked, msym)
                             if not msym and caps_conflict(run_asked, lambda e, mrpr=mrpr, p=p: resolver.run_prop(mrpr, p, e)[0]):
@@ -282,7 +298,10 @@ class SetProperties(Op):
                                 t_marks.append([bi, sorted(gets)])
                             else:
                                 already["marks"] += 1
+                if (part, str(bi), "verify-props:pStyle") in reads:
+                    reads.update(chain_reads(sheet, part, p, tables, chain_rprs, ("replace", "props")))
                 if para_asked:
+                    reads.add((part, str(bi), "verify-props:pPr"))
                     gets = resolver.gets_para(p, para_asked)
                     if gets:
                         t_paras.append([bi, sorted(gets)])
@@ -321,6 +340,7 @@ class SetProperties(Op):
             n_runs += len(t_runs)
             n_marks += len(t_marks)
             n_paras += len(t_paras)
+        frag.touches += sorted(reads)
         frag.property_assertions.append({
             "kind": "properties", "target": "direct", "scope": [scope] if isinstance(scope, str) else list(scope),
             "parts": parts, "select": {"runs": runs_pred, "paragraphs": para_pred},
@@ -471,6 +491,9 @@ class SetProperties(Op):
                     frag.touches.append((sheet.part, f"style:{sid}", "rPr"))
                 if ch["pPr"]:
                     frag.touches.append((sheet.part, f"style:{sid}", "pPr"))
+                # set_properties' own families: a direct set_properties reads them through its chains (verify:props) —
+                # its "already as asked" would go stale; set_style_font's fonts beside it stay a plan (batch 4)
+                frag.touches.append((sheet.part, f"style:{sid}", "props"))
         self._geometry(frag, run_asked, para_asked, bool(changes))
         frag.notes.append(f"style(s) {list(changes) or 'none'} → {_describe(run_set, para_set)} (definitions only; "
                           f"not tracked — Word does not track style changes)"

@@ -54,6 +54,8 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from . import compiler, diagnostics as diag, llm
+from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_OUTPUT_TOKENS,
+                        DEFAULT_STALL_REPETITIONS, InvestigationProgress, positive_integer)
 
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from Claude's own label and wording
 LIBRARY_CHOICE_KINDS = ("recipe", "operation")                       # named by Claude, built from the library (rule 13)
@@ -237,9 +239,23 @@ class Conversation:
     def __init__(self, request: str, files: Sequence[Path], template: Optional[Path] = None, client=None,
                  model: Optional[str] = None, memory: Optional[Dict[str, Any]] = None,
                  prior_failures: Optional[Sequence[Dict[str, Any]]] = None, answers: Sequence[str] = (),
-                 work_dir: Optional[Path] = None, mode: str = "chat", log: Optional[Callable[[str], None]] = None):
+                 work_dir: Optional[Path] = None, mode: str = "chat", log: Optional[Callable[[str], None]] = None,
+                 max_calls: Optional[int] = None, max_attempts: int = DEFAULT_MAX_ATTEMPTS,
+                 max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS, effort: str = DEFAULT_EFFORT,
+                 stall_repetitions: int = DEFAULT_STALL_REPETITIONS, max_image_tokens: Optional[int] = None,
+                 max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
+        self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
+        self.max_attempts = positive_integer("max_attempts", max_attempts)
+        self.stall_repetitions = positive_integer("stall_repetitions", stall_repetitions)
+        self.max_context_tokens = positive_integer("max_context_tokens", max_context_tokens)
+        self.context_state = {}
+        if max_image_tokens is not None:
+            positive_integer("max_image_tokens", max_image_tokens)
+        # Reuse the call policy's validation, without installing a second spending ledger.
+        policy = llm.CallBudget(effort=effort, max_output_tokens=max_output_tokens)
+        self.max_output_tokens, self.effort = policy.max_output_tokens, policy.effort
         self.id = uuid.uuid4().hex[:12]
         self.request = request
         self.files = [Path(f) for f in files]
@@ -251,6 +267,9 @@ class Conversation:
         self._client = client
         self.batch = compiler._Batch(self.files, self.template)
         self.batch.work_dir = self.work_dir
+        self.batch.max_image_tokens = max_image_tokens
+        self.batch.analysis_limits = analysis_limits
+        self.batch.context_state = self.context_state
         self.memory = memory if memory is not None else compiler.load_project_memory(self.files)
         self.answers = list(answers)
         self.prior_failures = list(prior_failures or [])
@@ -432,6 +451,12 @@ class Conversation:
                 "approved_words": list(self.sources), "answers": list(self.answers),
                 "entries": [e.to_dict() for e in self.entries], "turn": self.turn.to_dict() if self.turn else None,
                 "unsupported": self.unsupported, "tool_calls": self.tool_calls, "usage": self.usage.to_dict(),
+                "resource_policy": {"max_calls_per_turn": self.max_calls, "max_attempts_per_turn": self.max_attempts,
+                                    "max_output_tokens": self.max_output_tokens, "effort": self.effort,
+                                    "stall_repetitions": self.stall_repetitions,
+                                    "max_context_tokens": self.max_context_tokens,
+                                    "max_image_tokens": self.batch.max_image_tokens},
+                "context": self.context_state,
                 "calls": self.calls, "seconds": round(self.seconds, 2), "exchange": self.exchange}
 
     def save(self, path: Path) -> Path:
@@ -516,7 +541,7 @@ class Conversation:
                 if isinstance(out, dict) and out.get("_content_blocks"):
                     images += [str(p) for p in out.get("_images", [])]
                     return {"type": "tool_result", "tool_use_id": tid, "content": out["_content_blocks"]}
-                return {"type": "tool_result", "tool_use_id": tid, "content": json.dumps(out, ensure_ascii=False)[:20000]}
+                return {"type": "tool_result", "tool_use_id": tid, "content": json.dumps(out, ensure_ascii=False)}
         except Exception as e:  # noqa: BLE001 — every call gets an answer, or the next request is refused
             return {"type": "tool_result", "tool_use_id": tid, "is_error": True, "content": f"{type(e).__name__}: {e}"[:2000]}
 
@@ -531,6 +556,18 @@ class Conversation:
                     return turn
         finally:
             self.seconds += time.perf_counter() - t0
+            if self.messages:
+                from .contexts import checkpoint_history
+                checkpoint_history(self.messages, **self._context_arguments())
+
+    def _context_arguments(self):
+        from .investigation import artifact_root
+        folder = artifact_root(self.batch).parent
+        self.batch.context_dir = folder
+        return {"system": self.system, "tools": self.tools, "folder": folder, "state": self.context_state,
+                "authority": {"request": self.request, "approved_word_sources": list(self.sources),
+                              "files": self.batch.labels, "user_decisions": list(self.answers)},
+                "source_pins": self.batch.source_pins}
 
     def _record_results(self, ordered: List[Dict[str, Any]], pending: bool) -> None:
         extra = {"pending": True} if pending else {}       # pending: sent first in the next user message
@@ -539,18 +576,26 @@ class Conversation:
     def _advance_calls(self) -> Turn:
         rejections: List[str] = []                # the errors of every rejected submission in this user turn
         rejected = 0
+        progress = InvestigationProgress(self.stall_repetitions)
+        stalled = False
         images: List[str] = []
         nudged = False
-        for call in range(MAX_CALLS_PER_TURN):
+        for call in range(self.max_calls):
             check_pairing(self.messages)
+            from .contexts import ContextLimit, manage_context
+            try:
+                self.messages = manage_context(self.messages, max_tokens=self.max_context_tokens,
+                                               **self._context_arguments())
+            except ContextLimit as error:
+                return self._fail(str(error), rejections)
             self.calls += 1
             t_call = time.perf_counter()
             try:
                 with diag.scope(model_turn=self.calls), diag.span("conversation.request"):
                     resp = llm.call(self._client_now(), model=self.model, system=self.system, tools=self.tools,
-                                    messages=self.messages)
+                                    messages=self.messages, max_output_tokens=self.max_output_tokens, effort=self.effort)
             except Exception as e:  # noqa: BLE001 — classified below
-                if not llm.is_api_error(e):
+                if not llm.is_api_error(e) and not isinstance(e, llm.BudgetExceeded):
                     raise                  # a defect (a wrong argument, a test's script running out) propagates
                 # an API or network error, or Claude not installed: nothing is appended; the user can retry
                 self.exchange.append(llm.error_entry(self.calls, e, time.perf_counter() - t_call))
@@ -597,6 +642,10 @@ class Conversation:
                         results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "is_error": True,
                                             "content": "one submission per turn — this one was not considered"}
                         continue
+                    if rejected >= self.max_attempts:
+                        results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "is_error": True,
+                                            "content": "the configured attempt limit was reached; this candidate was not tried"}
+                        continue
                     spec = inp.get("spec")
                     try:
                         with diag.span("conversation.submission.validate", tool_use_id=_bid(b), model_turn=self.calls) as record:
@@ -612,6 +661,9 @@ class Conversation:
                                    errors=errs)
                         rejected += 1
                         rejections += errs
+                        candidate = ({k: v for k, v in spec.items() if k not in ("request", "summary", "assumptions")}
+                                     if isinstance(spec, dict) else spec)
+                        stalled = progress.rejected(candidate, errs) or stalled
                         results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "is_error": True,
                                             "content": "REJECTED — fix and call submit_editspec again:\n- " + "\n- ".join(errs)}
                         continue
@@ -620,6 +672,9 @@ class Conversation:
                     results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "content": ACCEPTED_RESULT}
                     continue
                 results[_bid(b)] = self._dispatch(b, name, inp, images)
+                result = results[_bid(b)]
+                if not result.get("is_error") and progress.observe({"tool": name, "content": result["content"]}):
+                    stalled = False
             ordered = [dict(results[_bid(b)]) for b in uses]
             if asks:
                 if accepted is not None:
@@ -635,20 +690,22 @@ class Conversation:
                 self.pending = ordered
                 self._record_results(ordered, pending=True)
                 return self._finish(self._spec_turn(accepted[1], accepted[2], rejections, images))
-            if rejected > 1:
+            if stalled or rejected >= self.max_attempts:
+                why = (f"investigation stalled after {self.stall_repetitions} equivalent rejected candidates "
+                       "without new evidence" if stalled else f"no spec after {rejected} rejected attempts")
                 for r in ordered:
                     if str(r.get("content", "")).startswith("REJECTED"):
-                        r["content"] += "\n(rejected twice — the user decides what happens next)"
+                        r["content"] += f"\n({why}; new evidence or a different approach is needed)"
                 self.pending = ordered
                 self._record_results(ordered, pending=True)
-                return self._fail("the spec was rejected twice", rejections)
-            if call == MAX_CALLS_PER_TURN - 1:
+                return self._fail(why, rejections)
+            if call == self.max_calls - 1:
                 self.pending = ordered
                 self._record_results(ordered, pending=True)
                 break
             self.messages.append({"role": "user", "content": ordered})
             self._record_results(ordered, pending=False)
-        return self._fail(f"no spec after {MAX_CALLS_PER_TURN} calls", rejections)
+        return self._fail(f"no spec after {self.max_calls} calls", rejections)
 
     # ---- turns ----
     def _choices_from(self, raw: Any, errors: List[str]) -> List[Choice]:

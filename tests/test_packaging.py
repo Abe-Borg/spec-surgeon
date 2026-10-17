@@ -68,3 +68,25 @@ def test_version_and_package_data():
     assert "ui/resources/*" in pyproject["tool"]["setuptools"]["package-data"]["spec_surgeon"]
     assert any(d.startswith("PySide6-Essentials") for d in pyproject["project"]["optional-dependencies"]["gui"])
     assert (ROOT / "docs" / "releases" / f"v{__version__}.md").is_file()
+
+
+def test_frozen_analyzer_dispatches_before_opening_the_app(monkeypatch):
+    import importlib.util
+    import multiprocessing
+    from types import SimpleNamespace
+    import pytest
+    module_spec = importlib.util.spec_from_file_location(
+        "_test_launcher_bootstrap", ROOT / "packaging" / "windows" / "launcher_bootstrap.py")
+    launcher = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(launcher)
+    calls = []
+    monkeypatch.setattr(multiprocessing, "freeze_support", lambda: None)
+    monkeypatch.setattr(sys, "argv", ["SpecSurgeon.exe", "-I", "-m", "spec_surgeon.analysis_runner", "request.json"])
+    monkeypatch.setitem(sys.modules, "spec_surgeon.analysis_runner",
+                        SimpleNamespace(main=lambda args: calls.append(args) or 0))
+    monkeypatch.setattr(winapp, "hold_app_mutex", lambda: pytest.fail("analysis worker must not start the app"))
+    with pytest.raises(SystemExit) as stopped:
+        launcher.prepare()
+    assert stopped.value.code == 0
+    assert calls == [["request.json"]]
+    assert '"spec_surgeon.analysis_runner"' in SPEC

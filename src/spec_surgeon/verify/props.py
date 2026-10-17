@@ -524,6 +524,12 @@ class Ctx:
         #                                             elements outside paragraphs a kind expects gone
         self.verified_members: Set[str] = set()     # non-text members a kind compared whole (rels, side parts, created)
         self.member_strip: Dict[str, Set[str]] = {}  # settings/docProps member → keys a kind verified (member residual)
+        # built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md §0):
+        self.replaced_styles: Set[str] = set()      # style ids a kind compared WHOLE (a replaced definition): out of the
+        #                                             styles residual on both sides
+        self.removed_styles: Set[str] = set()       # style ids a kind expects GONE: out of the residual's source copy only
+        self.strip_tbl_style: Dict[str, Set[int]] = {}   # part → ordinals (root.iter(w:tbl)) of tables whose
+        #                                             tblPr/tblStyle a kind checked
 
     def view(self, part):
         if part not in self.views:
@@ -660,7 +666,8 @@ def _run_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
     def gets(rpr) -> Tuple[bool, Optional[int]]:
         """(the font goes here, the size it must end with or None) — per property, from the SOURCE rPr."""
-        return fonts_set and (not only or _has_direct_font(rpr)), _v_size_to(_v_own_sz(rpr), size)
+        return (fonts_set and (not only or _has_direct_font(rpr)),
+                _v_size_to(_v_own_sz(rpr), size, bool(a.get("add_missing_size", False))))
     for part in parts:
         if part not in ctx.both:
             errs.append(f"run_fonts: {part} missing from the output")
@@ -811,9 +818,205 @@ def _doc_defaults_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
 
 PPR_SET_ELEMENTS = ("spacing", "ind", "jc")
+_V_SPACING_KEYS = {"before", "after", "line", "lineRule", "beforeLines", "afterLines"}
+_V_IND_KEYS = {"left", "right", "start", "end", "firstLine", "hanging", "leftChars", "rightChars", "startChars",
+               "endChars", "firstLineChars", "hangingChars"}
+_V_JC = {"left", "center", "right", "both", "distribute", "start", "end"}
+_V_LINE_RULES = {"auto", "exact", "atLeast"}
+_V_FIRST, _V_HANGING = ("firstLine", "firstLineChars"), ("hanging", "hangingChars")
+_V_SIDES = (("left", "start"), ("right", "end"), ("firstLine", "hanging"))
+_V_ON = ("1", "true", "on")
+
+
+def _v_ppr_values(params: Dict[str, Any]) -> Dict[str, Any]:
+    """set_paragraph_props' parameters (the user's own words) → the values to merge, as this module reads them;
+    ValueError where the op must refuse."""
+    out: Dict[str, Any] = {}
+    for name, keys in (("spacing", _V_SPACING_KEYS), ("ind", _V_IND_KEYS)):
+        v = params.get(name)
+        if v is None:
+            continue
+        if not isinstance(v, dict) or not v or set(v) - keys:
+            raise ValueError(f"bad {name} {v!r} (the op must refuse)")
+        clean = {}
+        for k, x in v.items():
+            if k == "lineRule":
+                if x not in _V_LINE_RULES:
+                    raise ValueError(f"bad lineRule {x!r} (the op must refuse)")
+                clean[k] = x
+            elif isinstance(x, bool) or not isinstance(x, int):
+                raise ValueError(f"{name}.{k} is not a whole number (the op must refuse)")
+            else:
+                clean[k] = str(x)
+        out[name] = clean
+    if set(_V_FIRST) & set(out.get("ind", {})) and set(_V_HANGING) & set(out.get("ind", {})):
+        raise ValueError("a first-line and a hanging indent both asked (the op must refuse)")
+    if params.get("jc") is not None:
+        if params["jc"] not in _V_JC:
+            raise ValueError(f"bad jc {params['jc']!r} (the op must refuse)")
+        out["jc"] = params["jc"]
+    if not out:
+        raise ValueError("nothing asked (the op must refuse)")
+    return out
+
+
+def _v_merged(name: str, el, val) -> Dict[str, str]:
+    """The attributes a w:spacing / w:ind / w:jc must end with: the asked ones set, the others kept (the first line —
+    firstLine/firstLineChars — drops the hanging indent — hanging/hangingChars — and vice versa; jc gets w:val) — this
+    module's reading of set_paragraph_props' merge."""
+    out = dict(el.attrib) if el is not None else {}
+    if name == "jc":
+        out[W + "val"] = val
+        return out
+    for k, v in val.items():
+        out[W + k] = str(v)
+    if name == "ind":
+        if any(k in val for k in _V_FIRST):
+            for k in _V_HANGING:
+                out.pop(W + k, None)
+        if any(k in val for k in _V_HANGING):
+            for k in _V_FIRST:
+                out.pop(W + k, None)
+    return out
+
+
+def _v_ppr_of(st):
+    return st.find(W + "pPr") if st is not None else None
+
+
+def _v_paragraph_levels(p, styles: Styles) -> List[Tuple[str, Any]]:
+    """(label, pPr) nearest first: the paragraph's own pPr, its paragraph style chain (its w:pStyle's value — an empty
+    one names no style —, else the default), its table's style chain (tblStyle, else the default table style),
+    docDefaults — template.Eff's level reading."""
+    ps = p.find(W + "pPr/" + W + "pStyle")
+    chain = styles.chain(ps.get(W + "val") if ps is not None else styles.default.get("paragraph"))
+    tbl = next(p.iterancestors(W + "tbl"), None)
+    if tbl is not None:
+        ts = tbl.find(W + "tblPr/" + W + "tblStyle")
+        chain = chain + styles.chain(ts.get(W + "val") if ts is not None else styles.default.get("table"))
+    return ([("the paragraph", p.find(W + "pPr"))] + [(f"style {s.get(W + 'styleId')}", _v_ppr_of(s)) for s in chain]
+            + [("docDefaults", styles.doc_defaults_ppr())])
+
+
+def _v_style_levels(st, styles: Styles) -> List[Tuple[str, Any]]:
+    """(label, pPr) nearest first: the style's own pPr, its basedOn ancestors, docDefaults."""
+    return ([(f"style {st.get(W + 'styleId')}", _v_ppr_of(st))]
+            + [(f"style {s.get(W + 'styleId')}", _v_ppr_of(s)) for s in styles.chain(st.get(W + "styleId"))[1:]]
+            + [("docDefaults", styles.doc_defaults_ppr())])
+
+
+def _v_inherited_refusal(levels: List[Tuple[str, Any]], setv: Dict[str, Any]) -> Optional[str]:
+    """Why set_paragraph_props must refuse a target whose own pPr is ``levels[0]`` and which inherits from the rest
+    (nearest first), or None: before/after asked where the nearest level naming …Autospacing turns it on, or where any
+    level sets …Lines (the lines not asked); an indentation side asked in twips where any level gives it in characters
+    (…Chars — Word's priority), those the merge removes from the target itself excepted, the side's Chars not asked; an
+    indentation alias whose other spelling the target's own w:ind uses."""
+    sv, iv = setv.get("spacing") or {}, setv.get("ind") or {}
+    spacings = [(i, lab, ppr.find(W + "spacing")) for i, (lab, ppr) in enumerate(levels)
+                if ppr is not None and ppr.find(W + "spacing") is not None]
+    inds = [(i, lab, ppr.find(W + "ind")) for i, (lab, ppr) in enumerate(levels)
+            if ppr is not None and ppr.find(W + "ind") is not None]
+    for side in ("before", "after"):
+        if side not in sv:
+            continue
+        named = [(lab, sp.get(W + side + "Autospacing")) for _, lab, sp in spacings
+                 if sp.get(W + side + "Autospacing") is not None]
+        if named and named[0][1] in _V_ON:
+            return f"spacing {side} is auto ({side}Autospacing on {named[0][0]})"
+        if f"{side}Lines" not in sv:
+            for _, lab, sp in spacings:
+                if sp.get(W + side + "Lines") not in (None, ""):
+                    return f"spacing {side} is set in lines ({side}Lines on {lab})"
+    for side in _V_SIDES:
+        if not any(k in iv for k in side) or any(k + "Chars" in iv for k in side):
+            continue
+        dropped = (set(_V_HANGING) if any(k in iv for k in _V_FIRST) else set()) | \
+                  (set(_V_FIRST) if any(k in iv for k in _V_HANGING) else set())
+        for i, lab, ind in inds:
+            for k in side:
+                if ind.get(W + k + "Chars") not in (None, "") and not (i == 0 and k + "Chars" in dropped):
+                    return f"indentation {k} is given in characters ({k}Chars on {lab}), which Word uses instead"
+    own = levels[0][1].find(W + "ind") if levels and levels[0][1] is not None else None
+    for asked, other in (("left", "start"), ("start", "left"), ("right", "end"), ("end", "right")):
+        if asked in iv and own is not None and own.get(W + other) is not None:
+            return f"indentation asked as {asked} where the target's own w:ind uses {other}"
+    return None
+
+
+def _v_check_merged(S, O, setv: Dict[str, Any], where: str, errs: List[str]) -> None:
+    """Each asked element of the output pPr ``O`` occurs once and holds exactly the source's attributes with the asked
+    values merged."""
+    for name, val in setv.items():
+        found = O.findall(W + name) if O is not None else []
+        exp = _v_merged(name, S.find(W + name) if S is not None else None, val)
+        got = dict(found[0].attrib) if found else None
+        if len(found) > 1:
+            errs.append(f"{where}: {len(found)} w:{name} elements in the output, expected one")
+        if got != exp or (found and len(found[0])):
+            errs.append(f"{where}: {name} is {_plain(got)}, expected {_plain(exp)}")
+
+
+def _paragraph_props_styles(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    """Built-in batch 4 §2: the values merged into paragraph style definitions — from the user's own parameters, read
+    here with this module's rules (never tracked: a ``tracked`` asked true is what the op must refuse) — each changed
+    style's pPr is the source's with the asked values merged and every other child identical; a style already as asked
+    is untouched; the refusals re-derived; every selected style shows the asked values in the output."""
+    if ctx.styles_part is None:
+        errs.append("paragraph_props: no common styles part")
+        return "paragraph_props: no styles part"
+    params = a.get("params") or {}
+    if set(params) - {"spacing", "ind", "jc", "tracked"}:
+        raise ValueError(f"unknown parameter(s) {sorted(set(params) - {'spacing', 'ind', 'jc', 'tracked'})}")
+    setv = _v_ppr_values(params)
+    if params.get("tracked", False):
+        errs.append("paragraph_props: style definitions are never tracked (the op must refuse tracked: true)")
+    sel = a.get("select") or {}
+    if set(sel) != {"ids"} or not isinstance(sel["ids"], list):
+        raise ValueError(f"bad styles selector {sel!r}")
+    ids = list(dict.fromkeys(sel["ids"]))
+    changed: List[str] = []
+    for sid in ids:
+        st, o = ctx.src_styles.by_id.get(sid), ctx.out_styles.by_id.get(sid)
+        if st is None or o is None:
+            errs.append(f"paragraph_props: style {sid} missing from the {'source' if st is None else 'output'}")
+            continue
+        where = f"style {sid}"
+        if st.get(W + "type", "paragraph") != "paragraph":
+            errs.append(f"{where}: a {st.get(W + 'type')} style (the op must refuse)")
+            continue
+        why = _v_inherited_refusal(_v_style_levels(st, ctx.src_styles), setv)
+        if why:
+            errs.append(f"{where}: {why} — the op must refuse")
+            continue
+        S, O = st.find(W + "pPr"), o.find(W + "pPr")
+        expected = {name: _v_merged(name, S.find(W + name) if S is not None else None, val) for name, val in setv.items()}
+        if not all(S is not None and S.find(W + name) is not None and dict(S.find(W + name).attrib) == exp
+                   for name, exp in expected.items()):
+            changed.append(sid)
+            ctx.strip_style_ppr.setdefault(sid, set()).update(setv)
+            _v_check_merged(S, O, setv, where, errs)
+            others_s = [sig(c) for c in (S if S is not None else []) if _local(c) not in setv]
+            others_o = [sig(c) for c in (O if O is not None else []) if _local(c) not in setv]
+            if others_s != others_o:
+                errs.append(f"{where}: paragraph properties other than {sorted(setv)} changed")
+        # (an already-as-asked style is left to the residual, which compares it whole)
+        for name, val in setv.items():                     # post-condition: the output style shows the asked values
+            found = O.findall(W + name) if O is not None else []
+            if len(found) != 1 or _v_merged(name, found[0], val) != dict(found[0].attrib):
+                errs.append(f"{where}: {name} does not show {val} in the output"
+                            + (f" ({len(found)} w:{name} elements)" if len(found) > 1 else ""))
+    if sorted(changed) != sorted(a.get("expected_ids", [])):
+        errs.append(f"paragraph_props: style(s) {sorted(changed)} change here, plan predicted "
+                    f"{sorted(a.get('expected_ids', []))}")
+    return f"paragraph_props: style(s) {changed} → {setv}"
 
 
 def _paragraph_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    target = a.get("target", "direct")
+    if target == "styles":
+        return _paragraph_props_styles(ctx, a, errs)
+    if target != "direct":
+        raise ValueError(f"unknown target {target!r}")
     parts = ctx.scope_parts(a.get("scope", []))
     if sorted(parts) != sorted(a.get("parts", [])):
         errs.append(f"paragraph_props: scope resolves to {sorted(parts)} here, plan says {sorted(a.get('parts', []))}")
@@ -833,6 +1036,10 @@ def _paragraph_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             if not para_matches(pred, p, bi, sv, ctx.src_styles):
                 continue
             n += 1
+            where = f"{part} block {bi}"
+            why = _v_inherited_refusal(_v_paragraph_levels(p, ctx.src_styles), setv)
+            if why:
+                errs.append(f"{where}: {why} — the op must refuse")
             if bi in ctx.text_changed.get(part, set()):
                 errs.append(f"paragraph_props: {part} block {bi} is selected but also has predicted text changes")
                 continue
@@ -842,29 +1049,10 @@ def _paragraph_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 continue
             ctx.strip_ppr.setdefault(part, {})[bi] = set(setv) | {"pPrChange"}
             S, O = p.find(W + "pPr"), ov.pars[oi].find(W + "pPr")
-            where = f"{part} block {bi}"
             if O is None:
                 errs.append(f"{where}: no pPr in the output")
                 continue
-            for name, val in setv.items():
-                se, oe = (S.find(W + name) if S is not None else None), O.find(W + name)
-                if name == "jc":
-                    expected = {**(dict(se.attrib) if se is not None else {}), W + "val": val}
-                else:
-                    expected = dict(se.attrib) if se is not None else {}
-                    for k, v in val.items():
-                        expected[W + k] = str(v)
-                    if name == "ind":
-                        if "firstLine" in val:
-                            expected.pop(W + "hanging", None); expected.pop(W + "hangingChars", None)
-                        if "hanging" in val:
-                            expected.pop(W + "firstLine", None); expected.pop(W + "firstLineChars", None)
-                got = dict(oe.attrib) if oe is not None else None
-                if got != expected:
-                    errs.append(f"{where}: {name} expected { {etree.QName(k).localname: v for k, v in expected.items()} } "
-                                f"got { {etree.QName(k).localname: v for k, v in (got or {}).items()} }")
-                if oe is not None and len(oe):
-                    errs.append(f"{where}: {name} gained children")
+            _v_check_merged(S, O, setv, where, errs)
             _check_ppr_change(S, O, tracked, a.get("author"), where, errs)
     if n != a.get("expected_paragraphs", -1):
         errs.append(f"paragraph_props: {n} paragraph(s) selected here, plan predicted {a.get('expected_paragraphs')}")
@@ -1760,13 +1948,19 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                 if rpr is not None:
                     view.runs[b][ri].remove(rpr)
     for bi in ctx.strip_marks.get(part, set()):
+        source_ppr = sv.pars[bi].find(W + "pPr")
+        # A source can already contain <w:pPr/>. Stripping a newly added mark
+        # must leave that original container present on both sides; only a
+        # container introduced for the checked mark may disappear here.
+        keep_empty_ppr = source_ppr is not None and not len(source_ppr)
         for view, b in ((s, bi), (o, amap.get(bi))):
             if b is None:
                 continue
             ppr = view.pars[b].find(W + "pPr")
             if ppr is not None and ppr.find(W + "rPr") is not None:
                 ppr.remove(ppr.find(W + "rPr"))
-                _drop_empty(ppr)
+                if not keep_empty_ppr:
+                    _drop_empty(ppr)
     for bi, names in ctx.strip_ppr.get(part, {}).items():
         for view, b in ((s, bi), (o, amap.get(bi))):
             if b is None:
@@ -1778,6 +1972,14 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                 if _local(c) in names:
                     ppr.remove(c)
             _drop_empty(ppr)
+    tbls = ctx.strip_tbl_style.get(part, set())
+    if tbls:                                           # ordinals among every w:tbl of the part (no op moves tables)
+        for root in (s_root, o_root):
+            tables = list(root.iter(W + "tbl"))
+            for k in tbls:
+                ts = tables[k].find(W + "tblPr/" + W + "tblStyle") if k < len(tables) else None
+                if ts is not None:
+                    ts.getparent().remove(ts)
     if part == ctx.src.main_part() and ctx.strip_sect:
         ss, os_ = sect_prs(s_root), sect_prs(o_root)
         for i, names in ctx.strip_sect.items():
@@ -1820,7 +2022,12 @@ def _residual_styles(ctx: Ctx, errs: List[str]) -> None:
                 parent.remove(rpr)
                 _drop_empty(parent)
                 _drop_empty(root.find(W + "docDefaults"))
+        # only the definition the kinds checked: the LAST w:style of an id (``Styles.by_id`` keeps it, as the
+        # transform's sheet does) — another one sharing the id is compared whole, never stripped unchecked (rule 8)
+        last = {st.get(W + "styleId"): st for st in root.findall(W + "style")}
         for st in root.findall(W + "style"):
+            if last.get(st.get(W + "styleId")) is not st:
+                continue
             if st.get(W + "styleId") in ctx.strip_styles and st.find(W + "rPr") is not None:
                 st.remove(st.find(W + "rPr"))
             names = ctx.strip_style_ppr.get(st.get(W + "styleId"))
@@ -1833,6 +2040,13 @@ def _residual_styles(ctx: Ctx, errs: List[str]) -> None:
     for st in o_root.findall(W + "style"):            # new styles: checked by styles_added, not residual
         if st.get(W + "styleId") in ctx.added_styles:
             o_root.remove(st)
+    for root in (s_root, o_root):                      # replaced definitions: compared whole by their kind
+        for st in root.findall(W + "style"):
+            if st.get(W + "styleId") in ctx.replaced_styles:
+                root.remove(st)
+    for st in s_root.findall(W + "style"):            # expected gone: an output that still holds one differs
+        if st.get(W + "styleId") in ctx.removed_styles:
+            s_root.remove(st)
     d = _residual_difference(s_root, o_root)
     if d:
         errs.append(f"{ctx.styles_part}: unpredicted change {d}")
@@ -1925,6 +2139,15 @@ from .links import LINK_KINDS  # noqa: E402
 from .docprops import DOCPROP_KINDS  # noqa: E402
 # built-in batch 3 (docs/BUILTIN_OPS_BATCH3_DESIGN.md)
 from .tabs import TAB_KINDS  # noqa: E402
+# built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md)
+from .unused import UNUSED_KINDS  # noqa: E402
+from .borders import BORDER_KINDS  # noqa: E402
+from .clearing import CLEARING_KINDS  # noqa: E402
+from .language import LANGUAGE_KINDS  # noqa: E402
+# built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md): the shared style import (§5) and map_styles (§7)
+from .styleimport import IMPORT_KINDS  # noqa: E402
+from .restyle import RESTYLE_KINDS  # noqa: E402
+from .applystyle import APPLY_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -1932,3 +2155,10 @@ KINDS.update(IMAGE_KINDS)
 for _batch2 in (COMMENT_KINDS, HIGHLIGHT_KINDS, REVISION_KINDS, REMOVAL_KINDS, WATERMARK_KINDS, LINK_KINDS, DOCPROP_KINDS):
     KINDS.update(_batch2)
 KINDS.update(TAB_KINDS)
+KINDS.update(UNUSED_KINDS)
+KINDS.update(BORDER_KINDS)
+KINDS.update(CLEARING_KINDS)
+KINDS.update(LANGUAGE_KINDS)
+KINDS.update(IMPORT_KINDS)
+KINDS.update(RESTYLE_KINDS)
+KINDS.update(APPLY_KINDS)

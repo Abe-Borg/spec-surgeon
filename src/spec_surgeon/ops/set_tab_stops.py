@@ -48,7 +48,8 @@ from .effective import Resolver, text_width
 from .empty_paragraphs import numbered
 from .hf_common import effective_refs
 from .replace_text import default_author
-from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts
+from .selectors import (StyleSheet, chain_reads, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts,
+                        table_ordinals)
 
 ALIGNS = ("left", "center", "right", "decimal", "bar")
 LEADERS = ("none", "dot", "hyphen", "underscore", "heavy", "middleDot")
@@ -313,7 +314,9 @@ class SetTabStops(Op):
         read_secs: set = set()
         read_refs = False
         for part in parts:
-            pars = paragraphs(pkg.xml(part))
+            root = pkg.xml(part)
+            pars = paragraphs(root)
+            tables = table_ordinals(root)
             chosen: List[list] = []
             for bi, p in enumerate(pars):
                 if not paragraph_selected(pred, p, bi, block_full_text(p), sheet):
@@ -342,6 +345,10 @@ class SetTabStops(Op):
                 # V10's post-condition reads this paragraph's stops in the output whether or not it changes: another op
                 # changing them (a second set_tab_stops) is a plan-time conflict, never a failure after apply
                 frag.touches.append((part, str(bi), "verify:tabs"))
+                # the inherited stops come through its style, the style chains and the table's style (batch 4): a restyle,
+                # an import replacing a style or a remapped table style beside it is a plan-time conflict
+                frag.touches.append((part, str(bi), "verify-props:pStyle"))
+                frag.touches += sorted(chain_reads(sheet, part, p, tables))
                 after = decide(want, gone, others, own, inherited_stops(res, p), is_num)
                 if after is None:
                     already += 1

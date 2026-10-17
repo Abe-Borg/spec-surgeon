@@ -2,7 +2,7 @@
 the advisor and the visual check of the preview samples).
 
 * ``call`` **streams** (``client.beta.messages.stream`` + ``get_final_message``): the output cap is 64,000 tokens, and
-  the SDK refuses a non-streaming request that large. Effort ``high``; thinking is left to the model (Opus 5.5 always
+  the SDK refuses a non-streaming request that large. Effort ``max``; thinking is left to the model (Opus 5.5 always
   thinks — sending a ``thinking`` setting, a forced ``tool_choice`` or an assistant prefill is a 400 there). The
   server-side refusal fallback is on (``fallbacks="default"``): a request the model's safety filters decline is re-run
   on another model inside the same call.
@@ -37,11 +37,13 @@ from contextvars import ContextVar
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import diagnostics as diag
+from .resources import (DEFAULT_EFFORT, DEFAULT_MAX_CALLS, DEFAULT_MAX_COST_USD,
+                        DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, positive_integer)
 
 DEFAULT_MODEL = os.environ.get("SPEC_SURGEON_MODEL", "claude-opus-5-5")
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
-MAX_TOKENS = 64000
-EFFORT = "high"
+MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
+EFFORT = DEFAULT_EFFORT
 
 # USD per million tokens: (input, output, cache read, 5-minute cache write). An estimate shown to the user, never a bill.
 # Update when Anthropic's prices change. A model that is not listed is shown as "price unknown", never guessed.
@@ -106,7 +108,8 @@ def _sdk_credentials() -> bool:
         return False
 
 
-def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], messages: List[Dict[str, Any]]):
+def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], messages: List[Dict[str, Any]],
+         max_output_tokens: Optional[int] = None, effort: Optional[str] = None):
     """One streamed request; returns the final message. Raises whatever the SDK raises: the caller classifies it with
     ``is_api_error`` (an API error is a recorded failure, anything else a defect that propagates) and never half-appends
     a turn. Inside ``budget_scope``, every caller shares its limits, including nested transform and visual calls.
@@ -114,7 +117,8 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
     with diag.scope(model_call_id=diag.new_id()):
         with diag.span("model.call", requested_model=model) as record:
             try:
-                return _call(client, model=model, system=system, tools=tools, messages=messages, record=record)
+                return _call(client, model=model, system=system, tools=tools, messages=messages, record=record,
+                             max_output_tokens=max_output_tokens, effort=effort)
             except BudgetExceeded as exc:
                 diag.event("model.budget.exhausted", level="warning", reason=str(exc), budgets=_budget_records())
                 raise
@@ -141,15 +145,20 @@ def _response_metadata(resp, requested):
         return {"record_error": _record_error(exc)}
 
 
-def _call(client, *, model, system, tools, messages, record):
+def _call(client, *, model, system, tools, messages, record, max_output_tokens, effort):
     budgets = _CALL_BUDGETS.get()
-    max_tokens, effort = MAX_TOKENS, EFFORT
+    max_tokens = MAX_TOKENS if max_output_tokens is None else positive_integer("max_output_tokens", max_output_tokens)
+    if max_tokens > MAX_TOKENS:
+        raise ValueError(f"max_output_tokens must not exceed {MAX_TOKENS}")
+    effort = EFFORT if effort is None else effort
+    if effort not in ("low", "medium", "high", "max"):
+        raise ValueError("effort must be low, medium, high or max")
     retries_disabled = False
     tools = list(tools)
     record.update(phase="preflight", message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets))
     if budgets:
         model = next((b.model for b in reversed(budgets) if b.model is not None), model)
-        max_tokens = min(b.max_output_tokens for b in budgets)
+        max_tokens = min(max_tokens, *(b.max_output_tokens for b in budgets))
         effort = budgets[-1].effort
         record.update(model=model, max_output_tokens=max_tokens, effort=effort)
         try:
@@ -532,9 +541,10 @@ class CallBudget:
     returned responses only. The optional ``None`` limits disable token/USD checks, never the call/output caps.
     """
 
-    def __init__(self, *, model: Optional[str] = None, effort: str = "medium", max_calls: int = 12,
-                 max_output_tokens: int = 8000, max_total_tokens: Optional[int] = 500000,
-                 max_cost_usd: Optional[float] = 5.0):
+    def __init__(self, *, model: Optional[str] = None, effort: str = DEFAULT_EFFORT,
+                 max_calls: int = DEFAULT_MAX_CALLS, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+                 max_total_tokens: Optional[int] = DEFAULT_MAX_TOTAL_TOKENS,
+                 max_cost_usd: Optional[float] = DEFAULT_MAX_COST_USD):
         if model is not None and (not isinstance(model, str) or not model.strip() or model != model.strip()):
             raise ValueError("model must be a non-empty model name without surrounding whitespace, or None")
         if not isinstance(effort, str) or effort not in ("low", "medium", "high", "max"):

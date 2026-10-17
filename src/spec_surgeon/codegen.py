@@ -21,7 +21,8 @@ Claude the whole conversation as its brief, read-only tools to look at the sampl
    revision of any kind (no tracked formatting either), change any part but the document's text parts and its styles
    part (V10's residual identity covers exactly those), or claim no layout reference without a reason;
 4. the **full verification suite** (independent verifier, V1–V5, V8, V10) on every sample. A failure goes back
-   to the model with the record; at most ``max_iter`` (3) attempts.
+   to the model with the record; configurable ample attempts, stopping earlier when
+   equivalent failures repeat without new inspection evidence.
 
 A passing op is saved (``generated_ops/<hash>.py`` + ``.history.json`` beside the batch's records) — a cache, not
 a registered op: promotion into ``ops/`` is a human decision, with tests. ``run_generated`` applies it to a batch
@@ -48,6 +49,9 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from . import diagnostics as diag
 from .llm import Usage
+from .compiler import INSPECTION_TOOLS
+from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_CALLS, DEFAULT_MAX_OUTPUT_TOKENS,
+                        DEFAULT_STALL_REPETITIONS, InvestigationProgress, positive_integer)
 
 ALLOWED_FROM: Dict[str, set] = {
     "spec_surgeon.ops.base": {"Op", "PlanFragment", "BlockDiff", "JobException"},
@@ -59,7 +63,7 @@ ALLOWED_FROM: Dict[str, set] = {
                                    "is_targeted", "StyleSheet", "DEFAULT_PRESERVE_FONTS", "FONT_PARAM_DOC",
                                    "check_run_selector", "font_values", "has_direct_font", "in_revision",
                                    "is_symbol_rpr", "mark_in_revision", "rpr_selected", "runs_by_paragraph",
-                                   "size_applies", "size_values"},
+                                   "size_applies", "size_values", "chain_reads", "table_ordinals"},
     "lxml": {"etree"},
     "__future__": {"annotations"},
     "typing": {"Any", "Dict", "List", "Optional", "Tuple", "Sequence", "Set", "Iterable"},
@@ -67,6 +71,21 @@ ALLOWED_FROM: Dict[str, set] = {
     "collections": {"Counter", "OrderedDict", "defaultdict"},
 }
 ALLOWED_IMPORT = {"re", "copy", "math", "itertools", "functools", "json"}
+GOAL_FROM = {
+    "spec_surgeon.ooxml": {"RevisionStamp", "property_change", "max_revision_id", "file_uses_date_utc"},
+    "spec_surgeon.ops.textedit": {"Edit", "RunText", "run_text", "plan_paragraph", "edits_to_data",
+                                  "edits_from_data", "apply_part_edits"},
+}
+
+
+def allowed_imports(goal_contract=None):
+    allowed = {name: set(values) for name, values in ALLOWED_FROM.items()}
+    if goal_contract is not None:
+        from .goals import validate_contract
+        validate_contract(goal_contract)
+        for name, values in GOAL_FROM.items():
+            allowed.setdefault(name, set()).update(values)
+    return allowed
 # What the reference ops import that a generated op may NOT: the tracked-formatting helpers (generated ops are plain
 # formatting — no revision of any kind) and the engine's registration hook. tests/test_codegen.py pins that every name
 # the examples import is either allowed above or listed here.
@@ -76,7 +95,7 @@ EXCLUDED_FROM_EXAMPLES: Dict[str, set] = {
     "spec_surgeon.ops": {"register"},
 }
 EXAMPLE_OPS = ("set_page_setup.py", "set_paragraph_props.py", "set_font.py")
-MAX_CALLS = 24
+MAX_CALLS = DEFAULT_MAX_CALLS
 ALLOWED_MODULES = tuple(sorted(set(ALLOWED_FROM) | ALLOWED_IMPORT))
 FORBIDDEN_NAMES = {"open", "exec", "eval", "compile", "__import__", "globals", "locals", "vars", "getattr", "setattr",
                    "delattr", "input", "breakpoint", "memoryview", "help", "exit", "quit", "type", "object"}
@@ -111,12 +130,13 @@ MODULE_ATTRS: Dict[str, set] = {
 }
 MODULE_FROM_IMPORTS = {("lxml", "etree"): "etree"}
 SANDBOX_TIMEOUT = 60
-MAX_ITER = 3
+MAX_ITER = DEFAULT_MAX_ATTEMPTS
 
 
-def check_source(src: str) -> List[str]:
+def check_source(src: str, *, goal_contract=None) -> List[str]:
     """Whitelist problems of a generated op's source ([] = acceptable)."""
     try:
+        allowed = allowed_imports(goal_contract)
         tree = ast.parse(src)
     except SyntaxError as e:
         return [f"syntax error: {e}"]
@@ -130,13 +150,13 @@ def check_source(src: str) -> List[str]:
                 else:
                     modules[a.asname or a.name] = a.name
         elif isinstance(node, ast.ImportFrom):
-            if node.level or node.module not in ALLOWED_FROM:
+            if node.level or node.module not in allowed:
                 probs.append(f"line {node.lineno}: 'from {'.' * node.level}{node.module} import …' is not allowed")
             else:
-                bad = [a.name for a in node.names if a.name not in ALLOWED_FROM[node.module]]
+                bad = [a.name for a in node.names if a.name not in allowed[node.module]]
                 if bad:
                     probs.append(f"line {node.lineno}: from {node.module} import {bad} is not allowed "
-                                 f"(allowed: {sorted(ALLOWED_FROM[node.module])})")
+                                 f"(allowed: {sorted(allowed[node.module])})")
                 for a in node.names:
                     key = MODULE_FROM_IMPORTS.get((node.module, a.name))
                     if key:
@@ -200,23 +220,24 @@ def _tail(text: str, n: int = 15) -> str:
 
 
 def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict[str, Any], workdir: Path,
-                   timeout: int = SANDBOX_TIMEOUT) -> SandboxResult:
+                   timeout: int = SANDBOX_TIMEOUT, *, goal_contract=None) -> SandboxResult:
     """plan + apply of the generated op on a COPY of ``docx`` in a separate isolated process."""
     with diag.scope(sandbox_id=diag.new_id()), \
             diag.span("codegen.sandbox", source=str(docx), workdir=str(workdir), timeout_seconds=timeout) as record:
-        result = _run_in_sandbox(source, docx, select, params, workdir, timeout)
+        result = _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract)
         record.update(ok=result.ok, code=result.code, output=str(result.output) if result.output else None)
         return result
 
 
-def _run_in_sandbox(source, docx, select, params, workdir, timeout):
+def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract):
     t0 = time.perf_counter()
     workdir = Path(workdir).resolve()          # the sandbox runs with cwd=workdir: every path it gets is absolute
     workdir.mkdir(parents=True, exist_ok=True)
     copy_path = workdir / "source.docx"
     shutil.copyfile(Path(docx).resolve(), copy_path)
     req = workdir / "request.json"
-    req.write_text(json.dumps({"source": source, "docx": str(copy_path), "select": select, "params": params}),
+    req.write_text(json.dumps({"source": source, "docx": str(copy_path), "select": select, "params": params,
+                              "goal_contract": goal_contract}),
                    encoding="utf-8")
     diag.event("codegen.sandbox.prepared", source_copy=str(copy_path), request_path=str(req))
     env = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONIOENCODING")}
@@ -250,11 +271,20 @@ def _run_in_sandbox(source, docx, select, params, workdir, timeout):
                          seconds=time.perf_counter() - t0)
 
 
-def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = None) -> List[str]:
+def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = None, *, goal_contract=None) -> List[str]:
     """What a generated op may never do, judged from its own plan before the suite runs. ``allowed_parts``: the source's
     text parts and its styles part — the parts V10's residual identity covers; any other part (numbering.xml, docProps,
     a chart…) could carry a change no verified assertion checks, so it is refused outright."""
     probs = []
+    if goal_contract is not None:
+        from .goals import validate_contract
+        validate_contract(goal_contract)
+        # The fixed original-to-final goal verifier controls every permitted
+        # change for this path, including literals, revisions and member graph.
+        # This branch is never itself permission to deliver a generated result.
+        if plan.get("geometry_reference") == "none" and not (plan.get("geometry_reason") or "").strip():
+            probs.append("geometry_reference 'none' needs a geometry_reason")
+        return probs
     removed, added = set(plan.get("members_removed") or []), set(plan.get("members_added") or [])
     kept = [d for d in plan.get("diffs") or [] if d["part"] not in removed and d["part"] not in added]
     if kept:
@@ -306,26 +336,33 @@ class FileTrial:
                 "output": str(self.output) if self.output else None, "output_md5": self.output_md5}
 
 
-def trial(source: str, f: Path, select, params, workdir: Path) -> FileTrial:
+def trial(source: str, f: Path, select, params, workdir: Path, *, goal_contract=None, goal_binding=None) -> FileTrial:
     with diag.scope(trial_id=diag.new_id()), \
             diag.span("codegen.trial", source=str(f), workdir=str(workdir)) as record:
-        result = _trial(source, f, select, params, workdir)
+        result = _trial(source, f, select, params, workdir, goal_contract, goal_binding)
         record.update(passed=result.passed, problem_count=len(result.problems), output_md5=result.output_md5,
                       failed_checks=[c.id for c in result.record.checks if c.status == "FAIL"]
                       if result.record is not None else [])
         return result
 
 
-def _trial(source, f, select, params, workdir):
-    from .verify import run_suite
-    sb = run_in_sandbox(source, f, select, params, workdir)
+def _trial(source, f, select, params, workdir, goal_contract, goal_binding):
+    from .verify import CheckResult, run_suite
+    if goal_contract is not None:
+        from .goals import validate_contract, validate_binding
+        try:
+            validate_contract(goal_contract)
+            goal_binding = validate_binding(f, goal_contract, goal_binding)
+        except Exception as error:
+            return FileTrial(f, False, [f"approved goal binding refused: {error}"])
+    sb = run_in_sandbox(source, f, select, params, workdir, goal_contract=goal_contract)
     if not sb.ok:
         where = _tail(sb.traceback, 12)
         return FileTrial(f, False, [f"[{sb.code or 'error'}] {sb.error}"
                                     + (f"\n(traceback, last lines:)\n{where}" if where else "")])
     try:
         with diag.span("codegen.trial.limits") as record:
-            limits = hard_limits(sb.plan, allowed_parts_of(f))
+            limits = hard_limits(sb.plan, allowed_parts_of(f), goal_contract=goal_contract)
             record.update(accepted=not bool(limits), problem_count=len(limits))
     except Exception as e:  # noqa: BLE001 — a plan the engine cannot even read is a failed trial, with the reason
         return FileTrial(f, False, [f"the generated op's plan is malformed ({type(e).__name__}: {e})"], sb.output)
@@ -340,6 +377,16 @@ def _trial(source, f, select, params, workdir):
         return FileTrial(f, False, [f"the verifier could not check the output at all ({type(e).__name__}: {e}); "
                                     f"the generated op produced a package the suite cannot read — a removed or "
                                     f"broken part?"], sb.output)
+    if goal_contract is not None:
+        from .goals import verify_goal
+        try:
+            goal_result = verify_goal(Path(f).read_bytes(), out_bytes, goal_contract, goal_binding)
+        except Exception as error:
+            goal_result = {"passed": False, "errors": [f"goal verifier could not check output: {error}"]}
+        rec.checks.append(CheckResult("GOAL", "Approved original-to-final effects",
+                                      "PASS" if goal_result.get("passed") else "FAIL",
+                                      "approved effects independently verified" if goal_result.get("passed")
+                                      else "; ".join(goal_result.get("errors", [])), goal_result))
     fails = [f"{c.id} FAIL: {c.summary[:600]}" for c in rec.checks if c.status == "FAIL"]
     return FileTrial(f, rec.passed, fails, sb.output, rec, hashlib.md5(out_bytes).hexdigest())
 
@@ -362,6 +409,10 @@ class GeneratedOp:
     brief: str = ""
     transcript: List[Dict[str, Any]] = field(default_factory=list)   # the exchange with the model (diagnostics)
     seconds: float = 0.0
+    context_state: Dict[str, Any] = field(default_factory=dict)
+    goal_contract: Optional[Dict[str, Any]] = None
+    goal_bindings: Dict[str, Any] = field(default_factory=dict)
+    approved_words: List[str] = field(default_factory=list)
 
 
 CODEGEN_SYSTEM = """You write ONE Python module: an operation (an `Op` subclass) for a deterministic .docx editing \
@@ -397,8 +448,8 @@ Reference ops from the library (relative imports there become the absolute white
 
 Finish by calling submit_op with the complete module source, the selector and the params to run it with."""
 
-CODEGEN_READ_TOOLS = ("show_xml", "find_paragraphs", "list_styles", "show_part_text")
-CODEGEN_TOOLS = [
+CODEGEN_READ_TOOLS = ("show_xml", "find_paragraphs", "list_styles", "show_part_text") + tuple(t["name"] for t in INSPECTION_TOOLS)
+CODEGEN_TOOLS = INSPECTION_TOOLS + [
     {"name": "show_xml", "description": "The XML of paragraphs of one part of a sample file (pretty-printed), by "
      "paragraph index (0-based, every w:p of the part in document order).",
      "input_schema": {"type": "object", "properties": {
@@ -433,50 +484,114 @@ def _examples() -> str:
     return "\n\n".join(out)
 
 
-def system_prompt() -> str:
+def system_prompt(goal_contract=None) -> str:
     from .catalog import CUSTOM_TRANSFORM_LIMITS
-    return CODEGEN_SYSTEM.format(allowed=json.dumps({k: sorted(v) for k, v in ALLOWED_FROM.items()}),
+    prompt = CODEGEN_SYSTEM.format(allowed=json.dumps({k: sorted(v) for k, v in allowed_imports(goal_contract).items()}),
                                  plain=sorted(ALLOWED_IMPORT), examples=_examples(),
                                  module_attrs=json.dumps({k: sorted(v) for k, v in MODULE_ATTRS.items()}),
                                  limits=json.dumps(CUSTOM_TRANSFORM_LIMITS, ensure_ascii=False))
+    if goal_contract is not None:
+        start, end = prompt.index("- PLAIN formatting only:"), prompt.index("- Only these property families")
+        prompt = prompt[:start] + (
+            "- CONTRACT-GOVERNED METHOD: implement exactly the approved goal below. Text, tracked revisions or "
+            "structural changes are permitted only when that goal explicitly approves them. Every inserted literal "
+            "must be an exact approved replacement/insertion value. No other goal field is approved wording. "
+            "The full V1–V10 suite AND a fixed independent original-to-final goal verifier must both pass. "
+            "Your own plan cannot expand the contract's scope. Do not write or propose your own verifier. "
+            "Use mode = 'content' for tracked wording changes and 'untracked' only when the contract explicitly "
+            "requests untracked wording changes. Tracked helpers and pure textedit helpers listed in "
+            "the import whitelist are available on this path. Predict all text/revision/member changes first.\n"
+        ) + prompt[end:]
+        prompt = prompt.replace('name, mode = "formatting", description', 'name, mode, description')
+        prompt += "\nAPPROVED IMMUTABLE GOAL:\n" + json.dumps(goal_contract, ensure_ascii=False, sort_keys=True)
+        helper = Path(__file__).resolve().parent / "ops" / "textedit.py"
+        prompt += "\nPure text-edit planning/application helper reference:\n" + helper.read_text(encoding="utf-8")
+    return prompt
 
 
 def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: Path, client=None,
-                model: Optional[str] = None, max_iter: int = MAX_ITER, log=None, brief: Optional[str] = None) -> GeneratedOp:
+                model: Optional[str] = None, max_iter: int = MAX_ITER, log=None, brief: Optional[str] = None,
+                max_calls: int = MAX_CALLS, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
+                effort: str = DEFAULT_EFFORT, stall_repetitions: int = DEFAULT_STALL_REPETITIONS,
+                max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
+                goal_contract=None, goal_bindings=None, approved_words: Sequence[str] = ()) -> GeneratedOp:
     """Look → generate → sandbox + verify on the samples → feed failures back: at most ``max_iter`` submissions and
-    ``MAX_CALLS`` calls. Every tool call is answered in the next message."""
+    ``max_calls`` calls. Every tool call is answered in the next message. Existing
+    outer budget scopes still apply to every call; local settings cannot bypass them."""
     with diag.scope(Path(out_dir) / diag.LOGS / "events.jsonl", codegen_id=diag.new_id()), \
             diag.span("codegen.generate", sample_count=len(samples), max_attempts=max_iter) as record:
-        result = _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief)
+        result = _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
+                              max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
+                              analysis_limits, goal_contract, goal_bindings, approved_words)
         record.update(passed=result.passed, attempts=len(result.attempts), errors=len(result.errors))
         return result
 
 
-def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief):
+def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
+                 max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
+                 analysis_limits, goal_contract, goal_bindings, approved_words):
     from . import compiler, llm
     from .profile import profile
     from .package import DocxPackage
+    positive_integer("max_iter", max_iter)
+    positive_integer("max_calls", max_calls)
+    positive_integer("max_context_tokens", max_context_tokens)
+    policy = llm.CallBudget(effort=effort, max_output_tokens=max_output_tokens)
+    progress = InvestigationProgress(stall_repetitions)
     log = log or (lambda m: None)
     model = model or compiler.DEFAULT_MODEL
     out_dir = Path(out_dir)
-    system = system_prompt()
+    # Contract wording is checked against explicit caller-owned sources before the
+    # model or sandbox runs. Neither proposal, generated source nor brief grants it.
+    checked_bindings = {}
+    if goal_contract is not None:
+        from .goals import approved_goal_words, validate_binding, validate_contract
+        validate_contract(goal_contract)
+        literals = approved_goal_words(goal_contract)
+        wording_spec = {"ops": [{"op": "insert_paragraph", "params": {"text": word}} for word in literals]}
+        missing = compiler.untraceable(wording_spec, [request, *approved_words])
+        if missing:
+            raise ValueError(f"goal contains wording without user approval: {missing}")
+        for sample in samples:
+            checked_bindings[str(sample)] = validate_binding(sample, goal_contract,
+                                                            (goal_bindings or {}).get(str(sample)))
+    import copy
+    goal_contract = copy.deepcopy(goal_contract)
+    system = system_prompt(goal_contract)
     profiles = [profile(DocxPackage.from_path(f)) for f in samples]
     batch = compiler._Batch(list(samples), None)
+    batch.work_dir = out_dir
+    batch.analysis_limits = analysis_limits
+    batch.context_dir = out_dir
     asked = (f"THE CONVERSATION WITH THE USER (what they asked, what was understood, every reply):\n{brief}"
              if brief else f"REQUEST: {request}")
     messages: List[Dict[str, Any]] = [{"role": "user", "content":
         f"{asked}\n\nWHY NO EXISTING OP FITS / PROPOSAL: {proposal}\n\nSAMPLE FILES (for the tools): "
         f"{[batch.label(Path(f)) for f in samples]}\n\nSAMPLE FILE PROFILES:\n"
         + json.dumps(profiles, ensure_ascii=False)}]
-    g = GeneratedOp(model=model, request=request, proposal=proposal or "", brief=brief or "")
+    # Full-batch bindings can include deliberate user choices on non-sample files.
+    # Keep them, then validate each one afresh when that file actually runs.
+    retained_bindings = copy.deepcopy(goal_bindings or {}) if goal_contract is not None else {}
+    retained_bindings.update(checked_bindings)
+    g = GeneratedOp(model=model, request=request, proposal=proposal or "", brief=brief or "",
+                    goal_contract=goal_contract, goal_bindings=retained_bindings, approved_words=list(approved_words))
+    batch.context_state = g.context_state
     g.transcript.append({"turn": 0, "role": "user", "content": messages[0]["content"],
                          "samples": [str(f) for f in samples]})
     t_all = time.perf_counter()
 
     def done() -> GeneratedOp:                     # every way out keeps codegen/history.json
+        from .contexts import checkpoint_history
+        checkpoint_history(messages, **context_arguments())
         g.seconds = time.perf_counter() - t_all
         _save_history(g, out_dir)
         return g
+
+    def context_arguments():
+        return {"system": system, "tools": CODEGEN_TOOLS, "folder": out_dir, "state": g.context_state,
+                "authority": {"request": request, "files": batch.labels, "goal_contract": goal_contract,
+                              "goal_bindings": checked_bindings, "approved_word_sources": list(approved_words),
+                              "proposal_diagnostic_only": proposal}, "source_pins": batch.source_pins}
 
     def client_now():
         nonlocal client
@@ -484,13 +599,20 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
             client = compiler._client()
         return client
     calls = 0
-    while len(g.attempts) < max_iter and calls < MAX_CALLS:
+    while len(g.attempts) < max_iter and calls < max_calls:
+        from .contexts import ContextLimit, manage_context
+        try:
+            messages = manage_context(messages, max_tokens=max_context_tokens, **context_arguments())
+        except ContextLimit as error:
+            g.errors.append(str(error))
+            return done()
         calls += 1
         t_call = time.perf_counter()
         try:
-            resp = llm.call(client_now(), model=model, system=system, tools=CODEGEN_TOOLS, messages=messages)
+            resp = llm.call(client_now(), model=model, system=system, tools=CODEGEN_TOOLS, messages=messages,
+                            max_output_tokens=policy.max_output_tokens, effort=policy.effort)
         except Exception as e:  # noqa: BLE001 — classified below
-            if not llm.is_api_error(e):
+            if not llm.is_api_error(e) and not isinstance(e, llm.BudgetExceeded):
                 raise                          # a defect (a wrong argument, a test's script running out) propagates
             g.errors.append(llm.failure_text(e, "the call to the model failed"))
             g.transcript.append(llm.error_entry(calls, e, time.perf_counter() - t_call))
@@ -514,6 +636,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
             continue
         results: List[Dict[str, Any]] = []
         submitted = False
+        stalled = False
         for b in uses:
             inp = dict(b.input or {})
             if b.name == "submit_op":
@@ -526,12 +649,13 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                 src, select, params = inp.get("source") or "", inp.get("select") or {}, inp.get("params") or {}
                 with diag.scope(codegen_attempt=attempt), \
                         diag.span("codegen.attempt", model_turn=calls, tool_use_id=b.id) as record:
-                    problems = check_source(src)
+                    problems = check_source(src, goal_contract=goal_contract)
                     diag.event("codegen.source_checked", accepted=not bool(problems), problem_count=len(problems))
                     trials: List[FileTrial] = []
                     if not problems:
                         for i, f in enumerate(samples):
-                            t = trial(src, Path(f), select, params, out_dir / "sandbox" / f"attempt{attempt}" / f"{i:02d}")
+                            t = trial(src, Path(f), select, params, out_dir / "sandbox" / f"attempt{attempt}" / f"{i:02d}",
+                                      goal_contract=goal_contract, goal_binding=checked_bindings.get(str(f)))
                             trials.append(t)
                             problems += [f"{Path(f).name}: {p}" for p in t.problems]
                     record.update(passed=not bool(problems), problem_count=len(problems), trial_count=len(trials))
@@ -545,13 +669,20 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                     return done()                  # after the result is set: the history says it passed
                 results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
                                 "content": ("FAILED — fix and submit again:\n- " + "\n- ".join(problems))[:12000]})
+                try:
+                    executable_source = ast.dump(ast.parse(src), include_attributes=False)
+                except (SyntaxError, ValueError, TypeError):
+                    executable_source = src
+                stalled = progress.rejected([executable_source, select, params], problems)
                 continue
             try:
                 if b.name not in CODEGEN_READ_TOOLS:
                     raise KeyError(f"unknown tool {b.name}")
                 out = getattr(batch, b.name)(**inp)
                 results.append({"type": "tool_result", "tool_use_id": b.id,
-                                "content": json.dumps(out, ensure_ascii=False)[:30000]})
+                                "content": json.dumps(out, ensure_ascii=False)})
+                if progress.observe({"tool": b.name, "content": out}):
+                    stalled = False
             except Exception as e:  # noqa: BLE001 — every tool call gets an answer, or the next request is refused
                 results.append({"type": "tool_result", "tool_use_id": b.id, "is_error": True,
                                 "content": f"{type(e).__name__}: {e}"[:2000]})
@@ -559,6 +690,10 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
         g.transcript.append(llm.results_entry(calls, results))
         g.seconds = time.perf_counter() - t_all
         _save_history(g, out_dir)                  # every attempt kept as it happens
+        if stalled:
+            g.errors.append(f"no passing op after {len(g.attempts)} attempt(s): investigation stalled; "
+                            "equivalent rejected transforms repeated without new evidence")
+            return done()
     g.errors.append(f"no passing op after {len(g.attempts)} attempt(s)" if len(g.attempts) >= max_iter else
                     f"no passing op after {calls} calls ({len(g.attempts)} attempt(s))")
     return done()
@@ -573,19 +708,28 @@ def _save_history(g: GeneratedOp, out_dir: Path) -> None:
                                                 "request": g.request, "proposal": g.proposal, "brief": g.brief,
                                                 "model": g.model, "usage": g.usage.to_dict(),
                                                 "seconds": round(g.seconds, 2), "attempts": g.attempts,
-                                                "transcript": g.transcript})
+                                                "transcript": g.transcript, "context": g.context_state,
+                                                "goal_contract": g.goal_contract, "goal_bindings": g.goal_bindings})
 
 
-def pick_samples(files: Sequence[Path]) -> List[Path]:
-    """The files a generated op is proven on: the first file of each structure pattern, up to three — by path (two
-    files may share a name in different folders)."""
+def pick_samples(files: Sequence[Path], count: Optional[int] = None) -> List[Path]:
+    """Representative trial files, identified by full path. Automatic selection covers
+    every readable structural pattern and fills the shared sample allowance;
+    an explicit count overrides it. Every delivered file is still verified.
+    """
     from .profile import profile_batch
+    from .sampling import representative_samples
     files = [Path(f) for f in files]
-    out: List[Path] = []
-    for pat in profile_batch(files)["patterns"][:3]:
-        paths = pat.get("paths") or []
-        out.append(Path(paths[0]) if paths else next(f for f in files if f.name == pat["files"][0]))
-    return out
+    candidates, pattern_ids = [], {}
+    for pat in profile_batch(files)["patterns"]:
+        paths = [Path(p) for p in pat.get("paths") or []]
+        if not paths:
+            paths = [f for f in files if f.name in pat["files"]]
+        for path in paths:
+            if path not in pattern_ids:
+                candidates.append(path)
+                pattern_ids[path] = pat["pattern_id"]
+    return representative_samples(candidates, pattern_key=pattern_ids.__getitem__, count=count)
 
 
 def _op_name(src: str) -> str:
@@ -607,6 +751,8 @@ def save_generated(g: GeneratedOp, out_dir: Path) -> Path:
     p.write_text(g.source, encoding="utf-8")
     (d / f"{h}.history.json").write_text(json.dumps({"name": g.name, "select": g.select, "params": g.params,
                                                      "request": g.request, "proposal": g.proposal, "brief": g.brief,
+                                                     "goal_contract": g.goal_contract, "goal_bindings": g.goal_bindings,
+                                                     "approved_words": g.approved_words,
                                                      "model": g.model, "usage": g.usage.to_dict(),
                                                      "attempts": g.attempts}, indent=2, default=str), encoding="utf-8")
     return p
@@ -635,7 +781,8 @@ def _run_generated_files(g, files, out_dir, log, output_names):
     with tempfile.TemporaryDirectory() as tmp:
         for i, f in enumerate(files):
             with diag.scope(source=str(f)), diag.span("codegen.file") as outcome:
-                t = trial(g.source, f, g.select, g.params, Path(tmp) / f"{i:04d}")
+                t = trial(g.source, f, g.select, g.params, Path(tmp) / f"{i:04d}",
+                          goal_contract=g.goal_contract, goal_binding=g.goal_bindings.get(str(f)))
                 name = names[str(f)]
                 if t.passed:
                     data = t.output.read_bytes()

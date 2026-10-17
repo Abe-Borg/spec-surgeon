@@ -208,7 +208,7 @@ def test_claude_offers_a_snippet_and_the_pick_approves_its_words(folder, snippet
 
 
 def test_a_spec_placing_a_snippets_words_before_the_pick_is_refused(folder, snippet):
-    fake = FakeClient(submit(insert_spec(), "s1"), submit(insert_spec(), "s2"))
+    fake = FakeClient(submit(insert_spec(), "s1"), submit(insert_spec(), "s2"), submit(insert_spec(), "s3"))
     c = Conversation(REQUEST, files(folder), client=fake)
     turn = c.start()
     assert turn.status == "failed" and turn.spec is None

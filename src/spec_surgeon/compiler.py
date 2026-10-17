@@ -21,7 +21,8 @@ A submitted spec is checked before it is accepted:
   ``section-break`` … — anything a particular file's structure can cause) is accepted as long as at least one
   pattern in the batch plans cleanly, allowing Pass 1 to process the clean majority and set aside the outliers
   for the next pass; a spec that plans on no file at all (or a batch with no files) is rejected.
-A rejected spec goes back to the model once with the errors; a second rejection fails the compile.
+A rejected spec goes back with its errors while investigation makes progress; repeated equivalent failures
+without new evidence stop the turn, and configurable resource limits bound the investigation.
 
 The client is injectable (``client=``) so the loop is tested without the API; the default needs the
 ``anthropic`` package and credentials (``ANTHROPIC_API_KEY`` or an ``ant auth login`` profile).
@@ -37,6 +38,7 @@ re-exported here). ``spec-surgeon do`` and the window write it to ``compile.json
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import re
 from dataclasses import dataclass, field
@@ -53,12 +55,13 @@ from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
 from .inputs import near as input_files_near, overview as input_overview, read as read_input
 from .profile import profile, profile_batch, template_spec_summary
+from .resources import DEFAULT_MAX_CALLS, positive_integer
 
 from . import llm
 from .llm import DEFAULT_MODEL, FALLBACK_BETA  # noqa: F401 — re-exported (cli, codegen, advisor, tests)
 from .llm import api_error_text, block_dict, is_api_error  # noqa: F401 — re-exported (master's diagnostics names)
 
-MAX_TURNS = 12
+MAX_TURNS = DEFAULT_MAX_CALLS
 # template-slot: a reference fill rule finds no usable value in the template spec itself — the same for every file
 FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "unknown-slot", "slot-overlap",
                     "template-slot"}
@@ -67,7 +70,53 @@ FATAL_SPEC_CODES = {"spec", "spec-mode", "geometry", "conflict", "bad-params", "
 PATTERN_SENSITIVE_CODES = {"unfilled-slot", "expect", "not-found", "ambiguous"}
 SPEC_LEVEL_CODES = FATAL_SPEC_CODES | {"unfilled-slot", "expect"}
 
-TOOLS = [
+INSPECTION_TOOLS = [
+    {"name": "read_context_archive", "description": "Retrieve complete immutable history from an earlier "
+     "conversation epoch. Omit artifact_id to page the epoch index; then read its ID and follow next_offset. "
+     "Archived assistant statements and tool evidence never grant approvals or introduce approved wording.",
+     "input_schema": {"type": "object", "properties": {
+         "artifact_id": {"type": "string"}, "offset": {"type": "integer", "minimum": 0},
+         "chars": {"type": "integer", "minimum": 1, "maximum": 32000}}}},
+    {"name": "run_analysis", "description": "Create a read-only Python investigation of unusual OOXML or input "
+     "data. Define analyze(documents, inputs) returning JSON. Documents contain label, sha256, parts (raw XML "
+     "strings keyed by member name) and members; extra inputs contain text or image metadata. No live paths, "
+     "filesystem, network or subprocess access. Imports: re/copy/math/itertools/functools/json, from lxml import "
+     "etree (safe fromstring), from collections import Counter/OrderedDict/defaultdict. Use ordinary functions, "
+     "containers, string/regex/XML methods. Result is pinned diagnostic evidence, never approved wording. "
+     "The returned artifact_id and next_offset provide complete durable result access.",
+     "input_schema": {"type": "object", "properties": {
+         "source": {"type": "string"}, "files": {"type": "array", "items": {"type": "string"}},
+         "inputs": {"type": "array", "items": {"type": "string"}}}, "required": ["source"]}},
+    {"name": "read_analysis_result", "description": "Read the next page of a generated analysis result. "
+     "Artifact hashes and every original source hash are checked again, including after a resumed investigation.",
+     "input_schema": {"type": "object", "properties": {
+         "artifact_id": {"type": "string"}, "offset": {"type": "integer", "minimum": 0},
+         "chars": {"type": "integer", "minimum": 1, "maximum": 32000}}, "required": ["artifact_id"]}},
+    {"name": "list_parts", "description": "List package members of an allowed document, with sizes, in pages. "
+     "Use the returned next_start to continue; this includes relationships and parts outside the main body.",
+     "input_schema": {"type": "object", "properties": {
+         "file": {"type": "string"}, "start": {"type": "integer", "minimum": 0},
+         "count": {"type": "integer", "minimum": 1, "maximum": 200}}, "required": ["file"]}},
+    {"name": "read_paragraphs", "description": "Read complete paragraph text with exact paragraph indices and "
+     "styles, optionally matching a regex. Long paragraphs and later matches remain reachable through the next "
+     "cursor (start and text_offset); follow it with the same file/part/filter until next is null.",
+     "input_schema": {"type": "object", "properties": {
+         "file": {"type": "string"}, "part": {"type": "string"},
+         "start": {"type": "integer", "minimum": 0}, "text_offset": {"type": "integer", "minimum": 0},
+         "count": {"type": "integer", "minimum": 1, "maximum": 200},
+         "chars": {"type": "integer", "minimum": 1, "maximum": 16000},
+         "regex": {"type": "string"}, "style": {"type": "string"}}, "required": ["file"]}},
+    {"name": "read_xml_page", "description": "Read an XML inspection view of any package XML/relationships part "
+     "or one paragraph, without truncating inaccessible tails. Continue using next_offset with the same arguments. "
+     "Offsets are characters in the inspection view, not source-byte edit locations.",
+     "input_schema": {"type": "object", "properties": {
+         "file": {"type": "string"}, "part": {"type": "string"},
+         "paragraph_index": {"type": "integer", "minimum": 0},
+         "offset": {"type": "integer", "minimum": 0},
+         "chars": {"type": "integer", "minimum": 1, "maximum": 16000}}, "required": ["file"]}},
+]
+
+TOOLS = INSPECTION_TOOLS + [
     {"name": "inspect_profile", "description": "The full profile of one structure pattern of the batch (sections, "
      "what each header/footer shows, slots, styles in use with fonts, counts, hygiene).",
      "input_schema": {"type": "object", "properties": {"pattern_id": {"type": "string"}}, "required": ["pattern_id"]}},
@@ -122,7 +171,7 @@ TOOLS = [
 
 SYSTEM = """You compile a user's request about editing Word (.docx) specification files into an EditSpec — a JSON \
 program over a fixed library of deterministic operations. A separate engine plans, applies and verifies the spec on \
-every file; you never edit files and you never see XML.
+every file; your inspection tools can read source text and XML, but never edit files.
 
 The contract you must keep (these files go to clients; silent loss or invented text is unacceptable):
 - Formatting edits place zero characters. Content edits place only words the user gave verbatim (or a template's \
@@ -164,6 +213,36 @@ remain); pos in twips from the left margin (1440 = 1 inch) or "right_margin" / "
 use them for "at the right margin". styles_in_use show each style's tab_stops. set_tab_stops, set_paragraph_props and \
 set_properties' paragraph flags all change paragraph properties: on the same paragraphs they are separate specs (offer \
 a chain).
+- Paragraph borders and shading are set_borders_shading: borders is the paragraph's WHOLE border box — name every side \
+that should show (top, left, bottom, right, between, bar; size in eighths of a point, 4 = ½ pt; space in points; colour \
+6 hex digits or auto), a side not named is removed even where the style shows it, "none" removes every border; shading \
+{fill} (D9D9D9 is Word's 15% grey) or "none". Spacing, indents and alignment IN A STYLE ("make the PR1 style 6 pt \
+after") are set_paragraph_props with select {"styles": {"ids": [...]}} (alone, paragraph styles only, never tracked); \
+set_borders_shading takes the same styles target ("the note style gets a box"). The profiles' styles_in_use show each \
+style's borders, shading, spacing and alignment.
+- "Clear the direct/manual formatting", "make the text follow its styles again" is clear_direct_formatting (scope, \
+paragraphs, runs): run formatting of runs and marks and paragraph formatting go; styles, list numbers, hidden text and \
+the language never change; highlight, superscripts (vertAlign, position) and outline levels only when the user asks \
+(also). keep takes element names: "but keep the bold" is keep ["b", "bCs"]. Say in assumptions what stays.
+- The proofing language ("set the language to US English") is set_language {language: "en-US"}; "British spelling to \
+US" keeps other languages with replace_only ["en-GB"] — the profiles' markup.languages shows the languages in use. It \
+changes run properties and styles everywhere: a spec of its own (offer a chain). Never tracked.
+- Applying a style to paragraphs picked by appearance or pattern ("make every bold all-caps paragraph Heading 1", "the \
+paragraphs after PART 2 become PR1") is apply_style: select.paragraphs with the selection rules (has_bold, is_all_caps, \
+text_regex, after_heading_regex, between_paragraphs, style_in), style = the style's id or name; direct_formatting \
+"clear" when the paragraphs should look exactly like the style (their own bold, sizes, spacing go — by the clear rules), \
+"keep" (default) otherwise. Style mapping ("the architect's Heading 1 becomes our PRT everywhere") is map_styles with \
+map [{from, to}] — from: the architect's style ids from styles_in_use / character_styles_in_use / table_styles_in_use. \
+The user's own ("our office") styles come from the ATTACHED TEMPLATE: read_template lists its styles; put its exact path \
+in template, and a style the file lacks is imported with the styles it is based on, linked to and followed by, and its \
+list numbering. existing "keep" (default) leaves a style the file already has as the file defines it; "replace" only \
+when the user says their definition must win. A default paragraph style as from (Normal) maps every paragraph without \
+a style too. "Remove unused styles" is remove_unused_styles (which "all", or "custom" for the document's own styles; \
+keep for styles to spare). Restyling a paragraph changes how all its properties resolve: apply_style or map_styles \
+beside set_properties, set_tab_stops, set_paragraph_props or set_borders_shading on the same paragraphs, or beside a \
+change of the style definitions they use, are separate specs; removing the architect's styles that mapping left unused \
+is a chain's LAST stage (in the same spec it would see them still in use). Field codes naming a mapped style (TOC \\t, \
+STYLEREF) are flagged, not edited — say so in assumptions.
 - Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
 in fill_variables.table.file, replace_table.pairs_table.file or swap_image.image / match.image — what a table holds is \
 the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
@@ -213,7 +292,12 @@ template's font" follows the catalog rule: font and size from the template spec'
 batch's body_text sizes. State the template's values and the sizes in assumptions.
 - mode: "formatting" unless an op places characters; "content" for tracked wording changes; "untracked" when \
 the user asked for untracked wording or a template has literal fills.
-- Finish each turn by calling submit_editspec once with the whole spec, or ask_user. Keep tool calls few.
+- Inspect as deeply as needed before deciding. read_paragraphs, list_parts and read_xml_page have continuation \
+cursors: follow them when a sample omits relevant content. A short preview is not evidence that a target is absent. \
+Use new evidence and different hypotheses to fix rejected candidates; do not repeat the same failed approach.
+- Omit review.sample_files unless the user requests an explicit sample count. Automatic sampling covers every \
+structural pattern and fills the shared allowance; do not copy a small sample count from an example by default.
+- Finish each turn by calling submit_editspec once with the whole spec, or ask_user.
 """
 
 CHAT_NOTE = """
@@ -241,7 +325,7 @@ that is not clear.
 VIEW_PAGES_TOOL = {
     "name": "view_pages", "description": "See pages of a batch file (or of the attached template) as rendered images "
     "— when the request is about how something looks (a line, a logo, a box, 'like the template') or you need the "
-    "layout. Up to 3 pages per call; images cost, so look only when it helps.",
+    "layout. Up to 3 pages per call; inspect the pages needed to resolve the uncertainty.",
     "input_schema": {"type": "object", "properties": {
         "file": {"type": "string", "description": "a file name from the profiles, or \"template\""},
         "pages": {"type": "array", "items": {"type": "integer", "minimum": 1}, "maxItems": 3}},
@@ -467,7 +551,16 @@ class _Batch:
         self.template = Path(template) if template else None
         self._pkgs: Dict[str, DocxPackage] = {}
         self.work_dir: Optional[Path] = None      # where a conversation keeps its page renders (chat only)
+        self.artifact_dir: Optional[Path] = None  # stable investigation root across recovery passes
+        self.analysis_limits = None              # host-configured investigation.AnalysisLimits
+        self.context_dir: Optional[Path] = None
+        self.context_state = {}
+        self.max_image_tokens: Optional[int] = None  # None uses vision's shared generous default
+        self.renderer = "auto"
         self.inputs = input_files_near(paths, self.template)   # tables and pictures beside them (inputs.py)
+        self.source_pins = [{"path": str(path.resolve()), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+                            for path in list(dict.fromkeys(paths + self.inputs + ([self.template] if self.template else [])))
+                            if path.is_file()]
 
     def label(self, path: Path) -> str:
         """The label a batch file is shown and addressed by (its name when it is not one of the batch's files)."""
@@ -509,6 +602,7 @@ class _Batch:
     def pkg(self, name: str) -> DocxPackage:
         if name not in self.files:
             raise KeyError(f"no file {name!r} in this batch; files: {sorted(self.files)[:12]}")
+        self.check_source_pin(self.files[name])
         if name not in self._pkgs:
             self._pkgs[name] = DocxPackage.from_path(self.files[name])
         return self._pkgs[name]
@@ -528,6 +622,112 @@ class _Batch:
                     "profile": "(call inspect_profile)"} for p in self.prof["patterns"][4:]]}
 
     # ---- tools ----
+    def check_source_pin(self, path):
+        pin = next((p for p in self.source_pins if p["path"] == str(Path(path).resolve())), None)
+        if pin and hashlib.sha256(Path(path).read_bytes()).hexdigest() != pin["sha256"]:
+            raise ValueError("investigation source changed; start a new source-bound investigation")
+
+    def read_context_archive(self, artifact_id=None, offset: int = 0, chars: int = 16000):
+        from .contexts import read_context_archive
+        return read_context_archive(self, artifact_id, offset, chars)
+
+    def run_analysis(self, source: str, files=None, inputs=None):
+        from .investigation import run_analysis
+        return run_analysis(self, source, files, inputs)
+
+    def read_analysis_result(self, artifact_id: str, offset: int = 0, chars: int = 16000):
+        from .investigation import read_analysis_result
+        return read_analysis_result(self, artifact_id, offset, chars)
+
+    @staticmethod
+    def _offset(name: str, value: int) -> int:
+        if type(value) is not int or value < 0:
+            raise ValueError(f"{name} must be a non-negative integer")
+        return value
+
+    @staticmethod
+    def _page_size(name: str, value: int, maximum: int) -> int:
+        positive_integer(name, value)
+        if value > maximum:
+            raise ValueError(f"{name} must not exceed {maximum}; continue with the returned cursor")
+        return value
+
+    def list_parts(self, file: str, start: int = 0, count: int = 50):
+        pkg = self.pkg(file)
+        self._offset("start", start)
+        self._page_size("count", count, 200)
+        members = pkg.members
+        end = min(start + count, len(members))
+        return {"file": file, "source_sha256": hashlib.sha256(pkg.data).hexdigest(), "start": start,
+                "total": len(members), "next_start": end if end < len(members) else None,
+                "parts": [{"name": m.filename, "bytes": m.file_size,
+                           "xml": m.filename.lower().endswith((".xml", ".rels"))}
+                          for m in members[start:end]]}
+
+    def read_paragraphs(self, file: str, part: str = "", start: int = 0, text_offset: int = 0,
+                        count: int = 20, chars: int = 12000, regex: Optional[str] = None,
+                        style: Optional[str] = None):
+        """A resumable view of every w:p; indices also address show_xml/read_xml_page.
+
+        The cursor names the next unread paragraph and character, so one very long
+        paragraph cannot hide the rest of itself or prevent later matches being read.
+        """
+        self._offset("start", start)
+        self._offset("text_offset", text_offset)
+        self._page_size("count", count, 200)
+        self._page_size("chars", chars, 16000)
+        pkg = self.pkg(file)
+        part = part or pkg.main_part()
+        pars = paragraphs(pkg.xml(part))
+        sheet = StyleSheet(pkg)
+        rx = re.compile(regex) if regex else None
+        rows, remaining, cursor = [], chars, None
+        for index in range(start, len(pars)):
+            p = pars[index]
+            ps = p.find(f"{W}pPr/{W}pStyle")
+            sid = ps.get(W + "val") if ps is not None else sheet.defaults.get("paragraph")
+            content = display_text(p)
+            if (style and sid != style) or (rx and not rx.search(content)):
+                continue
+            begin = text_offset if index == start else 0
+            if begin > len(content):
+                raise ValueError(f"text_offset exceeds paragraph {index}'s {len(content)} characters")
+            if len(rows) >= count or remaining <= 0:
+                cursor = {"start": index, "text_offset": begin}
+                break
+            end = min(begin + remaining, len(content))
+            rows.append({"index": index, "style": sid, "text": content[begin:end],
+                         "text_offset": begin, "text_length": len(content),
+                         "nested": nearest_p(p) is not None})
+            remaining -= end - begin
+            if end < len(content):
+                cursor = {"start": index, "text_offset": end}
+                break
+        return {"file": file, "part": part, "source_sha256": hashlib.sha256(pkg.data).hexdigest(),
+                "paragraphs_in_part": len(pars), "paragraphs": rows, "next": cursor}
+
+    def read_xml_page(self, file: str, part: str = "", offset: int = 0, chars: int = 12000,
+                      paragraph_index: Optional[int] = None):
+        from lxml import etree
+        self._offset("offset", offset)
+        self._page_size("chars", chars, 16000)
+        pkg = self.pkg(file)
+        part = part or pkg.main_part()
+        root = pkg.xml(part)  # package members only; the existing parser never resolves external entities
+        if paragraph_index is not None:
+            self._offset("paragraph_index", paragraph_index)
+            pars = paragraphs(root)
+            if paragraph_index >= len(pars):
+                raise ValueError(f"paragraph_index must be below {len(pars)}")
+            root = pars[paragraph_index]
+        content = etree.tostring(root, encoding="unicode")
+        if offset > len(content):
+            raise ValueError(f"offset exceeds this XML view's {len(content)} characters")
+        end = min(offset + chars, len(content))
+        return {"file": file, "part": part, "source_sha256": hashlib.sha256(pkg.data).hexdigest(),
+                "paragraph_index": paragraph_index, "offset": offset, "total_chars": len(content),
+                "next_offset": end if end < len(content) else None, "xml": content[offset:end]}
+
     def inspect_profile(self, pattern_id: str):
         for p in self.prof["patterns"]:
             if p["pattern_id"] == pattern_id:
@@ -623,14 +823,17 @@ class _Batch:
                 raise KeyError(f"no file {file!r} in this batch; files: {sorted(self.files)[:12]}")
             path = self.files[file]
         wanted = sorted({int(n) for n in (pages or [1]) if int(n) >= 1})[:3] or [1]
-        pngs = vision.page_pngs(path, wanted, Path(self.work_dir) / "pages")
+        render_options = {"renderer": self.renderer} if self.renderer != "auto" else {}
+        pngs = vision.page_pngs(path, wanted, Path(self.work_dir) / "pages", **render_options)
         if not pngs:
             raise ValueError(f"{file} has no page {wanted}")
         cost = sum(vision.est_tokens(p) for p in pngs)
         used = getattr(self, "_image_tokens", 0)
-        if used + cost > vision.VIEW_BUDGET_TOKENS:
+        allowance = self.max_image_tokens if self.max_image_tokens is not None else vision.VIEW_BUDGET_TOKENS
+        if used + cost > allowance:
             raise ValueError(f"the page budget of this conversation is used up ({used} of "
-                             f"{vision.VIEW_BUDGET_TOKENS} image tokens) — ask the user to describe what they mean")
+                             f"{allowance} image tokens); {cost} more are needed for these pages. "
+                             "Continue from the collected evidence or increase max_image_tokens to inspect more pages.")
         self._image_tokens = used + cost
         blocks: List[Dict[str, Any]] = []
         for png in pngs:
@@ -895,9 +1098,10 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str], memory: 
                      "inspect their structure and compile an EditSpec tailored to them):\n"
                      + json.dumps(list(prior_failures)[:20], ensure_ascii=False))
     if batch.template:
-        parts.append(f"A TEMPLATE FILE IS ATTACHED: {batch.template} — a prepared header/footer template or a "
-                     f"template spec (e.g. the architect's); call read_template to see which, and put this exact path "
-                     f"in the op's 'template' param")
+        parts.append(f"A TEMPLATE FILE IS ATTACHED: {batch.template} — a prepared header/footer template, a "
+                     f"template spec (e.g. the architect's) or a file holding the user's own styles (apply_style, "
+                     f"map_styles); call read_template to see which (it lists the template's styles), and put this exact "
+                     f"path in the op's 'template' param")
     if batch.inputs:
         parts.append("INPUT FILES beside the documents — tables and pictures an op can read (read_input_file shows one; "
                      "put the exact path in the op's params):\n"
@@ -916,11 +1120,18 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str], memory: 
 def compile_request(request: str, files: Sequence[Path], template: Optional[Path] = None,
                     answers: Sequence[str] = (), model: Optional[str] = None, client=None,
                     memory: Optional[Dict[str, Any]] = None, log: Optional[Callable[[str], None]] = None,
-                    prior_failures: Optional[Sequence[Dict[str, Any]]] = None) -> CompileResult:
+                    prior_failures: Optional[Sequence[Dict[str, Any]]] = None,
+                    max_calls: Optional[int] = None, max_attempts: Optional[int] = None,
+                    max_output_tokens: Optional[int] = None, effort: Optional[str] = None,
+                    max_context_tokens: Optional[int] = None, analysis_limits=None) -> CompileResult:
     """Request + batch → CompileResult, in one go (the command line without a terminal, the tests). ``status`` is
     ``ok`` (a validated, dry-planned spec), ``questions`` (ask the user, then call again with ``answers``),
     ``unsupported`` (no op fits; see spec["proposal"]) or ``failed``. The loop itself is conversation.Conversation."""
     from .conversation import Conversation
+    policy = {key: value for key, value in (("max_calls", max_calls), ("max_attempts", max_attempts),
+                                           ("max_output_tokens", max_output_tokens), ("effort", effort),
+                                           ("max_context_tokens", max_context_tokens), ("analysis_limits", analysis_limits))
+              if value is not None}
     conv = Conversation(request, files, template=template, client=client, model=model, memory=memory,
-                        prior_failures=prior_failures, answers=answers, mode="compile", log=log)
+                        prior_failures=prior_failures, answers=answers, mode="compile", log=log, **policy)
     return conv.compile_result(conv.start())

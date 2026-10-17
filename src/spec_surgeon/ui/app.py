@@ -432,10 +432,12 @@ class MainWindow(QMainWindow):
         self.act_chain = QAction("Chain recipes…", self)
         self.act_library_folder = QAction("Open library folder", self)
         self.act_memory = QAction("Repair memory…", self)
+        self.act_campaign = QAction("Multi-project workspace…", self)
+        self.act_recovery = QAction("Open recovery workspace…", self)
         self.act_open = QAction("Open results folder", self)
         self.act_settings = QAction("Settings…", self, shortcut=QKeySequence("Ctrl+,"))
         self.act_exit = QAction("Exit", self, shortcut=QKeySequence("Ctrl+Q"))
-        for a in (self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
+        for a in (self.act_campaign, self.act_recovery, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
                   self.act_settings):
             m.addAction(a)
         m.addSeparator()
@@ -507,6 +509,7 @@ class MainWindow(QMainWindow):
         run.set_aside_btn.clicked.connect(self.do_set_aside)
         run.advise_btn.clicked.connect(self.do_advise)
         run.resolve_btn.clicked.connect(self.do_resolve)
+        run.load_recovery_btn.clicked.connect(self.do_load_recovery)
         run.only_problems.toggled.connect(run.proxy.set_only_problems)
         run.table.doubleClicked.connect(self._open_row)
         p.table.doubleClicked.connect(self._open_row)
@@ -517,6 +520,8 @@ class MainWindow(QMainWindow):
         self.act_library.triggered.connect(self.do_library)
         self.act_library_folder.triggered.connect(self._open_library_folder)
         self.act_memory.triggered.connect(self.do_memory)
+        self.act_campaign.triggered.connect(self.do_campaign)
+        self.act_recovery.triggered.connect(self.do_load_recovery)
         r.library_btn.clicked.connect(self.do_library)
         r.chain_btn.clicked.connect(self.do_chain)
         self.act_chain.triggered.connect(self.do_chain)
@@ -540,7 +545,8 @@ class MainWindow(QMainWindow):
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn, run.resolve_btn,
                             p.review_ack_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
-                            self.act_chain, self.act_memory]
+                            self.act_chain, self.act_memory, self.act_campaign, self.act_recovery,
+                            run.load_recovery_btn]
 
     # ---- values ---------------------------------------------------------------------------------------
     def _load_values(self, fresh: bool) -> None:
@@ -1299,12 +1305,25 @@ class MainWindow(QMainWindow):
 
     def _fill_preview(self) -> None:
         s, p = self.session, self.preview_page
+        if s.recovery is None:
+            if self.run_page.recovery_question.count() > 1:
+                self.run_page.recovery_request.clear()
+            self.run_page.recovery_question.clear()
+            self.run_page.recovery_question.addItem("Clarification for the current investigation", None)
         p.empty.hide()
         p.body.show()
         p.clear_samples()
         p.info.hide()
         if s.recovery is not None:
             result = s.recovery
+            questions = self.run_page.recovery_question
+            questions.clear()
+            questions.addItem("Clarification for the current investigation", None)
+            for question in getattr(result, "question_records", []):
+                if question.get("status") == "answered":
+                    continue
+                questions.addItem(str(question.get("question", question.get("text", "Question"))),
+                                  question.get("id"))
             p.request_lbl.setText(f"Recovery: {result.request}")
             p.summary_lbl.setText(result.to_text())
             p.generated_card.hide()
@@ -1914,6 +1933,48 @@ class MainWindow(QMainWindow):
         return Path(res["path"])
 
     @Slot()
+    def do_campaign(self):
+        if self.busy or self.updating:
+            return False
+        from .campaign_dialog import CampaignDialog
+        dialog = getattr(self, "campaign_dialog", None)
+        if dialog is None:
+            dialog = self.campaign_dialog = CampaignDialog(self.session, self.prompts, self)
+        dialog.refresh()
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.show()
+        dialog.raise_()
+        return True
+
+    @Slot()
+    def do_load_recovery(self):
+        if self.busy or self.updating:
+            return False
+        selected = self.prompts.pick_dir("Open saved recovery workspace", str(self.session.out_root))
+        if not selected:
+            return False
+
+        def done(text):
+            self.files_page.folder.setText(str(self.session.folder or ""))
+            self.run_page.recovery_request.clear()
+            snapshot = getattr(self.session.recovery, "options_snapshot", {})
+            self.run_page.recovery_resources.set_values(snapshot)
+            for key, control in (("allow_codegen", self.run_page.recovery_codegen),
+                                 ("use_memory", self.run_page.recovery_memory),
+                                 ("render", self.request_page.render_cb)):
+                if key in snapshot:
+                    value = snapshot[key]
+                    if key == "allow_codegen" and value is None:
+                        value = bool(getattr(self.session.recovery, "key", {}).get("adaptive_contract"))
+                    control.setChecked(value)
+            self.write(text)
+            self.preview_key = self._widget_key(keep_spec=False) + self._chat_key()
+            self._fill_preview()
+            self.go(2)
+        return self._work("Open recovery workspace", lambda log: self.session.load_recovery(Path(selected)),
+                          on_done=done, page=self.run_page)
+
+    @Slot()
     def do_resolve(self) -> bool:
         if self.busy or self.updating:
             return False
@@ -1923,19 +1984,24 @@ class MainWindow(QMainWindow):
                                            [("Set API key…", self.open_settings)])
             return False
         from ..recovery import RecoveryOptions
+        from dataclasses import fields
         self.sync()
         page = self.run_page
-        options = RecoveryOptions(max_cost_usd=page.recovery_budget.value(),
-                                  max_attempts=page.recovery_attempts.value(), max_calls=page.recovery_calls.value(),
-                                  allow_codegen=page.recovery_codegen.isChecked(),
-                                  use_memory=page.recovery_memory.isChecked(),
-                                  render=self.request_page.render_cb.isChecked())
+        snapshot = getattr(self.session.recovery, "options_snapshot", {})
+        values = {field.name: snapshot[field.name] for field in fields(RecoveryOptions) if field.name in snapshot}
+        values.update(page.recovery_resources.values(), allow_codegen=page.recovery_codegen.isChecked(),
+                      use_memory=page.recovery_memory.isChecked(), render=self.request_page.render_cb.isChecked())
+        options = RecoveryOptions(**values)
         request = page.recovery_request.toPlainText().strip() or None
+        question_id = page.recovery_question.currentData() if self.session.recovery is not None else None
+        if request and question_id:
+            request = {"answer": request, "question_id": question_id}
         if request is None and self.session.last_run_dir is None and self.session.recovery is None:
             request = self.typed_request() or None
         wkey = self._widget_key(keep_spec=False)
 
         def done(text):
+            page.recovery_request.clear()
             self.write(text or "")
             self.preview_key = wkey + self._chat_key()
             self._fill_preview()

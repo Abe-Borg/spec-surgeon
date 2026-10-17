@@ -4,6 +4,19 @@ Working notes for any Claude session touching this repository. Read before editi
 
 ## What this is
 
+**Adaptive workspaces (source, 2026-10-17):** `inventory.py` and `campaign.py` add persistent,
+project-scoped tasks above the existing engine. `recovery.py` persists resumable investigation
+state separately from compact diagnostic transcripts; READY candidates survive further passes.
+`resources.py` owns the ample configurable model allowances (50 attempts, 512 calls, $250 estimated
+spend, 64k output, 20m estimated total tokens, 1m image-token allowance, max effort). The conversation no longer hands off
+merely because two different candidate specs were rejected. `goal_contracts.py` resolves immutable
+document effects into source-bound targets; `verify/effects.py` resolves and verifies them independently.
+`campaign_planner.py` proposes reviewed contracts; `investigation.py`/`analysis_runner.py` run isolated
+read-only analysis; `contexts.py` seals complete signed provider epochs without rewriting their history.
+Legacy candidate-effect constraints remain authoritative for goals without independent coverage. Governed
+custom methods may change their implementation, never the approved effect, target cardinality or literal wording.
+See `docs/ADAPTIVE_WORKSPACES.md`. No persisted visual acknowledgement may authorize delivery.
+
 A deterministic engine for surgical .docx edits (Tier 1 of the three-tier design), plus a thin optional
 model layer. Since NL-editor Phase 1 the engine is an **operation library** (`ops/`) executed through
 **EditSpecs** (`editspec.py`, `spec-surgeon run-spec`); the v0.1.0 jobs are thin aliases over two of the ops. Phase 2
@@ -16,14 +29,18 @@ check of the preview (`vision.py`, advisory), custom transforms as an offer, and
 every Claude call goes through `llm.py`. Built-in operations batch 1 (2026-10-16) added nine ops over one in-paragraph
 edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inputs, and snippets as a library kind
 (`docs/BUILTIN_OPS_BATCH1_DESIGN.md`). Built-in operations batch 3 (2026-10-16) added the run selector `color_in` and
-`set_tab_stops` (`docs/BUILTIN_OPS_BATCH3_DESIGN.md`; items 22–23 were already `set_properties`). The user (Abraham) is a
+`set_tab_stops` (`docs/BUILTIN_OPS_BATCH3_DESIGN.md`; items 22–23 were already `set_properties`). Built-in operations
+batch 4 (2026-10-17) added paragraph borders and shading, spacing on styles, clearing direct formatting, the proofing
+language, applying a style by appearance or pattern, style mapping over a shared style import (closure and list
+numbering) and removing unused styles (`docs/BUILTIN_OPS_BATCH4_DESIGN.md`). The user (Abraham) is a
 fire sprinkler designer; these files go to clients;
 "I will lose my job" if content is silently lost or invented is the spec.
 
 ## Hard rules
 
 1. **Verifier independence.** Nothing under `src/spec_surgeon/verify/` may import `spec_surgeon.jobs`,
-   `spec_surgeon.ops`, `spec_surgeon.editspec`, `spec_surgeon.ooxml`, or `spec_surgeon.package`
+   `spec_surgeon.ops`, `spec_surgeon.editspec`, `spec_surgeon.ooxml`, `spec_surgeon.package`,
+   `spec_surgeon.goals`, or `spec_surgeon.goal_contracts`
    (`tests/test_independence.py`). It has its own zip reader (`verify/reader.py`), its own text extraction
    (`verify/textcheck.py`), and its own selector resolution, style-chain walk and theme lookup
    (`verify/props.py`), and its own slot detection, fill extraction and effective-property resolver
@@ -35,7 +52,11 @@ fire sprinkler designer; these files go to clients;
    (`verify/revisions.py`) —, hidden/note/blank rules (`verify/removal.py`), watermark reader and shape template
    (`verify/watermark.py`), link readers (`verify/links.py`) and property tables and settings order
    (`verify/docprops.py`), and (built-in batch 3) its own colour-list reading for the run selector
-   (`props._v_sel_colors`/`_v_sel_color_in`) and its own tab entries, section reader and tab-stop rule (`verify/tabs.py`).
+   (`props._v_sel_colors`/`_v_sel_color_in`) and its own tab entries, section reader and tab-stop rule (`verify/tabs.py`),
+   and (built-in batch 4) its own border levels, box and shading rules (`verify/borders.py`), cleared sets and symbol rule
+   use (`verify/clearing.py`), effective language (`verify/language.py`), style resolution, closure, list-id allocation
+   and copies (`verify/restyle.py`, `verify/styleimport.py`, `verify/applystyle.py`) and used-style scan
+   (`verify/unused.py`).
    Do not "deduplicate" these into shared helpers — the duplication is the point: a
    transform-side bug must not be able to hide behind the same bug in the check.
 2. **Predict first.** `Op.plan()` (and `Job.plan()`) must compute every prediction (diffs, parts, members
@@ -66,7 +87,11 @@ fire sprinkler designer; these files go to clients;
    — the member residual, `props._residual_members`): any change there must be registered by a kind that checked it,
    and a part a kind compares whole (`ctx.verified_parts`) is skipped by the residual only because the kind compared
    ALL of it. A kind is handed the user's own words (scope, options, defaults absent) and applies its own defaults —
-   never the transform's resolved copy (see "Built-in operations, batch 2").
+   never the transform's resolved copy (see "Built-in operations, batch 2"). `numbering.xml` is under no residual
+   (batch 4): a kind whose op changes it compares the WHOLE member with its own expected tree and registers it in
+   `verified_members` (`styles_imported`); a style definition a kind replaced is out of the styles residual only through
+   `ctx.replaced_styles` after the kind compared it whole and checked its place, a removed one through
+   `ctx.removed_styles` (the residual then requires it gone).
 9. **Overlapping ops are refused, never ordered by guess.** `merge_fragments` raises `conflict` when two ops
    touch the same block's text, the same property family of the same target, or anything in a member another
    op removes/restructures. Ops declare what they touch in `touches`; keep that list honest — including a
@@ -122,6 +147,49 @@ fire sprinkler designer; these files go to clients;
    for a header/footer part (a `set_page_setup` beside it is a plan-time conflict). Not declared: its reads of the style
    chains' tabs and of numbering (no op changes either), and `color_in`'s read of the colour chain (as `set_font`'s
    symbol rule).
+   Batch 4 (`docs/BUILTIN_OPS_BATCH4_DESIGN.md` §0.1 and "Built"; `base.check_conflicts`' docstring is the grammar):
+   three more forms. A **soft read** `verify-props:<family>` (`base.soft_read`) is reached by a change of that family only,
+   never by a `text` change of the target (the reading kind re-resolves its targets over the output — an in-paragraph
+   edit beside `set_properties` plans, as it did before batch 4). A **whole-member family read** `(member, "*",
+   "verify[-props]:<family>")` is reached by a change of that family anywhere in the member. **Incremental changes**
+   `uses+`/`uses-` of `(styles, "style:<id>")` — which elements name the style (`base.incremental`): two of one direction
+   commute, opposite directions collide (`base.changes_collide`); a bare `verify` read of a style (its definition) is not
+   reached by them (`base.read_covers`), `verify:uses` is by both, `verify:uses-` only by a removal.
+   A paragraph-style change (`apply_style`, `map_styles`) touches `(part, bi, "pPr")` and `(part, bi, "pStyle")`, a
+   character-style change of a run or mark `(part, bi, "rStyle")` (`map_styles`), a table-style change `(part, "tbl:<k>",
+   "tblPr")` (k = ordinal over `root.iter(w:tbl)`); `apply_style` declares `uses+` of the style it applies and `uses-` of each
+   restyled paragraph's old style, and soft-reads `pStyle` of a selected paragraph already in it; `map_styles` declares
+   `uses-` of every `from` and `uses+` of every `to` (also where nothing in scope uses the from). An op whose prediction or
+   post-condition reads a paragraph's effective formatting declares a soft `pStyle` read of it plus `selectors.chain_reads`:
+   the nearest table's `(part, "tbl:<k>", "verify-props:tblPr")`, `verify:replace` (an import swapping the definition) of
+   every style of the table, paragraph and character chains, `verify:add` of a style the chain names that the file lacks —
+   `set_properties` (direct; also `verify:props` of the chain styles, its own families, which `set_properties` on a style
+   declares as `(styles, "style:<id>", "props")`, so direct-beside-style is a conflict while `set_style_font` beside it still
+   plans), `set_tab_stops`, `set_borders_shading` (direct). `set_properties` (direct) also soft-reads `rPr`/`rStyle` of every
+   paragraph whose runs it selects, `markRPr`/`rStyle` for marks and `pPr` for paragraph flags, an already-as-asked target
+   included (its post-condition reads them in the output). A selection that reads every paragraph's chain declares
+   whole-member soft reads per part it chose from (`selectors.selection_reads`, added by `editspec.plan_spec`): `style_in`
+   → `pStyle`; `has_bold`, `is_all_caps`, runs `color_in`, `remove_hidden_text`, `remove_notes`' colour/hidden rules and
+   inline runs → `pStyle`, `rStyle`, `tblPr`. `set_borders_shading` touches `(part, bi, "pPr")` + `(part, bi, "pBdr" |
+   "shd")` per changed paragraph (only the elements that change), soft-reads `pBdr`/`shd` of every selected paragraph and
+   reads `(styles, "style:<id>" | "docDefaults", "verify:pPr")` of every level below; its styles target touches `(styles,
+   "style:<id>", "pPr")`. `set_paragraph_props` on styles touches `(styles, "style:<id>", "pPr")` and reads `verify:pPr` of
+   every selected style (and, when its lines rule ran, of the ancestors and docDefaults — the direct path reads the
+   paragraph style lineage under the same condition). `clear_direct_formatting` touches `(part, bi, "rPr" | "markRPr" |
+   "pPr")` and `(part, bi, <name>)` for every pPr child it clears (so `verify:tabs`/`verify:pBdr` readers conflict).
+   `set_language` touches every changed run/mark rPr, style rPr and docDefaults rPr, reads `(part, "scope", "verify")` of
+   every text part, whole-member soft reads `pStyle`/`rStyle`/`tblPr` of each, and `(styles, "*", "verify")`.
+   `map_styles` reads `(styles, "style:<id>", "verify")` of every `from` and every `to` the document holds; `apply_style`
+   reads the style it applies; `insert_paragraph` / `ensure_end_of_section` read the style they name. The style import
+   touches `(styles, "style:<id>", "add")` per imported style, `(styles, "name:<casefolded name>", "add")` per imported
+   copy (two imports bringing one name from two templates collide), `(styles, "style:<id>", a)` for `a` in `replace, rPr,
+   pPr, tblPr` per replaced one, `(numbering, "*", "add")` when lists are copied, and reads `(styles, "style:<id>",
+   "verify")` of every style the document holds that a copy names (basedOn/link/next) or an imported list level names.
+   `set_style_font` with `"all"` or a type selector reads `(styles, "*", "verify:add")` and `verify:replace` (an import
+   beside it would leave a style with its own font). `remove_unused_styles` touches `(styles, "style:<id>", a)` for `a` in
+   `remove, rPr, pPr, tblPr` per removed style and reads `(styles, "*", "verify:uses-")`: an op taking uses away beside it
+   (mapping, applying another style) would make the order decide what is unused — a plan-time conflict, the removal runs as
+   a chain's last stage; an op adding uses plans beside it.
 10. **Never create a part to make an edit work.** E.g. `remove_header_footer` refuses (`inheritance`) rather
     than add an empty header part. Adding members is allowed only when the op's whole purpose is the added
     member and it is predicted in `members_added` — today `apply_header_footer_template`, whose new parts
@@ -133,7 +201,10 @@ fire sprinkler designer; these files go to clients;
     override, predicted in `members_added`; V10 compares the created part whole with the verifier's own expected part
     and the package rels and `[Content_Types].xml` with the source plus exactly those entries (`verified_members`). A
     `docProps/custom.xml` no relationship names is refused (`malformed-properties`), never overwritten. `add_watermark`
-    adds runs to existing header parts and never a header (`no-header`). A new part's content type must match its
+    adds runs to existing header parts and never a header (`no-header`). The style import (batch 4) adds styles to the
+    existing styles part and list definitions to the existing numbering part, never a part: a document without a
+    numbering part refuses a numbered style (`style-numbering`), one without a styles part refuses (`style-import` /
+    `structure`). A new part's content type must match its
     relationship type (V1 checks it).
 11. **Fills are extracted, never typed.** A template slot gets its value from the target by a declared rule
     (`regex`, `paragraph_after`) or is the user's approved wording (`literal` → the op is `untracked` and the
@@ -153,7 +224,9 @@ fire sprinkler designer; these files go to clients;
     `swap_image.image` / `match.image`) is what the approval token and `approval_inputs` hash ("input file X: changed
     since the preview"), `load_spec` resolves them against the spec's folder, `save_recipe` stores them absolute; the
     ops pin their md5 (apply refuses `table-changed` / `image-changed`) and V10 re-reads them. `spec_templates` stays
-    templates only (the batch filter and `set_aside.json`'s `template`).
+    templates only (the batch filter and `set_aside.json`'s `template`). `apply_style` and `map_styles` (batch 4) read
+    their styles template through the same `template` param: pinned by md5 (apply refuses a changed file, `internal`),
+    re-read by V10 (`styles_imported`, `applied_style`, `mapped_styles` fail on an md5 mismatch), hashed by the token.
 13. **Claude's words are never the user's** (Phase 8). The words an op may place (`compiler.untraceable` over
     `placed_words`) must come from `Conversation.sources`: the request, `--answer` lines, every reply the user typed,
     the `wording` of a choice the user picked, and `PROJECT.json` without `_path` — each source checked on its own.
@@ -246,7 +319,7 @@ fire sprinkler designer; these files go to clients;
     the terminal `cli._try_saved_operation` runs the trials inside `_talk` and a failure returns to the prompt. A recipe
     picked there is used as the choice's snapshot, never a re-read file (`Session.recipe_name` says so).
 18. **One call site** (Phase 8). Every Claude call goes through `llm.call` (streamed, `MAX_TOKENS` 64000, effort
-    `high`, `fallbacks="default"`, 5-minute cache). Callers resolve the client when the call is made, through
+    `max`, `fallbacks="default"`, 5-minute cache). Callers resolve the client when the call is made, through
     `compiler._client()` (the advisor through `advisor._client`) or an injected `client` — never captured at import.
     Usage is summed per serving model (`llm.Usage`); a model missing from `PRICES` is "price unknown", never guessed.
     One classification and one record format for every caller, also in `llm`: `is_api_error`/`api_error_text`/
@@ -686,6 +759,171 @@ Built-in operations batch 3 (2026-10-16; `docs/BUILTIN_OPS_BATCH3_DESIGN.md`):
   at a cleared position — numbered: an own clear entry —, with clear_others nothing else). `tests/test_tab_stops.py`
   compares the section readers on five fixtures and the rules on 3,000 random cases, and plants shared defects in each.
 
+Built-in operations batch 4 (2026-10-17; `docs/BUILTIN_OPS_BATCH4_DESIGN.md` — each module's docstring is the full
+definition):
+
+- **Paragraph borders and shading** (`set_borders_shading`). *Levels below*: a direct target — docDefaults pPr → table
+  style chain (tblStyle, else the default table style) → paragraph style chain (pStyle's value — an empty or missing
+  value names no style, as in `template.Eff`/`effective.Resolver` —, else the default; `borders._v_paragraph_style_id`),
+  each root-most first; a style target — docDefaults pPr → its basedOn ancestors root-most first (not itself); a style of
+  another type is `style-mismatch`. *Visible side*: a side
+  element whose `w:val` is not `nil`/`none` (absent = visible). *Visible shading*: a `w:shd` not `w:val="nil"` and not
+  (`clear` with `w:fill` absent or `auto` and no `w:themeFill`). *Expected pBdr*: sides in the order top, left, bottom,
+  right, between, bar — an asked side exactly `{val, sz, space, color}`, a side not asked that ANY lower level shows
+  visibly `{val: nil}`, else absent; none → no pBdr. *Expected shd*: asked → exactly `{val, color, fill}`; `"none"` →
+  `{clear, auto, auto}` when the NEAREST lower level specifying a `w:shd` shows visible shading, else absent. *Already*:
+  the own element sig-equal to the expected one (both absent counts). Only the elements that differ are written (old
+  removed, expected inserted in `PPR_ORDER`); an emptied paragraph pPr (plain) or style pPr goes. Post-condition (verifier
+  only): every selected target's output shows the asked box under both inheritance readings (the nearest level holding a
+  pBdr decides all sides / the nearest level naming a side decides it) and the asked shading (nearest `w:shd`; none
+  visible for `"none"`). Transform: `ops/set_borders_shading.clean_params/paragraph_levels/style_levels/side_visible/
+  shading_visible/expected_borders/expected_shading/same_element/decide/write_elements`; verifier: `verify/borders.
+  _v_asked/_v_below_paragraph/_v_below_style/_v_side_shows/_v_shd_shows/_v_box/_v_shade/_v_gets/_check_elements/
+  _check_shown`. `tests/test_borders_shading.py` compares the two decisions on every paragraph and paragraph style of two
+  fixtures for four asks, and plants shared defects (levels without the document defaults or the table style, a box
+  without nil sides, an attribute-blind already rule, clear-auto counted as shading, a style's levels including itself,
+  a wrong default size, a wrong default scope).
+- **Spacing, indents and alignment on styles** (`set_paragraph_props`, `select.styles`), and the refusals of both its
+  targets. *Merge*: the asked attributes set, the others kept, the first line (`firstLine`/`firstLineChars`) drops the
+  hanging indent (`hanging`/`hangingChars`) and vice versa, `jc` gets `w:val` — the paragraphs' merge
+  (`set_paragraph_props.merged_attrs`/`write_values`, shared by the direct path) ↔ `verify/props._v_merged`. *Already*:
+  every asked element present in the style's own pPr with the merged attributes equal to its own. *Levels*, nearest
+  first: a paragraph — its own pPr, its paragraph style chain (pStyle's value, an empty one naming none, else the
+  default), its table's style chain, docDefaults (`set_paragraph_props.paragraph_levels` ↔ `props._v_paragraph_levels`);
+  a style — its own pPr, its basedOn ancestors, docDefaults (`style_levels` ↔ `_v_style_levels`). *Refusals*
+  (`conflict-property`, `set_paragraph_props.inherited_refusal` ↔ `verify/props._v_inherited_refusal`; V10 fails "the
+  op must refuse", direct path and styles target alike): `before`/`after` asked where the NEAREST level naming
+  `…Autospacing` turns it on; `before`/`after` asked where ANY level sets `…Lines` (the lines not asked); an indentation
+  side asked in twips (left/start, right/end, the first line: firstLine/hanging) where any level gives that side in
+  characters (`leftChars`/`startChars`, `rightChars`/`endChars`, `firstLineChars`/`hangingChars` — Word's priority), the
+  ones the merge removes from the target itself excepted, the side's Chars not asked; an `ind` alias whose other spelling
+  the target's own `w:ind` uses. The styles assertion carries the user's own parameters (`params`, `select`); the kind
+  reads them itself (`_v_ppr_values`) and fails `tracked: true`. A style of another type is `style-mismatch`.
+  `tests/test_style_paragraph_props.py` plants a merge that keeps `hanging`, refusal rules that read only the target
+  itself, forget Autospacing or forget the characters (both targets), a merge that writes nothing and a cleaning that
+  adds a default `lineRule`.
+- **Clearing direct formatting** (`clear_direct_formatting`; design `docs/BUILTIN_OPS_BATCH4_DESIGN.md` §3). Cleared run
+  names (default) `rFonts b bCs i iCs caps smallCaps strike dstrike outline shadow emboss imprint color spacing w kern sz
+  szCs u effect bdr shd fitText em`, opt-in `highlight vertAlign position`; cleared paragraph names `keepNext keepLines
+  pageBreakBefore widowControl suppressLineNumbers pBdr shd tabs suppressAutoHyphens spacing ind contextualSpacing
+  mirrorIndents jc textDirection textAlignment textboxTightWrap`, opt-in `outlineLvl framePr suppressOverlap`; never
+  everything else (w: namespace only). The set for a target = (default ∪ also) − keep, per target type (`keep`/`also`
+  from the cleared and opt-in lists only, none in both: `bad-params`). Symbol runs (set_font's definition + `w:sym` when
+  `skip_sym_runs`) and symbol marks (without the w:sym rule) never lose `rFonts`/`caps`/`smallCaps`. Result: the source
+  element minus the cleared children, in order; plain — an emptied run rPr removed, an emptied mark rPr removed and then
+  an emptied pPr (one the op changed); tracked — rPrChange (snapshot the source rPr) / pPrChange (snapshot the source pPr
+  without rPr, sectPr, pPrChange); existing markers refuse tracked (`tracked-format`), flagged plain; a tracked change on a
+  mark that is a pending revision refuses. Transform: `ops/clear_formatting.RUN_CLEARED/RUN_OPT_IN/PARA_CLEARED/
+  PARA_OPT_IN/SYMBOL_KEPT`, `cleared_names`, `gone_names`, `paragraph_clearing`, `check_markers`, `clear_rpr`,
+  `clear_paragraph`; verifier: `verify/clearing.V_RUN_CLEARED/V_RUN_OPT_IN/V_PARA_CLEARED/V_PARA_OPT_IN/V_SYMBOL_KEPT/
+  V_DEFAULT_PRESERVE`, `v_cleared_sets`, `_v_gone`, `v_decide`, `check_cleared_rpr`, `check_runs_and_mark`,
+  `v_expected_ppr`, `check_cleared_ppr`, `check_empty_ppr` (the symbol rule through `props.symbolic`). The check matches
+  what the op declares (review round): the pPr's other children are compared only when the op changed the pPr (it
+  touches `pPr` + each cleared name), the mark's rPr only when it changed the mark (`markRPr`; `mark=` of
+  `v_expected_ppr`/`v_ppr_sequence`/`check_cleared_ppr`, which `apply_style` passes too), and "an emptied pPr goes" is
+  judged on the OUTPUT (an empty `w:pPr` left in a paragraph the op changed fails, whichever op ran first). A plain clear
+  that empties a mark without touching the pPr's own children soft-reads those children (`emptying_reads`) when every one
+  is a property some op may remove, so whether the pPr empties cannot depend on the order. `tests/test_clear_formatting.py::
+  test_transform_and_verifier_decisions_agree` compares the two decisions on every paragraph of four fixtures under four
+  settings and plants shared defects (vanish, vertAlign or numPr in the cleared sets; a symbol rule that forgets the
+  paragraph style chain or w:sym; an empty default symbol-font list; marks skipped; emptied elements left).
+- **Proofing language** (`set_language`; design §4). Levels: docDefaults' rPrDefault/rPr, every style's own rPr (keyed by
+  styleId, the last of a repeated id; a style without one left alone), every run's and paragraph mark's own rPr in every
+  text part; never rPrChange snapshots, numbering, sdtPr, tblStylePr. A level gets attribute A = V when its own w:lang
+  carries A with a value ≠ V (exact; with `replace_only`, casefolded in the list); docDefaults without replace_only also
+  when absent (docDefaults/rPrDefault/rPr/lang created in schema order; no styles part → `structure`); the lang's other
+  attributes stay. Transform: `ops/set_language.clean_params`, `language_levels`, `level_gets`, `write_lang`,
+  `doc_defaults_rpr`; verifier: `verify/language._v_asked`, `_v_levels`, `_v_gets`, `_check_lang_rpr`,
+  `_check_doc_defaults_frame`. The **effective language** of the post-condition (per attribute: direct → character style
+  chain (rStyle, else default) → paragraph style chain (pStyle, else default) → table style chain → docDefaults, the first
+  whose w:lang carries it) exists only on the verifier side (`verify/language.v_effective_lang`), as the effective font.
+  `tests/test_language.py` plants shared defects (docDefaults skipped, styles skipped, a case-sensitive replace_only, a
+  writer that drops the lang's other attributes).
+- **Style import** (built-in batch 4 §5; shared by `map_styles` and `apply_style`). Resolution of a style reference: exact
+  `w:styleId`, else the one `w:name` equal by `name_key` (whitespace collapsed, casefolded; two → `style-mismatch`), else
+  none. Copied = imported ∪ replaced.
+  Closure: the requested template styles; for every COPIED closure style its `basedOn`/`link`/`next` targets and the
+  `w:pStyle` of every level of its numbering definition (`abstractNum/lvl`, `num/lvlOverride/lvl`), to a fixpoint; a style
+  the document holds and does not replace is in the closure (held) but not walked; a reference the template does not
+  define is skipped. Imported = closure styles the document lacks (template order); replaced (`existing: "replace"`) = the
+  requested styles the document holds; refusals `style-import` (no styles part, an imported template default, a replaced
+  style that is a default on either side or of another type, a copy's `name_key` another style holds after the import,
+  an extension element carrying text, `mc:AlternateContent` anywhere in a copy, a HELD style whose name differs from the
+  template style of that id — another style under the same id —, naming both) and `style-numbering` (no numbering part, a
+  numId not a whole number, num/abstractNum missing, `numStyleLink`/`styleLink`, `lvlPicBulletId` in a level or a
+  `lvlOverride` level, `mc:AlternateContent` in a list, a copied list's level naming a held style the file numbers with its
+  own list — the first numId on its basedOn chain; a held level style the file does not number is flagged). The template's
+  numbering part is read only when a copied style is numbered (malformed → `bad-params`, fatal: the same for every file).
+  New ids: copied styles in template order, each template numId first met → above every numId the document DEFINES OR
+  REFERENCES (every `w:numId/@w:val` of the text, styles and numbering parts, `w:numIdMacAtCleanup`; none → 1), its
+  abstractNum first met → above every abstractNumId defined or referenced (none → 0) — a dangling reference is never
+  captured by an imported list. Copies: extension markup stripped, ids set. Places: abstractNums after the last
+  abstractNum (else before the first num, else before `numIdMacAtCleanup`, else at the end), nums after the last num (else
+  before `numIdMacAtCleanup`, else at the end); imported styles appended, replaced in place. Transform:
+  `ops/style_import.name_key/resolve_style/closure_of/style_links/numbering_styles/own_num_id/check_definition/same_style/
+  numbered_in/used_ids/next_ids/allocate_ids/stripped/build_copies/insert_numbering/plan_import/apply_import/
+  check_template_unchanged`; verifier: `verify/restyle.v_resolve_style`, `verify/styleimport.v_derive_import/_v_refs/
+  _v_levels/_v_num_id/_v_lists/_v_chain_list/_v_has_alternate/v_used_ids/v_expected_numbering/check_styles_imported/
+  check_numbering_unchanged` — `numbering.xml` is compared whole by the import kinds even when no list is copied (by
+  `styles_imported`, or by `check_requested` when the op imports nothing), unless another import of the plan copies lists
+  and owns the comparison.
+  The style copies use `apply_header_footer_template.strip_foreign` ↔ `template.strip_extensions`.
+  `tests/test_style_import.py` compares the resolvers on every style of both fixtures, the derivations on 14 requests ×
+  2 documents and the placements on 6 numbering shapes, and plants shared defects (closure without link/next, without list
+  levels, walking held styles; an allocator reusing ids).
+- **Style mapping** (`map_styles`, §7). Pairs: one `from` twice or a `to` that is another pair's `from` (as written) →
+  `bad-params`; with a template every `to` resolves in the template (none → `bad-params`); per file `from` resolves in the
+  file (none → `missing`), the style mapped to = the template's (replace) / the file's when `to` resolves there, else the
+  template's, else `missing-style` (keep); `from` = it → `same`; one type of paragraph/character/table, no default character
+  or table style as `from`, no two `from` resolving to one style, no style mapped to that is another's `from` →
+  `style-mismatch`. Elements: paragraphs whose style (`w:pStyle/@w:val`, else the default paragraph style) is a paragraph
+  `from`; runs (nearest paragraph) and paragraph marks whose `w:rStyle` is a character `from`; tables whose
+  `w:tblPr/w:tblStyle` is a table `from`; a pair without elements is `unused` and imports nothing. The change: `w:val` set
+  (a new `w:pStyle` first in the pPr, a pPr first in the paragraph); tracked: `pPrChange` / `rPrChange` with the source
+  snapshot. A character `from` also used where the mapping cannot reach (`w:sdtPr/w:rPr`, `w:sdtEndPr/w:rPr`, `m:r/w:rPr`
+  in the parts in scope, `w:lvl/w:rPr` in numbering) refuses `structure` — never left referenced while every use is
+  claimed changed. The paragraph check compares the mark's rPr only when the kind restyled the mark; else the residual
+  does. Transform: `ops/map_styles.clean_params/paragraph_style_of/run_style_of/table_style_of/mapped_holders/
+  unmapped_uses/set_paragraph_style/set_run_style`; verifier: `verify/restyle._v_map/_v_pairs/_v_holders/_v_rstyle/
+  _v_tblstyle/_v_unmapped/_check_paragraph/_check_rpr/_check_table/_mapped_styles`. `tests/test_map_styles.py` plants shared defects (resolution by
+  id only, unstyled paragraphs forgotten for the default style, marks forgotten, tables forgotten, a tracked default, a
+  default scope without the headers).
+- **Applying a style** (`apply_style`, §6). The style resolved by the style import's resolution — map_styles' rule: with
+  `existing: "keep"` the document's own when it has one, else the template's (imported); with `"replace"` always the
+  template's (a template given must hold it as a paragraph style: `bad-params`). A paragraph is restyled when its style
+  (pStyle, else the default paragraph style) is not the asked one; with `direct_formatting: "clear"` its targets are
+  clear_direct_formatting's under the DEFAULT rules; neither → untouched and uncounted. The change: `w:pStyle` first in the
+  pPr (a pPr first in the paragraph) and the cleared children gone, in ONE `w:pPrChange` when tracked (the snapshot taken
+  before both). Transform: `ops/apply_style.ApplyStyle.plan/apply`, `set_pstyle` over `clear_formatting.paragraph_clearing/
+  check_markers/changes_needed/clear_paragraph(ppr_edit=…)` and `style_import.resolve_style/TemplateStyles/plan_import/
+  apply_import`; verifier: `verify/applystyle._applied_style` over `restyle.v_resolve_style`, `styleimport.check_requested`
+  (the op's `styles_imported` assertion must carry exactly the template style the kind found it needs), `clearing.v_decide/
+  check_runs_and_mark/v_expected_ppr/v_with_pstyle/check_cleared_ppr`. `tests/test_apply_style.py` plants shared defects
+  (the default paragraph style forgotten, a clear set revealing hidden text, the pStyle written last, the import left out
+  of the assertions).
+- **Unused styles** (`remove_unused_styles`). Styles = the top-level `w:style` of the styles part; two with one
+  `w:styleId` refuse (`structure`); type `w:type` (default paragraph); default/custom = `w:default`/`w:customStyle` on
+  (1/true/on); a style's names = its id, `w:name/@w:val` and each comma-separated stripped entry of `w:aliases/@w:val`,
+  casefolded, empty ones dropped. Scanned parts = every text part + every numbering and settings part (main part's
+  relationships). Referenced = the `w:val` of every W-namespace `pStyle`, `rStyle`, `tblStyle`, `numStyleLink`,
+  `styleLink`, `defaultTableStyle`, `clickAndTypeStyle` anywhere in a scanned part (snapshots included). Named by fields
+  = per text part, the casefolded concatenation in document order of `w:instrText`/`w:delInstrText` texts and
+  `w:fldSimple/@w:instr`: a style one of whose names is a substring; field-generated = a text part whose instruction
+  text holds `toc` keeps the styles named `toc 1`…`toc 9`, `table of figures`; `index`: `index 1`…`index 9`,
+  `index heading`; `toa`: `table of authorities`, `toa heading`. Keep = a style one of whose names equals an entry,
+  stripped and casefolded. Used = every default ∪ referenced ∪ named ∪ field-generated ∪ kept. Eligible = has an id,
+  type in `types` (default all four), custom when `which: custom`. Stays = used ∪ every non-eligible style (id-less
+  included), closed under the `w:val` of `w:basedOn`/`w:next`/`w:link`. Removed = eligible styles not staying, in part
+  order. Transform: `ops/remove_unused_styles.style_table/style_names/eligible/scanned_parts/references/instruction_text/
+  named_in_fields/field_generated/kept_by/seed_styles/closure/analyze`; verifier: `verify/unused._v_styles/_v_names/
+  _v_eligible/_v_parts/_v_refs/_v_instr/_v_named/_v_kept/_v_reach/_v_removable` (+ the output post-condition
+  `_v_dangling`: every reference — scanned parts, every output style's basedOn/next/link, field names and field-generated
+  names — to a style the SOURCE defined must find it in the output). The kind registers its OWN list in
+  `ctx.removed_styles`, checks each is absent and every staying style present (the residual skips a byte-identical styles
+  part). `tests/test_remove_unused_styles.py` compares the two on seven fixtures × five parameter sets and plants shared
+  defects (snapshots skipped, fields ignored, case-sensitive names, no closure, a closure seeded by the used styles alone,
+  numbering or settings not scanned, the field-update table forgotten, a default `which`, a case-sensitive keep).
+
 ## Roadmap
 
 `docs/NL_SURGICAL_EDITOR_PLAN.md` is the design and phased plan for the natural-language editor built on
@@ -726,8 +964,10 @@ proposals and recorded in the plan's status sections.
 - `ops/base.py` — `Op`, `Plan` (v0.1.0 fields + `members_removed/added`, `property_assertions`,
   `geometry_reference/reason/template`, `ops`), `PlanFragment` (+ `touches`, `rev_ids_needed`), `JobException`,
   `merge_fragments` (conflicts, mode, revision-id ranges, geometry), `check_conflicts` + `verify_family` (the read
-  grammar of `touches`: `verify`, `verify:<family>`; rule 9). `ops/__init__.py` — registry (`@register`).
-- `ops/selectors.py` — transform-side selector resolution, `DEFAULT_PRESERVE_FONTS`, font param parsing.
+  grammar of `touches`: `verify`, `verify:<family>`, the soft `verify-props:<family>`, whole-member family reads, and —
+  batch 4 — `soft_read`, `incremental` (`uses+`/`uses-`), `read_covers`, `changes_collide`; rule 9). `ops/__init__.py` —
+  registry (`@register`).
+- `ops/selectors.py` — transform-side selector resolution, `DEFAULT_PRESERVE_FONTS`, font param parsing; (batch 4) `chain_reads`/`table_ordinals` (what an effective value reads through the style levels) and `selection_families`/`selection_reads` (what a selection reads through every paragraph's chain; `editspec.plan_spec` adds them); an empty `scope` list is refused (`bad-params`).
 - `ops/*.py` — `fix_page_numbering`, `replace_text`, `remove_header_footer`, `set_font`, `set_style_font`, `set_properties`,
   `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, `apply_header_footer_template`; built-in batch 1:
   `replace_table.py` (`replace_table`, `set_issue_stamp`, `_Replacing`, `find_all`, `resolve_scope`, `tracked_of`),
@@ -740,7 +980,13 @@ proposals and recorded in the plan's status sections.
   `watermark.py` (`add_watermark`, `remove_watermark`, `WIDTHS`), `links.py` (`remove_hyperlinks`, `unlink_fields`),
   `docprops.py` (`set_document_properties`, `set_document_state`, `PROPERTIES`, `Changes`, `CustomProps`); built-in batch 3:
   `set_tab_stops.py` (`set_tab_stops`, `clean_params`, `decide`, `paragraph_sections`, `Margins`, `write_tabs`) and
-  `selectors.effective_color` (the `color_in` run selector); and the shared
+  `selectors.effective_color` (the `color_in` run selector); built-in batch 4: `set_borders_shading.py`
+  (`set_borders_shading`, `expected_borders`, `expected_shading`, `decide`), `clear_formatting.py`
+  (`clear_direct_formatting`, `ClearSettings`, `paragraph_clearing`, `clear_paragraph` — the reuse API), `set_language.py`
+  (`set_language`), `apply_style.py` (`apply_style`), `map_styles.py` (`map_styles`), `style_import.py` (the shared import:
+  `resolve_style`, `TemplateStyles`, `plan_import`, `StyleImport`, `apply_import`), `remove_unused_styles.py`
+  (`remove_unused_styles`, `analyze`), and `set_paragraph_props.merged_attrs`/`write_values`/`inherited_refusal` (its styles
+  target); and the shared
   pieces `fields.py` (`fields_of`, `Field`, `unlink`, `NEVER_UNLINK`, `REFUSAL_TEXT`), `markup.py` (`Look`, `color_in`),
   `removal.py` (`deletable`, `plan_paragraph_deletion`, `delete_paragraph`, `plan_run_removal`, `remove_runs`).
 - `ops/textedit.py` — the in-paragraph edit core (batch 1): `RunText`, `Edit`, `check_edits`, `predict`,
@@ -794,8 +1040,12 @@ proposals and recorded in the plan's status sections.
   `removed_hidden_text`, `removed_notes`, `removed_empty_paragraphs`), `verify/watermark.py` (`added_watermark`,
   `removed_watermark`), `verify/links.py` (`removed_hyperlinks`, `unlinked_fields`), `verify/docprops.py`
   (`document_properties`, `document_state`), over the shared `verify/fields.py` and `verify/markup.py`; batch 3's
-  `verify/tabs.py` (`TAB_KINDS`: `tab_stops`); `Ctx` gained
-  `verified_parts`, `expected_removed`, `verified_members`, `member_strip` (see "V10's batch-2 hooks").
+  `verify/tabs.py` (`TAB_KINDS`: `tab_stops`); batch 4's `verify/borders.py` (`borders_shading`), `verify/clearing.py`
+  (`cleared_formatting` + the reuse API), `verify/language.py` (`language`), `verify/styleimport.py` (`styles_imported`),
+  `verify/restyle.py` (`mapped_styles`, `v_resolve_style`), `verify/applystyle.py` (`applied_style`), `verify/unused.py`
+  (`removed_styles`), and `paragraph_props`' styles branch in `props.py`; `Ctx` gained
+  `verified_parts`, `expected_removed`, `verified_members`, `member_strip` (see "V10's batch-2 hooks") and, batch 4,
+  `replaced_styles`, `removed_styles`, `strip_tbl_style`.
 - `verify/explain.py` — why a check failed, in specifics, from the check's own data and the record's predictions
   (`failure_details`, `text_change` word diffs with ⇥ ⍽ ⏎ made visible); `VerificationRecord.failures()` and the
   record's "WHY IT FAILED" section use it. It is verifier code: the independence rule applies to it too.
@@ -849,7 +1099,7 @@ proposals and recorded in the plan's status sections.
   `validate_spec` runs `_check_shapes` right after the unknown-key check: every spec-level field has the published
   schema's shape (`request`/`summary` text, `unsupported`/`proposal` text or null, `assumptions`/`questions` lists of
   strings, `review`/`applies_to` objects, `assertions` a list), then `mode` a string in `MODES`, an op's `op` a string,
-  `review.sample_files` an int 1–3 (not a bool), `applies_to.pattern_ids` a list of strings, `applies_to.or` only
+  `review.sample_files` a positive int (not a bool), `applies_to.pattern_ids` a list of strings, `applies_to.or` only
   `"all"` — all `SpecError` code `spec`, never a `TypeError` or a misreading. `effective_font` sub-fields are not
   shape-checked (a wrong type there is V10's "could not evaluate").
 - `compiler.py` — the tools, the SYSTEM prompt (`system_prompt(chat)`; `CHAT_NOTE` adds the chat rules), `TOOLS`
@@ -899,8 +1149,9 @@ proposals and recorded in the plan's status sections.
   cache), `review_samples` + `VisualReview` (+ `transcript`, without the images) + `save_review` (rule 15; its guards:
   `_read_answer`, `_finding` — a page is an int, not a bool —, `_skip_for`, `_quiet`, `_describe`, `_traceback`;
   page labels and the findings' `file` are `compiler.file_labels` labels over all the samples);
-  `VIEW_BUDGET_TOKENS` for `view_pages` (60,000: about 20 letter pages — `page_tokens()` 2,714 a letter page at 150 dpi,
-  22 one at a time, 21 in calls of three; 18 pages of 11×17 at 117 dpi, 3,312 each; `page_dpi` is the one dpi rule
+  `VIEW_BUDGET_TOKENS` for `view_pages` (1,000,000 by default, configurable per conversation: `page_tokens()` is
+  2,714 per letter page at 150 dpi, 368 one at a time or 366 in calls of three; 301 pages of 11×17 at 117 dpi,
+  3,312 each; `page_dpi` is the one dpi rule
   `rasterize_pages` uses; a test derives the comment's figures).
 - `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`), chains (`chains/<slug>.json` + `.meta.json`, the
   stages' specs embedded as saved; `save_chain`/`load_chain`/`chain_file`, 2026-10-16), operations
@@ -1030,7 +1281,8 @@ teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without
 (`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
 (`tests/test_chain.py`, 2026-10-16), 963 with built-in operations batch 1 (2026-10-16), 1556 with master's bounded
 recovery and built-in operations batch 2 (2026-10-16), 1600 with built-in operations batch 3
-(`tests/test_tab_stops.py`, `tests/test_color_selector.py`, 2026-10-16) — all pass but four that skip in the Linux container: the
+(`tests/test_tab_stops.py`, `tests/test_color_selector.py`, 2026-10-16), 1938 with built-in operations batch 4 and its review round (2026-10-17) —
+all pass but four that skip in the Linux container: the
 Windows-only Credential Manager round trip and three `tests/test_llm.py` tests that need the `anthropic` package; in the
 container `python3 -m pytest -q -s`).
 
@@ -1616,8 +1868,11 @@ and the file PASSED with the page number still on the cover (V7 skips page 1 the
    both strip their own before V10's residual) and stays pinned as planning and verifying in both orders.
 5. **Not changed, recorded:** `set_font`'s symbol-run rule and `set_properties`' effective values with provenance also
    read the style chains from the source; a `set_style_font` beside them plans today and the compiler's "change all
-   fonts" spec relies on it (`test_sweep_fixes.py`). A style change to a symbol font beside a `set_font` is the only
-   way that read goes wrong — left for the built-in-operations round, not widened here.
+   fonts" spec relies on it (`test_sweep_fixes.py`). A style change to a symbol font beside a `set_font` is still
+   undeclared. Built-in batch 4 found a second way, now closed: `set_properties` on a style beside a direct
+   `set_properties` judging the same paragraphs by their effective value through that style planned and failed V10 — the
+   style target declares its own family (`props`) and the direct op reads it through its chains (`verify:props`), while
+   fonts (`set_style_font`) stay a family of their own (`tests/test_batch4_conflicts.py`).
 
 ## 2026-10-16 Bounded recovery, final assertions and local repair memory
 
@@ -1644,6 +1899,9 @@ trial, final checks and reuse around them.
    append clarification to the original request, including requests without a compiled spec. They never silently
    replace the original task. Current user wording is the only approval source; retrieved cases and model notes
    cannot authorize project wording or templates.
+   An explicitly approved adaptive contract instead fixes final effects and source-bound targets, allowing
+   different operations/selectors or generated methods only under independent original-to-final verification.
+   The contract, its template hashes, wording, target cardinality and user choices are immutable authority.
 4. **Stage verification and final requirements are distinct.** A chain's declared `assertions` are frozen and
    independently evaluated by `verify.outcomes` after the final stage, before delivery. Preserve them through
    `chain_key`, saved library chains, preview, and CLI `chain:NAME` expansion. A later stage violating a declared
@@ -1659,11 +1917,12 @@ trial, final checks and reuse around them.
    assertions exempt runs holding `w:sym` even with an empty preservation list and cannot become universal checks.
    Declared final assertions check only what they express. Never equate stage PASS, final assertion PASS, READY,
    delivery or a model's "no findings" with satisfaction of arbitrary natural-language intent.
-6. **Custom recovery is narrower than ordinary custom formatting.** It requires explicit opt-in and currently
-   permits only goals consisting entirely of page-setup operations. Existing sandbox and formatting hard limits
-   still apply. Independently verify its result against the ORIGINAL goal's analytic plan, as well as the
-   generated transform's own plan; a model cannot authorize unrelated edits by predicting them. Expand this
-   boundary only alongside independent original-goal coverage and adversarial tests.
+6. **Custom recovery requires independent coverage.** Legacy tasks without an adaptive contract still require
+   explicit opt-in and only support goals consisting entirely of page-setup operations. Supported approved
+   adaptive contracts allow sandboxed custom methods automatically unless disabled. Independently verify the
+   original-to-final effect and complete preservation boundary, as well as the generated method's own plan.
+   A writer or critic cannot authorize unrelated edits by predicting or endorsing them. Library reuse must retain
+   the contract and binding authority or explicitly refuse governed methods; it must never silently downgrade them.
 7. **Visual review remains advisory and can block export.** Recovery feeds findings back into investigation while
    attempts remain, preserves unresolved or skipped-review evidence, and shows current findings in Preview.
    `review_ack` is ephemeral and bound to this recovery token; it is never restored from saved JSON. CLI `--yes`
@@ -1828,3 +2087,49 @@ definitions are listed above. Rules that came out of it:
 9. **Not in this batch** (recorded): tab stops in style definitions, bold/colour on part of a paragraph (run-in headings), a
    list-level selector, theme colours as a value to set.
 
+## Built-in operations, batch 4 (2026-10-17)
+
+Abraham: "let's add more prebuilt operations. build these" — items 26–32 (paragraph borders and shading; spacing and indents
+on the styles themselves; clear direct formatting; the proofing language; ★ apply a style to paragraphs picked by
+appearance or pattern; ★ style mapping importing your styles from a template; remove unused styles).
+`docs/BUILTIN_OPS_BATCH4_DESIGN.md` is the design with every decision (taken on his behalf, each changeable) and, at its
+end, what the build changed; README → "Built-in operations, batch 4" is the user's view; the both-sides definitions are
+listed above. Built by four parallel builders on the groundwork commit (the verifier hooks, the `pStyle` reads, the
+fixtures `build_styles`/`build_style_template`), `apply_style` last on their reuse APIs, then integrated and reviewed.
+Rules that came out of it:
+
+1. **A paragraph's style is a property family others read** (`pStyle`, §0.1): restyling changes how every inherited
+   property resolves, so an op whose plan or post-condition reads the style chain declares a soft `verify-props:pStyle`
+   per paragraph plus `selectors.chain_reads` (the table's style, `verify:replace` of every chain style, `verify:add` of a
+   chain style the file lacks), and the restyling ops touch `pStyle`/`rStyle`/`tblPr`. A new op that reads a paragraph's
+   effective formatting in the output must declare it too. A selection that reads every paragraph's chain (`style_in`,
+   `has_bold`, `is_all_caps`, runs `color_in`, effective hidden) gets whole-member soft reads from
+   `selectors.selection_families` — add a key there when a selector starts reading the chains.
+2. **A post-condition on an already-as-asked target needs a read** (Codex on #28, again here): an op whose V10 check reads
+   a target in the OUTPUT whether or not it changed it declares a family read of that target (`verify:tabs`,
+   `verify-props:pBdr`, `verify-props:rPr` …), and an op that removes property elements declares one touch per element
+   name it removes (`clear_direct_formatting`), so the two meet at plan time. Make such a read soft (`verify-props:`) when
+   the kind re-resolves its targets over the output: a hard one refused every text edit of the paragraph (the review's
+   regression: `set_properties` beside `replace_text`).
+3. **Styles named by an op are read; removals are every aspect; uses are counted.** An op that writes a reference to an
+   existing style (applies it, maps to it, inserts with it, imports a style based on it) reads `(styles, "style:<id>",
+   "verify")`; `remove_unused_styles` declares its removals as `remove`/`rPr`/`pPr`/`tblPr` of that style. Which elements
+   name a style is the incremental family `uses+`/`uses-`: mapping A→B beside B→C, applying a style beside mapping it
+   away, applying a style beside a selection by it, and mapping beside removing unused styles are plan-time conflicts
+   (each order gave another file); two ops adding uses of one style still plan. "Used" is judged on the SOURCE, so mapping
+   then removing is a chain, the removal last — in one spec it is refused.
+4. **The style import is shared and checked on its own** (`ops/style_import.py` ↔ `verify/styleimport.py`): an op that
+   imports adds the import's touches and its `styles_imported` assertion, and its own kind checks that assertion carries
+   exactly the template styles it found needed (`check_requested`) — an op can neither skip the import's check nor smuggle
+   an import past it. Numbering is copied with new ids above the document's own, never renumbering what is there;
+   picture bullets and numbering-style lists refuse (`style-numbering`).
+5. **Borders replace the whole box, with `nil` for every side a lower level shows** — Word's per-side vs per-element
+   inheritance of paragraph borders is not modelled; the written box is right under both readings, and V10's output check
+   tests both.
+6. **Clearing never reveals or renumbers**: hidden text stays hidden, list numbers stay, symbol fonts keep their glyphs,
+   superscripts and highlight stay unless asked. `keep`/`also` take element names (bold is `b` + `bCs`).
+7. **Never tracked, by design**: style definitions (spacing, borders on styles, imports, removals) and the proofing
+   language. Mapping is plain by default (a whole-document change), tracked on request (tables refuse tracked).
+8. **Not in this batch** (recorded): run, page and table-cell borders; theme colours as a border/shading colour to set;
+   tab stops in styles; mapping a linked character style automatically; editing field codes that name a mapped style
+   (flagged); picture-bullet lists in imports.

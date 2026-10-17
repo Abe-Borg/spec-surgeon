@@ -19,7 +19,7 @@ def test_call_streams_with_the_agreed_settings():
     assert r.content[0].text == "hi"
     req = fake.requests[0]
     assert req["max_tokens"] == 64000 == llm.MAX_TOKENS
-    assert req["output_config"] == {"effort": "high"}
+    assert req["output_config"] == {"effort": "max"}
     assert req["fallbacks"] == "default" and req["betas"] == [llm.FALLBACK_BETA]
     assert req["cache_control"] == {"type": "ephemeral"}
     assert "thinking" not in req and "tool_choice" not in req       # both are refused by Opus 5.5 when forced
@@ -108,7 +108,7 @@ def test_the_real_sdk_offline_sends_what_we_mean_and_its_message_works_with_llm(
     r = llm.call(client, model="claude-opus-5-5", system="S", tools=tools, messages=msgs)
     body = seen[0]["body"]
     assert body["max_tokens"] == 64000 and body["stream"] is True and body["fallbacks"] == "default"
-    assert body["output_config"] == {"effort": "high"} and body["cache_control"] == {"type": "ephemeral"}
+    assert body["output_config"] == {"effort": "max"} and body["cache_control"] == {"type": "ephemeral"}
     assert "thinking" not in body and "tool_choice" not in body
     assert llm.FALLBACK_BETA in (seen[0]["beta"] or "")
     assert llm.served(r) == ("claude-opus-4-8", True)

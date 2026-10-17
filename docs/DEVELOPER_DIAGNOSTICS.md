@@ -35,7 +35,9 @@ Each JSON line is a complete event with `schema_version`, `event_id`, a full UTC
 - `run_id`, `batch_id`, `chain_id`, `preview_id`: processing and nested runs.
 - `source`, `output_name`, `attempt`, `worker_id`: a document and its worker attempt.
 - `conversation_id`, `user_turn`, `model_turn`, `model_call_id`: conversations and individual requests.
-- `recovery_id`, `pattern_id`, `recovery_attempt`: repair groups and trials.
+- `recovery_id`, `pattern_id`, `recovery_attempt`: repair groups and trials. Saved recovery sessions retain their
+  `recovery_id` across reload, continuation and delivery; `recovery.resume` and `recovery.schedule` spans identify
+  continuations and scheduling slices, including paused reasons and the current budget.
 - `span_id`, `parent_span_id`: one operation and the operation that caused it.
 
 Not every field applies to every event. A separate worker process receives the parent's correlation fields explicitly; background/render threads inherit them through a copied context. Source paths identify files across parent-side delivery events and worker journals; `attempt` distinguishes retries. Application and scoped journals can contain the same event: deduplicate by `event_id` when combining them.

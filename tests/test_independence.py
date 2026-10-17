@@ -2,11 +2,12 @@
 editspec.py, ooxml.py or package.py — nor from the Claude layer (Claude never grades: llm, conversation, compiler,
 codegen, advisor) or the app around the engine (preview, gui)."""
 import ast
+from importlib.util import resolve_name
 from pathlib import Path
 
 VERIFY = Path(__file__).resolve().parent.parent / "src" / "spec_surgeon" / "verify"
 _NAMES = {"jobs", "ooxml", "package", "ops", "editspec", "llm", "conversation", "vision", "library", "compiler",
-          "codegen", "advisor", "preview", "gui"}
+          "codegen", "advisor", "preview", "gui", "goals", "goal_contracts"}
 FORBIDDEN = {f"spec_surgeon.{n}" for n in _NAMES} | _NAMES
 
 
@@ -16,10 +17,10 @@ def test_verify_imports_nothing_from_transform_side():
         for node in ast.walk(tree):
             if isinstance(node, ast.ImportFrom):
                 mod = node.module or ""
-                assert not any(mod == f or mod.endswith("." + f) or mod.startswith(f + ".") for f in FORBIDDEN), (py.name, mod)
-                if node.level >= 2:  # from ..something import
-                    assert mod.split(".")[0] not in _NAMES, (py.name, mod)
-                    assert mod or all(a.name not in _NAMES for a in node.names), (py.name, [a.name for a in node.names])
+                resolved = resolve_name("." * node.level + mod, "spec_surgeon.verify") if node.level else mod
+                imported = [resolved] + [resolved + "." + alias.name for alias in node.names]
+                assert not any(name == f or name.startswith(f + ".")
+                               for name in imported for f in FORBIDDEN), (py.name, resolved)
             elif isinstance(node, ast.Import):
                 for alias in node.names:
                     assert not any(alias.name == f or alias.name.startswith(f + ".") for f in FORBIDDEN), (py.name, alias.name)

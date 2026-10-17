@@ -306,7 +306,7 @@ def test_a_saved_operation_is_tried_first_and_the_conversation_is_kept(folder, t
     assert choice.label.startswith("Try your operation “Header distance” — 0.625 in (saved ") and \
         "tried on this batch's sample files first — edited copies only" in choice.label
     msg = s.reply(choice_id=choice.id, log=quiet)
-    assert "passed verification on 1 sample file(s)" in msg and s.generated.passed and s.spec is None
+    assert "passed verification on 2 sample file(s)" in msg and s.generated.passed and s.spec is None
     c = s.conversation
     assert c is not None and c.notes[-1].startswith("Your operation 'Header distance' passed verification on the sample files")
     assert c.entries[-1].role == "app" and "passed verification" in c.entries[-1].text

@@ -170,3 +170,77 @@ def test_a_family_read_of_a_target_conflicts_with_a_change_of_that_family_or_of_
     with pytest.raises(JobException) as e:
         merge_fragments([templating, _frag("delete_paragraphs", [("word/document.xml", "*", "text")])])
     assert e.value.code == "conflict" and "would verify word/document.xml without changing it" not in e.value.reason
+
+
+def test_a_soft_read_is_reached_by_a_change_of_its_family_and_never_by_a_text_change():
+    """Built-in batch 4: set_properties' reads of the runs it finds already as asked are soft (``verify-props``) — a
+    replace_text edit in the same paragraph plans, as before batch 4 (V2 judges the words, the kind re-resolves its runs
+    over the output), while clear_direct_formatting's change of those run properties is a conflict."""
+    sp = _frag("set_properties", [("word/document.xml", "3", "verify-props:rPr"),
+                                  ("word/document.xml", "3", "verify-props:pStyle")])
+    assert merge_fragments([sp, _frag("replace_text", [("word/document.xml", "3", "text")])]).mode == "formatting"
+    for aspect in ("rPr", "pStyle"):
+        with pytest.raises(JobException) as e:
+            merge_fragments([_frag("clear_direct_formatting", [("word/document.xml", "3", aspect)]), sp])
+        assert e.value.code == "conflict" and e.value.details["reads"] == ["#2 set_properties"]
+    # a hard family read is still reached by a text change, and a bare soft read by every family but text
+    with pytest.raises(JobException):
+        merge_fragments([_frag("x", [("word/document.xml", "3", "verify:rPr")]),
+                         _frag("replace_text", [("word/document.xml", "3", "text")])])
+    bare = _frag("x", [("word/document.xml", "3", "verify-props:")])
+    assert merge_fragments([bare, _frag("replace_text", [("word/document.xml", "3", "text")])]).mode == "formatting"
+    with pytest.raises(JobException):
+        merge_fragments([bare, _frag("set_font", [("word/document.xml", "3", "rPr")])])
+
+
+def test_a_whole_member_family_read_is_reached_by_that_family_anywhere_in_the_member_only():
+    """A selection by style_in/has_bold/is_all_caps reads every paragraph's pStyle: a restyle of any paragraph of the
+    part conflicts, a run-property or text change does not; a whole-member change still does (rule 1)."""
+    sel = _frag("set_font", [("word/document.xml", "*", "verify-props:pStyle"), ("word/document.xml", "scope", "verify")])
+    with pytest.raises(JobException) as e:
+        merge_fragments([sel, _frag("apply_style", [("word/document.xml", "17", "pStyle")])])
+    assert e.value.code == "conflict" and "the pStyle of every target in it" in e.value.reason
+    assert e.value.details["reads"] == ["#1 set_font"] and e.value.details["changes"] == ["#2 apply_style"]
+    for other in ([("word/document.xml", "17", "rPr")], [("word/document.xml", "17", "text")],
+                  [("word/footer1.xml", "2", "pStyle")], [("word/document.xml", "17", "verify:pStyle")]):
+        assert merge_fragments([sel, _frag("other", other)]).mode == "formatting", other
+    with pytest.raises(JobException):
+        merge_fragments([sel, _frag("delete_paragraphs", [("word/document.xml", "*", "text")])])
+    # a hard whole-member family read is reached by text changes inside the member too
+    with pytest.raises(JobException):
+        merge_fragments([_frag("x", [("word/document.xml", "*", "verify:pStyle")]),
+                         _frag("replace_text", [("word/document.xml", "4", "text")])])
+
+
+def test_incremental_uses_commute_in_one_direction_and_collide_in_opposite_ones():
+    """``uses+``/``uses-`` of a style: two ops adding uses of one style commute; mapping a style away (uses-) beside an
+    op that applies it (uses+) is order-dependent; a selection by the style (verify:uses) meets both; remove_unused's
+    judgement (verify:uses-) only a removal; a bare read of the style's definition neither."""
+    st = "word/styles.xml", "style:Heading2"
+    add1, add2 = _frag("apply_style", [(*st, "uses+")]), _frag("apply_style", [(*st, "uses+")])
+    away = _frag("map_styles", [(*st, "uses-")])
+    away2 = _frag("apply_style", [(*st, "uses-")])
+    assert merge_fragments([add1, add2]).mode == "formatting"
+    assert merge_fragments([away, away2]).mode == "formatting"
+    for a, b in ((add1, away), (away, add1)):
+        with pytest.raises(JobException) as e:
+            merge_fragments([a, b])
+        assert e.value.code == "conflict" and sorted(e.value.details["aspects"]) == ["uses+", "uses-"]
+    selection = _frag("set_font", [(*st, "verify:uses")])
+    for change in (add1, away):
+        with pytest.raises(JobException):
+            merge_fragments([selection, change])
+    judgement = _frag("remove_unused_styles", [("word/styles.xml", "*", "verify:uses-")])
+    assert merge_fragments([judgement, add1]).mode == "formatting"
+    with pytest.raises(JobException):
+        merge_fragments([judgement, away])
+    definition = _frag("insert_paragraph", [(*st, "verify")])
+    for change in (add1, away2):
+        assert merge_fragments([definition, change]).mode == "formatting"
+    with pytest.raises(JobException):
+        merge_fragments([definition, _frag("set_style_font", [(*st, "rPr")])])
+    # a plain change of the family collides with an incremental one, and an incremental aspect is never a read
+    with pytest.raises(JobException):
+        merge_fragments([_frag("x", [(*st, "uses")]), add1])
+    from spec_surgeon.ops.base import incremental
+    assert incremental("uses+") == ("uses", "+") and incremental("verify:uses-") is None and incremental("rPr") is None

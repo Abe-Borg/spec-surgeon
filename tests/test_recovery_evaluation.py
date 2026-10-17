@@ -83,6 +83,24 @@ def test_unknown_cost_does_not_become_zero_or_disappear_from_live_economics(tmp_
     assert result["summary"]["live_cost_per_human_accepted_batch_usd"] is None
 
 
+def test_continuation_costs_and_calls_include_prior_resource_segments(tmp_path):
+    report = _report(cost=2)
+    report["resource_history"] = [{"calls": 7, "estimated_cost_usd": 5,
+                                   "usage": {"cost_usd": 4, "served_models": ["prior-model"]}}]
+    row = evaluate(_manifest(tmp_path, [(report, {"execution": "live", "human_review": _accepted()})]))["cases"][0]
+    assert row["calls"] == 8 and row["estimated_cost_usd"] == 7
+    assert row["reported_usage_cost_usd"] == 6 and row["resource_segment_count"] == 2
+    assert row["served_models"] == ["prior-model"]
+
+
+def test_unknown_prior_spend_does_not_disappear_after_resuming(tmp_path):
+    report = _report(cost=2)
+    report["resource_history"] = [{"calls": 1, "estimated_cost_usd": None, "usage": {"cost_usd": None}}]
+    result = evaluate(_manifest(tmp_path, [(report, {"execution": "live", "human_review": _accepted()})]))
+    assert result["cases"][0]["estimated_cost_usd"] is None
+    assert result["summary"]["live_cost_per_human_accepted_batch_usd"] is None
+
+
 def test_budget_stopped_case_can_meet_expectations_without_becoming_accepted(tmp_path):
     report = _report(ready=False)
     report["budget"]["exhausted_reason"] = "recovery call limit reached"

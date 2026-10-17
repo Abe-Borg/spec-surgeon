@@ -79,9 +79,10 @@ def test_a_rejected_spec_goes_back_once(folder):
     assert res.status == "ok"
     err = fake.requests[1]["messages"][-1]["content"][0]
     assert err["is_error"] and "unknown op 'remove_headers'" in err["content"]
-    fake = FakeClient(resp(tool("submit_editspec", {"spec": bad})), resp(tool("submit_editspec", {"spec": bad}, "t2")))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": bad})), resp(tool("submit_editspec", {"spec": bad}, "t2")),
+                      resp(tool("submit_editspec", {"spec": bad}, "t3")))
     res = compile_request("remove all headers and footers", files(folder), client=fake)
-    assert res.status == "failed" and "rejected twice" in res.errors[0]
+    assert res.status == "failed" and "stalled" in res.errors[0]
 
 
 def test_dry_plan_catches_spec_level_mistakes(folder):

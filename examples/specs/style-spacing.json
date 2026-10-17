@@ -1,0 +1,42 @@
+{
+  "request": "Set the Normal style to 6 pt after with single line spacing",
+  "summary": "The Normal paragraph style (and every style based on it, unless it sets its own value) gets 6 pt space after and single line spacing; paragraphs with their own direct spacing keep it and are flagged.",
+  "assumptions": [
+    "the change is made in the style definition, not on the paragraphs: every paragraph of the style follows unless it sets its own spacing",
+    "6 pt after is 120 twips; single spacing is line 240 with the auto rule",
+    "style definitions are never tracked (Word does not track them either)"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_paragraph_props",
+      "select": {
+        "styles": {
+          "ids": [
+            "Normal"
+          ]
+        }
+      },
+      "params": {
+        "spacing": {
+          "after": 120,
+          "line": 240,
+          "lineRule": "auto"
+        }
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

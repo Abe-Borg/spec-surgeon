@@ -203,6 +203,37 @@ def test_unwritable_model_journal_does_not_change_call_result(tmp_path):
         assert request(FakeClient(answer)) is answer
 
 
+def test_model_diagnostics_match_the_configured_request_limits(tmp_path):
+    path = tmp_path / "events.jsonl"
+    client = FakeClient(resp(text("ok")))
+    with diag.scope(path):
+        llm.call(client, model=llm.DEFAULT_MODEL, system="", tools=[], messages=[],
+                 max_output_tokens=4096, effort="medium")
+    sent = client.requests[0]
+    done = named(events(path), "model.call.succeeded")[0]
+    assert sent["max_tokens"] == done["max_output_tokens"] == 4096
+    assert sent["output_config"]["effort"] == done["effort"] == "medium"
+
+
+def test_resumed_recovery_keeps_its_journal_identity_and_budget_history(source, tmp_path):
+    spec = goal()
+    options = recovery.RecoveryOptions(render=False, use_memory=False, max_calls=1)
+    first = recovery.recover([source], spec["request"], tmp_path / "recovery", spec=spec, options=options,
+        client=FakeClient(resp(tool("list_styles", {"file": source.name}))))
+    assert not first.ready and first.budget["calls"] == 1
+    assert recovery.load_recovery(first.out_dir).recovery_id == first.recovery_id
+    second = recovery.resume_recovery(first.out_dir, client=FakeClient(repair(spec)))
+    assert second.ready and second.recovery_id == first.recovery_id
+    assert second.resource_history[0]["calls"] == second.budget["calls"] == 1
+    recovery.deliver_recovery(second)
+    recorded = events(first.out_dir / "logs/events.jsonl")
+    for name in ("recovery.budget.stopped", "recovery.resume.succeeded", "recovery.delivery.succeeded"):
+        assert named(recorded, name)[0]["recovery_id"] == first.recovery_id
+    slices = named(recorded, "recovery.schedule.succeeded")
+    assert len(slices) == 2 and all(row["recovery_id"] == first.recovery_id for row in slices)
+    assert slices[0]["paused_reason"] and slices[1]["statuses"] == {"READY": 1}
+
+
 def test_memory_initialization_failure_remains_explainable_while_repair_continues(source, tmp_path, monkeypatch):
     from spec_surgeon import repair_memory
 

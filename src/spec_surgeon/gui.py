@@ -133,6 +133,7 @@ class Session:
     last_chain: Any = None                        # chain.ChainResult of the last Run (the window's results table)
     recovery: Any = None                          # investigated copies, awaiting review and export
     last_recovery: Any = None                     # recovery whose ready copies were exported
+    campaign: Any = None                          # durable multi-project workspace, independent of the four steps
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
 
     def _diagnostic_state(self) -> Dict[str, Any]:
@@ -501,7 +502,8 @@ class Session:
 
     @staticmethod
     def _generated_key(g) -> Dict[str, Any]:
-        return {"generated_source": g.source, "select": g.select, "params": g.params}
+        from .preview import generated_key
+        return generated_key(g)
 
     @_session_action
     def _codegen(self, request: str, proposal: str, files: List[Path], log: Log, brief: Optional[str] = None,
@@ -956,7 +958,25 @@ class Session:
         return "\n".join(lines)
 
     @_session_action
-    def resolve_remaining(self, log: Log, options=None, request: Optional[str] = None) -> str:
+    def load_recovery(self, run_dir: Path) -> str:
+        """Reopen saved investigation evidence without making a model call or restoring review approval."""
+        from .recovery import load_recovery
+        result = load_recovery(run_dir)
+        self._adopt_recovery(result)
+        self.selected_files = [Path(item.source) for item in result.files]
+        if self.selected_files:
+            self.folder = self.selected_files[0].parent
+        return result.to_text()
+
+    def _adopt_recovery(self, result) -> None:
+        self._set_outcome()
+        self.end_conversation()
+        self.recovery = result
+        self.out_dir = result.out_dir
+        self.questions = list(result.questions)
+
+    @_session_action
+    def resolve_remaining(self, log: Log, options=None, request: Any = None) -> str:
         """Investigate the last run's exceptions, or the current preview's failed files, on copies.
 
         No export is performed here. The returned candidates become the reviewable outcome for Run.
@@ -964,9 +984,12 @@ class Session:
         from .recovery import recover, recover_from_run
         out = Path(self.out_root) / datetime.now().strftime("%Y%m%d-%H%M%S-%f-recovery")
         previous = self.recovery
-        if previous is not None and previous.ready and self.last_recovery is not previous:
-            raise ValueError("Export the ready recovery copies before investigating the remaining files again. "
-                             "The current ready copies are still available on the Preview step.")
+        if previous is not None:
+            from .recovery import resume_recovery
+            result = resume_recovery(previous.out_dir, request=request, options=options,
+                                     client=self.client, log=log)
+            self._adopt_recovery(result)
+            return result.to_text()
         source_run = previous.out_dir if previous is not None else self.last_run_dir
         if (previous is None and (self.preview is not None or self.conversation is not None)
                 and self.out_dir is not None and self.last_run_dir != self.out_dir / "run"):
@@ -975,6 +998,8 @@ class Session:
             result = recover_from_run(source_run, out, request=request, options=options,
                                       client=self.client, log=log)
         else:
+            if request is not None and not isinstance(request, str):
+                raise ValueError("Scoped answers require an existing recovery investigation.")
             files = self.files()
             pv = self.preview
             if pv is not None:
@@ -994,11 +1019,7 @@ class Session:
                              spec=self.spec, chain=self.chain, prior_failures=self.prior_failures,
                              template=self.template, approved_words=approved, options=options,
                              client=self.client, log=log)
-        self._set_outcome()
-        self.end_conversation()
-        self.recovery = result
-        self.out_dir = result.out_dir
-        self.questions = list(result.questions)
+        self._adopt_recovery(result)
         return result.to_text()
 
     @_session_action

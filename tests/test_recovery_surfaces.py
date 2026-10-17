@@ -30,6 +30,7 @@ def result(tmp_path, *, blocking=False, ready=True):
 
 @pytest.fixture
 def recovery_stub(monkeypatch, tmp_path):
+    from spec_surgeon.recovery import RecoveryOptions
     state = SimpleNamespace(result=result(tmp_path), calls=[], exports=[])
 
     def recover_from_run(run, out, **kw):
@@ -41,8 +42,14 @@ def recovery_stub(monkeypatch, tmp_path):
         state.exports.append((value, kw))
         return value.out_dir / "outputs"
 
-    module = SimpleNamespace(RecoveryOptions=SimpleNamespace, recover_from_run=recover_from_run,
-                             recover=lambda *a, **kw: state.result, deliver_recovery=deliver_recovery)
+    def resume_recovery(run, **kw):
+        state.calls.append((run, run, kw))
+        state.result.review_ack = ""
+        return state.result
+
+    module = SimpleNamespace(RecoveryOptions=RecoveryOptions, recover_from_run=recover_from_run,
+                             recover=lambda *a, **kw: state.result, deliver_recovery=deliver_recovery,
+                             resume_recovery=resume_recovery, load_recovery=lambda run: state.result)
     monkeypatch.setitem(sys.modules, "spec_surgeon.recovery", module)
     state.module = module
     return state
@@ -117,16 +124,27 @@ def test_recovery_can_investigate_a_failed_compile_without_an_editspec(recovery_
     assert not recovery_stub.calls  # the unrelated older run was not retried
 
 
-def test_resolving_again_keeps_ready_copies_until_export(recovery_stub, tmp_path):
+def test_resolving_again_retains_ready_copies_without_requiring_export(recovery_stub, tmp_path):
     session = Session(out_root=tmp_path / "out", last_run_dir=tmp_path / "original-run")
     session.resolve_remaining(lambda _: None)
     first_folder = session.recovery.out_dir
-    with pytest.raises(ValueError, match="Export the ready recovery copies"):
-        session.resolve_remaining(lambda _: None)
-    assert len(recovery_stub.calls) == 1
-    session.run(False, False, lambda _: None)
+    candidates = list(session.recovery.ready)
+    session.resolve_remaining(lambda _: None, request={"answer": "Arial", "question_id": "q1"})
+    assert len(recovery_stub.calls) == 2 and not recovery_stub.exports
+    assert session.recovery.out_dir == first_folder
+    assert session.recovery.ready == candidates
+    assert recovery_stub.calls[-1][2]["request"] == {"answer": "Arial", "question_id": "q1"}
     session.resolve_remaining(lambda _: None)
     assert recovery_stub.calls[-1][0] == first_folder  # current unresolved manifest, not the original batch again
+
+
+def test_session_loads_saved_recovery_without_model_or_export(recovery_stub, tmp_path):
+    session = Session(out_root=tmp_path / "out", client=None)
+    session.load_recovery(tmp_path / "saved")
+    assert session.recovery is recovery_stub.result
+    assert session.selected_files == [recovery_stub.result.files[0].source]
+    assert session.folder == tmp_path
+    assert not recovery_stub.calls and not recovery_stub.exports
 
 
 def test_recovery_rows_distinguish_ready_candidates_from_unresolved_files(tmp_path):
@@ -198,3 +216,84 @@ def test_window_resolves_reviews_and_exports_copies(qt_env, recovery_stub, tmp_p
     assert "ERROR" not in log, log
     assert recovery_stub.exports[-1][1] == {"acknowledge_review": True}
     assert ui["results_model"].badges() == ["pass"]
+
+
+def test_window_reopens_saved_recovery_keylessly(qt_env, recovery_stub, tmp_path, monkeypatch):
+    from spec_surgeon import llm
+    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    monkeypatch.setattr(llm, "credentials_found", lambda: False)
+    window = build_window(Session(out_root=tmp_path / "out"),
+                          prompts=RecordingPrompts(files=[str(tmp_path / "saved")]))
+    qt_env[1].append(window)
+    window.act_recovery.trigger()
+    log = window._spec_surgeon["wait"]()
+    assert "ERROR" not in log, log
+    assert window.session.recovery is recovery_stub.result
+    assert window.stack.currentWidget() is window.preview_page
+    assert window.run_page.run_btn.isEnabled()
+    assert not recovery_stub.calls and not recovery_stub.exports
+
+
+def test_window_consumes_scoped_answer_once_without_global_replay(qt_env, recovery_stub, tmp_path):
+    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    value = recovery_stub.result
+    value.question_records = [{"id": "q0001", "question": "Which project wording?", "status": "open",
+                               "files": [str(value.files[0].source)]}]
+    window = build_window(Session(folder=tmp_path, out_root=tmp_path / "out", recovery=value),
+                          prompts=RecordingPrompts())
+    qt_env[1].append(window)
+    window._fill_preview()
+    window.run_page.recovery_question.setCurrentIndex(1)
+    window.run_page.recovery_request.setPlainText("ALPHA PROJECT")
+    assert window.do_resolve()
+    log = window._spec_surgeon["wait"]()
+    assert "ERROR" not in log, log
+    assert recovery_stub.calls[-1][2]["request"] == {"answer": "ALPHA PROJECT", "question_id": "q0001"}
+    assert window.run_page.recovery_request.toPlainText() == ""
+    assert window.do_resolve()
+    window._spec_surgeon["wait"]()
+    assert recovery_stub.calls[-1][2]["request"] is None
+
+
+def test_new_investigation_never_inherits_old_question_scope(qt_env, recovery_stub, tmp_path):
+    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    window = build_window(Session(folder=tmp_path, out_root=tmp_path / "out", last_run_dir=tmp_path / "batch"),
+                          prompts=RecordingPrompts())
+    qt_env[1].append(window)
+    page = window.run_page
+    page.recovery_question.addItem("Question from an old investigation", "q0001")
+    page.recovery_question.setCurrentIndex(1)
+    page.recovery_request.setPlainText("Clarification for this batch")
+    assert window.do_resolve()
+    log = window._spec_surgeon["wait"]()
+    assert "ERROR" not in log, log
+    assert recovery_stub.calls[-1][2]["request"] == "Clarification for this batch"
+
+
+def test_initial_session_refuses_scoped_answer_instead_of_crashing(tmp_path):
+    session = Session(folder=tmp_path, out_root=tmp_path / "out")
+    with pytest.raises(ValueError, match="existing recovery"):
+        session.resolve_remaining(lambda _: None, request={"answer": "Arial", "question_id": "q0001"})
+
+
+def test_reopened_recovery_preserves_saved_resource_and_privacy_settings(qt_env, recovery_stub, tmp_path):
+    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    snapshot = dict(max_cost_usd=1.25, max_attempts=2, max_calls=4, max_output_tokens=1000,
+                    max_total_tokens=5000, effort="medium", allow_codegen=True, use_memory=False,
+                    render=False, model="saved-model", renderer="none", group_call_slice=8,
+                    critic_review=False, max_context_tokens=64000)
+    snapshot = vars(recovery_stub.module.RecoveryOptions(**snapshot))
+    recovery_stub.result.options_snapshot = snapshot
+    window = build_window(Session(out_root=tmp_path / "out"),
+                          prompts=RecordingPrompts(files=[str(tmp_path / "saved")]))
+    qt_env[1].append(window)
+    window.do_load_recovery()
+    window._spec_surgeon["wait"]()
+    assert window.run_page.recovery_budget.value() == 1.25
+    assert not window.run_page.recovery_memory.isChecked()
+    assert not window.request_page.render_cb.isChecked()
+    assert window.do_resolve()
+    log = window._spec_surgeon["wait"]()
+    assert "ERROR" not in log, log
+    options = recovery_stub.calls[-1][2]["options"]
+    assert vars(options) == snapshot

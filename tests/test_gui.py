@@ -734,10 +734,27 @@ def test_the_window_runs_the_custom_transform_offered_in_the_chat(qt, folder, tm
     ui["wait"]()
     p = w.preview_page
     assert w.stack.currentWidget() is p and not p.generated_card.isHidden() and not p.samples_card.isHidden()
-    assert p.samples.count() == 1 and ui["buttons"]["run"].isEnabled()                # one sample per pattern
+    assert p.samples.count() == 2 and ui["buttons"]["run"].isEnabled()                # both files fit the automatic allowance
     assert not w.run_page.inplace_rb.isEnabled()                            # custom transforms write copies only
     before = {f: f.read_bytes() for f in folder.glob("*.docx")}
     ui["buttons"]["run"].click()
     ui["wait"]()
     assert ui["results_model"].badges() == ["pass", "pass"]
     assert {f: f.read_bytes() for f in folder.glob("*.docx")} == before
+
+
+def test_generated_approval_identity_includes_approved_goal_and_bound_targets(tmp_path):
+    from types import SimpleNamespace
+    from spec_surgeon.preview import approval_token, generated_key
+    source = tmp_path / "source.docx"
+    source.write_bytes(b"pinned source")
+    generated = SimpleNamespace(source="approved code", select={}, params={},
+        goal_contract={"kind": "document_effects", "effects": [{"id": "title", "type": "format"}]},
+        goal_bindings={str(source): {"candidate_id": "first"}})
+    original = approval_token(generated_key(generated), [source])
+    assert Session._generated_key(generated) == generated_key(generated)
+    generated.goal_bindings[str(source)]["candidate_id"] = "other"
+    assert approval_token(generated_key(generated), [source]) != original
+    generated.goal_bindings[str(source)]["candidate_id"] = "first"
+    generated.goal_contract["effects"][0]["type"] = "delete_paragraphs"
+    assert approval_token(generated_key(generated), [source]) != original
