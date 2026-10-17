@@ -808,7 +808,7 @@ def test_libreoffice_shows_every_typed_number_exactly_once_in_order(tpl, tmp_pat
     # Keep the executable's discovered PATH (including non-system installations) and isolate
     # LibreOffice's profile without replacing the user's HOME or the runtime environment.
     profile = (tmp_path / "libreoffice-profile").as_uri()
-    subprocess.run(["soffice", f"-env:UserInstallation={profile}", "--headless", "--convert-to", "pdf",
+    subprocess.run([shutil.which("soffice"), f"-env:UserInstallation={profile}", "--headless", "--convert-to", "pdf",
                     "--outdir", str(tmp_path), str(doc)], check=True, capture_output=True, timeout=240)
     subprocess.run(["pdftotext", "-layout", str(tmp_path / "out.pdf"), str(tmp_path / "out.txt")], check=True,
                    timeout=60)
