@@ -1,0 +1,24 @@
+{
+  "request": "Make the schedule pages landscape",
+  "summary": "Turn every section that holds a table and the word 'schedule' landscape (width and height swapped); the other sections, the margins and the words stay as they are. A file without such a section is left alone.",
+  "assumptions": [
+    "a schedule is a section that holds a table and a paragraph with the word 'schedule' in it (any case) — chosen by what the section contains, so a specification's own section numbering does not matter",
+    "landscape swaps the page's width and height; the margins are not rotated (the left and right margins stay the left and right margins)",
+    "a header or footer the schedule shares with portrait pages keeps its right-aligned items where the portrait page puts them — flagged for review",
+    "a file without a schedule section is left alone (allow_missing)"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_page_setup",
+      "select": {
+        "sections": {"containing": {"text_regex": "(?i)\\bschedule\\b"}, "with_tables": true}
+      },
+      "params": {"orientation": "landscape", "allow_missing": true},
+      "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}
+    }
+  ],
+  "review": {"sample_files": 2, "geometry_reference": "none"}
+}

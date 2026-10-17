@@ -500,16 +500,107 @@ def runs_by_paragraph(root: etree._Element, pars: List[etree._Element]) -> List[
     return groups
 
 
-def resolve_sections(pkg: DocxPackage, sections) -> List[int]:
+SECTION_KEYS = ("containing", "with_tables", "index_range")
+# paragraph predicates whose answer depends on the paragraphs' words (text_regex, the neighbours' text, emptiness, which
+# runs with text are bold or all caps) — a section chosen by them reads the main part's text (built-in batch 5)
+TEXT_READING_KEYS = ("text_regex", "is_empty", "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs")
+
+
+def check_section_selector(sections) -> None:
+    """The content form of ``select.sections`` (built-in batch 5, set_page_setup only): a non-empty object of
+    ``containing`` (a non-empty paragraph predicate), ``with_tables`` (true/false), ``index_range`` ([a, b], inclusive,
+    0 ≤ a ≤ b) — every given key must hold."""
+    if not isinstance(sections, dict) or not sections:
+        raise JobException(f"sections as an object needs at least one of {list(SECTION_KEYS)}, got {sections!r}",
+                           "bad-params")
+    unknown = set(sections) - set(SECTION_KEYS)
+    if unknown:
+        raise JobException(f"unknown section selector key(s) {sorted(unknown)}; known: {list(SECTION_KEYS)}",
+                           "bad-params")
+    if "containing" in sections:
+        pred = sections["containing"]
+        if not isinstance(pred, dict) or not pred:
+            raise JobException("sections.containing must be a paragraph predicate object (style_in, text_regex, …)",
+                               "bad-params")
+        check_paragraph_selector(pred)
+    if "with_tables" in sections and not isinstance(sections["with_tables"], bool):
+        raise JobException("sections.with_tables must be true or false", "bad-params")
+    if "index_range" in sections:
+        r = sections["index_range"]
+        if (not isinstance(r, (list, tuple)) or len(r) != 2 or not all(isinstance(x, int) and not isinstance(x, bool)
+                                                                       for x in r) or not 0 <= r[0] <= r[1]):
+            raise JobException("sections.index_range must be [first, last] section indices (0-based, inclusive)",
+                               "bad-params")
+
+
+def _sections_by_content(pkg: DocxPackage, sections: Dict[str, Any], n: int) -> List[int]:
+    check_section_selector(sections)
+    chosen = set(range(n))
+    if "index_range" in sections:
+        lo, hi = sections["index_range"]
+        chosen &= set(range(lo, hi + 1))
+    root = pkg.xml(pkg.main_part())
+    if "with_tables" in sections or "containing" in sections:
+        from .set_tab_stops import paragraph_sections      # set_tab_stops imports this module: imported when needed
+        section_of = paragraph_sections(root)
+        pars = list(root.iter(W + "p"))                     # paragraphs() order; the list keeps every proxy alive
+        where = {id(p): i for i, p in enumerate(pars)}
+    if "with_tables" in sections:
+        with_tables = set()
+        for tbl in root.iter(W + "tbl"):
+            first = next(tbl.iter(W + "p"), None)           # a table's section is its first paragraph's
+            if first is not None:
+                with_tables.add(section_of[where[id(first)]])
+        chosen &= with_tables if sections["with_tables"] else set(range(n)) - with_tables
+    if "containing" in sections:
+        pred, sheet = sections["containing"], StyleSheet(pkg)
+        chosen &= {section_of[bi] for bi, p in enumerate(pars)
+                   if paragraph_selected(pred, p, bi, block_full_text(p), sheet, all_pars=pars)}
+    return sorted(chosen)
+
+
+def resolve_sections(pkg: DocxPackage, sections, content: bool = False) -> List[int]:
+    """Section indices (among the main part's sectPr): ``"all"`` (or None), a list of indices, or — with ``content``
+    (set_page_setup, whose V10 kind re-derives the choice) — the content form ``{containing, with_tables,
+    index_range}`` (``check_section_selector``): a paragraph's section is ``set_tab_stops.paragraph_sections``' (its
+    outermost paragraph's), a table's its first paragraph's, ``containing`` is ``paragraph_selected`` over the main
+    part. The content form may choose no section; the caller decides (not-found / allow_missing)."""
     n = len(pkg.sections())
     if sections in (None, "all"):
         return list(range(n))
-    if not isinstance(sections, (list, tuple)) or not all(isinstance(i, int) for i in sections):
+    if isinstance(sections, dict):
+        if not content:
+            raise JobException(f"sections must be 'all' or a list of section indices here, got {sections!r}",
+                               "bad-params")
+        return _sections_by_content(pkg, sections, n)
+    if not isinstance(sections, (list, tuple)) or not all(isinstance(i, int) and not isinstance(i, bool)
+                                                          for i in sections):
         raise JobException(f"sections must be 'all' or a list of section indices, got {sections!r}", "bad-params")
     bad = [i for i in sections if not 0 <= i < n]
     if bad:
         raise JobException(f"no section(s) {bad}; the document has {n}", "bad-params", {"sections": n})
     return sorted(set(sections))
+
+
+def section_reads(pkg: DocxPackage, sections) -> List[Touch]:
+    """What the content form of ``select.sections`` reads (rule 9, built-in batch 5): ``containing`` with a predicate
+    that reads the paragraphs' words, and ``with_tables``, read the main part's text whole (``(main, "*",
+    "verify:text")`` — an edit of a paragraph's words, or a paragraph or table added or removed, could change which
+    sections are chosen); ``containing`` reads the style families its predicate reads through every paragraph's chain
+    as whole-member soft reads (``selection_families``: ``style_in`` → pStyle; ``has_bold``/``is_all_caps`` → pStyle,
+    rStyle, tblPr). ``index_range`` and the paragraph predicates ``in_table``/``index_range`` read where paragraphs and
+    tables are, which only a whole-member change of the main part moves (a conflict with any touch of it already)."""
+    if not isinstance(sections, dict):
+        return []
+    main = pkg.main_part()
+    out: List[Touch] = []
+    pred = sections.get("containing")
+    if sections.get("with_tables") is not None or (isinstance(pred, dict) and set(pred) & set(TEXT_READING_KEYS)):
+        out.append((main, "*", "verify:text"))
+    if isinstance(pred, dict):
+        fams = selection_families("set_page_setup", {"paragraphs": pred}, {})
+        out += [(main, "*", f"verify-props:{fam}") for fam in fams]
+    return out
 
 
 # ---- shared parameter parsing for the font ops ------------------------------------------------------

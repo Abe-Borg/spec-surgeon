@@ -176,7 +176,17 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "row, banding — w:tblLook) stays as it is",
         "never tracked",
     ],
-    "set_page_setup": ["margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given"],
+    "set_page_setup": [
+        "margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given",
+        "the header's and footer's distance from the page edge are margins.header and margins.footer (twips)",
+        "different_first_page true gives the section's first page its own first-page header/footer (none of its own: "
+        "it shows the previous section's, or a blank one — flagged); false shows the ordinary ones there; a section "
+        "already as asked is left alone",
+        "landscape swaps the page's width and height and leaves the margins as they are (give margins in the same op "
+        "to change them); a header/footer shared with portrait pages is flagged",
+        "sections can be chosen by what they contain: {containing: <paragraph predicate>, with_tables: true, "
+        "index_range: [first, last]}; allow_missing true when not every file has such a section",
+    ],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
                      "tracked unless the user said otherwise"],
     "delete_paragraphs": [
@@ -440,7 +450,9 @@ SELECTOR_GRAMMAR = {
     "runs": "'all' or {has_direct_font: bool, font_in: [names], not_in_revisions: bool, color_in: [colours]} — "
             "color_in: the run's effective colour (direct, else its character/paragraph style's) is one of the listed "
             "6-hex values, theme colour names (accent1, text2 …) or 'auto'",
-    "sections": "'all' or [section indices]",
+    "sections": "'all', [section indices] (0-based), or (set_page_setup) by content: {containing: <paragraph "
+                "predicate — a paragraph of the section matches>, with_tables: bool (the section holds a table), "
+                "index_range: [first, last] (inclusive)} — every given key must hold",
     "styles": "'all' | 'all-paragraph-and-character' | {ids: [...]} | {types: [...]}",
     "symbol_runs": "never changed by font ops: a run whose explicit font (direct, character style or paragraph "
                    "style) is a symbol font, or that holds a w:sym",
@@ -458,7 +470,7 @@ CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
         "fonts and sizes defined in styles": "style_fonts",
         "the document default font and size": "doc_defaults_fonts",
         "paragraph spacing, indents and alignment of paragraphs or of paragraph styles": "paragraph_props",
-        "page size, margins and orientation of sections": "section_props",
+        "page size, margins, orientation and different first page of sections": "section_props",
         "which header/footer each section shows": "section_hf_refs",
         "bold, italic, caps, small caps, strikethrough, underline and text colour of selected text or of styles; "
         "keep-with-next, keep lines together, widow control and page break before of paragraphs or of paragraph "

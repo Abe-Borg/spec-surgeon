@@ -180,6 +180,71 @@ def build(section_number: str, title: str, stamp: str = "ISSUED FOR CONSTRUCTION
     return _post_process(buf.getvalue())
 
 
+def build_schedule(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS",
+                   cover_first_page: bool = False) -> bytes:
+    """Built-in batch 5's section fixture (set_page_setup: landscape schedules, different first page):
+
+    * section 0 (cover): the section number, title and a revision-history table; its own default header (a tab, then
+      the issue stamp) and default footer ("<number> - {PAGE}", right-aligned); with ``cover_first_page`` also titlePg
+      and its own first-page footer ("COVER");
+    * section 1 (body, PART 1/2 in Heading 1): no references (shows the cover's header and footer), restarts at 1;
+      "Schedule 40" in lower case;
+    * section 2 (a schedule): "SPRINKLER HEAD SCHEDULE" and a table with a bold header row; no references;
+    * section 3 (body continued, PART 3 in Heading 1, END OF SECTION): no references.
+    """
+    doc = Document()
+    st = doc.styles["Normal"]; st.font.name = "Arial"; st.font.size = Pt(10)
+    cover = doc.sections[0]
+    _header(cover, "ISSUED FOR CONSTRUCTION  2026-01-01")
+    _footer(cover, section_number)
+    if cover_first_page:
+        cover.different_first_page_header_footer = True
+        ff = cover.first_page_footer; ff.is_linked_to_previous = False
+        ff.paragraphs[0].add_run("COVER")
+    doc.add_paragraph(f"SECTION {section_number}")
+    doc.add_paragraph(title)
+    doc.add_paragraph("PROJECT REVISION HISTORY")
+    t = doc.add_table(rows=2, cols=3)
+    t.cell(0, 0).text = "Rev"; t.cell(0, 1).text = "Date"; t.cell(0, 2).text = "Description"
+    t.cell(1, 0).text = "0"; t.cell(1, 1).text = "2026-01-01"; t.cell(1, 2).text = "Issued for Construction"
+
+    def section(restart: bool):
+        sec = doc.add_section(WD_SECTION.NEW_PAGE)
+        sec.header.is_linked_to_previous = True
+        sec.footer.is_linked_to_previous = True
+        if cover_first_page:
+            sec.different_first_page_header_footer = False
+            sec.first_page_footer.is_linked_to_previous = True
+        if restart:
+            _set_pgnum_start(sec, 1)
+        else:
+            for old in sec._sectPr.findall(qn("w:pgNumType")):   # add_section copies the previous restart
+                sec._sectPr.remove(old)
+        return sec
+
+    section(restart=True)
+    doc.add_paragraph("PART 1 - GENERAL", style="Heading 1")
+    doc.add_paragraph("1.01\tSUMMARY")
+    doc.add_paragraph("A.\tPipe shall be Schedule 40 per NFPA 13 (2025).")
+    doc.add_paragraph("PART 2 - PRODUCTS", style="Heading 1")
+    doc.add_paragraph("2.01\tSPRINKLERS")
+    section(restart=False)
+    doc.add_paragraph("SPRINKLER HEAD SCHEDULE")
+    t = doc.add_table(rows=3, cols=4)
+    for c, text in enumerate(("Mark", "Type", "K-factor", "Temperature")):
+        t.cell(0, c).paragraphs[0].add_run(text).bold = True
+    for c, text in enumerate(("S1", "Pendent", "5.6", "155 F")):
+        t.cell(1, c).text = text
+    for c, text in enumerate(("S2", "Upright", "8.0", "200 F")):
+        t.cell(2, c).text = text
+    section(restart=False)
+    doc.add_paragraph("PART 3 - EXECUTION", style="Heading 1")
+    doc.add_paragraph("3.01\tINSTALLATION")
+    doc.add_paragraph("END OF SECTION")
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
 def _ref_field(paragraph):
     r1 = paragraph.add_run()
     fc = OxmlElement("w:fldChar"); fc.set(qn("w:fldCharType"), "begin"); r1._r.append(fc)
