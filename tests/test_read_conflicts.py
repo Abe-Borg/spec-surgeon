@@ -243,12 +243,13 @@ def test_a_title_page_flip_under_cover_unnumbered_is_refused_as_a_conflict(witho
     assert "#2 apply_header_footer_template would change titlePg there underneath" in e.value.reason
     assert "split out #2 apply_header_footer_template into a spec of its own and run it first, then " \
            "#1 fix_page_numbering on its outputs" in e.value.reason
-    # planted: without fix_page_numbering's read of titlePg the spec plans, applies and PASSES every check — with the
-    # page number still on the cover: the PAGE paragraph was cleared from the first-page footer, which the cover no
-    # longer shows once its titlePg is off (V7 skips page 1 for cover-unnumbered, V10 asserts nothing about it)
+    # planted: without fix_page_numbering's read of titlePg the spec plans and applies — with the page number still on
+    # the cover: the PAGE paragraph was cleared from the first-page footer, which the cover no longer shows once its
+    # titlePg is off (V7 skips page 1 for cover-unnumbered). It used to PASS every check; since batch 5's review V10's
+    # cover_unnumbered kind reads what the cover shows in the output and fails it
     without_reads("fix_page_numbering")
     out, rec = _run(pkg, spec)
-    assert rec.passed, rec.to_markdown()
+    assert not rec.passed and "cover_unnumbered: the cover shows footer" in rec.get("V10").summary
     opkg = DocxPackage(out)
     o_cover = opkg.sections()[0]
     assert not o_cover.title_pg

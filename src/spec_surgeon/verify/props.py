@@ -28,7 +28,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
 
-from .reader import VPackage, W, M, STYLES_REL, THEME_REL, protected_members
+from .reader import VPackage, W, M, R, STYLES_REL, THEME_REL, protected_members
 from .textcheck import blocks
 
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -329,6 +329,15 @@ PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range",
 RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions", "color_in"}
 
 
+def _v_selector_style(p, styles: Styles) -> Optional[str]:
+    """The paragraph style the selector grammar reads: ``w:pStyle``'s value when the paragraph has a ``w:pStyle`` — an
+    empty or missing value names no style (batch 4's definition) —, else the default paragraph style. (Batch 5's review:
+    ``_pstyle(p) or default`` read an empty pStyle as the default style; the transform reads it as none — a section
+    chosen by ``style_in`` differed between the sides and a valid plan failed V10.)"""
+    ps = p.find(W + "pPr/" + W + "pStyle")
+    return ps.get(W + "val") if ps is not None else styles.default.get("paragraph")
+
+
 def _v_toggle_on(rpr, p, styles: Styles, tag: str) -> bool:
     if rpr is not None:
         d = rpr.find(W + tag)
@@ -338,7 +347,7 @@ def _v_toggle_on(rpr, p, styles: Styles, tag: str) -> bool:
             sr = st.find(W + "rPr")
             if sr is not None and sr.find(W + tag) is not None:
                 return sr.find(W + tag).get(W + "val") not in FALSY
-    for st in styles.chain(_pstyle(p) or styles.default.get("paragraph")):
+    for st in styles.chain(_v_selector_style(p, styles)):
         sr = st.find(W + "rPr")
         if sr is not None and sr.find(W + tag) is not None:
             return sr.find(W + tag).get(W + "val") not in FALSY
@@ -389,7 +398,7 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
         return True
     if not isinstance(pred, dict) or set(pred) - PARA_KEYS:
         raise ValueError(f"unknown paragraph selector {pred!r}")
-    if "style_in" in pred and (_pstyle(p) or styles.default.get("paragraph")) not in pred["style_in"]:
+    if "style_in" in pred and _v_selector_style(p, styles) not in pred["style_in"]:
         return False
     if "text_regex" in pred and not _v_rx_matches(pred["text_regex"], view.texts[bi], p):
         return False
@@ -530,6 +539,13 @@ class Ctx:
         self.removed_styles: Set[str] = set()       # style ids a kind expects GONE: out of the residual's source copy only
         self.strip_tbl_style: Dict[str, Set[int]] = {}   # part → ordinals (root.iter(w:tbl)) of tables whose
         #                                             tblPr/tblStyle a kind checked
+        # built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §5.2): table, row and cell properties a kind checked —
+        # removed from both sides before the part's residual (an emptied w:trPr / w:tcPr dropped on both sides). Tables
+        # by ordinal (root.iter(w:tbl)), rows by index among the table's own w:tr, cells among the row's own w:tc.
+        self.strip_tbl: Dict[str, Dict[int, Set[str]]] = {}                # part → {ordinal: tblPr child names}
+        self.strip_tr: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}     # part → {(ordinal, row): trPr child names}
+        self.strip_tc: Dict[str, Dict[Tuple[int, int, int], Set[str]]] = {}   # part → {(ordinal, row, cell): tcPr …}
+        self.strip_tblprex: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}  # part → {(ordinal, row): tblPrEx …}
 
     def view(self, part):
         if part not in self.views:
@@ -1227,7 +1243,202 @@ def sect_prs(root) -> List[Any]:
     return out
 
 
+# ---- sections: set_page_setup's selection and post-conditions (built-in batch 5, items 39–40) ----------------------
+#
+# This module's own reading of set_page_setup (transform side: ops/set_page_setup.py, ops/selectors.resolve_sections).
+# The assertion carries the user's own words — ``select`` and ``params`` as the spec gave them (absent = default) — and
+# the plan's list of selected sections; the kind re-derives the selection over the SOURCE and, per selected section,
+# exactly which sectPr elements must change and how, with its own defaults, and compares both with the plan.
+
+V_SECTION_KEYS = ("containing", "with_tables", "index_range")
+V_PAGE_PARAMS = ("margins", "size", "orientation", "different_first_page", "allow_missing")
+V_MARGIN_KEYS = ("top", "right", "bottom", "left", "header", "footer", "gutter")
+
+
+def _v_title_pg_on(sp) -> bool:
+    """Different first page in effect: a w:titlePg whose w:val is absent or not off."""
+    t = sp.find(W + "titlePg") if sp is not None else None
+    return t is not None and t.get(W + "val") not in FALSY
+
+
+def _v_resolve_sections(pkg: VPackage, sections, styles: Styles) -> List[int]:
+    """The sections (indices among the main part's sectPr) a ``select.sections`` chooses, read over ``pkg``:
+    ``"all"`` (or absent), a list of indices, or an object whose every given key must hold — ``index_range`` [a, b]
+    inclusive, ``with_tables`` (the section holds a table: a table's section is its first paragraph's), ``containing``
+    (some paragraph of the main part in the section matches the paragraph predicate, read by ``para_matches``). A
+    paragraph's section is ``tabs._v_sections``' (its outermost paragraph's: the number of paragraphs holding a
+    w:pPr/w:sectPr before it). ValueError where the op must refuse."""
+    root = pkg.xml(pkg.main_part())
+    n = len(sect_prs(root))
+    if sections is None or sections == "all":
+        return list(range(n))
+    if isinstance(sections, (list, tuple)):
+        if not all(type(i) is int and 0 <= i < n for i in sections):
+            raise ValueError(f"sections {sections!r} are not section indices of this file (it has {n}) — the op must "
+                             f"refuse")
+        return sorted(set(sections))
+    if not isinstance(sections, dict) or not sections or set(sections) - set(V_SECTION_KEYS):
+        raise ValueError(f"sections {sections!r}: 'all', a list of indices or an object of {list(V_SECTION_KEYS)} — "
+                         f"the op must refuse")
+    chosen = set(range(n))
+    if "index_range" in sections:
+        r = sections["index_range"]
+        if (not isinstance(r, (list, tuple)) or len(r) != 2 or not all(type(x) is int for x in r)
+                or not 0 <= r[0] <= r[1]):
+            raise ValueError(f"sections.index_range {r!r} — the op must refuse")
+        chosen &= set(range(r[0], r[1] + 1))
+    if "with_tables" in sections or "containing" in sections:
+        from .tabs import _v_sections            # verify/tabs imports this module: imported when needed
+        of = _v_sections(root)
+        pars = list(root.iter(W + "p"))           # the list keeps every proxy alive: ids stay unique
+        index = {id(p): k for k, p in enumerate(pars)}
+    if "with_tables" in sections:
+        flag = sections["with_tables"]
+        if not isinstance(flag, bool):
+            raise ValueError(f"sections.with_tables {flag!r} — the op must refuse")
+        holding = set()
+        for t in root.iter(W + "tbl"):
+            first = next(t.iter(W + "p"), None)
+            if first is not None:
+                holding.add(of[index[id(first)]])
+        chosen &= holding if flag else set(range(n)) - holding
+    if "containing" in sections:
+        pred = sections["containing"]
+        if not isinstance(pred, dict) or not pred:
+            raise ValueError(f"sections.containing {pred!r} — the op must refuse")
+        view = PartView(root)
+        try:
+            hit = {of[bi] for bi, p in enumerate(view.pars) if para_matches(pred, p, bi, view, styles)}
+        except re.error as e:
+            raise ValueError(f"sections.containing: {e} — the op must refuse")
+        chosen &= hit
+    return sorted(chosen)
+
+
+def _v_page_setup_elements(S, params: Dict[str, Any], where: str) -> Dict[str, Dict[str, Any]]:
+    """What set_page_setup must change in one selected section's sectPr ``S`` (the SOURCE), as section_props element
+    specs, read from the user's own parameters: pgMar gets the asked margins; pgSz the asked size, and with an
+    orientation ``orient`` and width/height swapped where they disagree with it (a square page stays as it is); titlePg,
+    when different_first_page is asked and not already in effect, present without w:val (on) or absent (off)."""
+    out: Dict[str, Dict[str, Any]] = {}
+    margins, size, orient = params.get("margins") or {}, params.get("size") or {}, params.get("orientation")
+    for name, d, keys in (("margins", margins, V_MARGIN_KEYS), ("size", size, ("w", "h"))):
+        if not isinstance(d, dict) or set(d) - set(keys) or any(
+                type(v) is not int or (v < 0 and k not in ("top", "bottom")) for k, v in d.items()):
+            raise ValueError(f"{name} {d!r} — the op must refuse")
+    if size and set(size) != {"w", "h"}:
+        raise ValueError("size needs both w and h — the op must refuse")
+    if orient not in (None, "portrait", "landscape"):
+        raise ValueError(f"orientation {orient!r} — the op must refuse")
+    dfp = params.get("different_first_page")
+    if dfp is not None and not isinstance(dfp, bool):
+        raise ValueError(f"different_first_page {dfp!r} — the op must refuse")
+    if margins:
+        if S.find(W + "pgMar") is None:
+            raise ValueError(f"{where} has no w:pgMar — the op must refuse")
+        out["pgMar"] = {"set": {k: str(v) for k, v in margins.items()}}
+    if size or orient:
+        pg = S.find(W + "pgSz")
+        own = lambda a: int(pg.get(W + a)) if pg is not None and (pg.get(W + a) or "").isdigit() else None
+        w, h = size.get("w", own("w")), size.get("h", own("h"))
+        if w is None or h is None:
+            raise ValueError(f"{where} has no page size to orient — the op must refuse")
+        pg_set: Dict[str, str] = {}
+        if orient:
+            if (orient == "landscape") != (w > h):
+                w, h = h, w
+            pg_set["orient"] = orient
+        pg_set["w"], pg_set["h"] = str(w), str(h)
+        out["pgSz"] = {"set": pg_set}
+    if dfp is not None and _v_title_pg_on(S) != dfp:
+        out["titlePg"] = {"present": True, "remove": ["val"]} if dfp else {"absent": True}
+    return out
+
+
+def _v_page_setup(ctx: Ctx, a: Dict[str, Any], s_secs, o_secs, errs: List[str]) -> List[int]:
+    """The selection and the per-section changes of a set_page_setup assertion, re-derived (see the block comment)."""
+    select, params = a.get("select"), a.get("params")
+    if not isinstance(select, dict) or set(select) - {"sections"}:
+        raise ValueError(f"select {select!r}: only 'sections'")
+    if not isinstance(params, dict) or set(params) - set(V_PAGE_PARAMS):
+        raise ValueError(f"params {params!r}: only {list(V_PAGE_PARAMS)}")
+    want = _v_resolve_sections(ctx.src, select.get("sections", "all"), ctx.src_styles)
+    if a.get("selected") != want:
+        errs.append(f"section_props: the selection {select.get('sections', 'all')!r} chooses sections {want} here, "
+                    f"the plan chose {a.get('selected')}")
+    allow = params.get("allow_missing", False)
+    if not isinstance(allow, bool):
+        raise ValueError(f"allow_missing {allow!r} — the op must refuse")
+    if not want and isinstance(select.get("sections"), dict) and not allow:
+        errs.append(f"section_props: the selection {select['sections']!r} chooses no section here — the op must "
+                    f"refuse (not-found) unless allow_missing")
+    per = a.get("per_section") or {}
+    changed = []
+    for i in want:
+        where = f"section {i}"
+        expected = _v_page_setup_elements(s_secs[i], params, where)
+        planned = per.get(str(i))
+        if expected:
+            changed.append(i)
+            if planned != expected:
+                errs.append(f"section_props: {where} must get {expected} (re-derived from the asked values and the "
+                            f"source), the plan gives {planned}")
+        elif planned is not None:
+            errs.append(f"section_props: {where} needs no change (already as asked), the plan gives {planned}")
+        # post-condition on the OUTPUT: the asked first-page setting is the one in effect, whether or not it changed
+        dfp = params.get("different_first_page")
+        if dfp is not None and _v_title_pg_on(o_secs[i]) != dfp:
+            errs.append(f"section_props: {where} different first page is "
+                        f"{'on' if _v_title_pg_on(o_secs[i]) else 'off'} in the output, asked {'on' if dfp else 'off'}")
+    stray = sorted(set(a.get("sections", [])) - set(want))
+    if stray:
+        errs.append(f"section_props: sections {stray} changed but the selection does not choose them")
+    if sorted(a.get("sections", [])) != changed:
+        errs.append(f"section_props: sections {changed} must change here, the plan changes {a.get('sections', [])}")
+    return want
+
+
+def _v_check_sect_element(ctx: Ctx, i: int, S, O, name: str, spec: Dict[str, Any], errs: List[str]) -> None:
+    """One element of one section, exactly as its spec says: ``{"absent": true}`` — gone; ``{"present": true,
+    "remove": [...], "set": {...}}`` — there, with the source's attributes minus ``remove`` plus ``set`` and the source's
+    children (none when the source has no such element); otherwise (``set``/``remove``/``drop_if_empty``) as before
+    built-in batch 5."""
+    ctx.strip_sect.setdefault(i, set()).add(name)
+    se, oe = S.find(W + name), O.find(W + name)
+    where = f"section {i} {name}"
+    if spec.get("absent"):
+        if set(spec) != {"absent"} or spec["absent"] is not True:
+            raise ValueError(f"{where}: an absent element spec takes no other keys")
+        if oe is not None:
+            errs.append(f"{where}: should be absent")
+        return
+    expected = dict(se.attrib) if se is not None else {}
+    for k in spec.get("remove", []):
+        expected.pop(W + k, None)
+    for k, v in (spec.get("set") or {}).items():
+        expected[W + k] = str(v)
+    if spec.get("present"):
+        if spec["present"] is not True or set(spec) - {"present", "remove", "set"}:
+            raise ValueError(f"{where}: a present element spec takes remove and set only")
+        if oe is None:
+            errs.append(f"{where}: should be present")
+            return
+    elif not expected and (spec.get("drop_if_empty") or se is None):
+        if oe is not None:
+            errs.append(f"{where}: should be absent")
+        return
+    if oe is None or dict(oe.attrib) != expected:
+        errs.append(f"{where}: expected { {etree.QName(k).localname: v for k, v in expected.items()} } got "
+                    f"{ {etree.QName(k).localname: v for k, v in dict(oe.attrib).items()} if oe is not None else None }")
+    elif [sig(c) for c in (se if se is not None else [])] != [sig(c) for c in oe]:
+        errs.append(f"{where}: children changed")
+
+
 def _section_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    """Per listed section, each element exactly as its spec says (``elements``, shared by every listed section, or —
+    set_page_setup since built-in batch 5 — ``per_section``: section index as text → its elements). With ``select``
+    (set_page_setup), the selection and every section's change are re-derived from the user's own words first
+    (``_v_page_setup``)."""
     main = ctx.src.main_part()
     s_secs, o_secs = sect_prs(ctx.src.xml(main)), sect_prs(ctx.out.xml(main))
     if len(s_secs) != len(o_secs):
@@ -1236,29 +1447,28 @@ def _section_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     sel = a.get("sections", [])
     if len(sel) != a.get("expected_sections", -1):
         errs.append(f"section_props: {len(sel)} section(s) listed, plan predicted {a.get('expected_sections')}")
+    per = a.get("per_section")
+    if per is not None and (not isinstance(per, dict) or sorted(per) != sorted(str(i) for i in sel)):
+        errs.append(f"section_props: per-section changes for {sorted(per) if isinstance(per, dict) else per!r}, "
+                    f"sections listed {sel}")
+        per = per if isinstance(per, dict) else {}
+    if a.get("op") == "set_page_setup" and "select" not in a:
+        # since batch 5 set_page_setup's assertion carries the user's own select and V10 re-derives the selection from
+        # it; one without it would be trusted on its word (batch 5's review)
+        errs.append("section_props: set_page_setup's assertion carries no select to re-derive the sections from")
+    chosen = _v_page_setup(ctx, a, s_secs, o_secs, errs) if "select" in a else None
     for i in sel:
         if not 0 <= i < len(s_secs):
             errs.append(f"section_props: no section {i}")
             continue
         S, O = s_secs[i], o_secs[i]
-        for name, spec in (a.get("elements") or {}).items():
-            ctx.strip_sect.setdefault(i, set()).add(name)
-            se, oe = S.find(W + name), O.find(W + name)
-            expected = dict(se.attrib) if se is not None else {}
-            for k in spec.get("remove", []):
-                expected.pop(W + k, None)
-            for k, v in (spec.get("set") or {}).items():
-                expected[W + k] = str(v)
-            where = f"section {i} {name}"
-            if not expected and (spec.get("drop_if_empty") or se is None):
-                if oe is not None:
-                    errs.append(f"{where}: should be absent")
-                continue
-            if oe is None or dict(oe.attrib) != expected:
-                errs.append(f"{where}: expected { {etree.QName(k).localname: v for k, v in expected.items()} } got "
-                            f"{ {etree.QName(k).localname: v for k, v in dict(oe.attrib).items()} if oe is not None else None }")
-            elif [sig(c) for c in (se if se is not None else [])] != [sig(c) for c in oe]:
-                errs.append(f"{where}: children changed")
+        elements = (per.get(str(i)) or {}) if per is not None else (a.get("elements") or {})
+        for name, spec in elements.items():
+            _v_check_sect_element(ctx, i, S, O, name, spec, errs)
+    if per is not None:
+        names = sorted({n for e in per.values() if isinstance(e, dict) for n in e})
+        return (f"section_props: sections {sel} → {names}"
+                + (f" (selection re-derived: sections {chosen})" if chosen is not None else ""))
     return f"section_props: sections {sel} → {list((a.get('elements') or {}).keys())}"
 
 
@@ -1288,6 +1498,36 @@ def _section_hf_refs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     if removed != a.get("expected_removed", -1):
         errs.append(f"section_hf_refs: {removed} reference(s) selected here, plan predicted {a.get('expected_removed')}")
     return f"section_hf_refs: {removed} reference(s) removed from sections {a.get('sections')}"
+
+
+def _v_page_field(root) -> bool:
+    """A PAGE field anywhere in the part: a complex field's instruction or a simple field's, first word PAGE."""
+    instr = [t.text or "" for t in root.iter(W + "instrText")] + [f.get(W + "instr") or "" for f in root.iter(W + "fldSimple")]
+    return any((x.split() or [""])[0].upper() == "PAGE" for x in instr)
+
+
+def _cover_unnumbered(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    """fix_page_numbering cover-unnumbered (post-condition, this module's own reading — never the transform's): the
+    footer the cover section shows in the OUTPUT — its own first-page footer while its w:titlePg is on (w:val not
+    0/false/off) and it has one, else its own default footer — is the footer the plan edited, and holds no PAGE field.
+    Reading titlePg by presence alone once edited a first-page footer the cover never showed and PASSED with the page
+    number still on the cover."""
+    main = ctx.out.main_part()
+    secs = sect_prs(ctx.out.xml(main))
+    if not secs:
+        errs.append("cover_unnumbered: the output has no section")
+        return "cover_unnumbered: no section"
+    rels = ctx.out.rels_targets(main)
+    own: Dict[str, Optional[str]] = {}
+    for el in secs[0].findall(W + "footerReference"):
+        rid = el.get(R + "id")
+        own[el.get(W + "type", "default")] = rels[rid]["target"] if rid in rels else None
+    shown = own.get("first") if _v_title_pg_on(secs[0]) and own.get("first") else own.get("default")
+    if shown != a.get("footer"):
+        errs.append(f"cover_unnumbered: the cover shows footer {shown!r}, the plan edited {a.get('footer')!r}")
+    elif shown and _v_page_field(ctx.out.xml(shown)):
+        errs.append(f"cover_unnumbered: the footer the cover shows ({shown}) still holds a PAGE field")
+    return f"cover_unnumbered: the cover shows {shown}, without a page number"
 
 
 def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
@@ -1818,6 +2058,7 @@ KINDS = {
     "paragraph_props": _paragraph_props,
     "section_props": _section_props,
     "section_hf_refs": _section_hf_refs,
+    "cover_unnumbered": _cover_unnumbered,
     "effective_font": _effective_font,
     "deleted_paragraphs": _deleted_paragraphs,
     "inserted_paragraphs": _inserted_paragraphs,
@@ -1893,6 +2134,50 @@ def mask_picture_sizes(drawing) -> None:
             if e is not None:
                 e.set("cx", "masked")
                 e.set("cy", "masked")
+
+
+def _strip_table_props(ctx: Ctx, part: str, s_root, o_root) -> None:
+    """Built-in batch 5: the table, row and cell property elements a kind checked (``strip_tbl``/``strip_tr``/
+    ``strip_tc``/``strip_tblprex``) leave both sides; a row's ``w:trPr`` or ``w:tblPrEx`` or a cell's ``w:tcPr`` left
+    empty by that goes on both sides."""
+    by_tbl = ctx.strip_tbl.get(part, {})
+    by_tr = ctx.strip_tr.get(part, {})
+    by_tc = ctx.strip_tc.get(part, {})
+    by_ex = ctx.strip_tblprex.get(part, {})
+    if not (by_tbl or by_tr or by_tc or by_ex):
+        return
+
+    def strip(holder, names: Set[str]) -> None:
+        if holder is None:
+            return
+        for c in list(holder):
+            if _local(c) in names:
+                holder.remove(c)
+        _drop_empty(holder)
+
+    for root in (s_root, o_root):
+        tables = list(root.iter(W + "tbl"))               # ordinals: no op adds, removes or moves a table
+        rows = lambda k: [c for c in tables[k] if c.tag == W + "tr"] if k < len(tables) else []
+        for k, names in by_tbl.items():
+            if k < len(tables):
+                pr = tables[k].find(W + "tblPr")
+                if pr is not None:
+                    for c in list(pr):
+                        if _local(c) in names:
+                            pr.remove(c)
+        for (k, r), names in by_tr.items():
+            trs = rows(k)
+            if r < len(trs):
+                strip(trs[r].find(W + "trPr"), names)
+        for (k, r), names in by_ex.items():
+            trs = rows(k)
+            if r < len(trs):
+                strip(trs[r].find(W + "tblPrEx"), names)
+        for (k, r, c), names in by_tc.items():
+            trs = rows(k)
+            tcs = [x for x in trs[r] if x.tag == W + "tc"] if r < len(trs) else []
+            if c < len(tcs):
+                strip(tcs[c].find(W + "tcPr"), names)
 
 
 def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
@@ -1980,6 +2265,7 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                 ts = tables[k].find(W + "tblPr/" + W + "tblStyle") if k < len(tables) else None
                 if ts is not None:
                     ts.getparent().remove(ts)
+    _strip_table_props(ctx, part, s_root, o_root)
     if part == ctx.src.main_part() and ctx.strip_sect:
         ss, os_ = sect_prs(s_root), sect_prs(o_root)
         for i, names in ctx.strip_sect.items():
@@ -2148,6 +2434,15 @@ from .language import LANGUAGE_KINDS  # noqa: E402
 from .styleimport import IMPORT_KINDS  # noqa: E402
 from .restyle import RESTYLE_KINDS  # noqa: E402
 from .applystyle import APPLY_KINDS  # noqa: E402
+# built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §5): tables
+from .tableprops import TABLE_PROP_KINDS  # noqa: E402
+from .applytablestyle import APPLY_TABLE_KINDS  # noqa: E402
+# built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §3, §4): list levels and the numbering audit's fix
+from .listlevel import LIST_LEVEL_KINDS  # noqa: E402
+from .numberingaudit import AUDIT_KINDS  # noqa: E402
+# built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §1, §2): numbering conversions
+from .numberingconvert import CONVERT_KINDS  # noqa: E402
+from .typednumbers import TYPED_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -2162,3 +2457,9 @@ KINDS.update(LANGUAGE_KINDS)
 KINDS.update(IMPORT_KINDS)
 KINDS.update(RESTYLE_KINDS)
 KINDS.update(APPLY_KINDS)
+KINDS.update(TABLE_PROP_KINDS)
+KINDS.update(APPLY_TABLE_KINDS)
+KINDS.update(LIST_LEVEL_KINDS)
+KINDS.update(AUDIT_KINDS)
+KINDS.update(CONVERT_KINDS)
+KINDS.update(TYPED_KINDS)

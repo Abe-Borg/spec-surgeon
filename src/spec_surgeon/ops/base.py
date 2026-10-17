@@ -268,7 +268,10 @@ def check_conflicts(fragments: Sequence[PlanFragment]) -> None:
     any_touch: Dict[str, List[int]] = {}
     changes: Dict[str, List[Tuple[int, str]]] = {}      # member → (op, aspect) of every non-read touch (any target)
     for f in fragments:
-        for member, target, aspect in f.touches:
+        # each distinct touch once: an op may declare the same read per paragraph thousands of times (a chain read of
+        # one style from every paragraph), and the pairwise check below is quadratic in what a target collects — a
+        # repeated touch adds nothing (batch 5's review: 16,000 touches of one op took 16 s to merge)
+        for member, target, aspect in dict.fromkeys(f.touches):
             any_touch.setdefault(member, []).append(f.op_index)
             if not verify_family(aspect)[0]:
                 changes.setdefault(member, []).append((f.op_index, aspect))

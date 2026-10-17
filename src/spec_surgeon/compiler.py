@@ -243,6 +243,40 @@ beside set_properties, set_tab_stops, set_paragraph_props or set_borders_shading
 change of the style definitions they use, are separate specs; removing the architect's styles that mapping left unused \
 is a chain's LAST stage (in the same spec it would see them still in use). Field codes naming a mapped style (TOC \\t, \
 STYLEREF) are flagged, not edited — say so in assumptions.
+- Table formatting is set_table_props (select.tables: "all" or {index_range, style_in, first_row_regex, text_regex, \
+nested}; scope for tables in headers/footers): borders is the table's WHOLE border set (top, left, bottom, right, \
+insideH, insideV — a side not named is removed, "none" removes every border; size in eighths of a point, 4 = ½ pt), \
+cell_margins {top, left, bottom, right} in twips merge into the table's own, width {"pct": 100} | {"twips": n} | "auto", \
+repeat_header_rows n ("repeat the header row" is 1), cant_split true ("rows don't break across pages"). Cells with \
+their own borders or margins keep them unless clear_cell_overrides. A table style for every table is \
+apply_table_style {style} (a style the file lacks comes from the template, like apply_style; direct_formatting "clear" \
+so the style shows). The profiles' tables show each pattern's tables, their styles and header rows. Never tracked; \
+the two on the same tables are separate specs.
+- Numbering. The profiles' lists show each list's levels (format, styles, the first number shown) and which \
+paragraphs the engine does not evaluate and why; numbered_styles show what a numbered style's first paragraph would \
+show ("PART 1 -", "1.1", "A."); lists.typed_numbers how many paragraphs start with a typed number. "Convert to our \
+PART / 1.1 / A. / 1. / a. scheme" with an example file is convert_numbering {template: its exact path, levels: the \
+example file's numbered style ids level 0 first — from read_template's lists.numbered_styles, one list —}; the \
+paragraphs converted are those of the list numbering the most paragraphs ("from": "main", the default) or of named \
+styles per level (from.styles); level_map only when the architect's levels do not line up with yours (say so). Typed \
+numbers ("A." and "1." typed at the start of paragraphs, the profile's typed_numbers) becoming real list numbers is \
+convert_typed_numbers {template, levels} — tracked by default (the removed typed numbers show as deletions), tracked \
+false for clean copies; it refuses a file unless every paragraph then reads exactly as before (a typo in the typed \
+numbers sets the file aside — offer audit_numbering to find them). Neither writes numbering text: the scheme is the \
+user's own. Both are specs of their own beside other ops on the body. "Restart the \
+articles at every PART" is set_list_level {style: the article style, restart: "after_higher"} — only when the PARTs \
+are numbered by a higher level of the same list (else it changes nothing: say so and offer converting the numbering \
+first); "zero-pad the articles" (1.01 instead of 1.1) is set_list_level {style, zero_pad: true}; a level's format is \
+format (decimal, decimalZero, upperLetter, lowerLetter, upperRoman, lowerRoman). "Check the numbering" (gaps, \
+duplicates, empty numbered paragraphs) is audit_numbering — it changes nothing and reports; unnumber_empty true \
+removes the number from empty numbered paragraphs (the later numbers move up — say so). List definitions are never \
+tracked, and a numbering op beside an op that restyles paragraphs or changes the styles they use is a separate spec.
+- Page setup is set_page_setup: margins (twips; the header's and footer's distance from the page edge are \
+margins.header / margins.footer), size, orientation, different_first_page true/false (a first page with its own \
+header/footer — the cover). Sections by index, or by what they contain: {"containing": {"text_regex": \
+"^SCHEDULE"}}, {"with_tables": true}, {"index_range": [a, b]} — "landscape pages for the schedules" is orientation \
+landscape on the sections containing them (only sections that exist: the engine never adds a section break — say so \
+when the schedule shares a section with other text); margins are not rotated unless given.
 - Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
 in fill_variables.table.file, replace_table.pairs_table.file or swap_image.image / match.image — what a table holds is \
 the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \

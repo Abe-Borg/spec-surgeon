@@ -55,10 +55,13 @@ def test_bound_always_fits_and_cuts_samples_before_structure():
     """Codex review on PR #3: the bound must hold even when structure alone exceeds it; every structural cut is
     reported in ``truncated``."""
     prof = profile(DocxPackage(build_rich(), name="rich.docx"))
-    roomy = bound(json.loads(json.dumps(prof)), limit=3500)
+    # just room for every section once the descriptive parts are cut (3500 before batch 5's table and list summaries,
+    # whose omission records take 20 bytes of it)
+    roomy = bound(json.loads(json.dumps(prof)), limit=3520)
     assert roomy["sections"] == prof["sections"] and not roomy["first_paragraphs"]          # samples went first
-    # batch 4's character/table styles in use go before any section or part (they matter less than the page setup)
-    assert roomy["truncated"] == ["header/footer text", "character styles in use"]
+    # batch 4's character/table styles in use go before any section or part (they matter less than the page setup), and
+    # so do batch 5's table and list summaries (the table count stays under counts)
+    assert roomy["truncated"] == ["header/footer text", "character styles in use", "tables", "lists"]
     for limit in (3000, 1500, 800, 300):
         small = bound(json.loads(json.dumps(prof)), limit=limit)
         assert len(json.dumps(small, ensure_ascii=False)) <= limit, limit

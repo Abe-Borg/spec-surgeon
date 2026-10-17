@@ -27,8 +27,9 @@ held style the copies name is missing from the output; and — the
 numbering member is under no residual — when the output's numbering part is not exactly the source's with the expected
 abstractNums after its last abstractNum (else before its first num, else before ``w:numIdMacAtCleanup``, else at the end)
 and the expected nums after its last num (else before ``w:numIdMacAtCleanup``, else at the end) — and, when it copies no
-list, when the numbering part changed at all (``check_numbering_unchanged``; skipped only when another
-``styles_imported`` assertion of the plan copies lists and so owns the member's comparison). It registers the imported
+list, when the numbering part changed at all (``check_numbering_unchanged``; skipped only when another assertion of
+the plan owns the member's comparison: a ``styles_imported`` assertion that copies lists, or set_list_level's
+``list_level`` — built-in batch 5 —, each comparing the member whole). It registers the imported
 styles (``added_styles``), the replaced ones (``replaced_styles``) and the numbering part (``verified_members``).
 
 ``check_requested`` (reused by every op kind over the import — ``mapped_styles`` and apply_style's): the op's own kind
@@ -418,13 +419,22 @@ def check_styles_imported(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             + (f", lists {d['num_map']} / {d['abs_map']}" if d["num_map"] else ""))
 
 
+NUMBERING_OWNER_KINDS = ("list_level",)
+
+
 def check_numbering_unchanged(ctx: Ctx, errs: List[str], tag: str, exclude: Optional[Dict[str, Any]] = None) -> None:
     """``numbering.xml`` is under no residual: an op over the style import that copies no list must leave it exactly as
-    it was — compared whole and registered (``verified_members``) — unless another ``styles_imported`` assertion of the
-    plan copies lists, whose own check then compares the member whole with the source plus its lists (two ops copying
-    lists are a plan-time conflict: both add to the member as a whole)."""
+    it was — compared whole and registered (``verified_members``) — unless another assertion of the plan OWNS the
+    member's comparison: a ``styles_imported`` assertion that copies lists (its own check compares the member whole with
+    the source plus its lists), or one of ``NUMBERING_OWNER_KINDS`` (built-in batch 5: ``list_level`` — set_list_level's
+    kind compares the member whole with the source plus exactly its one level's change). Standing down is not weaker:
+    the owner's whole comparison fails on ANY other change to the member — a list this op copied in secret included —
+    exactly as this one would, and an op changing numbering beside it is a plan-time conflict (the import with lists
+    touches ``(numbering, "*", "add")``, set_list_level ``(numbering, "*", "lvl")``: both whole-member changes)."""
     for x in ctx.plan.get("property_assertions", []) or []:
-        if x is not exclude and x.get("kind") == "styles_imported" and x.get("num_map"):
+        if x is exclude:
+            continue
+        if (x.get("kind") == "styles_imported" and x.get("num_map")) or x.get("kind") in NUMBERING_OWNER_KINDS:
             return
     s_part, o_part = ctx.src.related(NUMBERING_REL), ctx.out.related(NUMBERING_REL)
     if s_part is None and o_part is None:

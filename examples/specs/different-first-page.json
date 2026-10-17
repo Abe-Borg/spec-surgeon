@@ -1,0 +1,28 @@
+{
+  "request": "Give the cover page its own first-page header and footer, and put the header and footer half an inch from the page edge",
+  "summary": "Turn 'different first page' on for the cover section (section 0), so its first page shows the first-page header and footer; set every section's header and footer distance from the page edge to 0.5 in (720 twips). Nothing else in the page setup changes.",
+  "assumptions": [
+    "the cover is section 0",
+    "a cover without a first-page header or footer of its own shows a blank one on its first page — flagged for review (add it in Word if one is wanted)",
+    "a section that already shows its first page differently is left alone",
+    "the header and footer distance from the page edge are the section margins 'header' and 'footer', in twips (1440 = 1 in); the page margins stay as they are"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_page_setup",
+      "select": {"sections": [0]},
+      "params": {"different_first_page": true},
+      "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}
+    },
+    {
+      "op": "set_page_setup",
+      "select": {"sections": "all"},
+      "params": {"margins": {"header": 720, "footer": 720}},
+      "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}
+    }
+  ],
+  "review": {"sample_files": 2, "geometry_reference": "none"}
+}

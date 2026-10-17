@@ -442,7 +442,8 @@ class DocxPackage:
                 rid = ref.get(R + "id")
                 if rid in rels and rels[rid].resolved:
                     info.footer_refs[ref.get(W + "type", "default")] = rels[rid].resolved
-            info.title_pg = sp.find(W + "titlePg") is not None
+            tp = sp.find(W + "titlePg")             # w:val 0/false/off turns it off (CT_OnOff)
+            info.title_pg = tp is not None and tp.get(W + "val") not in ("0", "false", "off")
             pg = sp.find(W + "pgNumType")
             if pg is not None:
                 start = pg.get(W + "start")

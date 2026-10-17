@@ -93,6 +93,10 @@ EXCLUDED_FROM_EXAMPLES: Dict[str, set] = {
     "spec_surgeon.ooxml": {"RevisionStamp", "property_change", "max_revision_id", "file_uses_date_utc"},
     "spec_surgeon.ops.replace_text": {"default_author"},
     "spec_surgeon.ops": {"register"},
+    # set_page_setup's built-in batch 5 notes and reads (what a first page shows through inheritance, what a content
+    # selection of sections reads): a generated op neither selects sections by content nor flags their headers
+    "spec_surgeon.ops.hf_common": {"effective_refs", "refs"},
+    "spec_surgeon.ops.selectors": {"section_reads"},
 }
 EXAMPLE_OPS = ("set_page_setup.py", "set_paragraph_props.py", "set_font.py")
 MAX_CALLS = DEFAULT_MAX_CALLS

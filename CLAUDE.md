@@ -32,7 +32,13 @@ edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inpu
 `set_tab_stops` (`docs/BUILTIN_OPS_BATCH3_DESIGN.md`; items 22–23 were already `set_properties`). Built-in operations
 batch 4 (2026-10-17) added paragraph borders and shading, spacing on styles, clearing direct formatting, the proofing
 language, applying a style by appearance or pattern, style mapping over a shared style import (closure and list
-numbering) and removing unused styles (`docs/BUILTIN_OPS_BATCH4_DESIGN.md`). The user (Abraham) is a
+numbering) and removing unused styles (`docs/BUILTIN_OPS_BATCH4_DESIGN.md`). Built-in operations batch 5 (2026-10-17)
+added the engine's first model of list numbering, on both sides (`ops/lists.py` ↔ `verify/lists.py`: which number Word
+shows on each paragraph), and over it converting a document's numbering to the user's scheme from an example file and
+typed numbers to real list numbers (the document must read the same), a list level's format/zero padding/start/restart
+and a numbering audit; table borders, cell margins, width, header rows and rows that do not split, applying a table
+style; and `set_page_setup`'s different first page and sections chosen by what they contain
+(`docs/BUILTIN_OPS_BATCH5_DESIGN.md`). The user (Abraham) is a
 fire sprinkler designer; these files go to clients;
 "I will lose my job" if content is silently lost or invented is the spec.
 
@@ -56,7 +62,13 @@ fire sprinkler designer; these files go to clients;
    and (built-in batch 4) its own border levels, box and shading rules (`verify/borders.py`), cleared sets and symbol rule
    use (`verify/clearing.py`), effective language (`verify/language.py`), style resolution, closure, list-id allocation
    and copies (`verify/restyle.py`, `verify/styleimport.py`, `verify/applystyle.py`) and used-style scan
-   (`verify/unused.py`).
+   (`verify/unused.py`), and (built-in batch 5) its own list model — numbering definitions, a paragraph's numbering,
+   the count and the rendered number, the scheme, typed numbers, the visible line (`verify/lists.py`) —, conversion
+   destination and import derivation (`verify/numberingconvert.py`), typed-number refusals (`verify/typednumbers.py`),
+   list-level changes and the expected `w:lvl` (`verify/listlevel.py`), the audit's blank rule (`verify/numberingaudit.py`),
+   table selection, levels and expected table/row/cell elements (`verify/tableselect.py`, `verify/tableprops.py`,
+   `verify/applytablestyle.py`), the content form of the section selector (`props._v_resolve_sections`) and what the
+   cover shows (`props._cover_unnumbered`).
    Do not "deduplicate" these into shared helpers — the duplication is the point: a
    transform-side bug must not be able to hide behind the same bug in the check.
 2. **Predict first.** `Op.plan()` (and `Job.plan()`) must compute every prediction (diffs, parts, members
@@ -91,7 +103,14 @@ fire sprinkler designer; these files go to clients;
    (batch 4): a kind whose op changes it compares the WHOLE member with its own expected tree and registers it in
    `verified_members` (`styles_imported`); a style definition a kind replaced is out of the styles residual only through
    `ctx.replaced_styles` after the kind compared it whole and checked its place, a removed one through
-   `ctx.removed_styles` (the residual then requires it gone).
+   `ctx.removed_styles` (the residual then requires it gone). Batch 5: `set_list_level`'s `list_level` compares the WHOLE
+   numbering member with the source plus exactly its level's change; an op over the style import that imports nothing
+   (`apply_style`, `map_styles`, `apply_table_style`) still requires the member byte-for-byte unchanged
+   (`styleimport.check_numbering_unchanged`) unless another assertion owns it — a `styles_imported` copying lists, or a
+   kind in `NUMBERING_OWNER_KINDS` (`list_level`), whose own whole comparison still fails any other change. Table
+   properties are stripped from the text-part residual only through `ctx.strip_tbl` / `strip_tr` / `strip_tc` /
+   `strip_tblprex` (part → table ordinal / (ordinal, row) / (ordinal, row, cell) → element names) by the kind that
+   compared each element; an emptied `w:trPr`/`w:tcPr`/`w:tblPrEx` is dropped on both sides.
 9. **Overlapping ops are refused, never ordered by guess.** `merge_fragments` raises `conflict` when two ops
    touch the same block's text, the same property family of the same target, or anything in a member another
    op removes/restructures. Ops declare what they touch in `touches`; keep that list honest — including a
@@ -190,6 +209,24 @@ fire sprinkler designer; these files go to clients;
    `remove, rPr, pPr, tblPr` per removed style and reads `(styles, "*", "verify:uses-")`: an op taking uses away beside it
    (mapping, applying another style) would make the order decide what is unused — a plan-time conflict, the removal runs as
    a chain's last stage; an op adding uses plans beside it.
+   Batch 5 (`docs/BUILTIN_OPS_BATCH5_DESIGN.md` §6 and "Built"): an op whose prediction COUNTS numbers (the four
+   numbering ops) declares `lists.count_reads` — the numbering part whole `(numbering, "*", "verify")`, whole-member soft
+   reads `verify-props:pStyle` and `verify-props:numPr` of the main part, `(main, bi, "verify:numPr")` per counted numbered
+   paragraph, and `(styles, "style:<id>", "verify:pPr")` along the chain of EVERY counted paragraph (+ `verify:add` of a
+   chain style the file lacks): a style replaced or re-spaced beside it is a conflict, a font change of it is not.
+   Changes: a paragraph's numbering `(main, bi, "numPr")` (+ `pPr`, `pStyle`); a list definition `(numbering, "*", "lvl")`
+   (whole member: any other op on the numbering part conflicts); `convert_typed_numbers` also `(main, bi, "text")` and
+   `(main, "*", "verify:text")` (its post-condition reads every paragraph's line). Tables: `set_table_props` touches
+   `(part, "tbl:<k>", "tblProps")` + `tblBorders|tblCellMar|tblW`, `(part, "tr:<k>:<r>", "trPr")` + `tblHeader|cantSplit`,
+   `(part, "tc:<k>:<r>:<c>", "tcPr")` + `tcBorders|tcMar`, and reads `(part, "tbl:<k>", "verify-props:tblPr")` (its style)
+   plus soft reads of its asked elements on every selected table, row and cell; `apply_table_style` touches
+   `(part, "tbl:<k>", "tblPr")` (map_styles' aspect for a table style: paragraph ops in the table, which read it through
+   `chain_reads`, conflict) and `uses+`/`uses-`. Sections: `different_first_page` touches `(main, "sectPr:N", "titlePg")`
+   and reads `verify:titlePg` of every selected section; the content form of `select.sections` reads `(main, "*",
+   "verify:text")` only when its predicate reads words, plus the selection's soft family reads (never for `with_tables` or
+   `index_range`: only a whole-member change moves tables or section breaks). `remove_header_footer` now reads
+   `verify:titlePg` of every section (its inheritance rule reads them; beside `different_first_page` it planned and passed
+   with a first page showing nothing).
 10. **Never create a part to make an edit work.** E.g. `remove_header_footer` refuses (`inheritance`) rather
     than add an empty header part. Adding members is allowed only when the op's whole purpose is the added
     member and it is predicted in `members_added` — today `apply_header_footer_template`, whose new parts
@@ -924,6 +961,123 @@ definition):
   defects (snapshots skipped, fields ignored, case-sensitive names, no closure, a closure seeded by the used styles alone,
   numbering or settings not scanned, the field-update table forgotten, a default `which`, a case-sensitive keep).
 
+Built-in operations batch 5 (2026-10-17; `docs/BUILTIN_OPS_BATCH5_DESIGN.md` — each module's docstring is the full
+definition):
+
+- **The list model** (§0; `ops/lists.py` ↔ `verify/lists.py`). Numbering part = the main part's `numbering` relationship.
+  num / abstractNum by whole-number id (two with one id, a non-whole id/ilvl/start/lvlRestart/startOverride → unreadable).
+  A paragraph's numbering: own `w:pPr/w:numPr` numId/ilvl when present, else the first style on its chain (pStyle — an
+  empty value names none —, else the default paragraph style) whose own numPr holds a numId, with that style's ilvl, else
+  the **linked level** (the lowest level whose `w:pStyle` names the style), else 0; numId 0 → unnumbered; a numId no
+  `w:num` defines → dangling; when the two readings of numPr inheritance — as a unit (the numId-supplying level's own
+  ilvl) and element by element (the nearest ilvl along direct → chain; the link at the numId-supplying style counts as
+  its own level) — give different levels → not evaluated (`ambiguous-level`; `element_ilvl` ↔ `_v_by_element`);
+  `Numbering.linked` says the level came from a link (LibreOffice shows those at level 0 — flagged). Level = the abstractNum's `w:lvl` (start default 0, numFmt default decimal, lvlText, lvlRestart,
+  isLgl, suff default tab, pStyle). **Counting** over the main part's paragraphs in `root.iter(w:p)` order, text boxes and
+  paragraphs whose mark is a pending deletion left out, hidden paragraphs counted (Word; LibreOffice does not — flagged),
+  per numId: deeper levels restart after level L (lvlRestart none → yes; 0 → never; r → when L ≤ r−1, ignored when r−1 ≥
+  k; LibreOffice ignores lvlRestart — `has_restart_rule`, flagged), the level's value = its start (the num's startOverride,
+  else `w:start`) or the previous + 1; **rendered number** = lvlText with `%j` → level j−1's value in its format (decimal
+  when legal). Formats: decimal, decimalZero (`0`+n for 0–9), upper/lowerLetter (27 → AA), upper/lowerRoman (1–3999),
+  bullet (the text), none; negative values and other formats unsupported. **Not evaluated** (never predicted through):
+  unreadable, an earlier unreadable paragraph of the list (`earlier`), numStyleLink/styleLink lists, a full override
+  level (`w:lvlOverride/w:lvl`, `override`), an abstractNum two nums share with counted paragraphs (`shared`: Word
+  continues one count, LibreOffice keeps them apart), a `%j` naming a level with no current value (`skipped`) — and a
+  level a deeper paragraph reached while it had no value stays uncertain until a restart resets it: the next paragraph
+  AT it, or naming it, is `skipped` too (`skipped_below` ↔ `_v_skipped_below`; LibreOffice gives it its start then and
+  continues) —, a startOverride level starting a second time (`start-override`), an unsupported format or value. `count(root, sheet,
+  defs, override)` simulates a planned output; `count_reads` is what a counting op declares (rule 9). **Scheme**: 1–9
+  paragraph styles numbered by ONE num at levels 0…n−1 (`resolve_scheme`), each level's **pattern** its lvlText with
+  `%j` → the format's pattern. **Typed number**: on batch 1's run text, `^[ \t]*` + exactly one level's pattern +
+  `[ \t\u00a0]+` or the end (`typed_number`); **visible line** = rendered number + suffix + accepted run text, whitespace
+  runs collapsed, stripped (`visible_line`). **Destination check** (`list_is_clean`): no `w:lvlOverride`, not shared, not
+  linked, every level supported. `tests/test_lists.py` compares the two on every paragraph of ten fixture variants and
+  ~10,000 random paragraphs and plants shared defects in each rule.
+- **The conversion destination** (§0.3, §1, §2; `ops/numbering_convert.py` ↔ `verify/numberingconvert.py`): the scheme
+  resolved in the template (`bad-params`, fatal) or the document (`scheme`); each level's style: `keep` → the document's
+  own when the reference resolves there, else the template's (imported by batch 4's import, new list ids); `replace` →
+  the template's; the planned output = source styles + the import's copies, source lists + the copied list
+  (`ListDefs.with_extra`); the scheme re-resolved there; the destination num must pass `list_is_clean` against the SOURCE
+  count (`numbering-unsupported`); a level whose `w:lvl/w:rPr` turns on vanish/caps/smallCaps is refused
+  (`level_display_problem` ↔ `_v_levels_shown`).
+- **`convert_numbering`** (§1): source paragraphs = those of the main abstractNum (`main_abstract`: the most counted
+  non-bullet paragraphs; tie → the first) at their ilvl, or of named styles per level (`from.styles`, numbered ones only);
+  `level_map`; a paragraph at a level beyond the scheme → `scheme-depth`; an unevaluated source number converts only
+  when its LEVEL is known (`shared`, `start-override`, `skipped`, `override`) and its whole num is converted (flagged:
+  "could not predict before"; one still skipped after, at an unchanged level, flagged as the outline's own skip —
+  `skipped_both`), else `numbering-unsupported`; a held level style numbering differently from the template's level
+  (`level_pattern_sig` ↔ `_v_level_sig`) with `existing: "keep"` → `scheme` (use replace); a paragraph NOT converted that
+  would show another number → `numbering-mismatch` (convert every level) — the destination list's own paragraphs are
+  flagged instead. Change: `w:pStyle` = the level's style first in pPr, own numPr removed (an ilvl-only one too), cleared
+  children (apply_style's clear) gone; tracked → one pPrChange, refused (`tracked-format`) when a converted paragraph's
+  chain holds a style the import replaces (`replaced_in_chain`: reject-all would show two numbers). Predicted: every
+  counted paragraph's counters and number over the planned output; V10 predicts with its own model, compares with the
+  plan's and with its own count of the output. Flagged: linked scheme levels, a new style turning caps on.
+- **`convert_typed_numbers`** (§2): candidates = counted unnumbered paragraphs of the main part (not in tables unless
+  `include_tables`), selected; prefix = position 0 to the end of the whitespace after the typed number; the plan refuses
+  (`numbering-mismatch`) unless the visible line of EVERY counted paragraph is unchanged over the planned output and no
+  converted level's `suff` is `nothing`; refused (`typed-format`) a prefix run or mark with effective vanish/specVanish
+  on or ambiguous, caps/smallCaps where the typed number holds a lower-case letter, and — the number takes the planned
+  MARK's formatting (with the level's `w:lvl/w:rPr`) — a number whose planned look differs from the typed run's planned
+  look (both read in the planned output, over the new style) in strike, dstrike, vertAlign, position, colour (auto ≡
+  000000), size or a symbol font; bold, italic, underline or another font differing is flagged (`numbering_convert.
+  look_of`/`number_look`/`number_symbolic`, `display_problem` ↔ `_v_display`). Change: the prefix deleted by the edit
+  core (`tabs=True`), pStyle + own numPr off as convert_numbering. V10 checks each converted paragraph by the item model
+  (`verified_blocks`) and the visible-line post-condition over every counted paragraph on the OUTPUT.
+- **The edit core deletes a tab** (§2.3; `ops/textedit.py` ↔ `verify/edits.py`, keyword `tabs=True`, default off): a pure
+  deletion (`text == ""`) may cover a run's `w:tab` children (never `w:ptab`, breaks or other elements); untracked the
+  tab goes (V3: the plan declares `struct_after`), tracked it goes into the `w:del`. `tests/test_text_edits.py` plants a
+  tab left behind, a tab outside the range taken, a ptab accepted.
+- **List levels** (§3; `ops/set_list_level.py` ↔ `verify/listlevel.py`): the level = the style's own numbering
+  (`style_numbering`), `level` replacing the ilvl; changes (`changes_for` ↔ `_v_changes`) against the level's own fields —
+  restart **in effect** (`restart_in_effect` ↔ `_v_in_effect`: none, an r Word ignores, or `{after_level: level−1}`, is
+  "after any higher level" — only the normal form is written);
+  the written level (`expected_level` ↔ `_v_expected_lvl`): the source `w:lvl` with each changed element a fresh one
+  holding only `w:val`, in CT_Lvl order (the verifier reads the order from the bundled schema), `w:lvlRestart` removed for
+  "after any higher level". Refusals: `numbering-unsupported` (unreadable/linked list, missing or unsupported level,
+  start/restart on a shared abstractNum), `numbering-override` (a full override level), `list-level` (start 0 on a letter
+  or roman level, after_level not above, a change leaving an evaluated paragraph unevaluated).
+- **The numbering audit** (§4; `ops/audit_numbering.py`, report only; the fix ↔ `verify/numberingaudit.py`): blank
+  content (`blank_content` ↔ `_v_blank_content`: only pPr, proofErr, bookmarks, runs of rPr/lastRenderedPageBreak/`w:t` of
+  spaces and NBSPs), an empty numbered paragraph = counted, evaluated, a non-empty non-bullet number, blank content
+  (`empty_numbered` ↔ `_v_empties`); `unnumber_empty` writes exactly `<w:numPr><w:numId w:val="0"/></w:numPr>` and its kind
+  checks only that (numPr, its place, the pPrChange rules) — the mark's rPr, a sectPr and every other child are the
+  residual's, compared there with the other ops' strips. The visible sequence walk (typed numbers judged, the main
+  list's automatic numbers as context; table cells skipped; keyword shapes without their dash) and the typed grammar are
+  advisory (transform side only). Renumbering flags (stale REF/PAGEREF/NOTEREF fields, written references to an old
+  number) are shared by the numbering ops: `ops/numbering_flags.py`.
+- **The table selector** (§5.1; `ops/table_select.py` ↔ `verify/tableselect.py`): ordinal = index among `root.iter(w:tbl)`
+  of the part (nested included); a table's style = tblStyle's value (empty names none), else (no tblStyle) the default
+  table style; `index_range` inclusive, `style_in`, `first_row_regex` (the first own row's cells' paragraphs' block texts:
+  space within a cell, tab between cells), `text_regex` (any paragraph whose nearest table is it), `nested`; rows
+  `tr:<k>:<r>` and cells `tc:<k>:<r>:<c>` by own children (a row or cell in a content control is not own:
+  `table-structure` when rows or cells are changed).
+- **Table properties** (§5.2; `ops/set_table_props.py` ↔ `verify/tableprops.py`): style chain = the table's style and its
+  basedOn ancestors; expected `w:tblBorders` = asked sides exactly (`space` default 0), a side not asked that ANY chain
+  level shows visibly → `nil`, else absent; `w:tblCellMar` merged (asked sides `{w:w, w:type=dxa}`); `w:tblW` (pct ×50,
+  dxa, auto 0); header rows: the first n rows `<w:tblHeader/>`, later rows `w:val="0"` where the chain's trPr turns it
+  on, else none; `cant_split` likewise; "already" = own element equal (both absent counts); written in schema order
+  (`ooxml.TBLPR_ORDER`, `TRPR_ORDER`, `TCPR_ORDER` ↔ the bundled schema); never tracked. `clear_cell_overrides` removes
+  only the **competing** cell sides (`competing` ↔ `_v_competing_sides`: borders — every side but the diagonals
+  `tl2br`/`tr2bl`; margins — the asked sides, either spelling), an emptied tcBorders/tcMar/tcPr going. **Per table**
+  (`disposition` ↔ `_v_skip_or_refuse`): a table in a text box under an every-table selection, or with fewer own rows
+  than the header rows asked, is left alone and flagged (named explicitly: refused); a row or cell in a content control
+  when rows or cells change → `table-structure`; `start`/`end` sides and a right-to-left (`bidiVisual`) table asked for
+  borders or margins → `conflict-property`.
+- **Applying a table style** (§5.3; `ops/apply_table_style.py` ↔ `verify/applytablestyle.py`): apply_style's resolution
+  for a TABLE style (the import only when a selected table is restyled); restyled = its style is not the asked one;
+  `w:tblStyle` first in tblPr; `clear` removes the table's own tblBorders/shd/tblCellMar, its rows' `w:tblPrEx` ones and
+  its cells' tcBorders/shd/tcMar, soft-reads all of them on every selected table (an already-styled one included) and
+  its V10 kind checks on the OUTPUT that none is left and every selected table is in the style.
+- **Sections by content** (§7; `ops/selectors.resolve_sections(…, content=True)` ↔ `verify/props._v_resolve_sections`):
+  `{containing: <paragraph predicate>, with_tables, index_range}`, every given key holding; a paragraph's section by
+  `paragraph_sections` ↔ `tabs._v_sections`, a table's by its first paragraph; `set_page_setup`'s assertion carries the
+  user's `select` and V10 re-derives the list (an assertion without it fails). `different_first_page`: on = `w:titlePg`
+  without `w:val`, off = absent; `section_props` element specs `{"present": true, "remove": [...]}` / `{"absent": true}`.
+- **What the cover shows** (verifier only, `props._cover_unnumbered`): fix_page_numbering's cover-unnumbered asserts the
+  footer it edited is the one the cover shows in the output (its first-page footer while titlePg is on — `w:val` not
+  0/false/off — and it has one, else its default) and that it holds no PAGE field.
+
 ## Roadmap
 
 `docs/NL_SURGICAL_EDITOR_PLAN.md` is the design and phased plan for the natural-language editor built on
@@ -989,6 +1143,19 @@ proposals and recorded in the plan's status sections.
   target); and the shared
   pieces `fields.py` (`fields_of`, `Field`, `unlink`, `NEVER_UNLINK`, `REFUSAL_TEXT`), `markup.py` (`Look`, `color_in`),
   `removal.py` (`deletable`, `plan_paragraph_deletion`, `delete_paragraph`, `plan_run_removal`, `remove_runs`).
+- Built-in batch 5's ops: `ops/lists.py` (the shared list model: `ListDefs`, `paragraph_numbering`, `style_numbering`,
+  `count`, `format_value`, `resolve_scheme`, `typed_number`, `visible_line`, `list_is_clean`, `has_restart_rule`,
+  `count_reads`), `numbering_convert.py` (the conversion destination), `convert_numbering.py`, `convert_typed_numbers.py`,
+  `set_list_level.py`, `audit_numbering.py`, `table_select.py` (the table selector), `set_table_props.py`,
+  `apply_table_style.py`; `set_page_setup.py` grew `different_first_page` and `selectors.resolve_sections(…, content=True)`
+  / `section_reads`. Their V10 kinds: `verify/lists.py` (the model's twin), `verify/numberingconvert.py`
+  (`converted_numbering`), `verify/typednumbers.py` (`typed_numbers`), `verify/listlevel.py` (`list_level`),
+  `verify/numberingaudit.py` (`unnumbered_empty`), `verify/tableselect.py`, `verify/tableprops.py` (`table_props`),
+  `verify/applytablestyle.py` (`applied_table_style`), and in `verify/props.py` the content form of `section_props`
+  (`_v_resolve_sections`, `_v_page_setup`) and `cover_unnumbered`. Fixtures: `build_numbering`, `build_typed`,
+  `build_scheme_example` (= `examples/templates/NUMBERING SCHEME.docx`, `--numbering-scheme`), `build_tables`,
+  `build_schedule`. The profile's `tables` and `lists` summaries (`profile.table_summary`/`list_summary`) show Claude a
+  pattern's tables, lists, numbered styles (a scheme's levels are named from them) and typed numbers.
 - `ops/textedit.py` — the in-paragraph edit core (batch 1): `RunText`, `Edit`, `check_edits`, `predict`,
   `apply_untracked`/`apply_tracked`, `plan_paragraph` (BlockDiff or accepted view, rev delta, touch),
   `apply_part_edits`, `edits_to_data`/`edits_from_data`. `ops/tables.py` — table files (`xlsx_rows`, `csv_rows`,
@@ -2133,3 +2300,47 @@ Rules that came out of it:
 8. **Not in this batch** (recorded): run, page and table-cell borders; theme colours as a border/shading colour to set;
    tab stops in styles; mapping a linked character style automatically; editing field codes that name a mapped style
    (flagged); picture-bullet lists in imports.
+
+## Built-in operations, batch 5 (2026-10-17)
+
+Abraham: "let's add some more prebuilt functions" — items 33–40 (★ convert to your PART / 1.1 / A. / 1. / a. scheme from an
+example file; ★ typed "A." and "1." become real list numbers, the typed characters removed exactly as predicted; restart
+per PART, a level's format or zero padding; a numbering audit; table borders, cell margins, width, header rows, rows that
+do not split; a table style on every table; different first page and header/footer distances; landscape for chosen
+sections). `docs/BUILTIN_OPS_BATCH5_DESIGN.md` is the design with every decision (taken on his behalf, each changeable)
+and, at its end, what the build and the review changed; README → "Built-in operations, batch 5" is the user's view; the
+both-sides definitions are listed above. Built by a list-model builder first, then four builders in parallel (numbering
+conversions, list levels and the audit, tables, sections), each put through an adversarial review whose findings were
+reproduced before they were fixed. Rules that came out of it:
+
+1. **Numbering is predicted, never assumed.** Every numbering op counts with the shared list model and its V10 kind
+   recounts with the verifier's twin: its own prediction from the source must equal the plan's, and its own count of the
+   output must equal both. Where Word's behaviour is not certain — or Word and LibreOffice differ — the model says "not
+   evaluated" with the reason (shared list definitions, override levels, skipped levels, a startOverride level starting
+   again, a level the paragraph's own numPr leaves ambiguous, linked lists, unsupported formats); an op never predicts
+   through one: a conversion refuses, the audit reports. Do not "improve" a not-evaluated case into a guess without a
+   both-sides definition, its tests, and Word evidence.
+2. **The scheme is the user's own.** The engine never writes a list definition: the levels come from the user's example
+   file (imported by batch 4's style import, new list ids) or the document. A conversion's destination list must be
+   clean (`list_is_clean`).
+3. **Typed numbers become list numbers only when the document reads the same.** The plan computes the visible line of
+   every counted paragraph over the planned output and refuses the file on any difference (a typo, a skipped letter, a
+   list that would renumber other paragraphs) — never a silent renumbering; hidden or capitalised typed numbers, and a
+   number its mark would show hidden or in capitals, refuse (`typed-format`). The edit core deletes a tab only for this op
+   (`tabs=True`).
+4. **Plans see what V10 checks** (Codex on #32): a post-condition over the whole document is computed by the plan first
+   and refused or flagged there — V10 never discovers a number change the plan did not predict.
+5. **LibreOffice is not Word for numbering**: it ignores `w:lvlRestart`, does not count hidden numbered paragraphs, ignores
+   linked levels, numbers text boxes. The model follows Word; the ops flag where the proof PDFs will differ.
+6. **numbering.xml has owners.** `list_level` compares it whole; the import's no-copy check stands down only for an
+   owner kind (`NUMBERING_OWNER_KINDS`). Two ops changing it are a plan-time conflict.
+7. **Tables are whole border sets, merged margins, never tracked**, chosen by the table selector (ordinals over
+   `root.iter(w:tbl)`); cell overrides are flagged and cleared only on request, and then only the sides asked.
+8. **Sections by content are re-derived by V10** from the user's own `select`; a content selection that chooses every
+   section is flagged; the engine never adds a section break.
+9. **A titlePg written off is off** everywhere (`package.sections` reads `w:val`), and fix_page_numbering's
+   cover-unnumbered is checked against what the cover shows in the output (`cover_unnumbered`).
+10. **Not in this batch** (recorded): inserting section breaks around a schedule; restarting a list with new `w:num`
+    instances; tracked table or numbering changes; numbering in headers/footers/text boxes; numStyleLink/styleLink lists;
+    custom (`001`) formats; rotating margins for landscape; Word itself (nothing here was checked in Word — the LibreOffice
+    proofs were).

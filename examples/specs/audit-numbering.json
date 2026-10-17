@@ -1,0 +1,28 @@
+{
+  "request": "Check the numbering for gaps, duplicates and empty numbered lines",
+  "summary": "An audit of the main document's numbering: gaps, duplicates and numbers going back in what the reader sees (automatic and typed numbers), empty numbered paragraphs that use up a number, typed numbers on numbered paragraphs, hidden numbered paragraphs, undefined lists, lists the engine cannot predict and restart rules LibreOffice ignores. Report only: every finding is flagged and nothing changes.",
+  "assumptions": [
+    "report only: the file is not changed; the findings are flagged for review",
+    "the main document only; typed numbers (PART 1, 1.1, A., 1., a.) are read with the automatic numbers of the main list",
+    "an empty numbered paragraph keeps its number unless the fix (unnumber_empty) is asked"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "audit_numbering",
+      "params": {},
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2
+  }
+}

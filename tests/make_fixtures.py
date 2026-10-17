@@ -18,7 +18,9 @@ are its fill rules. ``build_reference_spec()`` (``--reference``) is an ordinary 
 template spec (reference slots); ``REFERENCE_FILLS`` fit it and build() targets. ``build_sized()`` is the size fixture
 of the font ops (9 pt text, 8 pt headers, a 12 pt note, symbol runs with sizes). ``build()``'s keyword options make templating targets: ``footer_revision`` (Jeremy's pending
 insertion in the body footer), ``side_margin_twips``, ``header_distance_twips``, ``footer_distance_twips``,
-``body_picture`` (a drawing whose id the template's logo must not reuse).
+``body_picture`` (a drawing whose id the template's logo must not reuse). Built-in batch 5's numbering fixtures:
+``build_numbering()`` (an architect's spec numbered by its own outline list), ``build_typed()`` (numbered by typed text)
+and ``build_scheme_example()`` (``--numbering-scheme``: ``examples/templates/NUMBERING SCHEME.docx``).
 """
 from __future__ import annotations
 
@@ -178,6 +180,71 @@ def build(section_number: str, title: str, stamp: str = "ISSUED FOR CONSTRUCTION
 
     buf = io.BytesIO(); doc.save(buf)
     return _post_process(buf.getvalue())
+
+
+def build_schedule(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS",
+                   cover_first_page: bool = False) -> bytes:
+    """Built-in batch 5's section fixture (set_page_setup: landscape schedules, different first page):
+
+    * section 0 (cover): the section number, title and a revision-history table; its own default header (a tab, then
+      the issue stamp) and default footer ("<number> - {PAGE}", right-aligned); with ``cover_first_page`` also titlePg
+      and its own first-page footer ("COVER");
+    * section 1 (body, PART 1/2 in Heading 1): no references (shows the cover's header and footer), restarts at 1;
+      "Schedule 40" in lower case;
+    * section 2 (a schedule): "SPRINKLER HEAD SCHEDULE" and a table with a bold header row; no references;
+    * section 3 (body continued, PART 3 in Heading 1, END OF SECTION): no references.
+    """
+    doc = Document()
+    st = doc.styles["Normal"]; st.font.name = "Arial"; st.font.size = Pt(10)
+    cover = doc.sections[0]
+    _header(cover, "ISSUED FOR CONSTRUCTION  2026-01-01")
+    _footer(cover, section_number)
+    if cover_first_page:
+        cover.different_first_page_header_footer = True
+        ff = cover.first_page_footer; ff.is_linked_to_previous = False
+        ff.paragraphs[0].add_run("COVER")
+    doc.add_paragraph(f"SECTION {section_number}")
+    doc.add_paragraph(title)
+    doc.add_paragraph("PROJECT REVISION HISTORY")
+    t = doc.add_table(rows=2, cols=3)
+    t.cell(0, 0).text = "Rev"; t.cell(0, 1).text = "Date"; t.cell(0, 2).text = "Description"
+    t.cell(1, 0).text = "0"; t.cell(1, 1).text = "2026-01-01"; t.cell(1, 2).text = "Issued for Construction"
+
+    def section(restart: bool):
+        sec = doc.add_section(WD_SECTION.NEW_PAGE)
+        sec.header.is_linked_to_previous = True
+        sec.footer.is_linked_to_previous = True
+        if cover_first_page:
+            sec.different_first_page_header_footer = False
+            sec.first_page_footer.is_linked_to_previous = True
+        if restart:
+            _set_pgnum_start(sec, 1)
+        else:
+            for old in sec._sectPr.findall(qn("w:pgNumType")):   # add_section copies the previous restart
+                sec._sectPr.remove(old)
+        return sec
+
+    section(restart=True)
+    doc.add_paragraph("PART 1 - GENERAL", style="Heading 1")
+    doc.add_paragraph("1.01\tSUMMARY")
+    doc.add_paragraph("A.\tPipe shall be Schedule 40 per NFPA 13 (2025).")
+    doc.add_paragraph("PART 2 - PRODUCTS", style="Heading 1")
+    doc.add_paragraph("2.01\tSPRINKLERS")
+    section(restart=False)
+    doc.add_paragraph("SPRINKLER HEAD SCHEDULE")
+    t = doc.add_table(rows=3, cols=4)
+    for c, text in enumerate(("Mark", "Type", "K-factor", "Temperature")):
+        t.cell(0, c).paragraphs[0].add_run(text).bold = True
+    for c, text in enumerate(("S1", "Pendent", "5.6", "155 F")):
+        t.cell(1, c).text = text
+    for c, text in enumerate(("S2", "Upright", "8.0", "200 F")):
+        t.cell(2, c).text = text
+    section(restart=False)
+    doc.add_paragraph("PART 3 - EXECUTION", style="Heading 1")
+    doc.add_paragraph("3.01\tINSTALLATION")
+    doc.add_paragraph("END OF SECTION")
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
 
 
 def _ref_field(paragraph):
@@ -1278,6 +1345,330 @@ def build_style_template() -> bytes:
     return buf.getvalue()
 
 
+# ---- built-in batch 5: numbering (docs/BUILTIN_OPS_BATCH5_DESIGN.md) -------------------------------------------------
+
+def _lvl_xml(ilvl: int, fmt: str, text: str, start: int = 1, pstyle: str = None, restart: int = None,
+             legal: bool = False, suff: str = None, left: int = None, hanging: int = 360) -> str:
+    """A ``w:lvl`` in CT_Lvl order (start, numFmt, lvlRestart, pStyle, isLgl, suff, lvlText, lvlJc, pPr)."""
+    left = 720 * (ilvl + 1) if left is None else left
+    return (f'<w:lvl w:ilvl="{ilvl}"><w:start w:val="{start}"/><w:numFmt w:val="{fmt}"/>'
+            + (f'<w:lvlRestart w:val="{restart}"/>' if restart is not None else "")
+            + (f'<w:pStyle w:val="{pstyle}"/>' if pstyle else "")
+            + ("<w:isLgl/>" if legal else "")
+            + (f'<w:suff w:val="{suff}"/>' if suff else "")
+            + f'<w:lvlText w:val="{text}"/><w:lvlJc w:val="left"/>'
+            + (f'<w:pPr><w:ind w:left="{left}" w:hanging="{hanging}"/></w:pPr>' if hanging else
+               f'<w:pPr><w:ind w:left="{left}" w:firstLine="0"/></w:pPr>')
+            + "</w:lvl>")
+
+
+def _add_lists(doc, abstracts, nums):
+    """Add ``w:abstractNum`` XML strings after the template's last abstractNum and ``w:num`` XML strings after its last
+    num (python-docx's template: abstractNums 0–8, nums 1–9 — new ids from 10 never clash)."""
+    numbering = doc.part.numbering_part.element
+    at = list(numbering).index(numbering.findall(qn("w:abstractNum"))[-1]) + 1
+    for k, x in enumerate(abstracts):
+        numbering.insert(at + k, etree.fromstring(x.replace("<w:abstractNum ", f"<w:abstractNum {_W_DECL} ", 1)))
+    at = list(numbering).index(numbering.findall(qn("w:num"))[-1]) + 1
+    for k, x in enumerate(nums):
+        numbering.insert(at + k, etree.fromstring(x.replace("<w:num ", f"<w:num {_W_DECL} ", 1)))
+
+
+def _abstract_xml(aid: int, levels, nsid: str, kind: str = "multilevel") -> str:
+    return (f'<w:abstractNum w:abstractNumId="{aid}"><w:nsid w:val="{nsid}"/><w:multiLevelType w:val="{kind}"/>'
+            + "".join(levels) + "</w:abstractNum>")
+
+
+def _style_name(doc, sid: str) -> str:
+    return next(s.name for s in doc.styles if s.style_id == sid)
+
+
+def _replace_last_paragraph(doc, xml: str):
+    """Add a paragraph written as XML (``<w:p>…</w:p>``, the w: prefix undeclared) at the end of the body."""
+    p = doc.add_paragraph()
+    p._p.getparent().replace(p._p, etree.fromstring(xml.replace("<w:p>", f"<w:p {_W_DECL}>", 1)))
+
+
+def _textbox_paragraph(paragraph, pstyle: str, text: str):
+    """A run holding a text box whose one paragraph is numbered by ``pstyle`` (DrawingML + VML fallback: twice)."""
+    inner = (f'<w:p><w:pPr><w:pStyle w:val="{pstyle}"/></w:pPr><w:r><w:t>{text}</w:t></w:r></w:p>')
+    xml = (
+        '<w:r xmlns:w="%s" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+        'xmlns:v="urn:schemas-microsoft-com:vml">'
+        '<mc:AlternateContent><mc:Choice Requires="wps"><w:drawing><wp:inline><wp:extent cx="914400" cy="457200"/>'
+        '<wp:docPr id="951" name="Text Box 51"/><a:graphic><a:graphicData '
+        'uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape"><wps:wsp><wps:txbx><w:txbxContent>'
+        '%s</w:txbxContent></wps:txbx><wps:bodyPr/></wps:wsp></a:graphicData>'
+        '</a:graphic></wp:inline></w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape><v:textbox><w:txbxContent>'
+        '%s</w:txbxContent></v:textbox></v:shape></w:pict></mc:Fallback>'
+        '</mc:AlternateContent></w:r>') % (W_NS, inner, inner)
+    paragraph._p.append(etree.fromstring(xml))
+
+
+def build_numbering(shared_restart: bool = True) -> bytes:
+    """The numbering fixture (built-in batch 5, §0): an architect's spec numbered automatically by its OWN outline list.
+    Every paragraph is found by its text in the tests (tests/test_lists.py ``NUMBERING_EXPECTED`` lists each one's
+    number). python-docx's template underneath (abstractNums 0–8, nums 1–9; its List Number/List Bullet styles unused).
+
+    The outline list: num 10 → abstractNum 10, levels named by their styles (``w:lvl/w:pStyle``):
+    0 ``ArchPart`` ("Arch Part") ``PART %1 -`` decimal, suffix space — the style's numPr names ilvl 0;
+    1 ``ArchArt`` ("Arch Article") ``%1.%2``, level 1 decimalZero (``1.01``) — ilvl 1;
+    2 ``ArchPara`` ("Arch Paragraph") ``%3.`` upperLetter — numPr WITHOUT ilvl: the LINKED level;
+    3 ``ArchSub`` ("Arch Subparagraph") ``%4.`` decimal — ilvl 3;
+    4 ``ArchSub2`` ("Arch Subparagraph 2", based on ArchSub) ``%5.`` lowerLetter — its own numPr without ilvl (linked);
+    ``ArchParaAlt`` is based on ArchPara with no numPr of its own (inherits level 2 through the chain).
+
+    Body (outline numbers in brackets): SECTION 21 13 13; the title; GENERAL [PART 1 -]; SUMMARY [1.01]; "Section
+    includes wet-pipe sprinkler systems." [A.]; "Related requirements:" [B.]; "Division 21 Section …" [1.]; "Hangers."
+    [a.]; "Supports." [b.]; "Division 28 Section …" [2.]; an EMPTY ArchPara [C. — it uses up a number]; "Deferred
+    submittal." [D.]; REFERENCES [1.02] (bookmark ``_Ref1001`` around its text); "NFPA 13." [A.]; "Hidden requirement."
+    (hidden: run and mark w:vanish) [B.]; "UL listings." (ArchParaAlt) [C.]; SUBMITTALS [1.03]; "Product data." (ArchPara
+    whose own numPr has ONLY ``ilvl 3``) [1.]; "Shop drawings." [A.]; "Deleted requirement." (its mark and run a PENDING
+    deletion by Jeremy — not counted); "Calculations, as specified in Article 1.02." [B.] (a written cross-reference);
+    "Comply with Article 1.02." [C.] (a ``REF _Ref1001 \\r \\h`` field, cached "1.02"); "Bullet one", "Bullet two"
+    (Normal, direct numPr num 21 → abstractNum 21, a bullet "•"); a paragraph holding a text box whose paragraph "Text box
+    item" is ArchPara (not counted; it exists twice: DrawingML and VML); PRODUCTS [PART 2 -]; MANUFACTURERS [2.01];
+    "Tyco." [A.]; "Viking." [B.]; MATERIALS [2.02]; "Steel pipe." [A.]; PIPING; "Black steel."; VALVES; "Gate valves.";
+    "B.\\tCheck valves." (ArchPara whose text starts with a TYPED "B." — double numbering); EXECUTION [PART 3 -];
+    INSTALLATION [3.01]; "Install per NFPA 13." [A.]; "Unnumbered note under a numbered style." (ArchPara, own numPr
+    numId 0: numbering off); a table: "Cell requirement." (ArchPara) / "Remark" (Normal); "After the table." (ArchPara).
+
+    ``shared_restart`` (the default): PIPING carries a direct numPr ``num 11, ilvl 1``; num 11 → the SAME abstractNum 10
+    with ``startOverride`` 2 on levels 0 and 1 (Word's "Set numbering value"/restart glitch: a duplicate 2.02). Two nums of
+    one abstractNum number paragraphs, so EVERY paragraph of num 10 and num 11 is "not evaluated" (``shared``: Word and
+    LibreOffice number them differently) — the audit's case. ``shared_restart=False``: PIPING is a plain ArchArt and the
+    outline is clean — PIPING [2.03], "Black steel." [A.], VALVES [2.04], "Gate valves." [A.], "B.\\tCheck…" [B.]; (with
+    True and a per-numId count it would be PIPING 2.02, "Black steel." B., VALVES 2.03.)
+
+    Then three small lists of their own (Normal paragraphs, direct numPr):
+    * the appendix list, num 22 → abstractNum 22 (NOT shared), ``startOverride`` 3 on level 0: 0 upperRoman
+      ``APPENDIX %1`` (abstract start 1), 1 upperLetter ``%2.`` start 26, 2 decimal ``%1.%2.%3`` isLgl lvlRestart 1,
+      3 lowerRoman ``(%4)`` lvlRestart 0 — "Appendix one" [APPENDIX III], "Zed" [Z.], "Legal one" [3.26.1], "Double A"
+      [AA.], "Legal two" [3.27.2], "Double B" [BB.], "Roman one" [(i)], "Appendix two" [APPENDIX IV], "Legal three"
+      [4.26.1], "Roman two" [(ii)], "Zed again" [Z.];
+    * the override list, num 23 → abstractNum 23 (0 decimal ``%1.``, 1 lowerLetter ``%2)``) whose num carries a FULL
+      override level for level 1 (``w:lvlOverride/w:lvl``): "Override first" [1.], "Override sub" (level 1 — not
+      evaluated: ``override``), "Override second" [2.].
+    """
+    doc = Document()
+    for sid, name, numpr, extra in (
+            ("ArchPart", "Arch Part", '<w:ilvl w:val="0"/><w:numId w:val="10"/>', "<w:keepNext/>"),
+            ("ArchArt", "Arch Article", '<w:ilvl w:val="1"/><w:numId w:val="10"/>', "<w:keepNext/>"),
+            ("ArchPara", "Arch Paragraph", '<w:numId w:val="10"/>', ""),
+            ("ArchSub", "Arch Subparagraph", '<w:ilvl w:val="3"/><w:numId w:val="10"/>', "")):
+        rpr = "<w:rPr><w:b/><w:caps/></w:rPr>" if sid == "ArchPart" else ("<w:rPr><w:b/></w:rPr>" if sid == "ArchArt"
+                                                                           else "")
+        _add_style(doc, f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{sid}"><w:name w:val="{name}"/>'
+                        f'<w:basedOn w:val="Normal"/><w:qFormat/><w:pPr>{extra}<w:numPr>{numpr}</w:numPr>'
+                        f'<w:spacing w:before="120" w:after="0"/></w:pPr>{rpr}</w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchSub2"><w:name w:val="Arch Subparagraph 2"/>'
+                    '<w:basedOn w:val="ArchSub"/><w:qFormat/><w:pPr><w:numPr><w:numId w:val="10"/></w:numPr></w:pPr>'
+                    '</w:style>')
+    _add_style(doc, '<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchParaAlt"><w:name w:val="Arch Paragraph Alt"/>'
+                    '<w:basedOn w:val="ArchPara"/><w:rPr><w:i/></w:rPr></w:style>')
+    outline = [_lvl_xml(0, "decimal", "PART %1 -", pstyle="ArchPart", suff="space", left=0, hanging=0),
+               _lvl_xml(1, "decimalZero", "%1.%2", pstyle="ArchArt", left=864, hanging=864),
+               _lvl_xml(2, "upperLetter", "%3.", pstyle="ArchPara", left=1440, hanging=576),
+               _lvl_xml(3, "decimal", "%4.", pstyle="ArchSub", left=2016, hanging=576),
+               _lvl_xml(4, "lowerLetter", "%5.", pstyle="ArchSub2", left=2592, hanging=576)]
+    appendix = [_lvl_xml(0, "upperRoman", "APPENDIX %1", suff="space", left=0, hanging=0),
+                _lvl_xml(1, "upperLetter", "%2.", start=26),
+                _lvl_xml(2, "decimal", "%1.%2.%3", restart=1, legal=True),
+                _lvl_xml(3, "lowerRoman", "(%4)", restart=0)]
+    override = [_lvl_xml(0, "decimal", "%1."), _lvl_xml(1, "lowerLetter", "%2)")]
+    nums = ['<w:num w:numId="10"><w:abstractNumId w:val="10"/></w:num>']
+    if shared_restart:
+        nums.append('<w:num w:numId="11"><w:abstractNumId w:val="10"/>'
+                    '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="2"/></w:lvlOverride>'
+                    '<w:lvlOverride w:ilvl="1"><w:startOverride w:val="2"/></w:lvlOverride></w:num>')
+    nums += ['<w:num w:numId="21"><w:abstractNumId w:val="21"/></w:num>',
+             '<w:num w:numId="22"><w:abstractNumId w:val="22"/>'
+             '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="3"/></w:lvlOverride></w:num>',
+             '<w:num w:numId="23"><w:abstractNumId w:val="23"/><w:lvlOverride w:ilvl="1">'
+             + _lvl_xml(1, "lowerRoman", "%2)") + '</w:lvlOverride></w:num>']
+    _add_lists(doc, [_abstract_xml(10, outline, "5A5A0010"),
+                     _abstract_xml(21, [_lvl_xml(0, "bullet", "•")], "5A5A0021", "singleLevel"),
+                     _abstract_xml(22, appendix, "5A5A0022"),
+                     _abstract_xml(23, override, "5A5A0023")], nums)
+
+    S = {sid: _style_name(doc, sid) for sid in ("ArchPart", "ArchArt", "ArchPara", "ArchParaAlt", "ArchSub", "ArchSub2")}
+    doc.add_paragraph("SECTION 21 13 13")
+    doc.add_paragraph("WET-PIPE SPRINKLER SYSTEMS")
+    doc.add_paragraph("GENERAL", style=S["ArchPart"])
+    doc.add_paragraph("SUMMARY", style=S["ArchArt"])
+    doc.add_paragraph("Section includes wet-pipe sprinkler systems.", style=S["ArchPara"])
+    doc.add_paragraph("Related requirements:", style=S["ArchPara"])
+    doc.add_paragraph('Division 21 Section "Common Work Results for Fire Suppression".', style=S["ArchSub"])
+    doc.add_paragraph("Hangers.", style=S["ArchSub2"])
+    doc.add_paragraph("Supports.", style=S["ArchSub2"])
+    doc.add_paragraph('Division 28 Section "Fire Detection and Alarm".', style=S["ArchSub"])
+    doc.add_paragraph(style=S["ArchPara"])                                   # empty: uses up "C."
+    doc.add_paragraph("Deferred submittal.", style=S["ArchPara"])
+    p = doc.add_paragraph(style=S["ArchArt"])
+    p._p.append(etree.fromstring(f'<w:bookmarkStart {_W_DECL} w:id="1" w:name="_Ref1001"/>'))
+    p.add_run("REFERENCES")
+    p._p.append(etree.fromstring(f'<w:bookmarkEnd {_W_DECL} w:id="1"/>'))
+    doc.add_paragraph("NFPA 13.", style=S["ArchPara"])
+    p = doc.add_paragraph(style=S["ArchPara"])
+    _rpr_add(p.add_run("Hidden requirement."), "<w:vanish/>")
+    _mark_add(p, "<w:vanish/>")
+    doc.add_paragraph("UL listings.", style=S["ArchParaAlt"])
+    doc.add_paragraph("SUBMITTALS", style=S["ArchArt"])
+    p = doc.add_paragraph("Product data.", style=S["ArchPara"])
+    _ppr_add(p, '<w:numPr><w:ilvl w:val="3"/></w:numPr>')
+    doc.add_paragraph("Shop drawings.", style=S["ArchPara"])
+    _replace_last_paragraph(
+        doc, '<w:p><w:pPr><w:pStyle w:val="ArchPara"/><w:rPr><w:del w:id="501" w:author="Jeremy" '
+             'w:date="2026-09-22T10:15:00Z"/></w:rPr></w:pPr><w:del w:id="502" w:author="Jeremy" '
+             'w:date="2026-09-22T10:15:00Z"><w:r><w:delText>Deleted requirement.</w:delText></w:r></w:del></w:p>')
+    doc.add_paragraph("Calculations, as specified in Article 1.02.", style=S["ArchPara"])
+    p = doc.add_paragraph("Comply with Article ", style=S["ArchPara"])
+    _field_run(p, "REF _Ref1001 \\r \\h", "1.02")
+    p.add_run(".")
+    for text in ("Bullet one", "Bullet two"):
+        p = doc.add_paragraph(text)
+        _ppr_add(p, '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="21"/></w:numPr>')
+    p = doc.add_paragraph("Text box holder: ")
+    _textbox_paragraph(p, "ArchPara", "Text box item")
+    doc.add_paragraph("PRODUCTS", style=S["ArchPart"])
+    doc.add_paragraph("MANUFACTURERS", style=S["ArchArt"])
+    doc.add_paragraph("Tyco.", style=S["ArchPara"])
+    doc.add_paragraph("Viking.", style=S["ArchPara"])
+    doc.add_paragraph("MATERIALS", style=S["ArchArt"])
+    doc.add_paragraph("Steel pipe.", style=S["ArchPara"])
+    p = doc.add_paragraph("PIPING", style=S["ArchArt"])
+    if shared_restart:
+        _ppr_add(p, '<w:numPr><w:ilvl w:val="1"/><w:numId w:val="11"/></w:numPr>')
+    doc.add_paragraph("Black steel.", style=S["ArchPara"])
+    doc.add_paragraph("VALVES", style=S["ArchArt"])
+    doc.add_paragraph("Gate valves.", style=S["ArchPara"])
+    doc.add_paragraph("B.\tCheck valves.", style=S["ArchPara"])
+    doc.add_paragraph("EXECUTION", style=S["ArchPart"])
+    doc.add_paragraph("INSTALLATION", style=S["ArchArt"])
+    doc.add_paragraph("Install per NFPA 13.", style=S["ArchPara"])
+    p = doc.add_paragraph("Unnumbered note under a numbered style.", style=S["ArchPara"])
+    _ppr_add(p, '<w:numPr><w:ilvl w:val="0"/><w:numId w:val="0"/></w:numPr>')
+    t = doc.add_table(rows=1, cols=2)
+    t.cell(0, 0).paragraphs[0].style = doc.styles[S["ArchPara"]]
+    t.cell(0, 0).paragraphs[0].add_run("Cell requirement.")
+    t.cell(0, 1).text = "Remark"
+    doc.add_paragraph("After the table.", style=S["ArchPara"])
+    for text, num, ilvl in (("Appendix one", 22, 0), ("Zed", 22, 1), ("Legal one", 22, 2), ("Double A", 22, 1),
+                            ("Legal two", 22, 2), ("Double B", 22, 1), ("Roman one", 22, 3), ("Appendix two", 22, 0),
+                            ("Legal three", 22, 2), ("Roman two", 22, 3), ("Zed again", 22, 1),
+                            ("Override first", 23, 0), ("Override sub", 23, 1), ("Override second", 23, 0)):
+        p = doc.add_paragraph(text)
+        _ppr_add(p, f'<w:numPr><w:ilvl w:val="{ilvl}"/><w:numId w:val="{num}"/></w:numPr>')
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
+def _typed_paragraph(doc, runs, style=None):
+    """A paragraph whose runs are ``runs`` (strings; a ``\\t`` inside one becomes a w:tab in that run — python-docx)."""
+    p = doc.add_paragraph(style=style)
+    for r in runs:
+        p.add_run(r)
+    return p
+
+
+def build_typed(typo: bool = False, leading_tab: bool = False, spaces: bool = False) -> bytes:
+    """A spec numbered by TYPED text (built-in batch 5, §2): every paragraph Normal, nothing numbered automatically; the
+    numbers fit the example file's scheme (``build_scheme_example``: ``PART %1 -``, ``%1.%2``, ``%3.``, ``%4.``,
+    ``%5.``). Found by text in the tests.
+
+    Body: "SECTION 21 13 13"; "WET-PIPE SPRINKLER SYSTEMS"; "PART 1 - GENERAL" (one run, a space after the number);
+    "1.1" + a tab-only run + "SUMMARY" (three runs); "A" + ".⇥Section includes wet-pipe sprinkler systems." (the number
+    SPLIT across two runs, the tab inside the second); "B.⇥Related requirements:" (one run, the tab inside); "1.⇥Division
+    21 Section …"; "a.⇥Hangers."; "b.⇥Supports."; "2.⇥Division 28 Section …"; "C.  Submittals." (two spaces, no tab);
+    "1.2⇥REFERENCES"; "A.⇥NFPA 13."; "PART 2 - PRODUCTS"; "2." + "1⇥" + "MANUFACTURERS" (split); "A.⇥Tyco.";
+    "B.⇥Viking."; "C.⇥Reliable." — ``typo``: "B.⇥Reliable." (a duplicate B: a conversion must refuse); "2.2⇥MATERIALS";
+    "A.⇥Steel pipe."; a table whose cells hold "1.⇥Cell item." and "2.⇥Cell item two." (left alone by default);
+    "PART 3 - EXECUTION"; "3.1⇥INSTALLATION"; "A.⇥Install per NFPA 13."; "1.⇥Hangers per NFPA 13."; "Unnumbered closing
+    note." (no typed number); "END OF SECTION 21 13 13".
+
+    ``leading_tab``: the letter and number items start with whitespace — a tab before every "A."-level item, two spaces
+    before every "1."-level item. ``spaces``: every tab separator is a single space instead.
+    """
+    sep = " " if spaces else "\t"
+    lead1 = "\t" if leading_tab else ""
+    lead2 = "  " if leading_tab else ""
+    doc = Document()
+    doc.add_paragraph("SECTION 21 13 13")
+    doc.add_paragraph("WET-PIPE SPRINKLER SYSTEMS")
+    _typed_paragraph(doc, ["PART 1 - GENERAL"])
+    _typed_paragraph(doc, ["1.1", sep, "SUMMARY"])
+    _typed_paragraph(doc, [lead1 + "A", f".{sep}Section includes wet-pipe sprinkler systems."])
+    _typed_paragraph(doc, [f"{lead1}B.{sep}Related requirements:"])
+    _typed_paragraph(doc, [f'{lead2}1.{sep}Division 21 Section "Common Work Results for Fire Suppression".'])
+    _typed_paragraph(doc, [f"a.{sep}Hangers."])
+    _typed_paragraph(doc, [f"b.{sep}Supports."])
+    _typed_paragraph(doc, [f'{lead2}2.{sep}Division 28 Section "Fire Detection and Alarm".'])
+    _typed_paragraph(doc, [f"{lead1}C.  Submittals."])
+    _typed_paragraph(doc, [f"1.2{sep}REFERENCES"])
+    _typed_paragraph(doc, [f"{lead1}A.{sep}NFPA 13."])
+    _typed_paragraph(doc, ["PART 2 - PRODUCTS"])
+    _typed_paragraph(doc, ["2.", f"1{sep}", "MANUFACTURERS"])
+    _typed_paragraph(doc, [f"{lead1}A.{sep}Tyco."])
+    _typed_paragraph(doc, [f"{lead1}B.{sep}Viking."])
+    _typed_paragraph(doc, [f"{lead1}{'B' if typo else 'C'}.{sep}Reliable."])
+    _typed_paragraph(doc, [f"2.2{sep}MATERIALS"])
+    _typed_paragraph(doc, [f"{lead1}A.{sep}Steel pipe."])
+    t = doc.add_table(rows=1, cols=2)
+    t.cell(0, 0).paragraphs[0].add_run(f"1.{sep}Cell item.")
+    t.cell(0, 1).paragraphs[0].add_run(f"2.{sep}Cell item two.")
+    _typed_paragraph(doc, ["PART 3 - EXECUTION"])
+    _typed_paragraph(doc, [f"3.1{sep}INSTALLATION"])
+    _typed_paragraph(doc, [f"{lead1}A.{sep}Install per NFPA 13."])
+    _typed_paragraph(doc, [f"{lead2}1.{sep}Hangers per NFPA 13."])
+    doc.add_paragraph("Unnumbered closing note.")
+    doc.add_paragraph("END OF SECTION 21 13 13")
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
+SCHEME_LEVELS = ["PRT", "ART", "PR1", "PR2", "PR3"]
+
+
+def build_scheme_example() -> bytes:
+    """The user's example file (``examples/templates/NUMBERING SCHEME.docx``; built-in batch 5 §0.3): paragraph styles
+    ``PRT``, ``ART``, ``PR1``, ``PR2``, ``PR3`` (names equal to the ids; based on Normal) numbered by ONE list — num 10 →
+    abstractNum 10, levels 0–4: ``PART %1 -`` (decimal, ``w:suff`` space), ``%1.%2`` (decimal, decimal → "1.1"),
+    ``%3.`` (upperLetter), ``%4.`` (decimal), ``%5.`` (lowerLetter). Each level's ``w:pStyle`` names its style and each
+    style's numPr names numId 10 AND its ilvl explicitly (LibreOffice ignores the linked level — ooxml-lessons §6).
+
+    Body (numbers in brackets): "NUMBERING SCHEME" (Title); GENERAL [PART 1 -]; SUMMARY [1.1]; "Paragraph." [A.];
+    "Subparagraph." [1.]; "Sub-subparagraph." [a.]; "Second sub-subparagraph." [b.]; "Second subparagraph." [2.]; "Second
+    paragraph." [B.]; "SECOND ARTICLE" [1.2]; PRODUCTS [PART 2 -]; MATERIALS [2.1]; "Paragraph under part 2." [A.].
+    """
+    doc = Document()
+    ids = SCHEME_LEVELS
+    for k, sid in enumerate(ids):
+        rpr = {"PRT": "<w:rPr><w:b/><w:caps/></w:rPr>", "ART": "<w:rPr><w:b/></w:rPr>"}.get(sid, "")
+        keep = "<w:keepNext/>" if k < 2 else ""
+        nxt = f'<w:next w:val="{ids[k + 1]}"/>' if k + 1 < len(ids) else ""
+        _add_style(doc, f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{sid}"><w:name w:val="{sid}"/>'
+                        f'<w:basedOn w:val="Normal"/>{nxt}<w:qFormat/><w:pPr>{keep}<w:numPr><w:ilvl w:val="{k}"/>'
+                        f'<w:numId w:val="10"/></w:numPr><w:spacing w:before="120" w:after="0"/></w:pPr>{rpr}</w:style>')
+    levels = [_lvl_xml(0, "decimal", "PART %1 -", pstyle="PRT", suff="space", left=0, hanging=0),
+              _lvl_xml(1, "decimal", "%1.%2", pstyle="ART", left=720, hanging=720),
+              _lvl_xml(2, "upperLetter", "%3.", pstyle="PR1", left=1440, hanging=720),
+              _lvl_xml(3, "decimal", "%4.", pstyle="PR2", left=2160, hanging=720),
+              _lvl_xml(4, "lowerLetter", "%5.", pstyle="PR3", left=2880, hanging=720)]
+    _add_lists(doc, [_abstract_xml(10, levels, "6B6B0010")],
+               ['<w:num w:numId="10"><w:abstractNumId w:val="10"/></w:num>'])
+    doc.add_paragraph("NUMBERING SCHEME", style="Title")
+    for sid, text in (("PRT", "GENERAL"), ("ART", "SUMMARY"), ("PR1", "Paragraph."), ("PR2", "Subparagraph."),
+                      ("PR3", "Sub-subparagraph."), ("PR3", "Second sub-subparagraph."), ("PR2", "Second subparagraph."),
+                      ("PR1", "Second paragraph."), ("ART", "SECOND ARTICLE"), ("PRT", "PRODUCTS"),
+                      ("ART", "MATERIALS"), ("PR1", "Paragraph under part 2.")):
+        doc.add_paragraph(text, style=doc.styles[_style_name(doc, sid)])
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
 # ---- built-in batch 2: generic package surgery for fixtures (docs/BUILTIN_OPS_BATCH2_DESIGN.md) -----------------------
 
 def docx_bytes(doc) -> bytes:
@@ -1341,6 +1732,158 @@ def add_parts(data: bytes, parts: dict, rels=(), overrides: dict = None) -> byte
     return out.getvalue()
 
 
+# ---- built-in batch 5, tables (docs/BUILTIN_OPS_BATCH5_DESIGN.md §5) ------------------------------------------------
+
+_TBLPR_ORDER = ["tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize", "tblW",
+                "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook",
+                "tblCaption", "tblDescription", "tblPrChange"]
+
+
+def _tblpr_add(table, xml: str):
+    """Add w:tblPr children written as XML to a python-docx table, each in schema order (fixture surgery)."""
+    pr = table._tbl.tblPr
+    for el in etree.fromstring(f"<w:x {_W_DECL}>{xml}</w:x>"):
+        rank = _TBLPR_ORDER.index(etree.QName(el).localname)
+        at = next((i for i, c in enumerate(pr) if _TBLPR_ORDER.index(etree.QName(c).localname) > rank), len(pr))
+        pr.insert(at, el)
+    return pr
+
+
+def _tcpr_add(cell, xml: str):
+    """Append w:tcPr children written as XML to a python-docx cell (give them in schema order, after w:tcW)."""
+    tcpr = cell._tc.get_or_add_tcPr()
+    for el in etree.fromstring(f"<w:x {_W_DECL}>{xml}</w:x>"):
+        tcpr.append(el)
+    return tcpr
+
+
+def _row_first(row, xml: str):
+    """Insert row-level elements written as XML (w:tblPrEx, w:trPr) first in a python-docx row, in the given order."""
+    for i, el in enumerate(etree.fromstring(f"<w:x {_W_DECL}>{xml}</w:x>")):
+        row._tr.insert(i, el)
+
+
+def _fill(table, rows):
+    for r, values in enumerate(rows):
+        for c, v in enumerate(values):
+            table.cell(r, c).text = v
+
+
+def build_tables(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS", *,
+                 start_end: bool = False) -> bytes:
+    """The batch-5 table fixture (set_table_props / apply_table_style). Two sections (the second landscape, for schedules);
+    every table is found by its ordinal (``root.iter(w:tbl)`` per part) and its first row's text. python-docx's template
+    underneath: ``TableNormal`` (the default table style: cell margins left/right 108, no borders) and ``TableGrid``
+    ("Table Grid": all six border sides single 4, cell margins 108).
+
+    Styles added: ``ArchGrid`` ("Arch Grid", based on TableNormal: tblBorders top, bottom and insideH single 4 — a
+    side not asked must be written nil — and ``w:trPr/w:cantSplit`` on: rows that may break need an explicit off);
+    ``ArchBanded`` ("Arch Banded", based on TableGrid, a ``w:tblStylePr`` firstRow with ``w:tcPr/w:tcBorders`` —
+    conditional borders, flagged); ``ArchHeader`` ("Arch Header", based on TableNormal, ``w:trPr/w:tblHeader`` on);
+    ``ArchStartEnd`` (only with ``start_end``: tblBorders spelled start/end).
+
+    Body, section 1: "SECTION …"; table 0 — Table Grid with direct tblBorders (top and bottom double), direct shading
+    EEEEEE, 3 rows "Item | Value" / "Riser | 4 in" / "Main | 6 in"; cell (1, 0) has its own tcBorders (bottom single
+    12), cell (2, 1) its own tcMar (left 200), cell (0, 0) its own shading D9D9D9. "Valve schedule"; table 1 — no style
+    (the default), 3 rows "Valve | Size" / "Gate | 4 in" / "Check | 6 in"; row 0 already carries tblHeader, row 1 cantSplit;
+    tblW pct 5000 (100 %); own tblCellMar left/right 115 dxa. "Pipe schedule"; table 2 — ArchGrid, 2 rows "Size |
+    Material" / "2 in | Steel". Table 3 — ArchBanded, 3 rows "Banded | Table" / …; row 1 carries a w:tblPrEx with its own
+    tblBorders (flagged). Table 4 — no style, 1 row "Outer | cell"; its cell (0, 0) holds table 5 — Table Grid, nested,
+    1 row "Nested | table". Table 6 — ArchHeader, 2 rows "Tracked | table"; a pending w:tblPrChange (Jeremy, id 401)
+    and, in row 0, a w:trPrChange (id 402). Section break (new page). Section 2 (landscape): "EQUIPMENT SCHEDULE";
+    table 7 — Table Grid, 2 rows "Tag | Description" / "FP-1 | Fire pump". With ``start_end``: table 8 — ArchStartEnd,
+    own tblBorders start/end and tblCellMar start/end, 1 row "Aliased | sides".
+
+    Header (section 1): table 0 — no style, 1 row "SECTION | {section_number}".
+    """
+    from docx.enum.section import WD_ORIENT
+    doc = Document()
+    _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="ArchGrid"><w:name w:val="Arch Grid"/>'
+                    '<w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders>'
+                    '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr>'
+                    '<w:trPr><w:cantSplit/></w:trPr></w:style>')
+    _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="ArchBanded"><w:name w:val="Arch Banded"/>'
+                    '<w:basedOn w:val="TableGrid"/><w:tblPr><w:tblStyleRowBandSize w:val="1"/></w:tblPr>'
+                    '<w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr><w:tcPr><w:tcBorders>'
+                    '<w:bottom w:val="single" w:sz="12" w:space="0" w:color="auto"/></w:tcBorders></w:tcPr>'
+                    '</w:tblStylePr></w:style>')
+    _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="ArchHeader"><w:name w:val="Arch Header"/>'
+                    '<w:basedOn w:val="TableNormal"/><w:trPr><w:tblHeader/></w:trPr></w:style>')
+    if start_end:
+        _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="ArchStartEnd"><w:name w:val="Arch Start End"/>'
+                        '<w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders>'
+                        '<w:start w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style>')
+
+    ht = doc.sections[0].header.add_table(1, 2, doc.sections[0].page_width - doc.sections[0].left_margin
+                                          - doc.sections[0].right_margin)
+    _fill(ht, [["SECTION", section_number]])
+    doc.sections[0].header.add_paragraph("")                      # a header ends with a paragraph
+
+    doc.add_paragraph(f"SECTION {section_number} - {title}")
+    t0 = doc.add_table(rows=3, cols=2)
+    t0.style = doc.styles["Table Grid"]
+    _fill(t0, [["Item", "Value"], ["Riser", "4 in"], ["Main", "6 in"]])
+    _tblpr_add(t0, '<w:tblBorders><w:top w:val="double" w:sz="4" w:space="0" w:color="auto"/>'
+                   '<w:bottom w:val="double" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>'
+                   '<w:shd w:val="clear" w:color="auto" w:fill="EEEEEE"/>')
+    _tcpr_add(t0.cell(1, 0), '<w:tcBorders><w:bottom w:val="single" w:sz="12" w:space="0" w:color="auto"/></w:tcBorders>')
+    _tcpr_add(t0.cell(2, 1), '<w:tcMar><w:left w:w="200" w:type="dxa"/></w:tcMar>')
+    _tcpr_add(t0.cell(0, 0), '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>')
+
+    doc.add_paragraph("Valve schedule")
+    t1 = doc.add_table(rows=3, cols=2)
+    _fill(t1, [["Valve", "Size"], ["Gate", "4 in"], ["Check", "6 in"]])
+    w = t1._tbl.tblPr.find(qn("w:tblW"))
+    w.set(qn("w:w"), "5000"); w.set(qn("w:type"), "pct")
+    _tblpr_add(t1, '<w:tblCellMar><w:left w:w="115" w:type="dxa"/><w:right w:w="115" w:type="dxa"/></w:tblCellMar>')
+    _row_first(t1.rows[0], "<w:trPr><w:tblHeader/></w:trPr>")
+    _row_first(t1.rows[1], "<w:trPr><w:cantSplit/></w:trPr>")
+
+    doc.add_paragraph("Pipe schedule")
+    t2 = doc.add_table(rows=2, cols=2)
+    t2.style = doc.styles["Arch Grid"]
+    _fill(t2, [["Size", "Material"], ["2 in", "Steel"]])
+
+    t3 = doc.add_table(rows=3, cols=2)
+    t3.style = doc.styles["Arch Banded"]
+    _fill(t3, [["Banded", "Table"], ["Row", "one"], ["Row", "two"]])
+    _row_first(t3.rows[1], '<w:tblPrEx><w:tblBorders><w:top w:val="single" w:sz="8" w:space="0" w:color="auto"/>'
+                           '</w:tblBorders></w:tblPrEx>')
+
+    t4 = doc.add_table(rows=1, cols=2)
+    _fill(t4, [["Outer", "cell"]])
+    t5 = t4.cell(0, 0).add_table(1, 2)
+    t5.style = doc.styles["Table Grid"]
+    _fill(t5, [["Nested", "table"]])
+
+    t6 = doc.add_table(rows=2, cols=2)
+    t6.style = doc.styles["Arch Header"]
+    _fill(t6, [["Tracked", "table"], ["Older", "change"]])
+    _tblpr_add(t6, '<w:tblPrChange w:id="401" w:author="Jeremy" w:date="2026-09-22T11:00:00Z"><w:tblPr>'
+                   '<w:tblW w:w="0" w:type="auto"/></w:tblPr></w:tblPrChange>')
+    _row_first(t6.rows[0], '<w:trPr><w:trPrChange w:id="402" w:author="Jeremy" w:date="2026-09-22T11:00:00Z">'
+                           '<w:trPr/></w:trPrChange></w:trPr>')
+
+    first = doc.sections[0]
+    second = doc.add_section(WD_SECTION.NEW_PAGE)
+    second.orientation = WD_ORIENT.LANDSCAPE
+    second.page_width, second.page_height = first.page_height, first.page_width
+    doc.add_paragraph("EQUIPMENT SCHEDULE")
+    t7 = doc.add_table(rows=2, cols=2)
+    t7.style = doc.styles["Table Grid"]
+    _fill(t7, [["Tag", "Description"], ["FP-1", "Fire pump"]])
+    if start_end:
+        t8 = doc.add_table(rows=1, cols=2)
+        t8.style = doc.styles["Arch Start End"]
+        _fill(t8, [["Aliased", "sides"]])
+        _tblpr_add(t8, '<w:tblBorders><w:start w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>'
+                       '<w:tblCellMar><w:start w:w="100" w:type="dxa"/><w:end w:w="100" w:type="dxa"/></w:tblCellMar>')
+    doc.add_paragraph("END OF SECTION")
+    return docx_bytes(doc)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir")
@@ -1350,8 +1893,14 @@ def main(argv=None):
     ap.add_argument("--reference", action="store_true", help="write the template-spec fixture (an architect's spec) only")
     ap.add_argument("--styles-template", action="store_true",
                     help="write the office styles template (map_styles / apply_style) only")
+    ap.add_argument("--numbering-scheme", action="store_true",
+                    help="write the numbering scheme example file (convert_numbering / convert_typed_numbers) only")
     args = ap.parse_args(argv)
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
+    if args.numbering_scheme:
+        (out / "NUMBERING SCHEME.docx").write_bytes(build_scheme_example())
+        print(f"wrote {out / 'NUMBERING SCHEME.docx'}")
+        return
     if args.styles_template:
         (out / "OFFICE STYLES.docx").write_bytes(build_style_template())
         print(f"wrote {out / 'OFFICE STYLES.docx'}")

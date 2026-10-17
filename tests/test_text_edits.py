@@ -488,3 +488,148 @@ def test_verifier_run_text_matches_the_transform_on_every_paragraph():
         for part in pkg.text_parts():
             for p in pkg.xml(part).iter(W + "p"):
                 assert textedit.RunText(p).text == v_paragraph_text(p)
+
+
+# ---- built-in batch 5: the core deletes a tab (tabs=True — docs/BUILTIN_OPS_BATCH5_DESIGN.md §2.3) -------------------
+
+import copy  # noqa: E402
+
+from make_fixtures import SCHEME_LEVELS, build_scheme_example, build_typed, patch_docx  # noqa: E402
+from spec_surgeon.ooxml import RevisionStamp, block_struct_counts  # noqa: E402
+from spec_surgeon.ops import convert_typed_numbers as typed_module  # noqa: E402
+from spec_surgeon.ops.base import PlanFragment  # noqa: E402
+from spec_surgeon.verify.edits import check_edited_paragraph, v_check_edits, v_items  # noqa: E402
+
+
+def _tab_paragraphs():
+    """Every paragraph of the typed fixture's three variants whose run text holds a tab."""
+    for variant in ({}, {"leading_tab": True}, {"spaces": True}):
+        for p in DocxPackage(build_typed(**variant)).xml("word/document.xml").iter(W + "p"):
+            if "\t" in textedit.RunText(p).text:
+                yield p
+
+
+def _tab_ranges(text: str):
+    """Pure deletions around the paragraph's first tab: ending at it, starting at it, the tab alone, the tab inside."""
+    i = text.index("\t")
+    out = {(0, i + 1), (i, i + 1)}
+    if i > 0 and i + 2 <= len(text):
+        out.add((i - 1, i + 2))
+    if i + 2 <= len(text):
+        out.add((i, i + 2))
+    return sorted(out)
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_tab_deletions_agree_on_both_sides(tracked):
+    """The transform plans and applies a pure deletion covering a w:tab (at the end, at the start, alone, inside the
+    range); the verifier's own item model with tabs=True expects exactly the paragraph the transform wrote; untracked
+    the plan declares the tab gone (V3's struct_after), tracked the tab goes into the w:del (counts unchanged)."""
+    n = 0
+    for src_p in _tab_paragraphs():
+        text = textedit.RunText(src_p).text
+        for a, b in _tab_ranges(text):
+            p = copy.deepcopy(src_p)
+            frag = PlanFragment(job="t", mode="formatting", params={}, intended_parts=[])
+            done = textedit.plan_paragraph(frag, "word/document.xml", 0, p, [textedit.Edit(a, b, "")], tracked, set(),
+                                           "here", tabs=True)
+            assert done, (text, a, b)
+            tabs_in = text[a:b].count("\t")
+            if tracked:
+                textedit.apply_tracked(p, done, RevisionStamp.now(AUTHOR, False), [900], tabs=True)
+                assert not [d for d in frag.diffs if d.struct_after]
+            else:
+                diff = frag.diffs[0]
+                before = block_struct_counts(src_p).get("tab", 0)
+                assert (diff.struct_after or {}).get("tab", 0) == before - tabs_in
+                textedit.apply_untracked(p, done, tabs=True)
+            errs: List[str] = []
+            check_edited_paragraph(src_p, p, [(a, b, "", False)], tracked, AUTHOR, set(), set(), "here", errs, tabs=True)
+            assert errs == [], (text, a, b, errs)
+            assert textedit.RunText(p).text == text[:a] + text[b:]          # tracked: the deleted runs are hidden
+            n += 1
+    assert n >= 40
+
+
+def test_the_strict_core_still_refuses_a_tab_and_tabs_never_cover_placed_text():
+    p = next(_tab_paragraphs())
+    text = textedit.RunText(p).text
+    i = text.index("\t")
+    for edit, tabs in (((0, i + 1, ""), False), ((0, i + 1, "X"), True)):
+        with pytest.raises(JobException) as e:
+            textedit.check_edits(textedit.RunText(p), [textedit.Edit(*edit)], False, set(), "here", tabs=tabs)
+        assert e.value.code == "structure"
+        with pytest.raises(ValueError):
+            v_check_edits(p, v_items(p), [edit + (False,)], False, set(), tabs=tabs)
+    with pytest.raises(JobException) as e:                         # apply's own guard: not planned with tabs
+        textedit.apply_untracked(copy.deepcopy(p), [textedit.Edit(0, i + 1, "")])
+    assert e.value.code == "internal"
+
+
+def _typed_with(xml: str) -> bytes:
+    """The typed fixture with one more typed paragraph (XML, the w: prefix undeclared) after "A.⇥Steel pipe."."""
+    def add(root):
+        anchor = next(q for q in root.iter(W + "p") if textedit.RunText(q).text == "A.\tSteel pipe.")
+        anchor.addnext(etree.fromstring(xml.replace("<w:p>", f'<w:p xmlns:w="{W[1:-1]}">', 1)))
+    return patch_docx(build_typed(), {"word/document.xml": add})
+
+
+def _convert(src: bytes, tmp_path):
+    t = tmp_path / "NUMBERING SCHEME.docx"
+    t.write_bytes(build_scheme_example())
+    return run_op(src, "convert_typed_numbers", {"levels": SCHEME_LEVELS, "template": str(t), "tracked": False})
+
+
+SECOND_TAB = "<w:p><w:r><w:t>B.</w:t><w:tab/><w:t>Black steel.</w:t><w:tab/><w:t>Schedule 40.</w:t></w:r></w:p>"
+PTAB = ('<w:p><w:r><w:t>B.</w:t><w:ptab w:relativeTo="margin" w:alignment="left" w:leader="none"/>'
+        '<w:t>Positional tab item.</w:t></w:r></w:p>')
+
+
+def test_shared_defect_a_tab_left_behind(tmp_path, monkeypatch):
+    """A range one short (the tab or space after the typed number left), the same in plan and apply: V2 and V3 agree
+    with the plan; only the verifier's own prefix sees the tab left behind."""
+    real = typed_module.Edit
+    monkeypatch.setattr(typed_module, "Edit", lambda a, b, text: real(a, b - 1, text))
+    plan, out, rec = _convert(build_typed(), tmp_path)
+    assert failed(rec) == ["V10"] and any("not exactly the predicted change" in e for e in v10_errors(rec))
+
+
+def test_shared_defect_a_tab_outside_the_range_taken(tmp_path, monkeypatch):
+    """An apply that also takes the next tab after the range, and a plan whose struct_after counts it gone: V2 (tabs are
+    no block text) and V3 (declared) pass; the item model finds the paragraph's second tab missing."""
+    src = _typed_with(SECOND_TAB)
+    plan, out, rec = _convert(src, tmp_path)
+    assert rec.passed, rec.to_markdown()                      # the honest core
+    real_apply, real_counts = textedit.apply_untracked, textedit.block_struct_counts
+
+    def next_tab(p, after: int):
+        rt = textedit.RunText(p)
+        return [ps.child for ps in rt.positions[after:] if textedit.is_tab_position(ps)][:1]
+
+    def greedy_apply(p, edits, tabs=False):
+        extra = [t for e in edits for t in next_tab(p, e.end)]
+        real_apply(p, edits, tabs=tabs)
+        for t in extra:
+            t.getparent().remove(t)
+
+    def greedy_counts(p, gone=()):
+        rt = textedit.RunText(p)
+        last = max([i for i, ps in enumerate(rt.positions) if any(ps.child is g for g in gone)], default=None)
+        return real_counts(p, list(gone) + (next_tab(p, last + 1) if last is not None else []))
+    monkeypatch.setattr(textedit, "apply_untracked", greedy_apply)
+    monkeypatch.setattr(textedit, "block_struct_counts", greedy_counts)
+    plan, out, rec = _convert(src, tmp_path)
+    assert failed(rec) == ["V10"] and any("not exactly the predicted change" in e for e in v10_errors(rec))
+
+
+def test_shared_defect_a_positional_tab_accepted(tmp_path, monkeypatch):
+    """A w:ptab after a typed number: the core refuses it (structure). A core whose tab rule also takes w:ptab removes it
+    (and declares it, so V3 passes) — the verifier's own rule says the op had to refuse."""
+    src = _typed_with(PTAB)
+    with pytest.raises(JobException) as e:
+        _convert(src, tmp_path)
+    assert e.value.code == "structure"
+    monkeypatch.setattr(textedit, "is_tab_position",
+                        lambda ps: ps.offset < 0 and ps.child.tag in (W + "tab", W + "ptab"))
+    plan, out, rec = _convert(src, tmp_path)
+    assert failed(rec) == ["V10"] and any("the op must refuse" in e for e in v10_errors(rec))

@@ -151,7 +151,106 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "last stage",
         "styles.xml only, never tracked; a file with nothing unused is left as it is",
     ],
-    "set_page_setup": ["margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given"],
+    # built-in batch 5 (tables, docs/BUILTIN_OPS_BATCH5_DESIGN.md §5)
+    "set_table_props": [
+        "the tables are every table of the body unless a selection narrows them (by position, table style, the first "
+        "row's text, any text in the table, nested or not); tables in headers and footers only when asked",
+        "the asked borders are the table's whole border set: a side not named has no border, so a side its table style "
+        "shows is cancelled with a 'nil' side (the style keeps its definition); 'none' removes every border; size in "
+        "eighths of a point (4 = ½ pt), space 0",
+        "cell margins are in twips (1440 = 1 inch) and merge into the table's own (sides not named stay); width is a "
+        "percentage of the text width, twips or auto",
+        "repeat_header_rows n makes the first n rows repeat at the top of each page and no later row (a table with "
+        "fewer rows is left alone, flagged; Word repeats header rows only for tables in the text flow, not floating or "
+        "nested ones — flagged); cant_split keeps every row on one page (true) or lets rows break (false)",
+        "cells with their own borders or margins keep them (flagged) unless clear_cell_overrides, which takes only the "
+        "cell sides that compete with what is asked (never a cell's diagonal lines, never a margin side not asked); a "
+        "table already as asked is left alone, a table in a text box too (flagged); a right-to-left table is set aside "
+        "for borders and margins; never tracked",
+    ],
+    "apply_table_style": [
+        "every table of the body gets the style unless a selection narrows them; a table already in the style is left "
+        "alone",
+        "the style is named by its id or name as the profiles show it; a style this file lacks comes from the template "
+        "file with the styles it is based on (existing 'replace' takes the template's definition even where this file "
+        "has one)",
+        "direct_formatting 'keep' (the default) leaves the tables' own borders, shading and cell margins, which win over "
+        "the style; 'clear' removes them, the rows' own exceptions and the cells' own, so the style shows; which "
+        "conditional parts show (first row, banding — w:tblLook) stays as it is",
+        "the template's style comes in only when a selected table takes it: a selection that restyles nothing changes "
+        "no style definition (existing 'replace' included)",
+        "a table in a text box is left alone (flagged); never tracked",
+    ],
+    # built-in batch 5 (list levels and the audit, docs/BUILTIN_OPS_BATCH5_DESIGN.md §3, §4)
+    "set_list_level": [
+        "the level is the one the named paragraph style numbers with (level names another level of the same list); "
+        "the change is made in the list's definition, so every paragraph at that level follows — in every list that "
+        "shares the definition (flagged)",
+        "zero padding: true turns 1, 2 into 01, 02 (decimalZero) and '1.1' into '1.01'; false the reverse; a level "
+        "numbered by letters or roman numerals is left alone",
+        "'restart per PART' is restart 'after_higher' (a level restarts after any higher level — usually already so); "
+        "when the PART headings are typed or numbered by another list the restart changes nothing (flagged): convert "
+        "the numbering first",
+        "a start or restart is refused on a list whose definition several lists share (Word and LibreOffice count them "
+        "differently); LibreOffice ignores restart rules, so the proof PDFs may differ from Word (flagged)",
+        "never tracked; a file whose style is missing or not numbered is left as it is and noted",
+    ],
+    "audit_numbering": [
+        "report only: the findings are flagged for review and the file is not changed",
+        "the main document only; numbers are those the engine predicts as Word shows them — a list it cannot predict "
+        "is reported as not evaluated, with the reason",
+        "typed numbers (PART 1, 1.1, A., 1., a., (a), II. …) at the start of unnumbered paragraphs outside tables are "
+        "checked for gaps, duplicates and numbers in the wrong PART, with the main list's automatic numbers as their "
+        "context; automatic numbers themselves are the engine's count and are not judged",
+        "unnumber_empty turns the number off on each empty numbered paragraph (the paragraph and its spacing stay); the "
+        "later numbers of its list move up (predicted and flagged); plain unless tracked",
+    ],
+    # built-in batch 5 (numbering conversions, docs/BUILTIN_OPS_BATCH5_DESIGN.md §1, §2)
+    "convert_numbering": [
+        "your scheme's levels are the numbered paragraph styles of your example file (level 0 first, as read_template "
+        "shows them); a style this file lacks is imported with its list (new list ids) — the numbering text such as "
+        "'PART %1 -' is always yours, never written by the engine",
+        "the paragraphs converted are those of the list numbering the most paragraphs here, each at its own level "
+        "(from 'main'), or the paragraphs of named styles per level (from.styles); level_map when the levels differ",
+        "each converted paragraph gets its level's style and loses its own list numbering; its own indents and fonts "
+        "stay unless direct_formatting is 'clear'",
+        "every paragraph's new number is predicted and checked; numbers that shift (a glitch in the source corrected), "
+        "cross-reference fields and written references such as 'as specified in 1.05' are flagged, never edited",
+        "a list whose old numbers the engine cannot predict (Word's 'Restart numbering', shared list definitions, "
+        "overridden levels) converts only WHOLE — every paragraph of that list — and is flagged; converting part of a "
+        "list, or levels whose leftover paragraphs would renumber, sets the file aside: convert every level",
+        "with an example file whose style ids this file already has but numbers differently, use existing 'replace' "
+        "('keep' sets the file aside: the scheme would not apply); tracked with 'replace' is refused",
+        "plain formatting (not tracked) unless asked",
+    ],
+    "convert_typed_numbers": [
+        "your scheme's levels are the numbered paragraph styles of your example file (level 0 first); a typed number "
+        "('PART 1 -', '1.1', 'A.', '1.', 'a.') at the start of a paragraph becomes that level's real list number",
+        "the typed number and the space or tab after it are removed and nothing is written: the list shows the same "
+        "number — only when every paragraph of the document then reads exactly as before; a typo (two 'B.'s, a skipped "
+        "letter) or a list that would renumber other paragraphs sets the file aside (the audit shows where)",
+        "typed numbers in table cells stay as typed unless include_tables; paragraphs already numbered are never "
+        "touched (a typed number on one is flagged)",
+        "the list number must LOOK like the typed one: a hidden or capitalised typed number ('a.' in All Caps), a "
+        "paragraph mark that would make the number hidden, coloured, sized, raised, struck or in a symbol font sets the "
+        "file aside; 'PART 1 -', '1.1', 'A.' in capitals are fine; a bold/italic/underline/font difference is flagged",
+        "tracked by default (the removed numbers show as deletions); tracked false removes them outright; "
+        "direct_formatting 'clear' needs tracked false; tracked with existing 'replace' over paragraphs already in "
+        "those styles is refused",
+        "a spec of its own: beside another operation that changes text, styles or numbering of the body it is a "
+        "conflict (offer a chain)",
+    ],
+    "set_page_setup": [
+        "margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given",
+        "the header's and footer's distance from the page edge are margins.header and margins.footer (twips)",
+        "different_first_page true gives the section's first page its own first-page header/footer (none of its own: "
+        "it shows the previous section's, or a blank one — flagged); false shows the ordinary ones there; a section "
+        "already as asked is left alone",
+        "landscape swaps the page's width and height and leaves the margins as they are (give margins in the same op "
+        "to change them); a header/footer shared with portrait pages is flagged",
+        "sections can be chosen by what they contain: {containing: <paragraph predicate>, with_tables: true, "
+        "index_range: [first, last]}; allow_missing true when not every file has such a section",
+    ],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
                      "tracked unless the user said otherwise"],
     "delete_paragraphs": [
@@ -415,7 +514,9 @@ SELECTOR_GRAMMAR = {
     "runs": "'all' or {has_direct_font: bool, font_in: [names], not_in_revisions: bool, color_in: [colours]} — "
             "color_in: the run's effective colour (direct, else its character/paragraph style's) is one of the listed "
             "6-hex values, theme colour names (accent1, text2 …) or 'auto'",
-    "sections": "'all' or [section indices]",
+    "sections": "'all', [section indices] (0-based), or (set_page_setup) by content: {containing: <paragraph "
+                "predicate — a paragraph of the section matches>, with_tables: bool (the section holds a table), "
+                "index_range: [first, last] (inclusive)} — every given key must hold",
     "styles": "'all' | 'all-paragraph-and-character' | {ids: [...]} | {types: [...]}",
     "symbol_runs": "never changed by font ops: a run whose explicit font (direct, character style or paragraph "
                    "style) is a symbol font, or that holds a w:sym",
@@ -433,7 +534,7 @@ CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
         "fonts and sizes defined in styles": "style_fonts",
         "the document default font and size": "doc_defaults_fonts",
         "paragraph spacing, indents and alignment of paragraphs or of paragraph styles": "paragraph_props",
-        "page size, margins and orientation of sections": "section_props",
+        "page size, margins, orientation and different first page of sections": "section_props",
         "which header/footer each section shows": "section_hf_refs",
         "bold, italic, caps, small caps, strikethrough, underline and text colour of selected text or of styles; "
         "keep-with-next, keep lines together, widow control and page break before of paragraphs or of paragraph "
