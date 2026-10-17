@@ -1484,6 +1484,20 @@ how." README → "Diagnostics — when something fails" is the user's view; `tes
    conversation's), plus `out_dir` and, while a conversation is open, `chat_dir` beside it; no folder twice.
 9. **The approval refusal says what changed** (`preview.approval_inputs` kept in `preview.json` and on the `Preview`;
    `explain_approval_change`). `approval_token` itself is unchanged — old tokens stay valid.
+10. **New work gets correlated start/outcome evidence.** `diagnostics.scope/event/span` (implemented in
+    `telemetry.py`) write local JSONL with UTC time, process/thread identity, context IDs, parent spans and durations.
+    Use explicit context propagation for process workers and a fresh `contextvars.copy_context()` per thread task.
+    Workers write separate file journals; app journals rotate per PID. A span's `succeeded` means normal return,
+    not document approval: include the actual status/check outcome. Keep the existing readable traces and pinned
+    progress lines. See `docs/DEVELOPER_DIAGNOSTICS.md` and `tests/test_*observability.py`.
+11. **Diagnostic metadata is bounded and credential-redacted.** Do not log raw model messages, generated source,
+    image data, full argument/environment dictionaries or SDK objects. Keep detailed content in its existing
+    transcript/verification records. Diagnostic writes must not replace the original exception or change processing
+    decisions; failed destinations report once through stderr and any working application journal.
+12. **No diagnostic I/O between the final overwrite check and `os.replace`.** The last
+    `guard.check_before_write(..., _record=False)` deliberately omits success logging. Logging before it is safe:
+    an external save during logging must be detected by that final check. Logging after it enlarges the race and
+    can overwrite that save (`tests/test_pipeline_observability.py`).
 
 ## Phase 8: the conversation, Claude's visual check, custom transforms as an offer, your library
 

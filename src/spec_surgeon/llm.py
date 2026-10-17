@@ -36,6 +36,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from . import diagnostics as diag
 from .resources import (DEFAULT_EFFORT, DEFAULT_MAX_CALLS, DEFAULT_MAX_COST_USD,
                         DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, positive_integer)
 
@@ -113,6 +114,38 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
     ``is_api_error`` (an API error is a recorded failure, anything else a defect that propagates) and never half-appends
     a turn. Inside ``budget_scope``, every caller shares its limits, including nested transform and visual calls.
     A refused preflight raises ``BudgetExceeded`` before opening a stream; ordinary calls are unchanged."""
+    with diag.scope(model_call_id=diag.new_id()):
+        with diag.span("model.call", requested_model=model) as record:
+            try:
+                return _call(client, model=model, system=system, tools=tools, messages=messages, record=record,
+                             max_output_tokens=max_output_tokens, effort=effort)
+            except BudgetExceeded as exc:
+                diag.event("model.budget.exhausted", level="warning", reason=str(exc), budgets=_budget_records())
+                raise
+
+
+def _budget_records() -> List[Dict[str, Any]]:
+    """A budget snapshot is evidence only; malformed provider usage cannot break a call while logging it."""
+    try:
+        return [budget.to_dict() for budget in _CALL_BUDGETS.get()]
+    except Exception as exc:  # noqa: BLE001 — diagnostics must not affect request accounting
+        return [{"record_error": _record_error(exc)}]
+
+
+def _response_metadata(resp, requested):
+    """A content-free summary, including fallback usage; never reads response blocks."""
+    try:
+        usage = Usage()
+        usage.add(resp, requested)
+        model, fell_back = served(resp)
+        return {"request_id": getattr(resp, "_request_id", None) or getattr(resp, "id", None),
+                "stop_reason": getattr(resp, "stop_reason", None), "served_model": model,
+                "fell_back": fell_back, "usage": usage.to_dict()}
+    except Exception as exc:  # noqa: BLE001 — malformed diagnostic metadata cannot discard a response
+        return {"record_error": _record_error(exc)}
+
+
+def _call(client, *, model, system, tools, messages, record, max_output_tokens, effort):
     budgets = _CALL_BUDGETS.get()
     max_tokens = MAX_TOKENS if max_output_tokens is None else positive_integer("max_output_tokens", max_output_tokens)
     if max_tokens > MAX_TOKENS:
@@ -120,11 +153,14 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
     effort = EFFORT if effort is None else effort
     if effort not in ("low", "medium", "high", "max"):
         raise ValueError("effort must be low, medium, high or max")
+    retries_disabled = False
     tools = list(tools)
+    record.update(phase="preflight", message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets))
     if budgets:
         model = next((b.model for b in reversed(budgets) if b.model is not None), model)
         max_tokens = min(max_tokens, *(b.max_output_tokens for b in budgets))
         effort = budgets[-1].effort
+        record.update(model=model, max_output_tokens=max_tokens, effort=effort)
         try:
             estimated_input = estimate_input_tokens(system=system, tools=tools, messages=messages)
         except (TypeError, ValueError) as e:
@@ -137,21 +173,39 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
         options = getattr(client, "with_options", None)
         if callable(options):
             client = options(max_retries=0)
+            retries_disabled = True
         for budget, reservation in zip(budgets, reservations):
             budget._reserve(reservation)
+        diag.event("model.budget.reserved", estimated_input_tokens=estimated_input,
+                   max_output_tokens=max_tokens, budgets=_budget_records())
     kw = dict(model=model, max_tokens=max_tokens, system=system, tools=tools, messages=messages,
               output_config={"effort": effort}, cache_control={"type": "ephemeral"},
               betas=[FALLBACK_BETA], fallbacks="default")
+    record.update(model=model, max_output_tokens=max_tokens, effort=effort, phase="stream.open")
+    diag.event("model.request.prepared", model=model, max_output_tokens=max_tokens, effort=effort,
+               message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets),
+               retries_disabled=retries_disabled)
     try:
         with client.beta.messages.stream(**kw) as stream:
+            record["phase"] = "stream.receive"
+            diag.event("model.stream.opened")
             resp = stream.get_final_message()
     except BaseException:
         for budget in budgets:
             budget.failed_calls += 1
+        if budgets:
+            record["budgets"] = _budget_records()
         # Keep the reservation: a dropped stream may have consumed tokens without reporting its usage.
         raise
+    record["phase"] = "usage.accounting"
     for budget, reservation in zip(budgets, reservations if budgets else ()):
         budget._complete(resp, model, reservation)
+    # The transcript remains the source of response content. Events contain only metadata, never prompts,
+    # tool payloads, page images or authentication headers.
+    record.update(_response_metadata(resp, model))
+    record["phase"] = "complete"
+    if budgets:
+        diag.event("model.budget.accounted", budgets=_budget_records())
     return resp
 
 
@@ -203,7 +257,10 @@ def failure_text(e: BaseException, failed: str = "the request to Claude failed")
 
 
 def _record_error(e: BaseException) -> str:
-    return f"{type(e).__name__}: {str(e)[:300]}"
+    try:
+        return f"{type(e).__name__}: {str(e)[:300]}"
+    except Exception:  # even an exception's broken __str__ must not replace the original result
+        return type(e).__name__
 
 
 def block_dict(b: Any) -> Dict[str, Any]:

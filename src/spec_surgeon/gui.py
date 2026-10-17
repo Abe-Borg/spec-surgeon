@@ -18,8 +18,12 @@ import subprocess
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime
+from functools import wraps
+from inspect import signature
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
+
+from . import diagnostics as diag
 
 Log = Callable[[str], None]
 
@@ -60,6 +64,37 @@ class OperationFailed(TrialsFailed):
 
 # ---- the logic (no widgets; tested on its own) ----------------------------------------------------
 
+def _session_action(fn):
+    """Trace semantic actions, including refusals before a preview/results folder exists.
+
+    Only option values and state metadata go into the application event stream. Request/reply text, model clients,
+    document contents and the return value belong in their existing records, never in this metadata snapshot.
+    """
+    sig = signature(fn)
+
+    @wraps(fn)
+    def recorded(self, *args, **kwargs):
+        options = {}
+        try:
+            arguments = sig.bind(self, *args, **kwargs).arguments
+            for key in ("render", "in_place", "replace", "tracked", "position", "choice_id"):
+                if key in arguments:
+                    options[key] = arguments[key]
+            for key in ("request", "text", "proposal"):
+                if isinstance(arguments.get(key), str):
+                    options[key + "_characters"] = len(arguments[key])
+        except Exception:
+            pass                              # a diagnostic never changes argument validation or the action
+        with diag.scope(session_id=self.diagnostic_id, component="session"):
+            with diag.span("session." + fn.__name__.lstrip("_"), options=options,
+                           before=self._diagnostic_state()) as completion:
+                try:
+                    return fn(self, *args, **kwargs)
+                finally:
+                    completion["after"] = self._diagnostic_state()
+    return recorded
+
+
 @dataclass
 class Session:
     """What the window is working on. Every step is a call into the engine; the window only shows the text."""
@@ -99,6 +134,27 @@ class Session:
     recovery: Any = None                          # investigated copies, awaiting review and export
     last_recovery: Any = None                     # recovery whose ready copies were exported
     campaign: Any = None                          # durable multi-project workspace, independent of the four steps
+    diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
+
+    def _diagnostic_state(self) -> Dict[str, Any]:
+        """Small metadata snapshot; no file reads, credential checks, document text or expensive approval hashing."""
+        try:
+            pv, approval = self._current_review()
+            return {"outcome": ("recovery" if self.recovery is not None else "chain" if self.chain is not None else
+                                "generated" if self.generated is not None else "spec" if self.spec is not None else
+                                "none"),
+                    "folder": str(self.folder) if self.folder else None,
+                    "template": str(self.template) if self.template else None,
+                    "out_dir": str(self.out_dir) if self.out_dir else None,
+                    "chat_dir": str(self.chat_dir) if self.chat_dir else None,
+                    "last_run_dir": str(self.last_run_dir) if self.last_run_dir else None,
+                    "selected_file_count": len(self.selected_files) if self.selected_files is not None else None,
+                    "conversation_open": self.conversation is not None,
+                    "turn_status": getattr(self.turn, "status", None),
+                    "preview_available": pv is not None, "approval_digest": approval,
+                    "review_acknowledged": bool(approval and getattr(pv, "review_ack", "") == approval)}
+        except Exception:
+            return {"snapshot_unavailable": True}
 
     def claude_ready(self) -> bool:
         """Claude can be called: a client was given (tests, scripted) or credentials are there
@@ -126,20 +182,33 @@ class Session:
         if self.selected_files is not None:
             files = [f for f in self.selected_files if f.is_file() and not is_template_file(f, templates)]
             if not files:
+                diag.event("session.inputs.refused", level="warning", session_id=self.diagnostic_id,
+                           reason="no_remaining_set_aside_files", selected_count=len(self.selected_files))
                 raise ValueError("no set-aside .docx files remain to process")
+            diag.event("session.inputs.selected", session_id=self.diagnostic_id, selection="set_aside",
+                       file_count=len(files), excluded_count=len(self.selected_files) - len(files))
             return files
         if not self.folder:
+            diag.event("session.inputs.refused", level="warning", session_id=self.diagnostic_id,
+                       reason="folder_missing")
             raise ValueError("choose the folder with the specs first")
-        files = [f for f in expand_inputs([str(self.folder)]) if not is_template_file(f, templates)]
+        candidates = expand_inputs([str(self.folder)])
+        files = [f for f in candidates if not is_template_file(f, templates)]
         if not files:
+            diag.event("session.inputs.refused", level="warning", session_id=self.diagnostic_id,
+                       reason="no_documents", folder=str(self.folder), candidate_count=len(candidates))
             raise ValueError(f"no .docx files in {self.folder}")
+        diag.event("session.inputs.selected", session_id=self.diagnostic_id, selection="folder",
+                   folder=str(self.folder), file_count=len(files), excluded_count=len(candidates) - len(files))
         return files
 
+    @_session_action
     def reset_set_aside(self) -> None:
         self.selected_files = None
         self.prior_failures = []
         self.end_conversation()
 
+    @_session_action
     def load_set_aside(self, source_dir: Optional[Path] = None) -> str:
         """Narrow the session to only the files that were set aside in the last run (or ``source_dir``),
         preserving their failure diagnostics for the next compile pass."""
@@ -163,6 +232,7 @@ class Session:
                      "Load a saved spec or use Your library for them, then press Preview.")
         return "\n".join(lines)
 
+    @_session_action
     def new_out_dir(self) -> Path:
         self.out_dir = Path(self.out_root) / datetime.now().strftime("%Y%m%d-%H%M%S")
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -170,6 +240,7 @@ class Session:
 
     # ---- steps ----
     # ---- outcome: a spec XOR a custom transform, and what was previewed of it ----
+    @_session_action
     def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "",
                      recipe: str = "", chain: Optional[Dict[str, Any]] = None) -> None:
         """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
@@ -198,10 +269,12 @@ class Session:
         from .chain import chain_name
         return chain_name(self.chain) if self.chain is not None else ""
 
+    @_session_action
     def end_conversation(self) -> None:
         self.conversation, self.turn, self.questions = None, None, []
         self._compiled_dir = None                 # a loaded spec or saved operation never previews into its folder
 
+    @_session_action
     def load_spec(self, path: Path) -> Dict[str, Any]:
         from .editspec import load_spec, validate_spec
         spec = load_spec(path)
@@ -210,6 +283,7 @@ class Session:
         self.end_conversation()
         return spec
 
+    @_session_action
     def remove_spec(self) -> None:
         self._set_outcome()
 
@@ -234,6 +308,7 @@ class Session:
         except (ValueError, OSError):
             return False
 
+    @_session_action
     def compile(self, request: str, log: Log) -> str:
         """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
         Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user. It opens the session
@@ -265,6 +340,7 @@ class Session:
             log(f"Compile record (the model's whole exchange): {out / 'compile.json'}")
         return msg
 
+    @_session_action
     def reply(self, text: str = "", choice_id: Optional[str] = None, log: Log = lambda m: None,
               render: bool = False) -> str:
         """The user's next message in the conversation — typed words, a picked choice, or both."""
@@ -358,6 +434,8 @@ class Session:
     def _after_turn(self, turn) -> str:
         self.turn = turn
         self.questions = list(turn.questions)
+        diag.event("session.conversation.turn", status=turn.status, question_count=len(self.questions),
+                   choice_count=len(getattr(turn, "choices", [])), has_spec=getattr(turn, "spec", None) is not None)
         self._save_chat()
         if turn.status == "ok":
             self._set_outcome(spec=turn.spec, source="compiled")
@@ -370,6 +448,7 @@ class Session:
                     ("\nClaude can write a one-off custom transform for it — pick that choice in the chat." if offer else ""))
         return f"That didn't work: {turn.message}\nReply in the chat to try again, or Start over."
 
+    @_session_action
     def _save_chat(self) -> None:
         """conversation.json and compile.json (the request, the answers and the outcome of the conversation's last turn
         with the model's whole exchange) in the current session folder; a record that cannot be written never stops
@@ -379,8 +458,10 @@ class Session:
             return
         try:
             c.save(self.chat_dir / "conversation.json")
-        except OSError:
-            pass
+        except OSError as exc:
+            diag.event("session.conversation.save_failed", level="warning",
+                       path=str(self.chat_dir / "conversation.json"),
+                       error=diag.exception_record(exc, "save-conversation"))
         if c.turn is not None:
             from .diagnostics import write_json
             self.last_compile = c.compile_result(c.turn)
@@ -399,6 +480,7 @@ class Session:
             out = self._compiled_dir if self._compiled_dir is not None else self._next_session_dir()
         return self._use_folder(out)
 
+    @_session_action
     def _use_folder(self, out: Path) -> Path:
         """``out`` becomes the results folder (the next preview and run go there); the conversation's records follow."""
         self.out_dir, self._compiled_dir = out, None
@@ -423,6 +505,7 @@ class Session:
         from .preview import generated_key
         return generated_key(g)
 
+    @_session_action
     def _codegen(self, request: str, proposal: str, files: List[Path], log: Log, brief: Optional[str] = None,
                  render: bool = False) -> str:
         from .codegen import generate_op, pick_samples
@@ -460,6 +543,7 @@ class Session:
                 ("\nA file changed while it was written: press Preview to try it again on the files as they are now."
                  if moved else ""))
 
+    @_session_action
     def _prove(self, g, files: List[Path], samples: List[Path], folder: Path, refusal: str, exc=TrialsFailed):
         """Try ``g`` on ``samples`` (sandbox + the full suite) in ``folder``. The approval token and inputs of ``files``
         are taken BEFORE the trials, so a file that changes while they run voids them. Raises ``exc`` (``TrialsFailed``,
@@ -475,6 +559,7 @@ class Session:
             raise exc(f"{refusal} — " + " | ".join(bad))
         return token, inputs, trials
 
+    @_session_action
     def _show_generated(self, g, out: Path, token: str, inputs: Dict[str, Any], intent: str, render: bool,
                         log: Log) -> None:
         """``g``, passed on the samples of the files ``token`` is of, becomes the session's outcome: its preview in
@@ -489,6 +574,7 @@ class Session:
             self._visual_check(self.generated_preview, intent, out / "preview", log)
         self.generated_token, self.generated_inputs = token, inputs
 
+    @_session_action
     def _preview_again(self, render: bool, log: Log) -> None:
         """The custom transform's files are as it was tried, but its preview was made with Render pages set the other way
         (or is missing): make the preview again from the same passing trials, in a new folder, with page images and
@@ -503,6 +589,7 @@ class Session:
         self._use_folder(out)
         self._show_generated(g, out, token, inputs, intent, render, log)
 
+    @_session_action
     def _prove_again(self, files: List[Path], render: bool, log: Log) -> None:
         """A file changed (or was added or removed) since the custom transform was tried: try it again on the samples of
         the files as they are now, in a new folder, and preview that — the token is then current. One that no longer
@@ -521,10 +608,12 @@ class Session:
         self._show_generated(g, out, token, inputs, intent, render, log)
 
     # ---- your library ----
+    @_session_action
     def load_recipe(self, name: str) -> Dict[str, Any]:
         from .library import load_recipe
         return self.load_spec(load_recipe(name))
 
+    @_session_action
     def use_snippet(self, name: str, anchor: str, position: str = "after", tracked: bool = True) -> Dict[str, Any]:
         """One of your snippets as the outcome (Your library…): the ``insert_paragraph`` spec ``library.snippet_spec``
         builds — its text exactly as saved, ``position`` the body paragraph whose text matches ``anchor``, in every file
@@ -536,12 +625,14 @@ class Session:
         self.end_conversation()
         return spec
 
+    @_session_action
     def new_snippet(self, name: str, text: str, description: str = "", replace: bool = False):
         """Save a typed paragraph as a snippet (Your library… → New snippet…)."""
         from .library import save_snippet
         return save_snippet(name, text, description=description, replace=replace)
 
     # ---- chains: several recipes, one after another (chain.py) ----
+    @_session_action
     def load_chain(self, name: str) -> Dict[str, Any]:
         """One of your saved chains (Your library…) as the outcome: its stages' specs as saved, previewed and run
         stage by stage. Ends the conversation like a loaded spec does."""
@@ -551,6 +642,7 @@ class Session:
         self.end_conversation()
         return chain
 
+    @_session_action
     def load_chain_file(self, path: Path) -> Dict[str, Any]:
         """A chain from a file (a saved chain's file, a run's or a preview's ``chain.json``)."""
         from .chain import load_chain_file
@@ -559,6 +651,7 @@ class Session:
         self.end_conversation()
         return chain
 
+    @_session_action
     def build_chain(self, names: List[str], name: str = "") -> Dict[str, Any]:
         """A chain from your recipes, in the order given (Chain recipes…): each recipe's spec as saved becomes a stage
         named after it. The chain is validated (every stage's spec) before it becomes the outcome; a name that is not
@@ -578,6 +671,7 @@ class Session:
         self.end_conversation()
         return chain
 
+    @_session_action
     def save_chain(self, name: str, description: str = "", replace: bool = False):
         """Save the previewed chain (only while its preview is current) in your library."""
         from .library import save_chain
@@ -586,6 +680,7 @@ class Session:
             raise ValueError("preview the chain first — only a chain whose preview is current can be saved")
         return save_chain(name, self.chain, description, replace)
 
+    @_session_action
     def use_operation(self, name: str, log: Log, render: bool = False) -> str:
         """Run one of your saved operations on this batch (Your library…): first on its sample files (sandbox + the
         full suite — it must pass here, not only where it was made), then its preview; Run writes edited copies only.
@@ -614,6 +709,7 @@ class Session:
         return (f"Your operation {name!r} passed verification on {len(samples)} sample file(s) of this batch. "
                 f"Run writes edited copies only (never over your files).")
 
+    @_session_action
     def save_recipe(self, name: str, description: str = "", replace: bool = False):
         """Save the previewed spec (only while its preview is current) as a recipe."""
         from .library import save_recipe
@@ -622,6 +718,7 @@ class Session:
             raise ValueError("preview the spec first — only a spec whose preview is current can be saved")
         return save_recipe(name, self.spec, description, replace)
 
+    @_session_action
     def save_operation(self, name: str, description: str = "", replace: bool = False):
         """Save the custom transform (only one that passed on this batch's samples and is still current)."""
         from .library import save_operation
@@ -631,6 +728,7 @@ class Session:
             raise ValueError("only a custom transform that passed on the current files can be saved — preview again")
         return save_operation(name, g, description, replace)
 
+    @_session_action
     def make_preview(self, render: bool, log: Log) -> str:
         from .preview import approval_token, make_preview
         if self.generated is not None:
@@ -677,6 +775,7 @@ class Session:
             lines.append("THE CONVERSATION:\n" + self.conversation.brief())
         return "\n".join(lines)
 
+    @_session_action
     def _visual_check(self, pv, intent: str, folder: Path, log: Log) -> None:
         from . import compiler, vision
         from .preview import write_preview_files
@@ -709,12 +808,16 @@ class Session:
         return (f"Claude's visual check flagged {len(rv.blocking())} problem(s) on the sample pages — look at them on the "
                 f"Preview step and press \u201cI've looked \u2014 allow Run\u201d, or change the request.")
 
+    @_session_action
     def acknowledge_review(self, token: str) -> None:
         """The user has looked at the blocking findings of the preview made with ``token`` (and only that one)."""
         pv, current = self._current_review()
         if pv is None or not token or token != current:
+            diag.event("session.approval.refused", level="warning", gate="review_acknowledgement",
+                       reason="preview_changed", supplied_digest=token, current_digest=current)
             raise ValueError("that preview is not the current one — press Preview again")
         pv.review_ack = token
+        diag.event("session.approval.acknowledged", approval_digest=token)
 
     def _note_preview(self) -> None:
         """Tell Claude what the preview found, so a reply from the Preview page is a correction it can act on."""
@@ -731,14 +834,18 @@ class Session:
                                        (f" Claude's visual check flagged {flagged} problem(s)." if flagged else ""))
         self._save_chat()
 
+    @_session_action
     def run(self, in_place: bool, render: bool, log: Log) -> str:
         from .batch import run_batch
         from .preview import approval_token
         blocked = self.run_blocked_reason()
         if blocked:
+            diag.event("session.approval.refused", level="warning", gate="visual_review", reason=blocked)
             raise ValueError(blocked)
         if self.recovery is not None:
             if in_place:
+                diag.event("session.approval.refused", level="warning", gate="delivery_mode",
+                           reason="recovery_copies_only")
                 raise ValueError("Recovery exports edited copies only; original files cannot be overwritten.")
             from .recovery import deliver_recovery
             result = self.recovery
@@ -756,14 +863,19 @@ class Session:
             if approval_token(key, files) != self.generated_token:
                 from .preview import approval_inputs, explain_approval_change
                 what = explain_approval_change(self.generated_inputs or {}, approval_inputs(key, files))
+                diag.event("session.approval.refused", level="warning", gate="approval_digest",
+                           reason="generated_inputs_changed", changes=what)
                 raise ValueError("a file changed (or the folder changed) since the AI-written transform was tested — "
                                  "press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
             out = (self.out_dir or self.new_out_dir()) / "run"
+            diag.event("session.approval.accepted", approval_digest=self.generated_token,
+                       file_count=len(files), in_place=False, run_dir=str(out))
             res = run_generated(self.generated, [str(f) for f in files], out, log=log)
             self.last_run_dir, self.last_trials, self.last_batch, self.last_chain = out, res, None, None
             ok = sum(r.passed for r in res)
             return f"{ok} of {len(res)} file(s) PASS. Outputs: {out / 'outputs'} (your files were not changed)."
         if self.preview is None or (self.spec is None and self.chain is None):
+            diag.event("session.approval.refused", level="warning", gate="preview", reason="preview_required")
             raise ValueError("press Preview first — nothing runs before you have seen the preview")
         files = self.files()
         key = self.outcome_key()
@@ -771,9 +883,13 @@ class Session:
             from .preview import approval_inputs, explain_approval_change
             what = explain_approval_change(getattr(self.preview, "token_inputs", None) or {},
                                            approval_inputs(key, files))
+            diag.event("session.approval.refused", level="warning", gate="approval_digest",
+                       reason="preview_inputs_changed", changes=what)
             raise ValueError(f"a file or the {'chain' if self.chain is not None else 'spec'} changed since the preview "
                              "— press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
         out = self.out_dir / "run"
+        diag.event("session.approval.accepted", approval_digest=self.preview.token,
+                   file_count=len(files), in_place=in_place, run_dir=str(out))
         self.last_run_dir = out                   # set before the run: a run that stops still has its logs there
         if self.chain is not None:
             return self._run_chain(files, out, in_place, render, log)
@@ -806,6 +922,7 @@ class Session:
                                                   self.claude_ready() else "."))
         return "\n".join(lines)
 
+    @_session_action
     def _run_chain(self, files: List[Path], out: Path, in_place: bool, render: bool, log: Log) -> str:
         """Run the chain (every stage a verified batch in ``out/stage-NN/``; ``chain.run_chain``) and say, per file,
         how far it got."""
@@ -840,6 +957,7 @@ class Session:
                                                   self.claude_ready() else "."))
         return "\n".join(lines)
 
+    @_session_action
     def load_recovery(self, run_dir: Path) -> str:
         """Reopen saved investigation evidence without making a model call or restoring review approval."""
         from .recovery import load_recovery
@@ -857,6 +975,7 @@ class Session:
         self.out_dir = result.out_dir
         self.questions = list(result.questions)
 
+    @_session_action
     def resolve_remaining(self, log: Log, options=None, request: Any = None) -> str:
         """Investigate the last run's exceptions, or the current preview's failed files, on copies.
 
@@ -903,6 +1022,7 @@ class Session:
         self._adopt_recovery(result)
         return result.to_text()
 
+    @_session_action
     def advise(self, log: Log) -> str:
         from .advisor import advise_batch
         if not self.last_run_dir:
@@ -950,9 +1070,19 @@ GUI_MISSING = ("The Spec Surgeon window needs Qt for Python (PySide6).\n"
 
 
 def main(argv=None) -> int:
+    from .settings import logs_dir
+    diag.setup_app_logging(logs_dir())           # also records Qt/import failures before the window can start
+    with diag.span("gui.application") as completion:
+        code = _main(argv)
+        completion["exit_code"] = code
+        return code
+
+
+def _main(argv=None) -> int:
     try:
         import PySide6.QtWidgets  # noqa: F401 — PySide6, or a system library Qt needs (libEGL on Linux), missing
     except ImportError as e:
+        diag.event("gui.startup.failed", level="error", **diag.error_fields(e))
         msg = f"{GUI_MISSING}\n\n({e})"
         if sys.stderr is not None:
             print(msg, file=sys.stderr)

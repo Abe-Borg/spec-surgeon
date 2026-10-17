@@ -142,9 +142,15 @@ def test_dynamic_analysis_is_read_only_persisted_and_reachable_after_resume(tmp_
 
 def test_context_epochs_preserve_complete_signed_history_and_scope(tmp_path, monkeypatch):
     from fake_claude import thinking
+    from spec_surgeon.catalog import op_catalog
+    from spec_surgeon.contexts import estimate_context_tokens
     source = write_document(tmp_path / "source.docx")
+    # Leave room for the current catalog and trusted task context, then force rollover
+    # with the large tool result. A fixed 60k cap cannot fit the batch-4 catalog alone.
+    system = recovery.SYSTEM + "\nOP CATALOG:\n" + recovery._json(op_catalog(examples=False))
+    context_limit = estimate_context_tokens(system=system, tools=recovery.TOOLS, messages=[]) + 20000
     monkeypatch.setattr(recovery.compiler._Batch, "list_styles", lambda self, **kw: {"evidence": "x" * 240000})
-    result = recovery.recover([source], "Investigate formatting", tmp_path / "session", options=opts(max_context_tokens=60000),
+    result = recovery.recover([source], "Investigate formatting", tmp_path / "session", options=opts(max_context_tokens=context_limit),
         client=FakeClient(resp(thinking("original-signature", "reasoning"), tool("list_styles", {"file": source.name})),
                           resp(tool("need_user", {"question": "Which property should change?"}))))
     state = next(iter(result.session_state["groups"].values()))
