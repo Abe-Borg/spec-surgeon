@@ -58,7 +58,7 @@ ALLOWED_FROM: Dict[str, set] = {
                                    "is_targeted", "StyleSheet", "DEFAULT_PRESERVE_FONTS", "FONT_PARAM_DOC",
                                    "check_run_selector", "font_values", "has_direct_font", "in_revision",
                                    "is_symbol_rpr", "mark_in_revision", "rpr_selected", "runs_by_paragraph",
-                                   "size_applies", "size_values"},
+                                   "size_applies", "size_values", "chain_reads", "table_ordinals"},
     "lxml": {"etree"},
     "__future__": {"annotations"},
     "typing": {"Any", "Dict", "List", "Optional", "Tuple", "Sequence", "Set", "Iterable"},

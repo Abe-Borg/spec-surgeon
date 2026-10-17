@@ -34,7 +34,8 @@ from ..ooxml import (PPR_ORDER, STYLE_ORDER, RevisionStamp, block_full_text, fil
 from . import register
 from .base import JobException, Op, PlanFragment
 from .replace_text import default_author
-from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts
+from .selectors import (StyleSheet, chain_reads, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts,
+                        table_ordinals)
 
 SPACING_KEYS = {"before": int, "after": int, "line": int, "lineRule": str, "beforeLines": int, "afterLines": int}
 IND_KEYS = {"left": int, "right": int, "start": int, "end": int, "firstLine": int, "hanging": int,
@@ -270,7 +271,9 @@ class SetParagraphProps(Op):
         reads: set = set()
         walks = reads_inherited(values)
         for part in parts:
-            pars = paragraphs(pkg.xml(part))
+            root = pkg.xml(part)
+            pars = paragraphs(root)
+            tables = table_ordinals(root)
             chosen = []
             for bi, p in enumerate(pars):
                 if not paragraph_selected(pred, p, bi, block_full_text(p), sheet):
@@ -285,6 +288,9 @@ class SetParagraphProps(Op):
                     # the rule read the styles this paragraph inherits from: another op changing one of their pPr (the
                     # styles target of this op can set …Lines or …Chars there) is a plan-time conflict
                     reads.update(lv[2] for lv in levels[1:])
+                    # … and so does a remap of its table's style or an import adding a style its chain names (batch 4)
+                    frag.touches += sorted(t for t in chain_reads(sheet, part, p, tables) if t[0] == part
+                                           or t[2] == "verify:add")
                 if ppr is not None and ppr.find(W + "pPrChange") is not None:
                     if tracked:
                         raise JobException(f"{part} paragraph {bi} already carries a pending tracked paragraph "

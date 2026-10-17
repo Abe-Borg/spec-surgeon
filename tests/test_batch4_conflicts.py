@@ -89,7 +89,8 @@ def test_a_remapped_table_style_beside_ops_reading_the_cell_paragraphs_conflicts
     for other in ({"op": "set_properties", "select": cells, "params": {"run": {"b": False}}},
                   {"op": "set_properties", "select": cells, "params": {"paragraph": {"keepNext": False}}},
                   {"op": "set_tab_stops", "select": cells, "params": {"clear": [1440]}},
-                  {"op": "set_borders_shading", "select": cells, "params": {"shading": "none"}}):
+                  {"op": "set_borders_shading", "select": cells, "params": {"shading": "none"}},
+                  {"op": "set_paragraph_props", "select": cells, "params": {"spacing": {"before": 120}}}):
         assert "tbl:0" in _conflict(src, remap, other), other
 
 
