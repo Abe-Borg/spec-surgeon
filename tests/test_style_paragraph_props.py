@@ -186,8 +186,10 @@ def test_parameters_are_checked(src):
             ({"styles": {"ids": ["ArchPara"]}, "scope": ["document"]}, {"jc": "both"}, "bad-params"),
             ({"styles": ["ArchPara"]}, {"jc": "both"}, "bad-params"),
             ({"styles": {"ids": []}}, {"jc": "both"}, "bad-params"),
-            ({"styles": {"ids": ["ArchStrong"]}}, {"jc": "both"}, "bad-params"),        # a character style
-            ({"styles": {"ids": ["ArchTable"]}}, {"jc": "both"}, "bad-params"),         # a table style
+            ({"styles": {"ids": ["ArchStrong"]}}, {"jc": "both"}, "style-mismatch"),    # a character style here
+            ({"styles": {"ids": ["ArchTable"]}}, {"jc": "both"}, "style-mismatch"),     # a table style here
+            ({"styles": {"ids": ["ArchPara"]}}, {"ind": {"firstLineChars": 1, "hanging": 1}}, "bad-params"),
+            ({"styles": {"ids": ["ArchPara"]}}, {"ind": {"leftChars": "1"}}, "bad-params"),
             ({"styles": {"ids": ["Nope"]}}, {"jc": "both"}, "not-found"),
             ({"styles": {"ids": ["ArchPara"]}}, {"ind": {"firstLine": 1, "hanging": 1}}, "bad-params"),
             ({"styles": {"ids": ["ArchPara"]}}, {}, "bad-params")):
@@ -269,27 +271,177 @@ def test_a_shared_merge_that_keeps_hanging_beside_first_line_is_caught(src, monk
     assert "V10" in failed(rec) and "ind is" in v10(rec)
 
 
-def test_a_shared_refusal_rule_that_forgets_the_ancestors_is_caught(src, monkeypatch):
-    data = mutate(src, STYLES, lambda r: add_style(r, '<w:style w:type="paragraph" w:styleId="ArchLinesChild">'
-                                                      '<w:name w:val="Arch Lines Child"/><w:basedOn w:val="ArchLines"/>'
-                                                      '</w:style>'))
-    real = spp_module.style_refusal
+def _children_of(src):
+    """The fixture with ArchLinesChild (based on ArchLines) and ArchAutoChild (based on ArchAuto) — nothing of their own."""
+    def add(r):
+        for sid, base in (("ArchLinesChild", "ArchLines"), ("ArchAutoChild", "ArchAuto")):
+            add_style(r, f'<w:style w:type="paragraph" w:styleId="{sid}"><w:name w:val="{sid}"/>'
+                         f'<w:basedOn w:val="{base}"/></w:style>')
+    return mutate(src, STYLES, add)
 
-    def own_only(sheet, sid, values):
-        st = sheet.styles[sid]
-        sp = st.find(W + "pPr/" + W + "spacing")
-        if sp is not None and any(sp.get(W + s + "Lines") for s in ("before", "after")):
-            return real(sheet, sid, values)
-        return None
-    monkeypatch.setattr(spp_module, "style_refusal", own_only)
-    plan, out, rec = styles_op(data, ["ArchLinesChild"], {"spacing": {"after": 120}})
-    assert "V10" in failed(rec) and "set in lines" in v10(rec) and "must refuse" in v10(rec)
+
+@pytest.mark.parametrize("sid, params, needle", [
+    ("ArchLinesChild", {"spacing": {"after": 120}}, "set in lines"),
+    ("ArchAutoChild", {"spacing": {"before": 120}}, "auto"),          # A3: autospacing inherited from the parent
+])
+def test_a_shared_refusal_rule_that_reads_only_the_style_itself_is_caught(src, monkeypatch, sid, params, needle):
+    real = spp_module.inherited_refusal
+    monkeypatch.setattr(spp_module, "inherited_refusal", lambda levels, values: real(levels[:1], values))
+    plan, out, rec = styles_op(_children_of(src), [sid], params)
+    assert "V10" in failed(rec) and needle in v10(rec) and "must refuse" in v10(rec)
 
 
 def test_a_shared_refusal_rule_that_forgets_autospacing_is_caught(src, monkeypatch):
-    monkeypatch.setattr(spp_module, "style_refusal", lambda sheet, sid, values: None)
+    monkeypatch.setattr(spp_module, "inherited_refusal", lambda levels, values: None)
     plan, out, rec = styles_op(src, ["ArchAuto"], {"spacing": {"before": 120}})
     assert "V10" in failed(rec) and "auto" in v10(rec) and "must refuse" in v10(rec)
+
+
+# ---- A3: autospacing inherited; A2: indentation given in characters ------------------------------------------------
+
+def test_autospacing_is_read_through_the_ancestors_and_the_nearest_level_decides(src):
+    data = _children_of(src)
+    with pytest.raises(JobException) as e:
+        styles_op(data, ["ArchAutoChild"], {"spacing": {"before": 120}})
+    assert e.value.code == "conflict-property" and "beforeAutospacing on style 'ArchAuto'" in str(e.value)
+    # the child turning it off itself: the nearest level naming it decides — written, and verified
+    off = mutate(data, STYLES, lambda r: style(r, "ArchAutoChild").append(etree.fromstring(
+        f'<w:pPr xmlns:w="{W[1:-1]}"><w:spacing w:beforeAutospacing="0"/></w:pPr>')))
+    plan, out, rec = styles_op(off, ["ArchAutoChild"], {"spacing": {"before": 120}})
+    assert rec.passed, rec.to_markdown()
+    assert attrs(style(styles_root(out), "ArchAutoChild").find(W + "pPr"), "spacing") == {"beforeAutospacing": "0",
+                                                                                          "before": "120"}
+    # the direct path reads the paragraph's style chain the same way
+    with pytest.raises(JobException) as e:
+        run_ops(src, [("set_paragraph_props", {"paragraphs": {"text_regex": "^Auto spacing"}},
+                       {"spacing": {"before": 120}})])
+    assert e.value.code == "conflict-property" and "style 'ArchAuto'" in str(e.value)
+
+
+def _chars(src, part, fn):
+    return mutate(src, part, fn)
+
+
+def _set_ind(el_, **kw):
+    ind = el_.find(W + "pPr/" + W + "ind")
+    ind.attrib.clear()
+    for k, v in kw.items():
+        ind.set(W + k, v)
+
+
+def test_indentation_given_in_characters_refuses_a_twips_value(src):
+    """A2 (Word gives leftChars/firstLineChars… priority over left/firstLine): asking the twips value where the style, a
+    style it is based on or the document defaults give that side in characters is refused, unless the spec gives it in
+    characters too."""
+    data = _chars(src, STYLES, lambda r: _set_ind(style(r, "ArchPara"), left="720", leftChars="300", firstLine="420",
+                                                  firstLineChars="200"))
+    for ind, needle in (({"left": 0}, "leftChars=300"), ({"firstLine": 0}, "firstLineChars=200"),
+                        ({"start": 0}, "leftChars=300")):
+        with pytest.raises(JobException) as e:
+            styles_op(data, ["ArchPara"], {"ind": ind})
+        assert e.value.code == "conflict-property" and needle in str(e.value), ind
+    plan, out, rec = styles_op(data, ["ArchPara"], {"ind": {"left": 0, "leftChars": 0, "firstLine": 0,
+                                                            "firstLineChars": 0}})
+    assert rec.passed, rec.to_markdown()
+    assert attrs(style(styles_root(out), "ArchPara").find(W + "pPr"), "ind") == {
+        "left": "0", "leftChars": "0", "firstLine": "0", "firstLineChars": "0"}
+    # a hanging indent asked: the merge itself removes the first-line Chars from the style — nothing left to defeat it
+    plan, out, rec = styles_op(data, ["ArchPara"], {"ind": {"hanging": 360, "leftChars": 0}})
+    assert rec.passed, rec.to_markdown()
+    assert attrs(style(styles_root(out), "ArchPara").find(W + "pPr"), "ind") == {"left": "720", "leftChars": "0",
+                                                                                 "hanging": "360"}
+    # inherited: a style based on one that indents in characters
+    child = mutate(data, STYLES, lambda r: add_style(r, '<w:style w:type="paragraph" w:styleId="ParaChild">'
+                                                        '<w:name w:val="Para Child"/><w:basedOn w:val="ArchPara"/></w:style>'))
+    with pytest.raises(JobException) as e:
+        styles_op(child, ["ParaChild"], {"ind": {"hanging": 360}})            # the parent's firstLineChars stays
+    assert e.value.code == "conflict-property" and "firstLineChars=200" in str(e.value)
+    # the direct path: the paragraph's own ind, and its style's
+    with pytest.raises(JobException) as e:
+        run_ops(data, [("set_paragraph_props", {"paragraphs": {"text_regex": "^Cell item"}}, {"ind": {"left": 360}})])
+    assert e.value.code == "conflict-property" and "style 'ArchPara'" in str(e.value)
+    own = _chars(src, MAIN, lambda r: _set_ind(next(p for p in r.iter(W + "p") if "".join(
+        t.text or "" for t in p.iter(W + "t")).startswith("Manual list")), left="720", leftChars="200", hanging="360"))
+    with pytest.raises(JobException) as e:
+        run_ops(own, [("set_paragraph_props", {"paragraphs": {"text_regex": "^Manual list"}},
+                       {"ind": {"left": 360}, "tracked": False})])
+    assert e.value.code == "conflict-property" and "the paragraph itself (leftChars=200)" in str(e.value)
+    plan, out, rec = run_ops(own, [("set_paragraph_props", {"paragraphs": {"text_regex": "^Manual list"}},
+                                    {"ind": {"left": 360, "leftChars": 0}, "tracked": False})])
+    assert rec.passed, rec.to_markdown()
+
+
+@pytest.mark.parametrize("target", ["styles", "direct"])
+def test_a_shared_refusal_rule_that_forgets_characters_is_caught(src, monkeypatch, target):
+    """Plan and apply share a rule that never looks at …Chars: the twips value is written beside a leftChars Word
+    prefers — V10 re-derives the refusal and fails it (styles target and direct path alike)."""
+    real = spp_module.inherited_refusal
+    monkeypatch.setattr(spp_module, "inherited_refusal",
+                        lambda levels, values: real(levels, {k: v for k, v in values.items() if k != "ind"}))
+    data = _chars(src, STYLES, lambda r: _set_ind(style(r, "ArchPara"), left="720", leftChars="300"))
+    if target == "styles":
+        plan, out, rec = styles_op(data, ["ArchPara"], {"ind": {"left": 0}})
+        assert attrs(style(styles_root(out), "ArchPara").find(W + "pPr"), "ind") == {"left": "0", "leftChars": "300"}
+    else:
+        plan, out, rec = run_ops(data, [("set_paragraph_props", {"paragraphs": {"text_regex": "^Cell item"}},
+                                         {"ind": {"left": 360}, "author": AUTHOR})])
+    assert "V10" in failed(rec) and "leftChars on style ArchPara" in v10(rec) and "must refuse" in v10(rec)
+
+
+def test_the_first_line_family_merges_as_one(src):
+    data = _chars(src, STYLES, lambda r: _set_ind(style(r, "ArchPara"), left="720", hanging="360", hangingChars="150"))
+    plan, out, rec = styles_op(data, ["ArchPara"], {"ind": {"firstLineChars": 200}})
+    assert rec.passed, rec.to_markdown()
+    assert attrs(style(styles_root(out), "ArchPara").find(W + "pPr"), "ind") == {"left": "720", "firstLineChars": "200"}
+
+
+# ---- A6: the assertion carries the user's own words ---------------------------------------------------------------
+
+def test_the_assertion_carries_the_users_own_parameters(src):
+    plan, out, rec = styles_op(src, ["ArchArticle", "ArchArticle"], {"spacing": {"after": 120}, "tracked": False})
+    a = plan.property_assertions[0]
+    assert a["params"] == {"spacing": {"after": 120}, "tracked": False} and "set" not in a and "tracked" not in a
+    assert a["select"] == {"ids": ["ArchArticle", "ArchArticle"]} and rec.passed
+    # a spec asking tracked on a style target the transform did not refuse: V10 fails it
+    d = plan.to_dict()
+    d["property_assertions"][0]["params"]["tracked"] = True
+    rec = run_suite(src, out, d, "src.docx", "out.docx")
+    assert "V10" in failed(rec) and "never tracked" in v10(rec)
+
+
+def test_a_shared_default_line_rule_is_caught(src, monkeypatch):
+    """Plan and apply share a cleaning that adds lineRule auto to every line value: V10 reads the user's own words and
+    expects no lineRule."""
+    real = spp_module._clean
+
+    def auto_rule(params):
+        out = real(params)
+        if "line" in out.get("spacing", {}) and "lineRule" not in out["spacing"]:
+            out["spacing"]["lineRule"] = "auto"
+        return out
+    monkeypatch.setattr(spp_module, "_clean", auto_rule)
+    plan, out, rec = styles_op(src, ["ArchArticle"], {"spacing": {"line": 360}})
+    assert attrs(style(styles_root(out), "ArchArticle").find(W + "pPr"), "spacing")["lineRule"] == "auto"
+    assert "V10" in failed(rec) and "spacing is" in v10(rec)
+
+
+def test_a_duplicate_element_is_caught(src):
+    plan, out, rec = styles_op(src, ["ArchArticle"], {"spacing": {"after": 120}})
+    assert rec.passed
+
+    def dup(r):
+        ppr = style(r, "ArchArticle").find(W + "pPr")
+        ppr.insert(list(ppr).index(ppr.find(W + "spacing")) + 1, el("spacing", before="1440", after="1440"))
+    _caught(src, plan, out, STYLES, dup, "2 w:spacing elements")
+    plan, out, rec = run_ops(src, [("set_paragraph_props", {"paragraphs": {"text_regex": r"^1\.01"}},
+                                    {"spacing": {"after": 120}, "tracked": False})])
+    assert rec.passed
+
+    def dup_direct(r):
+        ppr = next(p for p in r.iter(W + "p") if "".join(t.text or "" for t in p.iter(W + "t")).startswith("1.01")
+                   ).find(W + "pPr")
+        ppr.append(el("spacing", after="1440"))
+    _caught(src, plan, out, MAIN, dup_direct, "2 w:spacing elements")
 
 
 def test_a_shared_already_rule_on_styles_is_checked_by_the_count(src, monkeypatch):

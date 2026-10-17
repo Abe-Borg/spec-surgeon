@@ -2,7 +2,8 @@
 
 Formatting mode: zero text diffs. Two targets, one per call (as set_properties): **direct** formatting
 (``select.scope`` / ``paragraphs`` — the paragraph's own ``w:pPr/w:pBdr`` / ``w:shd``) or **paragraph styles**
-(``select.styles: {"ids": [...]}``, alone — the style's own ``w:pPr``; never tracked).
+(``select.styles: {"ids": [...]}``, alone — the style's own ``w:pPr``; never tracked; a style of another type in this
+file is ``style-mismatch``).
 
 Parameters: ``borders`` — ``"none"`` or an object of sides (``top | left | bottom | right | between | bar``), each a
 border ``{style, size, space, color}`` (defaults ``single``, 4 eighths of a point, 1 point, ``auto``); **the asked object
@@ -420,7 +421,8 @@ class SetBordersShading(Op):
             raise JobException(f"style id(s) {missing} not in this document", "not-found", {"missing": missing})
         bad = [sid for sid in ids if sheet.styles[sid].get(W + "type", "paragraph") != "paragraph"]
         if bad:
-            raise JobException(f"borders and shading go on paragraph styles only; {bad} are not", "bad-params")
+            raise JobException(f"borders and shading go on paragraph styles only; {bad} are not paragraph styles in "
+                               f"this file", "style-mismatch", {"styles": bad})
         changes: Dict[str, Dict[str, Any]] = {}
         reads: set = set()
         for sid in ids:

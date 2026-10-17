@@ -2,24 +2,31 @@
 
 Values are merged into the existing w:spacing / w:ind elements (lesson: a style's ``before="240"`` must
 survive a change to ``after``); elements are created in the complete pPr schema order, so a section-break
-paragraph keeps its w:sectPr after them. Setting ``firstLine`` removes ``hanging`` and vice versa (they are
-mutually exclusive in Word). Setting before/after on a paragraph whose spacing is "auto" is refused — the auto
-flag would silently override the value.
+paragraph keeps its w:sectPr after them. Setting the first line (``firstLine`` / ``firstLineChars``) removes the
+hanging indent (``hanging`` / ``hangingChars``) and vice versa (they are mutually exclusive in Word).
+
+Refused (``conflict-property``, ``inherited_refusal``) where Word would ignore the value written — over the target's
+own pPr and every level it inherits from, nearest first (a paragraph: its paragraph style chain, its table's style
+chain, docDefaults; a style: its basedOn ancestors, docDefaults): ``before``/``after`` asked where the nearest level
+naming ``…Autospacing`` turns it on; ``before``/``after`` asked where any level sets ``beforeLines``/``afterLines``
+(unless the spec sets the lines too); an indentation side asked in twips (left/start, right/end, the first line:
+firstLine/hanging) where any level gives that side in characters (``leftChars``/``startChars``, ``rightChars``/
+``endChars``, ``firstLineChars``/``hangingChars`` — Word gives the character value priority), the ones the merge itself
+removes from the target excepted, unless the spec gives that side in characters too; an ``ind`` alias whose other
+spelling the target's own w:ind uses.
 
 Tracked or plain (decision §14.1): plain for whole-document selections, tracked (w:pPrChange holding the old
 pPr) when the selector narrows to particular paragraphs; ``tracked`` overrides.
 
 Style definitions (built-in batch 4, docs/BUILTIN_OPS_BATCH4_DESIGN.md §2): ``select: {"styles": {"ids": [...]}}`` —
-alone, paragraph styles only — merges the same values into each style's OWN w:pPr (``merged_attrs``, the merge the
-paragraphs get). Never tracked. A style whose own values already are the asked ones is left alone. Refused
-(``conflict-property``, as for paragraphs): a side asked in points where the style's own spacing has ``…Autospacing``
-on, or where the style, its basedOn ancestors or docDefaults set ``beforeLines``/``afterLines`` (unless the spec sets
-the lines too); an ``ind`` alias whose other spelling the style's own w:ind uses. Paragraphs whose own direct
-formatting keeps its value are flagged.
+alone, paragraph styles only (another type in this file: ``style-mismatch``) — merges the same values into each
+style's OWN w:pPr (``merged_attrs``, the merge the paragraphs get). Never tracked. A style whose own values already are
+the asked ones is left alone. Paragraphs whose own direct formatting keeps its value are flagged. Its assertion
+carries the user's own parameters; V10 applies its own reading of them.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..package import W, DocxPackage
 from ..ooxml import (PPR_ORDER, STYLE_ORDER, RevisionStamp, block_full_text, file_uses_date_utc, get_or_add,
@@ -30,10 +37,15 @@ from .replace_text import default_author
 from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts
 
 SPACING_KEYS = {"before": int, "after": int, "line": int, "lineRule": str, "beforeLines": int, "afterLines": int}
-IND_KEYS = {"left": int, "right": int, "start": int, "end": int, "firstLine": int, "hanging": int}
+IND_KEYS = {"left": int, "right": int, "start": int, "end": int, "firstLine": int, "hanging": int,
+            "leftChars": int, "rightChars": int, "startChars": int, "endChars": int, "firstLineChars": int,
+            "hangingChars": int}
 JC_VALUES = ("left", "center", "right", "both", "distribute", "start", "end")
 LINE_RULES = ("auto", "exact", "atLeast")
 TRUE = ("1", "true", "on")
+FIRST = ("firstLine", "firstLineChars")            # the first-line family …
+HANGING = ("hanging", "hangingChars")              # … and the hanging family: mutually exclusive
+IND_SIDES = (("left", "start"), ("right", "end"), ("firstLine", "hanging"))   # twips attributes per side
 
 
 def _clean(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -51,15 +63,17 @@ def _clean(params: Dict[str, Any]) -> Dict[str, Any]:
         for k, val in v.items():
             if keys[k] is int:
                 if isinstance(val, bool) or not isinstance(val, int):
-                    raise JobException(f"{name}.{k} must be an integer (twentieths of a point)", "bad-params")
+                    raise JobException(f"{name}.{k} must be an integer (twentieths of a point; hundredths of a line or "
+                                       f"of a character for …Lines / …Chars)", "bad-params")
                 clean[k] = str(val)
             else:
                 if val not in LINE_RULES:
                     raise JobException(f"spacing.lineRule must be one of {LINE_RULES}", "bad-params")
                 clean[k] = val
         out[name] = clean
-    if "ind" in out and "firstLine" in out["ind"] and "hanging" in out["ind"]:
-        raise JobException("ind.firstLine and ind.hanging are mutually exclusive", "bad-params")
+    if "ind" in out and set(FIRST) & set(out["ind"]) and set(HANGING) & set(out["ind"]):
+        raise JobException("a first-line indent (firstLine/firstLineChars) and a hanging indent (hanging/hangingChars) "
+                           "are mutually exclusive", "bad-params")
     if params.get("jc") is not None:
         if params["jc"] not in JC_VALUES:
             raise JobException(f"jc must be one of {JC_VALUES}", "bad-params")
@@ -70,17 +84,18 @@ def _clean(params: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def merged_attrs(name: str, el, val) -> Dict[str, str]:
-    """The attributes (Clark names) a w:spacing / w:ind / w:jc ends with: the asked ones set, the others kept —
-    ``firstLine`` drops ``hanging``/``hangingChars`` and vice versa; w:jc gets w:val."""
+    """The attributes (Clark names) a w:spacing / w:ind / w:jc ends with: the asked ones set, the others kept — the
+    first line (``firstLine``/``firstLineChars``) drops the hanging indent (``hanging``/``hangingChars``) and vice
+    versa; w:jc gets w:val."""
     attrs = dict(el.attrib) if el is not None else {}
     if name == "jc":
         attrs[W + "val"] = val
         return attrs
     if name == "ind":
-        if "firstLine" in val:
-            attrs.pop(W + "hanging", None); attrs.pop(W + "hangingChars", None)
-        if "hanging" in val:
-            attrs.pop(W + "firstLine", None); attrs.pop(W + "firstLineChars", None)
+        for asked, gone in ((FIRST, HANGING), (HANGING, FIRST)):
+            if set(asked) & set(val):
+                for k in gone:
+                    attrs.pop(W + k, None)
     for k, v in val.items():
         attrs[W + k] = v
     return attrs
@@ -97,39 +112,100 @@ def write_values(ppr, values: Dict[str, Any]) -> None:
                 el.set(k, v)
 
 
-def style_refusal(sheet: StyleSheet, sid: str, values: Dict[str, Any]) -> Any:
-    """Why a style cannot take the values as asked — (message) — or None: a side asked in points where the style's own
-    spacing is auto, or where the style, its basedOn ancestors or docDefaults give it in lines (unless the lines are
-    asked too); an indentation alias whose other spelling the style's own w:ind uses."""
-    ppr = sheet.styles[sid].find(W + "pPr")
-    sp = ppr.find(W + "spacing") if ppr is not None else None
-    ind = ppr.find(W + "ind") if ppr is not None else None
+def inherited_refusal(levels: List[Tuple[str, Any, str]], values: Dict[str, Any]) -> Optional[str]:
+    """Why Word would ignore the values written on a target, or None. ``levels`` are (label, pPr, read target), nearest
+    first: the target's own pPr, then every level it inherits from (see the module docstring for the rules)."""
     sv, iv = values.get("spacing", {}), values.get("ind", {})
-    dd = sheet.root.find(f"{W}docDefaults/{W}pPrDefault/{W}pPr") if sheet.root is not None else None
+
+    def elements(name):
+        return [(i, lv[0], lv[1].find(W + name)) for i, lv in enumerate(levels)
+                if lv[1] is not None and lv[1].find(W + name) is not None]
+
     for side in ("before", "after"):
-        if side in sv and sp is not None and sp.get(W + side + "Autospacing") in TRUE:
-            return f"spacing {side} of style {sid!r} is 'auto' ({side}Autospacing); the value would be ignored"
-        if side in sv and f"{side}Lines" not in sv:
-            levels = [(f"style {st.get(W + 'styleId')!r}", st.find(W + "pPr/" + W + "spacing"))
-                      for st in sheet.lineage(sid)] + [("the document defaults", dd.find(W + "spacing") if dd is not None
-                                                        else None)]
-            for label, ssp in levels:
-                if ssp is not None and ssp.get(W + side + "Lines") not in (None, ""):
-                    return (f"spacing {side} of style {sid!r} is set in lines on {label} ({side}Lines="
-                            f"{ssp.get(W + side + 'Lines')}); Word uses the line value and would ignore the point value "
-                            f"— set {side}Lines in this spec as well, or clear it in Word first")
-    if ind is not None:
+        if side not in sv:
+            continue
+        auto = next(((label, sp.get(W + side + "Autospacing")) for _, label, sp in elements("spacing")
+                     if sp.get(W + side + "Autospacing") is not None), None)
+        if auto is not None and auto[1] in TRUE:
+            return f"spacing {side} is 'auto' ({side}Autospacing on {auto[0]}); the value would be ignored"
+        if f"{side}Lines" not in sv:
+            for _, label, sp in elements("spacing"):
+                if sp.get(W + side + "Lines") not in (None, ""):
+                    return (f"spacing {side} is set in lines on {label} ({side}Lines={sp.get(W + side + 'Lines')}); "
+                            f"Word uses the line value and would ignore the point value — clear {side}Lines in Word "
+                            f"first, or set {side}Lines in this spec as well")
+    for side in IND_SIDES:
+        asked = [k for k in side if k in iv]
+        if not asked or any(k + "Chars" in iv for k in side):
+            continue
+        removed = set()                                # what the merge itself takes off the target's own w:ind
+        if set(FIRST) & set(iv):
+            removed |= set(HANGING)
+        if set(HANGING) & set(iv):
+            removed |= set(FIRST)
+        for i, label, ind in elements("ind"):
+            for k in side:
+                v = ind.get(W + k + "Chars")
+                if v not in (None, "") and not (i == 0 and k + "Chars" in removed):
+                    return (f"indentation {asked[0]} is given in characters on {label} ({k}Chars={v}); Word uses the "
+                            f"character value and would ignore the twips value — set {k}Chars in this spec as well, or "
+                            f"clear it in Word first")
+    own = levels[0][1].find(W + "ind") if levels and levels[0][1] is not None else None
+    if own is not None:
         for a, b in (("left", "start"), ("right", "end"), ("start", "left"), ("end", "right")):
-            if a in iv and ind.get(W + b) is not None:
-                return f"the indentation of style {sid!r} uses w:{b}; set {b} instead of {a}"
+            if a in iv and own.get(W + b) is not None:
+                return f"the indentation of {levels[0][0]} uses w:{b}; set {b} instead of {a}"
     return None
+
+
+def _table_style_id(p, sheet: StyleSheet) -> Optional[str]:
+    q = p.getparent()
+    while q is not None and q.tag != W + "tbl":
+        q = q.getparent()
+    if q is None:
+        return None
+    ts = q.find(W + "tblPr/" + W + "tblStyle")
+    return ts.get(W + "val") if ts is not None else sheet.defaults.get("table")
+
+
+def _style_level(st) -> Tuple[str, Any, str]:
+    return f"style {st.get(W + 'styleId')!r}", st.find(W + "pPr"), f"style:{st.get(W + 'styleId')}"
+
+
+def paragraph_levels(p, sheet: StyleSheet) -> List[Tuple[str, Any, str]]:
+    """(label, pPr, read target) nearest first for a paragraph: its own pPr, its paragraph style chain (pStyle, else the
+    default), its table's style chain (tblStyle, else the default table style), docDefaults."""
+    out: List[Tuple[str, Any, str]] = [("the paragraph itself", p.find(W + "pPr"), "")]
+    out += [_style_level(st)
+            for st in sheet.lineage(sheet.paragraph_style_id(p)) + sheet.lineage(_table_style_id(p, sheet))]
+    out.append(("the document defaults", _doc_defaults_ppr(sheet), "docDefaults"))
+    return out
+
+
+def style_levels(sid: str, sheet: StyleSheet) -> List[Tuple[str, Any, str]]:
+    """(label, pPr, read target) nearest first for a style: its own pPr, its basedOn ancestors, docDefaults."""
+    out = [_style_level(st) for st in sheet.lineage(sid)]
+    out.append(("the document defaults", _doc_defaults_ppr(sheet), "docDefaults"))
+    return out
+
+
+def _doc_defaults_ppr(sheet: StyleSheet):
+    return sheet.root.find(f"{W}docDefaults/{W}pPrDefault/{W}pPr") if sheet.root is not None else None
+
+
+def reads_inherited(values: Dict[str, Any]) -> bool:
+    """Whether ``inherited_refusal`` reads the levels a target inherits from (they are then declared as reads)."""
+    sv, iv = values.get("spacing", {}), values.get("ind", {})
+    return bool({"before", "after"} & set(sv)) or any(
+        any(k in iv for k in side) and not any(k + "Chars" in iv for k in side) for side in IND_SIDES)
 
 
 _KEEPS = {"before": ("before", "beforeLines", "beforeAutospacing"), "after": ("after", "afterLines", "afterAutospacing"),
           "beforeLines": ("before", "beforeLines"), "afterLines": ("after", "afterLines"),
-          "left": ("left", "start"), "start": ("left", "start"), "right": ("right", "end"), "end": ("right", "end"),
-          "firstLine": ("firstLine", "hanging", "firstLineChars", "hangingChars"),
-          "hanging": ("firstLine", "hanging", "firstLineChars", "hangingChars")}
+          "left": ("left", "start", "leftChars", "startChars"), "start": ("left", "start", "leftChars", "startChars"),
+          "right": ("right", "end", "rightChars", "endChars"), "end": ("right", "end", "rightChars", "endChars"),
+          "firstLine": FIRST + HANGING, "hanging": FIRST + HANGING}
+_KEEPS.update({k + "Chars": _KEEPS[k] for k in ("left", "start", "right", "end", "firstLine", "hanging")})
 
 
 def keeps_own(ppr, values: Dict[str, Any]) -> bool:
@@ -153,7 +229,9 @@ class SetParagraphProps(Op):
     params_schema = {"type": "object", "properties": {
         "spacing": {"type": "object", "description": "before/after/line (twips), lineRule auto|exact|atLeast, "
                                                      "beforeLines/afterLines"},
-        "ind": {"type": "object", "description": "left/right/start/end/firstLine/hanging (twips)"},
+        "ind": {"type": "object", "description": "left/right/start/end/firstLine/hanging (twips); leftChars/rightChars/"
+                                                 "startChars/endChars/firstLineChars/hangingChars (hundredths of a "
+                                                 "character — Word prefers them over the twips value)"},
         "jc": {"type": "string", "enum": list(JC_VALUES)},
         "tracked": {"type": "boolean", "description": "w:pPrChange; default: plain for whole-document selections, "
                                                       "tracked when paragraphs are targeted; never for styles"},
@@ -190,6 +268,7 @@ class SetParagraphProps(Op):
         targets: Dict[str, List[int]] = {}
         older = 0
         reads: set = set()
+        walks = reads_inherited(values)
         for part in parts:
             pars = paragraphs(pkg.xml(part))
             chosen = []
@@ -197,42 +276,15 @@ class SetParagraphProps(Op):
                 if not paragraph_selected(pred, p, bi, block_full_text(p), sheet):
                     continue
                 ppr = p.find(W + "pPr")
-                sp = ppr.find(W + "spacing") if ppr is not None else None
-                ind = ppr.find(W + "ind") if ppr is not None else None
-                sv = values.get("spacing", {})
-                for side in ("before", "after"):
-                    if side in sv and sp is not None and sp.get(W + side + "Autospacing") in TRUE:
-                        raise JobException(f"{part} paragraph {bi}: spacing {side} is 'auto' "
-                                           f"({side}Autospacing); the value would be ignored", "conflict-property",
-                                           {"part": part, "paragraph": bi})
-                    # a spacing given in lines (beforeLines/afterLines, hundredths of a line) wins over the point
-                    # value: "6 pt after" written beside afterLines="200" is two lines after, with a PASS — refused
-                    # unless the spec sets the lines value too (or the user clears it in Word first)
-                    if side in sv and f"{side}Lines" not in sv:
-                        lines_at = None
-                        if sp is not None and sp.get(W + side + "Lines") not in (None, ""):
-                            lines_at = f"the paragraph itself ({side}Lines={sp.get(W + side + 'Lines')})"
-                        else:
-                            for st in sheet.lineage(sheet.paragraph_style_id(p)):
-                                ssp = st.find(W + "pPr/" + W + "spacing")
-                                if ssp is not None and ssp.get(W + side + "Lines") not in (None, ""):
-                                    lines_at = f"style {st.get(W + 'styleId')!r} ({side}Lines={ssp.get(W + side + 'Lines')})"
-                                    break
-                        if lines_at:
-                            raise JobException(f"{part} paragraph {bi}: spacing {side} is set in lines on {lines_at}; "
-                                               f"Word uses the line value and would ignore the point value — clear "
-                                               f"{side}Lines in Word first, or set {side}Lines in this spec as well",
-                                               "conflict-property", {"part": part, "paragraph": bi})
-                        if sheet.part:
-                            # the lines rule read the styles' spacing: another op changing a style's pPr (the styles
-                            # target of this op sets beforeLines/afterLines) is a plan-time conflict
-                            reads.update(st.get(W + "styleId") for st in sheet.lineage(sheet.paragraph_style_id(p)))
-                iv = values.get("ind", {})
-                if ind is not None:
-                    for a, b in (("left", "start"), ("right", "end"), ("start", "left"), ("end", "right")):
-                        if a in iv and ind.get(W + b) is not None:
-                            raise JobException(f"{part} paragraph {bi}: indentation uses w:{b}; set {b} instead of {a}",
-                                               "conflict-property", {"part": part, "paragraph": bi})
+                levels = paragraph_levels(p, sheet)
+                why = inherited_refusal(levels, values)
+                if why:
+                    raise JobException(f"{part} paragraph {bi}: {why}", "conflict-property",
+                                       {"part": part, "paragraph": bi})
+                if walks and sheet.part:
+                    # the rule read the styles this paragraph inherits from: another op changing one of their pPr (the
+                    # styles target of this op can set …Lines or …Chars there) is a plan-time conflict
+                    reads.update(lv[2] for lv in levels[1:])
                 if ppr is not None and ppr.find(W + "pPrChange") is not None:
                     if tracked:
                         raise JobException(f"{part} paragraph {bi} already carries a pending tracked paragraph "
@@ -244,7 +296,7 @@ class SetParagraphProps(Op):
                 frag.intended_parts.append(part)
                 frag.touches += [(part, str(bi), "pPr") for bi in chosen]
             frag.touches.append((part, "scope", "verify"))      # V10 re-resolves the selection over this part
-        frag.touches += [(sheet.part, f"style:{sid}", "verify:pPr") for sid in sorted(reads)]
+        frag.touches += [(sheet.part, target, "verify:pPr") for target in sorted(reads)]
         n = sum(len(v) for v in targets.values())
         frag.property_assertions.append({
             "kind": "paragraph_props", "scope": [scope] if isinstance(scope, str) else list(scope), "parts": parts,
@@ -285,35 +337,35 @@ class SetParagraphProps(Op):
             raise JobException(f"style id(s) {missing} not in this document", "not-found", {"missing": missing})
         bad = [sid for sid in ids if sheet.styles[sid].get(W + "type", "paragraph") != "paragraph"]
         if bad:
-            raise JobException(f"spacing, indentation and alignment go on paragraph styles only; {bad} are not",
-                               "bad-params")
+            raise JobException(f"spacing, indentation and alignment go on paragraph styles only; {bad} are not "
+                               f"paragraph styles in this file", "style-mismatch", {"styles": bad})
         changes: List[str] = []
-        reads: set = set(ids)              # V10 reads every selected style's own pPr in the output
-        lines_read = any(side in values.get("spacing", {}) and f"{side}Lines" not in values["spacing"]
-                         for side in ("before", "after"))
+        reads: set = {f"style:{sid}" for sid in ids}      # V10 reads every selected style's own pPr in the output
+        walks = reads_inherited(values)
         for sid in ids:
-            why = style_refusal(sheet, sid, values)
+            levels = style_levels(sid, sheet)
+            why = inherited_refusal(levels, values)
             if why:
-                raise JobException(why, "conflict-property", {"style": sid})
-            if lines_read:                 # the lines rule read the ancestors' and the document defaults' spacing
-                reads.update(st.get(W + "styleId") for st in sheet.lineage(sid))
+                raise JobException(f"style {sid!r}: {why}", "conflict-property", {"style": sid})
+            if walks:                      # the rule read the ancestors and the document defaults
+                reads.update(lv[2] for lv in levels[1:])
             ppr = sheet.styles[sid].find(W + "pPr")
             own = {name: (ppr.find(W + name) if ppr is not None else None) for name in values}
             if any(own[name] is None or merged_attrs(name, own[name], val) != dict(own[name].attrib)
                    for name, val in values.items()):
                 changes.append(sid)
         frag = self.fragment(select, params)
-        frag.touches += [(sheet.part, f"style:{sid}", "verify:pPr") for sid in sorted(reads)]
-        if lines_read:
-            frag.touches.append((sheet.part, "docDefaults", "verify:pPr"))
+        frag.touches += [(sheet.part, target, "verify:pPr") for target in sorted(reads)]
         if changes:
             frag.intended_parts = [sheet.part]
             frag.touches += [(sheet.part, f"style:{sid}", "pPr") for sid in changes]
             frag.geometry_reference = "none"
             frag.geometry_reason = "spacing/indentation/alignment changes move text by design"
+        # the user's own words (batch 2 rule 3): V10 applies its own reading and defaults to them
         frag.property_assertions.append({
-            "kind": "paragraph_props", "target": "styles", "styles_part": sheet.part, "select": {"ids": ids},
-            "set": values, "tracked": False, "expected_ids": changes})
+            "kind": "paragraph_props", "target": "styles", "styles_part": sheet.part, "select": dict(sel),
+            "params": {k: params[k] for k in ("spacing", "ind", "jc", "tracked") if k in params},
+            "expected_ids": changes})
         frag.transform_data = {"target": "styles", "styles_part": sheet.part, "changes": changes, "values": values}
         frag.notes.append(f"style(s) {changes or 'none'} → {values} (definitions only; not tracked — Word does not "
                           f"track style changes)" + (f"; already as asked: {[s for s in ids if s not in changes]}"

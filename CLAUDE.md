@@ -728,8 +728,10 @@ Built-in operations batch 4 (2026-10-17; `docs/BUILTIN_OPS_BATCH4_DESIGN.md` —
 definition):
 
 - **Paragraph borders and shading** (`set_borders_shading`). *Levels below*: a direct target — docDefaults pPr → table
-  style chain (tblStyle, else the default table style) → paragraph style chain (pStyle, else the default), each root-most
-  first; a style target — docDefaults pPr → its basedOn ancestors root-most first (not itself). *Visible side*: a side
+  style chain (tblStyle, else the default table style) → paragraph style chain (pStyle's value — an empty or missing
+  value names no style, as in `template.Eff`/`effective.Resolver` —, else the default; `borders._v_paragraph_style_id`),
+  each root-most first; a style target — docDefaults pPr → its basedOn ancestors root-most first (not itself); a style of
+  another type is `style-mismatch`. *Visible side*: a side
   element whose `w:val` is not `nil`/`none` (absent = visible). *Visible shading*: a `w:shd` not `w:val="nil"` and not
   (`clear` with `w:fill` absent or `auto` and no `w:themeFill`). *Expected pBdr*: sides in the order top, left, bottom,
   right, between, bar — an asked side exactly `{val, sz, space, color}`, a side not asked that ANY lower level shows
@@ -746,15 +748,25 @@ definition):
   fixtures for four asks, and plants shared defects (levels without the document defaults or the table style, a box
   without nil sides, an attribute-blind already rule, clear-auto counted as shading, a style's levels including itself,
   a wrong default size, a wrong default scope).
-- **Spacing, indents and alignment on styles** (`set_paragraph_props`, `select.styles`). *Merge*: the asked attributes
-  set, the others kept, `firstLine` drops `hanging`/`hangingChars` and vice versa, `jc` gets `w:val` — the paragraphs'
-  merge (`set_paragraph_props.merged_attrs`/`write_values`, now shared by the direct path) ↔ `verify/props._v_merged`.
-  *Already*: every asked element present in the style's own pPr with the merged attributes equal to its own. *Refusals*
-  (`conflict-property`): `before`/`after` asked where the style's own spacing has `…Autospacing` on, or where the style,
-  its ancestors or docDefaults set `…Lines` (the lines not asked); an `ind` alias whose other spelling the style's own
-  `w:ind` uses — `set_paragraph_props.style_refusal` ↔ `verify/props._v_style_spacing_refusal` (V10 fails "the op must
-  refuse"). `tests/test_style_paragraph_props.py` plants a merge that keeps `hanging`, refusal rules that forget the
-  ancestors or Autospacing, and a merge that writes nothing.
+- **Spacing, indents and alignment on styles** (`set_paragraph_props`, `select.styles`), and the refusals of both its
+  targets. *Merge*: the asked attributes set, the others kept, the first line (`firstLine`/`firstLineChars`) drops the
+  hanging indent (`hanging`/`hangingChars`) and vice versa, `jc` gets `w:val` — the paragraphs' merge
+  (`set_paragraph_props.merged_attrs`/`write_values`, shared by the direct path) ↔ `verify/props._v_merged`. *Already*:
+  every asked element present in the style's own pPr with the merged attributes equal to its own. *Levels*, nearest
+  first: a paragraph — its own pPr, its paragraph style chain (pStyle's value, an empty one naming none, else the
+  default), its table's style chain, docDefaults (`set_paragraph_props.paragraph_levels` ↔ `props._v_paragraph_levels`);
+  a style — its own pPr, its basedOn ancestors, docDefaults (`style_levels` ↔ `_v_style_levels`). *Refusals*
+  (`conflict-property`, `set_paragraph_props.inherited_refusal` ↔ `verify/props._v_inherited_refusal`; V10 fails "the
+  op must refuse", direct path and styles target alike): `before`/`after` asked where the NEAREST level naming
+  `…Autospacing` turns it on; `before`/`after` asked where ANY level sets `…Lines` (the lines not asked); an indentation
+  side asked in twips (left/start, right/end, the first line: firstLine/hanging) where any level gives that side in
+  characters (`leftChars`/`startChars`, `rightChars`/`endChars`, `firstLineChars`/`hangingChars` — Word's priority), the
+  ones the merge removes from the target itself excepted, the side's Chars not asked; an `ind` alias whose other spelling
+  the target's own `w:ind` uses. The styles assertion carries the user's own parameters (`params`, `select`); the kind
+  reads them itself (`_v_ppr_values`) and fails `tracked: true`. A style of another type is `style-mismatch`.
+  `tests/test_style_paragraph_props.py` plants a merge that keeps `hanging`, refusal rules that read only the target
+  itself, forget Autospacing or forget the characters (both targets), a merge that writes nothing and a cleaning that
+  adds a default `lineRule`.
 - **Clearing direct formatting** (`clear_direct_formatting`; design `docs/BUILTIN_OPS_BATCH4_DESIGN.md` §3). Cleared run
   names (default) `rFonts b bCs i iCs caps smallCaps strike dstrike outline shadow emboss imprint color spacing w kern sz
   szCs u effect bdr shd fitText em`, opt-in `highlight vertAlign position`; cleared paragraph names `keepNext keepLines
@@ -916,7 +928,7 @@ proposals and recorded in the plan's status sections.
   (`clear_direct_formatting`, `ClearSettings`, `paragraph_clearing`, `clear_paragraph` — the reuse API), `set_language.py`
   (`set_language`), `apply_style.py` (`apply_style`), `map_styles.py` (`map_styles`), `style_import.py` (the shared import:
   `resolve_style`, `TemplateStyles`, `plan_import`, `StyleImport`, `apply_import`), `remove_unused_styles.py`
-  (`remove_unused_styles`, `analyze`), and `set_paragraph_props.merged_attrs`/`write_values`/`style_refusal` (its styles
+  (`remove_unused_styles`, `analyze`), and `set_paragraph_props.merged_attrs`/`write_values`/`inherited_refusal` (its styles
   target); and the shared
   pieces `fields.py` (`fields_of`, `Field`, `unlink`, `NEVER_UNLINK`, `REFUSAL_TEXT`), `markup.py` (`Look`, `color_in`),
   `removal.py` (`deletable`, `plan_paragraph_deletion`, `delete_paragraph`, `plan_run_removal`, `remove_runs`).
