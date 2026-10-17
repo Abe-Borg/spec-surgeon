@@ -464,7 +464,11 @@ SHAPES = ["all", {}, {"index_range": [0, 2]}, {"index_range": [3, 3]}, {"index_r
 
 
 def _fixtures():
-    return [build_tables(), build_tables(start_end=True), build_styles()]
+    """The tables fixture, its start/end variant, the batch-4 fixture, and (review round) variants with a right-to-left
+    table, cell diagonals and an extra cell margin side, and a table in a text box."""
+    base = build_tables()
+    return [base, build_tables(start_end=True), build_styles(), mutate(base, MAIN, _rtl),
+            mutate(base, MAIN, _diagonal_and_top_margin), mutate(base, MAIN, _boxed)]
 
 
 def test_transform_and_verifier_select_alike_on_every_table():
@@ -503,18 +507,17 @@ def test_transform_and_verifier_decide_alike_on_every_table():
             for part in pkg.text_parts():
                 for k, (tbl, vtbl) in enumerate(zip(pkg.xml(part).iter(W + "tbl"), vpkg.xml(part).iter(W + "tbl"))):
                     chain, vchain = tsel.style_chain(tbl, sheet)[0], vts.v_style_chain(vtbl, vst)
-                    try:
-                        stp_module._alias_refusal(tbl.find(W + "tblPr"), chain, asked, "t")
-                        t_refused = False
-                    except JobException:
-                        t_refused = True
-                    try:
-                        vtp._v_refusal(vtbl, vchain, vasked, "t")
-                        v_refused = False
-                    except ValueError:
-                        v_refused = True
-                    assert t_refused == v_refused, (part, k, params)
-                    if t_refused:
+                    for every in (True, False):
+                        try:
+                            t_way = stp_module.disposition(tbl, chain, asked, every, "t") or "plan"
+                        except JobException:
+                            t_way = "refuse"
+                        try:
+                            v_way = "skip" if vtp._v_skip_or_refuse(vtbl, vchain, vasked, every, "t") else "plan"
+                        except ValueError:
+                            v_way = "refuse"
+                        assert (t_way if t_way in ("plan", "refuse") else "skip") == v_way, (part, k, params, every)
+                    if t_way != "plan":
                         continue
                     t = stp_module.decide_table(tbl.find(W + "tblPr"), chain, asked)
                     v = vtp._v_table_gets(vtbl.find(W + "tblPr"), vchain, vasked)
@@ -629,9 +632,6 @@ def test_refusals_of_a_table(src):
         get_op("set_table_props").plan(DocxPackage(no_own), {"tables": {"index_range": [8, 8]}}, {"borders": "none"})
     assert e.value.code == "conflict-property" and "ArchStartEnd" in e.value.reason
     get_op("set_table_props").plan(DocxPackage(no_own), {"tables": {"index_range": [8, 8]}}, {"cell_margins": {"top": 0}})
-    with pytest.raises(JobException) as e:
-        get_op("set_table_props").plan(DocxPackage(src), {"tables": {"index_range": [7, 7]}}, {"repeat_header_rows": 3})
-    assert e.value.code == "table-structure"
 
     def wrap(r):
         t = tbls(r)[7]
@@ -710,3 +710,194 @@ def test_libreoffice_opens_and_renders_the_output(src, tmp_path):
         pytest.skip("LibreOffice did not render here")
     pdf = pdfs[tmp_path / "out.docx"]
     assert pdf.exists() and pdf.stat().st_size > 1000 and pdf.read_bytes().startswith(b"%PDF")
+
+
+# ---- the review round (batch 5 review of the table ops): each fix pinned by a test that fails without it ---------------
+
+def frag_xml(xml: str):
+    return etree.fromstring(f'<x xmlns:w="{W[1:-1]}">{xml}</x>')[0]
+
+
+def _wrap_in_sdt(el_):
+    sdt = etree.Element(W + "sdt")
+    etree.SubElement(sdt, W + "sdtPr")
+    content = etree.SubElement(sdt, W + "sdtContent")
+    el_.addprevious(sdt)
+    content.append(el_)
+
+
+def _boxed(root):
+    """Table 7 moved into a text box (a w:pict holding a w:txbxContent) in the body's first paragraph."""
+    p = root.find(f"{W}body/{W}p")
+    t = tbls(root)[7]
+    run = etree.SubElement(p, W + "r")
+    txbx = etree.fromstring(f'<w:pict xmlns:w="{W[1:-1]}"><w:txbxContent/></w:pict>')
+    run.append(txbx)
+    t.getparent().remove(t)
+    txbx.find(W + "txbxContent").append(t)
+    etree.SubElement(txbx.find(W + "txbxContent"), W + "p")
+
+
+def test_B_overrides_in_content_controls_are_flagged(src):
+    """The flags count every row and cell of the table — a row or cell wrapped in a content control too."""
+    def wrap_row(root):
+        tr = rows(tbls(root)[0])[1]                          # its cell (1, 0) has its own tcBorders
+        tr.insert(0, frag_xml('<w:tblPrEx><w:tblBorders><w:top w:val="single" w:sz="24" w:space="0" '
+                              'w:color="FF0000"/></w:tblBorders></w:tblPrEx>'))
+        _wrap_in_sdt(tr)
+    plan, out, rec = stp(mutate(src, MAIN, wrap_row), T0, {"borders": {"top": {}, "bottom": {}}})
+    assert rec.passed, rec.to_markdown()
+    assert any("1 cell(s) keep their own borders" in f for f in plan.flags)
+    assert any("1 row(s) carry their own table-property exceptions" in f for f in plan.flags)
+
+    def wrap_cell(root):
+        _wrap_in_sdt(cells(rows(tbls(root)[0])[1])[0])
+    plan, out, rec = stp(mutate(src, MAIN, wrap_cell), T0, {"borders": {"top": {}, "bottom": {}}})
+    assert rec.passed and any("1 cell(s) keep their own borders" in f for f in plan.flags)
+
+
+def _diagonal_and_top_margin(root):
+    t0 = tbls(root)[0]
+    cells(rows(t0)[0])[1].find(W + "tcPr").insert(1, frag_xml(
+        '<w:tcBorders><w:tl2br w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tcBorders>'))
+    cells(rows(t0)[1])[0].find(f"{W}tcPr/{W}tcBorders").append(frag_xml(
+        '<w:tr2bl w:val="single" w:sz="4" w:space="0" w:color="auto"/>'))
+    cells(rows(t0)[2])[1].find(f"{W}tcPr/{W}tcMar").insert(0, frag_xml('<w:top w:w="300" w:type="dxa"/>'))
+
+
+CLEAR_T0 = {"borders": {"top": {}, "bottom": {}}, "cell_margins": {"left": 115}, "clear_cell_overrides": True}
+
+
+def test_E_clearing_cell_overrides_takes_only_the_competing_sides(src):
+    """A diagonal has no table-level counterpart and an unasked margin side does not compete: both stay; the sides that
+    compete go, an emptied element with them."""
+    data = mutate(src, MAIN, _diagonal_and_top_margin)
+    plan, out, rec = stp(data, T0, CLEAR_T0)
+    assert rec.passed, rec.to_markdown()
+    t0 = tables(out)[0]
+    assert [local(c) for c in cells(rows(t0)[0])[1].find(f"{W}tcPr/{W}tcBorders")] == ["tl2br"]   # untouched cell
+    assert [local(c) for c in cells(rows(t0)[1])[0].find(f"{W}tcPr/{W}tcBorders")] == ["tr2bl"]   # bottom gone
+    assert [local(c) for c in cells(rows(t0)[2])[1].find(f"{W}tcPr/{W}tcMar")] == ["top"]         # left gone
+    a = plan.property_assertions[0]
+    assert a["changed"][MAIN]["cells"] == [[0, 1, 0, ["tcBorders"]], [0, 2, 1, ["tcMar"]]]
+    # the source fixture's lone cell overrides still go whole (their elements empty)
+    plan, out, rec = stp(src, T0, CLEAR_T0)
+    assert rec.passed and sum(1 for _ in tables(out)[0].iter(W + "tcBorders")) == 0
+
+
+def test_E_a_shared_clear_that_takes_whole_elements_is_caught(src, monkeypatch):
+    real = stp_module.cell_sides
+    monkeypatch.setattr(stp_module, "cell_sides", lambda asked: {
+        n: list(s) + (["tl2br", "tr2bl"] if n == "tcBorders" else ["top", "bottom"]) for n, s in real(asked).items()})
+    plan, out, rec = stp(mutate(src, MAIN, _diagonal_and_top_margin), T0, CLEAR_T0)
+    assert sum(1 for _ in tables(out)[0].iter(W + "tl2br")) == 0
+    assert "V10" in failed(rec) and "not the plan's" in v10(rec)
+
+
+def test_E_a_wrong_cell_output_is_caught(src):
+    data = mutate(src, MAIN, _diagonal_and_top_margin)
+    plan, out, rec = stp(data, T0, CLEAR_T0)
+    assert rec.passed
+
+    def drop_top(r):
+        mar = cells(rows(tbls(r)[0])[2])[1].find(f"{W}tcPr/{W}tcMar")
+        mar.remove(mar.find(W + "top"))
+    _caught(data, plan, out, MAIN, drop_top, "w:tcPr is")
+    _caught(data, plan, out, MAIN, lambda r: cells(rows(tbls(r)[0])[1])[0].find(f"{W}tcPr/{W}tcBorders").append(
+        el("left", val="single")), "keeps its own")
+
+
+def test_1_header_rows_of_a_floating_or_nested_table_are_flagged(src):
+    plan, out, rec = stp(src, {"tables": {"nested": True}}, {"repeat_header_rows": 1})
+    assert rec.passed and any("Word repeats header rows only for tables in the text flow" in f for f in plan.flags)
+    data = mutate(src, MAIN, lambda r: tbls(r)[7].find(W + "tblPr").insert(1, el("tblpPr", vertAnchor="page")))
+    plan, out, rec = stp(data, {"tables": {"index_range": [7, 7]}}, {"repeat_header_rows": 1})
+    assert rec.passed and any("floating" in f and "table 7" in f for f in plan.flags)
+    plan, out, rec = stp(src, {"tables": {"index_range": [7, 7]}}, {"repeat_header_rows": 1})
+    assert not any("text flow" in f for f in plan.flags)
+
+
+def _rtl(root, k=7):
+    tbls(root)[k].find(W + "tblPr").insert(1, el("bidiVisual"))
+
+
+def test_2_a_right_to_left_table_refuses_borders_and_margins(src):
+    data = mutate(src, MAIN, _rtl)
+    for params in ({"borders": {"top": {}}}, {"cell_margins": {"left": 100}}):
+        with pytest.raises(JobException) as e:
+            get_op("set_table_props").plan(DocxPackage(data), {"tables": {"index_range": [7, 7]}}, params)
+        assert e.value.code == "conflict-property" and "right to left" in e.value.reason, params
+    plan, out, rec = stp(data, {"tables": {"index_range": [7, 7]}}, {"width": {"pct": 100}, "cant_split": True})
+    assert rec.passed
+
+    def style_rtl(root):
+        st = next(s for s in root.findall(W + "style") if s.get(W + "styleId") == "TableGrid")
+        st.find(W + "tblPr").insert(0, el("bidiVisual"))
+    with pytest.raises(JobException) as e:                       # a style turning it on counts too
+        get_op("set_table_props").plan(DocxPackage(mutate(src, STYLES, style_rtl)), {"tables": {"index_range": [7, 7]}},
+                                       {"borders": "none"})
+    assert e.value.code == "conflict-property"
+    off = mutate(src, MAIN, lambda r: tbls(r)[7].find(W + "tblPr").insert(1, el("bidiVisual", val="0")))
+    assert stp(off, {"tables": {"index_range": [7, 7]}}, {"borders": "none"})[2].passed
+
+
+def test_2_the_verifier_refuses_a_right_to_left_table_too(src, monkeypatch):
+    data = mutate(src, MAIN, _rtl)
+    monkeypatch.setattr(stp_module, "right_to_left", lambda tbl, chain: False)
+    plan, out, rec = stp(data, {"tables": {"index_range": [7, 7]}}, {"borders": {"top": {}}})
+    assert "V10" in failed(rec) and "right to left" in v10(rec)
+
+
+def test_3_conditional_header_rows_of_a_table_style_are_flagged(src):
+    def cond(root):
+        st = next(s for s in root.findall(W + "style") if s.get(W + "styleId") == "ArchBanded")
+        st.find(W + "tblStylePr").append(frag_xml("<w:trPr><w:tblHeader/></w:trPr>"))
+    plan, out, rec = stp(mutate(src, STYLES, cond), {"tables": {"style_in": ["ArchBanded"]}}, {"repeat_header_rows": 1})
+    assert rec.passed and any("sets header rows or row splitting of its own" in f for f in plan.flags)
+    plan, out, rec = stp(src, {"tables": {"style_in": ["ArchBanded"]}}, {"repeat_header_rows": 1})
+    assert not any("row splitting of its own" in f for f in plan.flags)
+
+
+def test_4_a_table_in_a_text_box_is_left_alone_under_every_table(src):
+    data = mutate(src, MAIN, _boxed)
+    plan, out, rec = stp(data, {}, {"width": {"pct": 100}})
+    assert rec.passed, rec.to_markdown()
+    # the boxed table now stands first in document order (ordinal 0); the others moved up by one
+    assert any("in a text box left alone" in f and "table 0" in f for f in plan.flags)
+    assert [k for k, _ in plan.property_assertions[0]["changed"][MAIN]["tables"]] == [1, 3, 4, 5, 6, 7]
+    with pytest.raises(JobException) as e:                       # named by a selection: refused
+        get_op("set_table_props").plan(DocxPackage(data), {"tables": {"first_row_regex": "^Tag"}}, {"width": "auto"})
+    assert e.value.code == "textbox"
+
+
+def test_4_a_shared_rule_that_changes_the_text_box_table_is_caught(src, monkeypatch):
+    data = mutate(src, MAIN, _boxed)
+    real = stp_module.disposition
+    monkeypatch.setattr(stp_module, "disposition",
+                        lambda tbl, chain, asked, every, where: None if tsel.in_text_box(tbl) else
+                        real(tbl, chain, asked, every, where))
+    plan, out, rec = stp(data, {}, {"width": {"pct": 100}})
+    assert "V10" in failed(rec) and "not the plan's" in v10(rec)
+
+
+def test_5_a_table_too_short_for_the_header_rows_is_left_alone(src):
+    plan, out, rec = stp(src, {}, {"repeat_header_rows": 3, "width": {"pct": 100}})
+    assert rec.passed, rec.to_markdown()
+    a = plan.property_assertions[0]
+    changed = [k for k, _ in a["changed"][MAIN]["tables"]]
+    assert 0 in changed and 2 not in changed and 7 not in changed       # tables 2, 4, 5, 6, 7 have fewer rows
+    assert any("fewer rows than the 3 header row(s) asked" in f and "table 7" in f for f in plan.flags)
+    assert tables(out)[7].find(f"{W}tblPr/{W}tblW").get(W + "type") == "auto"     # left alone whole
+    plan, out, rec = stp(src, {"tables": {"index_range": [7, 7]}}, {"repeat_header_rows": 3})
+    assert rec.passed and out == src
+
+
+def test_5_a_shared_rule_that_writes_a_short_tables_header_rows_is_caught(src, monkeypatch):
+    real = stp_module.disposition
+
+    def no_skip(tbl, chain, asked, every, where):
+        why = real(tbl, chain, asked, every, where)
+        return None if why == "too few rows" else why
+    monkeypatch.setattr(stp_module, "disposition", no_skip)
+    plan, out, rec = stp(src, {"tables": {"index_range": [2, 2]}}, {"repeat_header_rows": 3, "width": {"pct": 100}})
+    assert "V10" in failed(rec) and "not the plan's" in v10(rec)

@@ -160,10 +160,13 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "eighths of a point (4 = ½ pt), space 0",
         "cell margins are in twips (1440 = 1 inch) and merge into the table's own (sides not named stay); width is a "
         "percentage of the text width, twips or auto",
-        "repeat_header_rows n makes the first n rows repeat at the top of each page and no later row; cant_split keeps "
-        "every row on one page (true) or lets rows break (false)",
-        "cells with their own borders or margins keep them (flagged) unless clear_cell_overrides; a table already as "
-        "asked is left alone; never tracked",
+        "repeat_header_rows n makes the first n rows repeat at the top of each page and no later row (a table with "
+        "fewer rows is left alone, flagged; Word repeats header rows only for tables in the text flow, not floating or "
+        "nested ones — flagged); cant_split keeps every row on one page (true) or lets rows break (false)",
+        "cells with their own borders or margins keep them (flagged) unless clear_cell_overrides, which takes only the "
+        "cell sides that compete with what is asked (never a cell's diagonal lines, never a margin side not asked); a "
+        "table already as asked is left alone, a table in a text box too (flagged); a right-to-left table is set aside "
+        "for borders and margins; never tracked",
     ],
     "apply_table_style": [
         "every table of the body gets the style unless a selection narrows them; a table already in the style is left "
@@ -172,9 +175,11 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "file with the styles it is based on (existing 'replace' takes the template's definition even where this file "
         "has one)",
         "direct_formatting 'keep' (the default) leaves the tables' own borders, shading and cell margins, which win over "
-        "the style; 'clear' removes them and the cells' own, so the style shows; which conditional parts show (first "
-        "row, banding — w:tblLook) stays as it is",
-        "never tracked",
+        "the style; 'clear' removes them, the rows' own exceptions and the cells' own, so the style shows; which "
+        "conditional parts show (first row, banding — w:tblLook) stays as it is",
+        "the template's style comes in only when a selected table takes it: a selection that restyles nothing changes "
+        "no style definition (existing 'replace' included)",
+        "a table in a text box is left alone (flagged); never tracked",
     ],
     # built-in batch 5 (list levels and the audit, docs/BUILTIN_OPS_BATCH5_DESIGN.md §3, §4)
     "set_list_level": [
