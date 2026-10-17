@@ -144,9 +144,12 @@ def test_context_epochs_preserve_complete_signed_history_and_scope(tmp_path, mon
     from fake_claude import thinking
     source = write_document(tmp_path / "source.docx")
     monkeypatch.setattr(recovery.compiler._Batch, "list_styles", lambda self, **kw: {"evidence": "x" * 240000})
-    result = recovery.recover([source], "Investigate formatting", tmp_path / "session", options=opts(max_context_tokens=60000),
-        client=FakeClient(resp(thinking("original-signature", "reasoning"), tool("list_styles", {"file": source.name})),
-                          resp(tool("need_user", {"question": "Which property should change?"}))))
+    # The full operation catalog must fit before the large tool result forces rollover.
+    client = FakeClient(resp(thinking("original-signature", "reasoning"), tool("list_styles", {"file": source.name})),
+                        resp(tool("need_user", {"question": "Which property should change?"})))
+    result = recovery.recover([source], "Investigate formatting", tmp_path / "session", options=opts(max_context_tokens=120000),
+                             client=client)
+    assert len(client.requests) == 2
     state = next(iter(result.session_state["groups"].values()))
     assert state["context"]["epoch"] == 1
     record = state["context"]["archives"][0]
