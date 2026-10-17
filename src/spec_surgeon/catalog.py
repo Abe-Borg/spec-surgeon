@@ -86,6 +86,30 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "direct formatting on the selected paragraphs, tracked when they are targeted; the style definitions are not "
         "changed",
     ],
+    "clear_direct_formatting": [
+        "clearing direct formatting makes the text follow its styles again: fonts, sizes, bold/italic/underline, colour, "
+        "caps and the like go from the selected runs and paragraph marks; spacing, indents, alignment, borders, shading, "
+        "tab stops and keep/page-break flags from the selected paragraphs — the styles themselves are not changed",
+        "hidden text stays hidden, list numbers (numPr), character and paragraph styles and the proofing language are "
+        "never touched; highlight, superscript/subscript (vertAlign, position) and outline levels stay unless asked "
+        "('also')",
+        "symbol and Wingdings runs (and w:sym runs) keep their font and caps — their glyphs depend on them; their other "
+        "direct formatting is cleared",
+        "'keep' and 'also' take element names: bold is b and bCs, italic i and iCs, size sz and szCs — name both twins "
+        "to keep bold, italic or the size; shd and spacing name the run's and the paragraph's alike",
+        "a run or paragraph with nothing to clear is left alone; plain for the whole document, tracked (Formatted: …) "
+        "when particular paragraphs are targeted",
+    ],
+    "set_language": [
+        "the proofing language changes on every style, run and paragraph mark that names a language, and on the "
+        "document default; text that names none inherits the default — nothing else changes and no text is retyped",
+        "replace_only changes only the listed languages (e.g. British English to US English, French quotations stay "
+        "French); without it every named language becomes the asked one",
+        "language is the Latin-text language (w:val); east_asian and complex_script set the East Asian and "
+        "complex-script languages only when asked",
+        "never tracked (Word does not track a language change); a spec of its own — beside another operation that "
+        "changes run properties or styles it is a conflict (offer a chain)",
+    ],
     "remove_unused_styles": [
         "a style is used when a paragraph, run or table names it (body, headers, footers, footnotes, endnotes, comments — "
         "pending tracked changes included, a reject-all would bring them back), when the numbering or the settings name "

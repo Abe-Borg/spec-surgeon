@@ -236,6 +236,10 @@ class SetProperties(Op):
         resolver = PropResolver(sheet)
         frag = self.fragment(select, {**params, "tracked": tracked, "author": author})
         targets: Dict[str, Dict[str, list]] = {}
+        # V10's post-condition reads every selected run, mark and paragraph in the OUTPUT, an "already as asked" one
+        # included: another op changing its properties (clear_direct_formatting, set_font) is a plan-time conflict, never
+        # a failure after apply (batch 4)
+        reads: set = set()
         n_runs = n_marks = n_paras = 0
         already = Counter()
         older_r = older_p = 0
@@ -259,6 +263,7 @@ class SetProperties(Op):
                         revised = in_revision(r, p)
                         if (in_revs == "exclude" and revised) or not rpr_selected(runs_pred, rpr, revised, p, sheet):
                             continue
+                        reads.add((part, str(bi), "verify:rPr"))
                         sym = is_symbol_rpr(rpr, p, sheet, preserve) or (skip_sym and r.find(W + "sym") is not None)
                         gets = resolver.gets_run(rpr, p, run_asked, sym)
                         if not sym and caps_conflict(run_asked, lambda e, rpr=rpr, p=p: resolver.run_prop(rpr, p, e)[0]):
@@ -272,6 +277,7 @@ class SetProperties(Op):
                         mrpr = p.find(W + "pPr/" + W + "rPr")
                         revised = mark_in_revision(p)
                         if not (in_revs == "exclude" and revised) and rpr_selected(runs_pred, mrpr, revised, p, sheet):
+                            reads.add((part, str(bi), "verify:markRPr"))
                             msym = is_symbol_rpr(mrpr, p, sheet, preserve)
                             gets = resolver.gets_run(mrpr, p, run_asked, msym)
                             if not msym and caps_conflict(run_asked, lambda e, mrpr=mrpr, p=p: resolver.run_prop(mrpr, p, e)[0]):
@@ -287,6 +293,7 @@ class SetProperties(Op):
                             else:
                                 already["marks"] += 1
                 if para_asked:
+                    reads.add((part, str(bi), "verify:pPr"))
                     gets = resolver.gets_para(p, para_asked)
                     if gets:
                         t_paras.append([bi, sorted(gets)])
@@ -325,6 +332,7 @@ class SetProperties(Op):
             n_runs += len(t_runs)
             n_marks += len(t_marks)
             n_paras += len(t_paras)
+        frag.touches += sorted(reads)
         frag.property_assertions.append({
             "kind": "properties", "target": "direct", "scope": [scope] if isinstance(scope, str) else list(scope),
             "parts": parts, "select": {"runs": runs_pred, "paragraphs": para_pred},
