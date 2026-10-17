@@ -185,11 +185,19 @@ def _style_entry(sheet: StyleSheet, res: Resolver, sid: str, count: int, sample_
                 if side.get(W + "val") not in ("nil", "none"):
                     sides.append(name)
             sh = ppr.find(W + "shd") if ppr is not None else None
-            if sh is not None:
-                shd = sh.get(W + "fill") if sh.get(W + "val") not in ("nil",) else None
+            if sh is not None:                 # the nearest level wins; a theme fill is what Word renders (Codex on #31)
+                theme = sh.get(W + "themeFill")
+                fill = sh.get(W + "fill")
+                if sh.get(W + "val") == "nil":
+                    shd = None
+                elif theme:
+                    shd = theme + "".join(f" {k} {sh.get(W + 'themeFill' + k.capitalize())}" for k in ("shade", "tint")
+                                          if sh.get(W + "themeFill" + k.capitalize()))
+                else:
+                    shd = fill if fill and fill != "auto" else None
         if sides:
             e["borders"] = sides
-        if shd and shd != "auto":
+        if shd:
             e["shading"] = shd
     if para["jc"] != "left":
         e["jc"] = para["jc"]
@@ -199,6 +207,14 @@ def _style_entry(sheet: StyleSheet, res: Resolver, sid: str, count: int, sample_
     if txt.strip():
         e["sample"] = _clip(txt, 70)
     return e
+
+
+_SNAPSHOTS = {W + "rPrChange", W + "pPrChange", W + "tblPrChange", W + "trPrChange", W + "tcPrChange", W + "sectPrChange"}
+
+
+def _in_snapshot(el) -> bool:
+    """Inside a tracked property change's snapshot (what reject-all would restore, not what the file shows)."""
+    return any(a.tag in _SNAPSHOTS for a in el.iterancestors())
 
 
 def _named(sheet: StyleSheet, sid: str, count: int) -> Dict[str, Any]:
@@ -249,14 +265,19 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
     for sid, ps_ in sorted(by_style.items(), key=lambda kv: -len(kv[1]))[:25]:
         sample = next((p for p in ps_ if display_text(p).strip()), ps_[0])
         styles_in_use.append(_style_entry(sheet, res, sid, len(ps_), sample))
-    other_styles: Dict[str, Counter] = {"character": Counter(), "table": Counter()}   # batch 4: what map_styles can map
-    for el in root.iter(W + "rStyle"):
-        if el.getparent() is not None and el.getparent().getparent() is not None \
-                and el.getparent().getparent().tag == W + "r" and el.get(W + "val"):
-            other_styles["character"][el.get(W + "val")] += 1
-    for el in root.iter(W + "tblStyle"):
-        if el.get(W + "val"):
-            other_styles["table"][el.get(W + "val")] += 1
+    # batch 4: what map_styles can map — over every text part (its default scope), runs and paragraph marks alike,
+    # never a tracked change's snapshot (Codex on #31)
+    other_styles: Dict[str, Counter] = {"character": Counter(), "table": Counter()}
+    for part in pkg.text_parts():
+        proot = pkg.xml(part)
+        for el in proot.iter(W + "rStyle"):
+            holder = el.getparent().getparent() if el.getparent() is not None else None
+            if holder is not None and holder.tag in (W + "r", W + "pPr") and el.get(W + "val") \
+                    and not _in_snapshot(el):
+                other_styles["character"][el.get(W + "val")] += 1
+        for el in proot.iter(W + "tblStyle"):
+            if el.get(W + "val") and not _in_snapshot(el):
+                other_styles["table"][el.get(W + "val")] += 1
 
     direct = Counter()
     for part in pkg.text_parts():
@@ -495,7 +516,7 @@ def _languages(pkg: DocxPackage, kinds) -> Dict[str, Any]:
         for el in pkg.xml(part).iter(W + "lang"):
             holder = el.getparent().getparent() if el.getparent() is not None else None
             if el.getparent().tag == W + "rPr" and holder is not None and holder.tag in (W + "r", W + "pPr") \
-                    and el.get(W + "val"):
+                    and el.get(W + "val") and not _in_snapshot(el):
                 direct[el.get(W + "val")] += 1
     if direct:
         out["direct"] = dict(direct.most_common(5))
@@ -642,6 +663,19 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         prof["styles_in_use"] = [{k: st[k] for k in ("id", "count", "font", "size_pt") if k in st}
                                  for st in prof["styles_in_use"][:6]]
 
+    def thin_other_styles():
+        for key in ("character_styles_in_use", "table_styles_in_use"):
+            if len(prof.get(key) or []) > 4:
+                omitted.append(f"{len(prof[key]) - 4} {key.split('_')[0]} style(s) in use")
+                prof[key] = prof[key][:4]
+            if prof.get(key):
+                prof[key] = [{k: st[k] for k in ("id", "count") if k in st} for st in prof[key]]
+
+    def drop_other_styles():                  # before any section or part is cut: they matter more
+        for key in ("character_styles_in_use", "table_styles_in_use"):
+            if prof.pop(key, None):
+                omitted.append(key.replace("_", " "))
+
     def thin_markup():
         m = prof.get("markup")
         if not m:
@@ -668,6 +702,8 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         thin_markup,
         drop_part_text,
         thin_styles,
+        thin_other_styles,
+        drop_other_styles,
         lambda: cut_sections(6),
         lambda: cut_parts(8),
         lambda: cut_sections(2),
