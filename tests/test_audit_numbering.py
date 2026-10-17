@@ -167,6 +167,13 @@ def test_typed_numbering_and_its_duplicate(clean):
     assert any("24 typed number(s) checked; 1 finding(s): 1 duplicate" in n for n in plan.notes)
 
 
+def test_a_dangling_list_is_reported(clean):
+    data = edit_par(clean, 0, lambda p: p.insert(0, etree.fromstring(
+        f'<w:pPr {WD}><w:numPr><w:ilvl w:val="0"/><w:numId w:val="99"/></w:numPr></w:pPr>')))
+    got = [f for f in findings(data) if f.kind == "dangling"]
+    assert len(got) == 1 and got[0].index == 0 and "names list 99, which numbering.xml does not define" in got[0].text
+
+
 def test_the_example_scheme_has_nothing_to_report():
     plan, out, rec = run(build_scheme_example(), auditing())
     assert rec.passed and plan.flags == [] and findings(build_scheme_example()) == []
@@ -364,6 +371,12 @@ def test_a_spec_runs_through_the_batch_pipeline(clean, tmp_path):
                       spec=_spec(auditing(unnumber_empty=True, tracked=True)))
     f = batch.files[0]
     assert f.status == "PASS", f.record.to_markdown() if f.record else f.exception
+    # report only: nothing to write, the findings reach the record's "flagged for review"
+    batch = run_batch([str(path)], "edit-spec", {}, tmp_path / "out2", workers=1, renderer="none", do_render=False,
+                      spec=_spec(auditing()))
+    f = batch.files[0]
+    assert f.status == "PASS" and f.noop, f.record.to_markdown() if f.record else f.exception
+    assert any("is shown on an empty line" in fl for fl in f.record.flags)
 
 
 def test_catalog_and_the_worked_example(clean):

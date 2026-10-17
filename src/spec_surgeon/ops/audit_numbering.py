@@ -437,7 +437,8 @@ class AuditNumbering(Op):
             frag.flags.append(f"numbering: … and {len(res.findings) - MAX_FLAGS} more finding(s) — fix these and run the "
                               f"audit again")
         evaluated = sum(1 for p in res.pars if p.evaluated)
-        typed = len([i for i in res.typed_read if i not in {p.index for p in res.pars}])
+        numbered = {p.index for p in res.pars}
+        typed = sum(1 for i in res.typed_read if i not in numbered)
         frag.notes.append(f"numbering audit: {len(res.lists_used)} list(s) number {len(res.pars)} counted paragraph(s) "
                           f"({evaluated} evaluated); {typed} typed number(s) checked; {len(res.findings)} finding(s)"
                           + (": " + ", ".join(f"{n} {k}" for k, n in sorted(kinds.items())) if kinds else ""))
