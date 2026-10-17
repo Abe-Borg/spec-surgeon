@@ -28,7 +28,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
 
-from .reader import VPackage, W, M, STYLES_REL, THEME_REL
+from .reader import VPackage, W, M, STYLES_REL, THEME_REL, protected_members
 from .textcheck import blocks
 
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -326,7 +326,7 @@ def effective_size(rpr, p, styles: Styles) -> int:
 
 PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range",
              "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs"}
-RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions"}
+RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions", "color_in"}
 
 
 def _v_toggle_on(rpr, p, styles: Styles, tag: str) -> bool:
@@ -437,7 +437,22 @@ def _has_direct_font(rpr) -> bool:
     return rf is not None and any(rf.get(W + a) for a in FONT_ATTRS)
 
 
-def target_matches(pred, rpr, in_revision: bool, preserve: Set[str]) -> bool:
+def _v_sel_colors(colors) -> Set[str]:
+    """A color_in list as this module reads it: each entry stripped, a leading # dropped, casefolded."""
+    if not isinstance(colors, list) or not colors:
+        raise ValueError(f"color_in must be a non-empty list, got {colors!r}")
+    return {str(c).strip().lstrip("#").casefold() for c in colors if str(c).strip()}
+
+
+def _v_sel_color_in(color, wanted: Set[str]) -> bool:
+    """The effective colour (val, themeColor, themeShade, themeTint) matches when its theme name or its value is listed."""
+    val, theme = (color[0] or ""), (color[1] or "")
+    return (bool(theme) and theme.casefold() in wanted) or (bool(val) and val.casefold() in wanted)
+
+
+def target_matches(pred, rpr, in_revision: bool, preserve: Set[str], color_of=None) -> bool:
+    """``color_of`` gives the run's (or mark's) effective colour — ``_v_run_prop(rpr, p, styles, "color")[0]`` over the
+    SOURCE; only ``color_in`` needs it."""
     if pred in (None, "all") or pred == {}:
         return True
     if not isinstance(pred, dict) or set(pred) - RUN_KEYS:
@@ -450,6 +465,11 @@ def target_matches(pred, rpr, in_revision: bool, preserve: Set[str]) -> bool:
             return False
     if pred.get("not_in_revisions") and in_revision:
         return False
+    if "color_in" in pred:
+        if color_of is None:
+            raise ValueError("color_in needs the run's effective colour")
+        if not _v_sel_color_in(color_of(), _v_sel_colors(pred["color_in"])):
+            return False
     return True
 
 
@@ -476,7 +496,10 @@ class Ctx:
         self.out_theme = Theme(out.xml(tq) if tq else None)
         self.text_changed: Dict[str, Set[int]] = {}
         for d in plan.get("diffs", []):
-            if d.get("before") is not None and d.get("after") is not None:
+            # a structure-only declaration (batch 2: before == after, struct_after) never exempts its paragraph: the
+            # kind that made the change checks it item by item (verified_blocks), or the residual compares it whole
+            if d.get("before") is not None and d.get("after") is not None and not (
+                    d.get("before") == d.get("after") and d.get("struct_after") is not None):
                 self.text_changed.setdefault(d["part"], set()).add(int(d["block_index"]))
         for d in plan.get("accepted_views", []):
             self.text_changed.setdefault(d["part"], set()).add(int(d["block_index"]))
@@ -495,6 +518,12 @@ class Ctx:
         # residual leaves exactly those out, by this mapping, whatever the text alignment paired them with
         self.verified_blocks: Dict[str, Dict[int, int]] = {}
         self.masked_extents: Dict[str, Set[int]] = {}       # part → ordinals of the w:drawings whose sizes image_swaps checked
+        # built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md §1.2):
+        self.verified_parts: Set[str] = set()       # text parts a kind compared WHOLE with its own expected tree
+        self.expected_removed: Dict[str, List[Tuple[int, ...]]] = {}   # part → child-index paths (SOURCE tree) of
+        #                                             elements outside paragraphs a kind expects gone
+        self.verified_members: Set[str] = set()     # non-text members a kind compared whole (rels, side parts, created)
+        self.member_strip: Dict[str, Set[str]] = {}  # settings/docProps member → keys a kind verified (member residual)
 
     def view(self, part):
         if part not in self.views:
@@ -654,14 +683,17 @@ def _run_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     continue
                 if gets(rpr) == (False, None):
                     continue
-                if target_matches(runs_pred, rpr, in_rev, preserve):
+                if target_matches(runs_pred, rpr, in_rev, preserve,
+                                  lambda rpr=rpr, p=p: _v_run_prop(rpr, p, ctx.src_styles, "color")[0]):
                     cand_runs.append(ri)
             mark = False
             if a.get("include_paragraph_marks", True):
                 mrpr = p.find(W + "pPr/" + W + "rPr")
                 m_rev = mrpr is not None and any(mrpr.find(W + t) is not None for t in ("ins", "del", "moveFrom", "moveTo"))
                 if not (exclude_rev and m_rev) and not symbolic(mrpr, p, ctx.src_styles, preserve) \
-                        and target_matches(runs_pred, mrpr, m_rev, preserve) and gets(mrpr) != (False, None):
+                        and target_matches(runs_pred, mrpr, m_rev, preserve,
+                                           lambda mrpr=mrpr, p=p: _v_run_prop(mrpr, p, ctx.src_styles, "color")[0]) \
+                        and gets(mrpr) != (False, None):
                     mark = True
             if not cand_runs and not mark:
                 continue
@@ -1428,7 +1460,9 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                 for ri, r in enumerate(sv.runs[bi]):
                     rpr = r.find(W + "rPr")
                     in_rev = _has_ancestor(r, REVISION_WRAPPERS, p)
-                    if (exclude_rev and in_rev) or not target_matches(runs_pred, rpr, in_rev, preserve):
+                    if (exclude_rev and in_rev) or not target_matches(
+                            runs_pred, rpr, in_rev, preserve,
+                            lambda rpr=rpr, p=p: _v_run_prop(rpr, p, ctx.src_styles, "color")[0]):
                         continue
                     sym = symbolic(rpr, p, ctx.src_styles, preserve) or (skip_sym and r.find(W + "sym") is not None)
                     cands.append((ri, _v_gets_run(rpr, p, ctx.src_styles, run_asked, sym), sym))
@@ -1436,7 +1470,9 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
             if run_asked and marks_too:
                 mrpr = p.find(W + "pPr/" + W + "rPr")
                 m_rev = _v_mark_in_revision(mrpr)
-                if not (exclude_rev and m_rev) and target_matches(runs_pred, mrpr, m_rev, preserve):
+                if not (exclude_rev and m_rev) and target_matches(
+                        runs_pred, mrpr, m_rev, preserve,
+                        lambda mrpr=mrpr, p=p: _v_run_prop(mrpr, p, ctx.src_styles, "color")[0]):
                     msym = symbolic(mrpr, p, ctx.src_styles, preserve)
                     mark = (_v_gets_run(mrpr, p, ctx.src_styles, run_asked, msym), msym)
             pgets = _v_gets_para(p, ctx.src_styles, para_asked) if para_asked else {}
@@ -1604,6 +1640,27 @@ KINDS = {
 
 # ---- residual ---------------------------------------------------------------------------------------
 
+def element_path(el) -> Tuple[int, ...]:
+    """The element's place in its tree: the child index at every level from the root (comments and processing
+    instructions count, as they do in ``list(parent)``)."""
+    out = []
+    while el.getparent() is not None:
+        out.append(el.getparent().index(el))
+        el = el.getparent()
+    return tuple(reversed(out))
+
+
+def resolve_path(root, path: Sequence[int]):
+    """The element at ``path`` (``element_path``) in ``root`` or a copy of it, or None."""
+    el = root
+    for i in path:
+        kids = list(el)
+        if not 0 <= i < len(kids):
+            return None
+        el = kids[i]
+    return el
+
+
 def _residual_difference(a, b) -> Optional[str]:
     """Byte-identical canonical forms are identical trees (fast path); otherwise walk the trees with the
     significance rules of sig() — whitespace-only differences outside text elements are not changes."""
@@ -1655,6 +1712,16 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
     sv, ov = ctx.view(part)
     s_root = etree.fromstring(etree.tostring(sv.root))   # private copies: stripping must not disturb the views
     o_root = etree.fromstring(etree.tostring(ov.root))
+    # elements outside paragraphs a kind expects gone (batch 2: a comment's range marks between blocks): found in the
+    # SOURCE copy by their path before anything else is stripped, removed from it after — the output must lack exactly
+    # those, and nothing else may differ
+    gone = []
+    for path in ctx.expected_removed.get(part, []):
+        el = resolve_path(s_root, path)
+        if el is None or el.tag == W + "p" or _nearest_p(el) is not None or any(True for _ in el.iter(W + "p")):
+            errs.append(f"{part}: an expected removal at {list(path)} is not an element outside the paragraphs")
+            continue
+        gone.append(el)
     masked = ctx.masked_extents.get(part, set())
     if masked:                                         # the sizes image_swaps checked, by drawing ordinal (never moved)
         for root in (s_root, o_root):
@@ -1741,6 +1808,9 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                 el.getparent().remove(el)
     remove_blocks(s, tc | del_src)
     remove_blocks(o, {out_of(b) for b in tc if out_of(b) is not None} | ins_out)
+    for el in gone:
+        if el.getparent() is not None:
+            el.getparent().remove(el)
     d = _residual_difference(s_root, o_root)
     if d:
         errs.append(f"{part}: unpredicted change {d}")
@@ -1775,6 +1845,44 @@ def _residual_styles(ctx: Ctx, errs: List[str]) -> None:
         errs.append(f"{ctx.styles_part}: unpredicted change {d}")
 
 
+def member_key(el) -> str:
+    """The key a kind registers for a top-level child of a settings/docProps member it verified (``Ctx.member_strip``):
+    a custom property by its name, anything else by its qualified tag."""
+    if etree.QName(el).localname == "property" and el.get("name") is not None:
+        return "property:" + el.get("name")
+    return el.tag
+
+
+def _residual_members(ctx: Ctx, errs: List[str]) -> List[str]:
+    """Built-in batch 2 (design note §1.2): ``settings.xml`` and the document-properties parts were untouchable until
+    batch 2, so no kind looked at them — now every change to one must be covered. The keys a kind verified
+    (``member_strip``) are stripped on both sides and the rest compared element for element; a member a kind compared
+    whole (``verified_members``) is skipped; one created without that is a failure."""
+    checked = []
+    for member in sorted(protected_members(ctx.src) | protected_members(ctx.out)):
+        if member in ctx.verified_members:
+            continue
+        in_src, in_out = member in ctx.src.names, member in ctx.out.names
+        if not in_out:
+            continue                                    # a removal is V1's (predicted members_removed or a failure)
+        if not in_src:
+            errs.append(f"{member}: created, and no assertion checked what it holds")
+            continue
+        if ctx.src.read(member) == ctx.out.read(member):
+            continue
+        checked.append(member)
+        keys = ctx.member_strip.get(member, set())
+        s_root, o_root = ctx.src.xml(member), ctx.out.xml(member)
+        for root in (s_root, o_root):
+            for c in list(root):
+                if isinstance(c.tag, str) and member_key(c) in keys:
+                    root.remove(c)
+        d = _residual_difference(s_root, o_root)
+        if d:
+            errs.append(f"{member}: unpredicted change {d}")
+    return checked
+
+
 def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_name: Optional[str] = None,
                      output_name: Optional[str] = None) -> Tuple[bool, str, Dict[str, Any]]:
     ctx = Ctx(src, out, plan, source_name, output_name)
@@ -1792,12 +1900,15 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_
             errs.append(f"{a.get('kind')}: {e}")
     residual_parts = []
     for part in ctx.both:
-        if src.read(part) != out.read(part):
+        # an expected removal is checked by the residual alone: a part a kind expects elements gone from is compared
+        # even when its bytes did not change (they should have)
+        if (src.read(part) != out.read(part) or ctx.expected_removed.get(part)) and part not in ctx.verified_parts:
             residual_parts.append(part)
             _residual_text_part(ctx, part, errs)
     if ctx.styles_part and src.read(ctx.styles_part) != out.read(ctx.styles_part):
         residual_parts.append(ctx.styles_part)
         _residual_styles(ctx, errs)
+    residual_parts += _residual_members(ctx, errs)
     ok = not errs
     head = (f"{len(assertions)} assertion(s): " + "; ".join(summaries)) if assertions else "no property change predicted"
     summary = (head + f" | residual identity over {len(residual_parts)} changed part(s): "
@@ -1806,11 +1917,25 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_
 
 
 # header/footer templating kinds live in verify/template.py, built-in batch 1's word-changing kinds in verify/textops.py
-# and its picture swap in verify/images.py (imported last: they use the helpers above)
+# and its picture swap in verify/images.py, batch 2's in one module per op group (imported last: they use the helpers
+# above)
 from .template import TEMPLATE_KINDS  # noqa: E402
 from .textops import TEXT_OP_KINDS  # noqa: E402
 from .images import IMAGE_KINDS  # noqa: E402
+# built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md)
+from .comments import COMMENT_KINDS  # noqa: E402
+from .highlight import HIGHLIGHT_KINDS  # noqa: E402
+from .revisions import REVISION_KINDS  # noqa: E402
+from .removal import REMOVAL_KINDS  # noqa: E402
+from .watermark import WATERMARK_KINDS  # noqa: E402
+from .links import LINK_KINDS  # noqa: E402
+from .docprops import DOCPROP_KINDS  # noqa: E402
+# built-in batch 3 (docs/BUILTIN_OPS_BATCH3_DESIGN.md)
+from .tabs import TAB_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
 KINDS.update(IMAGE_KINDS)
+for _batch2 in (COMMENT_KINDS, HIGHLIGHT_KINDS, REVISION_KINDS, REMOVAL_KINDS, WATERMARK_KINDS, LINK_KINDS, DOCPROP_KINDS):
+    KINDS.update(_batch2)
+KINDS.update(TAB_KINDS)

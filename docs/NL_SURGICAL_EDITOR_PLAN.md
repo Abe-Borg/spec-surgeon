@@ -590,6 +590,45 @@ defects shared by plan and apply. README → "Built-in operations, batch 1" is t
 in this batch: the design note's list (tags as styles or whole articles, text boxes, replacing across tabs or breaks,
 rich snippets, renaming in place). The next batches come from Abraham's list.
 
+## Built-in operations status, part 3 (2026-10-16) — batch 2: clean-up, tracked changes, watermarks, properties
+
+The second batch from Abraham's list (items 11–21) is built (design note `docs/BUILTIN_OPS_BATCH2_DESIGN.md`, decisions
+taken on his behalf and each changeable; its last section records what the build changed): `remove_comments`,
+`remove_highlight`, `resolve_tracked_changes`, `remove_hidden_text`, `remove_notes`, `add_watermark`,
+`remove_watermark`, `remove_empty_paragraphs`, `remove_hyperlinks`, `unlink_fields`, `set_document_properties`,
+`set_document_state`. What the round added to the plan's architecture:
+
+* **Three method rules changed at Abraham's request** (accept/reject, document properties, the Track Changes setting):
+  never on the model's own initiative, only when the user asks, through a verified built-in operation; custom transforms
+  still cannot.
+* **Structure-only block declarations** (V2 leaves them out, V3 demands them, V10 still covers the paragraph), **whole
+  parts and members** checked by a kind (`verified_parts`, `verified_members`), **expected removals between paragraphs**
+  and a **member residual** over `settings.xml` and the document-properties parts — V10 now covers every member an op
+  can change.
+* **Two parsers of Word fields** (one per side) and a both-sides reading of effective hidden and colour.
+* **The verifier's own resolution of tracked changes**, a rebuild of each part compared whole, also checked against
+  pandoc's accept/reject in the tests.
+* **Clean-up ops are no-ops on a file with nothing to remove** (`allow_missing` true), and **assertions carry the user's
+  own words** so a wrong default shared by plan and apply shows.
+
+Twelve new V10 kinds, each with planted defects shared by plan and apply. README → "Built-in operations, batch 2" is the
+user's view; 1556 tests pass in total (with master's bounded recovery; four skip in the Linux container). Not in this batch: the design note's list (adding a picture watermark, comments in
+text boxes, joining paragraphs on accept/reject, table row/cell revisions, highlight in styles, removing personal
+information on save).
+
+## Built-in operations status, part 4 (2026-10-16) — batch 3: formatting on chosen paragraphs, colour, tab stops
+
+The third batch (items 22–25; design note `docs/BUILTIN_OPS_BATCH3_DESIGN.md`). Items 22 (bold/italic/underline/caps/small
+caps on chosen paragraphs) and 23 (keep with next, keep lines together, page break before, widow control) are the ideas
+`set_properties` was built for in part 1 — the round added the compiler's guidance ("each PART on a new page" = every PART
+after the first; "no stranded titles" = keep with next) and worked examples. Item 24 gained the run selector `color_in`
+(the effective colour, both sides) so "the editor's blue to black" recolours only the blue; item 25 is the new operation
+`set_tab_stops` with its V10 kind `tab_stops` (stops set and cleared on selected paragraphs, inherited stops cleared with
+clear entries, positions in twips or at each section's own right margin / centre, an "already" rule, numbered paragraphs
+certain only through their own entries). README → "Built-in operations, batch 3" is the user's view; 1600 tests pass
+(four skip in the Linux container). Not in this batch: tab stops in style definitions, formatting part of a paragraph, a
+list-level selector, theme colours as a value to set.
+
 ---
 
 ## Appendix A — EditSpec JSON schema (draft)

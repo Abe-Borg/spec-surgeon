@@ -22,14 +22,11 @@ from __future__ import annotations
 import re
 from typing import Any, Dict, List, Tuple
 
-from lxml import etree
-
-from ..ooxml import (RPR_ORDER, RevisionStamp, block_full_text, count_revisions, file_uses_date_utc, insert_in_order,
-                     mark_rpr, max_revision_id, paragraphs, to_del_text)
+from ..ooxml import RevisionStamp, block_full_text, count_revisions, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage, W
 from . import register
 from .base import BlockDiff, JobException, Op, PlanFragment
-from .delete_paragraphs import INERT_P_CHILDREN
+from .removal import deletable, delete_paragraph  # noqa: F401 — deletable is re-exported
 from .replace_table import COMMON_PARAMS, default_author, resolve_scope, tracked_of
 from .selectors import SCOPE_KINDS, scope_parts
 from .slots import field_runs
@@ -56,26 +53,6 @@ def stays(systems: List[str], keep: List[str], delete: List[str]) -> bool:
     if keep:
         return any(s in keep for s in systems)
     return any(s not in delete for s in systems)
-
-
-def deletable(p, part: str, bi: int, tracked: bool) -> None:
-    """delete_paragraphs' refusals, for a paragraph this op would delete."""
-    where = f"{part} paragraph {bi}"
-    if p.find(f"{W}pPr/{W}sectPr") is not None:
-        raise JobException(f"{where} carries a section break; it is not deleted", "section-break", {"where": where})
-    if p.find(f".//{W}fldChar") is not None or p.find(f".//{W}fldSimple") is not None:
-        raise JobException(f"{where} holds a field; it is not deleted", "field-result", {"where": where})
-    if p.find(f".//{W}p") is not None:
-        raise JobException(f"{where} holds a text box; it is not deleted", "textbox", {"where": where})
-    if tracked:
-        if count_revisions(p):
-            raise JobException(f"{where} already carries pending revisions; accept or reject them first, or delete "
-                               f"untracked", "existing-revisions", {"where": where})
-        other = [c for c in p if isinstance(c.tag, str) and c.tag not in (W + "pPr", W + "r") + INERT_P_CHILDREN]
-        if other:
-            raise JobException(f"{where} holds {[etree.QName(c).localname for c in other]} (a hyperlink, a content "
-                               f"control, a comment anchor …); a tracked deletion is written only over plain runs",
-                               "structure", {"where": where})
 
 
 @register
@@ -235,19 +212,5 @@ class FilterTaggedParagraphs(Op):
                 apply_part_edits(root, td["edits"][part], td["tracked"], stamp, next_id)
             pars = paragraphs(root)
             for bi in sorted(td.get("deleted", {}).get(part, []), reverse=True):
-                p = pars[bi]
-                if not td["tracked"]:
-                    p.getparent().remove(p)
-                    continue
-                mark = etree.Element(W + "del")
-                stamp.apply(mark, next_id[0])
-                next_id[0] += 1
-                insert_in_order(mark_rpr(p, create=True), mark, RPR_ORDER)
-                for r in [c for c in p if isinstance(c.tag, str) and c.tag == W + "r"]:
-                    d = etree.Element(W + "del")
-                    stamp.apply(d, next_id[0])
-                    next_id[0] += 1
-                    r.addprevious(d)
-                    to_del_text(r)
-                    d.append(r)
+                delete_paragraph(pars[bi], td["tracked"], stamp, next_id)
             pkg.write_xml(part, root)

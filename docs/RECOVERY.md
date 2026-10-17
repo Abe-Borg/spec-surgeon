@@ -1,9 +1,9 @@
 # Recovery and local repair memory
 
-This source checkout adds a bounded investigation workflow for requests that fail during
-compilation, preview, or a batch/chain run. It is not a claim that a new installer has been
-published. Recovery can inspect document structure and XML, template data, diagnostics and
-rendered pages; try a repair on copies; read the verification results; and revise its approach.
+Spec Surgeon v0.7.1 adds a bounded investigation workflow for requests that fail during
+compilation, preview, or a batch/chain run. Recovery can inspect document structure and XML,
+template data, diagnostics and rendered pages; try a repair on copies; read the verification
+results; and revise its approach.
 It stops when supported repairs succeed, a limit is reached, a user decision is needed, or the
 required capability is unavailable.
 

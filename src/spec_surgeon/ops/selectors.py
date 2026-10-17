@@ -15,7 +15,9 @@ Grammar:
                   is_all_caps bool     (live display text is all uppercase letters or has w:caps on)
                   after_heading_regex "…" (comes after the first paragraph matching the regex)
                   between_paragraphs {"start_regex": "…", "end_regex": "…", "include_bounds": bool}
-* ``runs``        "all" or a dict: has_direct_font bool | font_in [names] | not_in_revisions bool
+* ``runs``        "all" or a dict: has_direct_font bool | font_in [names] | not_in_revisions bool |
+                  color_in [colours] (the run's EFFECTIVE colour — the nearest level setting w:color, set_properties'
+                  rule — has one of the listed theme names or values: 6 hex digits or auto, case-insensitive)
 * ``sections``    "all" or [sectPr ordinals]
 * ``styles``      "all" (paragraph, character, table) | "all-paragraph-and-character" | {"ids": […]} | {"types": […]}
 
@@ -38,7 +40,7 @@ STYLES_REL = REL_TYPE_BASE + "styles"
 SCOPE_KINDS = ("document", "headers", "footers", "footnotes", "endnotes", "comments")
 PARAGRAPH_KEYS = ("style_in", "text_regex", "in_table", "is_empty", "index_range",
                   "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs")
-RUN_KEYS = ("has_direct_font", "font_in", "not_in_revisions")
+RUN_KEYS = ("has_direct_font", "font_in", "not_in_revisions", "color_in")
 REVISION_WRAPPERS = (W + "ins", W + "del", W + "moveFrom", W + "moveTo")
 FALSY = ("0", "false", "off")
 
@@ -118,6 +120,12 @@ def check_run_selector(pred) -> None:
     unknown = set(pred) - set(RUN_KEYS)
     if unknown:
         raise JobException(f"unknown run selector key(s) {sorted(unknown)}; known: {list(RUN_KEYS)}", "bad-params")
+    if "color_in" in pred:
+        from .markup import valid_color             # markup imports this module: imported when needed
+        cols = pred["color_in"]
+        if not isinstance(cols, list) or not cols or not all(isinstance(c, str) and valid_color(c) for c in cols):
+            raise JobException("runs.color_in must be a non-empty list of colours: 6 hex digits (RRGGBB), 'auto' or a "
+                               "theme colour name (accent1, text2 …)", "bad-params")
 
 
 class StyleSheet:
@@ -346,7 +354,19 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
     return True
 
 
-def rpr_selected(pred, rpr: Optional[etree._Element], revised: bool) -> bool:
+def effective_color(rpr: Optional[etree._Element], p: etree._Element, sheet: "StyleSheet"):
+    """The run's (or paragraph mark's) effective colour (val, themeColor, themeShade, themeTint) — set_properties' rule
+    (``effective.PropResolver``: the nearest level that sets w:color, default auto); the resolver is kept on the sheet."""
+    res = getattr(sheet, "_prop_resolver", None)
+    if res is None:
+        from .effective import PropResolver        # effective imports this module: imported when needed
+        res = sheet._prop_resolver = PropResolver(sheet)
+    return res.run_prop(rpr, p, "color")[0]
+
+
+def rpr_selected(pred, rpr: Optional[etree._Element], revised: bool, p: Optional[etree._Element] = None,
+                 sheet: Optional["StyleSheet"] = None) -> bool:
+    """``p`` (the run's paragraph) and ``sheet`` are needed only by ``color_in`` (the run's effective colour)."""
     if pred in (None, "all") or pred == {}:
         return True
     if "has_direct_font" in pred and has_direct_font(rpr) != bool(pred["has_direct_font"]):
@@ -357,6 +377,12 @@ def rpr_selected(pred, rpr: Optional[etree._Element], revised: bool) -> bool:
             return False
     if pred.get("not_in_revisions") and revised:
         return False
+    if "color_in" in pred:
+        from .markup import color_in, color_names
+        if p is None or sheet is None:
+            raise JobException("run selector color_in needs the run's paragraph and the style sheet", "internal")
+        if not color_in(effective_color(rpr, p, sheet), color_names(pred["color_in"])):
+            return False
     return True
 
 

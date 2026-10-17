@@ -17,11 +17,11 @@ model spend**. These are configurable ceilings, not spending targets. Each proje
 allowance; a workspace containing several projects can spend more than one allowance. No model call or charge is
 needed to inventory files, review saved progress, or execute an unambiguous approved goal using built-in operations.
 
-**Latest: v0.6.0 — run without an API key, apply verified formatting properties, and let Claude find your saved recipes and operations.** Includes the Qt window teardown crash fix and everything in v0.5.0. [v0.6.0 release notes](docs/releases/v0.6.0.md) include installation and update instructions.
+**Latest: v0.7.1 — built-in edits and snippets, verified chains, bounded recovery and local repair memory.** Includes everything in v0.6.0 and the recovery review fixes. [v0.7.1 release notes](docs/releases/v0.7.1.md) include installation and update instructions.
 
-**In this source checkout: bounded recovery and local repair memory.** Investigate failed requests, previews and batches within an explicit model budget, try verified repairs or sequences on copies, review the final result, and remember useful cases for future investigations. See [Recovery and local repair memory](docs/RECOVERY.md) for desktop and CLI usage, limits and privacy details, and the [real-batch evaluation protocol](docs/RECOVERY_EVALUATION.md) for validation still to be done. This describes source changes; it does not announce a published installer.
+**New in v0.7.1: bounded recovery and local repair memory.** Investigate failed requests, previews and batches within an explicit model budget, try verified repairs or sequences on copies, review the final result, and remember useful cases for future investigations. See [Recovery and local repair memory](docs/RECOVERY.md) for desktop and CLI usage, limits and privacy details, and the [real-batch evaluation protocol](docs/RECOVERY_EVALUATION.md) for validation still to be done.
 
-**New since v0.6.0 (not released yet): built-in operations, batch 1.** Ten prebuilt operations for the work you repeat across sites and projects: fill `{{SITE_NAME}}`-style placeholders and highlighted fields from your PROJECT.json or Excel sheet (a master set becomes a site set); a replacement table applied in one pass; MasterSpec `[option] [option]` choices resolved by your rules; paragraphs tagged for a system type (wet, dry, preaction, clean agent) kept or deleted; the issue stamp updated wherever it sits; every file ending with its own END OF SECTION number; the header/footer, title line and file name made to agree; a logo swapped in every header, fitted to the same space; a snippet library (a saved paragraph inserted after an anchor in every file that has it); and output files named by convention from their content. Every one is planned before it runs, places only your words, and is checked by its own independent V10 kind. Details: ["Built-in operations, batch 1"](#built-in-operations-batch-1-tables-options-tags-stamps-logos-names).
+**New in v0.7.1: built-in operations, batch 1.** Ten prebuilt operations for the work you repeat across sites and projects: fill `{{SITE_NAME}}`-style placeholders and highlighted fields from your PROJECT.json or Excel sheet (a master set becomes a site set); a replacement table applied in one pass; MasterSpec `[option] [option]` choices resolved by your rules; paragraphs tagged for a system type (wet, dry, preaction, clean agent) kept or deleted; the issue stamp updated wherever it sits; every file ending with its own END OF SECTION number; the header/footer, title line and file name made to agree; a logo swapped in every header, fitted to the same space; a snippet library (a saved paragraph inserted after an anchor in every file that has it); and output files named by convention from their content. Every one is planned before it runs, places only your words, and is checked by its own independent V10 kind. Details: ["Built-in operations, batch 1"](#built-in-operations-batch-1-tables-options-tags-stamps-logos-names).
 
 **New in v0.6.0: run it without an API key.** Most people who use Spec Surgeon will not have an Anthropic API key, or will not want one. Without a key the app now runs in **keyless mode**: the *Describe the change* step becomes *Choose the change*, with saved specs and **Your library** first and a note saying what a key would add. Those are typing a request in plain English, custom transforms, Claude's visual check of the preview pages, and advice on set-aside files. Everything else works without a key: saved specs, your library's recipes and operations, Preview, Run and its verification, set-aside passes and diagnostics. On the command line, the new `spec-surgeon library use NAME FILES…` runs one of your recipes or operations without a key. Details: ["Running without an API key"](#running-without-an-api-key).
 
@@ -74,7 +74,7 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 3. [Quick start](#quick-start)
 4. [Commands](#commands)
 5. [Jobs](#jobs)
-6. [Operations and EditSpecs (NL editor, Phase 1)](#operations-and-editspecs-nl-editor-phase-1) — incl. [Header/footer templating (Phase 2)](#headerfooter-templating-phase-2), [Template specs: match the architect's spec](#template-specs-match-the-architects-spec), [Font sizes](#font-sizes-match-the-template-specs-font), [Formatting properties: bold, caps, colour, keep with next](#formatting-properties-bold-caps-colour-keep-with-next-set_properties) and [Built-in operations, batch 1: tables, options, tags, stamps, logos, names](#built-in-operations-batch-1-tables-options-tags-stamps-logos-names)
+6. [Operations and EditSpecs (NL editor, Phase 1)](#operations-and-editspecs-nl-editor-phase-1) — incl. [Header/footer templating (Phase 2)](#headerfooter-templating-phase-2), [Template specs: match the architect's spec](#template-specs-match-the-architects-spec), [Font sizes](#font-sizes-match-the-template-specs-font), [Formatting properties: bold, caps, colour, keep with next](#formatting-properties-bold-caps-colour-keep-with-next-set_properties) and [Built-in operations, batch 1: tables, options, tags, stamps, logos, names](#built-in-operations-batch-1-tables-options-tags-stamps-logos-names), [batch 2: clean-up, tracked changes, watermarks, document properties](#built-in-operations-batch-2-clean-up-tracked-changes-watermarks-document-properties) and [batch 3: bold and page flow on chosen paragraphs, text colour, tab stops](#built-in-operations-batch-3-bold-and-page-flow-on-chosen-paragraphs-text-colour-tab-stops)
    - [Talk it through with Claude](#talk-it-through-with-claude) / [Claude's visual check](#claudes-visual-check) / [Your library](#your-library) / [Chains: several recipes, one after another](#chains-several-recipes-one-after-another) / [How Spec Surgeon calls Claude](#how-spec-surgeon-calls-claude)
 7. [The verification record](#the-verification-record)
 8. [Output folder layout](#output-folder-layout)
@@ -494,11 +494,12 @@ validate spec ─► plan every op on the SOURCE ─► merge fragments ─► a
 | Op | Mode | Select | Params | What it does | Predicted / asserted |
 |---|---|---|---|---|---|
 | `remove_header_footer` | formatting | `sections` (`all` \| [i]), `kinds` (header, footer), `types` (default, first, even) | — | removes the selected `headerReference`/`footerReference` elements, then every part no longer referenced: the part, its `.rels`, its content-type override, its relationship in `document.xml.rels`, and media nothing else uses | `members_removed` exact; every block of a removed part a predicted deletion; revisions inside removed parts as negative deltas, **flagged by name**; `section_hf_refs` assertion; V7 against the source render (body must not move) |
-| `set_font` | formatting | `scope`, `runs` (`all` \| `{has_direct_font, font_in, not_in_revisions}`), `paragraphs` (predicates) | `font` (ascii+hAnsi+cs) or per-slot `ascii`/`hAnsi`/`cs`/`eastAsia`; `size` (pt), `size_from` (pt list); `only_where_defined` (false); `clear_theme_fonts` (true); `preserve_fonts`; `skip_sym_runs` (true); `in_revisions` (include \| exclude); `include_paragraph_marks` (true); `tracked`; `author` | sets `w:rFonts` on the selected runs and paragraph marks (only on those with a direct font when `only_where_defined`) and `w:sz` on those that set their own size ([Font sizes](#font-sizes-match-the-template-specs-font)); never touches **symbol runs** (see below) | `run_fonts` assertion with the predicted run/mark/sized counts; tracked: `+n w:rPrChange` |
+| `set_font` | formatting | `scope`, `runs` (`all` \| `{has_direct_font, font_in, not_in_revisions, color_in}`), `paragraphs` (predicates) | `font` (ascii+hAnsi+cs) or per-slot `ascii`/`hAnsi`/`cs`/`eastAsia`; `size` (pt), `size_from` (pt list); `only_where_defined` (false); `clear_theme_fonts` (true); `preserve_fonts`; `skip_sym_runs` (true); `in_revisions` (include \| exclude); `include_paragraph_marks` (true); `tracked`; `author` | sets `w:rFonts` on the selected runs and paragraph marks (only on those with a direct font when `only_where_defined`) and `w:sz` on those that set their own size ([Font sizes](#font-sizes-match-the-template-specs-font)); never touches **symbol runs** (see below) | `run_fonts` assertion with the predicted run/mark/sized counts; tracked: `+n w:rPrChange` |
 | `set_style_font` | formatting | `styles`: `all` \| `all-paragraph-and-character` \| `{ids}` \| `{types}` | font params; `size`, `size_from`; `only_where_defined` (true) | sets `w:rFonts` and/or `w:sz` in style definitions — by default each only where the style already defines it (others inherit); symbol styles left alone | `style_fonts` assertion with the exact style-id list and the styles that get the size; `styles.xml` only |
 | `set_doc_defaults_font` | formatting | — | font params; `size`, `size_from` | sets `docDefaults/rPrDefault/rPr/rFonts` and/or `w:sz` (created in schema order when absent; with `size_from` the size only when its own size is listed) | `doc_defaults_fonts` assertion |
 | `set_paragraph_props` | formatting | `scope`, `paragraphs` | `spacing` {before, after, line, lineRule, beforeLines, afterLines}, `ind` {left, right, start, end, firstLine, hanging}, `jc`; `tracked`; `author` | merges values into existing `w:spacing`/`w:ind` (a style's `before="240"` survives), complete pPr schema order (section-break paragraphs keep their `w:sectPr` last); `firstLine` and `hanging` replace each other; a `before`/`after` in points on a paragraph whose own pPr or style chain sets `beforeLines`/`afterLines` refuses `conflict-property` (Word uses the lines value) unless the spec sets the lines value too (2026-10-14 audit fixes) | `paragraph_props` assertion; tracked: `+n w:pPrChange` with the old pPr as snapshot |
-| `set_properties` | formatting | `scope`, `paragraphs`, `runs` — or `styles` `{ids}` alone | `run` {b, i, caps, smallCaps, strike, u, color}, `paragraph` {keepNext, keepLines, widowControl, pageBreakBefore}; `skip_sym_runs`, `preserve_fonts`, `in_revisions`, `include_paragraph_marks`; `tracked`; `author` | sets the properties on every selected run and paragraph mark / paragraph (direct formatting), or in the named style definitions; b and i as the pairs `w:b`+`w:bCs` / `w:i`+`w:iCs`; what already shows the asked value is left alone; caps/smallCaps never on symbol runs; a style change that direct formatting, Word's toggle rule or a symbol run would defeat is refused ([Formatting properties](#formatting-properties-bold-caps-colour-keep-with-next-set_properties)) | `properties` assertion with the predicted run/mark/paragraph counts (or the style ids), the effective result re-resolved in the output; tracked: `+n w:rPrChange`, `+m w:pPrChange` |
+| `set_properties` | formatting | `scope`, `paragraphs`, `runs` (incl. `color_in`: text chosen by its colour) — or `styles` `{ids}` alone | `run` {b, i, caps, smallCaps, strike, u, color}, `paragraph` {keepNext, keepLines, widowControl, pageBreakBefore}; `skip_sym_runs`, `preserve_fonts`, `in_revisions`, `include_paragraph_marks`; `tracked`; `author` | sets the properties on every selected run and paragraph mark / paragraph (direct formatting), or in the named style definitions; b and i as the pairs `w:b`+`w:bCs` / `w:i`+`w:iCs`; what already shows the asked value is left alone; caps/smallCaps never on symbol runs; a style change that direct formatting, Word's toggle rule or a symbol run would defeat is refused ([Formatting properties](#formatting-properties-bold-caps-colour-keep-with-next-set_properties)) | `properties` assertion with the predicted run/mark/paragraph counts (or the style ids), the effective result re-resolved in the output; tracked: `+n w:rPrChange`, `+m w:pPrChange` |
+| `set_tab_stops` | formatting | `scope`, `paragraphs` | `set` [{pos, align, leader}] (pos in twips, or `right_margin` / `center` of each section's own text), `clear` [positions], `clear_others`; `tracked`; `author` | sets and clears tab stops on the selected paragraphs: an asked stop written where it is not already in effect, an inherited stop cleared with a clear entry, the paragraph's own stops removed, the list sorted; `clear_others` leaves exactly the asked stops ([batch 3](#set_tab_stops--tab-stops-on-chosen-paragraphs)) | `tab_stops` assertion (selection, margin positions and every paragraph's own entries re-derived; the stops in effect re-resolved in the output); tracked: `+n w:pPrChange`; geometry none |
 | `set_page_setup` | formatting | `sections` | `margins` {top, right, bottom, left, header, footer, gutter} (twips), `size` {w, h}, `orientation` | merges into `w:pgMar` / `w:pgSz`; orientation sets `w:orient` and swaps w/h when they disagree (margins are not rotated) | one `section_props` assertion per section |
 | `replace_text` | content \| untracked | `scope` | as the `tracked-replace` job (+ `tracked` bool) | v0.1.0 tracked-replace | as today |
 | `fix_page_numbering` | formatting | — | `option` | v0.1.0 page-numbering | as today + `section_props` for `continuous`; cover-unnumbered declares a read of every section's `titlePg` (a template flipping it in the same spec is a plan-time `conflict`, 2026-10-16) |
@@ -512,8 +513,20 @@ validate spec ─► plan every op on the SOURCE ─► merge fragments ─► a
 | `make_values_agree` | content \| untracked | — | `places` {name: {in, pattern, required}}, `truth`, `values`, `tracked` | values that do not agree with the truth are replaced by its text; a file name gives the copy a new name ([batch 1](#make_values_agree--headerfooter-title-line-and-file-name)) | `agreed_values` (+ the output name) |
 | `name_output` | formatting | — | `pattern`, `values` (fill rules), `transforms` | names the edited copy from the file's own content; copies only ([batch 1](#name_output--output-names-from-content)) | `output_name` (the name derived again and compared with the written name) |
 | `swap_image` | formatting | `scope` (default headers) | `image`, `match` ({image} \| {md5} \| {name_regex} \| "all"), `scope`, `fit` (contain \| stretch), `allow_missing` | a new picture in place of the matched ones, fitted to the old box ([batch 1](#swap_image--a-new-logo-fitted-to-the-old-space)) | `members_added` (one media member) / `members_removed` (unused old media) exact; `image_swaps`; geometry none |
+| `remove_comments` | formatting | — | `which` (all \| resolved \| authors), `authors`, `allow_missing` (true) | removes the chosen comments with their replies and their marks in the text; every comment part kept ([batch 2](#remove_comments--clean-files-for-the-client)) | `removed_comments` (the comment parts compared whole, every marked paragraph item by item); structure-only declarations for lost reference marks |
+| `remove_highlight` | formatting | `scope` (default body, headers, footers, notes) | `colors`, `tracked` (false), `author`, `allow_missing` (true) | takes `w:highlight` off runs and paragraph marks; styles flagged, never changed ([batch 2](#remove_highlight--the-highlighter-off)) | `removed_highlight` (every target re-selected; each `w:rPr` the source's minus the highlight); tracked: `rPrChange` +1 each |
+| `resolve_tracked_changes` | untracked | `scope` (default every text part, comments included) | `action` (accept \| reject), `authors`, `on_or_after`, `before`, `allow_missing` (true) | accepts or rejects the chosen tracked changes, only on request ([batch 2](#resolve_tracked_changes--accept-or-reject-only-when-you-ask)) | every changed block (V2), structure (V3), the negative delta of every revision kind (V4); `resolved_changes` (each part rebuilt by the verifier and compared whole); geometry none |
+| `remove_hidden_text` | content \| untracked | `scope` (default body, headers, footers, notes) | `tracked` (true), `author`, `allow_missing` (true) | removes hidden runs; deletes paragraphs whose words and mark are hidden; every piece listed ([batch 2](#remove_hidden_text--every-removed-piece-listed)) | `removed_hidden_text` (decisions re-derived; paragraphs item by item; deleted paragraphs checked) |
+| `remove_notes` | content \| untracked | `scope` (default body) | `rules` [{style_in, text_regex, color_in, hidden}], `runs` {color_in, hidden}, `tracked` (true), `author`, `allow_missing` (true) | deletes note paragraphs and, with `runs`, inline notes ([batch 2](#remove_notes--specifier-and-editor-notes)) | `removed_notes` (your rules read again by the verifier; as hidden text) |
+| `add_watermark` | untracked | — | `text` (your words), `font`, `color`, `opacity`, `layout`, `size`, `replace` | Word's text watermark at the start of every shown header's first paragraph ([batch 2](#add_watermark--remove_watermark--draft-not-for-construction)) | `added_watermark` (the shape rebuilt by the verifier; ids new; the box inside every text area); geometry none |
+| `remove_watermark` | formatting | — | `text` (only the watermarks showing it), `allow_missing` (true) | takes every (or the matching) watermark out of the headers; the paragraphs stay ([batch 2](#add_watermark--remove_watermark--draft-not-for-construction)) | `removed_watermark` (each holding paragraph the source's minus exactly those runs) |
+| `remove_empty_paragraphs` | content \| untracked | `scope` (default body) | `mode` (collapse \| all), `tracked` (true), `author`, `allow_missing` (true) | removes blank paragraphs, or each run of blank lines but its first ([batch 2](#remove_empty_paragraphs--blank-lines)) | `removed_empty_paragraphs` (blank, collapse and keep rules re-derived; each deletion checked) |
+| `remove_hyperlinks` | formatting | `scope` (default body, headers, footers, notes) | `which` (external \| internal \| all), `keep_style` (false), `allow_missing` (true) | unwraps links and link fields, keeps the words, drops the link style and unused addresses ([batch 2](#remove_hyperlinks--the-links-come-out-the-words-stay)) | `removed_hyperlinks` (paragraphs item by item; the rels part minus exactly the unused addresses) |
+| `unlink_fields` | formatting | `scope` (default body, headers, footers, notes) | `types` ([names] \| "all"), `allow_missing` (true) | turns fields into the text they show; page numbers never ([batch 2](#unlink_fields--fields-become-the-text-they-show)) | `unlinked_fields` (fields parsed again; markers and code gone, the result where it was); geometry none |
+| `set_document_properties` | untracked \| formatting | — | `set` {property: your words}, `clear` [properties], `custom` {name: your words}, `clear_custom` | sets or clears core/app/custom properties; may create `docProps/custom.xml` ([batch 2](#set_document_properties--title-company-custom-properties-clear-the-author-names)) | `document_properties` (each property re-read; the member residual over the properties parts) |
+| `set_document_state` | formatting | — | `track_changes` (off \| on), `final` (true \| false) | the track-changes setting, Word's Mark as Final markers ([batch 2](#set_document_state--track-changes-off-or-on-mark-as-final)) | `document_state` (the setting and the markers re-read; the member residual over settings and properties) |
 
-Exceptions the new ops raise (never a guess): `inheritance` (a removal would leave a selected section still *showing* a header/footer through inheritance from an earlier section, or would change what an unselected section shows — an empty replacement part would be needed and the op never creates one; first-page parts count only where `titlePg` is on, even-page parts only with `evenAndOddHeaders`, and an invisible inheritance change is flagged instead), `structure` (a header part carrying something other than images/hyperlinks; a section without `w:pgMar` when margins are set; no styles part), `tracked-format` (a tracked change on a run/paragraph that already carries someone's `w:rPrChange`/`w:pPrChange`, or on a paragraph mark that is itself a pending revision), `theme-font` (explicit font with `clear_theme_fonts: false` where a theme attribute would override it), `conflict-property` (spacing before/after on an "auto" paragraph; `left` on an indent written with `start`; for `set_properties` on a style, direct formatting or a symbol run that would keep its own look), `toggle-ambiguous` (`set_properties` on a style: a toggle another style level specifies too — Word XORs them, the engine refuses), `not-found`, `bad-params`, `conflict`.
+Exceptions the new ops raise (never a guess): `inheritance` (a removal would leave a selected section still *showing* a header/footer through inheritance from an earlier section, or would change what an unselected section shows — an empty replacement part would be needed and the op never creates one; first-page parts count only where `titlePg` is on, even-page parts only with `evenAndOddHeaders`, and an invisible inheritance change is flagged instead), `structure` (a header part carrying something other than images/hyperlinks; a section without `w:pgMar` when margins are set; no styles part), `tracked-format` (a tracked change on a run/paragraph that already carries someone's `w:rPrChange`/`w:pPrChange`, or on a paragraph mark that is itself a pending revision), `theme-font` (explicit font with `clear_theme_fonts: false` where a theme attribute would override it), `conflict-property` (spacing before/after on an "auto" paragraph; `left` on an indent written with `start`; for `set_properties` on a style, direct formatting or a symbol run that would keep its own look), `toggle-ambiguous` (`set_properties` on a style: a toggle another style level specifies too — Word XORs them, the engine refuses), `tab-position` (`set_tab_stops`: a margin position with no single text width to measure — a header or footer shown by sections with different margins, a section without page size and margins, a footnote — or one landing on another asked position), `not-found`, `bad-params`, `conflict`.
 
 **Tracked or plain** (plan §14.1, as assumed for Phase 1 — see the plan): whole-document formatting is applied plain; formatting that targets particular paragraphs (a `paragraphs` predicate in the selector) is tracked by default (`w:rPrChange` / `w:pPrChange` holding a snapshot of the old properties); an explicit `tracked` always wins and the record says which rule applied. Style definitions, docDefaults and page setup are never tracked (`tracked: true` is refused for them — Word does not track style-definition changes, and `w:sectPrChange` is not implemented).
 
@@ -672,7 +685,7 @@ Resolved by the engine — twice, independently: by `ops/selectors.py` for the t
 
 * `scope` — part kinds `document | headers | footers | footnotes | endnotes | comments`, resolved via rels.
 * `paragraphs` — `"all"` or an object whose keys are AND-ed: `style_in` [styleIds] (no `w:pStyle` = the default paragraph style), `text_regex` (Python `re.search` on the **block text** of CLAUDE.md — `w:t` + `w:delText` + `w:instrText` + `w:delInstrText` + `m:t`), `in_table` (bool), `is_empty` (block text == ""), `index_range` [start, end) over the part's paragraphs in document order.
-* `runs` — `"all"` or `{has_direct_font: bool, font_in: [names], not_in_revisions: bool}`.
+* `runs` — `"all"` or `{has_direct_font: bool, font_in: [names], not_in_revisions: bool, color_in: [colours]}`. `color_in` (built-in batch 3) chooses runs and paragraph marks by their **effective** colour — the nearest level that sets `w:color`: direct, the character style chain, the paragraph style chain, the table style, docDefaults; Automatic when none does — matching a listed theme colour name (`accent1`, `text2` …) or value (six hex digits, or `auto`), case-insensitive, a leading `#` ignored.
 * `sections` — `"all"` or [sectPr ordinals]; `styles` — as in the table above.
 * **Symbol runs** are never changed by a font op: a run is one when any explicit font name (any slot, case-insensitive) in its direct `w:rFonts`, in its character-style chain, or in its paragraph's style chain is in `preserve_fonts` (default: Symbol, Wingdings, Wingdings 2/3, Webdings, Marlett, MT Extra, ZapfDingbats, Zapf Dingbats, Bookshelf Symbol 7, MS Reference Specialty, MS Outlook), or when it holds a `w:sym`. A style is a symbol style under the same rule over its `basedOn` chain. Theme font references are never symbol fonts.
 
@@ -887,6 +900,289 @@ New codes and what they mean (the set-aside report and `DIAGNOSTICS.md` say them
 
 **Not in this batch** (recorded in the design note): tags that are styles or highlight colours; tags that cover a whole article; editing inside text boxes; replacing across tabs or line breaks; a tab inside a replacement; snippets with mixed run formatting; renaming files in place; two logo swaps in one header in one spec (two specs).
 
+### Built-in operations, batch 2: clean-up, tracked changes, watermarks, document properties
+
+Abraham's second batch of prebuilt operations (2026-10-16; items 11–21 of his list, ★ = starred). Design note with every decision: `docs/BUILTIN_OPS_BATCH2_DESIGN.md` (taken on his behalf, as in batch 1; each can be changed). Eleven requests, built as twelve operations:
+
+| # | You ask | Operation | Mode |
+|---|---|---|---|
+| 11 ★ | Remove comments: all, resolved only, or by author; the text unchanged | `remove_comments` | formatting |
+| 12 ★ | Remove highlighting: all, or only certain colours | `remove_highlight` | formatting (tracked on request) |
+| 13 | Accept or reject tracked changes: all, by author, or by date | `resolve_tracked_changes` | untracked |
+| 14 | Remove hidden text, every removed piece listed in the preview | `remove_hidden_text` | tracked / untracked |
+| 15 | Remove specifier or editor notes ("Retain… / Delete…" paragraphs in note styles, or blue or hidden text) | `remove_notes` | tracked / untracked |
+| 16 | Add or remove a watermark ("DRAFT", "NOT FOR CONSTRUCTION"); the wording is yours | `add_watermark`, `remove_watermark` | untracked / formatting |
+| 17 | Remove empty paragraphs, or collapse runs of blank lines | `remove_empty_paragraphs` | tracked / untracked |
+| 18 | Remove hyperlinks but keep the words | `remove_hyperlinks` | formatting |
+| 19 | Convert fields such as DOCPROPERTY to plain text; page numbers never | `unlink_fields` | formatting |
+| 20 | Set document properties (title, company) or clear the author names | `set_document_properties` | untracked / formatting |
+| 21 | Turn off the track-changes setting, or mark the file as final | `set_document_state` | formatting |
+
+#### Three rules of the method changed — at your request, and only this far
+
+Items 13, 20 and 21 were each marked "(rule)": the method (`skill/SKILL.md`, `references/element-types.md`) said *the model never accepts or rejects tracked changes — you do, in Word*, *the document properties are Word's — never touch them*, and *Track Changes is your choice — never toggle it*. They now read: **never on the engine's or Claude's own initiative — only when you ask for it by name**, through a built-in operation whose preview says exactly what it does (`resolve_tracked_changes` lists what it accepts or rejects, by kind and author — "ACCEPTS 15 tracked change(s) — deletion 5 (Jack 5); insertion 4 (Jeremy 4); …"; `set_document_properties` names every property and value; `set_document_state` says what it turns off or marks), and whose output is verified like every other. Claude is told the same (it offers these three only when you ask for exactly that), and the advisor never adds one of them to a re-compiled spec for a set-aside file — it recommends it instead, and you decide. A custom transform still can never do any of the three: `codegen.hard_limits` is unchanged (no revision delta of any kind, no part outside the text parts and the styles part). Nothing else in the method changed.
+
+#### Clean-up runs over whole batches
+
+Most of these operations remove something, and a batch of 80 specs has many files with nothing to remove. So, unlike the earlier operations, **a file with nothing to remove is left exactly as it is** — it plans as a no-op with a note ("no hidden text in […]: nothing to do") and passes. `"allow_missing": false` sets such a file aside instead (`not-found`), for when every file should have had something.
+
+Several clean-ups in one spec: the formatting ones (comments, highlight, hyperlinks, fields, watermark removal, Mark as Final) share a spec freely, and so do the tracked removals (hidden text, notes, blank paragraphs). Untracked (clean copies), an operation that deletes paragraphs restructures the part, so it cannot share a spec with another operation over that part — the plan refuses the pair as a `conflict` and Claude offers a [chain](#chains-several-recipes-one-after-another) instead, one stage each. So does `resolve_tracked_changes`, which takes every part it resolves as a whole.
+
+#### What the checks gained
+
+Every operation of this batch follows the rules the engine always kept — the plan predicts every change from the source, nothing is typed that you did not give, what cannot be done exactly is refused with a reason, and V10 re-derives the result with its own code. The verifier gained the pieces they needed, each strict:
+
+* **Structure-only changes.** Removing a comment's reference mark, a hyperlink field's characters or a watermark changes a paragraph's tabs/breaks/field marks but not its words. The plan declares such a paragraph with the same text before and after and its new structure counts; V2 leaves it out (no text changed), V3 matches it to its own paragraph and fails when the declared change did not happen — and the paragraph stays in V10's residual, so declaring it never excuses anything else in it.
+* **Whole parts and whole members.** An operation's V10 kind may take a whole part (`resolve_tracked_changes` rebuilds every part it resolves and compares it element for element), or a member that is not a text part — `settings.xml`, `docProps/core.xml`, `app.xml`, `custom.xml` — which a new **member residual** then compares element for element, minus exactly what the kind checked. A member the op created must be checked whole by its kind, or V10 fails.
+* **Marks between paragraphs** (a comment's range marks, a bookmark end) that an operation removes are named by the plan and taken out of the source copy before the residual compares — any other difference still fails.
+* **V5a** validates `docProps/core.xml` against the OPC schema with the Dublin Core definitions bundled (`schemas/dublincore/`; the schema's own imports point at the internet, which the app never reaches).
+* **Fields** are read by two parsers, one on each side (`ops/fields.py`, `verify/fields.py`): where each field's code and result lie, its type, whether it nests, spans paragraphs, is a form field or lies in a pending tracked change.
+* **V2's pairing** sets the plan's predicted untracked paragraph deletions and insertions aside *before* it aligns the rest on text (it used to do so only inside an ambiguous region): a deleted blank paragraph can no longer pair with another blank paragraph far away and throw every paragraph between them out of alignment. A predicted deletion that did not happen still fails — its paragraph is in the output, an insertion nobody predicted.
+* **Your own words reach the verifier.** Each new kind is handed the scope and options as you asked them (absent = the default) and applies its own defaults — so a wrong default shared by plan and apply shows.
+
+#### `remove_comments` — clean files for the client
+
+Comments come out of the documents — **all** of them (`"which": "all"`, the default), only the **resolved** threads (`"which": "resolved"` — what Word marks with *Resolve*), or the comments of named **authors** (`"which": "authors", "authors": ["Jack"]`, case and spacing ignored). A removed comment takes its replies with it (a thread never keeps a reply whose comment went); removing one author's reply leaves the thread's first comment and the other replies alone. The document's text is unchanged: only the comments and their marks in the text go — the range start and end marks and the little reference mark Word draws at the end of the commented words (its run too, when it holds nothing else).
+
+What Word keeps about a comment lives in up to four parts: `comments.xml` (the text), `commentsExtended.xml` (threads and the resolved flag), `commentsIds.xml` and `commentsExtensible.xml` (Word 2016+ bookkeeping). Every entry of a removed comment goes from every one of them, matched by the comment's paragraph ids. **No part is ever removed**, even when every comment goes (an empty `comments.xml` is valid and Word opens it), and no relationship changes — so a picture or a link that only a removed comment used stays in the package, unused (the plan flags it). A pending tracked change *inside* a removed comment's text goes with it (predicted, flagged). A file from Word 2010 or older keeps no resolved state (no `commentsExtended.xml`): `resolved` finds nothing there, and the note says why.
+
+Refused: a mark of a removed comment inside a text box (`textbox` — Word keeps two copies of a text box; remove that comment in Word), two comments sharing an id or a paragraph id (`structure`).
+
+```json
+{"op": "remove_comments", "params": {"which": "resolved"}}
+```
+
+V10 (`removed_comments`, `verify/comments.py`) reads the comments, threads and resolved flags again with its own code and must arrive at the same comments; it then compares `comments.xml` and every side part **whole** with the source minus exactly those entries, checks every paragraph that held a mark item by item (exactly the marks gone, nothing else), and hands marks that sit between paragraphs to the residual as expected removals. V2 sees every paragraph of a removed comment deleted; V3 sees each paragraph that lost a reference mark as a structure-only change the plan declared. (`examples/specs/remove-resolved-comments.json`.)
+
+#### `remove_highlight` — the highlighter off
+
+Word's highlighter (Home → *Text Highlight Color*; `w:highlight`) comes off text — every colour (the default) or the listed ones (`"colors": ["yellow"]`; Word's names: yellow, green, cyan, magenta, blue, red, darkBlue, darkCyan, darkGreen, darkMagenta, darkRed, darkYellow, darkGray, lightGray, black, white). Body, headers, footers, footnotes and endnotes by default (`select.scope`; comments too when asked). Every highlighted run is included — inside pending insertions and deletions too (a deletion rejected later must not bring a highlight back), inside hyperlinks and text boxes (both of Word's copies) — and every highlighted paragraph mark. An explicit "no highlight" (`none`) is not a highlight and stays. The text and every other formatting stay exactly as they were; an emptied `w:rPr` (and an emptied paragraph `w:pPr`) is removed.
+
+Plain by default (whole-document formatting, decision §14.1). `"tracked": true` records each change as Word's *Formatted* revision (`w:rPrChange` with the old formatting as its snapshot, so reject-all brings the highlight back); a run that already carries someone's tracked formatting change, or a paragraph mark that is itself a pending insertion or deletion, is then refused (`tracked-format`: a second tracked change cannot be expressed — accept or reject it first, or remove the highlight plainly). A **style** that highlights its text is never changed (flagged: change the style in Word). Paragraph or text *shading* (`w:shd`) is not highlighting and is not touched.
+
+```json
+{"op": "remove_highlight", "params": {"colors": ["yellow"]}}
+```
+
+V10 (`removed_highlight`, `verify/highlight.py`) reads the colours you asked for and the scope itself (its own defaults: every colour, body + headers + footers + notes), re-selects every target and checks each output `w:rPr` is the source's without the highlight — every other child unchanged, in order — and the change marker as plain/tracked demand; those `w:rPr` are then stripped from the residual, which proves the rest of each part identical. (`examples/specs/remove-highlighting.json`.)
+
+#### `resolve_tracked_changes` — accept or reject, only when you ask
+
+The one operation that accepts or rejects tracked changes — and it runs only when you ask for it: "accept all of Jeremy's changes", "reject everything Jack did after October 1", "accept all changes in the headers". The preview says exactly what will be accepted or rejected before anything runs.
+
+* `action`: `accept` or `reject` (required).
+* `authors`: only the changes by these people — matched to the name Word shows on each change (case and spacing ignored). Leave it out for everyone.
+* `on_or_after` / `before`: only the changes made in a date range — `YYYY-MM-DD`, or with a time (`2026-09-23T14:30`), read from Word's own clock on each change (`on_or_after` includes the day, `before` does not). Under a date filter a change that carries no date is left as it is (the preview flags how many).
+* `select.scope`: which parts — by default all of them: body, headers, footers, footnotes, endnotes, comments.
+* `allow_missing` (default **true**): a file with no change matching the request is left as it is ("no tracked change by Jeremy: nothing to do").
+
+What accepting and rejecting do — the same as Word's Accept/Reject:
+
+| Tracked change | Accept | Reject |
+|---|---|---|
+| inserted text | stays, as plain text | goes |
+| deleted text | goes | comes back, as plain text |
+| moved text | stays where it was moved to | goes back where it came from |
+| a paragraph inserted whole | stays | goes |
+| a paragraph deleted whole | goes | comes back |
+| a formatting change (run or paragraph) | the new formatting stays | the old formatting comes back |
+| a change of section or table properties | the new properties stay | left for Word (refused) |
+
+A change inside text that goes, goes with it (rejecting Jeremy's insertion also removes Jack's deletion inside it). A changed paragraph's formatting record is dropped once it is empty. Word's `_GoBack` bookmark (where the cursor was last saved) goes with text that goes; Word makes a new one on save. Tracked changes inside style or list definitions (`styles.xml`, `numbering.xml`) are not resolved here (flagged).
+
+What it leaves for Word (the file is set aside with the reason; nothing is written):
+
+* a tracked table row or cell insertion/deletion, a tracked change inside an equation, or — when rejecting — a change of section or table properties (`revision-kind`);
+* an accept or reject that would **join two paragraphs**: a deleted paragraph mark with text still on both sides, a paragraph that would go but still holds a bookmark, a picture or a comment, or the last paragraph of a cell, before a table or at the end of the document — Word decides whose formatting the joined paragraph keeps (`paragraph-merge`); one carrying a section break (`section-break`);
+* a moved passage the authors/dates asked choose only partly (its two ends by different people) — a move is resolved whole (`partial-move`);
+* text that would go while it holds a footnote or comment mark, one end of a bookmark, or part of a field — removing it would orphan the note or comment or break the bookmark or field (`marks-in-change`).
+
+```json
+{"op": "resolve_tracked_changes", "params": {"action": "accept", "authors": ["Jeremy"]}}
+```
+
+How it is verified: every paragraph whose text changes (accepted deletions, rejected insertions, paragraphs that go) is predicted before anything runs (V2), and so is every change of tabs, breaks or field marks (V3); the tracked-change count must fall by exactly the predicted number of each kind (V4) and no tracked change may be added (V5b); and the verifier resolves every part of the original again **with its own code** — it rebuilds each part node by node from its own decisions, where the operation edits its tree in place — and compares the result with the output part, element for element (V10, `resolved_changes`); a part with nothing to resolve is left to the residual, so another operation in the same spec may change it and is checked by its own kind. The tests also compare the result with pandoc's own accept/reject of the original. Accepting or rejecting touches whole parts, so it runs as a spec of its own — or as the first stage of a chain, with the other changes after it. (`examples/specs/accept-changes-by-author.json`.)
+
+#### `remove_hidden_text` — every removed piece listed
+
+Hidden text is text with Word's *Hidden* font setting — set on the words themselves or by a style. The operation removes every hidden run in the body, headers, footers, footnotes and endnotes, and deletes a paragraph whose words **and** paragraph mark are all hidden (an empty paragraph whose mark is hidden counts: it shows nothing either). **Every removed piece is listed in the preview** — the part, the paragraph and the words, a tab as ⇥, a field by its code in braces (`«{XE "Sprinkler"}»`).
+
+* Tracked by default (the reviewer sees each deletion; the deleted words stay hidden), untracked on request (`"tracked": false`).
+* A hidden index entry or other field goes whole when every part of it is hidden; hidden text inside a field that is otherwise shown is refused (`field-result`) — Word would put the field's result back when it updates fields. A hidden simple field goes whole untracked and is refused tracked (a simple field cannot be deleted as a tracked change).
+* A paragraph the deletion rules keep — the last paragraph of a table cell, of the document or of a header (Word cannot remove it), the paragraph between two tables (Word would join them) — or one that cannot be deleted (it carries a section break, holds a field, or — tracked — holds a hyperlink or someone's pending change) keeps its paragraph mark and loses its hidden words; the preview says so.
+* Refused: hidden text in a text box (`textbox`), a run whose *hidden* is set at two style levels (`toggle-ambiguous`: Word combines them in a way the engine does not model), hidden text in something other than a hyperlink, content control or tracked change (`structure`).
+
+How it is verified: the kind `removed_hidden_text` works out again, with the verifier's own reading of *hidden*, which runs and paragraphs go, compares that with the plan, and checks every changed paragraph item by item (each removed run gone, or wrapped in its own new deletion; nothing else in the paragraph moved) and every deleted paragraph (a tracked deletion of exactly that paragraph, or gone with every other paragraph unchanged). (`examples/specs/remove-hidden-text.json`.)
+
+#### `remove_notes` — specifier and editor notes
+
+A note is described by **rules**: a paragraph is a note when any rule matches, and within one rule every test it gives must hold:
+
+| test | holds when |
+|---|---|
+| `style_in` | the paragraph's style is one of these style ids (no style = the default paragraph style) |
+| `text_regex` | the paragraph's text matches (e.g. `^(Retain\|Delete\|Revise\|Coordinate)\b`) |
+| `color_in` | every run with visible words has one of these colours — `0000FF`, a theme colour (`accent1` …) or `auto` |
+| `hidden` | every run with content is hidden |
+
+Note paragraphs are deleted. `runs` (`color_in` and/or `hidden`) picks **inline notes** — runs of that colour inside the paragraphs that stay — and removes them; hyperlink text (often blue) and pictures are never taken. Every removed note is listed in the preview. Tracked by default, the body by default. A note that is the only paragraph of a table cell (or ends the document, or stands between two tables) leaves an empty paragraph rather than removing it. A note paragraph that cannot be deleted — a section break, a field, a text box, or (tracked) a hyperlink or someone's pending change — sets the file aside. Bracketed inline notes in plain black text (`[Note to specifier: …]`) are not notes by colour or style: use `replace_table` with a regex pair and an empty replacement. Claude builds the rules from what the profiles show (the note style ids, the colours in use, the words the notes begin with) and states them in the assumptions — check them on the samples.
+
+```json
+{"op": "remove_notes", "params": {"rules": [{"style_in": ["CMT"]},
+                                            {"text_regex": "^(Retain|Delete)\\b", "color_in": ["0000FF"]}]}}
+```
+
+Verified by the kind `removed_notes` (the same checks as hidden text, with the verifier's own style, text, colour and hidden readings; it reads your rules as given, never the operation's normalised copy). (`examples/specs/remove-specifier-notes.json`.)
+
+#### `add_watermark` / `remove_watermark` — "DRAFT", "NOT FOR CONSTRUCTION"
+
+**`add_watermark`** draws your words faintly behind every page, the way Word's *Design → Watermark* does: diagonal (or horizontal), Calibri, silver, half transparent, as large as fits the page — each of those can be changed (`font`, `color` as 6 hex digits, `opacity` from 0.05 to 1, `layout`, `size` in points). The words are placed exactly as you typed them; they are one line of at most 100 characters.
+
+- It goes into every header your document shows — the cover's first-page header, the body's header, even-page headers — as the first thing in each header's first paragraph, so nothing in the header moves. A section whose pages show no header gets no watermark, and the preview says so (add a header in Word first). A file with no header at all is set aside (`no-header`): Spec Surgeon never creates a header.
+- A file that already has a watermark is set aside (`watermark-exists`) unless you say to replace it (`replace: true`): then the old one is taken out and yours goes in, in one step.
+- `auto` size: the box keeps the proportions of your words in the font (measured with Calibri's, Arial's or Times New Roman's character widths; another font is measured with Calibri's, and the preview says the size is estimated) and is as large as fits the smallest page of the sections that show that header. A size in points that does not fit a file's page sets that file aside (`watermark-size`), never the whole batch.
+- A watermark is not a tracked change in Word, so the spec's mode is `untracked`; the preview flags that the words go on every page. Beside tracked word changes it is a second spec (or chain stage).
+
+```json
+{"op": "add_watermark", "params": {"text": "NOT FOR CONSTRUCTION"}}
+```
+
+**`remove_watermark`** takes the watermark out of every header — Word's text watermarks, its picture watermarks and the newer drawing kind — or, with `text`, only the ones showing those words (any case or spacing). The paragraph that held it (and Word's "Watermarks" content control around it) stays, so the header does not move. A file without a watermark is left as it is.
+
+**How it is verified.** The verifier finds the headers, each header's first paragraph and every watermark again with its own code; for an added watermark it builds Word's watermark shape again from your words and the asked look with its own template, checks the shape's ids are new and occur once in the package, checks the box lies inside every section's text area and fills it as the rule says, and compares each changed paragraph item by item — exactly one run added at its start (and, with replace, exactly the old runs gone), nothing else. For a removal, every paragraph that held a watermark must be the source's with exactly those runs gone. The layout reference is `none`: a watermark is drawn over every page.
+
+Refused (the file is set aside): a watermark that shares its run with other content, sits in a pending tracked change or in a text box; taking out a watermark whose run carries a shape definition another shape of the header still uses (`structure`); a section without a usable page size. (`examples/specs/add-draft-watermark.json`.)
+
+#### `remove_empty_paragraphs` — blank lines
+
+`collapse` (the default) leaves one blank line where several stand together; `all` removes every blank paragraph. A paragraph is blank when it holds nothing but spaces (or no-break spaces) — a numbered or bulleted empty line, one with a border or a frame, a bookmark, a tab, a break, a field, a picture, a comment mark or someone's pending change is **not** blank. What always stays: one paragraph between two tables (Word would join the tables), the last paragraph of a table cell, of the document and of a header — untracked only when it is needed (a cell or document must end with a paragraph), tracked always (Word cannot delete the final paragraph mark). The body by default (`scope` adds headers, footers …); tracked by default.
+
+```json
+{"op": "remove_empty_paragraphs", "params": {"mode": "collapse", "tracked": false}}
+```
+
+Verified by the kind `removed_empty_paragraphs`: the verifier finds the blank paragraphs, the runs and the kept ones again with its own code and checks each deletion. (`examples/specs/collapse-blank-lines.json`.)
+
+#### `remove_hyperlinks` — the links come out, the words stay
+
+`which`: `external` (the default — web addresses and e-mail: a `w:hyperlink` with a relationship, a `HYPERLINK` field without the `\l` switch), `internal` (links to a place in the document — a bookmark, a table of contents' entries: a `w:hyperlink` with only an anchor, a `HYPERLINK \l` field) or `all`; `keep_style` (default false); `scope` (default the body, headers, footers, footnotes and endnotes).
+
+* A link element is replaced by what it holds — the same runs, in the same place, with their own formatting; a link field is turned into the text it shows (`unlink_fields`' rule below). Not one visible word changes.
+* The linked words lose the **Hyperlink** (and **FollowedHyperlink**) character style — Word's built-in names, whatever the style's id — so they look like the text around them; `keep_style: true` keeps the blue underlined look. Words that carry their own blue or underline (direct formatting, not the style) keep it and are flagged.
+* An address no link uses any more **leaves the file**: its relationship is removed from the part's relationships. An address something else still uses — a picture's click link, a link that stays (another `which`) — stays (noted). A picture's own click link is not a text link and is never removed.
+* A link inside a text box (Word keeps two copies of it) sets the file aside (`textbox`); so does a link field that runs over two paragraphs (`field-span`), sits inside another field's code (`nested-field`) or lies in a pending tracked change (`existing-revisions`). A link inside a pending insertion is unwrapped inside it (the insertion stays). Links a table of contents shows are removed when asked (`internal`/`all`) and flagged: Word puts them back when the table of contents is updated.
+* Layout reference `source`: removing a link moves nothing (the render must match the source's).
+
+```json
+{"op": "remove_hyperlinks", "params": {"which": "external"}}
+```
+
+V10 (`removed_hyperlinks`): the links found again with the verifier's own code (its own reading of `\l`, of the link style, of a field's result), every changed paragraph checked item by item — the link gone from every container chain, the link style gone from exactly the linked runs, the field's code and characters gone, every other item where it was — and the relationships part compared with the source minus exactly the addresses that should go. (`examples/specs/remove-hyperlinks.json`.)
+
+#### `unlink_fields` — fields become the text they show
+
+`types`: the field types to convert — `["DOCPROPERTY"]`, `["DOCPROPERTY", "REF", "DATE"]` (any case) — or `"all"` (every type but the page numbers); `scope` (default the body, headers, footers, footnotes and endnotes).
+
+* What each field shows now stays, with its formatting; the field code and the field characters go (a simple field is replaced by its result). Word no longer updates the text — from the document properties, a bookmark, the date.
+* **Page numbers are never converted**: PAGE, NUMPAGES, SECTIONPAGES and PAGEREF are refused when named (`bad-params`) and skipped by `"all"` — they would freeze at the page they showed when the file was saved.
+* Refused (the file is set aside): a field inside a text box (`textbox`), one that runs over more than one paragraph — a table of contents, an index (`field-span`), one whose code holds another field or that sits inside another field's code (`nested-field`: converting it would change what the outer field does), a form field someone fills in (`form-field`), one whose code or characters lie in a pending tracked change (`existing-revisions`).
+* A field that shows nothing (an index entry `XE`, a property with no value) is removed whole — flagged. A DATE, TIME, CREATEDATE, SAVEDATE or PRINTDATE field keeps the date it showed when the file was last saved (noted). A field inside what another field shows (a DOCPROPERTY inside a link field's text) is converted on its own and flagged: Word puts it back when the outer field is updated, unless that one is converted too.
+* Layout reference `none`: the source's render may show a recomputed field (LibreOffice recomputes some), the output shows the saved text.
+
+```json
+{"op": "unlink_fields", "params": {"types": ["DOCPROPERTY"]}}
+```
+
+V10 (`unlinked_fields`): the fields parsed again with the verifier's own parser (`verify/fields.py`), every changed paragraph checked item by item — the begin, separate and end characters and the field's own code gone, a simple field unwrapped, the result and everything else where it was — and the plan's list of fields per paragraph compared. (`examples/specs/unlink-docproperty-fields.json`.)
+
+#### `set_document_properties` — title, company, custom properties; clear the author names
+
+Only when you ask for it by name, and only the properties you name; every one of them is checked afterwards, and everything else in those parts must be exactly as it was.
+
+* `set` — `title`, `subject`, `author`, `keywords`, `comments`, `category`, `status`, `last_modified_by`, `company`, `manager`, each to your exact words (one line, at most 255 characters, no character you cannot see). Word keeps the first eight in `docProps/core.xml` and company and manager in `docProps/app.xml`.
+* `clear` — the same names; the property is removed. "Clear the author names" is `"clear": ["author", "last_modified_by"]`. A property already empty is already clear. Tracked changes and comments keep their authors' names — the plan says so when a file has any (`resolve_tracked_changes` and `remove_comments` deal with those).
+* `custom` — custom text properties (*File → Info → Properties → Advanced → Custom*), `{"Project Number": "1003"}`; an existing one keeps its place and takes the value (names are matched without regard to case, as Word does), a new one is added. A file without custom properties gets a `docProps/custom.xml` holding exactly the ones you asked for — the one part this batch may create, because creating it is the whole point of the request (CLAUDE.md rule 10). A custom property that holds a number, a date or yes/no is refused (`property-type`) — change it in Word.
+* `clear_custom` — custom properties to remove. A value already as you asked changes nothing.
+
+```json
+{"op": "set_document_properties",
+ "params": {"set": {"title": "Wet-Pipe Sprinkler Systems", "company": "ACME Fire Protection"},
+            "clear": ["author", "last_modified_by"],
+            "custom": {"Project Number": "1003"}}}
+```
+
+**Fields that show a property** — a TITLE field, `DOCPROPERTY Title`, `DOCPROPERTY "Project Number"` in a header — keep the value they showed when the file was last saved until Word updates fields (F9, or printing with *Update fields*). The plan flags every one of them. LibreOffice draws such a field with the new value at once, so the preview shows the new title; for a file with such a field the plan drops the page-layout reference (V7) with that reason. Mode: `untracked` when words are set (your words go into the file), `formatting` when only clearing. V10 (`document_properties`) reads every asked property again with its own code — the exact text, an absent element for a cleared one, the next pid and Word's property-set id for a new custom property — and compares everything else in `core.xml`, `app.xml` and `custom.xml` element for element (the member residual). A created `custom.xml` is compared whole with what it must hold, and the package relationships and `[Content_Types].xml` with the source plus exactly its one relationship and its one override. Refused besides: a file without a properties part for what was asked (`no-part`), one whose properties hold something Word itself does not write — a property twice, two custom properties with one name (`malformed-properties`). (`examples/specs/set-title-clear-authors.json`.)
+
+#### `set_document_state` — Track Changes off (or on), Mark as Final
+
+* `"track_changes": "off"` removes the setting Word opens a file with (`w:trackRevisions`); `"on"` adds it, in the place Word's schema gives it in `settings.xml`. A file whose tracking is **locked with a password** (*Review → Track Changes → Lock Tracking*) is refused (`protected`): unlock it in Word first. Pending tracked changes are not touched — accepting or rejecting them is `resolve_tracked_changes`.
+* `"final": true` does what Word's *File → Info → Protect Document → Mark as Final* does: the custom property `_MarkAsFinal` (yes) and the Status property `Final`; Word then opens the file read-only with a *Marked as Final* bar (anyone can click *Edit Anyway* — it is a signal, not protection). A file without custom properties gets a `docProps/custom.xml` holding just that one. `"final": false` takes both markers off (a status other than *Final* is yours and stays).
+
+```json
+{"op": "set_document_state", "params": {"track_changes": "off", "final": true}}
+```
+
+Mode `formatting` (no words of yours go in). V10 (`document_state`): the setting re-read — none left for off, exactly `<w:trackRevisions/>` for on, and an added one in its place in the schema's order (checked against the bundled schema by the kind itself: V5a cannot judge the order of `settings.xml` — see the note under "Not in this batch") — and the two Mark-as-Final markers; the member residual compares everything else in `settings.xml`, `core.xml` and `custom.xml`. Both operations are refused in one spec when they would touch the same property (the Status, say) or both add custom properties (they would take the same new pid) — run them as two specs or chain stages. (`examples/specs/mark-final-tracking-off.json`.)
+
+#### What Claude sees, and what it is told
+
+Every pattern's profile carries a `markup` summary (`profile.markup`): the comments and their authors (and how many are resolved), the tracked changes by author and kind and the dates they span, the highlight colours, the number of hidden runs, the run colours in use, the hyperlinks (external/internal), the field types, whether a watermark is there and what it says, the document properties, whether the file is marked final and whether tracking is locked. Claude's instructions name the batch's rules: the three operations of the changed method rules only when you ask for exactly that; a watermark's words and a property's value are your exact words (it asks when you did not give them — `compiler.placed_words` traces them like any replacement); `remove_notes` rules built from the profiles and stated as assumptions; `resolve_tracked_changes` as a spec of its own or a chain's first stage; a watermark beside tracked word changes as a second spec.
+
+#### Refusals, in plain words (batch 2)
+
+New codes (the set-aside report and `DIAGNOSTICS.md` say them the same way — `report.FAILURE_EXPLANATIONS`; `tests/test_batch2_integration.py` scans the batch's operation modules and fails on a code without an explanation): `revision-kind`, `paragraph-merge`, `partial-move`, `marks-in-change` (accept/reject), `watermark-exists`, `no-header`, `watermark-size` (watermarks), `field-span`, `nested-field`, `form-field` (fields and link fields), `no-part`, `protected`, `property-type`, `malformed-properties` (properties and settings). Widened to the new cases: `existing-revisions`, `structure`, `textbox`, `toggle-ambiguous` (now hidden too), `field-result`.
+
+**Not in this batch** (recorded in the design note): adding a picture watermark; comments whose marks sit in text boxes; joining paragraphs on accept/reject; table row and cell revisions; rejecting section or table property changes; highlight in styles; removing personal information on save (`w:removePersonalInformation`). V5a and `settings.xml`: the schema check stops at the first element out of place, so a file whose Track Changes setting stands first never had a later error reported (python-docx writes a zoom setting Word would call incomplete); turning Track Changes off then reached that error and failed a correct output. The baseline now also validates the original with its settings in the schema's order — that only reorders, so every error it finds is the original's own, and an error the operation really introduces still fails. A known limit, unchanged: the schema check drops messages that mention `hyphenationZone` (an old false alarm of the bundled schema), which also hides an order error in `settings.xml` — so the track-changes operation checks the order of the element it adds itself, against the bundled schema.
+
+### Built-in operations, batch 3: bold and page flow on chosen paragraphs, text colour, tab stops
+
+Abraham's third batch of prebuilt operations (2026-10-16; items 22–25 of his list, ★ = starred). Design note with every decision: `docs/BUILTIN_OPS_BATCH3_DESIGN.md` (taken on his behalf, as in batches 1 and 2; each can be changed).
+
+| # | You ask | Operation | Mode |
+|---|---|---|---|
+| 22 ★ | Bold, italic, underline, caps or small caps on chosen paragraphs (article titles bold) | `set_properties` — already built in the built-in round's part 1; worked examples and Claude's guidance added | formatting |
+| 23 ★ | Page-flow settings: keep with next, keep lines together, page break before, widow/orphan control (each PART on a new page, no stranded article titles) | `set_properties` paragraph flags — already built; "each PART on a new page" and "no stranded titles" taught to Claude, a worked example | formatting |
+| 24 | Text colour (the editor's blue text to black) | `set_properties` `color` + the **new run selector `color_in`** | formatting |
+| 25 | Tab stops on chosen paragraphs | the **new operation `set_tab_stops`** | formatting |
+
+#### Items 22 and 23: what you ask, and how it runs
+
+Both were already possible — they are what [`set_properties`](#formatting-properties-bold-caps-colour-keep-with-next-set_properties) was built for. What this batch adds is that the common phrasings come out right:
+
+* **"Make the article titles bold"** — `set_properties` `run.b` on the paragraphs of the article style (`style_in`, from the profiles' styles in use) or, where the numbers are typed, a pattern such as `^\d+\.\d{2}\s`. Tracked, so Word shows "Formatted: Bold"; titles already bold are left alone.
+* **"Start each PART on a new page"** — page break before on every PART heading **after the first**, so PART 1 stays on page one under the section number and title. The selector says it with what it already had: the PART pattern plus `after_heading_regex` of the same pattern (`examples/specs/part-on-new-page.json`).
+* **"No stranded article titles"** — keep with next on the article titles (and keep lines together when you ask that a paragraph never splits).
+* **Widow/orphan control** is on by default in Word: turning it on changes only paragraphs or styles that turned it off, and the plan says how many were already on.
+
+#### Item 24: text chosen by its colour
+
+`"select": {"runs": {"color_in": ["0000FF"]}}` chooses the runs (and paragraph marks) whose colour — set directly *or by a style* — is one of the listed colours; `set_properties` then sets the new one. So "the editor's blue text to black" changes the blue words and nothing else: hyperlinks, red text and a theme colour you did not name keep their colours (`examples/specs/editors-blue-to-black.json`). Colours are given as the profiles show them — six hex digits (`0000FF`) or a theme colour name (`accent1`) — and Claude names them in the assumptions. **Black** is Word's *Automatic* colour (`auto`, what body text normally has) unless you ask for an explicit black (`000000`). A whole-document recolour is plain formatting; one narrowed to particular paragraphs is tracked (§14.1). `set_font` takes the same selector ("make the blue notes Arial"). Both sides read the colour on their own: the op through `ops/selectors.effective_color`, the verifier through `verify/props._v_run_prop`.
+
+#### `set_tab_stops` — tab stops on chosen paragraphs
+
+```json
+{"op": "set_tab_stops",
+ "select": {"scope": ["footers"], "paragraphs": "all"},
+ "params": {"set": [{"pos": "center", "align": "center"}, {"pos": "right_margin", "align": "right"}],
+            "clear_others": true}}
+```
+
+* **`set`** — the stops the paragraphs must have: `pos` in twips from the left margin (1440 = 1 inch) **or `"right_margin"` / `"center"`**, `align` left | center | right | decimal | bar, `leader` none | dot | hyphen | underscore | heavy | middleDot. **`clear`** — positions where no stop may be left. **`clear_others`** — every other stop in effect (the paragraph's own and its style's) is cleared, so only the asked stops remain.
+* **Margins measured per file and per section.** `right_margin` is the text width of the paragraph's own section (page width less the side margins and gutter), `center` half of it — so a batch mixing 1" and 1.25" margins gets each file's own positions. That is the fix for the classic footer whose page number sits past the right margin because the Footer style's 6.5" stop was never moved: in the fixture, section 2's "PAGE" ended at 558 pt on a page whose right margin is at 522 pt; after the op it ends at 522.1 pt. A header or footer shown by sections with different margins has no single right margin — that file is set aside (`tab-position`), never given a position that is wrong on some pages.
+* **Inherited stops count, as in Word.** A stop the paragraph's style gives is cleared with a *clear entry* (as Word writes it), the paragraph's own stop is simply removed; an asked stop is written only where it is not already in effect; a paragraph that already has what you asked is left alone ("already as asked, left alone: 7 paragraph(s)"); the paragraph's tab list ends sorted by position, and goes when nothing is left in it.
+* **Numbered paragraphs.** A list definition can carry its own tab (the one after the number), which the op does not read. On a numbered paragraph only the paragraph's own entries count as certain: an explicit `clear` writes a clear entry there even where no style sets a stop, and `clear_others` leaves the list's own tab as it is — flagged in the preview.
+* **Tracked or plain** as the other paragraph formatting (§14.1: plain for a whole-part selection, tracked when particular paragraphs are targeted), one `w:pPrChange` per changed paragraph; a paragraph already carrying someone's paragraph change refuses tracked (`tracked-format`) and is changed-and-flagged when plain. Direct formatting only — tab stops in style definitions are not in this batch.
+* **Overlaps.** Tab stops, spacing/indents (`set_paragraph_props`) and keep-with-next/page-break flags (`set_properties`) all live in a paragraph's properties: on the same paragraphs they are separate specs (a [chain](#chains-several-recipes-one-after-another)); bold or colour on the same paragraphs share a spec. Two tab-stop operations over the same paragraph are a plan-time `conflict` even where the first finds it already as asked (its check reads that paragraph's stops in the output; Codex on #28). A margin position beside a page-setup change in one spec is a plan-time `conflict` (the position would be measured on the old margins).
+* **Verified by V10's `tab_stops` kind** (`verify/tabs.py`, nothing shared with the op): the selection, the margin positions (its own section reader and widths), the inherited stops, the numbering rule and the expected tab list of every paragraph are re-derived from the source; each changed paragraph's list must be exactly that (kept entries untouched, new ones exactly as written, in order); and in the output every selected paragraph must show the asked stops, no stop at a cleared position, and — with `clear_others` — nothing else. Everything else is the residual's.
+
+The profiles show each style's tab stops (`tab_stops` in styles in use), so Claude can name the positions to clear; Claude is told to use `right_margin`/`center` for "at the right margin" (`examples/specs/footer-right-tab.json`).
+
+#### Refusals, in plain words (batch 3)
+
+One new code, `tab-position` (a margin position with no single text width, or one that lands on another asked position in a file) — explained in the set-aside report and `DIAGNOSTICS.md` like every other (`report.FAILURE_EXPLANATIONS`; `tests/test_tab_stops.py` scans the operation for codes without an explanation). Malformed tab lists (two entries at one position, an entry without a position) are `structure`.
+
+**Not in this batch** (recorded in the design note): tab stops in style definitions; bold or colour on part of a paragraph (a run-in heading such as "A. Fire Pumps:"); a selector by list level; a theme colour as a colour to set.
+
 ### Talk it through with Claude
 
 ![Claude asks with choices on the Describe step](docs/gui-chat.png)
@@ -1018,7 +1314,7 @@ Every call goes through one module, `llm.py` (the conversation, the visual check
 
 **What Claude can see and do.** Read-only tools over the batch, always: `inspect_profile`, `list_styles`, `sample_paragraphs`, `show_part_text`, `read_template`; in the chat also `view_pages`, and since 2026-10-16 `list_library` and `read_library_item` (your library, read-only — see ["Claude and your library"](#claude-and-your-library)). Its answers are `ask_user` and `submit_editspec`. The custom-transform writer reads the samples' XML (`show_xml`, `find_paragraphs`, `list_styles`, `show_part_text`) and answers with `submit_op`. The visual check answers with `submit_review`; the advisor with `submit_recommendation` or `submit_editspec`. Nothing Claude produces is applied without passing the engine's checks and your approval, and Claude never edits a file itself.
 
-**What Claude does not do, by design** (decided 2026-10-15, unchanged): accept or reject tracked changes, edit document properties (`docProps`), or switch track changes on or off. Those wait for verified built-in operations.
+**What Claude does not do, by design** (decided 2026-10-15): accept or reject tracked changes, edit document properties (`docProps`), or switch track changes on or off — on its own initiative. Since built-in operations batch 2 (2026-10-16) those three exist as verified built-in operations (`resolve_tracked_changes`, `set_document_properties`, `set_document_state`), and Claude writes them only when you ask for exactly that (see ["Three rules of the method changed"](#three-rules-of-the-method-changed--at-your-request-and-only-this-far)); a custom transform still can never do any of them.
 
 ---
 
@@ -1519,12 +1815,16 @@ spec-surgeon/
 │   │                                 built-in batch 1: textedit.py (the in-paragraph edit core), tables.py (table
 │   │                                 files), images.py (picture files), replace_table (+ set_issue_stamp),
 │   │                                 fill_variables, resolve_options, filter_tagged, end_of_section, agree, naming,
-│   │                                 swap_image
+│   │                                 swap_image; built-in batch 2 (comments, highlight, revisions, hidden,
+│   │                                 empty_paragraphs, watermark, links, docprops + fields, markup, removal);
+│   │                                 built-in batch 3: set_tab_stops
 │   ├── jobs/                         base.py (Job, OpJob), page_numbering.py, tracked_replace.py — v0.1.0 aliases over ops/
 │   ├── verify/                       INDEPENDENT: reader.py, textcheck.py, xsd.py, geometry.py, suite.py, props.py (V10),
 │   │                                 template.py (V10 templating kinds), explain.py (why a check failed, in specifics),
 │   │                                 built-in batch 1: edits.py (the item model), tables.py, textops.py (the word-
-│   │                                 changing kinds), images.py (image_swaps)
+│   │                                 changing kinds), images.py (image_swaps); built-in batch 2: comments.py,
+│   │                                 highlight.py, revisions.py, removal.py, watermark.py, links.py, docprops.py
+│   │                                 (+ fields.py, markup.py); built-in batch 3: tabs.py (tab_stops)
 │   ├── render/                       word_com.py, libreoffice.py
 │   ├── schemas/                      vendored ECMA-376 / ISO 29500 transitional XSDs
 │   └── skill/                        the docx-surgical-edit skill (the method; `spec_surgeon.SKILL_DIR`)
@@ -1756,12 +2056,20 @@ Built-in operations, batch 1 (2026-10-16; see ["Built-in operations, batch 1"](#
 | `test_snippets.py` | the library kind (saved, listed, shown, deleted; one plain paragraph; one name per item; a hand-edited file refused; taken from a document); insertion after the anchor in every file that has it, files without it unchanged, a twice-matching anchor set aside; the command line without a key; the conversation (offered, the pick approving its words and Claude writing the spec; words refused before the pick; a snippet edited between offer and pick; chat only); the window (New snippet…, use, Insert it) |
 | `test_batch1_integration.py` | the words the new ops place traced to the user; tables and pictures as spec inputs (resolved, stored absolute in a recipe, in the approval token, a recipe whose table is gone not offered); every new refusal code explained; the INPUT FILES listing and `read_input_file` refusing any path it did not list |
 
+Built-in operations, batch 3 (2026-10-16; see ["Built-in operations, batch 3"](#built-in-operations-batch-3-bold-and-page-flow-on-chosen-paragraphs-text-colour-tab-stops)) — 1600 tests pass, 4 skip (all pass in the container but the Windows-only Credential Manager round trip and three tests that need the `anthropic` package, which skip there). The fixture is `make_fixtures.build_tabs()` (two sections with different margins, a header shown by both, inherited and own stops, numbered paragraphs, a pending paragraph change, unsorted stops; blue set directly, by a character style and by a paragraph style, a theme blue, red and hyperlink blue).
+
+| File | Covers |
+|---|---|
+| `test_tab_stops.py` | footer stops at each section's own right margin and centre, a header shown at two widths refused, body paragraphs measuring their own section, two positions meeting in one file, inherited stops cleared with clear entries (tracked, the snapshot the old pPr), already as asked left alone, numbered paragraphs, unsorted stops kept and sorted, the last entry removing the list, the parameters, malformed lists; planted: a wrong position, a missing clear entry, a dropped leader, an untouched stop removed, entries out of order, a neighbouring property changed, a no-op paragraph change, an empty list left — and shared defects in the clear rule, the margin (the page instead of the text), the section reader, the numbering rule, the inherited stops, the already rule, the default alignment and the default scope, each caught by V10 alone; the two section readers compared on five fixtures and the two rules on 3,000 random cases; conflicts with paragraph-property ops and with a page-setup change; the catalog, prompt, profile, explanations and the three worked examples through a batch |
+| `test_color_selector.py` | "the editor's blue to black" changing only the blue (direct, character style, paragraph style and its mark), theme names and values, a tracked recolour, `set_font` with the selector, bad colour lists; the two readings compared on every run and mark of two fixtures; planted: a blue run left blue, and shared matchers that forget the styles or the theme names |
+
 ---
 
 ## Known limits of the prototype
 
 * **A hidden Header/Footer style in the target** (`w:vanish` on the style a copied header paragraph uses, with the template's own style not hidden): the copy passes every XML check and renders empty. Rendering on catches it (V6/V7 fail and the output goes to `failed/`); with rendering off it is delivered. Recorded as the 2026-10-14 audit's F11 and deferred — keep rendering on for templating runs.
 * **Template specs** (`slot_markers: ["reference"]`): a value the architect's header/footer shows in another form ("087100", hyphens, run into other text), through a field (STYLEREF, a document property) or in a text box is refused, not converted — fix the template spec (or name the exact text with `in_template`). The same rule refuses a short one-word title that also sits inside a longer word of the header (the title "DOORS" with a project called "OUTDOORS PAVILION"): the engine cannot tell that from the title glued to other text, and refusing is the safe side. An occurrence is replaced wherever its words stand on their own, also inside a longer phrase ("DOOR HARDWARE SCHEDULE" for the title "DOOR HARDWARE"): check the ⟦ ⟧ notes in the preview. Each spec's value is placed as that spec writes it — a spec whose number is "210500" gets "210500" where the architect wrote "08 71 00". Text in DrawingML shapes (`a:t`, WordArt, charts) is not searched.
+* **Tab stops** (`set_tab_stops`): direct formatting only (style definitions are not changed); a list definition's own tab (after the number) is not read — an explicit clear writes a clear entry on numbered paragraphs, `clear_others` leaves the list's tab (flagged); `right_margin`/`center` are refused in footnotes, endnotes and comments and in a header or footer shown at two widths.
 * **Font sizes:** the size goes only where a run, style or docDefaults sets one; list-number sizes in `numbering.xml`, the complex-script size (`w:szCs`) and conditional table-style formatting are not changed or modelled. The effective-size post-condition does not model `tblStylePr` either.
 * Two job modules. Header/footer templating is now an op (`apply_header_footer_template`, Phase 2, run through EditSpecs); numbering conversion is described in the skill's playbooks but not yet implemented.
 * `tracked-replace` edits text whose run sits directly under the paragraph, a hyperlink, an sdt content, or a `w:ins`; a target inside an insertion that wraps a hyperlink/sdt is an exception. Paragraph-mark revisions (deleting whole paragraphs tracked) are not implemented.

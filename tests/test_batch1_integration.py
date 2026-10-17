@@ -142,7 +142,8 @@ def test_every_refusal_code_of_the_new_ops_is_explained():
 def test_the_input_files_beside_the_documents_are_listed_and_only_they_can_be_read(folder, tmp_path):
     docs = sorted(folder.glob("*.docx"))
     listed = inputs.near(docs)
-    assert [p.name for p in listed] == ["PROJECT.xlsx", "logo.png", "pairs.csv"]
+    # Path ordering is case-insensitive on Windows; check the same exact files on every platform.
+    assert sorted(p.name for p in listed) == ["PROJECT.xlsx", "logo.png", "pairs.csv"]
     over = {Path(o["path"]).name: o for o in inputs.listing(docs)}
     assert over["PROJECT.xlsx"]["sheets"] == [{"name": "Sites", "headers": ["Variable", "VA1", "VA3"], "rows": 3}]
     assert over["logo.png"] == {"path": str(folder / "logo.png"), "kind": "picture", "format": "png", "pixels": [6, 6]}
