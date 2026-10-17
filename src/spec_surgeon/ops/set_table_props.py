@@ -15,8 +15,10 @@ Parameters (at least one of the first five):
 * ``width`` — ``{"pct": 1–100}``, ``{"twips": 1–31680}`` or ``"auto"``;
 * ``repeat_header_rows`` — n ≥ 0: the first n rows repeat at the top of every page, no later row does;
 * ``cant_split`` — true / false: every row is kept on one page / may break across pages;
-* ``clear_cell_overrides`` (default false; with ``borders`` or ``cell_margins``) — every cell's own ``w:tcBorders``
-  (with borders) / ``w:tcMar`` (with cell margins) goes, so the table's show.
+* ``clear_cell_overrides`` (default false; with ``borders`` or ``cell_margins``) — the sides of every own cell's
+  ``w:tcBorders`` / ``w:tcMar`` that compete with what was asked go, so the table's show (``cell_sides``: with borders —
+  always the whole set — every side but the diagonals ``tl2br``/``tr2bl``; with cell margins only the asked sides, each
+  with its start/end spelling); an emptied ``w:tcBorders`` / ``w:tcMar``, then an emptied ``w:tcPr``, goes.
 
 Definitions (CLAUDE.md lists them among the definitions that must stay identical on both sides; the verifier's reading
 is verify/tableprops.py):
@@ -40,15 +42,20 @@ is verify/tableprops.py):
   (``ooxml.TBLPR_ORDER``, ``TRPR_ORDER``; tblW, tblBorders, tblCellMar in that order; cantSplit before tblHeader); a row
   without a ``w:trPr`` gets one right after its ``w:tblPrEx`` (first otherwise); an emptied ``w:trPr`` / ``w:tcPr`` goes.
 
-Refused: ``tracked: true`` (``bad-params``); a selected table in a text box (``textbox``); a table without ``w:tblPr``,
-a header-row count above the table's rows, rows or cells wrapped in a content control or custom XML when rows or cells
-are set (``table-structure``); a table whose own ``w:tblBorders`` (borders asked) or ``w:tblCellMar`` (cell margins
-asked), or whose style chain's ``w:tblBorders`` (borders asked), spells a side ``start``/``end`` (``conflict-property``:
-which side Word means depends on the table's direction — say left/right in Word first). Flagged, never refused: cells
-that keep their own borders / margins (without ``clear_cell_overrides``), rows whose ``w:tblPrEx`` overrides the table,
-a table style's conditional formatting (``w:tblStylePr``) or cell-level ``w:tcPr`` with borders (not modelled), and a
-pending tracked table/row/cell property change on a changed table, row or cell (reject-all would restore that older
-snapshot).
+Left alone and flagged (in this order, checked before any refusal of that table): a table in a text box when the
+selection is every table (``table_select.selects_all``; a selection that names tables refuses it, ``textbox``); a table
+with fewer own rows than the header rows asked (after the rows-in-a-container refusal). Refused: ``tracked: true``
+(``bad-params``); a table without ``w:tblPr``, rows or cells wrapped in a content control or custom XML when rows or
+cells are set (``table-structure``); a table that runs right to left (``w:bidiVisual`` on in its own ``w:tblPr`` or any
+level of its style chain) when borders or cell margins are asked, a table whose own ``w:tblBorders`` (borders asked) or
+``w:tblCellMar`` (cell margins asked), or whose style chain's ``w:tblBorders`` (borders asked), spells a side
+``start``/``end`` (``conflict-property``: which side Word means depends on the table's direction — say left/right in
+Word first). Flagged, never refused: cells that keep their own borders / margins (without ``clear_cell_overrides``) and
+rows whose ``w:tblPrEx`` overrides the table — every row and cell of the table counted, those in a content control
+too —, a table style's conditional formatting (``w:tblStylePr``) or cell-level ``w:tcPr`` with borders, or
+``w:tblStylePr`` setting header rows / row splitting (not modelled), header rows asked of a floating (``w:tblpPr``) or
+nested table (Word repeats header rows only for tables in the text flow), and a pending tracked table/row/cell property
+change on a changed table, row or cell (reject-all would restore that older snapshot).
 
 Verified by V10's ``table_props`` kind (verify/tableprops.py), which re-derives all of the above on its own.
 """
@@ -66,12 +73,15 @@ from ..package import W, DocxPackage
 from . import register
 from .base import JobException, Op, PlanFragment
 from .selectors import StyleSheet, scope_parts
-from .table_select import (build, cells_wrapped, check_table_selector, element_sig, in_text_box, own_cells, own_rows,
-                           rows_wrapped, selection_reads, style_chain, style_chain_reads, table_selected)
+from .table_select import (all_cells, all_rows, build, cells_wrapped, check_table_selector, element_sig, in_text_box,
+                           is_nested, own_cells, own_rows, right_to_left, rows_wrapped, selection_reads, selects_all,
+                           style_chain, style_chain_reads, table_selected)
 
 TABLE_SIDES = ("top", "left", "bottom", "right", "insideH", "insideV")
 MARGIN_SIDES = ("top", "left", "bottom", "right")
 ALIASES = ("start", "end")
+CELL_BORDER_SIDES = ("top", "start", "left", "bottom", "end", "right", "insideH", "insideV")   # never the diagonals
+MARGIN_ALIAS = {"left": "start", "right": "end"}
 NOT_VISIBLE = ("nil", "none")
 OFF = ("0", "false", "off")
 TBL_ELEMENTS = ("tblW", "tblBorders", "tblCellMar")         # written in this order (schema order)
@@ -294,19 +304,52 @@ def decide_rows(tbl, chain: Sequence[Any], asked: Asked) -> List[Tuple[int, Dict
     return out
 
 
-def decide_cells(tbl, asked: Asked) -> List[Tuple[int, int, List[str]]]:
-    """(row, cell, [names]) of every own cell whose own borders / margins go (clear_cell_overrides)."""
+def cell_sides(asked: Asked) -> Dict[str, List[str]]:
+    """The sides of a cell's own ``w:tcBorders`` / ``w:tcMar`` that compete with what was asked: with borders (always
+    the whole border set) every side but the diagonals (``tl2br``/``tr2bl`` have no table-level counterpart); with cell
+    margins only the asked sides — each with its start/end spelling (a right-to-left table is refused)."""
+    out: Dict[str, List[str]] = {}
+    if asked.borders is not None:
+        out["tcBorders"] = list(CELL_BORDER_SIDES)
+    if asked.margins is not None:
+        out["tcMar"] = [s for side in MARGIN_SIDES if side in asked.margins for s in (side, MARGIN_ALIAS.get(side)) if s]
+    return out
+
+
+def competing(tc, name: str, sides: Sequence[str]) -> List[str]:
+    """The sides (local names, sorted) a cell's own ``name`` elements hold among ``sides``."""
+    found = set()
+    for holder in tc.findall(f"{W}tcPr/{W}{name}"):
+        found |= {etree.QName(c).localname for c in holder if isinstance(c.tag, str) and c.tag.startswith(W)
+                  and etree.QName(c).localname in sides}
+    return sorted(found)
+
+
+def decide_cells(tbl, asked: Asked) -> List[Tuple[int, int, Dict[str, List[str]]]]:
+    """(row, cell, {element: [sides that go]}) of every own cell whose own borders / margins compete with what was
+    asked (clear_cell_overrides)."""
     out = []
     if not asked.clear_cells:
         return out
-    names = asked.cell_names()
+    wanted = cell_sides(asked)
     for r, tr in enumerate(own_rows(tbl)):
         for c, tc in enumerate(own_cells(tr)):
-            tcpr = tc.find(W + "tcPr")
-            gone = [n for n in names if tcpr is not None and tcpr.find(W + n) is not None]
+            gone = {n: s for n, s in ((n, competing(tc, n, sides)) for n, sides in wanted.items()) if s}
             if gone:
                 out.append((r, c, gone))
     return out
+
+
+def clear_cell(tc, gone: Dict[str, List[str]]) -> None:
+    """The listed sides leave the cell's own elements; an emptied element, then an emptied w:tcPr, goes."""
+    tcpr = tc.find(W + "tcPr")
+    for name, sides in gone.items():
+        for holder in tcpr.findall(W + name):
+            for c in list(holder):
+                if isinstance(c.tag, str) and c.tag in {W + s for s in sides}:
+                    holder.remove(c)
+            _drop_if_empty(holder)
+    _drop_if_empty(tcpr)
 
 
 def el_data(el) -> Any:
@@ -369,9 +412,13 @@ def _describe(asked: Asked) -> str:
     return "; ".join(out)
 
 
-def _alias_refusal(tblpr, chain: Sequence[Any], asked: Asked, where: str) -> None:
+def _alias_refusal(tbl, chain: Sequence[Any], asked: Asked, where: str) -> None:
     def spells(el) -> bool:
         return el is not None and any(el.find(W + s) is not None for s in ALIASES)
+    tblpr = tbl.find(W + "tblPr")
+    if (asked.borders is not None or asked.margins is not None) and right_to_left(tbl, chain):
+        raise JobException(f"{where} runs right to left (w:bidiVisual), so which side 'left' and 'right' name is not "
+                           f"certain — set its borders and margins in Word", "conflict-property", {"table": where})
     if asked.borders is not None:
         if spells(tblpr.find(W + "tblBorders")):
             raise JobException(f"{where}: its own borders name a side start/end; which side Word means depends on the "
@@ -387,6 +434,30 @@ def _alias_refusal(tblpr, chain: Sequence[Any], asked: Asked, where: str) -> Non
                            {"table": where})
 
 
+def disposition(tbl, chain: Sequence[Any], asked: Asked, every: bool, where: str) -> Optional[str]:
+    """Why a selected table is left alone ("in a text box" under an every-table selection; "too few rows" for the header
+    rows), or None to plan it; ``JobException`` for a refusal — in this order: text box, no w:tblPr, rows in a container
+    (rows or cells set), too few rows, right to left / start-end sides, cells in a container (cells cleared)."""
+    if in_text_box(tbl):
+        if every:
+            return "in a text box"
+        raise JobException(f"{where} lies in a text box (Word keeps two copies of a text box)", "textbox",
+                           {"table": where})
+    if tbl.find(W + "tblPr") is None:
+        raise JobException(f"{where} has no table properties (w:tblPr)", "table-structure", {"table": where})
+    rows = own_rows(tbl)
+    if (asked.rows or asked.clear_cells) and rows_wrapped(tbl):
+        raise JobException(f"{where} has rows inside a content control or custom XML; its rows cannot be numbered "
+                           f"safely", "table-structure", {"table": where})
+    if asked.header_rows is not None and asked.header_rows > len(rows):
+        return "too few rows"
+    _alias_refusal(tbl, chain, asked, where)
+    if asked.clear_cells and any(cells_wrapped(tr) for tr in rows):
+        raise JobException(f"{where} has cells inside a content control or custom XML", "table-structure",
+                           {"table": where})
+    return None
+
+
 def _conditional_borders(chain: Sequence[Any]) -> bool:
     for st in chain:
         if st.find(f"{W}tcPr/{W}tcBorders") is not None:
@@ -395,6 +466,11 @@ def _conditional_borders(chain: Sequence[Any]) -> bool:
             if c.find(f"{W}tblPr/{W}tblBorders") is not None or c.find(f"{W}tcPr/{W}tcBorders") is not None:
                 return True
     return False
+
+
+def _conditional_rows(chain: Sequence[Any], names: Sequence[str]) -> bool:
+    """A table style's conditional formatting (w:tblStylePr) sets one of the row elements asked (not modelled)."""
+    return any(c.find(f"{W}trPr/{W}{n}") is not None for st in chain for c in st.findall(W + "tblStylePr") for n in names)
 
 
 @register
@@ -450,7 +526,11 @@ class SetTableProps(Op):
         changed: Dict[str, Dict[str, list]] = {}
         n_tables = n_rows = n_cells = already_n = selected_n = 0
         keep_cells = {"tcBorders": 0, "tcMar": 0}
-        exceptions = conditional = older_tbl = older_tr = older_tc = 0
+        exceptions = conditional = conditional_rows = older_tbl = older_tr = older_tc = 0
+        boxed: List[str] = []
+        short: List[str] = []
+        floating: List[str] = []
+        wanted_sides = cell_sides(asked)
         for part in parts:
             root = pkg.xml(part)
             frag.touches += sorted(selection_reads(part, root, pred))
@@ -459,27 +539,18 @@ class SetTableProps(Op):
             for k, tbl in enumerate(root.iter(W + "tbl")):
                 if not table_selected(pred, tbl, k, sheet):
                     continue
-                selected_n += 1
                 where = f"{part} table {k}"
-                if in_text_box(tbl):
-                    raise JobException(f"{where} lies in a text box (Word keeps two copies of a text box)", "textbox",
-                                       {"part": part, "table": k})
-                tblpr = tbl.find(W + "tblPr")
-                if tblpr is None:
-                    raise JobException(f"{where} has no table properties (w:tblPr)", "table-structure",
-                                       {"part": part, "table": k})
                 chain, _missing = style_chain(tbl, sheet)
-                _alias_refusal(tblpr, chain, asked, where)
+                skip = disposition(tbl, chain, asked, selects_all(pred), where)
+                if skip == "in a text box":                 # every table: this one is left alone and said so
+                    boxed.append(where)
+                    continue
+                selected_n += 1
                 rows = own_rows(tbl)
-                if (asked.rows or asked.clear_cells) and rows_wrapped(tbl):
-                    raise JobException(f"{where} has rows inside a content control or custom XML; its rows cannot be "
-                                       f"numbered safely", "table-structure", {"part": part, "table": k})
-                if asked.clear_cells and any(cells_wrapped(tr) for tr in rows):
-                    raise JobException(f"{where} has cells inside a content control or custom XML", "table-structure",
-                                       {"part": part, "table": k})
-                if asked.header_rows is not None and asked.header_rows > len(rows):
-                    raise JobException(f"{where} has {len(rows)} row(s); {asked.header_rows} header row(s) were asked",
-                                       "table-structure", {"part": part, "table": k, "rows": len(rows)})
+                if skip:                                    # too short for the header rows: left alone, said so
+                    short.append(f"{where} ({len(rows)} row(s))")
+                    continue
+                tblpr = tbl.find(W + "tblPr")
                 # what the prediction and V10's post-condition read (rule 9): the table's style (map_styles,
                 # apply_table_style restyle it), its style chain's table properties, and — soft, whether or not they
                 # change — the asked elements of the table, its rows and (clearing) its cells
@@ -496,14 +567,20 @@ class SetTableProps(Op):
                 cell_gets = decide_cells(tbl, asked)
                 if asked.borders is not None and _conditional_borders(chain):
                     conditional += 1
-                if asked.borders is not None or asked.margins is not None or asked.width is not None:
-                    exceptions += sum(1 for tr in rows if tr.find(W + "tblPrEx") is not None and any(
+                if asked.rows and _conditional_rows(chain, asked_row):
+                    conditional_rows += 1
+                if asked.header_rows and (tblpr.find(W + "tblpPr") is not None or is_nested(tbl)):
+                    floating.append(where)
+                # the flags count every row and cell of the table, those inside a content control too
+                every_row = all_rows(tbl)
+                if asked_tbl:
+                    exceptions += sum(1 for tr in every_row if any(
                         tr.find(f"{W}tblPrEx/{W}{n}") is not None for n in asked_tbl))
                 if not asked.clear_cells:
-                    for tr in rows:
-                        for tc in own_cells(tr):
-                            for n in asked.cell_names():
-                                keep_cells[n] += int(tc.find(f"{W}tcPr/{W}{n}") is not None)
+                    for tr in every_row:
+                        for tc in all_cells(tr):
+                            for n, sides in wanted_sides.items():
+                                keep_cells[n] += int(bool(competing(tc, n, sides)))
                 if not (tbl_gets or row_gets or cell_gets):
                     already_n += 1
                     continue
@@ -524,7 +601,7 @@ class SetTableProps(Op):
                     older_tc += int(own_cells(rows[r])[c].find(f"{W}tcPr/{W}tcPrChange") is not None)
                 items.append([k, {n: el_data(e) for n, e in tbl_gets.items()},
                               [[r, {n: el_data(e) for n, e in g.items()}] for r, g in row_gets],
-                              [[r, c, names] for r, c, names in cell_gets]])
+                              [[r, c, gone] for r, c, gone in cell_gets]])
                 if tbl_gets:
                     record["tables"].append([k, sorted(tbl_gets)])
                 record["rows"] += [[k, r, sorted(g)] for r, g in row_gets]
@@ -547,8 +624,20 @@ class SetTableProps(Op):
                           + " — never tracked")
         if already_n:
             frag.notes.append(f"already as asked, left alone: {already_n} table(s)")
-        if not selected_n:
+        if not selected_n and not boxed and not short:
             frag.notes.append("no table in this file matches the selection: nothing to change")
+        if boxed:
+            frag.flags.append(f"{len(boxed)} table(s) in a text box left alone (Word keeps two copies of a text box): "
+                              f"{boxed}")
+        if short:
+            frag.flags.append(f"{len(short)} table(s) have fewer rows than the {asked.header_rows} header row(s) asked "
+                              f"and are left alone: {short}")
+        if floating:
+            frag.flags.append(f"{len(floating)} table(s) get header rows but are floating (w:tblpPr) or nested in "
+                              f"another table: Word repeats header rows only for tables in the text flow — {floating}")
+        if conditional_rows:
+            frag.flags.append(f"{conditional_rows} table(s) use a table style whose conditional formatting (first "
+                              f"row, banding …) sets header rows or row splitting of its own — not modelled.")
         if asked.borders is not None:
             frag.notes.append("a side not asked that the table's style shows is written as 'nil' (no border), so the "
                               "asked borders are the table's whole border set")
@@ -585,10 +674,6 @@ class SetTableProps(Op):
                         if name in g:
                             write_element(trpr, name, el_from(g[name]), TRPR_ORDER)
                     _drop_if_empty(trpr)
-                for r, c, names in cgets:
-                    tcpr = own_cells(rows[r])[c].find(W + "tcPr")
-                    for name in names:
-                        for old in tcpr.findall(W + name):
-                            tcpr.remove(old)
-                    _drop_if_empty(tcpr)
+                for r, c, gone in cgets:
+                    clear_cell(own_cells(rows[r])[c], gone)
             pkg.write_xml(part, root)

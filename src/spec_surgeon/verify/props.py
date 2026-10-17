@@ -545,6 +545,7 @@ class Ctx:
         self.strip_tbl: Dict[str, Dict[int, Set[str]]] = {}                # part → {ordinal: tblPr child names}
         self.strip_tr: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}     # part → {(ordinal, row): trPr child names}
         self.strip_tc: Dict[str, Dict[Tuple[int, int, int], Set[str]]] = {}   # part → {(ordinal, row, cell): tcPr …}
+        self.strip_tblprex: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}  # part → {(ordinal, row): tblPrEx …}
 
     def view(self, part):
         if part not in self.views:
@@ -2136,11 +2137,13 @@ def mask_picture_sizes(drawing) -> None:
 
 def _strip_table_props(ctx: Ctx, part: str, s_root, o_root) -> None:
     """Built-in batch 5: the table, row and cell property elements a kind checked (``strip_tbl``/``strip_tr``/
-    ``strip_tc``) leave both sides; a row's ``w:trPr`` or a cell's ``w:tcPr`` left empty by that goes on both sides."""
+    ``strip_tc``/``strip_tblprex``) leave both sides; a row's ``w:trPr`` or ``w:tblPrEx`` or a cell's ``w:tcPr`` left
+    empty by that goes on both sides."""
     by_tbl = ctx.strip_tbl.get(part, {})
     by_tr = ctx.strip_tr.get(part, {})
     by_tc = ctx.strip_tc.get(part, {})
-    if not (by_tbl or by_tr or by_tc):
+    by_ex = ctx.strip_tblprex.get(part, {})
+    if not (by_tbl or by_tr or by_tc or by_ex):
         return
 
     def strip(holder, names: Set[str]) -> None:
@@ -2165,6 +2168,10 @@ def _strip_table_props(ctx: Ctx, part: str, s_root, o_root) -> None:
             trs = rows(k)
             if r < len(trs):
                 strip(trs[r].find(W + "trPr"), names)
+        for (k, r), names in by_ex.items():
+            trs = rows(k)
+            if r < len(trs):
+                strip(trs[r].find(W + "tblPrEx"), names)
         for (k, r, c), names in by_tc.items():
             trs = rows(k)
             tcs = [x for x in trs[r] if x.tag == W + "tc"] if r < len(trs) else []

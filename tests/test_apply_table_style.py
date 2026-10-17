@@ -154,17 +154,17 @@ def test_a_template_style_is_imported_and_clear_lets_it_show(src, tpl):
     assert kids(t[1].find(W + "tblPr")) == ["tblStyle", "tblW", "tblLook"]             # own margins gone
     a = plan.property_assertions[0]
     assert a["changed"][MAIN][0] == [0, True, ["shd", "tblBorders"], [[0, 0, ["shd"]], [1, 0, ["tcBorders"]],
-                                                                       [2, 1, ["tcMar"]]]]
+                                                                       [2, 1, ["tcMar"]]], []]
     assert a["expected_cells"] == 3
     assert any(n.get(W + "styleId") == "TblMine" for n in DocxPackage(out).xml(STYLES).findall(W + "style"))
 
 
 def test_existing_replace_takes_the_templates_definition_and_keep_the_documents(src, tpl):
-    plan, out, rec = ats(src, {"tables": {"index_range": [7, 7]}}, style="TableGrid", template=tpl,
+    plan, out, rec = ats(src, {"tables": {"index_range": [1, 1]}}, style="TableGrid", template=tpl,
                          existing="replace")
     assert rec.passed, rec.to_markdown()
-    assert plan.property_assertions[1]["replaced"] == ["TableGrid"]
-    assert plan.property_assertions[0]["expected_tables"] == 0             # table 7 already is TableGrid: the definition
+    assert plan.property_assertions[1]["replaced"] == ["TableGrid"]        # table 1 is restyled: the definition too
+    assert plan.property_assertions[0]["expected_restyled"] == 1
     # keep (the default): the file's own Table Grid, nothing imported — and the template still read (rule 12)
     plan, out, rec = ats(src, {"tables": {"index_range": [1, 1]}}, style="Table Grid", template=tpl)
     assert rec.passed and [a["kind"] for a in plan.property_assertions] == ["applied_table_style"]
@@ -176,7 +176,7 @@ def test_clear_alone_on_a_table_already_in_the_style(src):
     assert rec.passed, rec.to_markdown()
     a = plan.property_assertions[0]
     assert a["changed"][MAIN] == [[0, False, ["shd", "tblBorders"], [[0, 0, ["shd"]], [1, 0, ["tcBorders"]],
-                                                                    [2, 1, ["tcMar"]]]]]
+                                                                    [2, 1, ["tcMar"]]], []]]
     assert a["expected_restyled"] == 0 and style_of(tables(out)[0]) == "TableGrid"
 
 
@@ -305,12 +305,15 @@ def test_transform_and_verifier_decide_alike_on_every_table(tpl):
             for tbl, vtbl in zip(pkg.xml(part).iter(W + "tbl"), vpkg.xml(part).iter(W + "tbl")):
                 for sid in ("TableGrid", "TableNormal", "ArchGrid", "ArchTable"):
                     assert (table_style_id(tbl, sheet) != sid) == (v_table_style(vtbl, vst) != sid)
-                names, cs = ats_module.table_clearing(tbl)
+                names, cs, rs = ats_module.table_clearing(tbl)
                 vpr = vtbl.find(W + "tblPr")
                 assert names == [n for n in ("tblBorders", "shd", "tblCellMar") if vpr.find(W + n) is not None]
                 vcs = [(r, c, [n for n in ("tcBorders", "shd", "tcMar") if tc.find(f"{W}tcPr/{W}{n}") is not None])
                        for r, tr in enumerate(v_rows(vtbl)) for c, tc in enumerate(v_cells(tr))]
                 assert cs == [x for x in vcs if x[2]]
+                vrs = [(r, [n for n in ("tblBorders", "shd", "tblCellMar") if tr.find(f"{W}tblPrEx/{W}{n}") is not None])
+                       for r, tr in enumerate(v_rows(vtbl))]
+                assert rs == [x for x in vrs if x[1]]
 
 
 # ---- conflicts (rule 9) --------------------------------------------------------------------------------------------
@@ -456,3 +459,142 @@ def test_the_table_style_example_reads_the_office_template_as_an_input():
     spec = load_spec(ROOT / "examples" / "specs" / "apply-table-style.json")
     tpl = (ROOT / "examples" / "templates" / "OFFICE STYLES.docx").resolve()
     assert Path(spec["ops"][0]["params"]["template"]) == tpl and tpl in spec_input_files(spec)
+
+
+# ---- the review round (batch 5 review of the table ops): each fix pinned by a test that fails without it ---------------
+
+T3 = {"tables": {"index_range": [3, 3]}}
+T7 = {"tables": {"index_range": [7, 7]}}
+
+
+def test_A_clear_takes_the_rows_own_exceptions_too(src):
+    """Table 3's row 1 carries a w:tblPrEx with its own borders, which win over the style for that row: clear removes
+    them (the emptied w:tblPrEx goes) and says so; keep flags them."""
+    plan, out, rec = ats(src, T3, style="Table Grid", direct_formatting="clear")
+    assert rec.passed, rec.to_markdown()
+    assert rows(tables(out)[3])[1].find(W + "tblPrEx") is None
+    a = plan.property_assertions[0]
+    assert a["changed"][MAIN] == [[3, True, [], [], [[1, ["tblBorders"]]]]] and a["expected_rows"] == 1
+    assert any("1 row(s)" in n for n in plan.notes)
+    t = set(map(tuple, get_op("apply_table_style").plan(DocxPackage(src), T3, {
+        "style": "Table Grid", "direct_formatting": "clear"}).touches))
+    assert (MAIN, "tr:3:1", "tblPrEx") in t
+    plan, out, rec = ats(src, T3, style="Table Grid")
+    assert rec.passed and any("keep their own borders, shading or cell margins (or their rows" in f for f in plan.flags)
+
+
+def test_A_a_row_exception_left_in_place_is_caught(src):
+    plan, out, rec = ats(src, T3, style="Table Grid", direct_formatting="clear")
+    assert rec.passed
+    _caught(src, plan, out, MAIN, lambda r: rows(tbls(r)[3])[1].insert(0, etree.fromstring(
+        f'<w:tblPrEx xmlns:w="{W[1:-1]}"><w:shd w:val="clear" w:color="auto" w:fill="FF0000"/></w:tblPrEx>')),
+        "w:tblPrEx")
+
+
+def test_A_a_shared_clear_that_forgets_the_rows_is_caught(src, monkeypatch):
+    monkeypatch.setattr(ats_module, "CLEARED_ROW", ())
+    plan, out, rec = ats(src, T3, style="Table Grid", direct_formatting="clear")
+    assert rows(tables(out)[3])[1].find(W + "tblPrEx") is not None
+    assert "V10" in failed(rec) and "keeps" in v10(rec) and "not the plan's" in v10(rec)
+
+
+def test_C_nothing_restyled_imports_nothing(src, tpl):
+    """A selection that restyles no table changes no style definition: no import, the note true, styles.xml as it was —
+    also with existing 'replace', which used to replace Table Grid for three tables nobody selected."""
+    from docx import Document
+    from make_fixtures import docx_bytes
+    doc = Document()
+    doc.add_paragraph("No tables here.")
+    bare = docx_bytes(doc)
+    plan, out, rec = ats(bare, {}, style="TblMine", template=tpl)
+    assert rec.passed and out == bare
+    assert [a["kind"] for a in plan.property_assertions] == ["applied_table_style"]
+    assert any("nothing to change" in n for n in plan.notes) and any("is not imported" in n for n in plan.notes)
+    plan, out, rec = ats(src, {"tables": {"text_regex": "NO SUCH TEXT"}}, style="TableGrid", template=tpl,
+                         existing="replace")
+    assert rec.passed and out == src and any("taken over" in n for n in plan.notes)
+    plan, out, rec = ats(src, T7, style="TableGrid", template=tpl, existing="replace")       # already in the style
+    assert rec.passed and out == src and plan.property_assertions[0]["requested"] == []
+
+
+def test_C_an_import_nothing_needs_is_caught(src, tpl):
+    """The old behaviour planted: the plan imports the template's style although no selected table is restyled —
+    the kind derives that nothing needs an import and fails it (check_requested)."""
+    from spec_surgeon.ops.style_import import TemplateStyles, plan_import
+    pkg = DocxPackage(src)
+    frag = get_op("apply_table_style").plan(pkg, T7, {"style": "TableGrid", "template": tpl, "existing": "replace"})
+    imp = plan_import(pkg, TemplateStyles.load(tpl), ["TableGrid"], "replace")
+    frag.transform_data["import"] = imp.transform_data()
+    frag.property_assertions.append(imp.assertion())
+    frag.intended_parts += imp.intended_parts()
+    plan = merge_fragments([frag])
+    work = pkg.copy()
+    get_op("apply_table_style").apply(work, frag)
+    rec = run_suite(src, work.output_bytes(), plan.to_dict(), "src.docx", "out.docx")
+    assert "V10" in failed(rec) and "nothing needs one here" in v10(rec)
+
+
+CLEAR_T7 = {"op": "apply_table_style", "select": T7, "params": {"style": "TableGrid", "direct_formatting": "clear"}}
+OWN_T7 = {"op": "set_table_props", "select": T7,
+          "params": {"borders": {"top": {"size": 24, "color": "FF0000"}}, "cell_margins": {"left": 400}}}
+
+
+def test_D_clear_beside_new_own_formatting_on_a_table_already_in_the_style_conflicts(src):
+    """Table 7 is in Table Grid with nothing of its own: clear finds it already as asked. Another op giving it its own
+    borders and margins in the same spec would leave the style hidden — a plan-time conflict in both orders."""
+    _conflict(src, CLEAR_T7, OWN_T7)
+    t = set(map(tuple, get_op("apply_table_style").plan(DocxPackage(src), T7, CLEAR_T7["params"]).touches))
+    assert {(MAIN, "tbl:7", "verify-props:tblBorders"), (MAIN, "tbl:7", "verify-props:shd"),
+            (MAIN, "tbl:7", "verify-props:tblCellMar"), (MAIN, "tr:7:0", "verify-props:tblPrEx"),
+            (MAIN, "tc:7:1:1", "verify-props:tcMar")} <= t
+    # keep reads none of them: the same pair plans
+    keep = {"op": "apply_table_style", "select": T7, "params": {"style": "TableGrid"}}
+    _passes(src, keep, {"op": "set_table_props", "select": T7, "params": {"cell_margins": {"left": 400}}})
+
+
+def test_D_without_the_reads_the_post_condition_still_catches_it(src, monkeypatch):
+    from spec_surgeon.ops.base import verify_family
+    cls = type(get_op("apply_table_style"))
+    original = cls.plan
+
+    def plan(self, pkg, select, params):
+        frag = original(self, pkg, select, params)
+        frag.touches = [t for t in frag.touches if not verify_family(t[2])[0]]
+        return frag
+    monkeypatch.setattr(cls, "plan", plan)
+    for ops in ((CLEAR_T7, OWN_T7), (OWN_T7, CLEAR_T7)):
+        pl, frags = plan_spec(DocxPackage(src), _spec(*ops))
+        out = apply_spec(DocxPackage(src), frags).output_bytes()
+        rec = run_suite(src, out, pl.to_dict(), "src.docx", "out.docx")
+        assert "V10" in failed(rec) and "keeps its own" in v10(rec), ops
+
+
+def test_D_a_wrong_output_on_an_already_table_is_caught(src):
+    plan, out, rec = ats(src, T7, style="TableGrid", direct_formatting="clear")
+    assert rec.passed and out == src
+    _caught(src, plan, out, MAIN, lambda r: cells(rows(tbls(r)[7])[0])[0].find(W + "tcPr").append(
+        el("shd", val="clear", color="auto", fill="FFFF00")), "keeps its own")
+    _caught(src, plan, out, MAIN, lambda r: tbls(r)[7].find(f"{W}tblPr/{W}tblStyle").set(W + "val", "ArchGrid"),
+            "style is 'ArchGrid'")
+
+
+def _boxed(root):
+    p = root.find(f"{W}body/{W}p")
+    t = tbls(root)[7]
+    run = etree.SubElement(p, W + "r")
+    txbx = etree.fromstring(f'<w:pict xmlns:w="{W[1:-1]}"><w:txbxContent/></w:pict>')
+    run.append(txbx)
+    t.getparent().remove(t)
+    txbx.find(W + "txbxContent").append(t)
+    etree.SubElement(txbx.find(W + "txbxContent"), W + "p")
+
+
+def test_4_a_table_in_a_text_box_is_left_alone_under_every_table(src):
+    data = mutate(src, MAIN, _boxed)                              # the boxed table becomes ordinal 0
+    plan, out, rec = ats(data, {}, style="ArchGrid")
+    assert rec.passed, rec.to_markdown()
+    assert any("in a text box left alone" in f and "table 0" in f for f in plan.flags)
+    assert style_of(tables(out)[0]) == "TableGrid"
+    with pytest.raises(JobException) as e:
+        get_op("apply_table_style").plan(DocxPackage(data), {"tables": {"first_row_regex": "^Tag"}}, {"style": "ArchGrid"})
+    assert e.value.code == "textbox"

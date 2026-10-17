@@ -99,12 +99,36 @@ def cells_wrapped(tr) -> bool:
     return any(_nearest(tc, W + "tr") is tr and tc.getparent() is not tr for tc in tr.iter(W + "tc"))
 
 
+def all_rows(tbl) -> List[Any]:
+    """Every w:tr whose nearest w:tbl is this table — its own rows and rows inside a content control or custom XML."""
+    return [tr for tr in tbl.iter(W + "tr") if _nearest(tr, W + "tbl") is tbl]
+
+
+def all_cells(tr) -> List[Any]:
+    """Every w:tc whose nearest w:tr is this row (wrapped ones included)."""
+    return [tc for tc in tr.iter(W + "tc") if _nearest(tc, W + "tr") is tr]
+
+
 def is_nested(tbl) -> bool:
     return _nearest(tbl, W + "tbl") is not None
 
 
 def in_text_box(tbl) -> bool:
     return _nearest(tbl, TEXT_BOX) is not None
+
+
+def selects_all(pred: Any) -> bool:
+    """The selection is every table (``"all"``, absent, or an empty object): a table in a text box is then skipped and
+    flagged rather than refusing the file; a selection that names tables refuses one."""
+    return pred in (None, "all") or pred == {}
+
+
+def right_to_left(tbl, chain: Sequence[Any]) -> bool:
+    """The table's own ``w:tblPr`` or any level of its style chain turns ``w:bidiVisual`` on (present, ``w:val`` not
+    0/false/off): its columns run right to left, so which side 'left' names is not certain."""
+    levels = [tbl.find(W + "tblPr")] + [st.find(W + "tblPr") for st in chain]
+    return any(e.get(W + "val") not in ("0", "false", "off")
+               for pr in levels if pr is not None for e in pr.findall(W + "bidiVisual"))
 
 
 def table_style_id(tbl, sheet: StyleSheet) -> Optional[str]:

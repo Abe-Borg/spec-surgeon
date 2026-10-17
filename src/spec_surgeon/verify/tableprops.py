@@ -13,7 +13,14 @@ This module's own reading of the op's definitions (transform side: ops/set_table
 * "already" (``_v_same``: the own elements of that name are exactly the expected one);
 * the schema order every element is written in — read from the bundled wml.xsd itself (``v_order``: a complexType's
   elements following its extension base, groups, sequences and choices, in the order they are listed), not from a table;
-* the refusals (text box, no ``w:tblPr``, start/end sides, rows or cells in containers, too many header rows).
+* the cell sides ``clear_cell_overrides`` takes (``_v_competing_sides``: with borders every side but the diagonals
+  ``tl2br``/``tr2bl``; with cell margins the asked sides, left also as start, right also as end) and the expected cell
+  properties after it (``_v_cleared_tcpr``: an emptied element, then an emptied ``w:tcPr``, gone);
+* which selected tables are left alone and which refused (``_v_skip_or_refuse``, in the op's order: a text box — left
+  alone under an every-table selection, refused under one naming tables —, no ``w:tblPr``, rows in a container, fewer
+  own rows than the header rows asked — left alone —, a right-to-left table (``w:bidiVisual`` on in its own ``w:tblPr``
+  or any level of its style chain) or start/end sides when borders or margins are asked, cells in a container). A table
+  left alone gets no check of its own: the residual compares it whole.
 
 Fails when the tables, rows or cells that change (or their counts) differ from the plan's; when a changed table's
 ``w:tblPr``, a changed row's ``w:trPr`` (and where it stands) or a changed cell's ``w:tcPr`` is not exactly the source's
@@ -29,7 +36,7 @@ from __future__ import annotations
 import copy
 import functools
 import re
-from typing import Any, Dict, List, Sequence, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from lxml import etree
 
@@ -264,40 +271,79 @@ def _v_cell_names(asked: Dict[str, Any]) -> List[str]:
     return [n for n, k in (("tcBorders", "borders"), ("tcMar", "margins")) if asked[k] is not None]
 
 
-def _v_cell_gets(tbl, asked: Dict[str, Any]) -> List[Tuple[int, int, List[str]]]:
-    out = []
-    if not asked["clear"]:
-        return out
-    for r, tr in enumerate(v_rows(tbl)):
-        for c, tc in enumerate(v_cells(tr)):
-            names = [n for n in _v_cell_names(asked) if tc.find(f"{W}tcPr/{W}{n}") is not None]
-            if names:
-                out.append((r, c, names))
+def _v_competing_sides(asked: Dict[str, Any]) -> Dict[str, set]:
+    """The sides of a cell's own borders / margins that compete with the asked ones: borders (always a whole set) —
+    every side but the diagonals; margins — the asked sides, left also as start, right also as end."""
+    out: Dict[str, set] = {}
+    if asked["borders"] is not None:
+        out["tcBorders"] = {"top", "left", "start", "bottom", "right", "end", "insideH", "insideV"}
+    if asked["margins"] is not None:
+        out["tcMar"] = set(asked["margins"]) | {{"left": "start", "right": "end"}[s] for s in asked["margins"]
+                                                if s in ("left", "right")}
     return out
 
 
-def _v_refusal(tbl, chain: List[Any], asked: Dict[str, Any], where: str) -> None:
-    """ValueError where the op must refuse this table."""
+def _v_competing(tc, name: str, sides: set) -> List[str]:
+    pr = tc.find(W + "tcPr")
+    held = [x for x in pr.findall(W + name)] if pr is not None else []
+    return sorted({c.tag[len(W):] for x in held for c in x
+                   if isinstance(c.tag, str) and c.tag.startswith(W) and c.tag[len(W):] in sides})
+
+
+def _v_cell_gets(tbl, asked: Dict[str, Any]) -> List[Tuple[int, int, Dict[str, List[str]]]]:
+    out = []
+    if not asked["clear"]:
+        return out
+    wanted = _v_competing_sides(asked)
+    for r, tr in enumerate(v_rows(tbl)):
+        for c, tc in enumerate(v_cells(tr)):
+            gone = {}
+            for n in sorted(wanted):
+                sides = _v_competing(tc, n, wanted[n])
+                if sides:
+                    gone[n] = sides
+            if gone:
+                out.append((r, c, gone))
+    return out
+
+
+def _v_every_table(pred: Any) -> bool:
+    return pred in (None, "all") or pred == {}
+
+
+def _v_rtl(tbl, chain: List[Any]) -> bool:
+    """w:bidiVisual on in the table's own w:tblPr or in any level of its style chain."""
+    holders = [tbl.find(W + "tblPr")] + [st.find(W + "tblPr") for st in chain]
+    return any(_v_on(e) for h in holders if h is not None for e in h.findall(W + "bidiVisual"))
+
+
+def _v_skip_or_refuse(tbl, chain: List[Any], asked: Dict[str, Any], every: bool, where: str) -> Optional[str]:
+    """Why a selected table is left alone (a text box under an every-table selection, too few rows for the header rows),
+    or None; ValueError where the op must refuse it — in the op's order."""
     def aliased(el) -> bool:
         return el is not None and (el.find(W + "start") is not None or el.find(W + "end") is not None)
-    pr = tbl.find(W + "tblPr")
     if v_in_text_box(tbl):
+        if every:
+            return "in a text box"
         raise ValueError(f"{where} lies in a text box (the op must refuse: textbox)")
+    pr = tbl.find(W + "tblPr")
     if pr is None:
         raise ValueError(f"{where} has no w:tblPr (the op must refuse: table-structure)")
+    rows = v_rows(tbl)
+    if (asked["header"] is not None or asked["split"] is not None or asked["clear"]) and v_rows_wrapped(tbl):
+        raise ValueError(f"{where}: rows inside a container (the op must refuse: table-structure)")
+    if asked["header"] is not None and asked["header"] > len(rows):
+        return "fewer rows than the header rows"
+    if (asked["borders"] is not None or asked["margins"] is not None) and _v_rtl(tbl, chain):
+        raise ValueError(f"{where} runs right to left (the op must refuse: conflict-property)")
     if asked["borders"] is not None and (aliased(pr.find(W + "tblBorders"))
                                          or any(aliased(st.find(f"{W}tblPr/{W}tblBorders")) for st in chain)):
         raise ValueError(f"{where}: a border side is spelled start/end (the op must refuse: conflict-property)")
     if asked["margins"] is not None and aliased(pr.find(W + "tblCellMar")):
         raise ValueError(f"{where}: a cell margin side is spelled start/end (the op must refuse: conflict-property)")
-    rows = v_rows(tbl)
-    if (asked["header"] is not None or asked["split"] is not None or asked["clear"]) and v_rows_wrapped(tbl):
-        raise ValueError(f"{where}: rows inside a container (the op must refuse: table-structure)")
     if asked["clear"] and any(v_cells_wrapped(tr) for tr in rows):
         raise ValueError(f"{where}: cells inside a container (the op must refuse: table-structure)")
-    if asked["header"] is not None and asked["header"] > len(rows):
-        raise ValueError(f"{where}: {asked['header']} header rows asked of {len(rows)} (the op must refuse: "
-                         f"table-structure)")
+    return None
 
 
 # ---- the checks --------------------------------------------------------------------------------------------------------
@@ -311,11 +357,17 @@ def _v_with(src, gets: Dict[str, Any], container: str, order_type: str):
     return el if (len(el) or el.attrib) else None
 
 
-def _v_without(src, names: Sequence[str]):
+def _v_cleared_tcpr(src, gone: Dict[str, List[str]]):
+    """The source w:tcPr with the listed sides out of its elements of each name; an emptied element, then an emptied
+    w:tcPr, gone (None)."""
     el = copy.deepcopy(src)
-    for c in list(el):
-        if isinstance(c.tag, str) and c.tag in {W + n for n in names}:
-            el.remove(c)
+    for name, sides in gone.items():
+        for holder in el.findall(W + name):
+            for c in list(holder):
+                if isinstance(c.tag, str) and c.tag in {W + s for s in sides}:
+                    holder.remove(c)
+            if not len(holder) and not holder.attrib:
+                el.remove(holder)
     return el if (len(el) or el.attrib) else None
 
 
@@ -371,7 +423,8 @@ def _v_post(o_tbl, chain: List[Any], asked: Dict[str, Any], where: str, errs: Li
     if asked["clear"]:
         for r, tr in enumerate(rows):
             for c, tc in enumerate(v_cells(tr)):
-                kept = [n for n in _v_cell_names(asked) if tc.find(f"{W}tcPr/{W}{n}") is not None]
+                kept = {n: x for n, x in ((n, _v_competing(tc, n, sides))
+                                          for n, sides in _v_competing_sides(asked).items()) if x}
                 if kept:
                     errs.append(f"{where} row {r} cell {c}: keeps its own {kept} in the output (clear_cell_overrides)")
 
@@ -398,7 +451,8 @@ def _table_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         for k, tbl in s_t.selected(pred, ctx.src_styles):
             where = f"{part} table {k}"
             chain = v_style_chain(tbl, ctx.src_styles)
-            _v_refusal(tbl, chain, asked, where)
+            if _v_skip_or_refuse(tbl, chain, asked, _v_every_table(pred), where):
+                continue                               # left alone: the residual compares it whole
             o_tbl = o_t.tables[k]
             s_pr, o_pr = tbl.find(W + "tblPr"), o_tbl.find(W + "tblPr")
             t_gets = _v_table_gets(s_pr, chain, asked)
@@ -427,17 +481,17 @@ def _table_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                         errs.append(f"{where} row {r}: w:trPr is not the row's first property element (right after "
                                     f"its w:tblPrEx)")
                 ctx.strip_tr.setdefault(part, {}).setdefault((k, r), set()).update(g)
-            for r, c, names in c_gets:
-                rec["cells"].append([k, r, c, sorted(names)])
+            for r, c, gone in c_gets:
+                rec["cells"].append([k, r, c, sorted(gone)])
                 s_cells, o_cells = v_cells(s_rows[r]), v_cells(o_rows[r])
                 if len(s_cells) != len(o_cells):
                     errs.append(f"{where} row {r}: cells changed in number")
                     continue
-                want = _v_without(s_cells[c].find(W + "tcPr"), names)
+                want = _v_cleared_tcpr(s_cells[c].find(W + "tcPr"), gone)
                 got = o_cells[c].find(W + "tcPr")
                 if sig(got) != sig(want):
                     errs.append(f"{where} row {r} cell {c}: w:tcPr is {_show(got)}, expected {_show(want)}")
-                ctx.strip_tc.setdefault(part, {}).setdefault((k, r, c), set()).update(names)
+                ctx.strip_tc.setdefault(part, {}).setdefault((k, r, c), set()).update(gone)
             if t_gets or r_gets or c_gets:
                 n_tables += 1
                 n_rows += len(r_gets)
