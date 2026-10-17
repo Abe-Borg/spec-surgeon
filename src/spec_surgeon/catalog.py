@@ -39,7 +39,25 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "set_style_font": ["only styles that already name a font (or set a size) change; the others inherit it"],
     "set_doc_defaults_font": ["the document default font (and size) changes, so inheriting text follows; with size_from "
                               "its size changes only when it is one of those sizes"],
-    "set_paragraph_props": ["values merge into existing spacing/indents; unspecified attributes stay"],
+    "set_paragraph_props": [
+        "values merge into existing spacing/indents; unspecified attributes stay",
+        "with select.styles the values go into the paragraph style definitions instead (never tracked): every paragraph "
+        "of that style follows unless it sets its own value (flagged); a style already as asked is left alone; spacing "
+        "the style (or a style it is based on, or the document defaults) gives in lines, or as 'auto', sets the file "
+        "aside rather than being silently ignored by Word",
+    ],
+    "set_borders_shading": [
+        "the asked borders are the paragraph's whole border box: a side not named has no border, so a side its style "
+        "shows is cancelled with a 'nil' side (the style keeps its definition); 'none' removes every border (or the "
+        "shading)",
+        "border size is in eighths of a point (4 = ½ pt, Word's default; 2–96), the space between border and text in "
+        "points (1 by default); colours are 6 hex digits or 'auto'",
+        "a paragraph or style that already looks as asked is left alone (no change, no tracked-change marker)",
+        "direct formatting on the selected paragraphs by default (tracked when they are targeted, so the reviewer sees "
+        "'Formatted: Border'); with select.styles the paragraph style definitions change instead (never tracked) — "
+        "paragraphs with their own direct borders/shading and styles based on it that define their own keep theirs "
+        "(flagged)",
+    ],
     "set_properties": [
         "'all caps' is the w:caps display property — the letters are not retyped; bold and italic are written as the "
         "pairs Word itself writes (w:b + w:bCs, w:i + w:iCs)",
@@ -356,23 +374,24 @@ SELECTOR_GRAMMAR = {
 
 # What a one-off custom transform (codegen.py) can change and still be verified: each family maps to the V10 assertion
 # kind that checks it (tests/test_conversation.py pins the mapping against verify/props.KINDS). Anything else —
-# highlight, borders, shading, numbering and lists, tables, images, fields, comments, tracked changes, any change of
-# words — has no verified check yet, so a custom transform cannot do it: it needs a new built-in operation (the next
-# round). Shown to Claude in the compiler's and the transform writer's instructions.
+# highlight, numbering and lists, tables, images, fields, comments, tracked changes, any change of words — has no
+# verified check for a custom transform, so a custom transform cannot do it: it needs a built-in operation. Shown to
+# Claude in the compiler's and the transform writer's instructions.
 CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
     "families": {
         "run fonts and font sizes of selected text": "run_fonts",
         "fonts and sizes defined in styles": "style_fonts",
         "the document default font and size": "doc_defaults_fonts",
-        "paragraph spacing, indents and alignment": "paragraph_props",
+        "paragraph spacing, indents and alignment of paragraphs or of paragraph styles": "paragraph_props",
         "page size, margins and orientation of sections": "section_props",
         "which header/footer each section shows": "section_hf_refs",
         "bold, italic, caps, small caps, strikethrough, underline and text colour of selected text or of styles; "
         "keep-with-next, keep lines together, widow control and page break before of paragraphs or of paragraph "
         "styles": "properties",
         "tab stops of paragraphs (set, clear, clear the others)": "tab_stops",
+        "paragraph borders and shading of paragraphs or of paragraph styles": "borders_shading",
     },
-    "cannot": ["highlight, borders, shading", "numbering and lists",
+    "cannot": ["highlight", "numbering and lists",
                "tables", "images", "fields", "comments", "tracked changes", "any change of words"],
     "rules": ["plain (untracked) formatting only", "only the document's text parts (body, headers, footers, footnotes, "
               "endnotes, comments) and its styles part may change", "edited copies only — never written over the "
