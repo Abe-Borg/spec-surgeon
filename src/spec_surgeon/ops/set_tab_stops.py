@@ -342,6 +342,7 @@ class SetTabStops(Op):
                 # V10's post-condition reads this paragraph's stops in the output whether or not it changes: another op
                 # changing them (a second set_tab_stops) is a plan-time conflict, never a failure after apply
                 frag.touches.append((part, str(bi), "verify:tabs"))
+                frag.touches.append((part, str(bi), "verify:pStyle"))   # the inherited stops come through its style
                 after = decide(want, gone, others, own, inherited_stops(res, p), is_num)
                 if after is None:
                     already += 1

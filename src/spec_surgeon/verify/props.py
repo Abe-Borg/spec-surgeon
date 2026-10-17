@@ -524,6 +524,12 @@ class Ctx:
         #                                             elements outside paragraphs a kind expects gone
         self.verified_members: Set[str] = set()     # non-text members a kind compared whole (rels, side parts, created)
         self.member_strip: Dict[str, Set[str]] = {}  # settings/docProps member → keys a kind verified (member residual)
+        # built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md §0):
+        self.replaced_styles: Set[str] = set()      # style ids a kind compared WHOLE (a replaced definition): out of the
+        #                                             styles residual on both sides
+        self.removed_styles: Set[str] = set()       # style ids a kind expects GONE: out of the residual's source copy only
+        self.strip_tbl_style: Dict[str, Set[int]] = {}   # part → ordinals (root.iter(w:tbl)) of tables whose
+        #                                             tblPr/tblStyle a kind checked
 
     def view(self, part):
         if part not in self.views:
@@ -1778,6 +1784,14 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                 if _local(c) in names:
                     ppr.remove(c)
             _drop_empty(ppr)
+    tbls = ctx.strip_tbl_style.get(part, set())
+    if tbls:                                           # ordinals among every w:tbl of the part (no op moves tables)
+        for root in (s_root, o_root):
+            tables = list(root.iter(W + "tbl"))
+            for k in tbls:
+                ts = tables[k].find(W + "tblPr/" + W + "tblStyle") if k < len(tables) else None
+                if ts is not None:
+                    ts.getparent().remove(ts)
     if part == ctx.src.main_part() and ctx.strip_sect:
         ss, os_ = sect_prs(s_root), sect_prs(o_root)
         for i, names in ctx.strip_sect.items():
@@ -1833,6 +1847,13 @@ def _residual_styles(ctx: Ctx, errs: List[str]) -> None:
     for st in o_root.findall(W + "style"):            # new styles: checked by styles_added, not residual
         if st.get(W + "styleId") in ctx.added_styles:
             o_root.remove(st)
+    for root in (s_root, o_root):                      # replaced definitions: compared whole by their kind
+        for st in root.findall(W + "style"):
+            if st.get(W + "styleId") in ctx.replaced_styles:
+                root.remove(st)
+    for st in s_root.findall(W + "style"):            # expected gone: an output that still holds one differs
+        if st.get(W + "styleId") in ctx.removed_styles:
+            s_root.remove(st)
     d = _residual_difference(s_root, o_root)
     if d:
         errs.append(f"{ctx.styles_part}: unpredicted change {d}")

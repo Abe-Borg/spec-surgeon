@@ -249,6 +249,10 @@ class SetProperties(Op):
             for bi, p in enumerate(pars):
                 if not paragraph_selected(para_pred, p, bi, block_full_text(p), sheet):
                     continue
+                if para_asked or (run_asked and (marks_too or groups[bi])):
+                    # the effective values (before) and V10's post-condition (after) read this paragraph's style chain:
+                    # another op restyling it (apply_style, map_styles) is a plan-time conflict, never a failure after apply
+                    frag.touches.append((part, str(bi), "verify:pStyle"))
                 if run_asked:
                     for ri, r in enumerate(groups[bi]):
                         rpr = r.find(W + "rPr")

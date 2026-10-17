@@ -175,6 +175,8 @@ class EnsureEndOfSection(Op):
                 if style is not None and style not in sheet.styles:
                     raise JobException(f"this file has no style {style!r} for the new line", "missing-style",
                                        {"style": style})
+                if style is not None:                       # the new line names it: removing it beside is a conflict
+                    frag.touches.append((sheet.part, f"style:{style}", "verify"))
             else:
                 rx = re.compile(params["copy_from_regex"])
                 hits = [i for i, p in enumerate(pars) if p.getparent() is body and rx.search(RunText(p).text)]
