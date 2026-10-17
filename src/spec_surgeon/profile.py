@@ -353,6 +353,12 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         tables = {"error": f"{type(e).__name__}: {e}"}
     if tables:
         prof["tables"] = tables
+    try:
+        lists = list_summary(pkg, root, sheet)
+    except Exception as e:  # noqa: BLE001 — descriptive only, like markup
+        lists = {"error": f"{type(e).__name__}: {e}"}
+    if lists:
+        prof["lists"] = lists
     hygiene = fp.get("body_hygiene") or {}
     anomalies = {}
     if hygiene.get("has_nbsp"):
@@ -370,6 +376,94 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
     if anomalies not in ({}, {"style_regime": "normal_only"}) and anomalies != {"style_regime": "styled"}:
         prof["hygiene"] = anomalies
     return bound(prof)
+
+
+LIST_LIMIT = 4           # lists described one by one (the most used first)
+NUMBERED_STYLE_LIMIT = 20
+TYPED_NUMBER = re.compile(r"^[ \t]*(?:PART\s+\d+|ARTICLE\s+\d+|\d+(?:\.\d+)+\.?|\d+[.)]|\(\d+\)|[A-Za-z][.)]|\([a-z]\))"
+                          r"(?:[ \t\u00a0]+|$)")
+
+
+def list_summary(pkg: DocxPackage, root, sheet: StyleSheet) -> Dict[str, Any]:
+    """What built-in batch 5's numbering operations would find (descriptive; the ops count with ops/lists.py
+    themselves): the lists that number the body (by list definition, the most used first — each level's format, the
+    styles numbered at it, how many paragraphs, the first number shown; how many paragraphs the engine does not
+    evaluate and why), the **numbered styles** (a paragraph style whose own numbering names a list level, with the
+    number its first paragraph would show: ``PART 1 -``, ``1.1``, ``A.`` — what a scheme's ``levels`` are named from in an
+    example file) and how many unnumbered paragraphs start with a typed number."""
+    from .ops.lists import ListDefs, count, counted, paragraph_numbering, render, start_of, style_numbering
+    from .ops.style_import import style_type
+    from .ops.textedit import run_text
+    defs = ListDefs.load(pkg)
+    out: Dict[str, Any] = {}
+    if defs.present:
+        pars = count(root, sheet, defs)
+        groups: Dict[Any, List[Any]] = {}
+        for np_ in pars:
+            groups.setdefault(np_.abstract_id if np_.abstract_id is not None else f"num {np_.num_id}", []).append(np_)
+        described = []
+        for key, ps in sorted(groups.items(), key=lambda kv: -len(kv[1]))[:LIST_LIMIT]:
+            levels: Dict[int, Dict[str, Any]] = {}
+            for np_ in ps:
+                if np_.ilvl is None:
+                    continue
+                e = levels.setdefault(np_.ilvl, {"level": np_.ilvl, "format": np_.fmt, "paragraphs": 0,
+                                                 "styles": Counter(), "first": None})
+                e["paragraphs"] += 1
+                if np_.style:
+                    e["styles"][np_.style] += 1
+                if e["first"] is None and np_.evaluated and np_.text:
+                    e["first"] = np_.text
+            for e in levels.values():
+                e["styles"] = [sid for sid, _ in e["styles"].most_common(3)]
+                if e["first"] is None:
+                    e.pop("first")
+            d: Dict[str, Any] = {"definition": key, "lists": sorted({np_.num_id for np_ in ps if np_.num_id is not None}),
+                                 "paragraphs": len(ps), "levels": [levels[k] for k in sorted(levels)]}
+            issues = Counter(np_.issue for np_ in ps if not np_.evaluated)
+            if issues:
+                d["not_evaluated"] = dict(issues)
+            described.append(d)
+        if described:
+            out["lists"] = described
+        if len(groups) > LIST_LIMIT:
+            out["more_lists"] = len(groups) - LIST_LIMIT
+        numbered = []
+        for sid, st in sheet.styles.items():
+            if style_type(st) != "paragraph":
+                continue
+            nb = style_numbering(sid, sheet, defs)
+            if nb is None or nb.num_id is None or nb.dangling or nb.unreadable or nb.ilvl is None:
+                continue
+            lv = defs.level(nb.num_id, nb.ilvl)
+            e = {"style": sid, "list": nb.num_id, "level": nb.ilvl}
+            name = st.find(W + "name")
+            if name is not None and name.get(W + "val") and name.get(W + "val") != sid:
+                e["name"] = name.get(W + "val")
+            if lv is None or lv.fmt == "bullet":
+                continue                              # a bullet is never a numbered level of a scheme
+            if lv.text is not None and not lv.unsupported:
+                shown, _ = render(lv.text, lv.legal, lambda k, n=nb.num_id: start_of(defs, n, k),
+                                  lambda k, n=nb.num_id: defs.level(n, k))
+                if shown is not None:
+                    e["shows"] = shown
+            numbered.append(e)
+        used = {np_.style for np_ in pars if np_.style}
+        per_list = Counter(e["list"] for e in numbered)
+        # a style the body numbers with, or one of an outline (two or more styles numbered by one list); Word's unused
+        # single-level List Number styles are noise here
+        numbered = [e for e in numbered if e["style"] in used or per_list[e["list"]] > 1]
+        if numbered:                          # the lists with the most numbered styles first (an outline scheme)
+            numbered.sort(key=lambda e: (-per_list[e["list"]], e["list"], e["level"], e["style"]))
+            out["numbered_styles"] = numbered[:NUMBERED_STYLE_LIMIT]
+    typed = 0
+    for p in root.iter(W + "p"):
+        if counted(p) and nearest_p(p) is None and paragraph_numbering(p, sheet, defs) is None \
+                and TYPED_NUMBER.match(run_text(p)):
+            typed += 1
+    if typed:
+        out["typed_numbers"] = typed
+    return out
 
 
 TABLE_LIMIT = 8          # tables listed one by one (the rest are counted by style)
@@ -752,6 +846,16 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         if prof.pop("tables", None):
             omitted.append("tables")
 
+    def thin_lists():
+        lists = prof.get("lists")
+        if lists and len(lists.get("lists") or []) > 1:
+            omitted.append(f"{len(lists['lists']) - 1} list view(s)")
+            lists["lists"] = lists["lists"][:1]
+
+    def drop_lists():
+        if prof.pop("lists", None):
+            omitted.append("lists")
+
     def thin_markup():
         m = prof.get("markup")
         if not m:
@@ -777,11 +881,13 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         lambda: prof.pop("hygiene", None),
         thin_markup,
         thin_tables,
+        thin_lists,
         drop_part_text,
         thin_styles,
         thin_other_styles,
         drop_other_styles,
         drop_tables,
+        drop_lists,
         lambda: cut_sections(6),
         lambda: cut_parts(8),
         lambda: cut_sections(2),
