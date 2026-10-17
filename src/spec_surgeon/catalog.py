@@ -199,8 +199,9 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "report only: the findings are flagged for review and the file is not changed",
         "the main document only; numbers are those the engine predicts as Word shows them — a list it cannot predict "
         "is reported as not evaluated, with the reason",
-        "typed numbers (PART 1, 1.1, A., 1., a., (a), II. …) at the start of unnumbered paragraphs are read with the "
-        "automatic numbers of the main list; other lists are checked each on its own",
+        "typed numbers (PART 1, 1.1, A., 1., a., (a), II. …) at the start of unnumbered paragraphs outside tables are "
+        "checked for gaps, duplicates and numbers in the wrong PART, with the main list's automatic numbers as their "
+        "context; automatic numbers themselves are the engine's count and are not judged",
         "unnumber_empty turns the number off on each empty numbered paragraph (the paragraph and its spacing stay); the "
         "later numbers of its list move up (predicted and flagged); plain unless tracked",
     ],

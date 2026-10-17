@@ -7,6 +7,7 @@ no-break space, a fix that removes the whole numPr, a count that skips hidden pa
 (rule 9); the batch pipeline; the catalog and the worked example."""
 from __future__ import annotations
 
+import copy
 import io
 import json
 from pathlib import Path
@@ -134,13 +135,14 @@ def test_the_report_on_the_architects_outline(clean):
     assert "‘Hidden requirement.’ (B.) is hidden but uses up a number" in flags
     assert "‘B. Check valves.’ is numbered automatically (B.) and starts with a typed ‘B.’ — double numbering" in flags
     assert "list 23 — 1 paragraph(s), first ‘Override sub’" in flags and "full override level" in flags
-    assert "list 22 — 1 paragraph(s), first ‘Legal three’: skipped level" in flags
+    assert "list 22 — 2 paragraph(s), first ‘Legal three’: skipped level" in flags
+    assert "list 10 — 3 paragraph(s), first ‘Shop drawings.’: skipped level: level 2 of list 10 was skipped" in flags
     assert "list 22 (first ‘Appendix one’) sets a restart rule (w:lvlRestart) on level(s) [2, 3]: LibreOffice" in flags
     k = kinds(clean)
     assert ("empty", EMPTY_C) in k and ("hidden", 14) in k and ("double", 37) in k
     outline = [f for f in findings(clean) if f.kind in ("gap", "duplicate", "back", "start") and f.index < 45]
     assert outline == []                                       # the main list reads as it should
-    assert any(n.startswith("numbering audit: 4 list(s) number 51 counted paragraph(s) (49 evaluated)") for n in plan.notes)
+    assert any(n.startswith("numbering audit: 4 list(s) number 51 counted paragraph(s) (45 evaluated)") for n in plan.notes)
     frag = get_op("audit_numbering").plan(DocxPackage(clean), {}, {})
     assert (NUMBERING, "*", "verify") in frag.touches and (MAIN, "37", "verify:text") in frag.touches
     assert (MAIN, str(EMPTY_C), "verify:numPr") in frag.touches and not any(a in ("pPr", "numPr") for _, _, a in
@@ -164,7 +166,7 @@ def test_typed_numbering_and_its_duplicate(clean):
     dup = [f for f in findings(build_typed(typo=True)) if f.kind == "duplicate"]
     assert len(dup) == 1 and dup[0].text == "numbering: ‘B. Reliable.’ shows B. again, as ‘B. Viking.’ before it"
     assert len(findings(build_typed(typo=True))) == 1
-    assert any("24 typed number(s) checked; 1 finding(s): 1 duplicate" in n for n in plan.notes)
+    assert any("22 typed number(s) checked; 1 finding(s): 1 duplicate" in n for n in plan.notes)   # not the 2 cells
 
 
 def test_a_dangling_list_is_reported(clean):
@@ -185,15 +187,15 @@ def test_gaps_going_back_and_new_starts():
                      "Body text 1.5 inch.", "1.5 inch pipe.")
     got = [(f.kind, f.index) for f in findings(data)]
     assert ("gap", 3) in got and ("back", 4) in got and ("start", 6) in got and ("duplicate", 7) in got
-    assert ("gap", 12) in got                       # "1.5 inch pipe." reads as a typed n.n (advisory)
-    assert len(got) == 5
+    assert ("gap", 12) in got and ("part", 12) in got   # "1.5 inch pipe." reads as a typed n.n (advisory)
+    assert len(got) == 6
     texts = {f.index: f.text for f in findings(data)}
     assert texts[3] == "numbering: ‘C. Three.’ shows C. after A. (‘A. One.’): a number is skipped"
     assert texts[6] == "numbering: ‘B. Starts late.’ starts its sequence at B."
 
 
 def test_the_typed_grammar():
-    cases = {"PART 1 - GENERAL": ("PART <1> -", 1), "PART 12 GENERAL": ("PART <1>", 12),
+    cases = {"PART 1 - GENERAL": ("PART <1>", 1), "PART 12 GENERAL": ("PART <1>", 12),
              "ARTICLE 3": ("ARTICLE <1>", 3), "1.1\tSUMMARY": ("<1>.<1>", 1), "2.01 MATERIALS": ("<1>.<1>", 1),
              "1.2.3. Item": ("<1>.<1>.<1>.", 3), "\t3.\tThree": ("<1>.", 3), "4) Four": ("<1>)", 4),
              "(5) Five": ("(<1>)", 5), "B.\tTwo": ("<A>.", 2), "c) three": ("<a>)", 3), "(d) four": ("(<a>)", 4),
@@ -264,7 +266,7 @@ def test_a_wrong_output_is_caught(clean):
     for fn, msg in ((lambda p: p.find(f"{W}pPr/{W}numPr").insert(0, etree.fromstring(f'<w:ilvl {WD} w:val="2"/>')),
                      "not exactly"),
                     (lambda p: p.find(W + "pPr").append(etree.fromstring(f"<w:jc {WD} w:val=\"center\"/>")),
-                     "other than numPr changed"),
+                     "unpredicted change"),         # the residual: the fix's check leaves the rest to it
                     (lambda p: p.find(W + "pPr").insert(0, p.find(f"{W}pPr/{W}numPr")), "w:numPr is child 0")):
         bad = edit_par(out, EMPTY_C, fn)
         rec = run_suite(clean, bad, plan.to_dict(), "src.docx", "out.docx")
@@ -387,3 +389,128 @@ def test_catalog_and_the_worked_example(clean):
     plan, frags = plan_spec(pkg, spec)
     out = apply_spec(pkg, frags).output_bytes()
     assert run_suite(clean, out, plan.to_dict(), "src.docx", "out.docx").passed and out == clean and plan.flags
+
+
+# ---- the adversarial review's findings (each test fails without its fix) ---------------------------------------------
+
+def _after(text: str, el):
+    def fn(root):
+        p = next(p for p in root.iter(W + "p") if text_of(p) == text)
+        p.addnext(el)
+    return fn
+
+
+def _table(cells):
+    tcs = "".join(f"<w:tc><w:p><w:r><w:t>{c}</w:t></w:r></w:p></w:tc>" for c in cells)
+    return etree.fromstring(f"<w:tbl {WD}><w:tblGrid/><w:tr>{tcs}</w:tr></w:tbl>")
+
+
+def test_the_fix_beside_ops_that_change_the_mark_or_the_section_break(clean):
+    """Item 3: the kind checks exactly what the fix changes (numPr, its place, pPrChange) and leaves the mark's rPr and a
+    sectPr to the residual — set_font over the marks, bold on the paragraphs, page setup on a section break plan and
+    pass beside the fix (they used to plan and fail V10)."""
+    for other in ({"op": "set_font", "select": {"scope": ["document"], "runs": "all"}, "params": {"font": "Arial"}},
+                  {"op": "set_properties", "select": {"scope": ["document"], "paragraphs": {"style_in": ["ArchPara"]}},
+                   "params": {"run": {"b": True}, "tracked": False}}):
+        plan, out, rec = run(clean, auditing(unnumber_empty=True), other)
+        assert rec.passed, (other["op"], v10(rec))
+
+    def section_break(r):
+        body = r.find(W + "body")
+        list(r.iter(W + "p"))[EMPTY_C].find(W + "pPr").append(copy.deepcopy(body.find(W + "sectPr")))
+    data = patch_docx(clean, {MAIN: section_break})
+    for tracked in (False, True):
+        plan, out, rec = run(data, auditing(unnumber_empty=True, tracked=tracked),
+                             {"op": "set_page_setup", "select": {"sections": "all"}, "params": {"margins": {"left": 2000}}})
+        assert rec.passed, v10(rec)
+    # still caught: a change of the mark nobody made
+    plan, out, rec = run(clean, auditing(unnumber_empty=True))
+    bad = edit_par(out, EMPTY_C, lambda p: p.find(W + "pPr").append(etree.fromstring(
+        f"<w:rPr {WD}><w:b/></w:rPr>")))
+    rec = run_suite(clean, bad, plan.to_dict(), "src.docx", "out.docx")
+    assert "V10" in failed(rec) and "unpredicted change" in v10(rec)
+
+
+def test_the_fix_flags_stale_cross_references(clean):
+    """Item 4: the fix moves D. up to C.: a REF field pointing at it and a written "D." go stale — flagged."""
+    def refs(r):
+        deferred = next(p for p in r.iter(W + "p") if text_of(p) == "Deferred submittal.")
+        deferred.insert(1, etree.fromstring(f'<w:bookmarkStart {WD} w:id="88" w:name="_Ref8800"/>'))
+        deferred.append(etree.fromstring(f'<w:bookmarkEnd {WD} w:id="88"/>'))
+        holder = next(p for p in r.iter(W + "p") if text_of(p) == "NFPA 13.")
+        holder.append(etree.fromstring(
+            f'<w:r {WD}><w:t xml:space="preserve"> See paragraph D. and </w:t></w:r>'))
+        for x in (f'<w:r {WD}><w:fldChar w:fldCharType="begin"/></w:r>',
+                  f'<w:r {WD}><w:instrText xml:space="preserve"> REF _Ref8800 \\r \\h </w:instrText></w:r>',
+                  f'<w:r {WD}><w:fldChar w:fldCharType="separate"/></w:r>', f'<w:r {WD}><w:t>D.</w:t></w:r>',
+                  f'<w:r {WD}><w:fldChar w:fldCharType="end"/></w:r>'):
+            holder.append(etree.fromstring(x))
+    data = patch_docx(clean, {MAIN: refs})
+    plan, out, rec = run(data, auditing(unnumber_empty=True))
+    assert rec.passed, v10(rec)
+    flags = "\n".join(plan.flags)
+    assert "numbering after the fix: 1 cross-reference field(s) point at paragraphs whose number the fix changes" in flags
+    assert "REF _Ref8800 → ‘Deferred submittal.’" in flags
+    assert "numbering after the fix: written references to old numbers that change" in flags and "'D.' (now 'C.')" in flags
+
+
+def test_no_false_findings_on_ordinary_spec_text(clean):
+    """Item 7: a pipe-size table's "1.5" is a value, not a number (table cells are skipped); a manufacturer "A. O.
+    Smith Corporation." on a numbered paragraph is not double numbering; the outline's own counts — after a verified
+    restart rule — are never judged (automatic numbers are context)."""
+    data = patch_docx(clean, {MAIN: _after("Steel pipe.", _table(["1.5", "2.5"]))})
+    assert not [f for f in findings(data) if f.kind in ("gap", "duplicate", "back", "start", "part")]
+
+    def rename(r):
+        next(p for p in r.iter(W + "p") if text_of(p) == "Tyco.").find(W + "r/" + W + "t").text = \
+            "A. O. Smith Corporation."
+    assert not [f for f in findings(patch_docx(clean, {MAIN: rename})) if f.kind == "double" and "Smith" in f.text]
+    assert [f.kind for f in findings(clean) if f.kind == "double"] == ["double"]          # "B.⇥Check valves." still
+    plan, out, rec = run(clean, {"op": "set_list_level", "params": {"style": "Arch Article", "restart": "never"}})
+    assert rec.passed
+    assert not [f for f in findings(out) if f.kind in ("gap", "duplicate", "back", "start", "part")]
+
+
+def test_real_errors_in_typed_numbering_are_found():
+    """Item 7: a component that belongs to another PART ("2.3" under PART 1, "1.1" under PART 2) is a finding; a roman
+    list I./II./III. reads as roman; PART with and without the dash is one sequence."""
+    got = [(f.kind, f.index) for f in findings(typed_doc(
+        "PART 1 - GENERAL", "1.1\tSUMMARY", "1.2\tREFERENCES", "2.3\tSUBMITTALS", "PART 2 - PRODUCTS",
+        "1.1\tMANUFACTURERS", "2.2\tMATERIALS"))]
+    assert ("part", 3) in got and ("part", 5) in got and ("gap", 3) not in got
+    assert findings(typed_doc("I.\tSCOPE", "II.\tPRODUCTS", "III.\tEXECUTION", "IV.\tCLOSE")) == []
+    assert findings(typed_doc("PART 1 - GENERAL", "1.1\tSUMMARY", "1.2\tREFERENCES", "PART 2 PRODUCTS",
+                              "2.1\tMANUFACTURERS")) == []
+    assert findings(typed_doc("PART 1 GENERAL", "PART 2 - PRODUCTS")) == []
+    assert findings(typed_doc(*[f"{c}.\tItem" for c in "ABCDEFGHIJ"])) == []    # I. continues the letters
+    assert [(f.kind, f.index) for f in findings(typed_doc("I.\tOne", "III.\tThree"))] == [("gap", 1)]   # I = roman 1
+
+
+def test_list_level_findings_come_first_and_survive_the_cap(clean):
+    """Item 8: forty duplicate "A." lines cannot push the caveats (not evaluated, restart rule, linked level) past the
+    cap; the empty paragraph after a text box names the body paragraph before it, not the text box's."""
+    def flood(r):
+        steel = next(p for p in r.iter(W + "p") if text_of(p) == "Steel pipe.")
+        for k in range(40):
+            steel.addnext(etree.fromstring(f'<w:p {WD}><w:r><w:t xml:space="preserve">A.\tLine {k}.</w:t></w:r></w:p>'))
+    plan, out, rec = run(patch_docx(clean, {MAIN: flood}), auditing())
+    assert rec.passed and len(plan.flags) == aud.MAX_FLAGS + 1 and "more finding(s)" in plan.flags[-1]
+    head = plan.flags[:5]
+    assert any("not evaluated" in f for f in head) and any("restart rule" in f for f in head)
+    assert any("LINKED level" in f for f in head)
+
+    def after_box(r):                          # a copy of the text box holder after "Tyco.", then an empty "B."
+        holder = copy.deepcopy(next(p for p in r.iter(W + "p") if text_of(p).startswith("Text box holder")))
+        tyco = next(p for p in r.iter(W + "p") if text_of(p) == "Tyco.")
+        tyco.addnext(holder)
+        holder.addnext(etree.fromstring(f'<w:p {WD}><w:pPr><w:pStyle w:val="ArchPara"/></w:pPr></w:p>'))
+    empties = [f.text for f in findings(patch_docx(clean, {MAIN: after_box})) if f.kind == "empty"]
+    assert any("(after ‘Text box holder:" in t for t in empties) and not any("Text box item" in t for t in empties)
+
+
+def test_the_linked_level_finding(clean):
+    """Item 9: list 10's paragraphs that take their level from a link are a list-level finding."""
+    got = [f for f in findings(clean) if f.kind == "linked"]
+    assert len(got) == 1 and "of list 10 take their level from a LINKED level" in got[0].text
+    assert "LibreOffice shows them at level 0" in got[0].text
+    assert not [f for f in findings(build_scheme_example()) if f.kind == "linked"]       # explicit levels there

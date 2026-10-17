@@ -12,7 +12,8 @@ user's own parameters (``_v_asked``: ``allow_missing`` true by default) this mod
   start or restart on an abstractNum that numbers counted paragraphs through more than one num, a restart after a level
   not below it, a letter or roman level starting below 1, a change after which a paragraph evaluated before is not;
 * what changes (``_v_changes``: the format — the zero-pad rule: decimal ↔ decimalZero —, the start (default 0), the
-  restart rule as Word reads it: none, or r ≥ 1 with r − 1 ≥ the level, is "after any higher level") and the expected
+  restart rule as Word reads it, written in its normal form: none, r ≥ 1 equal to the level (after the nearest higher
+  level) or above it (ignored) is "after any higher level", no element) and the expected
   ``w:lvl`` (``_v_expected_lvl``: the source level with each changed element replaced by a new one carrying only
   ``w:val``, in the schema's order).
 
@@ -112,7 +113,9 @@ def _v_target(ctx: Ctx, defs: VListDefs, asked: Dict[str, Any]) -> Tuple[Optiona
 
 
 def _v_in_effect(restart: Optional[int], ilvl: int) -> Optional[int]:
-    if restart is not None and restart >= 1 and restart - 1 < ilvl:
+    """The restart rule as Word reads it, normal form: a value 1 ≤ r below the level restarts after level r − 1 only; 0
+    never; none, r equal to the level (after the nearest higher level = after any) and r above it (ignored) → None."""
+    if restart is not None and 1 <= restart < ilvl:
         return restart
     return 0 if restart == 0 else None
 
@@ -128,8 +131,8 @@ def _v_changes(lv, asked: Dict[str, Any], ilvl: int) -> Dict[str, Any]:
     if asked["start"] is not None and asked["start"] != lv.start:
         out["start"] = asked["start"]
     if asked["restart"] is not None:
-        want = None if asked["restart"] == "higher" else asked["restart"]
-        if _v_in_effect(want, ilvl) != _v_in_effect(lv.restart, ilvl):
+        want = _v_in_effect(None if asked["restart"] == "higher" else asked["restart"], ilvl)
+        if want != _v_in_effect(lv.restart, ilvl):
             out["restart"] = want
     return out
 

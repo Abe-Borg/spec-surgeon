@@ -157,7 +157,8 @@ CONVERTED = {
     "INSTALLATION": "3.1", "Install per NFPA 13.": "A.", "Cell requirement.": "B.", "After the table.": "C.",
 }
 OTHER_LISTS = {"Bullet one": "•", "Bullet two": "•", "Appendix one": "APPENDIX III", "Zed": "Z.",
-               "Legal one": "3.26.1", "Double A": "AA.", "Override sub": ("override",), "Zed again": "Z."}
+               "Legal one": "3.26.1", "Double A": "AA.", "Override sub": ("override",),
+               "Zed again": ("skipped",)}        # level 1 skipped by "Legal three" (lists.skipped_below)
 STYLE_OF = {"GENERAL": "PRT", "SUMMARY": "ART", "Section includes wet-pipe sprinkler systems.": "PR1",
             'Division 21 Section "Common Work Results for Fire Suppression".': "PR2", "Hangers.": "PR3",
             "UL listings.": "PR1", "Cell requirement.": "PR1"}

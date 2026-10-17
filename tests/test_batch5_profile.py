@@ -32,7 +32,8 @@ def test_lists_say_which_paragraphs_the_engine_does_not_evaluate():
     outline = _profile(build_numbering(shared_restart=True))["lists"]["lists"][0]
     assert outline["lists"] == [10, 11] and outline["not_evaluated"] == {"shared": outline["paragraphs"]}
     clean = _profile(build_numbering(shared_restart=False))["lists"]["lists"][0]
-    assert "not_evaluated" not in clean and clean["levels"][1]["first"] == "1.01"
+    # "Product data." skips level 2: the three level-2 paragraphs after it are not evaluated (lists.skipped_below)
+    assert clean["not_evaluated"] == {"skipped": 3} and clean["levels"][1]["first"] == "1.01"
     assert clean["levels"][2]["styles"][0] == "ArchPara"
 
 

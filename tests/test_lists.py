@@ -44,7 +44,7 @@ def fixture(name: str) -> bytes:
                         "styles": build_styles, "style-template": build_style_template,
                         "default-style": _default_style_doc, "override-restart": _override_restart_doc,
                         "ambiguous": _ambiguous_doc, "style-link": _style_link_doc,
-                        "negative": _negative_doc}[name]()
+                        "negative": _negative_doc, "chain-levels": _chain_levels_doc}[name]()
     return _CACHE[name]
 
 
@@ -117,7 +117,8 @@ def assert_sides_agree(data: bytes, override_t=None, defs_pair=None) -> None:
 
 
 FIXTURES = ["numbering", "numbering-clean", "typed", "typed-typo", "typed-lead", "typed-spaces", "scheme", "styles",
-            "style-template", "default-style", "override-restart", "ambiguous", "style-link", "negative"]
+            "style-template", "default-style", "override-restart", "ambiguous", "style-link", "negative",
+            "chain-levels"]
 
 
 @pytest.mark.parametrize("name", FIXTURES)
@@ -136,9 +137,12 @@ OUTLINE = {   # build_numbering(shared_restart=False): paragraph text → render
     "Hidden requirement.": "B.",                                # hidden paragraphs count
     "UL listings.": "C.",                                       # ArchParaAlt: level 2 through its basedOn chain
     "SUBMITTALS": "1.03", "Product data.": "1.",                # own numPr with ONLY ilvl 3: the style's list
-    "Shop drawings.": "A.",
-    "Calculations, as specified in Article 1.02.": "B.",        # the pending deletion before it is not counted
-    "Comply with Article 1.02.": "C.",
+    # "Product data." (level 3) was counted while level 2 had no value since SUBMITTALS: LibreOffice gave level 2 its
+    # start then ("Shop drawings." B.), Word starts it at "Shop drawings." (A.) — level 2 is uncertain until PART 2
+    # (the coordinator's review round: a skipped level)
+    "Shop drawings.": ("skipped",),
+    "Calculations, as specified in Article 1.02.": ("skipped",),   # (the pending deletion before it is not counted)
+    "Comply with Article 1.02.": ("skipped",),
     "PRODUCTS": "PART 2 -", "MANUFACTURERS": "2.01", "Tyco.": "A.", "Viking.": "B.", "MATERIALS": "2.02",
     "Steel pipe.": "A.", "PIPING": "2.03", "Black steel.": "A.", "VALVES": "2.04", "Gate valves.": "A.",
     "B.\tCheck valves.": "B.", "EXECUTION": "PART 3 -", "INSTALLATION": "3.01", "Install per NFPA 13.": "A.",
@@ -156,10 +160,10 @@ OTHER_LISTS = {
     "Appendix two": "APPENDIX IV",
     "Legal three": ("skipped",),          # "%1.%2.%3": level 1 has no value after the restart — not offered
     "Roman two": "(ii)",                  # lvlRestart 0: never restarts
-    "Zed again": "Z.",
+    "Zed again": ("skipped",),            # level 1 was skipped by "Legal three": Word Z., LibreOffice AA.
     "Override first": "1.", "Override sub": ("override",), "Override second": "2.",
 }
-COUNTERS = {"Product data.": (1, 3, 1, 1), "Shop drawings.": (1, 3, 1), "Legal three": (4, 26, 1),
+COUNTERS = {"Product data.": (1, 3, 1, 1), "Legal three": (4, 26, 1),
             "Roman two": (4, 26, 1, 2), "Hangers.": (1, 1, 2, 1, 1), "PIPING": (2, 3)}
 SHARED = {k: ("shared",) for k in OUTLINE}
 DEFAULT_STYLE = {"One": "1.", "Two": "2.", "Three under Body": "3."}
@@ -242,6 +246,43 @@ NEGATIVE = {"neg-a": ("unsupported",), "neg-b": ("unsupported",), "neg-c": ("uns
             "neg-e": "1.", "neg-f": "1.1"}
 
 
+def _chain_levels_doc() -> bytes:
+    """A style chain read two ways (step 4: as a unit — numId and level from the style holding the numId — and element by
+    element — the nearest own ilvl, the link at the numId's style standing for its level): "H2" = only ``ilvl 1``
+    based on "H1" (``ilvl 0`` + numId 5) — the review's "Heading 2 under Heading 1" — is ambiguous; "Same" = only
+    ``ilvl 0`` based on "H1b" (``ilvl 0`` + numId 9) agrees; "Lnk" (numId 6, no ilvl, linked from level 1) based on
+    "Far" (``ilvl 2``): the link is Lnk's own level under both readings — evaluated, marked linked; "NoLnk" (numId 7,
+    neither ilvl nor link) based on "Far": 0 as a unit, 2 element by element — ambiguous."""
+    styles = ('<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>'
+              '<w:style w:type="paragraph" w:styleId="H1"><w:name w:val="H1"/><w:pPr><w:numPr><w:ilvl w:val="0"/>'
+              '<w:numId w:val="5"/></w:numPr></w:pPr></w:style>'
+              '<w:style w:type="paragraph" w:styleId="H2"><w:name w:val="H2"/><w:basedOn w:val="H1"/><w:pPr><w:numPr>'
+              '<w:ilvl w:val="1"/></w:numPr></w:pPr></w:style>'
+              '<w:style w:type="paragraph" w:styleId="H1b"><w:name w:val="H1b"/><w:pPr><w:numPr><w:ilvl w:val="0"/>'
+              '<w:numId w:val="9"/></w:numPr></w:pPr></w:style>'
+              '<w:style w:type="paragraph" w:styleId="Same"><w:name w:val="Same"/><w:basedOn w:val="H1b"/><w:pPr>'
+              '<w:numPr><w:ilvl w:val="0"/></w:numPr></w:pPr></w:style>'
+              '<w:style w:type="paragraph" w:styleId="Far"><w:name w:val="Far"/><w:pPr><w:numPr><w:ilvl w:val="2"/>'
+              '</w:numPr></w:pPr></w:style>'
+              '<w:style w:type="paragraph" w:styleId="Lnk"><w:name w:val="Lnk"/><w:basedOn w:val="Far"/><w:pPr>'
+              '<w:numPr><w:numId w:val="6"/></w:numPr></w:pPr></w:style>'
+              '<w:style w:type="paragraph" w:styleId="NoLnk"><w:name w:val="NoLnk"/><w:basedOn w:val="Far"/><w:pPr>'
+              '<w:numPr><w:numId w:val="7"/></w:numPr></w:pPr></w:style>')
+    linked = ('<w:abstractNum w:abstractNumId="6"><w:lvl w:ilvl="0"><w:start w:val="1"/><w:lvlText w:val="%1."/>'
+              '</w:lvl><w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:pStyle w:val="Lnk"/>'
+              '<w:lvlText w:val="%2)"/></w:lvl></w:abstractNum>')
+    numbering = (_two_levels(5) + linked + _two_levels(7) + _two_levels(9)
+                 + "".join(f'<w:num w:numId="{n}"><w:abstractNumId w:val="{n}"/></w:num>' for n in (5, 6, 7, 9)))
+    body = (_p("ch-h1", '<w:pStyle w:val="H1"/>') + _p("ch-h2", '<w:pStyle w:val="H2"/>')
+            + _p("ch-same", '<w:pStyle w:val="Same"/>') + _p("ch-link", '<w:pStyle w:val="Lnk"/>')
+            + _p("ch-nolink", '<w:pStyle w:val="NoLnk"/>'))
+    return mini_docx(body, styles, numbering)
+
+
+CHAIN_LEVELS = {"ch-h1": "1.", "ch-h2": ("ambiguous-level",), "ch-same": "1.", "ch-link": "a)",
+                "ch-nolink": ("ambiguous-level",)}
+
+
 def _default_style_doc() -> bytes:
     """A crafted file: the DEFAULT paragraph style ("Body") is numbered by list 5; "Other" is not; a paragraph whose
     w:pStyle is EMPTY names no style (unnumbered)."""
@@ -293,7 +334,8 @@ def expectation_failures(side: str) -> List[str]:
     clean = dict(OUTLINE, **OTHER_LISTS, **{k + " counters": v for k, v in COUNTERS.items()})
     for name, want in (("numbering-clean", clean), ("numbering", dict(SHARED, **OTHER_LISTS)),
                        ("default-style", DEFAULT_STYLE), ("override-restart", OVERRIDE_RESTART),
-                       ("ambiguous", AMBIGUOUS), ("style-link", STYLE_LINK), ("negative", NEGATIVE)):
+                       ("ambiguous", AMBIGUOUS), ("style-link", STYLE_LINK), ("negative", NEGATIVE),
+                       ("chain-levels", CHAIN_LEVELS)):
         got = observed(side, fixture(name))
         if name == "numbering":
             got = {k: v for k, v in got.items() if not k.endswith(" counters")}
@@ -741,14 +783,14 @@ def test_a_skipped_level_is_not_evaluated(side):
     assert got == {
         "a": (None, "1.", (1,)),
         "b": ("skipped", None, (1, 1, 1)),          # level 1 never reached
-        "c": (None, "1.1", (1, 1)),
-        "d": (None, "1.1.1", (1, 1, 1)),
+        "c": ("skipped", None, None),               # level 1 skipped by b: Word 1.1, LibreOffice 1.2
+        "d": ("skipped", None, None),               # names level 1, still uncertain
         "e": (None, "2.", (2,)),                    # restarts levels 1 and 2 (not 3: lvlRestart 0)
         "f": ("skipped", None, (2, 1, 1)),          # level 1 reset by the restart
         "g": (None, "(1)", (2, 1, 1, 1)),
         "h": (None, "3.", (3,)),
         "i": (None, "1 of 1", (3, 1, 1, 1, 1)),     # names level 3, which never restarts and still holds 1
-        "j": (None, "3.1", (3, 1)),
+        "j": ("skipped", None, None),               # level 1 skipped again by i (h reset it)
     }
     reason = next(x.not_evaluated for x in s.count() if par_text(s.pars[x.index]) == "b")
     assert reason.startswith(tl.SKIPPED if side == "t" else vl.V_SKIPPED) and "level 1" in reason
@@ -910,6 +952,11 @@ DEFECTS = {
         ("override_restart_uncertain", "_v_override_restart", lambda real: lambda nth, override: False)],
     "an own list without a level always takes level 0": [
         ("chain_ilvl", "_v_chain_ilvl", lambda real: lambda styles, sid: None)],
+    "a skipped level counted as certain (LibreOffice starts it, Word does not)": [
+        ("skipped_below", "_v_skipped_below", lambda real: lambda has, L: [])],
+    "a style chain read as a unit only (a nearer style's own level ignored)": [
+        ("element_ilvl", "_v_by_element", lambda real: lambda styles, sid, list_style, defs, n:
+         real(styles, list_style, list_style, defs, n))],
     "negative numbers shown": [("format_value", "v_format_value",
                                 lambda real: lambda fmt, n, text=None: str(n) if n < 0 and fmt in ("decimal", "decimalZero")
                                 else real(fmt, n, text))],
@@ -1144,7 +1191,7 @@ def _extra(rng):
 def test_transform_and_verifier_agree_on_random_list_definitions():
     rng = random.Random(33)
     paragraphs = evaluated = schemes = typed = 0
-    for case in range(450):
+    for case in range(700):                    # (450 before skipped levels made fewer paragraphs evaluated)
         data, level_lists = _rand_doc(rng)
         assert_sides_agree(data)
         t, v = TSide(data), VSide(data)
@@ -1183,3 +1230,74 @@ def test_transform_and_verifier_agree_on_random_list_definitions():
                     typed += 1
     assert paragraphs > 8000 and evaluated > 1500 and schemes > 20 and typed > 100, (paragraphs, evaluated, schemes,
                                                                                      typed)
+
+
+# ---- the two readings of a style chain (review of set_list_level / audit_numbering, item 1) --------------------------
+
+@pytest.mark.parametrize("side", ["t", "v"])
+def test_a_style_chain_read_two_ways(side):
+    """Step 4's two readings on both sides: a nearer style holding only an ilvl (Heading 2 under Heading 1) and an ilvl
+    beyond a numId style with neither ilvl nor link are ambiguous; equal readings and a link at the numId's style are
+    not — the link is marked (LibreOffice shows level 0 there)."""
+    s = TSide(fixture("chain-levels")) if side == "t" else VSide(fixture("chain-levels"))
+    assert observed(side, fixture("chain-levels")) == CHAIN_LEVELS
+    rows = {par_text(s.pars[x.index]): x for x in s.count()}
+    assert rows["ch-link"].linked and not rows["ch-h1"].linked and not rows["ch-same"].linked
+    numbering = tl.style_numbering if side == "t" else vl.v_style_numbering
+    styles = s.sheet if side == "t" else s.styles
+    h2 = numbering("H2", styles, s.defs)
+    assert h2.ambiguous and h2.unreadable and h2.ilvl is None
+    assert numbering("Lnk", styles, s.defs).linked and numbering("Lnk", styles, s.defs).ilvl == 1
+    clean = TSide(fixture("numbering-clean")) if side == "t" else VSide(fixture("numbering-clean"))
+    linked = {par_text(clean.pars[x.index]) for x in clean.count() if x.linked}
+    assert {"Section includes wet-pipe sprinkler systems.", "Hangers.", "UL listings."} <= linked
+    assert "SUMMARY" not in linked and "Product data." not in linked
+
+
+def test_the_reviews_heading_2_under_heading_1_is_not_evaluated():
+    """The review's repro (ART = only ilvl 1, based on PRT): read at level 0 before — set_list_level then changed the
+    PART level for "ART". Now ambiguous on both sides, and the scheme refuses it."""
+    def styles(r):
+        art = next(st for st in r.findall(W + "style") if st.get(W + "styleId") == "ART")
+        art.find(W + "basedOn").set(W + "val", "PRT")
+        numpr = art.find(W + "pPr/" + W + "numPr")
+        numpr.remove(numpr.find(W + "numId"))
+    data = patch_docx(fixture("scheme"), {"word/styles.xml": styles})
+    assert_sides_agree(data)
+    for side in ("t", "v"):
+        got = observed(side, data)
+        assert got["SUMMARY"] == ("ambiguous-level",) and got["GENERAL"] == "PART 1 -", side
+    t = TSide(data)
+    with pytest.raises(JobException) as e:
+        tl.resolve_scheme(SCHEME_LEVELS, t.sheet, t.defs)
+    assert e.value.code == "scheme"
+
+
+def test_a_direct_numid_without_ilvl_under_a_level_style_stays_ambiguous():
+    """The review's second repro: an own numPr naming list 10 without a level in a style that gives level 1."""
+    def main(r):
+        p = next(p for p in r.iter(W + "p") if par_text(p) == "SECOND ARTICLE")
+        p.find(W + "pPr").append(etree.fromstring(f'<w:numPr xmlns:w="{W_NS}"><w:numId w:val="10"/></w:numPr>'))
+    data = patch_docx(fixture("scheme"), {MAIN: main})
+    assert_sides_agree(data)
+    assert observed("t", data)["SECOND ARTICLE"] == ("ambiguous-level",)
+
+
+@pytest.mark.parametrize("side", ["t", "v"])
+def test_a_skipped_level_stays_uncertain_until_it_restarts(side):
+    """The review's sequence "1.2 SUBMITTALS / 1. Product data / A. Shop drawings / B. Samples / 1.3 / A.": "1." is
+    counted while level 2 holds no value — LibreOffice gives level 2 its start then ("Shop drawings" B.), Word at "Shop
+    drawings" (A.): every level-2 paragraph is not evaluated until 1.3 restarts it; "1." itself is evaluated."""
+    num = _two_levels(1)[:-len("</w:abstractNum>")] + (
+        '<w:lvl w:ilvl="3"><w:start w:val="1"/><w:lvlText w:val="%4."/></w:lvl></w:abstractNum>'
+        '<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>')
+    order = [("PART", 0), ("SUMMARY", 1), ("First", 2), ("SUBMITTALS", 1), ("Product data", 3), ("Shop drawings", 2),
+             ("Samples", 2), ("REFERENCES", 1), ("NFPA", 2)]
+    data = mini_docx("".join(_numbered(t, 1, k) for t, k in order), "", num)
+    assert_sides_agree(data)
+    got = observed(side, data)
+    assert got == {"PART": "1.", "SUMMARY": "1.1", "First": "a)", "SUBMITTALS": "1.2", "Product data": "1.",
+                   "Shop drawings": ("skipped",), "Samples": ("skipped",), "REFERENCES": "1.3", "NFPA": "a)"}
+    s = TSide(data) if side == "t" else VSide(data)
+    reason = next(x.not_evaluated for x in s.count() if par_text(s.pars[x.index]) == "Shop drawings")
+    assert reason.startswith(tl.SKIPPED if side == "t" else vl.V_SKIPPED) and "level 2" in reason

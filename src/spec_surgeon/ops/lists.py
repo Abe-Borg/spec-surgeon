@@ -42,12 +42,24 @@ Definitions
   3. numId = d_num when present, else s_num; none → unnumbered; not whole → **unreadable**; 0 → unnumbered; no numbering
      part → unnumbered; a dangling numId → ``Numbering.dangling`` (unnumbered for counting, reported by the audit);
   4. ilvl = d_lvl when present; else, when numId came from the style: s_lvl when present, else the **linked level** (the
-     lowest ilvl whose level definition names s_style in its ``pstyle``), else 0; when numId came from the paragraph and it
-     has no ilvl: 0 — unless a style on the paragraph's chain carries a ``w:numPr/w:ilvl`` (``chain_ilvl``: the first one,
-     nearest first) that is not the whole number 0: Word may take the style's level (whether it inherits numPr as a unit —
-     the first numPr's ilvl — or element by element — the first ilvl), so the level is **ambiguous**
-     (``Numbering.ambiguous``, the reason in ``unreadable``; counted as ``ambiguous-level``, below). An ilvl that is not
-     an ilvl → **unreadable**.
+     lowest ilvl whose level definition names s_style in its ``pstyle``; ``Numbering.linked``), else 0; when numId came
+     from the paragraph and it has no ilvl: 0 — unless a style on the paragraph's chain carries a ``w:numPr/w:ilvl``
+     (``chain_ilvl``: the first one, nearest first) that is not the whole number 0: Word may take the style's level
+     (whether it inherits numPr as a unit — the first numPr's ilvl — or element by element — the first ilvl), so the
+     level is **ambiguous** (``Numbering.ambiguous``, the reason in ``unreadable``; counted as ``ambiguous-level``,
+     below). An ilvl that is not an ilvl → **unreadable**.
+
+     **Two readings of a style chain** (a list named by a style, no ``d_lvl``). Word stores a paragraph's list and level
+     as two separate properties, LibreOffice inherits them element by element, and the model above reads them **as a
+     unit** — numId AND level from ONE style, s_style (the nearest whose numPr holds a numId: the numId is the nearest
+     ``w:numId`` under both readings, so only the level can differ). The **element-by-element** reading
+     (``element_ilvl``) takes, along the chain nearest first, the first style's own ``w:numPr/w:ilvl`` — or, at s_style
+     itself when it has none, its linked level (the list's own link names that style's level) —, else 0. When the two
+     levels differ — a NEARER style holding only an ``w:ilvl`` ("Heading 2" = ``<w:ilvl w:val="1"/>`` based on "Heading
+     1", which holds the numId), or an ilvl BEYOND an s_style that has neither its own ilvl nor a link — the paragraph's
+     level is **ambiguous** (``ambiguous-level``), as for the direct case above. A level that came from the linked level
+     under both readings is marked ``Numbering.linked`` / ``NumberedPar.linked``: Word reads the link, LibreOffice
+     ignores it (it shows the paragraph at level 0 — ooxml-lessons §6): the ops flag it.
 * **Formats** (``format_value``): ``decimal`` str(n); ``decimalZero`` ``0`` + str(n) when 0 ≤ n ≤ 9, else str(n);
   ``upperLetter``/``lowerLetter`` (n ≥ 1) the letter of (n−1) mod 26 repeated (n−1) div 26 + 1 times (27 → AA, 28 → BB);
   ``upperRoman``/``lowerRoman`` (1–3999) the standard numerals; ``bullet`` the level's text as written; ``none`` "".
@@ -98,7 +110,13 @@ counters and the rendered number are None unless said), checked in this order:
 * ``skipped`` (``SKIPPED``; ``skipped_level``) — its text names a level that has no current value in N: never reached,
   or reset by a restart ("1.1.1" right after a PART). Word shows such a level as 0 ("1.0.1"), LibreOffice shows its start
   and then continues from it, a model showing the start would agree with neither — so the number is not offered. The
-  reason names the level; the counters are kept (the start stands for the missing value).
+  reason names the level; the counters are kept (the start stands for the missing value). And a **skipped level**
+  (``skipped_below``): when a paragraph at level L is counted while a level k < L of N holds no value ("1.2 SUBMITTALS /
+  1. Product data" — level 2 skipped), LibreOffice gives k its start at that moment and continues from it, Word starts k
+  when it next comes ("A. Shop drawings": Word "A.", LibreOffice "B."). Level k is then UNCERTAIN until a restart resets
+  it (step 1), and every paragraph AT level k or whose text NAMES k meanwhile is not evaluated (``skipped``, counters
+  None). The paragraph that skipped it is not: its own number does not show k (a ``%j`` naming k is the case above). A
+  paragraph deeper than k that does not show it is not either — both applications show the same number there.
 
 Scheme and typed numbers (design §0.3, §2.1)
 --------------------------------------------
@@ -169,11 +187,12 @@ API (for the batch-5 ops)
 ``count_reads(pkg, sheet, pars, extra_styles=()) -> [touch]``
     The reads a counting op declares (above); ``pars`` is ``count``'s result over the SOURCE.
 Lower-level pieces (each a module function, so a test can plant a defect in it): ``whole``, ``read_level``,
-``style_chain``, ``chain_ilvl``, ``linked_level``, ``render``, ``skipped_level``, ``named_levels``, ``restarts``,
+``style_chain``, ``chain_ilvl``, ``element_ilvl``, ``linked_level``, ``render``, ``skipped_level``, ``skipped_below``,
+``named_levels``, ``restarts``,
 ``start_of``, ``override_restart_uncertain``, ``counted``; ``ListDefs.is_override``; constants ``FORMATS``, ``SUFFIXES``,
 ``FORMAT_PATTERNS``, ``SHARED`` / ``SKIPPED`` / ``START_OVERRIDE`` (every ``shared`` / ``skipped`` /
 ``start-override`` reason starts with it), ``OVERRIDE_REASON``. ``Numbering.ambiguous`` (default False) marks step 4's
-ambiguous level.
+ambiguous level; ``Numbering.linked`` / ``NumberedPar.linked`` (default False, not compared) a linked level.
 """
 from __future__ import annotations
 
@@ -435,7 +454,8 @@ class Numbering:
     style: Optional[str] = None         # the style whose w:numPr gave the list (source "style")
     dangling: bool = False
     unreadable: Optional[str] = None
-    ambiguous: bool = False             # its own numPr has a numId and no ilvl, its style chain an ilvl (step 4)
+    ambiguous: bool = False             # the two readings of step 4 give different levels
+    linked: bool = field(default=False, compare=False)   # the level is the LINKED level (step 4; LibreOffice: level 0)
 
 
 def paragraph_style(p, sheet) -> Optional[str]:
@@ -477,6 +497,22 @@ def chain_ilvl(sheet, sid: Optional[str]):
     return None
 
 
+def element_ilvl(sheet, sid: Optional[str], s_style: Optional[str], defs: "ListDefs", num_id: int):
+    """The level the ELEMENT-BY-ELEMENT reading (step 4) gives a paragraph of style ``sid`` whose list is named by style
+    ``s_style`` and that has no own ``w:ilvl``: along the chain of ``sid`` nearest first, the first style's own
+    ``w:numPr/w:ilvl`` (the element) — or, at ``s_style`` itself when it has none, its linked level (an int: the list's
+    own link names that style's level); None when neither occurs."""
+    for s, st in style_chain(sheet, sid):
+        e = st.find(f"{W}pPr/{W}numPr/{W}ilvl")
+        if e is not None:
+            return e
+        if s == s_style:
+            k = linked_level(defs, num_id, s_style)
+            if k is not None:
+                return k
+    return None
+
+
 def linked_level(defs: ListDefs, num_id: int, style_id: Optional[str]) -> Optional[int]:
     """The lowest ilvl of list ``num_id`` whose level definition names ``style_id`` in its w:pStyle, else None."""
     for k in range(9):
@@ -486,7 +522,9 @@ def linked_level(defs: ListDefs, num_id: int, style_id: Optional[str]) -> Option
     return None
 
 
-def _numbering(d_num, d_lvl, styled, defs: ListDefs, style_ilvl=None) -> Optional[Numbering]:
+def _numbering(d_num, d_lvl, styled, defs: ListDefs, style_ilvl=None, element=None) -> Optional[Numbering]:
+    """Steps 3–4. ``style_ilvl``: the first ilvl of the chain (a direct numId without ilvl); ``element``: a function giving
+    the element-by-element level (``element_ilvl``) for a list named by a style."""
     if not defs.present:
         return None
     if d_num is not None:
@@ -506,6 +544,7 @@ def _numbering(d_num, d_lvl, styled, defs: ListDefs, style_ilvl=None) -> Optiona
     if not defs.defined(n):
         return Numbering(n, None, source, s_style, dangling=True)
     lvl_el = d_lvl if d_lvl is not None else (styled[1] if source == "style" else None)
+    linked = False
     if lvl_el is not None:
         k = _ilvl(lvl_el.get(W + "val"))
         if k is None:
@@ -514,6 +553,7 @@ def _numbering(d_num, d_lvl, styled, defs: ListDefs, style_ilvl=None) -> Optiona
                              unreadable=f"{who} list level {lvl_el.get(W + 'val')!r} is not a whole number 0–8")
     elif source == "style":
         k = linked_level(defs, n, s_style)
+        linked = k is not None
         k = 0 if k is None else k
     elif style_ilvl is not None and whole(style_ilvl.get(W + "val")) != 0:
         return Numbering(n, None, source, s_style, ambiguous=True,
@@ -521,21 +561,34 @@ def _numbering(d_num, d_lvl, styled, defs: ListDefs, style_ilvl=None) -> Optiona
                                     f"{style_ilvl.get(W + 'val')!r}: Word may take that level — ambiguous")
     else:
         k = 0
-    return Numbering(n, k, source, s_style)
+    if source == "style" and d_lvl is None and element is not None:
+        # the element-by-element reading: a nearer style's own ilvl, or one beyond a style without ilvl or link
+        e = element(n, s_style)
+        ek = e if isinstance(e, int) else (_ilvl(e.get(W + "val")) if e is not None else 0)
+        if ek != k:
+            shown = e if isinstance(e, int) else (e.get(W + "val") if e is not None else "0")
+            return Numbering(n, None, source, s_style, ambiguous=True,
+                             unreadable=f"style {s_style} names list {n} at level {k}, but a style's own level "
+                                        f"{shown!r} lies on the chain: Word may read the numbering as a unit or element "
+                                        f"by element — ambiguous")
+    return Numbering(n, k, source, s_style, linked=linked)
 
 
 def paragraph_numbering(p, sheet, defs: ListDefs) -> Optional[Numbering]:
     numpr = p.find(f"{W}pPr/{W}numPr")
     d_num = numpr.find(W + "numId") if numpr is not None else None
     d_lvl = numpr.find(W + "ilvl") if numpr is not None else None
-    styled = _styled(sheet, paragraph_style(p, sheet)) if d_num is None else None
-    style_ilvl = chain_ilvl(sheet, paragraph_style(p, sheet)) if d_num is not None and d_lvl is None else None
-    return _numbering(d_num, d_lvl, styled, defs, style_ilvl)
+    sid = paragraph_style(p, sheet)
+    styled = _styled(sheet, sid) if d_num is None else None
+    style_ilvl = chain_ilvl(sheet, sid) if d_num is not None and d_lvl is None else None
+    return _numbering(d_num, d_lvl, styled, defs, style_ilvl,
+                      element=lambda n, s_style: element_ilvl(sheet, sid, s_style, defs, n))
 
 
 def style_numbering(style_id: Optional[str], sheet, defs: ListDefs) -> Optional[Numbering]:
     """The numbering a paragraph of this style without its own numPr gets (steps 2–4 on the style chain alone)."""
-    return _numbering(None, None, _styled(sheet, style_id), defs)
+    return _numbering(None, None, _styled(sheet, style_id), defs,
+                      element=lambda n, s_style: element_ilvl(sheet, style_id, s_style, defs, n))
 
 
 # ---- formats and the rendered number ---------------------------------------------------------------------------------
@@ -628,6 +681,12 @@ def named_levels(text: Optional[str]) -> List[int]:
     return out
 
 
+def skipped_below(has_value: Callable[[int], bool], L: int) -> List[int]:
+    """The levels below ``L`` that hold no current value when a paragraph at level ``L`` is counted (skipped levels:
+    LibreOffice gives each its start at that moment, Word does not)."""
+    return [k for k in range(L) if not has_value(k)]
+
+
 def override_restart_uncertain(nth_start: int, start_override: Optional[int]) -> bool:
     """Whether a level's value is uncertain after its ``nth_start`` start in its instance: it carries a startOverride
     (Word may apply it at the first start only) and this is not its first start."""
@@ -676,6 +735,7 @@ class NumberedPar:
     abstract_id: Optional[int] = None
     source: str = "direct"
     style: Optional[str] = None
+    linked: bool = field(default=False, compare=False)   # its level is the LINKED level (LibreOffice shows level 0)
 
     @property
     def evaluated(self) -> bool:
@@ -722,6 +782,7 @@ def count(root, sheet, defs: ListDefs, override: Optional[Mapping[int, Optional[
     states: Dict[int, Dict[int, int]] = {}
     starts: Dict[int, Dict[int, int]] = {}             # instance → level → how many times it started
     doubt: Dict[int, set] = {}                          # instance → levels holding an uncertain value (step 2)
+    skips: Dict[int, set] = {}                          # instance → levels a deeper paragraph skipped (step 4)
     poisoned: Dict[int, str] = {}
     poisoned_all: Optional[str] = None
     for index, nb in found:
@@ -729,7 +790,8 @@ def count(root, sheet, defs: ListDefs, override: Optional[Mapping[int, Optional[
         a = defs.abstract_of(n)
 
         def par(counters=None, text=None, suff=None, fmt=None, why=None, issue=None):
-            return NumberedPar(index, n, L, counters, text, suff, fmt, why, issue, a, nb.source, nb.style)
+            return NumberedPar(index, n, L, counters, text, suff, fmt, why, issue, a, nb.source, nb.style,
+                               linked=nb.linked)
         if nb.unreadable is not None:
             out.append(par(why=nb.unreadable, issue="ambiguous-level" if nb.ambiguous else "unreadable"))
             if n is None:
@@ -746,11 +808,13 @@ def count(root, sheet, defs: ListDefs, override: Optional[Mapping[int, Optional[
             out.append(par(why=prob[1], issue=prob[0]))
             continue
         state = states.setdefault(n, {})
-        began, unsure = starts.setdefault(n, {}), doubt.setdefault(n, set())
-        for k in sorted(state):
+        began, unsure, skipped = starts.setdefault(n, {}), doubt.setdefault(n, set()), skips.setdefault(n, set())
+        for k in sorted(set(state) | skipped):
             if k > L and restarts(_restart(defs, n, k), L, k):
-                del state[k]
+                state.pop(k, None)
                 unsure.discard(k)
+                skipped.discard(k)
+        skipped.update(skipped_below(lambda k: k in state, L))
         if L not in state:
             state[L] = start_of(defs, n, L)
             began[L] = began.get(L, 0) + 1
@@ -779,6 +843,13 @@ def count(root, sheet, defs: ListDefs, override: Optional[Mapping[int, Optional[
             out.append(par(suff=suff, fmt=fmt, issue="start-override",
                            why=f"{START_OVERRIDE}: level {shaky[0]} of list {n} carries a startOverride and started "
                                f"again — Word may restart it at its w:start instead"))
+            continue
+        gone = sorted(k for k in skipped if (k == L or k in named) and k in state)   # no value: the rule below
+        if gone:
+            out.append(par(suff=suff, fmt=fmt, issue="skipped",
+                           why=f"{SKIPPED}: level {gone[0]} of list {n} was skipped — a deeper level was numbered while "
+                               f"it had no value; LibreOffice gave it its start then and continues from it, Word starts "
+                               f"it when it next comes: they number it differently until it restarts"))
             continue
         counters = tuple(state[k] if k in state else start_of(defs, n, k) for k in range(L + 1))
         if lv is None:
