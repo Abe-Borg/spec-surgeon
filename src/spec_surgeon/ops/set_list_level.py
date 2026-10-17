@@ -33,9 +33,11 @@ Definitions (the verifier's own reading is verify/listlevel.py):
   counts, so it plans there, flagged.
 * **What changes** (``changes_for``), from the level's own fields: ``fmt`` when the asked format (or the zero-pad rule)
   differs from the level's; ``start`` when the asked start differs from the level's (default 0); ``restart`` when the
-  asked rule differs from the level's **in effect** — ``restart_in_effect``: none, or a value r ≥ 1 that Word ignores
-  (r − 1 ≥ the level), is "after any higher level"; 0 is never; another r is after level r − 1. Nothing differs →
-  "already as asked": a no-op with a note.
+  asked rule differs from the level's **in effect** — ``restart_in_effect``, the rule's normal form: none, a value r ≥ 1
+  that Word ignores (r − 1 ≥ the level) and r equal to the level ("after level r − 1", the nearest higher one: after any
+  higher level) are all "after any higher level"; 0 is never; another r is after level r − 1 only. What is written is the
+  normal form (``{"after_level": level − 1}`` writes no element, raises no LibreOffice flag). Nothing differs → "already
+  as asked": a no-op with a note.
 * **The written level** (``expected_level``): a copy of the source ``w:lvl`` with each changed element replaced by a new
   one — ``<w:start w:val=n/>``, ``<w:numFmt w:val=F/>`` (no ``w:format`` attribute is kept), ``<w:lvlRestart
   w:val=r/>`` (removed for "after any higher level") — inserted in CT_Lvl order (``LVL_ORDER``: start, numFmt,
@@ -47,10 +49,19 @@ Definitions (the verifier's own reading is verify/listlevel.py):
 * **Predicted numbers**: ``lists.count`` over the main part with the modified definitions — every counted numbered
   paragraph's counters and rendered number after the change (a format change keeps every counter).
 * **Flagged**: a num's ``startOverride`` for the level beside ``start`` (the override still wins in that list); every
-  other num sharing the abstractNum (all their paragraphs change); writing ``never`` / ``after_level`` (LibreOffice
-  ignores ``w:lvlRestart``: the proof PDFs number the level as if it restarted after every higher level, Word follows
-  it); a restart asked where no higher level of the list numbers a counted paragraph (the restart changes nothing — the
-  PARTs are typed or in another list: convert the numbering first, ``convert_numbering`` / ``convert_typed_numbers``).
+  other num sharing the abstractNum that numbers counted paragraphs (all their paragraphs change; an orphan num is not
+  named); writing ``never`` / ``after_level`` (LibreOffice ignores ``w:lvlRestart``: the proof PDFs number the level as
+  if it restarted after every higher level, Word follows it); a restart asked where no higher level of the list numbers
+  a counted paragraph (the restart changes nothing — the PARTs are typed or in another list: convert the numbering
+  first, ``convert_numbering`` / ``convert_typed_numbers``); **who the change reaches** (``_reach_flags``): no counted
+  paragraph at the level ("this change reaches no paragraph"), or the style's own numbered paragraphs at another list or
+  level — a direct numPr naming another list, what Word leaves after re-numbering through the ribbon — named by the list
+  and level they are numbered by ("this change reaches no paragraph of style X" when none is at the level); paragraphs at
+  the level the model does not evaluate (a shared definition …: the change reaches them, unpredicted — the note says how
+  many); paragraphs of the list whose level is a LINKED level (``NumberedPar.linked``: LibreOffice shows them at level 0,
+  ``linked_flag``); and what the renumbering leaves stale (``numbering_flags``, shared with convert_numbering):
+  REF/PAGEREF/NOTEREF fields whose bookmark lies in a paragraph whose number changes, and written occurrences of an old
+  number that changes in another paragraph's text — flagged, never edited.
 
 Touches (rule 9; design §6): ``(numbering, "*", "lvl")`` — a whole-member change: any other op touching the numbering
 part is a plan-time conflict —, ``(styles, "style:<id>", "verify")`` of the style, and ``lists.count_reads`` (the
@@ -76,6 +87,7 @@ from . import lists
 from .base import JobException, Op, PlanFragment
 from .selectors import StyleSheet
 from .style_import import resolve_style, style_type
+from .numbering_flags import stale_fields, stale_fields_flag, written_references, written_references_flag
 from .textedit import run_text, shown
 
 FORMAT_CHOICES = ("decimal", "decimalZero", "upperLetter", "lowerLetter", "upperRoman", "lowerRoman")
@@ -192,9 +204,10 @@ def abstract_level(defs: lists.ListDefs, t: Target) -> Optional[lists.LevelDef]:
 
 
 def restart_in_effect(restart: Optional[int], ilvl: int) -> Optional[int]:
-    """A level's ``w:lvlRestart`` as Word reads it: None (after any higher level) for none and for a value Word ignores
-    (r − 1 ≥ the level), else the value (0 never, r after level r − 1)."""
-    if restart is None or (restart >= 1 and restart - 1 >= ilvl):
+    """A level's ``w:lvlRestart`` as Word reads it, in its normal form: None (after any higher level) for none, for a
+    value Word ignores (r − 1 ≥ the level) and for r = the level (after level r − 1 = after the nearest higher level:
+    after any higher level); else the value (0 never, 1 ≤ r < the level: after level r − 1 only)."""
+    if restart is None or (restart >= 1 and restart >= ilvl):
         return None
     return restart
 
@@ -224,8 +237,8 @@ def changes_for(lv: lists.LevelDef, opts: Dict[str, Any], ilvl: int) -> Tuple[Di
     if opts["start"] is not None and opts["start"] != lv.start:
         out["start"] = opts["start"]
     if opts["restart"] is not None:
-        want = asked_restart(opts["restart"])
-        if restart_in_effect(want, ilvl) != restart_in_effect(lv.restart, ilvl):
+        want = restart_in_effect(asked_restart(opts["restart"]), ilvl)       # the normal form is what is written
+        if want != restart_in_effect(lv.restart, ilvl):
             out["restart"] = want
     return out, notes
 
@@ -262,6 +275,15 @@ def write_level(root, abstract_id: int, ilvl: int, new_lvl) -> None:
     """Put ``new_lvl`` in place of the level in ``root`` (in place)."""
     old = level_element(root, abstract_id, ilvl)
     old.getparent().replace(old, new_lvl)
+
+
+def linked_flag(where: str, linked: Sequence[lists.NumberedPar], every) -> str:
+    """Paragraphs whose level is a LINKED level (a style numPr without ilvl, the list's w:pStyle naming the style): Word
+    reads the link, LibreOffice ignores it and shows them at level 0 — the proof PDFs differ."""
+    return (f"{where}: {len(linked)} paragraph(s) of this list take their level from a LINKED level (the style names the "
+            f"list without a level; the list's level names the style) — Word follows the link, LibreOffice shows them at "
+            f"level 0, so the proof PDFs number them differently; first ‘{_label(every[linked[0].index])}’ (give the "
+            f"style its w:ilvl in Word to make both agree).")
 
 
 def _rows(pars: Sequence[lists.NumberedPar]) -> List[List[Any]]:
@@ -422,9 +444,14 @@ class SetListLevel(Op):
                 changes["restart"], f"after level {(changes['restart'] or 1) - 1}"))
         moved = [(was[p.index], p) for p in after if p.index in was and was[p.index].text != p.text]
         examples = "; ".join(f"‘{_label(every[b.index], 30)}’ {b.text} → {a.text}" for b, a in moved[:EXAMPLES])
+        at_level = [p for p in after if p.abstract_id == target.abstract_id and p.ilvl == target.ilvl]
+        unknown = sum(1 for p in at_level if not p.evaluated)
         frag.notes.append(f"{where}: {', '.join(said)} (the list definition — every paragraph of the level follows); "
-                          f"{len(moved)} paragraph(s) change number" + (f": {examples}" if moved else "")
-                          + (f" … and {len(moved) - EXAMPLES} more" if len(moved) > EXAMPLES else ""))
+                          f"{len(at_level)} paragraph(s) at this level; {len(moved)} paragraph(s) change number"
+                          + (f": {examples}" if moved else "")
+                          + (f" … and {len(moved) - EXAMPLES} more" if len(moved) > EXAMPLES else "")
+                          + (f"; {unknown} paragraph(s) at this level are not evaluated — their numbers change but are "
+                             f"not predicted" if unknown else ""))
 
         # ---- flags ----------------------------------------------------------------------------------------------
         if "start" in changes:
@@ -432,12 +459,62 @@ class SetListLevel(Op):
             if pinned:
                 frag.flags.append(f"{where}: list(s) {pinned} set their own start for this level (w:startOverride); "
                                   f"the override still wins there.")
-        if sharing:
-            frag.flags.append(f"{where}: the definition is shared with list(s) {sharing}; every paragraph they number at "
-                              f"this level changes too.")
+        numbering = sorted(n for n in sharing if n in users)    # only lists that number counted paragraphs
+        if numbering:
+            frag.flags.append(f"{where}: the definition is shared with list(s) {numbering}; every paragraph they number "
+                              f"at this level changes too.")
         if "restart" in changes and changes["restart"] is not None:
             frag.flags.append(f"{where}: {LIBREOFFICE_RESTART}.")
+        self._reach_flags(frag, where, target, sheet, every, before)
+        at_level = [p for p in after if p.abstract_id == target.abstract_id and p.ilvl == target.ilvl]
+        unknown = [p for p in at_level if not p.evaluated]
+        if unknown:
+            frag.flags.append(f"{where}: {len(unknown)} of the {len(at_level)} paragraph(s) at this level are not "
+                              f"evaluated ({unknown[0].not_evaluated}) — the change reaches them, but their numbers are "
+                              f"neither predicted nor checked; first ‘{_label(every[unknown[0].index])}’.")
+        linked = [p for p in before if p.linked and p.abstract_id == target.abstract_id]
+        if linked:
+            frag.flags.append(linked_flag(where, linked, every))
+        changed = [p.index for p in after if p.index in was and was[p.index].text != p.text]
+        for flag in (stale_fields_flag(stale_fields(root, every, changed), "paragraphs whose number changes"),
+                     written_references_flag(written_references(
+                         every, [(i, was[i].text, next(a.text for a in after if a.index == i)) for i in changed]))):
+            if flag:
+                frag.flags.append(flag)
         return frag
+
+    @staticmethod
+    def _reach_flags(frag: PlanFragment, where: str, target: Target, sheet, every, before) -> None:
+        """Who the change reaches. The style's own counted paragraphs numbered by another list or at another level (a
+        direct numPr naming another list — what Word leaves after re-numbering through the ribbon) are not reached:
+        flagged, naming those lists; when none of the style's paragraphs is at the level, "this change reaches no
+        paragraph of style X"; when no counted paragraph at all is, "this change reaches no paragraph". Paragraphs of the
+        style with numbering switched off (numId 0) are left out: they show no number either way."""
+        at_level = [p for p in before if p.abstract_id == target.abstract_id and p.ilvl == target.ilvl]
+        if not at_level:
+            frag.flags.append(f"{where}: no counted paragraph is numbered at this level, so this change reaches no "
+                              f"paragraph.")
+            return
+        if frag.params.get("level") is not None:
+            return                                     # another level than the style's own: the style's are not at it
+        by_index = {p.index: p for p in before}
+        mine = [i for i, p in enumerate(every) if lists.counted(p) and lists.paragraph_style(p, sheet) == target.style_id
+                and i in by_index]
+        away: Dict[str, List[int]] = {}
+        for i in mine:
+            np_ = by_index[i]
+            if np_.abstract_id == target.abstract_id and np_.ilvl == target.ilvl:
+                continue
+            key = f"list {np_.num_id}" + (f" level {np_.ilvl}" if np_.ilvl is not None else "")
+            away.setdefault(key, []).append(i)
+        if not away:
+            return
+        n_away = sum(len(v) for v in away.values())
+        frag.flags.append(f"{where}: {n_away} of the {len(mine)} numbered paragraph(s) of style {target.style_id} are not "
+                          f"numbered at this level — "
+                          + "; ".join(f"{len(v)} by {k} (first ‘{_label(every[v[0]])}’)" for k, v in away.items())
+                          + (f": this change reaches no paragraph of style {target.style_id}." if n_away == len(mine)
+                             else ": the change does not reach them."))
 
     def apply(self, pkg: DocxPackage, frag: PlanFragment) -> None:
         td = frag.transform_data

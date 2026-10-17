@@ -15,10 +15,16 @@ by default) this module re-derives
 
 It fails when the paragraphs differ from the plan's (``changed``); when a changed paragraph's output ``w:numPr`` is not
 exactly ``<w:numPr><w:numId w:val="0"/></w:numPr>``, not where the source's stood (or, when it had none, not where the
-schema's order puts it among the source's children), when any other child of its pPr changed, or when the ``w:pPrChange``
-breaks the paragraph-property rules; and, post-condition, when the verifier's own prediction (the source counted with
-those paragraphs unnumbered) differs from the plan's ``predicted`` rows or its count of the OUTPUT differs from that
-prediction. Only ``numPr`` and ``pPrChange`` of the changed paragraphs leave the residual.
+schema's order puts it among the source's children), or when the ``w:pPrChange`` breaks the paragraph-property rules
+(present exactly when tracked, its snapshot the source pPr without rPr, sectPr, pPrChange); and, post-condition, when the
+verifier's own prediction (the source counted with those paragraphs unnumbered) differs from the plan's ``predicted``
+rows or its count of the OUTPUT differs from that prediction.
+
+Exactly what the fix changes is checked here — the numPr and the pPrChange, which alone leave the residual
+(``strip_ppr``). Every other child of the changed paragraphs' pPr — the mark's ``w:rPr``, a ``w:sectPr``, spacing … — is
+left to the residual, which compares it with the source after the OTHER ops' kinds have stripped what THEY checked (a
+set_font over the marks, a set_page_setup on a section break): not weaker — a change nobody checked still fails there —,
+and an op beside the fix that changes the mark or the section break plans and passes instead of failing here.
 """
 from __future__ import annotations
 
@@ -127,10 +133,6 @@ def _unnumbered_empty(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             continue
         if len(O.findall(W + "numPr")) != 1 or sig(O.find(W + "numPr")) != expected_numpr:
             errs.append(f"{where}: the output w:numPr is not exactly <w:numPr><w:numId w:val=\"0\"/></w:numPr>")
-        rest_s = [sig(c) for c in (S if S is not None else []) if _local(c) not in ("numPr", "pPrChange")]
-        rest_o = [sig(c) for c in O if _local(c) not in ("numPr", "pPrChange")]
-        if rest_s != rest_o:
-            errs.append(f"{where}: paragraph properties other than numPr changed")
         _v_numpr_place(S, O, where, errs)
         _check_ppr_change(S, O, tracked, author, where, errs)
         ctx.strip_ppr.setdefault(main, {}).setdefault(bi, set()).update({"numPr", "pPrChange"})
