@@ -39,3 +39,4 @@ from . import clear_formatting, set_language  # noqa: E402,F401  — built-in ba
 from . import map_styles  # noqa: E402,F401  — built-in batch 4 (style mapping over ops/style_import.py)
 from . import apply_style  # noqa: E402,F401  — built-in batch 4 (item 30, over clear_formatting and style_import)
 from . import apply_table_style, set_table_props  # noqa: E402,F401  — built-in batch 5 (tables, items 37, 38)
+from . import audit_numbering, set_list_level  # noqa: E402,F401  — built-in batch 5 (list levels and the audit, items 35, 36)

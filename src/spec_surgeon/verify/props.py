@@ -2423,6 +2423,9 @@ from .applystyle import APPLY_KINDS  # noqa: E402
 # built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §5): tables
 from .tableprops import TABLE_PROP_KINDS  # noqa: E402
 from .applytablestyle import APPLY_TABLE_KINDS  # noqa: E402
+# built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §3, §4): list levels and the numbering audit's fix
+from .listlevel import LIST_LEVEL_KINDS  # noqa: E402
+from .numberingaudit import AUDIT_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -2439,3 +2442,5 @@ KINDS.update(RESTYLE_KINDS)
 KINDS.update(APPLY_KINDS)
 KINDS.update(TABLE_PROP_KINDS)
 KINDS.update(APPLY_TABLE_KINDS)
+KINDS.update(LIST_LEVEL_KINDS)
+KINDS.update(AUDIT_KINDS)
