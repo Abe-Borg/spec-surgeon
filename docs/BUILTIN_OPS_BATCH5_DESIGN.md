@@ -505,6 +505,6 @@ prompt carries the whole op catalog, and this batch's six operations, their sche
 first request from about 86,500 to about 105,000 estimated tokens of master's 120,000-token working context
 (`resources.DEFAULT_CONTEXT_TOKENS`, 3 bytes a token, 4,784 an image), so a conversation viewing a third page starts a new
 context epoch. `tests/test_vision.py`'s image-allowance test failed on that rollover; it now sets its own allowance, as
-master's rollover test already did, and `tests/test_contexts.py` guards the headroom left (the first request plus two page
-images must fit). Whether to compact the catalog (the schema repeats every op's parameters; the worked examples are
+master's rollover test already did, and `tests/test_contexts.py` guards the headroom left (a conversation viewing two pages
+must stay in its first epoch: about 5,300 estimated tokens to spare). Whether to compact the catalog (the schema repeats every op's parameters; the worked examples are
 sent whole) or raise the allowance is left for Abraham.

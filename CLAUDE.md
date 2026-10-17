@@ -2349,7 +2349,8 @@ reproduced before they were fixed. Rules that came out of it:
     carries the whole `op_catalog()` — ops, the EditSpec schema, every worked example — in every conversation, and
     `contexts.estimate_context_tokens` (3 bytes a token, 4,784 an image) starts a new epoch past
     `resources.DEFAULT_CONTEXT_TOKENS` (120,000). Batch 5 took the first request from about 86,500 to about 105,000.
-    `tests/test_contexts.py::test_the_default_allowance_leaves_a_conversation_room_for_two_page_images` fails when the
-    first request plus two page images no longer fits: then compact the catalog or raise the allowance — Abraham's call,
+    `tests/test_contexts.py::test_the_default_allowance_leaves_a_conversation_room_for_two_page_images` runs a real
+    two-page `view_pages` exchange and fails when it starts a new epoch (about 5,300 estimated tokens of room are left
+    after batch 5): then compact the catalog or raise the allowance — Abraham's call,
     a documented default (`docs/ADAPTIVE_WORKSPACES.md`) — never loosen the guard. A test whose subject is not rollover
     sets its own `max_context_tokens` (as `tests/test_vision.py`'s image-allowance test and master's rollover test do).

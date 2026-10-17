@@ -134,24 +134,32 @@ def test_real_conversation_continues_after_multiple_context_rollovers(tmp_path):
     assert chat.to_dict()["context"]["archives"]
 
 
-def test_the_default_allowance_leaves_a_conversation_room_for_two_page_images(tmp_path):
+def test_the_default_allowance_leaves_a_conversation_room_for_two_page_images(tmp_path, monkeypatch):
     """Headroom guard. Every conversation's system prompt carries the whole op catalog (ops, schema, worked
     examples), so each batch of operations shrinks what is left of the default context allowance before a first
-    new epoch (built-in batch 5 took it from about 33,500 estimated tokens to about 15,000). The first request
-    plus two page images (one ``view_pages`` call) must still fit; when this fails, compacting the catalog or
-    raising ``resources.DEFAULT_CONTEXT_TOKENS`` is the owner's decision — never loosen this guard to pass."""
+    new epoch (built-in batch 5 took it from about 33,500 estimated tokens to about 15,000). A conversation that
+    looks at two pages (one ``view_pages`` exchange: Claude's call, then the labelled images as its result) must
+    still send its next request in the first epoch; when this fails, compacting the catalog or raising
+    ``resources.DEFAULT_CONTEXT_TOKENS`` is the owner's decision — never loosen this guard to pass."""
+    from pathlib import Path
+    from spec_surgeon import vision
     from spec_surgeon.resources import DEFAULT_CONTEXT_TOKENS
+    from test_vision import make_pdf
+    monkeypatch.setattr(vision, "render_pdf", lambda docx, work, renderer="auto", log=None:
+                        make_pdf(Path(work) / Path(docx).stem / "r.pdf", pages=2))
     source = tmp_path / "spec.docx"
     source.write_bytes(build("21 00 00", "FIRE SUPPRESSION"))
-    fake = FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}, "done")))
+    fake = FakeClient(resp(tool("view_pages", {"file": source.name, "pages": [1, 2]}, "pages")),
+                      resp(tool("submit_editspec", {"spec": REMOVE}, "done")))
     chat = Conversation("remove all headers and footers", [source], client=fake, work_dir=tmp_path / "work")
     assert chat.max_context_tokens == DEFAULT_CONTEXT_TOKENS
-    assert chat.start().status == "ok"
-    first = fake.requests[0]
-    used = estimate_context_tokens(system=first["system"], tools=first["tools"], messages=first["messages"])
-    image = {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": ""}}
-    per_image = (estimate_context_tokens(system="", tools=[], messages=[{"role": "user", "content": [image]}])
-                 - estimate_context_tokens(system="", tools=[], messages=[{"role": "user", "content": []}]))
-    assert used + 2 * per_image <= DEFAULT_CONTEXT_TOKENS, (
-        f"the first request is {used} estimated tokens; two page images ({2 * per_image}) would pass the default "
-        f"allowance of {DEFAULT_CONTEXT_TOKENS} — compact the op catalog or raise the allowance")
+    assert chat.start().status == "ok" and len(fake.requests) == 2
+    assert chat.context_state.get("epoch", 0) == 0, (
+        f"viewing two pages started a new context epoch under the default allowance of {DEFAULT_CONTEXT_TOKENS} "
+        "estimated tokens — compact the op catalog or raise the allowance")
+    second = fake.requests[1]
+    used = estimate_context_tokens(system=second["system"], tools=second["tools"], messages=second["messages"])
+    assert used <= DEFAULT_CONTEXT_TOKENS
+    result = second["messages"][-1]["content"][0]
+    assert result["type"] == "tool_result" and result["tool_use_id"] == "pages"
+    assert [block["type"] for block in result["content"]].count("image") == 2
