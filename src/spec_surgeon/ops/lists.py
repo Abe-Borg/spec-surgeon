@@ -57,12 +57,15 @@ paragraphs in ``root.iter(w:p)`` order, each counted paragraph with a numbering 
 ``NumberedPar``. A **list instance** is a numId. For a paragraph at level L of instance N:
 
 1. every level k > L of N holding a current value loses it when it restarts after L (``restarts``): ``restart`` None →
-   restarts; 0 → never; r ≥ 1 → restarts when L ≤ r − 1, and is ignored (as None) when r − 1 ≥ k;
+   restarts; 0 → never; r ≥ 1 → restarts when L ≤ r − 1, and is ignored (as None) when r − 1 ≥ k — Word's reading
+   (ECMA-376 §17.9.11). LibreOffice ignores ``w:lvlRestart`` (0 and r ≥ 1 alike): wherever a level carries one, the
+   render proofs differ from Word (``has_restart_rule`` lists those levels, for a flag);
 2. level L's value = its start (``start_of``: N's ``startOverride`` for L when it has one, else the level's ``start``, else
    0) when it has no current value, else the current value + 1;
 3. the **counters** = the values of levels 0…L (a level with no current value shows its start); the **rendered number**
    (``render``) = the level's ``text`` with each ``%j`` (j = 1…9) replaced by level j−1's value in level j−1's format —
-   in decimal when level L is ``legal``; no ``text`` (or a missing level) → "".
+   in decimal when level L is ``legal``; no ``text`` (or a missing level) → "". A ``%j`` naming a level with NO current
+   value in N makes the paragraph not evaluated (``skipped``, below).
 
 ``NumberedPar.suff``/``fmt`` are level L's own whenever level L is defined, is not a full override level and the instance
 could be counted (none of the first three issues below); else None.
@@ -79,7 +82,11 @@ counters and the rendered number are None unless said), checked in this order:
   continues one count across such nums, LibreOffice keeps them apart (design §0.2); counting still runs per numId;
 * ``override`` — a level 0…L of N is a full override level (its value is in the counters);
 * ``unsupported`` — level L is unsupported, or its text names a level that is missing or unsupported, or a value it shows
-  is out of its format's range. The counters are kept (the count itself is certain).
+  is out of its format's range. The counters are kept (the count itself is certain);
+* ``skipped`` (``SKIPPED``; ``skipped_level``) — its text names a level that has no current value in N: never reached,
+  or reset by a restart ("1.1.1" right after a PART). Word shows such a level as 0 ("1.0.1"), LibreOffice shows its start
+  and then continues from it, a model showing the start would agree with neither — so the number is not offered. The
+  reason names the level; the counters are kept (the start stands for the missing value).
 
 Scheme and typed numbers (design §0.3, §2.1)
 --------------------------------------------
@@ -140,10 +147,12 @@ API (for the batch-5 ops)
 ``main_abstract(pars) -> int | None``
 ``visible_line(number_text, run_text, suff=None) -> str``
 ``list_is_clean(defs, num_id, counted_pars) -> str | None``
+``has_restart_rule(defs, num_id) -> [ilvl]``
+    The levels of the list whose definition carries a ``w:lvlRestart`` (LibreOffice ignores it: flag them).
 Lower-level pieces (each a module function, so a test can plant a defect in it): ``whole``, ``read_level``,
-``style_chain``, ``linked_level``, ``render``, ``restarts``, ``start_of``, ``counted``; ``ListDefs.is_override``;
-constants ``FORMATS``, ``SUFFIXES``, ``FORMAT_PATTERNS``, ``SHARED`` (every ``shared`` reason starts with it),
-``OVERRIDE_REASON``.
+``style_chain``, ``linked_level``, ``render``, ``skipped_level``, ``restarts``, ``start_of``, ``counted``;
+``ListDefs.is_override``; constants ``FORMATS``, ``SUFFIXES``, ``FORMAT_PATTERNS``, ``SHARED`` / ``SKIPPED`` (every
+``shared`` / ``skipped`` reason starts with it), ``OVERRIDE_REASON``.
 """
 from __future__ import annotations
 
@@ -162,6 +171,7 @@ SUFFIXES = {"tab": "\t", "space": " ", "nothing": ""}
 FORMAT_PATTERNS = {"decimal": "[0-9]+", "decimalZero": "[0-9]{2,}", "upperLetter": "[A-Z]+", "lowerLetter": "[a-z]+",
                    "upperRoman": "[IVXLCDM]+", "lowerRoman": "[ivxlcdm]+", "none": ""}
 SHARED = "shared list definition"
+SKIPPED = "skipped level"
 OVERRIDE_REASON = ("is a full override level (w:lvlOverride/w:lvl); Word does not read those as the standard describes, "
                    "so its numbers are not modelled")
 _WHOLE = re.compile(r"-?[0-9]+")
@@ -548,6 +558,26 @@ def render(text: str, legal: bool, value_of: Callable[[int], int],
     return "".join(out), None
 
 
+def skipped_level(text: str, has_value: Callable[[int], bool]) -> Optional[int]:
+    """The first level a ``%j`` of ``text`` names that has no current value (``has_value``), else None."""
+    i = 0
+    while i < len(text):
+        if text[i] == "%" and i + 1 < len(text) and text[i + 1] in "123456789":
+            k = int(text[i + 1]) - 1
+            if not has_value(k):
+                return k
+            i += 2
+        else:
+            i += 1
+    return None
+
+
+def has_restart_rule(defs: ListDefs, num_id: int) -> List[int]:
+    """The levels of list ``num_id`` whose definition carries a ``w:lvlRestart`` value. The model reads it as Word does;
+    LibreOffice ignores it, so the render proofs of those levels differ from Word — flag them."""
+    return [k for k, lv in sorted(defs.levels_of(num_id).items()) if lv.restart is not None]
+
+
 def restarts(restart: Optional[int], L: int, k: int) -> bool:
     """Whether level ``k`` (> L) starts again after a paragraph at level ``L`` (its ``w:lvlRestart``: ``restart``)."""
     if restart is None:
@@ -682,8 +712,17 @@ def count(root, sheet, defs: ListDefs, override: Optional[Mapping[int, Optional[
             continue
         text, why = render(lv.text, lv.legal, lambda k: state[k] if k in state else start_of(defs, n, k),
                            lambda k: defs.level(n, k))
-        out.append(par(counters=counters, text=text, suff=suff, fmt=fmt, why=why and f"list {n} level {L}: {why}",
-                       issue="unsupported" if why else None))
+        if why:
+            out.append(par(counters=counters, suff=suff, fmt=fmt, why=f"list {n} level {L}: {why}", issue="unsupported"))
+            continue
+        gap = skipped_level(lv.text, lambda k: k in state)
+        if gap is not None:
+            out.append(par(counters=counters, suff=suff, fmt=fmt, issue="skipped",
+                           why=f"{SKIPPED}: the number text {lv.text!r} of list {n} level {L} names level {gap}, which "
+                               f"has no value yet (never reached, or restarted) — Word shows 0 there, LibreOffice its "
+                               f"start"))
+            continue
+        out.append(par(counters=counters, text=text, suff=suff, fmt=fmt))
     return out
 
 

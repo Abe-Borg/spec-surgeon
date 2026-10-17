@@ -15,9 +15,13 @@ here comes from ops/ (rule 1): the numbering part is read through ``reader.VPack
   else the default paragraph style; basedOn, cycle-safe) whose own numPr holds a numId, that style's ilvl, else the lowest
   level naming that style, else 0; a direct numId without ilvl → 0; 0 or none → unnumbered; undefined → dangling;
 * counting over ``root.iter(w:p)``, text boxes and pending-deletion marks left out, per numId: restarts (none → always,
-  0 → never, r ≥ 1 → when L ≤ r − 1, ignored when r − 1 ≥ k), start = startOverride → level start → 0, the counters,
-  the rendered number (``%1``–``%9``, decimal when the level is legal), and the not-evaluated codes ``unreadable``,
-  ``earlier``, ``unsupported``, ``shared``, ``override`` in ops/lists.py's order;
+  0 → never, r ≥ 1 → when L ≤ r − 1, ignored when r − 1 ≥ k — Word's reading; LibreOffice ignores ``w:lvlRestart``
+  altogether, so its renders differ from Word wherever a level carries one: ``v_has_restart_rule`` lists those levels),
+  start = startOverride → level start → 0, the counters, the rendered number (``%1``–``%9``, decimal when the level is
+  legal), and the not-evaluated codes in ops/lists.py's order: ``unreadable``, ``earlier``, ``unreadable`` /
+  ``unsupported`` (the list), ``shared``, ``override``, ``unsupported`` (the level, a level its text names, a value) and
+  ``skipped`` (a ``%j`` naming a level with no current value — never reached, or restarted: Word, LibreOffice and a model
+  showing the start disagree there; the counters are kept);
 * the scheme (raises ValueError: the op must refuse ``scheme`` / ``bad-params``), the level patterns, typed numbers,
   the visible line, the main abstractNum and the clean destination list.
 
@@ -28,7 +32,8 @@ API (verifier names are ``v_``-prefixed): ``VListDefs(root)`` / ``v_list_defs(pk
 ``v_count(root, styles, defs, override=None)`` → [``VNumbered``], ``v_format_value(fmt, n, text=None)``,
 ``v_resolve_scheme(levels, styles, defs)`` → ``VScheme``, ``v_level_pattern(scheme, k)``,
 ``v_typed_number(run_text, scheme)`` → ``VTyped`` or None, ``v_main_abstract(pars)``,
-``v_visible_line(number, run_text, suff=None)``, ``v_list_is_clean(defs, num_id, pars)``.
+``v_visible_line(number, run_text, suff=None)``, ``v_list_is_clean(defs, num_id, pars)``,
+``v_has_restart_rule(defs, num_id)``; ``V_SHARED`` / ``V_SKIPPED`` start the ``shared`` / ``skipped`` reasons.
 """
 from __future__ import annotations
 
@@ -45,6 +50,7 @@ V_OFF = {"0", "false", "off"}
 V_FORMATS = {"decimal", "decimalZero", "upperLetter", "lowerLetter", "upperRoman", "lowerRoman", "bullet", "none"}
 V_SUFFIX = {"tab": "\t", "space": " ", "nothing": ""}
 V_SHARED = "shared list definition"
+V_SKIPPED = "skipped level"
 V_OVERRIDE = "is a full override level (w:lvlOverride/w:lvl), not modelled"
 _V_DIGITS = set("0123456789")
 _V_THOUSANDS = ["", "M", "MM", "MMM"]
@@ -386,6 +392,19 @@ def _v_render(text: str, legal: bool, value, level) -> Tuple[Optional[str], Opti
     return "".join(shown), None
 
 
+def _v_skipped(text: str, vals: Dict[int, int]) -> Optional[int]:
+    """The first level a ``%j`` of ``text`` names that holds no value in ``vals``, else None."""
+    for kind, x in _v_placeholders(text):
+        if kind == "lvl" and x not in vals:
+            return x
+    return None
+
+
+def v_has_restart_rule(defs: "VListDefs", nid: int) -> List[int]:
+    """The levels of num ``nid`` whose definition carries a w:lvlRestart value (LibreOffice ignores it)."""
+    return sorted(k for k, lv in defs.levels_of(nid).items() if lv.restart is not None)
+
+
 def _v_restarts(restart: Optional[int], at: int, k: int) -> bool:
     """Level k (> at) loses its value after a paragraph at level ``at``."""
     if restart is not None and restart >= 1 and restart <= k:
@@ -499,7 +518,14 @@ def v_count(root, styles: Styles, defs: VListDefs,
         else:
             text, why = _v_render(lv.text, lv.legal, lambda k: vals.get(k, _v_start_of(defs, nid, k)),
                                   lambda k: defs.level(nid, k))
-            out.append(row("unsupported" if why else None, why, shown, text, suff, fmt))
+            gap = None if why else _v_skipped(lv.text, vals)
+            if why:
+                out.append(row("unsupported", why, shown, None, suff, fmt))
+            elif gap is not None:
+                out.append(row("skipped", f"{V_SKIPPED}: %{gap + 1} names level {gap}, which has no value yet",
+                               shown, None, suff, fmt))
+            else:
+                out.append(row(None, None, shown, text, suff, fmt))
     return out
 
 
