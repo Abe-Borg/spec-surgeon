@@ -53,5 +53,9 @@ def test_answer_preserves_original_request_when_compile_has_no_spec(tmp_path):
     second = recover_from_run(first.out_dir, tmp_path / "second", request="All sections", options=options, client=client)
     assert second.request == "Change the font to Verdana\n\nUser clarification: All sections"
     context = json.loads(client.requests[0]["messages"][0]["content"])
-    assert "Change the font to Verdana" in context["request"] and "All sections" in context["request"]
-    assert context["failures"][0]["reason"] == "Which sections should change?"
+    assert context["request"] == "Change the font to Verdana", "Saved model history remains append-only"
+    continuation = json.loads(client.requests[0]["messages"][-1]["content"])
+    assert continuation["user_decisions"][0]["answer"] == "All sections"
+    assert second.out_dir == first.out_dir
+    assert second.question_records[0]["question"] == "Which sections should change?"
+    assert second.question_records[0]["status"] == "answered"

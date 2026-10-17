@@ -580,7 +580,9 @@ def editspec_json_schema() -> Dict[str, Any]:
                 "pattern_ids": {"type": "array", "items": {"type": "string"}}, "or": {"const": "all"}}},
             "mode": {"enum": list(MODES)},
             "review": {"type": "object", "properties": {
-                "sample_files": {"type": "integer", "minimum": 1, "maximum": 3},
+                "sample_files": {"type": "integer", "minimum": 1,
+                                 "description": "Explicit preview sample count. Omit for automatic selection: "
+                                                "eight files, expanded when needed to cover every structural pattern."},
                 "geometry_reference": {"enum": ["source", "template", "none"]}}},
             "ops": {"type": "array", "minItems": 1, "items": {"oneOf": op_items}},
             "assertions": {"type": "array", "items": {"type": "object", "properties": {

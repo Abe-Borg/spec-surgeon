@@ -88,15 +88,15 @@ def _guarded_import(allowed):
     return imp
 
 
-def load_op_class(source: str):
-    from .codegen import ALLOWED_MODULES, check_source
+def load_op_class(source: str, goal_contract=None):
+    from .codegen import ALLOWED_IMPORT, allowed_imports, check_source
     from .ops.base import Op
-    problems = check_source(source)
+    problems = check_source(source, goal_contract=goal_contract)
     if problems:
         raise ValueError("source rejected: " + "; ".join(problems))
     safe = {k: getattr(builtins, k) for k in SAFE_BUILTINS if hasattr(builtins, k)}
     safe["__build_class__"] = builtins.__build_class__
-    safe["__import__"] = _guarded_import(ALLOWED_MODULES)
+    safe["__import__"] = _guarded_import(tuple(set(allowed_imports(goal_contract)) | ALLOWED_IMPORT))
     ns = {"__builtins__": safe, "__name__": "generated_op"}
     exec(compile(source, "generated_op.py", "exec"), ns)
     classes = [v for v in ns.values() if isinstance(v, type) and issubclass(v, Op) and v is not Op]
@@ -114,7 +114,7 @@ def main(argv=None) -> int:
         from .ops.base import merge_fragments
         from .package import DocxPackage
         install_guard(out_dir)                  # before a single line of the generated code runs
-        cls = load_op_class(req["source"])
+        cls = load_op_class(req["source"], req.get("goal_contract"))
         op = cls()
         pkg = DocxPackage(Path(req["docx"]).read_bytes(), name=Path(req["docx"]).name)
         frag = op.plan(pkg, req.get("select") or {}, req.get("params") or {})

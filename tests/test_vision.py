@@ -161,6 +161,24 @@ def test_view_pages_in_the_conversation_is_an_image_tool_result_with_a_budget(fo
     assert "view_pages" not in [tool_["name"] for tool_ in one_shot.tools]
 
 
+def test_page_investigation_accepts_a_configured_larger_allowance(folder, tmp_path, monkeypatch):
+    from spec_surgeon.conversation import Conversation
+    monkeypatch.setattr(vision, "render_pdf", lambda docx, work, renderer="auto", log=None:
+                        make_pdf(Path(work) / Path(docx).stem / "r.pdf", pages=4))
+    monkeypatch.setattr(vision, "VIEW_BUDGET_TOKENS", 9000)
+    name = sorted(folder.glob("*.docx"))[0].name
+    fake = FakeClient(resp(tool("view_pages", {"file": name, "pages": [1, 2]}, "v1")),
+                      resp(tool("view_pages", {"file": name, "pages": [3, 4]}, "v2")),
+                      resp(tool("submit_editspec", {"spec": REMOVE}, "s1")))
+    conversation = Conversation("remove all headers and footers", sorted(folder.glob("*.docx")), client=fake,
+                                work_dir=tmp_path / "chat", max_image_tokens=12000)
+    result = conversation.start()
+    second = fake.requests[2]["messages"][-1]["content"][0]
+    assert not second.get("is_error") and len(result.images) == 4
+    assert result.status == "ok" and conversation.batch._image_tokens > vision.VIEW_BUDGET_TOKENS
+    assert conversation.to_dict()["resource_policy"]["max_image_tokens"] == 12000
+
+
 def test_the_visual_check_rewrite_keeps_the_approval_inputs(tmp_path):
     from spec_surgeon.preview import make_preview, write_preview_files
     d = tmp_path / "in"

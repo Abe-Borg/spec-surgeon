@@ -273,7 +273,27 @@ def _note_exception(tr: "diag.Tracer", stage: str, exc: Dict[str, Any]) -> None:
 
 def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str, out_name: Optional[str] = None,
                  spec: Optional[Dict[str, Any]] = None, attempt: int = 1,
-                 refuse: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                 refuse: Optional[Dict[str, Any]] = None,
+                 trace_context: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Carry correlation explicitly into spawned workers and keep their event streams separate."""
+    context = dict(trace_context if trace_context is not None else diag.context())
+    context.update(source=path, output_name=out_name or Path(path).name, attempt=attempt,
+                   worker_id=diag.new_id())
+    events = diag.trace_path(Path(out_dir), out_name or Path(path).name).with_suffix(".events.jsonl")
+    with diag.scope(events, **context), diag.span("file.process") as outcome:
+        result = _process_one_impl(path, job_name, params, out_dir, out_name, spec, attempt, refuse)
+        exception = result.get("exception")
+        outcome.update(status="exception" if exception else
+                       "pass" if (result.get("record") or {}).get("passed") else "fail",
+                       timings=result.get("timings"), output_md5=result.get("output_md5"))
+        if exception:
+            diag.event("file.exception", level="error", exception=exception)
+        return result
+
+
+def _process_one_impl(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
+                      out_name: Optional[str] = None, spec: Optional[Dict[str, Any]] = None,
+                      attempt: int = 1, refuse: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """One file from acquisition to its verified output (in a pool worker, or in-process for a single file).
 
     Every stage is written to the file's trace as it happens (``logs/<name>.trace.log``). Anything that stops the
@@ -300,6 +320,7 @@ def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
         tr.note("acquire", "…")
         identity = guard.acquire(src)
         res["identity"] = identity.to_dict()
+        diag.event("file.acquired", identity=res["identity"])
         tr.note("acquire", f"{identity.size:,} bytes · modified {_when(identity.mtime_ns)} · md5 {identity.md5} "
                            f"[{diag.ms(t_stage)}]")
         stage, t_stage = "open", time.perf_counter()
@@ -311,6 +332,7 @@ def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
         stage, t_stage = "fingerprint", time.perf_counter()
         tr.note("fingerprint", "…")
         res["fingerprint"] = fingerprint(pkg)
+        diag.event("file.fingerprint", fingerprint=res["fingerprint"])
         tr.note("fingerprint", _fp_summary(res["fingerprint"]) + f" [{diag.ms(t_stage)}]")
         res["timings"]["acquire+fingerprint"] = time.perf_counter() - t0
 
@@ -328,6 +350,10 @@ def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
             plan = job.plan(pkg, params)
         res["plan"] = plan.to_dict()
         res["timings"]["plan"] = time.perf_counter() - t_stage
+        diag.event("file.planned", duration_ms=res["timings"]["plan"] * 1000,
+                   intended_parts=res["plan"].get("intended_parts"),
+                   members_added=res["plan"].get("members_added"),
+                   members_removed=res["plan"].get("members_removed"), output_name=plan.output_name)
         tr.note("plan", ("merged: " if spec is not None else f"job {job_name}: ") + diag.plan_summary(plan)
                 + f" [{diag.ms(t_stage)}]")
 
@@ -361,10 +387,14 @@ def _process_one(path: str, job_name: str, params: Dict[str, Any], out_dir: str,
             tr.block(f"{cid} {cname}:")
             tr.block("\n".join(f"  - {x}" for x in details))
         stage, t_stage = "write", time.perf_counter()
+        diag.event("file.write.started", output=str(out_path), size=len(out_bytes))
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_bytes(out_bytes)
+        res["timings"]["write"] = time.perf_counter() - t_stage
         res["output"] = str(out_path)
         res["output_md5"] = hashlib.md5(out_bytes).hexdigest()
+        diag.event("file.write.succeeded", output=str(out_path), output_md5=res["output_md5"],
+                   duration_ms=res["timings"]["write"] * 1000)
         tr.note("write", f"outputs/{name} · md5 {res['output_md5']} [{diag.ms(t_stage)}]")
     except Exception as e:  # a refusal, an unreadable file, a disk that will not write, the engine's own failure
         exc = diag.exception_record(e, stage, data, tr.op)
@@ -386,6 +416,8 @@ def _worker_died(path: Path, out_dir: Path, out_name: str, why: BaseException) -
     tpath = diag.trace_path(out_dir, out_name)
     lines = diag.read_trace(tpath)
     stage = diag.last_stage(lines) or "acquire"
+    diag.event("worker.died", level="error", source=str(path), attempt=2, stage=stage,
+               exception_type=type(why).__name__, reason=str(why), trace_path=str(tpath))
     fault = diag.fault_excerpt(lines)
     partial = Path(out_dir) / "outputs" / out_name
     try:
@@ -408,6 +440,7 @@ def _lost_result(path: Path, out_dir: Path, out_name: str, e: BaseException) -> 
     exc = diag.exception_record(e, "transform+verify")
     exc.update(code="internal-error", kind="internal-error",
                reason=f"the file's result could not be returned from its worker process: {type(e).__name__}: {e}")
+    diag.event("worker.result_lost", level="error", source=str(path), exception=exc)
     tpath = diag.trace_path(out_dir, out_name)
     tail = diag.trace_event("result", f"FAILED [internal-error] {exc['reason']}", exc.get("traceback", ""))
     diag.append_trace(tpath, tail)
@@ -419,10 +452,12 @@ def _run_alone(path: Path, job_name: str, params: Dict[str, Any], out_dir: Path,
                spec: Optional[Dict[str, Any]], refuse: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Run one file again in a fresh one-process pool, so a file that kills its worker is named — and the files that
     only shared a worker with it get their results."""
+    diag.event("worker.retry", level="warning", source=str(path), attempt=2,
+               reason="the original process pool stopped abruptly; isolate the file in a fresh process")
     try:
         with ProcessPoolExecutor(max_workers=1) as ex:
             return ex.submit(_process_one, str(path), job_name, params, str(out_dir), out_name, spec, 2,
-                             refuse).result()
+                             refuse, diag.context()).result()
     except BrokenProcessPool as e:
         return _worker_died(path, out_dir, out_name, e)
     except Exception as e:  # noqa: BLE001
@@ -435,7 +470,11 @@ def verified_bytes(fr: FileResult) -> bytes:
     """The output file's bytes, only if they are the ones the suite verified (``output_md5``); anything else —
     the file replaced, truncated, edited since — is a GuardError, never delivered."""
     data = fr.output.read_bytes()
-    if fr.output_md5 and hashlib.md5(data).hexdigest() != fr.output_md5:
+    actual = hashlib.md5(data).hexdigest()
+    diag.event("delivery.identity", source=str(fr.source), output=str(fr.output),
+               expected_md5=fr.output_md5, actual_md5=actual, size=len(data),
+               matches=not fr.output_md5 or actual == fr.output_md5)
+    if fr.output_md5 and actual != fr.output_md5:
         raise guard.GuardError(f"{fr.output}: the output file is not the one the suite verified (its content "
                                f"changed after verification); not delivered")
     return data
@@ -446,12 +485,14 @@ def quarantine_failed_output(fr: FileResult, out_dir: Path) -> Path:
     dest_dir = Path(out_dir) / "failed"
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / fr.output.name
+    diag.event("delivery.quarantine.started", source=str(fr.source), output=str(fr.output), destination=str(dest))
     if dest.exists():
         dest.unlink()
     fr.output.replace(dest)
     fr.output = dest
     if fr.record is not None:
         fr.record.output = str(dest)
+    diag.event("delivery.quarantine.succeeded", source=str(fr.source), destination=str(dest))
     return dest
 
 
@@ -549,6 +590,7 @@ def _trace(fr: FileResult, stage: str, msg: str, block: str = "") -> List[str]:
     lines = diag.trace_event(stage, msg, block)
     fr.trace += lines
     diag.append_trace(fr.trace_path, lines)
+    diag.event("file.checkpoint", source=str(fr.source), stage=stage, message=msg, details=block or None)
     return lines
 
 
@@ -562,6 +604,18 @@ def _file_messages(messages: Sequence[str], names: Sequence[str]) -> List[str]:
 def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_dir: Path,
               workers: int = 0, renderer: str = "auto", do_render: bool = True, in_place: bool = False,
               progress=None, spec: Optional[Dict[str, Any]] = None) -> BatchResult:
+    """Run a batch with correlation, including validation failures before a results folder is safe to create."""
+    with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), batch_id=diag.new_id()), \
+            diag.span("batch", out_dir=str(out_dir), job=job_name, workers=workers,
+                      renderer=renderer, do_render=do_render, in_place=in_place) as outcome:
+        result = _run_batch(inputs, job_name, params, out_dir, workers, renderer, do_render, in_place, progress, spec)
+        outcome.update(counts=result.counts(), timings=result.timings)
+        return result
+
+
+def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_dir: Path,
+               workers: int, renderer: str, do_render: bool, in_place: bool,
+               progress, spec: Optional[Dict[str, Any]]) -> BatchResult:
     """Run a named job (``job_name`` + ``params``) or an EditSpec (``spec``; then ``job_name`` is only a label).
 
     Everything the run does goes to ``<out>/logs/run.log`` (``progress`` gets the same progress lines), each file's
@@ -581,57 +635,70 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                          "was written)")
     files = expand_inputs(inputs)
     check_inputs_outside(files, out_dir)      # before anything is created: a run never writes where it reads
-    for sub in ("outputs", "records", "exceptions", "plans", "render", diag.LOGS):
-        (out_dir / sub).mkdir(parents=True, exist_ok=True)
-    skipped_templates: List[Path] = []
-    if spec is not None:
-        tlist = spec_templates(spec)
-        skipped_templates = [f for f in files if is_template_file(f, tlist)]
-        files = [f for f in files if f not in skipped_templates]
-    batch = BatchResult(out_dir=out_dir, job=job_name, params=params, spec=spec)
-    batch.skipped = [str(f) for f in skipped_templates]
-    batch.environment = diag.environment()
-    batch.started = datetime.now().astimezone().isoformat(timespec="seconds")
-    batch.log_path = out_dir / diag.LOGS / diag.RUN_LOG
-    log = diag.RunLog(batch.log_path, progress, _run_header(batch, files, workers, renderer, do_render, in_place))
-    stage = "transform+verify"
-    t_start = time.perf_counter()
-    try:
-        _transform_and_verify(batch, files, job_name, params, out_dir, workers, spec, log)
-        stage = "render+geometry"
-        _render_and_compare(batch, renderer, do_render, workers, log)
-        stage = "deliver"
-        _deliver(batch, in_place, log)
-        stage = "records"
-        _write_records(batch, job_name, params, spec, log)
-        batch.timings["total"] = time.perf_counter() - t_start
-        stage = "reports"
-        batch.finished = datetime.now().astimezone().isoformat(timespec="seconds")
-        from .report import write_batch_report, write_diagnostics
-        write_batch_report(batch)
-        write_diagnostics(batch)
-        c = batch.counts()
-        log.detail(f"finished: PASS {c['PASS']} · FAIL {c['FAIL']} · EXCEPTION {c['EXCEPTION']} — "
-                   + ", ".join(f"{k} {v:.2f}s" for k, v in batch.timings.items()))
-        return batch
-    except BaseException as e:
-        batch.stopped = f"{stage}: {type(e).__name__}: {e}"
-        log.detail(f"THE BATCH STOPPED during {stage}: {type(e).__name__}: {e}")
-        log.block(traceback.format_exc())
-        try:                                    # say what is known: the files done so far and where it stopped
-            from .report import write_diagnostics
+    with diag.scope(out_dir / diag.LOGS / "events.jsonl"), \
+            diag.span("batch.execute", file_count=len(files), job=job_name, workers=workers,
+                      renderer=renderer, do_render=do_render, in_place=in_place) as execution:
+        for sub in ("outputs", "records", "exceptions", "plans", "render", diag.LOGS):
+            (out_dir / sub).mkdir(parents=True, exist_ok=True)
+        skipped_templates: List[Path] = []
+        if spec is not None:
+            tlist = spec_templates(spec)
+            skipped_templates = [f for f in files if is_template_file(f, tlist)]
+            files = [f for f in files if f not in skipped_templates]
+        batch = BatchResult(out_dir=out_dir, job=job_name, params=params, spec=spec)
+        batch.skipped = [str(f) for f in skipped_templates]
+        batch.environment = diag.environment()
+        diag.event("batch.environment", environment=batch.environment, skipped=batch.skipped)
+        batch.started = datetime.now().astimezone().isoformat(timespec="seconds")
+        batch.log_path = out_dir / diag.LOGS / diag.RUN_LOG
+        log = diag.RunLog(batch.log_path, progress, _run_header(batch, files, workers, renderer, do_render, in_place))
+        stage = "transform+verify"
+        t_start = time.perf_counter()
+        try:
+            with diag.span("batch.transform_verify", file_count=len(files)):
+                _transform_and_verify(batch, files, job_name, params, out_dir, workers, spec, log)
+            stage = "render+geometry"
+            with diag.span("batch.render"):
+                _render_and_compare(batch, renderer, do_render, workers, log)
+            stage = "deliver"
+            with diag.span("batch.delivery"):
+                _deliver(batch, in_place, log)
+            stage = "records"
+            with diag.span("batch.records"):
+                _write_records(batch, job_name, params, spec, log)
+            batch.timings["total"] = time.perf_counter() - t_start
+            stage = "reports"
             batch.finished = datetime.now().astimezone().isoformat(timespec="seconds")
-            write_diagnostics(batch)
-        except Exception as e2:  # noqa: BLE001 — the original error is the one that matters
-            log.detail(f"(DIAGNOSTICS.md could not be written either: {type(e2).__name__}: {e2})")
-        raise
-    finally:
-        log.close()
+            from .report import write_batch_report, write_diagnostics
+            with diag.span("batch.reports"):
+                write_batch_report(batch)
+                write_diagnostics(batch)
+            c = batch.counts()
+            execution.update(counts=c, timings=batch.timings, skipped=batch.skipped)
+            log.detail(f"finished: PASS {c['PASS']} · FAIL {c['FAIL']} · EXCEPTION {c['EXCEPTION']} — "
+                       + ", ".join(f"{k} {v:.2f}s" for k, v in batch.timings.items()))
+            return batch
+        except BaseException as e:
+            batch.stopped = f"{stage}: {type(e).__name__}: {e}"
+            log.detail(f"THE BATCH STOPPED during {stage}: {type(e).__name__}: {e}")
+            log.block(traceback.format_exc())
+            try:                                    # say what is known: the files done so far and where it stopped
+                from .report import write_diagnostics
+                batch.finished = datetime.now().astimezone().isoformat(timespec="seconds")
+                write_diagnostics(batch)
+            except Exception as e2:  # noqa: BLE001 — the original error is the one that matters
+                log.detail(f"(DIAGNOSTICS.md could not be written either: {type(e2).__name__}: {e2})")
+            raise
+        finally:
+            log.close()
 
 
 def _file_done(f: Path, r: Dict[str, Any], log: "diag.RunLog") -> None:
     log(f"  done {f.name}")                # ui/rows.ProgressTracker counts these lines — keep them exactly so
     exc = r.get("exception")
+    diag.event("worker.result", source=str(f), status="exception" if exc else
+               "pass" if (r.get("record") or {}).get("passed") else "fail",
+               exception=exc, timings=r.get("timings"), trace_path=r.get("trace_path"))
     if exc:
         at = f" (at {exc.get('stage')}" + (f", op #{exc['op_number']} {exc.get('op')}" if exc.get("op_number") else "") \
             + ")" if exc.get("kind") != "refusal" else ""
@@ -654,21 +721,26 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
     if named or refused:
         log(f"output names from the spec: {len(named)} file(s) renamed, {len(refused)} refused (two files one name)")
     out_names = output_names(files, named)            # unique across the batch, whatever the inputs are called
+    for f in files:
+        diag.event("worker.queued", source=str(f), output_name=out_names[str(f)], attempt=1, workers=workers,
+                   naming_refusal=refused.get(str(f)))
     if workers == 1 or len(files) == 1:
         for f in files:
             results[str(f)] = _process_one(str(f), job_name, params, str(out_dir), out_names[str(f)], spec,
-                                           refuse=refused.get(str(f)))
+                                           refuse=refused.get(str(f)), trace_context=diag.context())
             _file_done(f, results[str(f)], log)
     else:
         broken: List[Path] = []
         with ProcessPoolExecutor(max_workers=workers) as ex:
             futs = {ex.submit(_process_one, str(f), job_name, params, str(out_dir), out_names[str(f)], spec, 1,
-                              refused.get(str(f))): f for f in files}
+                              refused.get(str(f)), diag.context()): f for f in files}
             for fut in as_completed(futs):
                 f = futs[fut]
                 try:
                     r = fut.result()
-                except BrokenProcessPool:
+                except BrokenProcessPool as e:
+                    diag.event("worker.pool_broken", level="warning", source=str(f), attempt=1,
+                               reason=str(e), retry_scheduled=True)
                     broken.append(f)
                     continue
                 except Exception as e:  # noqa: BLE001 — the result could not come back: this file's record
@@ -709,6 +781,7 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
     out_dir = batch.out_dir
     t_r = time.perf_counter()
     backend = render_mod.pick(renderer) if do_render else None
+    diag.event("render.selected", requested=renderer, enabled=do_render, backend=backend)
     batch.renderer = backend
     renderable = [fr for fr in batch.files if fr.output is not None and fr.record is not None]
     workers = workers or max(1, min(os.cpu_count() or 2, len(batch.files) or 1, 8))
@@ -790,25 +863,26 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
                 _trace(fr, "render", f"V6 FAIL — {fr.record.get('V6').summary}")
                 continue
             try:
-                expected_pages = (fr.plan or {}).get("geometry_pages_expected_to_change", [])
-                g = geom.compare_pdfs(sp, op, expected_pages)
-                look_pages = sorted({1} | {p.page for p in g.pages if p.max_dy > GEOM_TOL_PT or p.words_only_in_out or p.words_only_in_ref})
-                pngs = geom.rasterize(op, pages_dir, look_pages[:6])
-                fr.record.set(CheckResult(
-                    "V6", "Render and look", "PASS",
-                    f"renderer {backend}; pages {g.ref_pages}→{g.out_pages}; rasterized pages {look_pages[:6]} → "
-                    f"{pages_dir.name}/; page-count delta is not evidence of body change (XML checks are character truth)",
-                    {"renderer": backend, "source_pdf": str(sp), "output_pdf": str(op), "pages": [str(p) for p in pngs]}))
-                tg = None
-                tref = (fr.plan or {}).get("geometry_template")
-                top = _template_op_params(fr.plan or {})
-                if ((fr.plan or {}).get("geometry_reference") == "template" and tref and str(Path(tref)) in tpl_pdfs
-                        and fr.output in out_hf and top is not None):
-                    hf_pdf, n_sections = out_hf[fr.output]
-                    tg = geom.compare_template_bands(tpl_pdfs[str(Path(tref))], hf_pdf,
-                                                     geom.template_section_map(top["template_sections"], n_sections),
-                                                     top.get("kinds", ["header", "footer"]), GEOM_TOL_PT)
-                fr.record.set(geometry_check(fr.plan or {}, g, tg))
+                with diag.span("render.compare", source=str(fr.source), source_pdf=str(sp), output_pdf=str(op)):
+                    expected_pages = (fr.plan or {}).get("geometry_pages_expected_to_change", [])
+                    g = geom.compare_pdfs(sp, op, expected_pages)
+                    look_pages = sorted({1} | {p.page for p in g.pages if p.max_dy > GEOM_TOL_PT or p.words_only_in_out or p.words_only_in_ref})
+                    pngs = geom.rasterize(op, pages_dir, look_pages[:6])
+                    fr.record.set(CheckResult(
+                        "V6", "Render and look", "PASS",
+                        f"renderer {backend}; pages {g.ref_pages}→{g.out_pages}; rasterized pages {look_pages[:6]} → "
+                        f"{pages_dir.name}/; page-count delta is not evidence of body change (XML checks are character truth)",
+                        {"renderer": backend, "source_pdf": str(sp), "output_pdf": str(op), "pages": [str(p) for p in pngs]}))
+                    tg = None
+                    tref = (fr.plan or {}).get("geometry_template")
+                    top = _template_op_params(fr.plan or {})
+                    if ((fr.plan or {}).get("geometry_reference") == "template" and tref and str(Path(tref)) in tpl_pdfs
+                            and fr.output in out_hf and top is not None):
+                        hf_pdf, n_sections = out_hf[fr.output]
+                        tg = geom.compare_template_bands(tpl_pdfs[str(Path(tref))], hf_pdf,
+                                                         geom.template_section_map(top["template_sections"], n_sections),
+                                                         top.get("kinds", ["header", "footer"]), GEOM_TOL_PT)
+                    fr.record.set(geometry_check(fr.plan or {}, g, tg))
             except Exception as e:  # noqa: BLE001 — a comparison that cannot run is this file's failure, not a skip
                 tb = traceback.format_exc()
                 fr.record.set(CheckResult("V6", "Render and look", "FAIL",
@@ -845,7 +919,12 @@ def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog") -> None:
     t_d = time.perf_counter()
     for fr in batch.files:
         if fr.record is None or fr.output is None:
+            diag.event("delivery.skipped", source=str(fr.source), status=fr.status,
+                       reason="no verified output was produced")
             continue
+        t_file = time.perf_counter()
+        diag.event("delivery.started", source=str(fr.source), output=str(fr.output),
+                   in_place=in_place, noop=fr.noop, verified=fr.record.passed)
         if not fr.record.passed:
             moved = quarantine_failed_output(fr, out_dir)
             fr.record.set(CheckResult("V9", "Overwrite guard", "NA",
@@ -887,6 +966,10 @@ def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog") -> None:
                                           f"moved out of outputs/ to {moved.parent.name}/{moved.name} (diagnosis only); run "
                                           f"again on the current file"))
         v9 = fr.record.get("V9")
+        fr.timings["deliver"] = time.perf_counter() - t_file
+        diag.event("delivery.finished", level="warning" if v9.status == "FAIL" else "info",
+                   source=str(fr.source), status=v9.status, reason=v9.summary,
+                   delivered_to=fr.delivered_to, duration_ms=fr.timings["deliver"] * 1000)
         _trace(fr, "deliver", f"V9 {v9.status} — {v9.summary}")
         if v9.status == "FAIL":
             log(f"  {fr.source.name}: V9 FAIL — {diag.snip(v9.summary, 400)}")
@@ -923,5 +1006,7 @@ def _write_records(batch: BatchResult, job_name: str, params: Dict[str, Any], sp
             (out_dir / "records" / f"{stem}.record.md").write_text(fr.record.to_markdown(), encoding="utf-8")
             (out_dir / "records" / f"{stem}.record.json").write_text(json.dumps(fr.record.to_dict(), indent=2), encoding="utf-8")
         line = _result_line(fr)
+        diag.event("file.result", source=str(fr.source), status=fr.status, summary=line,
+                   delivered_to=fr.delivered_to, timings=fr.timings, record_stem=stem)
         _trace(fr, "result", line)
         log.detail(f"  {fr.source.name}: {line}")

@@ -293,6 +293,7 @@ class MainWindow(QMainWindow):
         self._refresh_files()
         self._inputs_changed()
         self.go(0)
+        diag.event("ui.window.ready", session_id=session.diagnostic_id, fresh=fresh)
 
     # ---- layout -----------------------------------------------------------------------------------
     def _build(self) -> None:
@@ -431,10 +432,12 @@ class MainWindow(QMainWindow):
         self.act_chain = QAction("Chain recipes…", self)
         self.act_library_folder = QAction("Open library folder", self)
         self.act_memory = QAction("Repair memory…", self)
+        self.act_campaign = QAction("Multi-project workspace…", self)
+        self.act_recovery = QAction("Open recovery workspace…", self)
         self.act_open = QAction("Open results folder", self)
         self.act_settings = QAction("Settings…", self, shortcut=QKeySequence("Ctrl+,"))
         self.act_exit = QAction("Exit", self, shortcut=QKeySequence("Ctrl+Q"))
-        for a in (self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
+        for a in (self.act_campaign, self.act_recovery, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
                   self.act_settings):
             m.addAction(a)
         m.addSeparator()
@@ -506,6 +509,7 @@ class MainWindow(QMainWindow):
         run.set_aside_btn.clicked.connect(self.do_set_aside)
         run.advise_btn.clicked.connect(self.do_advise)
         run.resolve_btn.clicked.connect(self.do_resolve)
+        run.load_recovery_btn.clicked.connect(self.do_load_recovery)
         run.only_problems.toggled.connect(run.proxy.set_only_problems)
         run.table.doubleClicked.connect(self._open_row)
         p.table.doubleClicked.connect(self._open_row)
@@ -516,6 +520,8 @@ class MainWindow(QMainWindow):
         self.act_library.triggered.connect(self.do_library)
         self.act_library_folder.triggered.connect(self._open_library_folder)
         self.act_memory.triggered.connect(self.do_memory)
+        self.act_campaign.triggered.connect(self.do_campaign)
+        self.act_recovery.triggered.connect(self.do_load_recovery)
         r.library_btn.clicked.connect(self.do_library)
         r.chain_btn.clicked.connect(self.do_chain)
         self.act_chain.triggered.connect(self.do_chain)
@@ -539,7 +545,8 @@ class MainWindow(QMainWindow):
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn, run.resolve_btn,
                             p.review_ack_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
-                            self.act_chain, self.act_memory]
+                            self.act_chain, self.act_memory, self.act_campaign, self.act_recovery,
+                            run.load_recovery_btn]
 
     # ---- values ---------------------------------------------------------------------------------------
     def _load_values(self, fresh: bool) -> None:
@@ -584,6 +591,7 @@ class MainWindow(QMainWindow):
     def sync(self) -> None:
         """Read the paths into the session (on the GUI thread, before a job starts)."""
         s, f = self.session, self.files_page
+        before = (s.folder, s.template, s.out_root)
         new_folder = Path(f.folder.text()) if f.folder.text() else None
         if new_folder != s.folder:
             s.reset_set_aside()
@@ -592,6 +600,10 @@ class MainWindow(QMainWindow):
         s.template = Path(f.template.text()) if f.template.text() else None
         if f.out.text():
             s.out_root = Path(f.out.text())
+        if before != (s.folder, s.template, s.out_root):
+            diag.event("ui.inputs.changed", session_id=s.diagnostic_id,
+                       folder=str(s.folder) if s.folder else None, template=str(s.template) if s.template else None,
+                       out_root=str(s.out_root), conversation_open=s.conversation is not None)
 
     def _widget_key(self, keep_spec: bool = True, request: Optional[str] = None) -> tuple:
         """The inputs a preview depends on that live in the widgets. A loaded spec counts only while no request is
@@ -705,6 +717,7 @@ class MainWindow(QMainWindow):
     @Slot(int)
     def _nav_changed(self, row: int) -> None:
         if row >= 0:
+            diag.event("ui.navigation.changed", session_id=self.session.diagnostic_id, step=row + 1)
             self.stack.setCurrentIndex(row)
             self._refresh_nav()
 
@@ -1058,6 +1071,8 @@ class MainWindow(QMainWindow):
         """Run ``fn(log)`` in the background; ``on_done(result)`` runs on the GUI thread; an error is shown on
         ``page`` (the step whose button started the job)."""
         if self.busy or self.updating:
+            diag.event("ui.action.refused", level="warning", session_id=self.session.diagnostic_id,
+                       action=label_, reason="busy" if self.busy else "updating")
             return False
         self.sync()
         self._on_done = on_done
@@ -1067,7 +1082,11 @@ class MainWindow(QMainWindow):
         self.write(f"\n=== {label_} ===")
         for page in (self.request_page, self.preview_page, self.run_page, self.files_page):
             page.info.hide()
-        start_job(self.bridge, fn)
+        self._job_context = {"session_id": self.session.diagnostic_id, "action_id": diag.new_id(), "action": label_}
+        self._job_started = time.perf_counter()
+        with diag.scope(**self._job_context):
+            diag.event("ui.action.queued", tracked=track, step=self.stack.currentIndex() + 1)
+            start_job(self.bridge, fn)
         return True
 
     @Slot(str)
@@ -1090,11 +1109,15 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _job_done(self, result) -> None:
         on_done, self._on_done = self._on_done, None
+        displayed = False
         try:
-            if on_done is not None:
-                on_done(result)
-            elif result:
-                self.write(str(result))
+            with diag.scope(**getattr(self, "_job_context", {})):
+                with diag.span("ui.result.display"):
+                    if on_done is not None:
+                        on_done(result)
+                    elif result:
+                        self.write(str(result))
+                    displayed = True
         except Exception:
             self.write("ERROR while showing the result:\n" + traceback.format_exc())
         finally:
@@ -1102,9 +1125,16 @@ class MainWindow(QMainWindow):
             self.set_busy(False)
             self._refresh_chat()
             self._refresh_nav()
+            diag.event("ui.action.completed", **getattr(self, "_job_context", {}), displayed=displayed,
+                       duration_ms=round((time.perf_counter() - getattr(self, "_job_started", time.perf_counter()))
+                                         * 1000, 3))
 
     @Slot(str, str)
     def _job_failed(self, message: str, tb: str) -> None:
+        diag.event("ui.action.failed", level="error", **getattr(self, "_job_context", {}),
+                   message=message, traceback=tb,
+                   duration_ms=round((time.perf_counter() - getattr(self, "_job_started", time.perf_counter()))
+                                     * 1000, 3))
         self._on_done = None
         self.log.appendPlainText("ERROR: " + message + "\n" + "\n".join("    " + line for line in tb.rstrip().splitlines()))
         self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
@@ -1275,12 +1305,25 @@ class MainWindow(QMainWindow):
 
     def _fill_preview(self) -> None:
         s, p = self.session, self.preview_page
+        if s.recovery is None:
+            if self.run_page.recovery_question.count() > 1:
+                self.run_page.recovery_request.clear()
+            self.run_page.recovery_question.clear()
+            self.run_page.recovery_question.addItem("Clarification for the current investigation", None)
         p.empty.hide()
         p.body.show()
         p.clear_samples()
         p.info.hide()
         if s.recovery is not None:
             result = s.recovery
+            questions = self.run_page.recovery_question
+            questions.clear()
+            questions.addItem("Clarification for the current investigation", None)
+            for question in getattr(result, "question_records", []):
+                if question.get("status") == "answered":
+                    continue
+                questions.addItem(str(question.get("question", question.get("text", "Question"))),
+                                  question.get("id"))
             p.request_lbl.setText(f"Recovery: {result.request}")
             p.summary_lbl.setText(result.to_text())
             p.generated_card.hide()
@@ -1890,6 +1933,48 @@ class MainWindow(QMainWindow):
         return Path(res["path"])
 
     @Slot()
+    def do_campaign(self):
+        if self.busy or self.updating:
+            return False
+        from .campaign_dialog import CampaignDialog
+        dialog = getattr(self, "campaign_dialog", None)
+        if dialog is None:
+            dialog = self.campaign_dialog = CampaignDialog(self.session, self.prompts, self)
+        dialog.refresh()
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.show()
+        dialog.raise_()
+        return True
+
+    @Slot()
+    def do_load_recovery(self):
+        if self.busy or self.updating:
+            return False
+        selected = self.prompts.pick_dir("Open saved recovery workspace", str(self.session.out_root))
+        if not selected:
+            return False
+
+        def done(text):
+            self.files_page.folder.setText(str(self.session.folder or ""))
+            self.run_page.recovery_request.clear()
+            snapshot = getattr(self.session.recovery, "options_snapshot", {})
+            self.run_page.recovery_resources.set_values(snapshot)
+            for key, control in (("allow_codegen", self.run_page.recovery_codegen),
+                                 ("use_memory", self.run_page.recovery_memory),
+                                 ("render", self.request_page.render_cb)):
+                if key in snapshot:
+                    value = snapshot[key]
+                    if key == "allow_codegen" and value is None:
+                        value = bool(getattr(self.session.recovery, "key", {}).get("adaptive_contract"))
+                    control.setChecked(value)
+            self.write(text)
+            self.preview_key = self._widget_key(keep_spec=False) + self._chat_key()
+            self._fill_preview()
+            self.go(2)
+        return self._work("Open recovery workspace", lambda log: self.session.load_recovery(Path(selected)),
+                          on_done=done, page=self.run_page)
+
+    @Slot()
     def do_resolve(self) -> bool:
         if self.busy or self.updating:
             return False
@@ -1899,19 +1984,24 @@ class MainWindow(QMainWindow):
                                            [("Set API key…", self.open_settings)])
             return False
         from ..recovery import RecoveryOptions
+        from dataclasses import fields
         self.sync()
         page = self.run_page
-        options = RecoveryOptions(max_cost_usd=page.recovery_budget.value(),
-                                  max_attempts=page.recovery_attempts.value(), max_calls=page.recovery_calls.value(),
-                                  allow_codegen=page.recovery_codegen.isChecked(),
-                                  use_memory=page.recovery_memory.isChecked(),
-                                  render=self.request_page.render_cb.isChecked())
+        snapshot = getattr(self.session.recovery, "options_snapshot", {})
+        values = {field.name: snapshot[field.name] for field in fields(RecoveryOptions) if field.name in snapshot}
+        values.update(page.recovery_resources.values(), allow_codegen=page.recovery_codegen.isChecked(),
+                      use_memory=page.recovery_memory.isChecked(), render=self.request_page.render_cb.isChecked())
+        options = RecoveryOptions(**values)
         request = page.recovery_request.toPlainText().strip() or None
+        question_id = page.recovery_question.currentData() if self.session.recovery is not None else None
+        if request and question_id:
+            request = {"answer": request, "question_id": question_id}
         if request is None and self.session.last_run_dir is None and self.session.recovery is None:
             request = self.typed_request() or None
         wkey = self._widget_key(keep_spec=False)
 
         def done(text):
+            page.recovery_request.clear()
             self.write(text or "")
             self.preview_key = wkey + self._chat_key()
             self._fill_preview()
@@ -2071,7 +2161,10 @@ class MainWindow(QMainWindow):
                 "Spec Surgeon", "A Preview or Run is in progress. Close anyway?\n\nA run that started still finishes "
                 "its files before the program exits."):
             event.ignore()
+            diag.event("ui.window.close_cancelled", session_id=self.session.diagnostic_id, busy=self.busy)
             return
+        diag.event("ui.window.closing", session_id=self.session.diagnostic_id, busy=self.busy,
+                   updating=self.updating, forced=self.force_close)
         self.save_settings()
         for v in self._viewers:
             v.close()
@@ -2173,6 +2266,8 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
 
 
 def _install_excepthook(window_ref: List[Optional[MainWindow]]) -> None:
+    previous_hook = sys.excepthook
+
     def hook(exc_type, exc, tb):
         text = "".join(traceback.format_exception(exc_type, exc, tb))
         _append_error_log("UNEXPECTED ERROR in the window\n" + text)
@@ -2184,7 +2279,8 @@ def _install_excepthook(window_ref: List[Optional[MainWindow]]) -> None:
                                                         f"{logs_dir() / 'spec-surgeon.log'}):\n\n{exc}")
         except Exception:
             pass
-        sys.__excepthook__(exc_type, exc, tb)
+        previous_hook(exc_type, exc, tb)          # preserves diagnostics and any host-installed exception hook
+    hook._spec_surgeon = True
     sys.excepthook = hook
 
 

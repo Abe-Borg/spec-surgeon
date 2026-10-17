@@ -4,6 +4,19 @@ Working notes for any Claude session touching this repository. Read before editi
 
 ## What this is
 
+**Adaptive workspaces (source, 2026-10-17):** `inventory.py` and `campaign.py` add persistent,
+project-scoped tasks above the existing engine. `recovery.py` persists resumable investigation
+state separately from compact diagnostic transcripts; READY candidates survive further passes.
+`resources.py` owns the ample configurable model allowances (50 attempts, 512 calls, $250 estimated
+spend, 64k output, 20m estimated total tokens, 1m image-token allowance, max effort). The conversation no longer hands off
+merely because two different candidate specs were rejected. `goal_contracts.py` resolves immutable
+document effects into source-bound targets; `verify/effects.py` resolves and verifies them independently.
+`campaign_planner.py` proposes reviewed contracts; `investigation.py`/`analysis_runner.py` run isolated
+read-only analysis; `contexts.py` seals complete signed provider epochs without rewriting their history.
+Legacy candidate-effect constraints remain authoritative for goals without independent coverage. Governed
+custom methods may change their implementation, never the approved effect, target cardinality or literal wording.
+See `docs/ADAPTIVE_WORKSPACES.md`. No persisted visual acknowledgement may authorize delivery.
+
 A deterministic engine for surgical .docx edits (Tier 1 of the three-tier design), plus a thin optional
 model layer. Since NL-editor Phase 1 the engine is an **operation library** (`ops/`) executed through
 **EditSpecs** (`editspec.py`, `spec-surgeon run-spec`); the v0.1.0 jobs are thin aliases over two of the ops. Phase 2
@@ -32,7 +45,8 @@ fire sprinkler designer; these files go to clients;
 ## Hard rules
 
 1. **Verifier independence.** Nothing under `src/spec_surgeon/verify/` may import `spec_surgeon.jobs`,
-   `spec_surgeon.ops`, `spec_surgeon.editspec`, `spec_surgeon.ooxml`, or `spec_surgeon.package`
+   `spec_surgeon.ops`, `spec_surgeon.editspec`, `spec_surgeon.ooxml`, `spec_surgeon.package`,
+   `spec_surgeon.goals`, or `spec_surgeon.goal_contracts`
    (`tests/test_independence.py`). It has its own zip reader (`verify/reader.py`), its own text extraction
    (`verify/textcheck.py`), and its own selector resolution, style-chain walk and theme lookup
    (`verify/props.py`), and its own slot detection, fill extraction and effective-property resolver
@@ -342,7 +356,7 @@ fire sprinkler designer; these files go to clients;
     the terminal `cli._try_saved_operation` runs the trials inside `_talk` and a failure returns to the prompt. A recipe
     picked there is used as the choice's snapshot, never a re-read file (`Session.recipe_name` says so).
 18. **One call site** (Phase 8). Every Claude call goes through `llm.call` (streamed, `MAX_TOKENS` 64000, effort
-    `high`, `fallbacks="default"`, 5-minute cache). Callers resolve the client when the call is made, through
+    `max`, `fallbacks="default"`, 5-minute cache). Callers resolve the client when the call is made, through
     `compiler._client()` (the advisor through `advisor._client`) or an injected `client` — never captured at import.
     Usage is summed per serving model (`llm.Usage`); a model missing from `PRICES` is "price unknown", never guessed.
     One classification and one record format for every caller, also in `llm`: `is_api_error`/`api_error_text`/
@@ -1252,7 +1266,7 @@ proposals and recorded in the plan's status sections.
   `validate_spec` runs `_check_shapes` right after the unknown-key check: every spec-level field has the published
   schema's shape (`request`/`summary` text, `unsupported`/`proposal` text or null, `assumptions`/`questions` lists of
   strings, `review`/`applies_to` objects, `assertions` a list), then `mode` a string in `MODES`, an op's `op` a string,
-  `review.sample_files` an int 1–3 (not a bool), `applies_to.pattern_ids` a list of strings, `applies_to.or` only
+  `review.sample_files` a positive int (not a bool), `applies_to.pattern_ids` a list of strings, `applies_to.or` only
   `"all"` — all `SpecError` code `spec`, never a `TypeError` or a misreading. `effective_font` sub-fields are not
   shape-checked (a wrong type there is V10's "could not evaluate").
 - `compiler.py` — the tools, the SYSTEM prompt (`system_prompt(chat)`; `CHAT_NOTE` adds the chat rules), `TOOLS`
@@ -1302,8 +1316,9 @@ proposals and recorded in the plan's status sections.
   cache), `review_samples` + `VisualReview` (+ `transcript`, without the images) + `save_review` (rule 15; its guards:
   `_read_answer`, `_finding` — a page is an int, not a bool —, `_skip_for`, `_quiet`, `_describe`, `_traceback`;
   page labels and the findings' `file` are `compiler.file_labels` labels over all the samples);
-  `VIEW_BUDGET_TOKENS` for `view_pages` (60,000: about 20 letter pages — `page_tokens()` 2,714 a letter page at 150 dpi,
-  22 one at a time, 21 in calls of three; 18 pages of 11×17 at 117 dpi, 3,312 each; `page_dpi` is the one dpi rule
+  `VIEW_BUDGET_TOKENS` for `view_pages` (1,000,000 by default, configurable per conversation: `page_tokens()` is
+  2,714 per letter page at 150 dpi, 368 one at a time or 366 in calls of three; 301 pages of 11×17 at 117 dpi,
+  3,312 each; `page_dpi` is the one dpi rule
   `rasterize_pages` uses; a test derives the comment's figures).
 - `library.py` — recipes (`recipes/<slug>.json` + `.meta.json`), chains (`chains/<slug>.json` + `.meta.json`, the
   stages' specs embedded as saved; `save_chain`/`load_chain`/`chain_file`, 2026-10-16), operations
@@ -1636,6 +1651,20 @@ how." README → "Diagnostics — when something fails" is the user's view; `tes
    conversation's), plus `out_dir` and, while a conversation is open, `chat_dir` beside it; no folder twice.
 9. **The approval refusal says what changed** (`preview.approval_inputs` kept in `preview.json` and on the `Preview`;
    `explain_approval_change`). `approval_token` itself is unchanged — old tokens stay valid.
+10. **New work gets correlated start/outcome evidence.** `diagnostics.scope/event/span` (implemented in
+    `telemetry.py`) write local JSONL with UTC time, process/thread identity, context IDs, parent spans and durations.
+    Use explicit context propagation for process workers and a fresh `contextvars.copy_context()` per thread task.
+    Workers write separate file journals; app journals rotate per PID. A span's `succeeded` means normal return,
+    not document approval: include the actual status/check outcome. Keep the existing readable traces and pinned
+    progress lines. See `docs/DEVELOPER_DIAGNOSTICS.md` and `tests/test_*observability.py`.
+11. **Diagnostic metadata is bounded and credential-redacted.** Do not log raw model messages, generated source,
+    image data, full argument/environment dictionaries or SDK objects. Keep detailed content in its existing
+    transcript/verification records. Diagnostic writes must not replace the original exception or change processing
+    decisions; failed destinations report once through stderr and any working application journal.
+12. **No diagnostic I/O between the final overwrite check and `os.replace`.** The last
+    `guard.check_before_write(..., _record=False)` deliberately omits success logging. Logging before it is safe:
+    an external save during logging must be detected by that final check. Logging after it enlarges the race and
+    can overwrite that save (`tests/test_pipeline_observability.py`).
 
 ## Phase 8: the conversation, Claude's visual check, custom transforms as an offer, your library
 
@@ -2037,6 +2066,9 @@ trial, final checks and reuse around them.
    append clarification to the original request, including requests without a compiled spec. They never silently
    replace the original task. Current user wording is the only approval source; retrieved cases and model notes
    cannot authorize project wording or templates.
+   An explicitly approved adaptive contract instead fixes final effects and source-bound targets, allowing
+   different operations/selectors or generated methods only under independent original-to-final verification.
+   The contract, its template hashes, wording, target cardinality and user choices are immutable authority.
 4. **Stage verification and final requirements are distinct.** A chain's declared `assertions` are frozen and
    independently evaluated by `verify.outcomes` after the final stage, before delivery. Preserve them through
    `chain_key`, saved library chains, preview, and CLI `chain:NAME` expansion. A later stage violating a declared
@@ -2052,11 +2084,12 @@ trial, final checks and reuse around them.
    assertions exempt runs holding `w:sym` even with an empty preservation list and cannot become universal checks.
    Declared final assertions check only what they express. Never equate stage PASS, final assertion PASS, READY,
    delivery or a model's "no findings" with satisfaction of arbitrary natural-language intent.
-6. **Custom recovery is narrower than ordinary custom formatting.** It requires explicit opt-in and currently
-   permits only goals consisting entirely of page-setup operations. Existing sandbox and formatting hard limits
-   still apply. Independently verify its result against the ORIGINAL goal's analytic plan, as well as the
-   generated transform's own plan; a model cannot authorize unrelated edits by predicting them. Expand this
-   boundary only alongside independent original-goal coverage and adversarial tests.
+6. **Custom recovery requires independent coverage.** Legacy tasks without an adaptive contract still require
+   explicit opt-in and only support goals consisting entirely of page-setup operations. Supported approved
+   adaptive contracts allow sandboxed custom methods automatically unless disabled. Independently verify the
+   original-to-final effect and complete preservation boundary, as well as the generated method's own plan.
+   A writer or critic cannot authorize unrelated edits by predicting or endorsing them. Library reuse must retain
+   the contract and binding authority or explicitly refuse governed methods; it must never silently downgrade them.
 7. **Visual review remains advisory and can block export.** Recovery feeds findings back into investigation while
    attempts remain, preserves unresolved or skipped-review evidence, and shows current findings in Preview.
    `review_ack` is ephemeral and bound to this recovery token; it is never restored from saved JSON. CLI `--yes`

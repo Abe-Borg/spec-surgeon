@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence
 
 from . import libreoffice, word_com
+from .. import diagnostics as diag
 
 
 def pick(prefer: str = "auto") -> Optional[str]:
@@ -60,6 +61,16 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, backend: str, workers: int
                 log: Optional[Callable[[str], None]] = None,
                 detail: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
     """{docx: pdf} for the files that rendered; the others are missing (and said on ``log``)."""
+    with diag.span("render.batch", backend=backend, out_dir=str(out_dir), file_count=len(files),
+                   workers=workers) as outcome:
+        result = _render_pdfs(files, out_dir, backend, workers, log, detail)
+        outcome.update(rendered=len(result), missing=[str(f) for f in files if f not in result])
+        return result
+
+
+def _render_pdfs(files: Sequence[Path], out_dir: Path, backend: str, workers: int,
+                 log: Optional[Callable[[str], None]],
+                 detail: Optional[Callable[[str], None]]) -> Dict[Path, Path]:
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
     try:
@@ -68,6 +79,8 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, backend: str, workers: int
         if backend == "libreoffice":
             return libreoffice.render_pdfs(files, out_dir, workers=workers, log=log, detail=detail)
     except Exception as e:  # noqa: BLE001 — the renderer itself failed: no PDFs, the batch goes on without them
+        diag.event("render.backend_failed", level="error", backend=backend,
+                   exception=diag.exception_record(e, "render"))
         log(f"rendering with {backend} failed: {error_text(e)}")
         detail(traceback.format_exc())
     return {}

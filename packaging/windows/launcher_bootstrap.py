@@ -1,4 +1,4 @@
-"""Handle frozen process-pool workers and isolated generated-op subprocesses before opening any UI."""
+"""Handle frozen workers and isolated investigation subprocesses before opening any UI."""
 import multiprocessing
 import os
 import sys
@@ -17,6 +17,10 @@ def prepare():
     multiprocessing.freeze_support()
     if sys.argv[1:4] == ["-I", "-m", "spec_surgeon.sandbox_runner"]:
         from spec_surgeon.sandbox_runner import main
+
+        sys.exit(main(sys.argv[4:]))
+    if sys.argv[1:4] == ["-I", "-m", "spec_surgeon.analysis_runner"]:
+        from spec_surgeon.analysis_runner import main
 
         sys.exit(main(sys.argv[4:]))
     if sys.argv[1:2] == ["--installer-smoke-test"]:

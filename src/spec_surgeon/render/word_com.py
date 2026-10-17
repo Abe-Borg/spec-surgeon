@@ -80,16 +80,22 @@ class WordSession:
     def __enter__(self):
         import pythoncom
         import win32com.client
+        from .. import diagnostics as diag
+        diag.event("render.word_start.started")
         pythoncom.CoInitialize()
-        self.app = win32com.client.DispatchEx("Word.Application")
+        with diag.span("render.word_dispatch"):
+            self.app = win32com.client.DispatchEx("Word.Application")
         self.app.Visible = False
         self.app.DisplayAlerts = 0
         self.tmp = Path(tempfile.mkdtemp(prefix="specsurgeon-word-"))
+        diag.event("render.word_start.succeeded", temporary=str(self.tmp))
         return self
 
     def __exit__(self, *exc):
+        from .. import diagnostics as diag
         try:
-            self.app.Quit(SaveChanges=0)
+            with diag.span("render.word_quit"):
+                self.app.Quit(SaveChanges=0)
         finally:
             import pythoncom
             pythoncom.CoUninitialize()
@@ -101,12 +107,17 @@ class WordSession:
         return dst
 
     def render_pdf(self, docx: Path, pdf: Path) -> Path:
-        src = self._copy(Path(docx))
-        doc = self.app.Documents.Open(str(src), ReadOnly=True, AddToRecentFiles=False, Visible=False)
+        from .. import diagnostics as diag
+        with diag.span("render.word_copy", source=str(docx)):
+            src = self._copy(Path(docx))
+        with diag.span("render.word_open", source=str(docx), temporary=str(src)):
+            doc = self.app.Documents.Open(str(src), ReadOnly=True, AddToRecentFiles=False, Visible=False)
         try:
-            doc.ExportAsFixedFormat(str(pdf), WD_FORMAT_PDF)
+            with diag.span("render.word_export", source=str(docx), output=str(pdf)):
+                doc.ExportAsFixedFormat(str(pdf), WD_FORMAT_PDF)
         finally:
-            doc.Close(SaveChanges=0)
+            with diag.span("render.word_close", source=str(docx)):
+                doc.Close(SaveChanges=0)
         return pdf
 
     def accept_reject_text(self, docx: Path) -> Tuple[str, str]:
@@ -133,6 +144,7 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[st
     COM error's code and Word's own description — and left out; the others still render. Word failing to start
     propagates (the caller reports it and renders nothing). ``detail`` gets Word's version and each file's time."""
     from ..diagnostics import com_quiet
+    from .. import diagnostics as diag
     import time
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
@@ -148,7 +160,8 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[st
             pdf = out_dir / (f.stem + ".pdf")
             t = time.perf_counter()
             try:
-                ws.render_pdf(f, pdf)
+                with diag.span("render.word_file", source=str(f), output=str(pdf)):
+                    ws.render_pdf(f, pdf)
             except Exception as e:  # noqa: BLE001 — this file's render failed; the others go on
                 log(f"{f.name}: Word could not render it: {com_error_text(e) or f'{type(e).__name__}: {e}'}")
                 continue
@@ -156,5 +169,6 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[st
                 result[f] = pdf
                 detail(f"Word: {f.name} → {pdf.name} in {time.perf_counter() - t:.1f}s")
             else:
+                diag.event("render.file_missing", level="warning", backend="word", source=str(f), output=str(pdf))
                 log(f"{f.name}: Word reported no error but wrote no PDF")
     return result

@@ -8,7 +8,8 @@
 
 Claude never grades. The engine's checks (V1–V10) decide PASS/FAIL from the XML; the visual check is not a check in
 the verification record, can add a reason to stop and can never pass anything — not a file, not a preview, not a run.
-It samples (never every page of every file) to keep the cost down. Nothing here raises into a preview, at any stage
+The preview review samples pages; additional investigation can inspect the pages relevant to an unresolved issue.
+Nothing here raises into a preview, at any stage
 (preparing the pages, making the client, the call, reading the answer): a renderer that cannot run, a missing key or an
 API error is a ``skipped`` review with the reason (``llm.failure_text``: its kind, HTTP status and request id); any
 other exception — of the client factory, of the call, or while reading Claude's answer ("Claude's answer could not be
@@ -30,13 +31,15 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
 from . import llm
+from .resources import DEFAULT_MAX_IMAGE_TOKENS
 
 LONG_EDGE_PX = 2000            # ≤2000 px per side keeps every image valid in requests with more than 20 images
 TARGET_DPI = 150
 TOKENS_PER_IMAGE_CAP = 4784    # Opus 5.5 high-resolution tier
-# view_pages' budget in estimated image tokens per conversation: about 20 letter pages (page_tokens(): 2,714 a letter
-# page at 150 dpi, so 22 one at a time, 21 in calls of three); 18 pages of 11×17 (3,312 each at 117 dpi).
-VIEW_BUDGET_TOKENS = 60000
+# Configurable investigation allowance, separate from the model's per-request limits.
+# At 2,714 tokens per letter page this allows 368 one at a time, 366 in calls of three;
+# 301 pages of 11×17 at 3,312 tokens each. Shared model-call budgets still apply.
+VIEW_BUDGET_TOKENS = DEFAULT_MAX_IMAGE_TOKENS
 SEVERITIES = ("info", "warn", "block")
 
 

@@ -8,6 +8,7 @@ the process printed — LibreOffice exits 0 even when it could not load a file."
 from __future__ import annotations
 
 import configparser
+import contextvars
 import os
 import shutil
 import subprocess
@@ -16,6 +17,8 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Sequence
+
+from .. import diagnostics as diag
 
 _CANDIDATES = [
     "soffice", "libreoffice",
@@ -73,7 +76,17 @@ def _convert_batch(soffice: str, files: Sequence[Path], out_dir: Path, profile_d
     cmd = [soffice, "--headless", "--norestore", "--nologo",
            f"-env:UserInstallation={profile_dir.resolve().as_uri()}",
            "--convert-to", "pdf", "--outdir", str(out_dir)] + [str(f) for f in files]
-    return subprocess.run(cmd, check=True, capture_output=True, timeout=timeout, env=env)
+    with diag.span("render.process", backend="libreoffice", executable=soffice,
+                   files=[str(f) for f in files], out_dir=str(out_dir), profile=str(profile_dir),
+                   timeout_seconds=timeout) as outcome:
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True, timeout=timeout, env=env)
+        except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
+            outcome.update(returncode=getattr(e, "returncode", None),
+                           stdout=_tail(getattr(e, "stdout", None)), stderr=_tail(getattr(e, "stderr", None)))
+            raise
+        outcome.update(returncode=result.returncode, stdout=_tail(result.stdout), stderr=_tail(result.stderr))
+        return result
 
 
 def _tail(raw, n: int = 6) -> str:
@@ -119,9 +132,10 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
     said: Dict[Path, str] = {}                      # file → what its (last) soffice run printed
     reported: set = set()                           # files whose failure has been said already
 
-    def run(chunk: List[Path], profile: Path):
+    def run(chunk: List[Path], profile: Path, attempt: int = 1):
         t = time.perf_counter()
-        done = _convert_batch(soffice, chunk, out_dir, profile, timeout)
+        with diag.scope(render_attempt=attempt):
+            done = _convert_batch(soffice, chunk, out_dir, profile, timeout)
         printed = " ".join(x for x in (_tail(getattr(done, "stdout", None)), _tail(getattr(done, "stderr", None))) if x)
         for f in chunk:
             said[f] = printed
@@ -130,20 +144,25 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
         return done
     try:
         with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = [(chunk, ex.submit(run, chunk, base / f"profile{i}")) for i, chunk in enumerate(chunks) if chunk]
+            futs = [(chunk, ex.submit(contextvars.copy_context().run, run, chunk, base / f"profile{i}"))
+                    for i, chunk in enumerate(chunks) if chunk]
             retry: List[Path] = []
             for chunk, fut in futs:
                 try:
                     fut.result()
                 except Exception as e:  # noqa: BLE001 — the chunk's process failed; find the file(s) at fault
+                    diag.event("render.retry", level="warning", backend="libreoffice", attempt=2,
+                               files=[str(f) for f in chunk], reason=failure_text(e))
                     log(f"LibreOffice failed on a chunk of {len(chunk)} file(s) ({failure_text(e)}); retrying them "
                         f"one by one: {[f.name for f in chunk][:8]}")
                     retry += [f for f in chunk if not (out_dir / (f.stem + ".pdf")).exists()]
         for k, f in enumerate(retry):
             try:
-                run([f], base / f"retry{k}")
+                run([f], base / f"retry{k}", attempt=2)
             except Exception as e:  # noqa: BLE001
                 reported.add(f)
+                diag.event("render.file_failed", level="error", backend="libreoffice", source=str(f),
+                           attempt=2, reason=failure_text(e))
                 log(f"{f.name}: LibreOffice could not render it: {failure_text(e)}")
     finally:
         shutil.rmtree(base, ignore_errors=True)
@@ -152,7 +171,10 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
         pdf = out_dir / (f.stem + ".pdf")
         if pdf.exists():
             result[f] = pdf
+            diag.event("render.file_ready", backend="libreoffice", source=str(f), output=str(pdf))
         elif f not in reported:
+            diag.event("render.file_missing", level="warning", backend="libreoffice", source=str(f),
+                       output=str(pdf), process_output=said.get(f))
             log(f"{f.name}: no PDF came out of LibreOffice" + (f"; it printed: {said[f]}" if said.get(f) else
                                                                 " and it printed nothing"))
     return result

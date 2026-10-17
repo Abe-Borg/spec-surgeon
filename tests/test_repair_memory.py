@@ -261,6 +261,39 @@ def test_concurrent_writes_and_feedback_do_not_lose_records(tmp_path):
     assert len(case["feedback"]) == 16 and case["reuse_blocked"] is True
 
 
+def test_first_writer_retries_a_transient_wal_initialization_lock(tmp_path, monkeypatch):
+    original_connect = sqlite3.connect
+    collisions = []
+
+    class CompetingWriter(sqlite3.Connection):
+        def execute(self, sql, *args, **kwargs):
+            if sql == "PRAGMA journal_mode = WAL" and not collisions:
+                collisions.append(True)
+                raise sqlite3.OperationalError("database is locked")
+            return super().execute(sql, *args, **kwargs)
+
+    monkeypatch.setattr(memory.sqlite3, "connect", lambda *args, **kwargs:
+                        original_connect(*args, factory=CompetingWriter, **kwargs))
+    store = memory.CaseStore(tmp_path / "cases.db")
+    case_id = store.record(example(notes="Retain this case despite a concurrent initializer"))
+    assert collisions and store.get(case_id)["notes"] == "Retain this case despite a concurrent initializer"
+    with original_connect(store.path) as con:
+        assert con.execute("PRAGMA journal_mode").fetchone()[0] == "wal"
+
+
+def test_wal_setup_does_not_retry_unrelated_storage_errors(tmp_path, monkeypatch):
+    calls = []
+
+    class BrokenStorage:
+        def execute(self, sql):
+            calls.append(sql)
+            raise sqlite3.OperationalError("disk I/O error")
+
+    with pytest.raises(sqlite3.OperationalError, match="disk I/O"):
+        memory._enable_wal(BrokenStorage())
+    assert len(calls) == 1
+
+
 def test_sql_looking_user_text_is_data_not_a_query(tmp_path):
     store = memory.CaseStore(tmp_path / "cases.db")
     request = "'; DROP TABLE cases; --"

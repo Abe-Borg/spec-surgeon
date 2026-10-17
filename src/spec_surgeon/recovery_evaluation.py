@@ -56,6 +56,30 @@ def _object(value, where: str):
     return value
 
 
+def _resource_totals(report, ident):
+    """Continuation allowances are separate; evaluation includes every recorded segment."""
+    history = report.get("resource_history", [])
+    if not isinstance(history, list):
+        raise EvaluationError(f"{ident}.resource_history must be a list")
+    segments = [*history, report.get("budget", {})]
+    values = {"calls": [], "estimated_cost_usd": [], "reported_usage_cost_usd": []}
+    served = set()
+    for index, segment in enumerate(segments):
+        prefix = f"{ident}.resource_segments[{index}]"
+        segment = _object(segment, prefix)
+        usage = _object(segment.get("usage", {}), prefix + ".usage")
+        models = usage.get("served_models", [])
+        if not isinstance(models, list) or any(not isinstance(model, str) for model in models):
+            raise EvaluationError(prefix + ".usage.served_models must be a list of model names")
+        served.update(models)
+        values["calls"].append(_number(segment.get("calls"), prefix + ".calls", integer=True))
+        values["estimated_cost_usd"].append(_number(segment.get("estimated_cost_usd"), prefix + ".estimated_cost_usd"))
+        values["reported_usage_cost_usd"].append(_number(usage.get("cost_usd"), prefix + ".usage.cost_usd"))
+    return {**{key: sum(items) if all(item is not None for item in items) else None
+               for key, items in values.items()},
+            "served_models": sorted(served), "resource_segment_count": len(segments)}
+
+
 def _case(case: Dict[str, Any], base: Path) -> Dict[str, Any]:
     ident = case.get("id")
     if not isinstance(ident, str) or not ident.strip():
@@ -114,18 +138,20 @@ def _case(case: Dict[str, Any], base: Path) -> Dict[str, Any]:
             final_passed += 1
     # Prefer the ledger including retained reservations over known usage alone. A missing
     # estimate stays unknown; neither a free scripted run nor an incomplete bill is inferred.
-    cost = _number(budget.get("estimated_cost_usd"), f"{ident}.estimated_cost_usd")
+    totals = _resource_totals(report, ident)
+    cost = totals["estimated_cost_usd"]
     row = {
         "id": ident, "execution": execution, "cohort": str(case.get("cohort", "unspecified")),
         "report": str(path), "report_sha256": digest, "files": len(files),
         "ready": statuses.count("READY"), "unresolved": statuses.count("UNRESOLVED"),
         "needs_input": statuses.count("NEEDS_INPUT"),
         "delivered": sum(bool(f.get("delivered_to")) for f in files),
-        "attempts": len(attempts), "calls": _number(budget.get("calls"), f"{ident}.calls", integer=True),
-        "model": budget.get("model"), "effort": budget.get("effort"), "served_models": served,
+        "attempts": len(attempts), "calls": totals["calls"],
+        "model": budget.get("model"), "effort": budget.get("effort"), "served_models": totals["served_models"],
+        "resource_segment_count": totals["resource_segment_count"],
         "seconds": _number(report.get("seconds"), f"{ident}.seconds"),
         "estimated_cost_usd": cost,
-        "reported_usage_cost_usd": _number(usage.get("cost_usd"), f"{ident}.usage.cost_usd"),
+        "reported_usage_cost_usd": totals["reported_usage_cost_usd"],
         "budget_stop": budget.get("exhausted_reason"),
         "final_assertion_count": len(assertions),
         "final_assertions_passed_files": final_passed,

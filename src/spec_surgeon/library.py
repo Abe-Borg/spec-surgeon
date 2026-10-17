@@ -196,6 +196,10 @@ def save_operation(name: str, g: Any, description: str = "", replace: bool = Fal
     """Save a passing custom transform (codegen.GeneratedOp) as one of your operations."""
     if not getattr(g, "passed", False) or not getattr(g, "source", ""):
         raise LibraryError("only a custom transform that passed verification can be saved")
+    if getattr(g, "goal_contract", None) is not None:
+        raise LibraryError("this custom method is bound to an approved workspace goal; its code and verification "
+                           "are preserved in the workspace, but the operation library cannot yet carry that "
+                           "goal's approvals into another task")
     s = slug(name)
     _check_free("operation", s, replace)
     d = _kind_dir("operation")
@@ -301,6 +305,9 @@ def load_operation(name: str):
     item = find(name, "operation")
     folder = _inside(item.path, "operation")
     manifest = json.loads((folder / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("goal_contract") is not None:
+        raise LibraryError("a stored goal-bound method needs a fresh workspace goal and source binding; "
+                           "library metadata cannot approve that task")
     source = (folder / "op.py").read_text(encoding="utf-8")
     if hashlib.sha256(source.encode("utf-8")).hexdigest() != manifest.get("sha256"):
         raise LibraryError(f"your operation {item.name!r} changed since it was saved (op.py does not match its "
