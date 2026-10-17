@@ -205,7 +205,16 @@ so the style shows). The profiles' tables show each pattern's tables, their styl
 the two on the same tables are separate specs.
 - Numbering. The profiles' lists show each list's levels (format, styles, the first number shown) and which \
 paragraphs the engine does not evaluate and why; numbered_styles show what a numbered style's first paragraph would \
-show ("PART 1 -", "1.1", "A."); counts.typed_numbers how many paragraphs start with a typed number. "Restart the \
+show ("PART 1 -", "1.1", "A."); lists.typed_numbers how many paragraphs start with a typed number. "Convert to our \
+PART / 1.1 / A. / 1. / a. scheme" with an example file is convert_numbering {template: its exact path, levels: the \
+example file's numbered style ids level 0 first — from read_template's lists.numbered_styles, one list —}; the \
+paragraphs converted are those of the list numbering the most paragraphs ("from": "main", the default) or of named \
+styles per level (from.styles); level_map only when the architect's levels do not line up with yours (say so). Typed \
+numbers ("A." and "1." typed at the start of paragraphs, the profile's typed_numbers) becoming real list numbers is \
+convert_typed_numbers {template, levels} — tracked by default (the removed typed numbers show as deletions), tracked \
+false for clean copies; it refuses a file unless every paragraph then reads exactly as before (a typo in the typed \
+numbers sets the file aside — offer audit_numbering to find them). Neither writes numbering text: the scheme is the \
+user's own. Both are specs of their own beside other ops on the body. "Restart the \
 articles at every PART" is set_list_level {style: the article style, restart: "after_higher"} — only when the PARTs \
 are numbered by a higher level of the same list (else it changes nothing: say so and offer converting the numbering \
 first); "zero-pad the articles" (1.01 instead of 1.1) is set_list_level {style, zero_pad: true}; a level's format is \
