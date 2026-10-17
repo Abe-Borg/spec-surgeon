@@ -458,6 +458,20 @@ must be a list; `with_tables` declares no text read; a set_page_setup assertion 
 content selection choosing every section is flagged; the landscape example matches a SCHEDULE heading, not "Schedule 40
 pipe".
 
+**List levels and the audit (§3, §4)**: a new file-specific code `list-level` (a start of 0 on a letter or roman
+level, an `after_level` not above the level, a change leaving an evaluated paragraph unevaluated); the audit's blank rule
+allows bookmarks (its own both-sides rule); the owner rule (`NUMBERING_OWNER_KINDS`) lets the import's no-copy check stand
+down beside `list_level`, which compares numbering.xml whole. Review: a style inheriting only its level from the style it
+is based on is `ambiguous-level` where the two readings of numPr inheritance differ (it was read at level 0 and
+`set_list_level` changed the wrong level — every check passing); a change that reaches no paragraph of the style (they are
+numbered by another list) is flagged; `unnumbered_empty` checks only the numPr it writes and leaves the mark and a section
+break to the residual (beside a font change it planned and failed V10); renumbering flags stale REF fields and written
+references (`ops/numbering_flags.py`, shared with convert_numbering); `{after_level: level−1}` is "after any higher
+level"; the audit judges typed numbers only (the main list's automatic numbers are context), skips table cells, reads
+roman numerals, reads "PART 1 -" and "PART 2" as one sequence, checks a typed number's prefix against its PART, puts the
+list-level findings before the 30-flag cap and anchors an empty paragraph on the previous body paragraph; linked levels
+are flagged (LibreOffice shows them at level 0).
+
 **Merging**: `check_conflicts` takes each distinct touch once (a conversion over 2,000 paragraphs took 16 s to merge).
 
 **Decisions left for Abraham** (recorded, not built): a typed spec without `word/numbering.xml` is refused (rule 10: the
