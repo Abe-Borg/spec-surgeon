@@ -100,12 +100,20 @@ def _standards(row):
         editions, end = [], len(family.group())
         if designation:
             remainder = tail[designation.end():]
+            # Stop at the citation's sentence, after parsing decimal designations
+            # and "No.". A month abbreviation can still introduce an edition date.
+            for boundary in re.finditer(r"[.!?](?=\s|$)", remainder):
+                if (boundary[0] == "." and re.search(r"\b"+MONTH+r"$", remainder[:boundary.start()], re.I)
+                        and re.match(r"\s+(?:\d{1,2},?\s+)?\d{4}\b", remainder[boundary.end():])):
+                    continue
+                remainder = remainder[:boundary.start()]
+                break
             attached = re.match(r"[-–](\d{2,4}[a-z]?)\b", remainder, re.I)
             if attached:
                 editions.append(attached[1])
             editions += [m[0] for m in re.finditer(r"\b(?:19|20)\d{2}[a-z]?\b", remainder, re.I)]
             editions = list(dict.fromkeys(editions))
-            end = family.end()+len(tail)-family.start()
+            end = family.end()+designation.end()+len(remainder)-family.start()
         record = _location(row, family.start(), text[family.start():family.start()+end].strip())
         record.update({"family": family.group().upper(), "designation": identifier, "editions": editions,
                        "edition": editions[0] if len(editions) == 1 else None,
@@ -156,11 +164,13 @@ def _read_file(path, canonical):
             if any(True for _ in root.iter(W+"p", W+"comment")):
                 roots[part] = root
                 part_kinds[part] = "other_word_part"
-    rows = []
+    rows, row_by_paragraph = [], {}
     for part, root in roots.items():
         for bi, p in enumerate(paragraphs(root)):
-            rows.append({"file": str(path), "part": part, "paragraph": bi, "text": _text(p),
-                         "kind": part_kinds[part], "nested": any(a.tag == W+"p" for a in p.iterancestors())})
+            row = {"file": str(path), "part": part, "paragraph": bi, "text": _text(p),
+                   "kind": part_kinds[part], "nested": any(a.tag == W+"p" for a in p.iterancestors())}
+            rows.append(row)
+            row_by_paragraph[p] = row
     sections = _sections(pkg, rows)
     for row in rows:
         preceding = [s for s in sections if s["paragraph"] <= row["paragraph"]] if row["kind"] == "document" else []
@@ -184,7 +194,10 @@ def _read_file(path, canonical):
         for el in root.iter():
             revision = revision_kind(el)
             if revision:
-                markup.append({"type": "tracked_changes", "part": part, "revision": revision,
+                paragraph = next((a for a in el.iterancestors() if a.tag == W+"p"), None)
+                row = row_by_paragraph.get(paragraph)
+                location = _location(row) if row is not None else {"part": part}
+                markup.append({**location, "type": "tracked_changes", "revision": revision,
                                "author": el.get(W+"author"), "id": el.get(W+"id")})
             if el.tag == W+"comment":
                 markup.append({"type": "comments", "part": part, "id": el.get(W+"id"), "author": el.get(W+"author")})
@@ -254,7 +267,7 @@ def audit_batch(files, audits=None, identity=None):
     selected = list(audits or AUDITS)
     if set(selected)-set(AUDITS):
         raise ValueError(f"unknown audits: {sorted(set(selected)-set(AUDITS))}")
-    canonical = identity or {}
+    canonical = {} if identity is None else identity
     if not isinstance(canonical, dict) or any(k not in ("project_name", "project_number", "date") or
                                               not isinstance(v, str) or not v.strip() for k, v in canonical.items()):
         raise ValueError("identity is an object with optional non-empty project_name, project_number and date strings")

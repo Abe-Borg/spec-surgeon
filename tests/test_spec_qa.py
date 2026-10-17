@@ -71,6 +71,60 @@ def test_issue_readiness_includes_style_hidden_highlight_and_revisions(tmp_path)
     assert {"hidden_text", "highlights", "tracked_changes"} <= set(f["readiness"]["counts"])
 
 
+def test_readiness_revisions_identify_their_paragraphs_and_context(tmp_path):
+    path = tmp_path / "revisions.docx"
+    d = Document()
+    d.add_paragraph("SECTION 21 13 19")
+    d.add_paragraph("SPRINKLERS")
+    for kind, text in (("ins", "added requirement"), ("del", "removed requirement")):
+        p = d.add_paragraph(f"{kind} context: ")
+        revision = OxmlElement("w:" + kind)
+        revision.set(qn("w:id"), str(len(d.paragraphs)))
+        revision.set(qn("w:author"), "Reviewer")
+        run = OxmlElement("w:r")
+        content = OxmlElement("w:delText" if kind == "del" else "w:t")
+        content.text = text
+        run.append(content)
+        revision.append(run)
+        p._p.append(revision)
+    # A tracked row insertion has no containing paragraph; retain its part location.
+    table = d.add_table(rows=1, cols=1)
+    row_revision = OxmlElement("w:ins")
+    row_revision.set(qn("w:id"), "5")
+    table.rows[0]._tr.get_or_add_trPr().append(row_revision)
+    d.save(path)
+
+    report = audit_batch([path], audits=["readiness"])
+    revisions = [f for f in report["files"][0]["readiness"]["findings"] if f["type"] == "tracked_changes"]
+    assert [(r["paragraph"], r["context"]) for r in revisions[:2]] == [
+        (2, "ins context: added requirement"), (3, "del context: ")]
+    assert all(r["section"] == "21 13 19" and r["file"] == str(path) for r in revisions[:2])
+    assert revisions[2]["part"] == "word/document.xml" and "paragraph" not in revisions[2]
+    markdown = audit_markdown(report)
+    assert "word/document.xml paragraph 3" in markdown and "word/document.xml paragraph 4" in markdown
+    assert "ins context: added requirement" in markdown and "del context: " in markdown
+
+
+@pytest.mark.parametrize("citation,designation,editions", [
+    ("Comply with NFPA 13. Contract dated 2024.", "13", []),
+    ("Comply with NFPA 13! Contract dated 2024.", "13", []),
+    ("Comply with NFPA 13? Contract dated 2024.", "13", []),
+    ("NFPA 13; Contract dated 2024.", "13", []),
+    ("NFPA 13, 2022 Edition. Contract dated 2024.", "13", ["2022"]),
+    ("NFPA No. 13, 2022 Edition. Contract dated 2024.", "13", ["2022"]),
+    ("ASME B31.9-2020. Contract dated 2024.", "B31.9", ["2020"]),
+    ("ASTM A795/A795M-21. Contract dated 2024.", "A795/A795M", ["21"]),
+    ("FM Global Data Sheet 2-0, Oct. 2021. Contract dated 2024.", "2-0", ["2021"]),
+])
+def test_standard_editions_do_not_include_years_from_later_sentences(tmp_path, citation, designation, editions):
+    path = write_doc(tmp_path / "standard.docx", "21 05 00", "COMMON", citation)
+    standard, = audit_batch([path], audits=["standards"])["files"][0]["standards"]
+    assert standard["designation"] == designation
+    assert standard["editions"] == editions
+    assert standard["status"] == ("recorded" if editions else "edition_missing")
+    assert "Contract" not in standard["text"]
+
+
 def test_identity_variants_keep_values_and_locations_across_files(tmp_path):
     a = write_doc(tmp_path / "a.docx", "21 05 00", "COMMON", "Project Name: Harbor Tower", "Project No.: H-123",
                   header="Harbor Tower\t10/17/2026")
@@ -125,6 +179,27 @@ def test_unknown_identity_and_bad_options_are_explicit(tmp_path):
         audit_batch([p], audits=["fix_editions"])
     with pytest.raises(ValueError):
         audit_batch([p], identity={"project_name": 123})
+
+
+@pytest.mark.parametrize("identity", [[], False, 0, ""])
+def test_identity_must_be_an_object_even_when_falsy(tmp_path, identity):
+    path = write_doc(tmp_path / "a.docx", "21 05 00", "COMMON")
+    with pytest.raises(ValueError, match="identity is an object"):
+        audit_batch([path], identity=identity)
+
+
+@pytest.mark.parametrize("identity", ["[]", "false", "null", "0", '\"\"'])
+@pytest.mark.parametrize("from_file", [False, True])
+def test_cli_rejects_non_object_identity_json(tmp_path, capsys, identity, from_file):
+    path = write_doc(tmp_path / "a.docx", "21 05 00", "COMMON")
+    if from_file:
+        identity_file = tmp_path / "identity.json"
+        identity_file.write_text(identity)
+        identity = "@" + str(identity_file)
+    output = tmp_path / "report.json"
+    assert main(["audit", str(path), "--identity", identity, "--out", str(output)]) == 2
+    assert "identity" in capsys.readouterr().err
+    assert not output.exists()
 
 
 def test_readiness_only_retains_the_actual_placeholder_occurrences(tmp_path):

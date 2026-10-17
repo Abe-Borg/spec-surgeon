@@ -203,7 +203,10 @@ def cmd_audit(args):
         print("No DOCX files found to audit.", file=sys.stderr)
         return 2
     try:
-        report = audit_batch(files, args.audit, _params(args.identity))
+        identity = _params(args.identity)
+        if not isinstance(identity, dict):
+            raise ValueError("identity must be a JSON object")
+        report = audit_batch(files, args.audit, identity)
     except (OSError, ValueError) as e:
         print(f"Audit refused: {e}", file=sys.stderr)
         return 2

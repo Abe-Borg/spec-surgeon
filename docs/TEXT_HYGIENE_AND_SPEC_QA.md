@@ -64,6 +64,7 @@ spec-surgeon audit Specs --identity '{"project_name":"Harbor Tower","project_num
 
 Repeat `--audit` to select reports; omit it for all five. `--identity @identity.json` reads
 canonical values with optional `project_name`, `project_number` and `date` keys.
+Identity JSON must be an object; arrays, booleans, numbers, strings and `null` are invalid.
 Identity detection uses labels and custom properties. Dates in headers/footers and opening
 paragraphs are candidates. Canonical values also find similar unlabeled header/cover values.
 Each candidate retains its detection basis; unknown identity is explicit. Different date
@@ -77,13 +78,16 @@ A filename-only section identity is marked unconfirmed. References without a sta
 say so instead of claiming a title match. Self-references do not count as incoming references.
 Compact section numbers such as `210500` resolve to the same identity as `21 05 00`.
 
-Standard editions are recorded verbatim, including short ASTM edition suffixes. Latest editions
+Standard editions are recorded verbatim within the citation's sentence or clause, including
+short ASTM edition suffixes. Years in subsequent sentences are excluded. Latest editions
 and AHJ adoption are not inferred. Use the existing approved replacement operation (item 2)
 for a later explicit change, for example **NFPA 13, 2025 Edition**, or the AHJ-adopted edition.
 
 Readiness states are `not_ready`, `incomplete` or `no_findings`. Ambiguous inherited hidden
 formatting, embedded objects and missing section identity remain limitations. Unreadable files
 are errors and make `complete` false. No findings is not an issue certification.
+Tracked changes include the containing paragraph's location and current text when available;
+structural revisions without a containing paragraph retain their part location.
 Exit codes: 0 for a completed scan (findings allowed), 1 for unreadable files, 2 for invalid inputs.
 Source hashes identify the inspected bytes.
 
