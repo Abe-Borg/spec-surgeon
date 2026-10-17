@@ -135,11 +135,14 @@ def _applied_style(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 n_runs, n_marks = n_runs + nr, n_marks + nm
                 gone = set(d.ppr)
             S, O = p.find(W + "pPr"), ov.pars[oi].find(W + "pPr")
-            if restyle or gone or (d is not None and d.mark is not None):
-                expected = v_expected_ppr(S, gone, mark_stays)
+            # the mark's rPr only when this op changes the mark: another op of the spec changing it (set_font, set_language)
+            # is checked by its own kind, and the residual compares the rest (review D2)
+            mark = d is not None and d.mark is not None
+            if restyle or gone or mark:
+                expected = v_expected_ppr(S, gone, mark_stays, mark=mark)
                 if restyle:
                     expected = v_with_pstyle(expected, sid)
-                check_cleared_ppr(S, O, expected, tracked, author, where, errs, changed=restyle or bool(gone))
+                check_cleared_ppr(S, O, expected, tracked, author, where, errs, changed=restyle or bool(gone), mark=mark)
             if restyle or gone:
                 n_paras += 1
                 ctx.strip_ppr.setdefault(part, {}).setdefault(bi, set()).update(gone | {"pStyle", "pPrChange"})

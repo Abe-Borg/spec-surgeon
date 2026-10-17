@@ -302,6 +302,28 @@ def test_removing_the_applied_style_beside_conflicts(src):
     assert e.value.code == "conflict" and "ArchUnused" in e.value.reason
 
 
+def test_a_font_change_of_the_same_paragraphs_beside_a_restyle_plans_and_verifies(src):
+    """Review D2: set_font gives the restyled paragraph's mark an rPr; applied_style compared the mark's presence and
+    failed "paragraph properties are ['pStyle', 'rPr'], expected ['pStyle']" in either order. The mark is the residual's
+    (and set_font's kind's) when apply_style does not change it — a stray change there still fails."""
+    from spec_surgeon.editspec import apply_spec
+    apply_op = {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^PART 2"}}, "params": {"style": "Heading1"}}
+    font = {"op": "set_font", "params": {"font": "Arial", "only_where_defined": False}}
+    for ops in ((apply_op, font), (font, apply_op)):
+        plan, frags = plan_spec(DocxPackage(src), _spec(*ops))
+        out = apply_spec(DocxPackage(src), frags).output_bytes()
+        rec = run_suite(src, out, plan.to_dict(), "src.docx", "out.docx")
+        assert rec.passed, rec.to_markdown()
+    pkg = DocxPackage(out)
+    root = pkg.xml("word/document.xml")
+    p = next(x for x in paragraphs(root) if "".join(t.text or "" for t in x.iter(W + "t")).startswith("PART 2"))
+    mark = p.find(W + "pPr/" + W + "rPr")
+    assert mark is not None                                   # set_font gave it one
+    etree.SubElement(mark, W + "caps")
+    pkg.write_xml("word/document.xml", root)
+    assert not run_suite(src, pkg.output_bytes(), plan.to_dict(), "src.docx", "out.docx").passed
+
+
 # ---- the template is an input (rule 12) ------------------------------------------------------------------------------
 
 def test_a_template_changed_after_planning_is_refused_and_fails_v10(src, tpl):
