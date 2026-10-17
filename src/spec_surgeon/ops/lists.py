@@ -871,3 +871,32 @@ def typed_number(run_text: str, scheme: Scheme) -> Optional[TypedNumber]:
     k, m = hits[0]
     return TypedNumber(level=k if len(hits) == 1 else None, token=m.group(1), token_start=m.start(1), end=m.end(),
                        levels=tuple(h[0] for h in hits))
+
+
+# ---- what a count reads (rule 9; design §6) --------------------------------------------------------------------------
+
+def count_reads(pkg: DocxPackage, sheet, pars: Sequence[NumberedPar], extra_styles: Iterable[str] = ()
+                ) -> List[Tuple[str, str, str]]:
+    """The reads an op whose prediction counts the main part's numbers must declare (design §6): the numbering part
+    whole; the whole-member soft family reads of ``pStyle`` and ``numPr`` over the main part (any paragraph restyled or
+    given numbering by another op changes the count); ``verify:numPr`` of every counted numbered paragraph (a tracked
+    deletion of one is a ``text`` change of it — a conflict; untracked insertions and deletions are whole-member ``text``
+    changes, rule 1); and ``verify:pPr`` of every style on the chains of those paragraphs and of ``extra_styles`` (the
+    scheme's) — a style's numbering is in its pPr: a replaced, removed or re-spaced style is a conflict, a font change of
+    it (``rPr``) is not. ``pars`` is ``count``'s result over the SOURCE; ``sheet`` the source's ``StyleSheet``."""
+    main = pkg.main_part()
+    out: List[Tuple[str, str, str]] = []
+    part = numbering_part(pkg)
+    if part is not None:
+        out.append((part, "*", "verify"))
+    out += [(main, "*", "verify-props:pStyle"), (main, "*", "verify-props:numPr")]
+    every = list(pkg.xml(main).iter(W + "p"))
+    styles: List[str] = []
+    for np_ in pars:                     # its own style chain: its numbering may come from any level of it
+        out.append((main, str(np_.index), "verify:numPr"))
+        styles += [sid for sid, _ in style_chain(sheet, paragraph_style(every[np_.index], sheet))]
+    for ref in extra_styles:
+        styles += [sid for sid, _ in style_chain(sheet, ref)]
+    if sheet.part is not None:
+        out += [(sheet.part, f"style:{sid}", "verify:pPr") for sid in dict.fromkeys(styles)]
+    return out
