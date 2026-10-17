@@ -805,7 +805,7 @@ def test_libreoffice_shows_every_typed_number_exactly_once_in_order(tpl, tmp_pat
         out = pkg.output_bytes()
     doc = tmp_path / "out.docx"
     doc.write_bytes(out)
-    subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", str(tmp_path), str(doc)], check=True,
+    subprocess.run([shutil.which("soffice"), "--headless", "--convert-to", "pdf", "--outdir", str(tmp_path), str(doc)], check=True,
                    capture_output=True, timeout=240, env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"})
     subprocess.run(["pdftotext", "-layout", str(tmp_path / "out.pdf"), str(tmp_path / "out.txt")], check=True,
                    timeout=60)
