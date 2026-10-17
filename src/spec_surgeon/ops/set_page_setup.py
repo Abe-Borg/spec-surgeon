@@ -143,6 +143,12 @@ class SetPageSetup(Op):
         # what the content form reads (its paragraphs' words and styles): another op changing them is a plan-time
         # conflict (rule 9)
         frag.touches += section_reads(pkg, chooser)
+        if isinstance(chooser, dict) and ords and len(ords) == len(secs):
+            # chosen by content, and every section matched — in a one-section file that is the whole document ("Schedule
+            # 40 pipe" matches a 'schedule' pattern in the body of a piping spec): say so, the user decides (review)
+            frag.flags.append(f"the content selection chose every section of this file ({len(secs)}): the change applies "
+                              f"to the whole document, not to a part of it — check that the pattern does not match "
+                              f"ordinary text")
         per_section: Dict[int, Dict[str, Dict[str, str]]] = {}
         asserted: Dict[str, Dict[str, Dict[str, Any]]] = {}     # section_props element specs per changed section
         titles: Dict[int, bool] = {}
@@ -209,6 +215,10 @@ class SetPageSetup(Op):
         if already:
             frag.notes.append(f"different first page already {'on' if first else 'off'} in section(s) {already}: "
                               f"left alone")
+        older = [i for i in changed if secs[i].find(W + "sectPrChange") is not None]
+        if older:                          # the change is plain; a pending tracked one stays (batch 5's review)
+            frag.flags.append(f"section(s) {older} already carry a pending tracked section change (w:sectPrChange) "
+                              f"from an earlier reviewer; reject-all would restore that older page setup")
         if titles:
             self._first_pages(pkg, secs, titles, frag)
         if orient:

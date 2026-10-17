@@ -138,6 +138,10 @@ class RemoveHeaderFooter(Op):
             frag.intended_parts = [main] + ([main_rels_part] if gone_rids else []) + ([CT_PART] if ct_changes else [])
             frag.touches = [(main, f"sectPr:{i}", "hfref") for i in sorted({i for i, _, _, _ in removed_refs})]
             frag.touches += [(m, "*", "remove") for m in frag.members_removed]
+            # the inheritance rule above READS every section's titlePg (whether a first-page part is displayed): a
+            # different_first_page beside it would turn on a first page that then shows nothing — a plan-time conflict
+            # (batch 5's review), never a pass with the first page blank
+            frag.touches += [(main, f"sectPr:{i}", "verify:titlePg") for i in range(len(secs))]
             if gone_rids:
                 frag.touches.append((main_rels_part, "*", "rels"))
             if ct_changes:

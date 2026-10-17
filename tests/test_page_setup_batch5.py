@@ -451,7 +451,9 @@ def test_the_content_form_declares_what_it_reads():
     assert _reads(plan({"containing": {"has_bold": True}})) == {
         (MAIN, "*", "verify:text"), (MAIN, "*", "verify-props:pStyle"), (MAIN, "*", "verify-props:rStyle"),
         (MAIN, "*", "verify-props:tblPr")}
-    assert _reads(plan({"with_tables": True})) == {(MAIN, "*", "verify:text")}
+    # no text edit moves a table: with_tables reads only where tables and section breaks are, which only a whole-member
+    # change of the main part moves (batch 5's review: it used to refuse every replace_text beside it)
+    assert _reads(plan({"with_tables": True})) == set()
     assert _reads(plan({"index_range": [1, 2]})) == set()
     assert _reads(plan([1, 2])) == set() and _reads(plan("all")) == set()
 
@@ -466,6 +468,8 @@ def test_a_text_edit_beside_a_selection_by_text_is_a_conflict_and_by_index_is_no
     assert e.value.code == "conflict" and "the text of every target in it" in e.value.reason
     by_index = get_op("set_page_setup").plan(pkg, {"sections": {"index_range": [1, 2]}}, {"orientation": "landscape"})
     assert merge_fragments([by_index, edit]).ops
+    by_tables = get_op("set_page_setup").plan(pkg, {"sections": {"with_tables": True}}, {"orientation": "landscape"})
+    assert merge_fragments([by_tables, edit]).ops
 
 
 def test_a_restyle_beside_a_selection_by_style_is_a_conflict():

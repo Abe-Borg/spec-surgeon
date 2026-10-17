@@ -28,7 +28,7 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
 
-from .reader import VPackage, W, M, STYLES_REL, THEME_REL, protected_members
+from .reader import VPackage, W, M, R, STYLES_REL, THEME_REL, protected_members
 from .textcheck import blocks
 
 A_NS = "http://schemas.openxmlformats.org/drawingml/2006/main"
@@ -329,6 +329,15 @@ PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range",
 RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions", "color_in"}
 
 
+def _v_selector_style(p, styles: Styles) -> Optional[str]:
+    """The paragraph style the selector grammar reads: ``w:pStyle``'s value when the paragraph has a ``w:pStyle`` — an
+    empty or missing value names no style (batch 4's definition) —, else the default paragraph style. (Batch 5's review:
+    ``_pstyle(p) or default`` read an empty pStyle as the default style; the transform reads it as none — a section
+    chosen by ``style_in`` differed between the sides and a valid plan failed V10.)"""
+    ps = p.find(W + "pPr/" + W + "pStyle")
+    return ps.get(W + "val") if ps is not None else styles.default.get("paragraph")
+
+
 def _v_toggle_on(rpr, p, styles: Styles, tag: str) -> bool:
     if rpr is not None:
         d = rpr.find(W + tag)
@@ -338,7 +347,7 @@ def _v_toggle_on(rpr, p, styles: Styles, tag: str) -> bool:
             sr = st.find(W + "rPr")
             if sr is not None and sr.find(W + tag) is not None:
                 return sr.find(W + tag).get(W + "val") not in FALSY
-    for st in styles.chain(_pstyle(p) or styles.default.get("paragraph")):
+    for st in styles.chain(_v_selector_style(p, styles)):
         sr = st.find(W + "rPr")
         if sr is not None and sr.find(W + tag) is not None:
             return sr.find(W + tag).get(W + "val") not in FALSY
@@ -389,7 +398,7 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
         return True
     if not isinstance(pred, dict) or set(pred) - PARA_KEYS:
         raise ValueError(f"unknown paragraph selector {pred!r}")
-    if "style_in" in pred and (_pstyle(p) or styles.default.get("paragraph")) not in pred["style_in"]:
+    if "style_in" in pred and _v_selector_style(p, styles) not in pred["style_in"]:
         return False
     if "text_regex" in pred and not _v_rx_matches(pred["text_regex"], view.texts[bi], p):
         return False
@@ -1441,6 +1450,10 @@ def _section_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         errs.append(f"section_props: per-section changes for {sorted(per) if isinstance(per, dict) else per!r}, "
                     f"sections listed {sel}")
         per = per if isinstance(per, dict) else {}
+    if a.get("op") == "set_page_setup" and "select" not in a:
+        # since batch 5 set_page_setup's assertion carries the user's own select and V10 re-derives the selection from
+        # it; one without it would be trusted on its word (batch 5's review)
+        errs.append("section_props: set_page_setup's assertion carries no select to re-derive the sections from")
     chosen = _v_page_setup(ctx, a, s_secs, o_secs, errs) if "select" in a else None
     for i in sel:
         if not 0 <= i < len(s_secs):
@@ -1483,6 +1496,36 @@ def _section_hf_refs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     if removed != a.get("expected_removed", -1):
         errs.append(f"section_hf_refs: {removed} reference(s) selected here, plan predicted {a.get('expected_removed')}")
     return f"section_hf_refs: {removed} reference(s) removed from sections {a.get('sections')}"
+
+
+def _v_page_field(root) -> bool:
+    """A PAGE field anywhere in the part: a complex field's instruction or a simple field's, first word PAGE."""
+    instr = [t.text or "" for t in root.iter(W + "instrText")] + [f.get(W + "instr") or "" for f in root.iter(W + "fldSimple")]
+    return any((x.split() or [""])[0].upper() == "PAGE" for x in instr)
+
+
+def _cover_unnumbered(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    """fix_page_numbering cover-unnumbered (post-condition, this module's own reading — never the transform's): the
+    footer the cover section shows in the OUTPUT — its own first-page footer while its w:titlePg is on (w:val not
+    0/false/off) and it has one, else its own default footer — is the footer the plan edited, and holds no PAGE field.
+    Reading titlePg by presence alone once edited a first-page footer the cover never showed and PASSED with the page
+    number still on the cover."""
+    main = ctx.out.main_part()
+    secs = sect_prs(ctx.out.xml(main))
+    if not secs:
+        errs.append("cover_unnumbered: the output has no section")
+        return "cover_unnumbered: no section"
+    rels = ctx.out.rels_targets(main)
+    own: Dict[str, Optional[str]] = {}
+    for el in secs[0].findall(W + "footerReference"):
+        rid = el.get(R + "id")
+        own[el.get(W + "type", "default")] = rels[rid]["target"] if rid in rels else None
+    shown = own.get("first") if _v_title_pg_on(secs[0]) and own.get("first") else own.get("default")
+    if shown != a.get("footer"):
+        errs.append(f"cover_unnumbered: the cover shows footer {shown!r}, the plan edited {a.get('footer')!r}")
+    elif shown and _v_page_field(ctx.out.xml(shown)):
+        errs.append(f"cover_unnumbered: the footer the cover shows ({shown}) still holds a PAGE field")
+    return f"cover_unnumbered: the cover shows {shown}, without a page number"
 
 
 def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
@@ -2013,6 +2056,7 @@ KINDS = {
     "paragraph_props": _paragraph_props,
     "section_props": _section_props,
     "section_hf_refs": _section_hf_refs,
+    "cover_unnumbered": _cover_unnumbered,
     "effective_font": _effective_font,
     "deleted_paragraphs": _deleted_paragraphs,
     "inserted_paragraphs": _inserted_paragraphs,

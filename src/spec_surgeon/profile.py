@@ -380,7 +380,8 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
 
 LIST_LIMIT = 4           # lists described one by one (the most used first)
 NUMBERED_STYLE_LIMIT = 20
-TYPED_NUMBER = re.compile(r"^[ \t]*(?:PART\s+\d+|ARTICLE\s+\d+|\d+(?:\.\d+)+\.?|\d+[.)]|\(\d+\)|[A-Za-z][.)]|\([a-z]\))"
+TYPED_NUMBER = re.compile(r"^[ \t]*(?:PART\s+\d+|ARTICLE\s+\d+|\d+(?:\.\d+)+\.?|\d+[.)]|\(\d+\)|[A-Za-z][.)]|"
+                          r"\([A-Za-z]\)|[IVXLC]{2,}[.)]|[ivxlc]{2,}[.)])"
                           r"(?:[ \t\u00a0]+|$)")
 
 

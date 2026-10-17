@@ -93,8 +93,13 @@ def check_paragraph_selector(pred) -> None:
                 re.compile(pred[rx_key])
             except re.error as e:
                 raise JobException(f"bad {rx_key}: {e}", "bad-params")
-    if "index_range" in pred and (not isinstance(pred["index_range"], (list, tuple)) or len(pred["index_range"]) != 2):
-        raise JobException("index_range must be [start, end)", "bad-params")
+    if "style_in" in pred and (not isinstance(pred["style_in"], (list, tuple))
+                               or not all(isinstance(x, str) for x in pred["style_in"])):
+        # a bare string was read as a set of characters on one side and a substring test on the other (batch 5 review)
+        raise JobException("style_in must be a list of style ids", "bad-params")
+    if "index_range" in pred and (not isinstance(pred["index_range"], (list, tuple)) or len(pred["index_range"]) != 2
+                                  or not all(isinstance(x, int) and not isinstance(x, bool) for x in pred["index_range"])):
+        raise JobException("index_range must be [start, end) — two whole numbers", "bad-params")
     if "has_bold" in pred and not isinstance(pred["has_bold"], bool):
         raise JobException("has_bold must be true or false", "bad-params")
     if "is_all_caps" in pred and not isinstance(pred["is_all_caps"], bool):
@@ -584,18 +589,20 @@ def resolve_sections(pkg: DocxPackage, sections, content: bool = False) -> List[
 
 def section_reads(pkg: DocxPackage, sections) -> List[Touch]:
     """What the content form of ``select.sections`` reads (rule 9, built-in batch 5): ``containing`` with a predicate
-    that reads the paragraphs' words, and ``with_tables``, read the main part's text whole (``(main, "*",
-    "verify:text")`` — an edit of a paragraph's words, or a paragraph or table added or removed, could change which
-    sections are chosen); ``containing`` reads the style families its predicate reads through every paragraph's chain
-    as whole-member soft reads (``selection_families``: ``style_in`` → pStyle; ``has_bold``/``is_all_caps`` → pStyle,
-    rStyle, tblPr). ``index_range`` and the paragraph predicates ``in_table``/``index_range`` read where paragraphs and
-    tables are, which only a whole-member change of the main part moves (a conflict with any touch of it already)."""
+    that reads the paragraphs' words reads the main part's text whole (``(main, "*", "verify:text")`` — an edit of a
+    paragraph's words could change which sections are chosen); ``containing`` reads the style families its predicate
+    reads through every paragraph's chain as whole-member soft reads (``selection_families``: ``style_in`` → pStyle;
+    ``has_bold``/``is_all_caps`` → pStyle, rStyle, tblPr). ``with_tables``, ``index_range`` and the paragraph predicates
+    ``in_table``/``index_range`` read where paragraphs, tables and section breaks are, which only a whole-member change
+    of the main part moves (a paragraph inserted or deleted untracked: a conflict with any touch of it already) — no
+    text read for them (batch 5's review: ``with_tables`` refused every replace_text beside it, though no text edit moves
+    a table)."""
     if not isinstance(sections, dict):
         return []
     main = pkg.main_part()
     out: List[Touch] = []
     pred = sections.get("containing")
-    if sections.get("with_tables") is not None or (isinstance(pred, dict) and set(pred) & set(TEXT_READING_KEYS)):
+    if isinstance(pred, dict) and set(pred) & set(TEXT_READING_KEYS):
         out.append((main, "*", "verify:text"))
     if isinstance(pred, dict):
         fams = selection_families("set_page_setup", {"paragraphs": pred}, {})

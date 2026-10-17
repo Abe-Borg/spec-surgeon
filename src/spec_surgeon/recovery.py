@@ -312,6 +312,10 @@ def _goals(goal):
                     notes.append("A page setup that chooses sections by their content has no independent final "
                                  "check yet; its stage verification re-derives which sections it changed.")
                     continue
+                if "different_first_page" in params:
+                    # the final page_setup check reads margins, size and orientation only (batch 5's review)
+                    notes.append("A page setup's different-first-page setting has no independent final check yet; its "
+                                 "stage verification checks the title-page switch of every section it chose.")
                 a = {"kind": "page_setup", "sections": sections}
                 a.update({k: copy.deepcopy(params[k]) for k in ("margins", "size", "orientation") if k in params})
                 if a.get("size") and a.get("orientation"):
