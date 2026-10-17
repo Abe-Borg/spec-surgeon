@@ -629,6 +629,22 @@ certain only through their own entries). README → "Built-in operations, batch 
 (four skip in the Linux container). Not in this batch: tab stops in style definitions, formatting part of a paragraph, a
 list-level selector, theme colours as a value to set.
 
+## Built-in operations status, part 5 (2026-10-17) — batch 4: borders and shading, styles, clearing, language
+
+The fourth batch (items 26–32; design note `docs/BUILTIN_OPS_BATCH4_DESIGN.md`): `set_borders_shading` (the paragraph's
+whole border box, `nil` for every side a lower level shows, and shading — on paragraphs or paragraph styles);
+`set_paragraph_props` on styles (spacing, indents, alignment in style definitions); `clear_direct_formatting` (the
+paragraphs follow their styles again — hidden text, numbering, symbol fonts, superscripts and highlight kept unless
+asked); `set_language` (the proofing language of every level that names one, and the default); ★ `apply_style`
+(paragraphs picked by appearance or pattern, the style from the document or imported from a template, direct formatting
+kept or cleared); ★ `map_styles` over a shared style import (the closure through basedOn/link/next and list levels,
+list numbering copied with new ids, `styles_imported` checking the copies and `numbering.xml` whole); and
+`remove_unused_styles` (used = text, numbering, settings, field instructions, tracked-change snapshots, defaults and the
+basedOn/next/link closure; no dangling reference in the output). New plan-time aspects: a paragraph's style (`pStyle`,
+read as `verify:pStyle`) and reads of the styles an op names. README → "Built-in operations, batch 4" is the user's view.
+Not in this batch: run, page and table-cell borders; theme colours to set; tab stops in styles; mapping linked character
+styles automatically; editing field codes that name a mapped style.
+
 ---
 
 ## Appendix A — EditSpec JSON schema (draft)

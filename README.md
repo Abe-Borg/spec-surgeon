@@ -57,7 +57,7 @@ Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transfor
 3. [Quick start](#quick-start)
 4. [Commands](#commands)
 5. [Jobs](#jobs)
-6. [Operations and EditSpecs (NL editor, Phase 1)](#operations-and-editspecs-nl-editor-phase-1) — incl. [Header/footer templating (Phase 2)](#headerfooter-templating-phase-2), [Template specs: match the architect's spec](#template-specs-match-the-architects-spec), [Font sizes](#font-sizes-match-the-template-specs-font), [Formatting properties: bold, caps, colour, keep with next](#formatting-properties-bold-caps-colour-keep-with-next-set_properties) and [Built-in operations, batch 1: tables, options, tags, stamps, logos, names](#built-in-operations-batch-1-tables-options-tags-stamps-logos-names), [batch 2: clean-up, tracked changes, watermarks, document properties](#built-in-operations-batch-2-clean-up-tracked-changes-watermarks-document-properties) and [batch 3: bold and page flow on chosen paragraphs, text colour, tab stops](#built-in-operations-batch-3-bold-and-page-flow-on-chosen-paragraphs-text-colour-tab-stops)
+6. [Operations and EditSpecs (NL editor, Phase 1)](#operations-and-editspecs-nl-editor-phase-1) — incl. [Header/footer templating (Phase 2)](#headerfooter-templating-phase-2), [Template specs: match the architect's spec](#template-specs-match-the-architects-spec), [Font sizes](#font-sizes-match-the-template-specs-font), [Formatting properties: bold, caps, colour, keep with next](#formatting-properties-bold-caps-colour-keep-with-next-set_properties) and [Built-in operations, batch 1: tables, options, tags, stamps, logos, names](#built-in-operations-batch-1-tables-options-tags-stamps-logos-names), [batch 2: clean-up, tracked changes, watermarks, document properties](#built-in-operations-batch-2-clean-up-tracked-changes-watermarks-document-properties), [batch 3: bold and page flow on chosen paragraphs, text colour, tab stops](#built-in-operations-batch-3-bold-and-page-flow-on-chosen-paragraphs-text-colour-tab-stops) and [batch 4: borders and shading, styles, clear formatting, language](#built-in-operations-batch-4-borders-and-shading-styles-clear-formatting-language)
    - [Talk it through with Claude](#talk-it-through-with-claude) / [Claude's visual check](#claudes-visual-check) / [Your library](#your-library) / [Chains: several recipes, one after another](#chains-several-recipes-one-after-another) / [How Spec Surgeon calls Claude](#how-spec-surgeon-calls-claude)
 7. [The verification record](#the-verification-record)
 8. [Output folder layout](#output-folder-layout)
@@ -480,9 +480,15 @@ validate spec ─► plan every op on the SOURCE ─► merge fragments ─► a
 | `set_font` | formatting | `scope`, `runs` (`all` \| `{has_direct_font, font_in, not_in_revisions, color_in}`), `paragraphs` (predicates) | `font` (ascii+hAnsi+cs) or per-slot `ascii`/`hAnsi`/`cs`/`eastAsia`; `size` (pt), `size_from` (pt list); `only_where_defined` (false); `clear_theme_fonts` (true); `preserve_fonts`; `skip_sym_runs` (true); `in_revisions` (include \| exclude); `include_paragraph_marks` (true); `tracked`; `author` | sets `w:rFonts` on the selected runs and paragraph marks (only on those with a direct font when `only_where_defined`) and `w:sz` on those that set their own size ([Font sizes](#font-sizes-match-the-template-specs-font)); never touches **symbol runs** (see below) | `run_fonts` assertion with the predicted run/mark/sized counts; tracked: `+n w:rPrChange` |
 | `set_style_font` | formatting | `styles`: `all` \| `all-paragraph-and-character` \| `{ids}` \| `{types}` | font params; `size`, `size_from`; `only_where_defined` (true) | sets `w:rFonts` and/or `w:sz` in style definitions — by default each only where the style already defines it (others inherit); symbol styles left alone | `style_fonts` assertion with the exact style-id list and the styles that get the size; `styles.xml` only |
 | `set_doc_defaults_font` | formatting | — | font params; `size`, `size_from` | sets `docDefaults/rPrDefault/rPr/rFonts` and/or `w:sz` (created in schema order when absent; with `size_from` the size only when its own size is listed) | `doc_defaults_fonts` assertion |
-| `set_paragraph_props` | formatting | `scope`, `paragraphs` | `spacing` {before, after, line, lineRule, beforeLines, afterLines}, `ind` {left, right, start, end, firstLine, hanging}, `jc`; `tracked`; `author` | merges values into existing `w:spacing`/`w:ind` (a style's `before="240"` survives), complete pPr schema order (section-break paragraphs keep their `w:sectPr` last); `firstLine` and `hanging` replace each other; a `before`/`after` in points on a paragraph whose own pPr or style chain sets `beforeLines`/`afterLines` refuses `conflict-property` (Word uses the lines value) unless the spec sets the lines value too (2026-10-14 audit fixes) | `paragraph_props` assertion; tracked: `+n w:pPrChange` with the old pPr as snapshot |
+| `set_paragraph_props` | formatting | `scope`, `paragraphs` — or `styles` `{ids}` alone (batch 4) | `spacing` {before, after, line, lineRule, beforeLines, afterLines}, `ind` {left, right, start, end, firstLine, hanging}, `jc`; `tracked`; `author` | merges values into existing `w:spacing`/`w:ind` (a style's `before="240"` survives), complete pPr schema order (section-break paragraphs keep their `w:sectPr` last); `firstLine` and `hanging` replace each other; a `before`/`after` in points on a paragraph whose own pPr or style chain sets `beforeLines`/`afterLines` refuses `conflict-property` (Word uses the lines value) unless the spec sets the lines value too (2026-10-14 audit fixes); with `select.styles` the same merge goes into paragraph style definitions, never tracked ([batch 4](#spacing-indents-and-alignment-in-paragraph-styles-set_paragraph_props-with-selectstyles)) | `paragraph_props` assertion (styles: `target: "styles"`, each changed style's pPr); tracked: `+n w:pPrChange` with the old pPr as snapshot |
 | `set_properties` | formatting | `scope`, `paragraphs`, `runs` (incl. `color_in`: text chosen by its colour) — or `styles` `{ids}` alone | `run` {b, i, caps, smallCaps, strike, u, color}, `paragraph` {keepNext, keepLines, widowControl, pageBreakBefore}; `skip_sym_runs`, `preserve_fonts`, `in_revisions`, `include_paragraph_marks`; `tracked`; `author` | sets the properties on every selected run and paragraph mark / paragraph (direct formatting), or in the named style definitions; b and i as the pairs `w:b`+`w:bCs` / `w:i`+`w:iCs`; what already shows the asked value is left alone; caps/smallCaps never on symbol runs; a style change that direct formatting, Word's toggle rule or a symbol run would defeat is refused ([Formatting properties](#formatting-properties-bold-caps-colour-keep-with-next-set_properties)) | `properties` assertion with the predicted run/mark/paragraph counts (or the style ids), the effective result re-resolved in the output; tracked: `+n w:rPrChange`, `+m w:pPrChange` |
 | `set_tab_stops` | formatting | `scope`, `paragraphs` | `set` [{pos, align, leader}] (pos in twips, or `right_margin` / `center` of each section's own text), `clear` [positions], `clear_others`; `tracked`; `author` | sets and clears tab stops on the selected paragraphs: an asked stop written where it is not already in effect, an inherited stop cleared with a clear entry, the paragraph's own stops removed, the list sorted; `clear_others` leaves exactly the asked stops ([batch 3](#set_tab_stops--tab-stops-on-chosen-paragraphs)) | `tab_stops` assertion (selection, margin positions and every paragraph's own entries re-derived; the stops in effect re-resolved in the output); tracked: `+n w:pPrChange`; geometry none |
+| `set_borders_shading` | formatting | `scope`, `paragraphs` — or `styles` `{ids}` alone | `borders` ("none" or the whole box: sides top/left/bottom/right/between/bar, each {style, size, space, color}), `shading` ("none" or {fill, pattern, color}); `tracked`; `author` | writes the paragraph's (or style's) `w:pBdr`/`w:shd` as asked; a side the styles show and the box lacks is cancelled with `nil`; what already looks as asked is left alone ([batch 4](#set_borders_shading--borders-and-shading-on-paragraphs-or-in-their-styles)) | `borders_shading` assertion (levels, expected elements and the already rule re-derived; the asked box shown in the output); tracked: `+n w:pPrChange` |
+| `clear_direct_formatting` | formatting | `scope`, `paragraphs`, `runs` | `run` (true), `paragraph` (true), `keep`, `also` [element names], `include_paragraph_marks`, `in_revisions`, `skip_sym_runs`, `preserve_fonts`; `tracked`; `author` | removes the direct run formatting of runs and marks and the direct paragraph formatting of paragraphs, so the styles apply; hidden text, list numbers, styles, language and symbol fonts never; highlight, superscripts and outline levels only with `also` ([batch 4](#clear_direct_formatting--text-follows-its-styles-again-item-28)) | `cleared_formatting` assertion (each target = source minus exactly the cleared children); tracked: `+n w:rPrChange`, `+m w:pPrChange` |
+| `set_language` | formatting | — | `language`, `east_asian`, `complex_script` (language tags), `replace_only` [tags] | sets the proofing language on every style, run and paragraph mark that names one, and the document default ([batch 4](#set_language--the-proofing-language-item-29)) | `language` assertion (every level re-derived; every run and mark of the output resolves to the asked language); never tracked |
+| `apply_style` | formatting | `scope`, `paragraphs` (the whole grammar: `has_bold`, `is_all_caps`, `text_regex`, `after_heading_regex` …) | `style` (id or name), `template`, `existing` (keep \| replace), `direct_formatting` (keep \| clear); `tracked`; `author` | gives the selected paragraphs the style — from the document or imported from the template with its numbering; `clear` also clears their direct formatting ([batch 4](#apply_style--a-style-for-paragraphs-picked-by-appearance-or-pattern-item-30-)) | `applied_style` (+ `styles_imported` when imported); tracked: `+n w:pPrChange` (+ `w:rPrChange` per cleared run) |
+| `map_styles` | formatting | `scope` (default every text part) | `map` [{from, to}], `template`, `existing` (keep \| replace), `allow_missing` (true), `tracked` (false); `author` | every use of each `from` style becomes `to`: paragraphs (Normal: also those naming no style), runs and marks, tables; `to` imported from the template with its closure and list numbering when the file lacks it ([batch 4](#map_styles--the-architects-styles-become-yours-item-31-)) | `mapped_styles` + `styles_imported` (copies and `numbering.xml` compared whole) |
+| `remove_unused_styles` | formatting | — | `keep`, `which` (all \| custom), `types`, `allow_missing` (true) | removes the style definitions nothing uses (text, numbering, settings, field instructions, tracked-change snapshots, defaults, basedOn/next/link closure) ([batch 4](#remove_unused_styles--remove-the-styles-nothing-uses-item-32)) | `removed_styles` (the list re-derived; no dangling reference in the output); styles.xml only |
 | `set_page_setup` | formatting | `sections` | `margins` {top, right, bottom, left, header, footer, gutter} (twips), `size` {w, h}, `orientation` | merges into `w:pgMar` / `w:pgSz`; orientation sets `w:orient` and swaps w/h when they disagree (margins are not rotated) | one `section_props` assertion per section |
 | `replace_text` | content \| untracked | `scope` | as the `tracked-replace` job (+ `tracked` bool) | v0.1.0 tracked-replace | as today |
 | `fix_page_numbering` | formatting | — | `option` | v0.1.0 page-numbering | as today + `section_props` for `continuous`; cover-unnumbered declares a read of every section's `titlePg` (a template flipping it in the same spec is a plan-time `conflict`, 2026-10-16) |
@@ -509,7 +515,7 @@ validate spec ─► plan every op on the SOURCE ─► merge fragments ─► a
 | `set_document_properties` | untracked \| formatting | — | `set` {property: your words}, `clear` [properties], `custom` {name: your words}, `clear_custom` | sets or clears core/app/custom properties; may create `docProps/custom.xml` ([batch 2](#set_document_properties--title-company-custom-properties-clear-the-author-names)) | `document_properties` (each property re-read; the member residual over the properties parts) |
 | `set_document_state` | formatting | — | `track_changes` (off \| on), `final` (true \| false) | the track-changes setting, Word's Mark as Final markers ([batch 2](#set_document_state--track-changes-off-or-on-mark-as-final)) | `document_state` (the setting and the markers re-read; the member residual over settings and properties) |
 
-Exceptions the new ops raise (never a guess): `inheritance` (a removal would leave a selected section still *showing* a header/footer through inheritance from an earlier section, or would change what an unselected section shows — an empty replacement part would be needed and the op never creates one; first-page parts count only where `titlePg` is on, even-page parts only with `evenAndOddHeaders`, and an invisible inheritance change is flagged instead), `structure` (a header part carrying something other than images/hyperlinks; a section without `w:pgMar` when margins are set; no styles part), `tracked-format` (a tracked change on a run/paragraph that already carries someone's `w:rPrChange`/`w:pPrChange`, or on a paragraph mark that is itself a pending revision), `theme-font` (explicit font with `clear_theme_fonts: false` where a theme attribute would override it), `conflict-property` (spacing before/after on an "auto" paragraph; `left` on an indent written with `start`; for `set_properties` on a style, direct formatting or a symbol run that would keep its own look), `toggle-ambiguous` (`set_properties` on a style: a toggle another style level specifies too — Word XORs them, the engine refuses), `tab-position` (`set_tab_stops`: a margin position with no single text width to measure — a header or footer shown by sections with different margins, a section without page size and margins, a footnote — or one landing on another asked position), `not-found`, `bad-params`, `conflict`.
+Exceptions the new ops raise (never a guess): `inheritance` (a removal would leave a selected section still *showing* a header/footer through inheritance from an earlier section, or would change what an unselected section shows — an empty replacement part would be needed and the op never creates one; first-page parts count only where `titlePg` is on, even-page parts only with `evenAndOddHeaders`, and an invisible inheritance change is flagged instead), `structure` (a header part carrying something other than images/hyperlinks; a section without `w:pgMar` when margins are set; no styles part), `tracked-format` (a tracked change on a run/paragraph that already carries someone's `w:rPrChange`/`w:pPrChange`, or on a paragraph mark that is itself a pending revision), `theme-font` (explicit font with `clear_theme_fonts: false` where a theme attribute would override it), `conflict-property` (spacing before/after on an "auto" paragraph; `left` on an indent written with `start`; for `set_properties` on a style, direct formatting or a symbol run that would keep its own look), `toggle-ambiguous` (`set_properties` on a style: a toggle another style level specifies too — Word XORs them, the engine refuses), `tab-position` (`set_tab_stops`: a margin position with no single text width to measure — a header or footer shown by sections with different margins, a section without page size and margins, a footnote — or one landing on another asked position), `style-mismatch` / `style-import` / `style-numbering` / `missing-style` (`apply_style`, `map_styles`: a style of another kind or two styles of one name; a style that cannot be imported as it is; its list numbering that cannot; a style in neither file — batch 4), `not-found`, `bad-params`, `conflict`.
 
 **Tracked or plain** (plan §14.1, as assumed for Phase 1 — see the plan): whole-document formatting is applied plain; formatting that targets particular paragraphs (a `paragraphs` predicate in the selector) is tracked by default (`w:rPrChange` / `w:pPrChange` holding a snapshot of the old properties); an explicit `tracked` always wins and the record says which rule applied. Style definitions, docDefaults and page setup are never tracked (`tracked: true` is refused for them — Word does not track style-definition changes, and `w:sectPrChange` is not implemented).
 
@@ -649,7 +655,7 @@ What a custom transform may change (`CUSTOM_TRANSFORM_LIMITS`, every family mapp
 | page size, margins and orientation of sections | `section_props` |
 | which header/footer each section shows | `section_hf_refs` |
 
-It cannot change bold, italic, underline or caps; text colour, highlight, borders or shading; numbering and lists; tables; images; fields; comments; tracked changes; or any words. It is plain (untracked) formatting only, may change only the document's text parts (body, headers, footers, footnotes, endnotes, comments) and its styles part, and writes edited copies only.
+It cannot change highlight; numbering and lists; tables; images; fields; comments; tracked changes; or any words (bold, italic, underline, caps and text colour became possible with `set_properties`, tab stops with batch 3, paragraph borders and shading with batch 4 — each family a custom transform may use maps to the V10 kind that checks it: `catalog.CUSTOM_TRANSFORM_LIMITS`). It is plain (untracked) formatting only, may change only the document's text parts (body, headers, footers, footnotes, endnotes, comments) and its styles part, and writes edited copies only.
 
 `codegen.py`:
 
@@ -1165,6 +1171,254 @@ The profiles show each style's tab stops (`tab_stops` in styles in use), so Clau
 One new code, `tab-position` (a margin position with no single text width, or one that lands on another asked position in a file) — explained in the set-aside report and `DIAGNOSTICS.md` like every other (`report.FAILURE_EXPLANATIONS`; `tests/test_tab_stops.py` scans the operation for codes without an explanation). Malformed tab lists (two entries at one position, an entry without a position) are `structure`.
 
 **Not in this batch** (recorded in the design note): tab stops in style definitions; bold or colour on part of a paragraph (a run-in heading such as "A. Fire Pumps:"); a selector by list level; a theme colour as a colour to set.
+
+### Built-in operations, batch 4: borders and shading, styles, clear formatting, language
+
+Abraham's fourth batch of prebuilt operations (2026-10-17; items 26–32 of his list, ★ = starred). Design note with every decision: `docs/BUILTIN_OPS_BATCH4_DESIGN.md` (taken on his behalf, as in batches 1–3; each can be changed). No operation in this batch writes a character.
+
+| # | You ask | Operation | Mode |
+|---|---|---|---|
+| 26 | Paragraph borders and shading (box the specifier notes, a rule under the title, grey behind the notes) | the **new operation `set_borders_shading`** — on chosen paragraphs, or in paragraph styles | formatting |
+| 27 | Spacing and indents set on the styles themselves | `set_paragraph_props` gains a **`styles` target** | formatting |
+| 28 | Clear direct formatting so text follows its styles again | the **new operation `clear_direct_formatting`** | formatting |
+| 29 | Set the proofing language for all text | the **new operation `set_language`** | formatting |
+| 30 ★ | Apply a style to paragraphs picked by appearance or pattern (bold, all caps, regex, "after a heading") | the **new operation `apply_style`** | formatting |
+| 31 ★ | Style mapping: the architect's style A becomes your style B everywhere, importing your styles from a template | the **new operation `map_styles`**, over a shared **style import** (closure and list numbering) | formatting |
+| 32 | Remove unused styles | the **new operation `remove_unused_styles`** | formatting |
+
+**Your styles come from a template file.** `apply_style` and `map_styles` take `template`: a .docx/.dotx holding your office styles (`examples/templates/OFFICE STYLES.docx` is the worked example — PRT, ART, PR1, PR2 numbered by one list). In the window it is the *Template spec (optional)* file; Claude reads its styles with `read_template` (the template's styles are listed now) and puts its path in the spec. It is an input like a template spec: pinned by md5, refused at apply when it changed, hashed by the approval token.
+
+**The recommended workflow for an architect's spec** is a [chain](#chains-several-recipes-one-after-another): (1) `map_styles` (or `apply_style` for paragraphs picked by how they look), (2) `clear_direct_formatting` where the paragraphs should look exactly like your styles (or `apply_style` with `direct_formatting: "clear"` in one go), (3) `remove_unused_styles` last — in one spec it would still see the architect's styles in use. `set_language` is a stage of its own (it changes run properties everywhere).
+
+#### `set_borders_shading` — borders and shading on paragraphs or in their styles
+
+```json
+{"op": "set_borders_shading",
+ "select": {"paragraphs": {"style_in": ["ArchNote"]}},
+ "params": {"borders": {"top": {"style": "single", "size": 4, "space": 1, "color": "auto"},
+                        "bottom": {"style": "single"}},
+            "shading": {"fill": "D9D9D9"}}}
+```
+
+* **`borders`** — `"none"`, or the paragraph's **whole border box**: an object whose keys are the sides that show
+  (`top`, `left`, `bottom`, `right`, `between`, `bar`), each `{style, size, space, color}` — style `single` by default
+  (also `thick`, `double`, `dotted`, `dashed`, `triple`, `wave`, `thinThickSmallGap`, …), size in eighths of a point
+  (2–96, default 4 = ½ pt), space in points between the border and the text (0–31, default 1), colour `auto` or six hex
+  digits. A side you do not name has **no** border: where the paragraph's style shows one there, the op writes a `nil`
+  side that cancels it, so the box you see is exactly the one you asked for, whatever the style says.
+* **`shading`** — `"none"`, or `{fill, pattern, color}`: `fill` `auto` or six hex digits (`D9D9D9` is Word's 15 % grey),
+  `pattern` `clear` by default (`solid`, `pct10` …), `color` the pattern's colour (`auto` by default). `"none"` writes a
+  clear shading where the style shows one (and removes the paragraph's own otherwise).
+* **Two targets, one per call**, as `set_properties`: direct formatting on the selected paragraphs (`scope`,
+  `paragraphs`), tracked when particular paragraphs are targeted (§14.1: Word shows "Formatted: Border"), plain for a
+  whole-document selection; or **paragraph style definitions** (`"select": {"styles": {"ids": ["ArchNote"]}}`, alone,
+  never tracked — Word does not track style changes). Paragraphs that keep their own direct borders/shading, and styles
+  based on the changed one that define their own, keep theirs — flagged in the preview, never refused.
+* **Already as asked = untouched.** A paragraph or style whose own box and shading already are the asked ones is left
+  alone and not counted ("already as asked, left alone: 15 paragraph(s)"); only the element that differs is written (a
+  paragraph whose box is right but whose shading is not keeps its box untouched). A paragraph already carrying someone's
+  pending paragraph change refuses tracked (`tracked-format`) and is changed-and-flagged when plain.
+* **Layout reference**: `none` when a border changes (a border takes space and moves the text), the source render for
+  shading alone.
+* **Overlaps.** Borders/shading, spacing/indents, tab stops and keep-with-next flags all live in a paragraph's
+  properties: on the same paragraphs they are separate specs (a chain). A style-definition change (any of the paragraph
+  properties of a style) beside direct borders on paragraphs of that style, or of a style it is based on, is a plan-time
+  `conflict` too: the cancelling `nil` sides are computed from the styles. Bold or colour on the same paragraphs, or on
+  the same style, share a spec.
+* **Verified by V10's `borders_shading` kind** (`verify/borders.py`, nothing shared with the op): the selection, the
+  levels below each target (the document defaults, the table style, the paragraph style chain — or a style's own
+  ancestors), the expected border box and shading and the "already" rule are re-derived from the source; each changed
+  paragraph or style must hold exactly the expected elements and nothing else changed; and in the output every selected
+  paragraph or style must *show* the asked box — under either reading of how Word inherits paragraph borders (the
+  nearest box decides every side, or each side is decided on its own) — and the asked shading.
+
+#### Spacing, indents and alignment in paragraph styles (`set_paragraph_props` with `select.styles`)
+
+```json
+{"op": "set_paragraph_props", "select": {"styles": {"ids": ["ArchArticle"]}},
+ "params": {"spacing": {"before": 240, "after": 120}, "ind": {"left": 0}}}
+```
+
+The values merge into each style's own paragraph properties exactly as they would into a paragraph's (the attributes
+asked set, the others kept; `firstLine` removes `hanging` and vice versa); every paragraph of the style — and of the
+styles based on it — follows unless it sets the value itself (flagged in the preview: "1 paragraph(s) using style
+ArchPara … keep their own direct spacing/indentation/alignment"). Never tracked; a style already as asked is left alone.
+A style whose spacing is `auto` (`…Autospacing`), or given in lines on the style, a style it is based on or the document
+defaults (`beforeLines`/`afterLines` win over points in Word), is set aside (`conflict-property`) unless the spec sets
+the lines value too; so is an indentation asked as `left` where the style writes `start` (and the reverse). V10's
+`paragraph_props` kind checks each changed style's paragraph properties (the merge, nothing else changed), re-derives
+the refusals, and checks that every selected style shows the asked values in the output.
+
+#### `clear_direct_formatting` — text follows its styles again (item 28)
+
+```json
+{"op": "clear_direct_formatting", "select": {"paragraphs": "all"},
+ "params": {"keep": ["b", "bCs"], "also": ["highlight"]}}
+```
+
+* **What goes** — from the selected runs and their paragraph marks (`run`, default true): fonts, bold, italic, caps,
+  small caps, strike, double strike, outline, shadow, emboss, engrave, colour, character spacing, scale, kerning, size,
+  underline, text effects, character borders and shading, fit text, emphasis marks. From the selected paragraphs
+  (`paragraph`, default true): keep with next, keep lines together, page break before, widow control, line-number
+  suppression, borders, shading, tab stops, hyphenation suppression, spacing, indents, contextual spacing, mirror
+  indents, alignment, text direction, vertical alignment, text-box tight wrap. The style's values apply again.
+* **What stays, always** — character and paragraph styles, list numbers (`numPr`), hidden text (stays hidden), the
+  proofing language, right-to-left and complex-script switches, East Asian typography, section breaks, and anything
+  Word stores outside its own namespace. **Stays unless you ask** (`also`): highlight (a review cue — and the templating
+  slot marker), superscript/subscript and raised/lowered text (m², footnote numbers), outline levels (the table of
+  contents) and frames.
+* **`keep`** names what must not be cleared (element names: bold is `b` + `bCs`, italic `i` + `iCs`, size `sz` +
+  `szCs`; `shd` and `spacing` name the run's and the paragraph's alike). A name that is neither cleared nor opt-in, or a
+  name in both `keep` and `also`, is refused (`bad-params`).
+* **Symbol fonts are never touched**: a Symbol/Wingdings run (by its own font, its character style or its paragraph
+  style) and a run holding a `w:sym` keep their font and caps — their glyphs depend on them; their other formatting is
+  cleared.
+* **Plain or tracked** as the other formatting (§14.1): plain for the whole document, tracked when particular paragraphs
+  are targeted — one `w:rPrChange` per cleared run or mark, one `w:pPrChange` per cleared paragraph, so Word shows
+  "Formatted: …" and reject-all brings the formatting back. Plain: a run left with no properties loses its `w:rPr`, a
+  paragraph left with none loses its `w:pPr`. Someone's pending formatting change refuses tracked (`tracked-format`) and
+  is kept and flagged plain. Already clean runs and paragraphs are left alone ("nothing to clear, left alone: …").
+* **Overlaps.** Clearing and any other formatting of the same paragraphs (bold, fonts, spacing, tab stops) are separate
+  specs — a chain, clearing first.
+* **Verified by V10's `cleared_formatting` kind** (`verify/clearing.py`, nothing shared with the op): the selection, the
+  symbol rule and each target's cleared set are re-derived from the source with the user's own `keep`/`also`; each
+  cleared run, mark and paragraph must be exactly the source minus the cleared children, in order — no more gone, none
+  left, nothing added, an emptied element absent (plain) — with the tracked-change rules. Everything else is the
+  residual's.
+
+#### `set_language` — the proofing language (item 29)
+
+```json
+{"op": "set_language", "params": {"language": "en-US", "replace_only": ["en-GB"]}}
+```
+
+* **`language`** (Latin text, `w:lang w:val`), **`east_asian`** (`w:eastAsia`), **`complex_script`** (`w:bidi`) — at
+  least one, each a language tag (`en-US`, `fr-CA`, `ja-JP`). **`replace_only`** — only these languages change, so
+  "British spelling to US" leaves a French quotation French.
+* **Where it changes**: every style, run and paragraph mark that names a language, and the document default (created in
+  `styles.xml` when the file has none — never a new part). Text that names no language inherits the default. A
+  language's other attributes stay (setting the Latin language keeps the East Asian one). Never: tracked-change
+  snapshots, list numbering, content-control properties, conditional table formatting.
+* **Never tracked** (Word does not track a language change either; `tracked: true` is refused). A spec of its own:
+  beside another operation that changes run properties of the same text or any style it is a plan-time `conflict`.
+* **Layout reference**: the source render, unless East Asian or complex-script languages are set or automatic
+  hyphenation is on (the language picks the hyphenation dictionary) — then none.
+* **Verified by V10's `language` kind** (`verify/language.py`): every level's change re-derived from the source (the
+  same levels, the same attributes), each changed `w:lang` exactly the source's with the asked attributes and nothing
+  else in its properties, a created document default in its schema place; and — on the output — every run and paragraph
+  mark of every text part must resolve to the asked language through its styles and the default (with `replace_only`:
+  none may still resolve to a listed language). The effective language exists only on the verifier's side.
+
+#### `apply_style` — a style for paragraphs picked by appearance or pattern (item 30 ★)
+
+```json
+{"op": "apply_style", "select": {"paragraphs": {"has_bold": true, "is_all_caps": true}},
+ "params": {"style": "PRT", "template": "OFFICE STYLES.docx", "direct_formatting": "clear"}}
+```
+
+* **The paragraphs** are chosen with the whole [selector grammar](#selector-grammar): by appearance (`has_bold`, `is_all_caps` — bold typed or from the style, capitals typed or by the caps setting), by pattern (`text_regex`), by position (`after_heading_regex`: every paragraph after the first match; `between_paragraphs`), by their current style (`style_in`), in tables or not. `examples/specs/bold-caps-to-heading.json` turns every bold all-caps paragraph into Heading 1.
+* **`style`** — the paragraph style's id or name (`Heading 1` finds `Heading1` by its name). The document's own style is used when it has one; otherwise it comes from **`template`**, imported exactly as `map_styles` imports (with the styles it is based on, links to and is followed by, and its list numbering). `existing: "replace"` takes the template's definition even where the document has the style. A character or table style is `style-mismatch`; a style in neither file is `missing-style` (in the template: `bad-params`).
+* **`direct_formatting`** — `keep` (the default): the paragraphs' own formatting stays and wins over the style, as in Word. `clear`: their direct paragraph formatting and their runs' and marks' direct run formatting go by `clear_direct_formatting`'s default rules (hidden text, list numbers, superscripts, highlight, the language and symbol fonts stay), so the paragraphs look exactly like the style — one *Formatted* change per paragraph when tracked, the new style and the cleared formatting in the same snapshot.
+* **Already as asked = untouched**: a paragraph already in the style (with nothing to clear) is left alone. A paragraph numbered by its own list (`w:numPr`) keeps it — flagged, since it overrides the style's numbering.
+* **Tracked or plain** by §14.1: targeted (a `paragraphs` predicate) → tracked, Word shows "Formatted: Style"; whole document → plain.
+* **Overlaps**: a paragraph's style decides how every inherited property resolves, so `set_properties`, `set_tab_stops`, `set_borders_shading` or `set_paragraph_props` on the same paragraphs, or another restyle, are plan-time `conflict`s — a chain. A style this op applies cannot be removed in the same spec.
+* **Verified by V10's `applied_style` kind** (`verify/applystyle.py`, nothing shared with the op): the selection, the style (the verifier's own resolver, the same keep/replace rule), the import it needs (checked against the op's `styles_imported` assertion) and every paragraph's change are re-derived from the source; each changed paragraph must show `w:pStyle` first and everything else as before — minus, with `clear`, exactly the cleared children (`verify/clearing.py`'s own rules) — with the tracked-change rules.
+
+#### `map_styles` — the architect's styles become yours (item 31 ★)
+
+```json
+{"op": "map_styles",
+ "params": {"map": [{"from": "Heading 1", "to": "PRT"}, {"from": "Arch Article", "to": "ART"},
+                    {"from": "Arch Strong", "to": "Char Mine"}, {"from": "ArchTable", "to": "TblMine"}],
+            "template": "OFFICE STYLES.docx"}}
+```
+
+* **`map`** — pairs of styles, by id or by name (a name is matched case-insensitively; two styles of one name set the file
+  aside — name it by its id). **Every use changes**: a paragraph style on every paragraph whose style it is (the default
+  paragraph style — Normal — also on the paragraphs that name no style), a character style on every run and paragraph mark,
+  a table style on every table — in the body, headers, footers, footnotes, endnotes and comments (`select.scope` narrows
+  it). Nothing else: the architect's style definitions stay where they are (removing unused styles is its own operation, a
+  second stage of a chain), and so do `basedOn`/`next` links that name them.
+* **`template`** — your styles. A style the file lacks is **imported** with everything it needs: the styles it is based on,
+  linked to (a paragraph style's character twin) and followed by, and — for a numbered style — its list: the template's
+  `w:num` and `w:abstractNum`, copied into the file's `numbering.xml` with new ids (above the file's own, so they never
+  collide), and the styles that list's levels name. A style the file already has **keeps the file's definition**
+  (`existing: "keep"`, the default) or is **replaced in its place** by yours (`existing: "replace"`). The template is an
+  input like a template spec: pinned by md5 at plan time, refused at apply if it changed (`internal`), re-read by the check,
+  hashed by the preview's approval token; a relative path is the spec's folder.
+* **What is skipped**: a pair whose `from` the file lacks, or that nothing uses, is skipped and noted (`allow_missing`,
+  default true; false refuses `not-found`) — and imports nothing. A pair whose two styles are one is skipped.
+* **What sets the file aside**: a `to` of another type than its `from` (`style-mismatch`); the default character or table
+  style as `from` (text without a style uses it implicitly — nothing to map); two pairs naming one style; importing a style
+  whose name another style holds (`style-import` — Word finds styles by name); replacing a default style; a list the import
+  cannot copy (`style-numbering`: no numbering part in the file, a picture bullet, a list defined through a numbering style).
+  A `to` the template lacks is a spec error (`bad-params`).
+* **Flagged for review**: field codes naming a mapped style (a TOC `\t` switch, STYLEREF) — not edited, they no longer find
+  the paragraphs until you edit them; runs still in the mapped style's linked character style ("Heading 1 Char"); an
+  imported style based on a style this file defines differently from the template (it renders on the file's own);
+  `word/stylesWithEffects.xml` (Word 2010's copy) not updated; earlier tracked formatting changes on restyled paragraphs.
+* **Plain** by default — a whole-document change; `tracked: true` records one *Formatted: Style* revision per paragraph,
+  run or mark (`w:pPrChange` / `w:rPrChange`, the snapshot the old properties); a table style cannot be tracked here.
+* **Overlaps**: a paragraph's style decides every inherited property, so `set_properties`, `set_tab_stops` and
+  `set_paragraph_props` on the same paragraphs, a change of a `from`/`to` style definition, removing a style an imported one
+  relies on, and the header/footer templating op (which plans from the styles part as a whole) are plan-time `conflict`s
+  — separate specs, a chain.
+* **Verified by** V10's `mapped_styles` (`verify/restyle.py`: the pairs resolved, every paragraph, run, mark and table
+  re-derived and its change checked exactly — `w:pStyle` first in the pPr, everything else identical, the change markers
+  by the shared rules) and `styles_imported` (`verify/styleimport.py`: the closure, the imported and replaced styles and the
+  new list ids re-derived from the template; each copy compared whole with the template's definition, imported styles
+  appended in the template's order, replaced ones in their old place; `numbering.xml` compared whole with the file's own
+  plus exactly the copied lists in their places). Nothing is shared with the op.
+
+#### `remove_unused_styles` — remove the styles nothing uses (item 32)
+
+```json
+{"op": "remove_unused_styles", "params": {"which": "custom", "keep": ["Arch Note"]}}
+```
+
+An architect's spec carries dozens of style definitions nobody uses any more — the template's leftovers, Word's unused
+built-ins, the table-style gallery. The operation removes them from `styles.xml` and touches nothing else: no paragraph,
+no numbering, no setting changes, and nothing on any page moves (the source render stays the layout reference).
+
+* **What counts as used.** A style stays when a paragraph, run or table names it — in the body, headers, footers,
+  footnotes, endnotes or comments, **pending tracked changes included** (the old style in a "Formatted: Style" change
+  comes back on reject-all) —, when the numbering names it (a list level's style, a list linked to a numbering style),
+  when the settings name it (the default table style, Click and Type's style), when a **field instruction** names it
+  (`STYLEREF "Arch Field Only"`, a TOC's `\t "Arch Article,2"` — by id, name or alias, in any case), when it is a
+  **default style**, when you list it in `keep`, or when a style that stays is **based on it, followed by it or linked
+  to it** (so "Heading 1" keeps "Heading 1 Char" and its base "Normal"). A document with a **TOC, INDEX or TOA field**
+  keeps the styles a field update applies ("toc 1"–"toc 9", "Table of Figures", "index 1"–"index 9", "Index Heading",
+  "Table of Authorities", "TOA Heading"): removing a customised "TOC 3" would undo it at the next update.
+* **`which`** — `all` (the default) removes every unused style, Word's built-ins included (Word brings back its own
+  definition if one is used later); `custom` removes only the document's own styles (Word's *custom style* mark). A
+  built-in that stays keeps what it links to, so "custom" never strands Word's "Heading 4" without its "Heading 4 Char".
+* **`types`** — the kinds considered: `paragraph`, `character`, `table`, `numbering` (default all four). Styles of the
+  other kinds stay, and so does everything they are based on or linked to.
+* **`keep`** — ids or names never removed (any case; a name that matches no style is said in the preview).
+* **The preview lists** how many go, by kind, and their ids; which styles stay only because a field names them; how many
+  of the removed are Word built-ins; and a flag when the file has Word 2010's `stylesWithEffects.xml` copy (not updated;
+  Word 2013 and later ignore it).
+* **A file with nothing unused** is left as it is ("nothing to do"); `allow_missing: false` sets it aside. A file that
+  defines one style twice is set aside (`structure`: which definition Word uses is not certain). Never tracked — Word
+  does not track style definitions either.
+* **Overlaps.** "Used" means used in the file as it is before the spec: a style another operation in the same spec stops
+  using stays. To map or apply your styles and then remove the architect's leftovers, run them as a
+  [chain](#chains-several-recipes-one-after-another) with `remove_unused_styles` last. A style another operation in the
+  same spec applies, maps to, inserts a paragraph with or changes, beside its removal, is a plan-time `conflict`; so is
+  the header/footer templating op (it plans from the whole styles part).
+* **Verified by V10's `removed_styles` kind** (`verify/unused.py`, nothing shared with the op): the used styles and the
+  list that goes are worked out again from the source with the verifier's own reading of every rule above and compared
+  with the plan; the output's styles part must be the source's minus exactly those definitions (every other style
+  byte-for-byte the same, in order); and on the output, every style reference of the text, numbering and settings parts,
+  every basedOn / next / link and every style a field names must still find its definition — the operation can never
+  leave a dangling style reference.
+
+#### Refusals, in plain words (batch 4)
+
+Three new codes, each explained in the set-aside report and `DIAGNOSTICS.md` (`report.FAILURE_EXPLANATIONS`; `tests/test_batch4_integration.py` scans the batch's operations for codes without an explanation and checks that none of these file-specific codes rejects a whole spec): `style-mismatch` (the style named is of another kind here, two styles answer to the name, or the default character/table style was to be mapped), `style-import` (your style cannot be copied in as it is: a default style, a name clash under another id, extension markup with text), `style-numbering` (your style's list cannot be copied: no numbering part here, picture bullets, a list defined through a numbering style). `missing-style` now also says that a template can supply the style.
+
+**Not in this batch** (recorded in the design note): run (character) borders, page borders, table cell borders and shading; theme colours as a border or shading colour to set; tab stops in styles; mapping a style's linked character style automatically; editing field codes that name a mapped style; a style for part of a paragraph.
+
 
 ### Talk it through with Claude
 
@@ -1800,14 +2054,18 @@ spec-surgeon/
 │   │                                 fill_variables, resolve_options, filter_tagged, end_of_section, agree, naming,
 │   │                                 swap_image; built-in batch 2 (comments, highlight, revisions, hidden,
 │   │                                 empty_paragraphs, watermark, links, docprops + fields, markup, removal);
-│   │                                 built-in batch 3: set_tab_stops
+│   │                                 built-in batch 3: set_tab_stops; built-in batch 4: set_borders_shading,
+│   │                                 clear_formatting (clear_direct_formatting), set_language, apply_style,
+│   │                                 map_styles (+ style_import.py, the shared style import), remove_unused_styles
 │   ├── jobs/                         base.py (Job, OpJob), page_numbering.py, tracked_replace.py — v0.1.0 aliases over ops/
 │   ├── verify/                       INDEPENDENT: reader.py, textcheck.py, xsd.py, geometry.py, suite.py, props.py (V10),
 │   │                                 template.py (V10 templating kinds), explain.py (why a check failed, in specifics),
 │   │                                 built-in batch 1: edits.py (the item model), tables.py, textops.py (the word-
 │   │                                 changing kinds), images.py (image_swaps); built-in batch 2: comments.py,
 │   │                                 highlight.py, revisions.py, removal.py, watermark.py, links.py, docprops.py
-│   │                                 (+ fields.py, markup.py); built-in batch 3: tabs.py (tab_stops)
+│   │                                 (+ fields.py, markup.py); built-in batch 3: tabs.py (tab_stops); built-in
+│   │                                 batch 4: borders.py, clearing.py, language.py, applystyle.py, restyle.py
+│   │                                 (mapped_styles), styleimport.py (styles_imported), unused.py (removed_styles)
 │   ├── render/                       word_com.py, libreoffice.py
 │   ├── schemas/                      vendored ECMA-376 / ISO 29500 transitional XSDs
 │   └── skill/                        the docx-surgical-edit skill (the method; `spec_surgeon.SKILL_DIR`)
@@ -2046,12 +2304,28 @@ Built-in operations, batch 3 (2026-10-16; see ["Built-in operations, batch 3"](#
 | `test_tab_stops.py` | footer stops at each section's own right margin and centre, a header shown at two widths refused, body paragraphs measuring their own section, two positions meeting in one file, inherited stops cleared with clear entries (tracked, the snapshot the old pPr), already as asked left alone, numbered paragraphs, unsorted stops kept and sorted, the last entry removing the list, the parameters, malformed lists; planted: a wrong position, a missing clear entry, a dropped leader, an untouched stop removed, entries out of order, a neighbouring property changed, a no-op paragraph change, an empty list left — and shared defects in the clear rule, the margin (the page instead of the text), the section reader, the numbering rule, the inherited stops, the already rule, the default alignment and the default scope, each caught by V10 alone; the two section readers compared on five fixtures and the two rules on 3,000 random cases; conflicts with paragraph-property ops and with a page-setup change; the catalog, prompt, profile, explanations and the three worked examples through a batch |
 | `test_color_selector.py` | "the editor's blue to black" changing only the blue (direct, character style, paragraph style and its mark), theme names and values, a tracked recolour, `set_font` with the selector, bad colour lists; the two readings compared on every run and mark of two fixtures; planted: a blue run left blue, and shared matchers that forget the styles or the theme names |
 
+Built-in operations, batch 4 (2026-10-17; see ["Built-in operations, batch 4"](#built-in-operations-batch-4-borders-and-shading-styles-clear-formatting-language)) — TESTCOUNT tests pass, 4 skip (in the container: the Windows-only Credential Manager round trip and three tests that need the `anthropic` package). The fixtures are `make_fixtures.build_styles()` (an architect's spec on python-docx's 164-style template: the architect's article, paragraph, note, strong and table styles, a note style with a box and shading and a child cancelling its bottom, styles given in lines, auto spacing and start/end indents, unused custom styles and linked pairs, styles kept only by a `next`, a STYLEREF field or a tracked-change snapshot, direct formatting of every kind, hidden text, a superscript, a highlight, Wingdings and `w:sym` runs, British and French languages, a manual list, a TOC field) and `make_fixtures.build_style_template()` (the office styles: PRT/ART/PR1/PR2 numbered by one list whose levels name them, a linked character style, a box-and-shading note style, a name clash, a redefined Heading 1 and Normal, a picture-bullet list and a list defined through a numbering style; `examples/templates/OFFICE STYLES.docx`).
+
+| File | Covers |
+|---|---|
+| `test_borders_shading.py` | the whole border box (nil sides cancelling what the styles show), shading and "none", direct and styles targets, tracked and plain, already as asked, the two readings of border inheritance; planted outputs and shared defects in the visible-side rule, the levels, the expected box and the already rule; conflicts with paragraph-property ops and style changes |
+| `test_style_paragraph_props.py` | spacing, indents and alignment merged into paragraph style definitions, the lines / auto / start-end refusals, already as asked, the flags for paragraphs that keep their own; planted outputs and shared merge defects |
+| `test_clear_formatting.py` | what goes and what stays (hidden text, numbering, superscripts, highlight, language, symbol fonts), keep/also, runs selector, run/paragraph switches, emptied rPr/pPr removed, tracked snapshots, pending changes; planted outputs and shared defects in the cleared sets and the symbol rule; the transform and verifier decisions compared on every paragraph of three fixtures; conflicts (per-element pPr touches; set_properties reading what it finds already as asked); the reuse API apply_style builds on |
+| `test_language.py` | every level that names a language and the document default (created in schema order), replace_only, east Asian and complex-script languages, the effective-language post-condition; planted outputs and shared defects (docDefaults or styles skipped, case-sensitive replace_only); conflicts |
+| `test_apply_style.py` | paragraphs picked by appearance (bold all caps) and by pattern, the style from the document or imported from the template (keep, replace), direct formatting kept or cleared in one paragraph change, already styled paragraphs, own numbering flagged; planted outputs and shared defects (the default paragraph style forgotten, a clear set revealing hidden text, the pStyle written last, the import left out of the assertions); conflicts with style-reading ops and with removing the applied style; the template changed after planning |
+| `test_style_import.py` | the closure (basedOn, link, next, the styles a list's levels name), imported vs replaced, list numbering copied with new ids in their places, the refusals (default style, name clash, picture bullets, numbering-style lists, no numbering part), reads of the styles the copies rely on; planted outputs and shared defects (a closure that forgets links or list styles, a name-blind resolver, an id allocator reusing an id) |
+| `test_map_styles.py` | paragraph, character (runs and marks) and table styles mapped, the default paragraph style, keep and replace, tracked, what is skipped and flagged (field codes, linked character styles); planted outputs and shared defects (paragraphs without pStyle forgotten, marks forgotten); conflicts; the template as an input |
+| `test_remove_unused_styles.py` | which all / custom, types, keep by id and name, the styles kept by a single use (next, a field, a snapshot), linked pairs, basedOn ancestors, numbering-linked styles, field-generated TOC/INDEX styles; planted outputs and shared defects (snapshots, field instructions, case, the closure, the numbering part ignored), each caught by the re-derived list or the dangling-reference post-condition; conflicts |
+| `test_batch4_profile.py` | borders and shading per style (a theme fill), character and table styles in use over every part and mark, languages without tracked snapshots, the bound thinning the new lists, a template's styles |
+| `test_batch4_integration.py` | the seven worked examples plan and verify; the mapping example's template as an input; every refusal code explained and none file-specific fatal; no words placed; the catalog, prompt and custom-transform limits; the profile's unused-style counts; map then remove unused as a chain |
+
 ---
 
 ## Known limits of the prototype
 
 * **A hidden Header/Footer style in the target** (`w:vanish` on the style a copied header paragraph uses, with the template's own style not hidden): the copy passes every XML check and renders empty. Rendering on catches it (V6/V7 fail and the output goes to `failed/`); with rendering off it is delivered. Recorded as the 2026-10-14 audit's F11 and deferred — keep rendering on for templating runs.
 * **Template specs** (`slot_markers: ["reference"]`): a value the architect's header/footer shows in another form ("087100", hyphens, run into other text), through a field (STYLEREF, a document property) or in a text box is refused, not converted — fix the template spec (or name the exact text with `in_template`). The same rule refuses a short one-word title that also sits inside a longer word of the header (the title "DOORS" with a project called "OUTDOORS PAVILION"): the engine cannot tell that from the title glued to other text, and refusing is the safe side. An occurrence is replaced wherever its words stand on their own, also inside a longer phrase ("DOOR HARDWARE SCHEDULE" for the title "DOOR HARDWARE"): check the ⟦ ⟧ notes in the preview. Each spec's value is placed as that spec writes it — a spec whose number is "210500" gets "210500" where the architect wrote "08 71 00". Text in DrawingML shapes (`a:t`, WordArt, charts) is not searched.
+* **Batch 4** (`docs/BUILTIN_OPS_BATCH4_DESIGN.md`): borders and shading on paragraphs and paragraph styles only (no run, page or table-cell borders); Word's per-side vs whole-element inheritance of paragraph borders is not modelled — the op writes `nil` for every side a lower level shows, so the box is the asked one under either reading; `clear_direct_formatting` leaves highlight, superscripts and outline levels unless asked and never touches symbol fonts, hidden text or numbering; `map_styles` does not edit field codes that name a mapped style (flagged) nor map a style's linked character style by itself; imported list numbering refuses picture bullets and lists defined through a numbering style; `remove_unused_styles` judges "used" on the file before the spec (a chain's last stage after mapping) and does not update `stylesWithEffects.xml` (Word 2013+ ignores it).
 * **Tab stops** (`set_tab_stops`): direct formatting only (style definitions are not changed); a list definition's own tab (after the number) is not read — an explicit clear writes a clear entry on numbered paragraphs, `clear_others` leaves the list's tab (flagged); `right_margin`/`center` are refused in footnotes, endnotes and comments and in a header or footer shown at two widths.
 * **Font sizes:** the size goes only where a run, style or docDefaults sets one; list-number sizes in `numbering.xml`, the complex-script size (`w:szCs`) and conditional table-style formatting are not changed or modelled. The effective-size post-condition does not model `tblStylePr` either.
 * Two job modules. Header/footer templating is now an op (`apply_header_footer_template`, Phase 2, run through EditSpecs); numbering conversion is described in the skill's playbooks but not yet implemented.
