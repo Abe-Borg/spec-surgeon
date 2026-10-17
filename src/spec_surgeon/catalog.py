@@ -216,8 +216,12 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "stay unless direct_formatting is 'clear'",
         "every paragraph's new number is predicted and checked; numbers that shift (a glitch in the source corrected), "
         "cross-reference fields and written references such as 'as specified in 1.05' are flagged, never edited",
-        "a list the engine cannot predict (shared list definitions, overridden levels, a level with no value yet) sets "
-        "the file aside; plain formatting (not tracked) unless asked",
+        "a list whose old numbers the engine cannot predict (Word's 'Restart numbering', shared list definitions, "
+        "overridden levels) converts only WHOLE — every paragraph of that list — and is flagged; converting part of a "
+        "list, or levels whose leftover paragraphs would renumber, sets the file aside: convert every level",
+        "with an example file whose style ids this file already has but numbers differently, use existing 'replace' "
+        "('keep' sets the file aside: the scheme would not apply); tracked with 'replace' is refused",
+        "plain formatting (not tracked) unless asked",
     ],
     "convert_typed_numbers": [
         "your scheme's levels are the numbered paragraph styles of your example file (level 0 first); a typed number "
@@ -227,8 +231,12 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "letter) or a list that would renumber other paragraphs sets the file aside (the audit shows where)",
         "typed numbers in table cells stay as typed unless include_tables; paragraphs already numbered are never "
         "touched (a typed number on one is flagged)",
+        "the list number must LOOK like the typed one: a hidden or capitalised typed number ('a.' in All Caps), a "
+        "paragraph mark that would make the number hidden, coloured, sized, raised, struck or in a symbol font sets the "
+        "file aside; 'PART 1 -', '1.1', 'A.' in capitals are fine; a bold/italic/underline/font difference is flagged",
         "tracked by default (the removed numbers show as deletions); tracked false removes them outright; "
-        "direct_formatting 'clear' needs tracked false",
+        "direct_formatting 'clear' needs tracked false; tracked with existing 'replace' over paragraphs already in "
+        "those styles is refused",
         "a spec of its own: beside another operation that changes text, styles or numbering of the body it is a "
         "conflict (offer a chain)",
     ],

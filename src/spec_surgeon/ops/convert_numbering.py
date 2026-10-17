@@ -18,12 +18,24 @@ paragraph to convert is a no-op with a note; false → ``not-found``).
 
 Definitions (the verifier's own reading is verify/numberingconvert.py):
 
-* Refused: a converted paragraph whose number is not evaluated in the SOURCE (``numbering-unsupported``: an unsupported or
-  unreadable list, a shared abstractNum, an override level, a skipped level); one whose own numPr has only a ``w:ilvl``
-  (``numbering-unsupported`` — it relies on the style for its list); one whose own numPr carries a tracked change
-  (``existing-revisions``); a source level beyond the scheme after ``level_map`` (``scheme-depth``, file-specific); a
-  predicted number that is not evaluated where the paragraph is converted or was evaluated in the source
-  (``numbering-unsupported``).
+* **Not evaluated in the SOURCE** (F8 of the batch-5 review): a converted paragraph whose number the source cannot
+  evaluate converts when its LEVEL is known (``LEVEL_KNOWN``: issue ``shared``, ``start-override``, ``skipped``,
+  ``override``; its ilvl and num read) and EVERY counted paragraph of its num is converted (``whole_list_chosen``) — the
+  list leaves whole, its new numbers are predicted; flagged ("could not predict before the conversion … check them").
+  Else refused (``numbering-unsupported``: an unreadable or unsupported list, an ``earlier``/``ambiguous-level``
+  paragraph, a list converted in part — the reason says to convert every paragraph of it). An own numPr with only a
+  ``w:ilvl`` is read by the list model (list from the style, that level) and converted like any (F5).
+* Refused: one whose own numPr carries a tracked change (``existing-revisions``); a source level beyond the scheme after
+  ``level_map`` (``scheme-depth``, file-specific); a predicted number that is not evaluated where the paragraph is
+  converted — except a paragraph not evaluated before (``LEVEL_KNOWN``) that follows a skipped level at the level it
+  had (``skipped_both``: the outline's own shape carried over; flagged) — or was evaluated in the source
+  (``numbering-unsupported``); tracked when a converted paragraph's style chain holds a style the import REPLACES
+  (``numbering_convert.replaced_in_chain``; ``tracked-format``, F14 — the replacement is never tracked, reject-all would
+  give the old style back under the new numbered definition).
+* **Paragraphs left out keep their numbers** (F7): every counted paragraph NOT converted must show, predicted, what it
+  showed (``shows``: unnumbered, else rendered text, suffix and issue) — else ``numbering-mismatch`` naming the first ones
+  ("their list no longer counts the converted paragraphs; convert every level") — except a paragraph the destination
+  list numbers in the prediction (a held destination list, a style the import brings or replaces): flagged by name.
 * The change of a converted paragraph: ``w:pStyle`` = the level's style (first in the pPr; a pPr created first in the
   paragraph), its own ``w:numPr`` removed, the cleared children gone with ``clear``; tracked: one ``w:pPrChange`` (the
   snapshot = the source pPr without rPr, sectPr, pPrChange, taken before all of it) and one ``w:rPrChange`` per cleared
@@ -36,17 +48,24 @@ Definitions (the verifier's own reading is verify/numberingconvert.py):
   converted paragraphs whose text starts with a typed number of the scheme (double numbering); REF/PAGEREF/NOTEREF
   fields whose bookmark lies in a converted paragraph (their cached number goes stale); every occurrence, in another
   paragraph's run text, of a converted paragraph's OLD rendered number that changes (a written cross-reference: never
-  edited); every other paragraph whose number the conversion changes (a held destination list, a replaced style); the
-  destination's restart rules LibreOffice ignores (``lists.has_restart_rule``); converted paragraphs whose mark is
-  hidden (``markup.Look``: Word counts them, LibreOffice does not — its render proof numbers what follows differently).
+  edited); every paragraph of the destination list not converted whose number changes (F7's exception); the converted
+  paragraphs not evaluated before (F8) and those following a skipped level before and after; the destination's restart
+  rules LibreOffice ignores (``lists.has_restart_rule``); converted paragraphs whose mark is hidden (``markup.Look``:
+  Word counts them, LibreOffice does not — its render proof numbers what follows differently); restyled paragraphs whose
+  lower-case text the new style shows in capitals (``_caps_text``, F9: their own rPr less what ``clear`` removes, over
+  the planned chain — ``numbering_convert.planned_levels``/``look_of``); scheme level styles whose level is the linked
+  level (``Destination.linked``, F3: LibreOffice's proofs show them at level 0).
 * Refused at scheme resolution (``numbering_convert``): a scheme level whose ``w:lvl/w:rPr`` turns on vanish, caps or
-  smallCaps (``bad-params`` in the template, ``scheme`` for a held list).
+  smallCaps (``bad-params`` in the template, ``scheme`` for a held list); with a template and existing "keep", a held
+  level style numbering unlike the template's level (``scheme``, F6: use "replace"); an import into a file without a
+  numbering part (``style-numbering``, F12).
 
 Touches (rule 9): per changed paragraph ``(main, bi, "pPr")``, ``"pStyle"`` (restyled), ``"numPr"`` (own numPr removed),
 each cleared pPr child by name, ``"rPr"``, ``"markRPr"``; ``uses+`` of the level style and ``uses-`` of the old style per
 restyled paragraph; the import's touches; ``lists.count_reads`` (the numbering part whole, the main part's ``pStyle`` and
 ``numPr`` families, ``verify:numPr`` of every counted numbered paragraph, ``verify:pPr`` of every style on their chains and
-the scheme's); ``(main, "scope", "verify")``; ``(styles, "style:<id>", "verify")`` of a held level style.
+the scheme's); ``(main, "scope", "verify")``; ``(styles, "style:<id>", "verify")`` of a held level style — each once
+(F10: duplicates made ``merge_fragments`` quadratic).
 
 Verified by V10's ``converted_numbering`` kind (verify/numberingconvert.py) — and, when styles are imported, by
 ``styles_imported`` (verify/styleimport.py).
@@ -129,6 +148,14 @@ def shows(x: Optional[lists.NumberedPar]) -> Optional[Tuple[Any, ...]]:
     """What a paragraph's number shows, as F7 compares it: None (unnumbered), else (text, suffix, issue) — a number
     that is not evaluated equals only a number with the same issue."""
     return None if x is None else (x.text, x.suff, x.issue)
+
+
+def skipped_both(x: lists.NumberedPar, y: Optional[lists.NumberedPar], lvl: int) -> bool:
+    """A converted paragraph not predictable before (a ``LEVEL_KNOWN`` issue) whose predicted number follows a skipped
+    level (``skipped``: a deeper level was numbered before this one had a value) at the level it had — the outline's
+    own shape carried over as it is: Word and LibreOffice number it differently, before as after; converted, flagged."""
+    return (y is not None and not x.evaluated and not y.evaluated and x.issue in LEVEL_KNOWN and y.issue == "skipped"
+            and x.ilvl == lvl)
 
 
 def whole_list_chosen(x: lists.NumberedPar, src, chosen_at) -> bool:
@@ -289,8 +316,12 @@ class ConvertNumbering(Op):
         override = {x.index: (dest.scheme.num_id, lvl) for x, lvl in converted}
         predicted = lists.count(root, dest.sheet, dest.defs, override)
         pred_at = {x.index: x for x in predicted}
-        for x, _ in converted:
+        carried: List[int] = []                          # skipped before and after: the source's own uncertainty
+        for x, lvl in converted:
             y = pred_at.get(x.index)
+            if skipped_both(x, y, lvl):
+                carried.append(x.index)
+                continue
             if y is None or not y.evaluated:
                 raise JobException(f"{main} paragraph {x.index} ({shown(run_text(pars[x.index]))!r}): its number in "
                                    f"the converted list cannot be predicted — {y.not_evaluated if y else 'not numbered'}",
@@ -411,7 +442,15 @@ class ConvertNumbering(Op):
             frag.notes.append(f"already as asked, left alone: {already} paragraph(s)")
         if not converted:
             frag.notes.append("nothing numbered to convert in this file; no change")
-        self._flags(frag, root, pars, src, predicted, converted, dest, main, unpredicted)
+        self._flags(frag, root, pars, src, predicted, converted, dest, main,
+                    [i for i in unpredicted if i not in carried])
+        if carried:
+            frag.flags.append(f"{len(carried)} converted paragraph(s) follow a level the outline skipped (a deeper level "
+                              f"was numbered before this one had a value), before the conversion and after it: Word "
+                              f"starts the level when it next comes, LibreOffice gave it its start then and continues — "
+                              f"the two number them differently, and the engine predicts neither; check them: "
+                              + "; ".join(f"‘{shown(run_text(pars[i]), 40)}’" for i in carried[:6])
+                              + (" …" if len(carried) > 6 else ""))
         look = Look(sheet)
         hidden = [x.index for x, _ in converted if look.mark_hidden(pars[x.index]) is not False]
         if hidden:
@@ -524,10 +563,10 @@ class ConvertNumbering(Op):
             if shows(a) != shows(b):                     # F7: only the destination list's own get here (else refused)
                 moved.append(f"‘{shown(run_text(pars[i]), 40)}’ {number_words(a)} → {number_words(b)}")
         if moved:
+            why = "this file’s own list" if dest.held else "a style the import brings or replaces"
             frag.flags.append(f"{len(moved)} paragraph(s) not converted change their number: the destination list "
-                              f"{dest.scheme.num_id} numbers them too ({'this file’s own list' if dest.held else 'a style the import brings or replaces'}), "
-                              f"and the converted paragraphs now count in it: " + "; ".join(moved[:6])
-                              + (" …" if len(moved) > 6 else ""))
+                              f"{dest.scheme.num_id} numbers them too ({why}), and the converted paragraphs now count "
+                              f"in it: " + "; ".join(moved[:6]) + (" …" if len(moved) > 6 else ""))
         if unpredicted:
             frag.flags.append(f"{len(unpredicted)} paragraph(s) had numbers the engine could not predict before the "
                               f"conversion (a restarted or shared list): their new numbers are predicted, whether they "

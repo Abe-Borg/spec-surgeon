@@ -17,16 +17,23 @@ clearing rules verify/clearing.py, the style resolution verify/restyle.py.
   those (``styleimport.check_requested``, which also compares the numbering part whole when nothing is imported);
 * the planned output's styles (a copy of the source's styles part with the replaced copies in their places and the
   imported ones appended) and lists (the source's ``VListDefs`` with the copied abstractNum/num); ``v_resolve_scheme``
-  over them with each level's style id (ValueError: the op must refuse, ``scheme``); the destination list clean against
-  the SOURCE count (``v_list_is_clean``; ValueError: ``numbering-unsupported``).
+  over them with each level's style id (ValueError: the op must refuse, ``scheme``); with a template, a level whose style
+  the file holds and keeps must number like the template's level (``_v_level_sig``: its text, legal, the formats of the
+  levels its text names — else ``scheme``, F6 of the batch-5 review); the destination list clean against the SOURCE
+  count (``v_list_is_clean``; ValueError: ``numbering-unsupported``); each level's ``w:lvl/w:rPr`` in the destination's
+  abstractNum (``VDest.level_rprs``, read by ``typed_numbers``' display rule) and the styles the import replaces
+  (``VDest.replaced``).
 
 **converted_numbering** re-derives from the SOURCE the converted paragraphs (``from: "main"`` — the counted paragraphs
 numbered by any num of ``v_main_abstract``, at their ilvl —, or ``from.styles`` — the counted, numbered paragraphs whose
-style is in level k's list, at k), the refusals the op must raise (not evaluated, an own numPr with only an ilvl, a
-tracked change in it, a level beyond the scheme after ``level_map``, a converted or formerly evaluated number the
-prediction cannot evaluate), each level's style, and each paragraph's change (restyled, own numPr removed, with
-``clear`` clear_direct_formatting's DEFAULT targets). It predicts every counted paragraph's number with its OWN model
-(``v_count`` over the planned output with the converted paragraphs given the destination list at their levels), which
+style is in level k's list, at k), the refusals the op must raise (not evaluated in the source unless its level is
+known — ``V_LEVEL_KNOWN`` — and every counted paragraph of its num is converted, F8; a tracked change in its own numPr;
+a level beyond the scheme after ``level_map``; a converted number the prediction cannot evaluate — unless it was not
+evaluated before and follows a skipped level at the level it had —, or a formerly evaluated one; tracked over a style
+chain holding a style the import replaces, F14; a paragraph NOT converted whose number — rendered text, suffix, issue
+— changes outside the destination list, F7), each level's style, and each paragraph's change (restyled, own numPr
+removed, with ``clear`` clear_direct_formatting's DEFAULT targets). It predicts every counted paragraph's number with
+its OWN model (``v_count`` over the planned output with the converted paragraphs given the destination list at their levels), which
 must equal the plan's; its own count of the OUTPUT must equal both (the paragraphs as many as the source's). Each
 changed paragraph's pPr = the source's with ``w:pStyle`` set first (restyled), ``w:numPr`` gone (own) and the cleared
 children gone, the ``w:pPrChange`` by the shared rules (``clearing.check_cleared_ppr``); cleared runs and marks exactly
@@ -329,8 +336,11 @@ def _converted_numbering(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     override = {x.index: (dest.scheme.num_id, lvl) for x, lvl in converted}
     predicted = v_count(sv.root, dest.styles, dest.defs, override)
     at = {y.index: y for y in predicted}
-    for x, _ in converted:
+    for x, lvl in converted:
         y = at.get(x.index)
+        if y is not None and x.not_evaluated is not None and y.not_evaluated is not None and \
+                x.issue in V_LEVEL_KNOWN and y.issue == "skipped" and x.ilvl == lvl:
+            continue                                 # the outline's own skipped level, at the level it had
         if y is None or y.not_evaluated is not None:
             raise ValueError(f"{main} paragraph {x.index}: its converted number cannot be evaluated "
                              f"({y.not_evaluated if y else 'not numbered'}) (the op must refuse: numbering-unsupported)")

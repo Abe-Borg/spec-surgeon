@@ -1,8 +1,11 @@
 """convert_numbering and V10's ``converted_numbering`` kind (built-in batch 5, item 33 ★ — docs/BUILTIN_OPS_BATCH5_DESIGN.md
 §1): end to end on the architect's outline (build_numbering) converted to the example file's scheme (PRT / ART / PR1 / PR2
 / PR3, imported with its list), plain and tracked, kept and cleared formatting, from the main list and from named
-styles, level_map; a held scheme; the refusals (an ilvl-only own numPr, a shared list, a level beyond the scheme, a
-template that is no scheme); the flags (typed numbers, a REF field, written references, shifts of other paragraphs);
+styles, level_map; a held scheme; the adversarial review's fixes (an ilvl-only own numPr converts, a shared or
+overridden list converts only whole, a partial conversion that renumbers the rest refuses, held styles that number
+unlike the example file need "replace", tracked over replaced styles refuses, the new style's capitals flagged); the
+refusals (a level beyond the scheme, a template that is no scheme); the flags (typed numbers, a REF field, written
+references, shifts of other paragraphs, the outline's own skipped level);
 wrong OUTPUTS and wrong IMPLEMENTATIONS shared by plan and apply, each caught by V10; plan-time conflicts (rule 9); the
 template as an input (rule 12); the worked example."""
 from __future__ import annotations
@@ -143,8 +146,10 @@ CONVERTED = {
     "Related requirements:": "B.", 'Division 21 Section "Common Work Results for Fire Suppression".': "1.",
     "Hangers.": "a.", "Supports.": "b.", 'Division 28 Section "Fire Detection and Alarm".': "2.", "": "C.",
     "Deferred submittal.": "D.", "REFERENCES": "1.2", "NFPA 13.": "A.", "Hidden requirement.": "B.",
-    "UL listings.": "C.", "SUBMITTALS": "1.3", "Product data.": "1.", "Shop drawings.": "A.",
-    "Calculations, as specified in Article 1.02.": "B.", "Comply with Article 1.02.": "C.", "PRODUCTS": "PART 2 -",
+    "UL listings.": "C.", "SUBMITTALS": "1.3", "Product data.": "1.",
+    # level 2 skipped by "Product data." (level 3 right after the article: lists.skipped_below), before and after
+    "Shop drawings.": ("skipped",), "Calculations, as specified in Article 1.02.": ("skipped",),
+    "Comply with Article 1.02.": ("skipped",), "PRODUCTS": "PART 2 -",
     "MANUFACTURERS": "2.1", "Tyco.": "A.", "Viking.": "B.", "MATERIALS": "2.2", "Steel pipe.": "A.", "PIPING": "2.3",
     "Black steel.": "A.", "VALVES": "2.4", "Gate valves.": "A.", "B.\tCheck valves.": "B.", "EXECUTION": "PART 3 -",
     "INSTALLATION": "3.1", "Install per NFPA 13.": "A.", "Cell requirement.": "B.", "After the table.": "C.",
@@ -185,6 +190,9 @@ def test_the_architects_outline_becomes_the_example_files_scheme(tpl):
     # the flags: the double number, the stale REF field, the written reference to 1.02
     flags = " | ".join(plan.flags)
     assert "‘B. Check valves.’" in flags and "REF _Ref1001" in flags and "'1.02' (now '1.2')" in flags
+    # the outline's own skipped level (before and after) — converted, flagged by name
+    assert any("3 converted paragraph(s) follow a level the outline skipped" in f and "‘Shop drawings.’" in f
+               for f in plan.flags), plan.flags
     assert "Calculations, as specified in Article 1" in flags
     # the hidden paragraph: Word counts it (the prediction follows Word), LibreOffice's proof does not
     assert any("hidden" in f and "LibreOffice" in f and "‘Hidden requirement.’" in f for f in plan.flags)
@@ -270,27 +278,175 @@ def test_a_paragraph_another_list_numbers_converted_into_a_held_list_shifts_the_
     got = numbers(out)
     assert got["Introduction"] == "PART 1 -" and got["GENERAL"] == "PART 2 -" and got["SUMMARY"] == "2.1"
     assert any("not converted change their number" in f and "‘GENERAL’ 'PART 1 -' → 'PART 2 -'" in f
-               for f in plan.flags)
+               and "numbers them too (this file’s own list)" in f for f in plan.flags), plan.flags
 
 
 # ---- refusals ---------------------------------------------------------------------------------------------------------
 
-def test_an_ilvl_only_own_numbering_refuses(tpl):
-    with pytest.raises(JobException) as e:
-        get_op("convert_numbering").plan(DocxPackage(fixture("raw")), {}, {"levels": SCHEME_LEVELS, "template": tpl})
-    assert e.value.code == "numbering-unsupported" and "Product data." in e.value.reason
+def test_an_ilvl_only_own_numbering_converts(tpl):
+    """F5 of the review: "Product data." (ArchPara) carries <w:numPr><w:ilvl w:val="3"/></w:numPr> — Word writes these;
+    the model reads list 10 level 3 — converted like a full numPr (PR2, its numPr removed), the same as with its numId
+    spelled out."""
+    def spelled(root):
+        find(root, "Product data.").find(f"{W}pPr/{W}numPr").append(_x('<w:numId w:val="10"/>'))
+    outs = []
+    for src in (fixture("clean"), patch_docx(fixture("clean"), {MAIN: spelled})):
+        plan, out, rec = converting(src, tpl)
+        assert rec.passed, rec.to_markdown()
+        p = find(DocxPackage(out).xml(MAIN), "Product data.")
+        assert pstyle(p) == "PR2" and p.find(f"{W}pPr/{W}numPr") is None and numbers(out)["Product data."] == "1."
+        outs.append(etree.tostring(p))
+    assert outs[0] == outs[1]
 
 
-def test_a_shared_list_refuses_and_a_held_shared_scheme_too(tpl):
-    """build_numbering(True): nums 10 and 11 share abstractNum 10 — the source numbers cannot be read (Word and
-    LibreOffice differ), and the document's own list as the destination is not clean either."""
-    with pytest.raises(JobException) as e:
-        get_op("convert_numbering").plan(DocxPackage(fixture("shared")), {}, {"levels": SCHEME_LEVELS, "template": tpl})
-    assert e.value.code == "numbering-unsupported" and "shared list definition" in e.value.reason
+def test_a_shared_list_converts_whole_flagged_and_a_held_shared_scheme_refuses(tpl):
+    """F8: build_numbering(True) — nums 10 and 11 share abstractNum 10 (Word's "Restart numbering"): the source numbers
+    cannot be read, but every paragraph of both lists is converted into the fresh destination list, whose numbers are
+    predicted — converted, flagged ("could not predict before"). The document's own shared list as the destination is
+    still refused."""
+    plan, out, rec = converting(fixture("shared"), tpl)
+    assert rec.passed, rec.to_markdown()
+    got = numbers(out)
+    assert {k: got[k] for k in CONVERTED} == CONVERTED
+    assert any("could not predict before the conversion" in f and "whether they changed is not known" in f
+               and "‘GENERAL’ → 'PART 1 -'" in f for f in plan.flags), plan.flags
     with pytest.raises(JobException) as e:
         get_op("convert_numbering").plan(DocxPackage(fixture("shared")), {},
                                          {"levels": ["ArchPart", "ArchArt", "ArchPara", "ArchSub", "ArchSub2"]})
     assert e.value.code == "numbering-unsupported" and "destination list" in e.value.reason
+
+
+def test_a_shared_list_converted_in_part_refuses(tpl):
+    """F8: only a list converted whole takes its unpredictable numbers out of it — leaving ArchSub2 behind, "GENERAL"
+    (list 10, shared) is refused, saying to convert every paragraph of list 10."""
+    styles = [["ArchPart"], ["ArchArt"], ["ArchPara", "ArchParaAlt"], ["ArchSub"]]
+    with pytest.raises(JobException) as e:
+        get_op("convert_numbering").plan(DocxPackage(fixture("shared")), {},
+                                         {"levels": SCHEME_LEVELS, "template": tpl, "from": {"styles": styles}})
+    assert e.value.code == "numbering-unsupported" and "‘GENERAL’" not in e.value.reason
+    assert "'GENERAL'" in e.value.reason and "every paragraph of list 10" in e.value.reason, e.value.reason
+
+
+def _override_doc() -> bytes:
+    """List 30 (abstractNum 30: level 0 "%1." decimal, level 1 "%2)" lower letters) whose num carries a FULL override of
+    level 1; styles OvA (list 30, level 0), OvB and OvC (list 30, level 1): "First" [1.], "Sub one" (OvB) and "Sub two"
+    (OvC) — not evaluated (``override``), their level known."""
+    doc = Document()
+    for text in ("First", "Sub one", "Sub two"):
+        doc.add_paragraph(text)
+    buf = io.BytesIO()
+    doc.save(buf)
+
+    def styles(root):
+        for sid, k in (("OvA", 0), ("OvB", 1), ("OvC", 1)):
+            root.append(etree.fromstring(
+                f'<w:style {W_DECL} w:type="paragraph" w:styleId="{sid}"><w:name w:val="{sid}"/>'
+                f'<w:basedOn w:val="Normal"/><w:pPr><w:numPr><w:ilvl w:val="{k}"/><w:numId w:val="30"/></w:numPr>'
+                f'</w:pPr></w:style>'))
+
+    def lvl(k, fmt, text):
+        return (f'<w:lvl w:ilvl="{k}"><w:start w:val="1"/><w:numFmt w:val="{fmt}"/><w:lvlText w:val="{text}"/>'
+                f'<w:lvlJc w:val="left"/></w:lvl>')
+
+    def numbering(root):
+        first_num = root.find(W + "num")
+        first_num.addprevious(etree.fromstring(f'<w:abstractNum {W_DECL} w:abstractNumId="30">'
+                                               + lvl(0, "decimal", "%1.") + lvl(1, "lowerLetter", "%2)")
+                                               + "</w:abstractNum>"))
+        root.append(etree.fromstring(f'<w:num {W_DECL} w:numId="30"><w:abstractNumId w:val="30"/>'
+                                     f'<w:lvlOverride w:ilvl="1">{lvl(1, "lowerRoman", "%2)")}</w:lvlOverride></w:num>'))
+
+    def body(root):
+        for text, sid in (("First", "OvA"), ("Sub one", "OvB"), ("Sub two", "OvC")):
+            p = find(root, text)
+            p.insert(0, _x(f'<w:pPr><w:pStyle w:val="{sid}"/></w:pPr>'))
+    return patch_docx(buf.getvalue(), {"word/styles.xml": styles, NUMBERING: numbering, MAIN: body})
+
+
+def test_a_list_with_an_override_level_converts_only_whole(tpl, monkeypatch):
+    """F8 (the override issue): converted whole (from "main") the list's unpredictable level-1 numbers are predicted in
+    the destination list — flagged; converting "Sub one" without "Sub two" is refused; a transform that converts a list
+    in part anyway is caught by V10 (the verifier's own rule)."""
+    src = _override_doc()
+    assert numbers(src) == {"First": "1.", "Sub one": ("override",), "Sub two": ("override",)}
+    plan, out, rec = converting(src, tpl)
+    assert rec.passed, rec.to_markdown()
+    assert numbers(out) == {"First": "PART 1 -", "Sub one": "1.1", "Sub two": "1.2"}
+    assert any("2 paragraph(s) had numbers the engine could not predict" in f for f in plan.flags), plan.flags
+    part = {"from": {"styles": [["OvA"], ["OvB"]]}}
+    with pytest.raises(JobException) as e:
+        get_op("convert_numbering").plan(DocxPackage(src), {}, {"levels": SCHEME_LEVELS, "template": tpl, **part})
+    assert e.value.code == "numbering-unsupported" and "every paragraph of list 30" in e.value.reason
+    monkeypatch.setattr(cn, "whole_list_chosen", lambda *a: True)
+    plan, out, rec = converting(src, tpl, **part)
+    assert "V10" in failed(rec) and "the op must refuse: numbering-unsupported" in v10(rec), v10(rec)
+
+
+def test_a_partial_conversion_that_renumbers_the_rest_refuses(tpl, monkeypatch):
+    """F7: converting only the PART and article levels leaves the paragraphs in the old list, which no longer restarts
+    under each article ("NFPA 13." A. → E.): refused (numbering-mismatch), naming them and saying to convert every
+    level; a transform without the rule is caught by V10."""
+    part = {"from": {"styles": [["ArchPart"], ["ArchArt"]]}}
+    with pytest.raises(JobException) as e:
+        get_op("convert_numbering").plan(DocxPackage(fixture("clean")), {},
+                                         {"levels": SCHEME_LEVELS, "template": tpl, **part})
+    assert e.value.code == "numbering-mismatch" and "‘NFPA 13.’ 'A.' → 'E.'" in e.value.reason
+    assert "convert every level" in e.value.reason, e.value.reason
+    monkeypatch.setattr(cn, "shows", lambda x: None)
+    plan, out, rec = converting(fixture("clean"), tpl, **part)
+    assert "V10" in failed(rec) and "the op must refuse: numbering-mismatch" in v10(rec), v10(rec)
+
+
+def _zero_articles(root):
+    a = next(a for a in root.findall(W + "abstractNum") if a.get(W + "abstractNumId") == "10")
+    next(l for l in a.findall(W + "lvl") if l.get(W + "ilvl") == "1").find(W + "numFmt").set(W + "val", "decimalZero")
+
+
+def test_the_example_files_style_ids_with_this_files_own_list_need_replace(tpl, monkeypatch):
+    """F6: an architect's spec with the example file's style ids and its own list ("1.01" articles): existing "keep"
+    is refused (scheme) — the scheme would silently not apply; "replace" converts ("1.01" → "1.1"); tracked + "replace"
+    is refused (F14: reject-all would keep the replaced definitions); a transform without either rule is caught."""
+    arch = patch_docx(build_scheme_example(), {NUMBERING: _zero_articles})
+    assert numbers(arch)["SUMMARY"] == "1.01"
+    with pytest.raises(JobException) as e:
+        get_op("convert_numbering").plan(DocxPackage(arch), {}, {"levels": SCHEME_LEVELS, "template": tpl})
+    assert e.value.code == "scheme" and "existing 'replace'" in e.value.reason
+    plan, out, rec = converting(arch, tpl, existing="replace")
+    assert rec.passed, rec.to_markdown()
+    assert numbers(out)["SUMMARY"] == "1.1"
+    with pytest.raises(JobException) as e:
+        get_op("convert_numbering").plan(DocxPackage(arch), {}, {"levels": SCHEME_LEVELS, "template": tpl,
+                                                                 "existing": "replace", "tracked": True})
+    assert e.value.code == "tracked-format" and "reject-all" in e.value.reason
+    monkeypatch.setattr(cn, "replaced_in_chain", lambda *a: [])
+    plan, out, rec = converting(arch, tpl, existing="replace", tracked=True)
+    assert "V10" in failed(rec) and "the op must refuse: tracked-format" in v10(rec), v10(rec)
+    from spec_surgeon.ops import numbering_convert
+    monkeypatch.setattr(numbering_convert, "level_pattern_sig", lambda *a: 0)
+    plan, out, rec = converting(arch, tpl)
+    assert "V10" in failed(rec) and "the op must refuse: scheme" in v10(rec), v10(rec)
+
+
+def test_capitals_the_new_style_brings_are_flagged(tpl):
+    """F9: ArchPart without its caps and "PRODUCTS" typed "Products": the example file's PRT shows it in capitals."""
+    def no_caps(root):
+        st = next(s for s in root.findall(W + "style") if s.get(W + "styleId") == "ArchPart")
+        rpr = st.find(W + "rPr")
+        rpr.remove(rpr.find(W + "caps"))
+
+    def lower(root):
+        t = next(t for t in root.iter(W + "t") if t.text == "PRODUCTS")
+        t.text = "Products"
+    src = patch_docx(fixture("clean"), {"word/styles.xml": no_caps, MAIN: lower})
+    plan, out, rec = converting(src, tpl)
+    assert rec.passed, rec.to_markdown()
+    assert any("capitals" in f and "‘Products’" in f for f in plan.flags), plan.flags
+
+
+def test_touches_are_declared_once(tpl):
+    """F10: one touch per target and aspect."""
+    frag = get_op("convert_numbering").plan(DocxPackage(fixture("clean")), {}, {"levels": SCHEME_LEVELS, "template": tpl})
+    assert len(frag.touches) == len(set(frag.touches))
 
 
 def test_a_level_beyond_the_scheme_refuses_and_the_scheme_must_fit(tpl):

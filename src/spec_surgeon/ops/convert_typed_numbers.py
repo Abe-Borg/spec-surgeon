@@ -21,14 +21,23 @@ Definitions (the verifier's own reading is verify/typednumbers.py):
   after optional spaces/tabs, then spaces/tabs/NBSPs or the end; the **prefix** = position 0 to the end of that
   whitespace. Two levels matching → the file is refused (``ambiguous``). A NUMBERED paragraph whose text starts with a
   typed number is flagged (double numbering), never touched.
-* **It reads as typed** (``display_problem``; run text ignores display properties): the file is refused
-  (``typed-format``) when a run holding a character of the prefix has an EFFECTIVE ``w:vanish``, ``w:caps`` or
-  ``w:smallCaps`` that is on or ambiguous (batch 2's hidden rule, ``markup.Look``; set_properties' toggles,
-  ``effective.PropResolver``) — a hidden "A.⇥" would become a visible number, a typed "a." in capitals reads "A."; when
-  the paragraph mark is effectively hidden (Word formats the list number with the mark: it would be hidden, and
-  LibreOffice joins the paragraph to the next); or when, in the planned output, the mark (its own rPr over the NEW
-  style's chain) is hidden, or in capitals while the level's number can hold a lower-case letter. A scheme level whose
-  ``w:lvl/w:rPr`` turns on vanish/caps/smallCaps is refused at scheme resolution (``numbering_convert``).
+* **It reads as typed, and the number looks like it** (``display_problem``; run text ignores display properties): the
+  file is refused (``typed-format``) when a run of the prefix is effectively hidden (``w:vanish`` or ``w:specVanish`` on
+  or ambiguous: ``hidden_toggle``, batch 2's toggle rule) — a hidden "A.⇥" would become a visible number; when a run
+  holding a character of the typed number is in capitals or small capitals (on or ambiguous) and the typed number holds
+  a lower-case letter — "a." reads "A." (F4 of the batch-5 review: "PART 1 -", "1.1", "A." read the same in capitals and
+  convert); when the paragraph mark is effectively hidden (Word formats the list number with the mark: it would be
+  hidden, and LibreOffice joins the paragraph to the next); when, in the planned output, the list number
+  (``numbering_convert.number_look``: the mark's own rPr over the NEW style's chain, the level's ``w:lvl/w:rPr`` on
+  top) is hidden, or in capitals while the level's number can hold a lower-case letter, or in a symbol font
+  (``number_symbolic``), or a typed run is in one (``selectors.is_symbol_rpr``); and when a typed run and the number,
+  both over the planned chain, differ in strike, double strike, vertical alignment, position, colour (auto ≡ 000000) or
+  size (F1: a white, 1 pt, superscript or struck mark made an invisible or odd number that passed). A difference in
+  bold, italic, underline or a non-symbol font is flagged. A scheme level whose ``w:lvl/w:rPr`` turns on
+  vanish/caps/smallCaps is refused at scheme resolution (``numbering_convert``).
+* Tracked, refused (``tracked-format``, F14) when a candidate's style chain holds a style the import REPLACES
+  (``numbering_convert.replaced_in_chain``): the replacement is never tracked — reject-all would bring the typed number
+  back under the new numbered definition ("A. A. First").
 * The change of a converted paragraph: the prefix removed by the in-paragraph edit core (one edit ``(0, end, "")`` with
   ``tabs=True``: the tab after a typed number goes with it — design §2.3), ``w:pStyle`` = the level's style (first in the
   pPr), its own ``w:numPr`` (a ``numId`` 0 or dangling one) removed, the cleared children gone with ``clear`` (cleared
@@ -45,7 +54,12 @@ Definitions (the verifier's own reading is verify/typednumbers.py):
   stripped; a not-evaluated number equal only to itself) of EVERY counted paragraph of the main part is unchanged: a
   converted paragraph shows its typed number exactly, a paragraph the destination list already numbered keeps its number.
   A typo in the typed numbers (two "B."s, a skipped letter) therefore refuses the file; a skipped level (an article
-  "1.1" before any PART) is not evaluated, so it refuses too.
+  "1.1" before any PART) is not evaluated, so it refuses too — the reason then names the nearest earlier unconverted
+  line that looks like a typed number (``audit_numbering.typed_shape``) but matched no level, and what the level needs
+  (F11: "PART 1 – GENERAL" with an en dash).
+* Flagged: the look differences above; paragraphs whose lower-case text the new style shows in capitals (F9: "General"
+  reads "GENERAL" under PRT); scheme level styles whose level is the linked level (``Destination.linked``, F3:
+  LibreOffice's proofs show them at level 0); the destination's restart rules; double numbering.
 
 Touches (rule 9): per converted paragraph ``(main, bi, "text")`` (the edit core), ``"pPr"``, ``"pStyle"`` (restyled),
 ``"numPr"`` (own numPr removed), each cleared pPr child, ``"rPr"``, ``"markRPr"``; ``uses+``/``uses-`` as apply_style; the
@@ -53,7 +67,7 @@ import's touches; ``lists.count_reads``; ``(main, "*", "verify:text")`` (the pos
 any other text change in the main part in the same spec is a conflict); ``(main, "scope", "verify")``; what the display
 rule read — ``selectors.chain_reads`` of each converted paragraph with its prefix runs' and its mark's rPr (families
 ``replace`` and ``rPr``: a style import swapping a chain style, a style font/property/language change), ``verify:rPr`` of
-the new style's chain and of docDefaults.
+the new style's chain and of docDefaults — each once (F10).
 
 Verified by V10's ``typed_numbers`` kind (verify/typednumbers.py) — and, when styles are imported, by
 ``styles_imported``.

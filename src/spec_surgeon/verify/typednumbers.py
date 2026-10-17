@@ -12,7 +12,13 @@ re-derives from the SOURCE:
 * the candidates — counted paragraphs of the main part (``v_counted``), unnumbered (``v_paragraph_numbering`` none or
   dangling), selected (``props.para_matches``), outside tables unless ``include_tables`` — and their typed numbers
   (``v_typed_number`` on ``v_paragraph_text``): level and prefix end, which must equal the plan's; the refusals (two
-  levels → ``ambiguous``; a level with ``w:suff`` nothing → ``numbering-mismatch``; a tracked change in the own numPr);
+  levels → ``ambiguous``; a level with ``w:suff`` nothing → ``numbering-mismatch``; the display rule ``_v_display`` →
+  ``typed-format`` — a hidden prefix run (vanish or specVanish), capitals on a typed number holding a lower-case letter,
+  a hidden mark, and in the planned output a list number (``_v_look`` of the mark over ``_v_planned_levels`` with the
+  level's ``w:lvl/w:rPr`` on top) hidden, in capitals where it can hold a lower-case letter, in a symbol font, or
+  differing from a typed run read over the same chain in strike, dstrike, vertAlign, position, colour or size (F1 of
+  the batch-5 review); a tracked change in the own numPr; tracked over a style chain holding a style the import
+  replaces → ``tracked-format``, F14);
 * every counted paragraph's number over the planned output with its OWN model (``v_count``, the converted paragraphs given
   the destination list at their typed level) — it must equal the plan's prediction, and the planned output must read the
   same as the source (else the op had to refuse ``numbering-mismatch``);

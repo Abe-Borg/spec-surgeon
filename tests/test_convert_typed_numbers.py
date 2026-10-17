@@ -2,7 +2,10 @@
 §2): end to end on the typed spec (build_typed: tabs, spaces, leading whitespace; tracked and plain; numbers split across
 runs) converted to the example file's scheme; the guarantee "the document reads the same" (a typo, a list that already
 numbers paragraphs, a skipped level, an ambiguous typed number, a level without a suffix each refuse); held schemes;
-tables; cleared formatting; wrong OUTPUTS and wrong IMPLEMENTATIONS shared by plan and apply, each caught by V10;
+tables; cleared formatting; the display rule (hidden, capitalised, or a mark that makes the number white, tiny, raised,
+struck or symbols — the adversarial review's F1/F4); the review's other fixes (flags for the new style's capitals and
+linked levels, held styles unlike the example file, tracked over replaced styles, the messages); wrong OUTPUTS and wrong
+IMPLEMENTATIONS shared by plan and apply, each caught by V10;
 plan-time conflicts (rule 9); the template as an input (rule 12); the worked example; and the LibreOffice proof — the
 converted file rendered to PDF shows every typed number exactly once, in order."""
 from __future__ import annotations

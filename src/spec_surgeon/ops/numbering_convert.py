@@ -33,19 +33,23 @@ Definitions
   otherwise leave the document unconverted and pass).
 * **No numbering part**: an import the scheme needs into a file without ``word/numbering.xml`` refuses
   ``style-numbering`` with a plain reason (rule 10: a part is never created).
-* **The list number's look** (``look_of``, ``number_look``, ``number_symbolic``; convert_typed_numbers' display rule):
-  Word formats a list number with the paragraph mark's run properties — the mark's own rPr over ``planned_levels`` (the
-  NEW style's chain) — and the level's ``w:lvl/w:rPr`` on top. ``linked_level_styles``: level styles naming their list
-  without a ``w:ilvl`` (LibreOffice renders them at level 0: flagged).
+* **The list number's look** (``look_of``, ``number_look``, ``number_symbolic``; convert_typed_numbers' display rule,
+  F1 of the batch-5 review): Word and LibreOffice format a list number with the paragraph MARK's run properties — in
+  the planned output the mark's own ``w:pPr/w:rPr`` over ``planned_levels`` (docDefaults, the table style chain, the
+  NEW paragraph style's chain, the mark's character style chain, each root-most first) — with the level's
+  ``w:lvl/w:rPr`` on top. ``look_of``: the toggles ``LOOK_TOGGLES`` (top, then direct win; exactly one style level →
+  that; none → off; more → None, ambiguous) and, nearest first, vertAlign / position / sz / u / colour (auto ≡ 000000) /
+  the ascii font. ``LOOK_REFUSED`` differences between a typed run and the number refuse, ``LOOK_FLAGGED`` ones are
+  flagged. ``shows_lowercase``: a level whose number can hold a lower-case letter (a lower-case literal of its text, or
+  a ``%j`` of a ``lowerLetter``/``lowerRoman`` level, unless the level is legal).
 * **The number's own formatting** (``level_display_problem``): a scheme level whose ``w:lvl/w:rPr`` turns on
   ``w:vanish``, ``w:caps`` or ``w:smallCaps`` (the element present, ``w:val`` not 0/false/off) shows its number hidden or
   in capitals — not what the model renders: refused, ``bad-params`` in the template, ``scheme`` for a held list.
-* **How a number is shown** (convert_typed_numbers, ``planned_mark_toggles``): Word formats a list number with the
-  paragraph MARK's run properties — in the planned output the mark's own ``w:pPr/w:rPr`` over docDefaults, the table
-  style chain, the NEW paragraph style's chain and the mark's character style chain; ``vanish``, ``caps``, ``smallCaps``
-  as toggles (direct wins; exactly one style level → that; none → off; more → None, ambiguous). ``shows_lowercase``: a
-  level whose number can hold a lower-case letter (a lower-case literal of its text, or a ``%j`` of a
-  ``lowerLetter``/``lowerRoman`` level, unless the level is legal).
+* **Linked levels** (``linked_level_styles``, F3): scheme level styles (level 1 and deeper) whose level is the LINKED
+  level (``lists.style_numbering`` → ``Numbering.linked``: no ``w:ilvl`` in the style's numPr, the level's ``w:pStyle``
+  names it) — Word reads the link, LibreOffice renders them at level 0: flagged by both ops.
+* **Replaced styles** (``replaced_in_chain``, F14): the styles of a paragraph's chain the import replaces — a tracked
+  conversion of such a paragraph is refused (``tracked-format``).
 
 API
 ---
@@ -54,7 +58,12 @@ API
     ``Destination``: ``scheme`` (``lists.Scheme`` over the planned output), ``sids`` (the style id of each level),
     ``sheet`` (the planned output's styles: ``.styles``, ``.defaults``, ``.part``), ``defs`` (the planned output's
     ``ListDefs``), ``tpl`` (``TemplateStyles`` or None), ``requested``, ``imp`` (``StyleImport`` or None), ``held`` (the
-    destination list is the document's own), ``restart_levels`` (``lists.has_restart_rule`` of the destination: flag).
+    destination list is the document's own), ``restart_levels`` (``lists.has_restart_rule`` of the destination: flag),
+    ``level_rprs`` (each level's ``w:lvl/w:rPr`` in the destination's abstractNum, or None), ``linked``
+    (``linked_level_styles``).
+``look_of(levels, direct, top=None)``, ``planned_levels(pr, p, style_id, rpr)``, ``number_look(pr, p, style_id,
+level_rpr)``, ``number_symbolic(sheet, p, style_id, level_rpr, preserve)``, ``replaced_in_chain(sheet, p, replaced)``,
+``level_pattern_sig(level_defs, k)``, ``level_sample(level_defs, k)`` — see the definitions above.
 ``row(np) -> list``
     A counted paragraph's number as plans and V10 compare it: ``[index, num_id, ilvl, counters, text, suff, issue]``.
 ``visible(np_or_none, run_text) -> str``
@@ -177,14 +186,6 @@ def planned_levels(pr: PropResolver, p, style_id: str, rpr) -> List[Any]:
     return levels
 
 
-def planned_mark_toggles(pr: PropResolver, p, style_id: str) -> Dict[str, Optional[bool]]:
-    """The paragraph mark's effective vanish/caps/smallCaps in the planned output, with ``style_id`` as its paragraph
-    style (``pr`` a ``PropResolver`` over the planned output's styles)."""
-    mrpr = p.find(f"{W}pPr/{W}rPr")
-    levels = planned_levels(pr, p, style_id, mrpr)
-    return {e: _toggle(levels, mrpr, e) for e in DISPLAY_TOGGLES}
-
-
 def number_look(pr: PropResolver, p, style_id: str, level_rpr) -> Dict[str, Any]:
     """How the list number of ``p`` looks in the planned output: the paragraph mark's properties (its own rPr over
     ``planned_levels``) with the level's ``w:lvl/w:rPr`` on top — Word and LibreOffice format the number so."""
@@ -280,20 +281,16 @@ def replaced_in_chain(sheet, p, replaced) -> List[str]:
     return [s for s, _ in lists.style_chain(sheet, lists.paragraph_style(p, sheet)) if s in replaced]
 
 
-def linked_level_styles(sheet, sids: Sequence[str]) -> List[str]:
-    """The scheme's level styles (level 1 and deeper) whose numbering comes from a style ``w:numPr`` without ``w:ilvl``
-    — the level linked through ``w:lvl/w:pStyle``: Word shows them right, LibreOffice renders them at level 0
-    (ooxml-lessons §6; F3, a flag)."""
+def linked_level_styles(sheet, defs: lists.ListDefs, sids: Sequence[str]) -> List[str]:
+    """The scheme's level styles (level 1 and deeper) whose level is the LINKED level (``lists.style_numbering`` →
+    ``Numbering.linked``: the style's numPr names the list without ``w:ilvl``, the level's ``w:pStyle`` names the
+    style): Word shows them right, LibreOffice renders them at level 0 (ooxml-lessons §6; F3, a flag). Level 0 is
+    left out — both show it at level 0."""
     out = []
     for k, sid in enumerate(sids):
-        if k == 0:
-            continue
-        for _, st in lists.style_chain(sheet, sid):
-            numpr = st.find(f"{W}pPr/{W}numPr")
-            if numpr is not None and numpr.find(W + "numId") is not None:
-                if numpr.find(W + "ilvl") is None:
-                    out.append(sid)
-                break
+        nb = lists.style_numbering(sid, sheet, defs) if k else None
+        if nb is not None and nb.linked:
+            out.append(sid)
     return out
 
 
@@ -384,7 +381,7 @@ def destination(pkg: DocxPackage, sheet, defs: lists.ListDefs, source_count: Seq
                            {"num_id": scheme.num_id})
     return Destination(scheme=scheme, sids=sids, sheet=planned, defs=out_defs, tpl=tpl, requested=requested, imp=imp,
                        held=held, restart_levels=lists.has_restart_rule(out_defs, scheme.num_id),
-                       level_rprs=_level_rprs(own, len(sids)), linked=linked_level_styles(planned, sids))
+                       level_rprs=_level_rprs(own, len(sids)), linked=linked_level_styles(planned, out_defs, sids))
 
 
 def row(np_: lists.NumberedPar) -> List[Any]:
