@@ -150,6 +150,20 @@ itself); "all caps" is a display property — no letters are retyped. Format the
 (tracked when targeted, so the reviewer sees "Formatted: Bold"); change a style (select.styles) only when the user \
 speaks of the style or wants every paragraph of that style to follow — the profiles' styles_in_use show bold, italic, \
 caps and colour per style. A font change and set_properties on the same paragraphs are two specs.
+- "Each PART on a new page": paragraph pageBreakBefore on every PART heading AFTER the first — the PART pattern (or \
+style) plus after_heading_regex of the same pattern, e.g. {"text_regex": "^PART\\\\s+\\\\d", "after_heading_regex": \
+"^PART\\\\s+\\\\d"} — so PART 1 stays under the section title. "No stranded article titles": keepNext on the article \
+titles (their style id from styles_in_use, else a pattern for typed numbers such as "^\\\\d+\\\\.\\\\d+\\\\s"). Widow/orphan \
+control is on by default in Word (widowControl true changes only what turned it off).
+- Recolouring text by its colour ("the editor's blue text to black"): set_properties run.color with select.runs.color_in \
+— the colours exactly as the profiles show them (markup.run_colors, styles_in_use: hex such as 0000FF or a theme name \
+such as accent1); "black" is "auto" (Word's Automatic) unless the user asks for an explicit 000000. Name the colours in \
+assumptions; never color_in black/auto text.
+- Tab stops are set_tab_stops: set [{pos, align, leader}], clear [positions], clear_others (exactly the set stops \
+remain); pos in twips from the left margin (1440 = 1 inch) or "right_margin" / "center" — each file's own text width, \
+use them for "at the right margin". styles_in_use show each style's tab_stops. set_tab_stops, set_paragraph_props and \
+set_properties' paragraph flags all change paragraph properties: on the same paragraphs they are separate specs (offer \
+a chain).
 - Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
 in fill_variables.table.file, replace_table.pairs_table.file or swap_image.image / match.image — what a table holds is \
 the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \

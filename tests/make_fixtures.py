@@ -709,6 +709,120 @@ def build_formatted(section_number: str = "21 13 13", title: str = "WET-PIPE SPR
     return buf.getvalue()
 
 
+# ---- built-in batch 3 (docs/BUILTIN_OPS_BATCH3_DESIGN.md) ------------------------------------------------------------
+
+def _tabs(ppr_owner, stops):
+    """Put own tab entries (val, pos[, leader]) on a paragraph or a style element's pPr, in the order given."""
+    ppr = ppr_owner.get_or_add_pPr()
+    tabs = OxmlElement("w:tabs")
+    for st in stops:
+        t = OxmlElement("w:tab"); t.set(qn("w:val"), st[0]); t.set(qn("w:pos"), str(st[1]))
+        if len(st) > 2:
+            t.set(qn("w:leader"), st[2])
+        tabs.append(t)
+    ppr.insert_element_before(tabs, "w:suppressAutoHyphens", "w:kinsoku", "w:wordWrap", "w:overflowPunct",
+                              "w:topLinePunct", "w:autoSpaceDE", "w:autoSpaceDN", "w:bidi", "w:adjustRightInd",
+                              "w:snapToGrid", "w:spacing", "w:ind", "w:contextualSpacing", "w:mirrorIndents",
+                              "w:suppressOverlap", "w:jc", "w:textDirection", "w:textAlignment",
+                              "w:textboxTightWrap", "w:outlineLvl", "w:divId", "w:cnfStyle", "w:rPr", "w:sectPr",
+                              "w:pPrChange")
+
+
+def build_tabs(section_number: str = "21 13 13", narrow_second: bool = True, colours: bool = True) -> bytes:
+    """The set_tab_stops and color_in fixture (docs/BUILTIN_OPS_BATCH3_DESIGN.md). Every paragraph is found by its
+    text in the tests.
+
+    Styles: ``Header``/``Footer`` (python-docx's: center 4680, right 9360), ``ArticleTabs`` (left 720 and 1440),
+    ``ArticleChild`` (based on ArticleTabs: clears 1440, adds right 4320), ``ListNumber`` (numbered by its style),
+    ``EditorNote`` (a blue character colour, 0000FF, from the style), ``BlueNote`` (a paragraph style in that blue: its
+    runs and its paragraph mark are blue). Section 1: Letter, 1" margins (text width 9360);
+    section 2 (``narrow_second``): 1.25" margins (text width 8640) with a footer of its own and the header inherited from
+    section 1 (a header shown at two widths).
+
+    Body: the title lines; "1.01<tab>SUMMARY" (ArticleTabs, inherits two stops); "1.02<tab>REFERENCES" (ArticleTabs, own
+    right 9360 dot leader and a clear at 720); "1.03<tab>SUBMITTALS" (ArticleChild); "Numbered<tab>item" (ListNumber);
+    "Numbered direct<tab>item" (direct numPr, own left 2160); "Earlier<tab>change" (own left 2880 and a pending
+    w:pPrChange by Jeremy); "Unsorted<tab>stops<tab>here" (own 2880 then 1440); a table cell paragraph with a tab; the
+    section break paragraph "End of section one"; section 2: "Schedule<tab>value". Colours (``colours``): a run in direct
+    blue 0000FF, one in theme accent1 (4472C4), one in the EditorNote style, a red run, a hyperlink-blue (0563C1) run
+    — inside "Colours: …".
+    """
+    from docx.enum.style import WD_STYLE_TYPE
+    from docx.shared import RGBColor, Twips
+    doc = Document()
+    styles = doc.styles
+    art = styles.add_style("ArticleTabs", WD_STYLE_TYPE.PARAGRAPH)
+    art.base_style = styles["Normal"]
+    _tabs(art.element, [("left", 720), ("left", 1440)])
+    child = styles.add_style("ArticleChild", WD_STYLE_TYPE.PARAGRAPH)
+    child.base_style = art
+    _tabs(child.element, [("clear", 1440), ("right", 4320)])
+    note = styles.add_style("EditorNote", WD_STYLE_TYPE.CHARACTER)
+    note.font.color.rgb = RGBColor(0x00, 0x00, 0xFF)
+    blue_par = styles.add_style("BlueNote", WD_STYLE_TYPE.PARAGRAPH)
+    blue_par.base_style = styles["Normal"]
+    blue_par.font.color.rgb = RGBColor(0x00, 0x00, 0xFF)
+
+    first = doc.sections[0]
+    first.left_margin = first.right_margin = Twips(1440)
+    hp = first.header.paragraphs[0]
+    hp.style = styles["Header"]
+    hp.add_run("ACME DATA CENTERS\tPROJECT 2026-07")
+    fp = first.footer.paragraphs[0]
+    fp.style = styles["Footer"]
+    fp.add_run(f"SECTION {section_number}\t\tPAGE")
+    doc.add_paragraph(f"SECTION {section_number}")
+    doc.add_paragraph("WET-PIPE SPRINKLER SYSTEMS")
+    doc.add_paragraph("1.01\tSUMMARY", style="ArticleTabs")
+    p = doc.add_paragraph("1.02\tREFERENCES", style="ArticleTabs")
+    _tabs(p._p, [("clear", 720), ("right", 9360, "dot")])
+    doc.add_paragraph("1.03\tSUBMITTALS", style="ArticleChild")
+    doc.add_paragraph("Numbered\titem", style="List Number")
+    p = doc.add_paragraph("Numbered direct\titem")
+    numpr = OxmlElement("w:numPr")
+    ilvl = OxmlElement("w:ilvl"); ilvl.set(qn("w:val"), "0"); numpr.append(ilvl)
+    nid = OxmlElement("w:numId"); nid.set(qn("w:val"), "5"); numpr.append(nid)
+    p._p.get_or_add_pPr().insert(0, numpr)
+    _tabs(p._p, [("left", 2160)])
+    p = doc.add_paragraph("Earlier\tchange")
+    _tabs(p._p, [("left", 2880)])
+    chg = OxmlElement("w:pPrChange")
+    chg.set(qn("w:id"), "404"); chg.set(qn("w:author"), "Jeremy"); chg.set(qn("w:date"), "2026-09-22T11:00:00Z")
+    chg.append(OxmlElement("w:pPr"))
+    p._p.get_or_add_pPr().append(chg)
+    p = doc.add_paragraph("Unsorted\tstops\there")
+    _tabs(p._p, [("left", 2880), ("left", 1440)])
+    if colours:
+        p = doc.add_paragraph("Colours: ")
+        r = p.add_run("direct blue"); r.font.color.rgb = RGBColor(0x00, 0x00, 0xFF)
+        p.add_run(", ")
+        r = p.add_run("theme blue"); r.font.color.rgb = RGBColor(0x44, 0x72, 0xC4)
+        r._r.rPr.find(qn("w:color")).set(qn("w:themeColor"), "accent1")
+        p.add_run(", ")
+        r = p.add_run("note style blue"); r.style = styles["EditorNote"]
+        p.add_run(", ")
+        r = p.add_run("red words"); r.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+        p.add_run(", ")
+        r = p.add_run("link blue"); r.font.color.rgb = RGBColor(0x05, 0x63, 0xC1)
+        p.add_run(" end.")
+        p = doc.add_paragraph("Blue note paragraph ", style="BlueNote")
+        r = p.add_run("kept red"); r.font.color.rgb = RGBColor(0xFF, 0x00, 0x00)
+    t = doc.add_table(rows=1, cols=1)
+    t.cell(0, 0).paragraphs[0].add_run("Cell\ttext")
+    doc.add_paragraph("End of section one")
+    if narrow_second:
+        sec = doc.add_section(WD_SECTION.NEW_PAGE)
+        sec.left_margin = sec.right_margin = Twips(1800)
+        sec.header.is_linked_to_previous = True
+        sec.footer.is_linked_to_previous = False
+        f2 = sec.footer.paragraphs[0]
+        f2.style = styles["Footer"]
+        f2.add_run(f"SECTION {section_number} (2)\t\tPAGE")
+    doc.add_paragraph("Schedule\tvalue")
+    buf = io.BytesIO(); doc.save(buf)
+    return buf.getvalue()
+
+
 # ---- built-in batch 1 (docs/BUILTIN_OPS_BATCH1_DESIGN.md) ------------------------------------------------------------
 
 BATCH1_TAGS = ("WET", "DRY", "PREACTION", "WET/DRY", "CLEAN AGENT")

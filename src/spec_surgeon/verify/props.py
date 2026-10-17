@@ -326,7 +326,7 @@ def effective_size(rpr, p, styles: Styles) -> int:
 
 PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range",
              "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs"}
-RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions"}
+RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions", "color_in"}
 
 
 def _v_toggle_on(rpr, p, styles: Styles, tag: str) -> bool:
@@ -437,7 +437,22 @@ def _has_direct_font(rpr) -> bool:
     return rf is not None and any(rf.get(W + a) for a in FONT_ATTRS)
 
 
-def target_matches(pred, rpr, in_revision: bool, preserve: Set[str]) -> bool:
+def _v_sel_colors(colors) -> Set[str]:
+    """A color_in list as this module reads it: each entry stripped, a leading # dropped, casefolded."""
+    if not isinstance(colors, list) or not colors:
+        raise ValueError(f"color_in must be a non-empty list, got {colors!r}")
+    return {str(c).strip().lstrip("#").casefold() for c in colors if str(c).strip()}
+
+
+def _v_sel_color_in(color, wanted: Set[str]) -> bool:
+    """The effective colour (val, themeColor, themeShade, themeTint) matches when its theme name or its value is listed."""
+    val, theme = (color[0] or ""), (color[1] or "")
+    return (bool(theme) and theme.casefold() in wanted) or (bool(val) and val.casefold() in wanted)
+
+
+def target_matches(pred, rpr, in_revision: bool, preserve: Set[str], color_of=None) -> bool:
+    """``color_of`` gives the run's (or mark's) effective colour — ``_v_run_prop(rpr, p, styles, "color")[0]`` over the
+    SOURCE; only ``color_in`` needs it."""
     if pred in (None, "all") or pred == {}:
         return True
     if not isinstance(pred, dict) or set(pred) - RUN_KEYS:
@@ -450,6 +465,11 @@ def target_matches(pred, rpr, in_revision: bool, preserve: Set[str]) -> bool:
             return False
     if pred.get("not_in_revisions") and in_revision:
         return False
+    if "color_in" in pred:
+        if color_of is None:
+            raise ValueError("color_in needs the run's effective colour")
+        if not _v_sel_color_in(color_of(), _v_sel_colors(pred["color_in"])):
+            return False
     return True
 
 
@@ -662,14 +682,17 @@ def _run_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     continue
                 if gets(rpr) == (False, None):
                     continue
-                if target_matches(runs_pred, rpr, in_rev, preserve):
+                if target_matches(runs_pred, rpr, in_rev, preserve,
+                                  lambda rpr=rpr, p=p: _v_run_prop(rpr, p, ctx.src_styles, "color")[0]):
                     cand_runs.append(ri)
             mark = False
             if a.get("include_paragraph_marks", True):
                 mrpr = p.find(W + "pPr/" + W + "rPr")
                 m_rev = mrpr is not None and any(mrpr.find(W + t) is not None for t in ("ins", "del", "moveFrom", "moveTo"))
                 if not (exclude_rev and m_rev) and not symbolic(mrpr, p, ctx.src_styles, preserve) \
-                        and target_matches(runs_pred, mrpr, m_rev, preserve) and gets(mrpr) != (False, None):
+                        and target_matches(runs_pred, mrpr, m_rev, preserve,
+                                           lambda mrpr=mrpr, p=p: _v_run_prop(mrpr, p, ctx.src_styles, "color")[0]) \
+                        and gets(mrpr) != (False, None):
                     mark = True
             if not cand_runs and not mark:
                 continue
@@ -1436,7 +1459,9 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                 for ri, r in enumerate(sv.runs[bi]):
                     rpr = r.find(W + "rPr")
                     in_rev = _has_ancestor(r, REVISION_WRAPPERS, p)
-                    if (exclude_rev and in_rev) or not target_matches(runs_pred, rpr, in_rev, preserve):
+                    if (exclude_rev and in_rev) or not target_matches(
+                            runs_pred, rpr, in_rev, preserve,
+                            lambda rpr=rpr, p=p: _v_run_prop(rpr, p, ctx.src_styles, "color")[0]):
                         continue
                     sym = symbolic(rpr, p, ctx.src_styles, preserve) or (skip_sym and r.find(W + "sym") is not None)
                     cands.append((ri, _v_gets_run(rpr, p, ctx.src_styles, run_asked, sym), sym))
@@ -1444,7 +1469,9 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
             if run_asked and marks_too:
                 mrpr = p.find(W + "pPr/" + W + "rPr")
                 m_rev = _v_mark_in_revision(mrpr)
-                if not (exclude_rev and m_rev) and target_matches(runs_pred, mrpr, m_rev, preserve):
+                if not (exclude_rev and m_rev) and target_matches(
+                        runs_pred, mrpr, m_rev, preserve,
+                        lambda mrpr=mrpr, p=p: _v_run_prop(mrpr, p, ctx.src_styles, "color")[0]):
                     msym = symbolic(mrpr, p, ctx.src_styles, preserve)
                     mark = (_v_gets_run(mrpr, p, ctx.src_styles, run_asked, msym), msym)
             pgets = _v_gets_para(p, ctx.src_styles, para_asked) if para_asked else {}
@@ -1896,9 +1923,12 @@ from .removal import REMOVAL_KINDS  # noqa: E402
 from .watermark import WATERMARK_KINDS  # noqa: E402
 from .links import LINK_KINDS  # noqa: E402
 from .docprops import DOCPROP_KINDS  # noqa: E402
+# built-in batch 3 (docs/BUILTIN_OPS_BATCH3_DESIGN.md)
+from .tabs import TAB_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
 KINDS.update(IMAGE_KINDS)
 for _batch2 in (COMMENT_KINDS, HIGHLIGHT_KINDS, REVISION_KINDS, REMOVAL_KINDS, WATERMARK_KINDS, LINK_KINDS, DOCPROP_KINDS):
     KINDS.update(_batch2)
+KINDS.update(TAB_KINDS)

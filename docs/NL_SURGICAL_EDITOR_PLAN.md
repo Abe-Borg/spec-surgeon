@@ -616,6 +616,19 @@ user's view; 1556 tests pass in total (with master's bounded recovery; four skip
 text boxes, joining paragraphs on accept/reject, table row/cell revisions, highlight in styles, removing personal
 information on save).
 
+## Built-in operations status, part 4 (2026-10-16) — batch 3: formatting on chosen paragraphs, colour, tab stops
+
+The third batch (items 22–25; design note `docs/BUILTIN_OPS_BATCH3_DESIGN.md`). Items 22 (bold/italic/underline/caps/small
+caps on chosen paragraphs) and 23 (keep with next, keep lines together, page break before, widow control) are the ideas
+`set_properties` was built for in part 1 — the round added the compiler's guidance ("each PART on a new page" = every PART
+after the first; "no stranded titles" = keep with next) and worked examples. Item 24 gained the run selector `color_in`
+(the effective colour, both sides) so "the editor's blue to black" recolours only the blue; item 25 is the new operation
+`set_tab_stops` with its V10 kind `tab_stops` (stops set and cleared on selected paragraphs, inherited stops cleared with
+clear entries, positions in twips or at each section's own right margin / centre, an "already" rule, numbered paragraphs
+certain only through their own entries). README → "Built-in operations, batch 3" is the user's view; 1600 tests pass
+(four skip in the Linux container). Not in this batch: tab stops in style definitions, formatting part of a paragraph, a
+list-level selector, theme colours as a value to set.
+
 ---
 
 ## Appendix A — EditSpec JSON schema (draft)

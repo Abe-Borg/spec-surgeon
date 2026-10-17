@@ -32,3 +32,4 @@ from . import (agree, end_of_section, fill_variables, filter_tagged, naming,  # 
                replace_table, resolve_options, swap_image)
 from . import (comments, docprops, empty_paragraphs, hidden, highlight, links,  # noqa: E402,F401  — built-in batch 2
                revisions, watermark)
+from . import set_tab_stops  # noqa: E402,F401  — built-in batch 3

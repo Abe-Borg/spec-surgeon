@@ -15,7 +15,9 @@ changing any job or check. Phase 8 turned the compile into a conversation (`conv
 check of the preview (`vision.py`, advisory), custom transforms as an offer, and a personal library (`library.py`);
 every Claude call goes through `llm.py`. Built-in operations batch 1 (2026-10-16) added nine ops over one in-paragraph
 edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inputs, and snippets as a library kind
-(`docs/BUILTIN_OPS_BATCH1_DESIGN.md`). The user (Abraham) is a fire sprinkler designer; these files go to clients;
+(`docs/BUILTIN_OPS_BATCH1_DESIGN.md`). Built-in operations batch 3 (2026-10-16) added the run selector `color_in` and
+`set_tab_stops` (`docs/BUILTIN_OPS_BATCH3_DESIGN.md`; items 22–23 were already `set_properties`). The user (Abraham) is a
+fire sprinkler designer; these files go to clients;
 "I will lose my job" if content is silently lost or invented is the spec.
 
 ## Hard rules
@@ -32,7 +34,9 @@ edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inpu
    (`verify/highlight.py`), resolution of tracked changes — a rebuild, never an in-place edit
    (`verify/revisions.py`) —, hidden/note/blank rules (`verify/removal.py`), watermark reader and shape template
    (`verify/watermark.py`), link readers (`verify/links.py`) and property tables and settings order
-   (`verify/docprops.py`). Do not "deduplicate" these into shared helpers — the duplication is the point: a
+   (`verify/docprops.py`), and (built-in batch 3) its own colour-list reading for the run selector
+   (`props._v_sel_colors`/`_v_sel_color_in`) and its own tab entries, section reader and tab-stop rule (`verify/tabs.py`).
+   Do not "deduplicate" these into shared helpers — the duplication is the point: a
    transform-side bug must not be able to hide behind the same bug in the check.
 2. **Predict first.** `Op.plan()` (and `Job.plan()`) must compute every prediction (diffs, parts, members
    removed/added, revision delta of every kind, structural changes, accepted views, property assertions and
@@ -108,6 +112,16 @@ edit core (`ops/textedit.py` ↔ `verify/edits.py`), tables and pictures as inpu
    `[Content_Types].xml` as whole members); `add_watermark` reads `verify:pgSz`/`verify:pgMar`/`verify:hfref` of every
    section showing a header it sizes for. Not declared, as for `set_font` (see "Plan-time conflicts for what an op
    reads" 5): the clean-up ops' reads of the style chains (hidden, colour) — their kinds re-derive from the SOURCE.
+   Batch 3: `set_tab_stops` touches `(part, bi, "pPr")` and `(part, bi, "tabs")` per changed paragraph (so
+   `set_paragraph_props` or `set_properties` paragraph flags on the same paragraph are a `conflict`; its run properties are
+   not), reads `(part, bi, "verify:tabs")` of EVERY selected paragraph — its post-condition checks the output's stops of
+   an already-as-asked paragraph too, so a second tab op changing them is a plan-time conflict (Codex on #28: it used to
+   plan and fail V10 after apply), while a spacing change there still plans — and `(part, "scope", "verify")` per part in
+   scope; with a margin position (`right_margin`/`center`) it reads
+   `(main, "sectPr:N", "verify:pgSz"/"verify:pgMar")` of every section it measured and `verify:hfref` of every section
+   for a header/footer part (a `set_page_setup` beside it is a plan-time conflict). Not declared: its reads of the style
+   chains' tabs and of numbering (no op changes either), and `color_in`'s read of the colour chain (as `set_font`'s
+   symbol rule).
 10. **Never create a part to make an edit work.** E.g. `remove_header_footer` refuses (`inheritance`) rather
     than add an empty header part. Adding members is allowed only when the op's whole purpose is the added
     member and it is predicted in `members_added` — today `apply_header_footer_template`, whose new parts
@@ -285,7 +299,7 @@ test that proves they agree.)
   carrying its original `rPrChange` id on both halves is a defect even though that (part, kind, id) existed before.
 - **Selector grammar and symbol runs.** `scope`, `paragraphs` (`style_in` with the default paragraph style
   when no pStyle, `text_regex` on the block text above, `in_table`, `is_empty`, `index_range`), `runs`
-  (`has_direct_font`, `font_in`, `not_in_revisions`), `sections`, `styles`. A symbol run: any explicit font
+  (`has_direct_font`, `font_in`, `not_in_revisions`, `color_in` — batch 3, below), `sections`, `styles`. A symbol run: any explicit font
   name (any slot, casefolded) in direct rFonts, the rStyle chain or the paragraph's pStyle chain is in
   `preserve_fonts`, or it holds a `w:sym` (when `skip_sym_runs`). Runs belong to their nearest `w:p`.
   Transform side: `ops/selectors.py`; verifier side: `verify/props.py`. `tests/test_ops.py::
@@ -640,6 +654,38 @@ Batch 2's operations (each module's docstring is the full definition; `docs/BUIL
   `Changes`, `CustomProps`, `SETTINGS_ORDER`; verifier: `verify/docprops._V_PROPERTIES`, `_Check`, `_settings_order()`
   (read from the bundled `wml.xsd` itself). `tests/test_docprops.py` pins the tables equal and plants shared defects.
 
+Built-in operations batch 3 (2026-10-16; `docs/BUILTIN_OPS_BATCH3_DESIGN.md`):
+
+- **The run selector `color_in`** (`set_properties`, `set_font`). A run or paragraph mark is selected when its effective
+  colour — set_properties' colour rule: the nearest level setting `w:color` (direct → character style chain → paragraph
+  style chain → table style chain → docDefaults), default `("auto", None, None, None)` — has a listed `w:themeColor` name or
+  `w:val` (batch 2's colour-list definition: stripped, a leading `#` dropped, casefolded). Every entry must be 6 hex digits,
+  `auto` or a theme colour name (`bad-params`). Read from the SOURCE. Transform: `ops/selectors.rpr_selected(pred, rpr,
+  revised, p, sheet)` → `effective_color` (a `PropResolver` kept on the sheet, so the example op `set_font.py` imports
+  nothing new — `codegen`'s example rule) + `markup.color_in`/`color_names`, `check_run_selector` (`markup.valid_color`);
+  verifier: `verify/props.target_matches(…, color_of=)` with `_v_run_prop(…, "color")`, `_v_sel_colors`, `_v_sel_color_in`.
+  `tests/test_color_selector.py` compares the two on every run and mark of two fixtures and plants matchers that forget the
+  styles or the theme names.
+- **Tab stops** (`set_tab_stops`). *Own entries*: the paragraph's `w:pPr/w:tabs/w:tab` `(pos, val, leader)` (leader absent =
+  `none`; `clear` = a clear entry); a `w:tabs` child other than `w:tab`, an entry without a whole-number position or two at
+  one position refuse (`structure`). *Inherited*: the "Effective pinnable properties" tab fold without the paragraph's own
+  pPr (`effective.Resolver.paragraph(direct=False)` ↔ `template.Eff.para(with_direct=False)`). *In effect*: inherited
+  folded with own. *Numbered*: batch 2's numbering definition (`empty_paragraphs.numbered` ↔ `removal._v_numbered`).
+  *Margin positions*: `right_margin` = the text width W (the existing text-width definition), `center` = W // 2; a body
+  paragraph's section = of its outermost paragraph, the number of paragraphs holding `w:pPr/w:sectPr` before it in
+  `root.iter(w:p)` order (`set_tab_stops.paragraph_sections` ↔ `tabs._v_sections`); a header/footer part: every section
+  showing it (`hf_common.effective_refs` ↔ `template._refs_shown`), all one W; else `tab-position`. *The rule*: S = the
+  asked stops, C = the clear positions (+ with `clear_others` every position in effect not in S); X in S is already when
+  (numbered: own entry at X == S[X]; else: in effect at X == S[X]), else own entries at X go and S[X] is written; X in C is
+  already when (numbered: own entry at X is a clear entry; else: nothing in effect at X), else own entries at X go and a
+  clear entry is written when a stop is inherited at X or the paragraph is numbered. A changed paragraph's entries = the
+  untouched source entries + the new ones, sorted by position (stable); none → `w:tabs` removed; a new entry is `w:val`,
+  `w:leader` unless none, `w:pos`. Values compared exactly (`start` ≠ `left`). Transform: `ops/set_tab_stops.decide`,
+  `own_entries`, `inherited_stops`, `in_effect`, `Margins`, `write_tabs`; verifier: `verify/tabs._v_decide`, `_v_own`,
+  `_v_inherited`, `_v_fold`, `_VMargins`, `_check_tabs_out` (+ the output post-condition: the asked stops in effect, no stop
+  at a cleared position — numbered: an own clear entry —, with clear_others nothing else). `tests/test_tab_stops.py`
+  compares the section readers on five fixtures and the rules on 3,000 random cases, and plants shared defects in each.
+
 ## Roadmap
 
 `docs/NL_SURGICAL_EDITOR_PLAN.md` is the design and phased plan for the natural-language editor built on
@@ -692,7 +738,9 @@ proposals and recorded in the plan's status sections.
   (`resolve_tracked_changes`, `analyze`, `predict`, `resolve`), `hidden.py` (`remove_hidden_text`, `remove_notes`,
   `CLEANUP_PARAMS`, `keep_rules`, `FieldSpans`, `describe`), `empty_paragraphs.py` (`remove_empty_paragraphs`),
   `watermark.py` (`add_watermark`, `remove_watermark`, `WIDTHS`), `links.py` (`remove_hyperlinks`, `unlink_fields`),
-  `docprops.py` (`set_document_properties`, `set_document_state`, `PROPERTIES`, `Changes`, `CustomProps`), and the shared
+  `docprops.py` (`set_document_properties`, `set_document_state`, `PROPERTIES`, `Changes`, `CustomProps`); built-in batch 3:
+  `set_tab_stops.py` (`set_tab_stops`, `clean_params`, `decide`, `paragraph_sections`, `Margins`, `write_tabs`) and
+  `selectors.effective_color` (the `color_in` run selector); and the shared
   pieces `fields.py` (`fields_of`, `Field`, `unlink`, `NEVER_UNLINK`, `REFUSAL_TEXT`), `markup.py` (`Look`, `color_in`),
   `removal.py` (`deletable`, `plan_paragraph_deletion`, `delete_paragraph`, `plan_run_removal`, `remove_runs`).
 - `ops/textedit.py` — the in-paragraph edit core (batch 1): `RunText`, `Edit`, `check_edits`, `predict`,
@@ -745,7 +793,8 @@ proposals and recorded in the plan's status sections.
   `verify/revisions.py` (`REVISION_KINDS`: `resolved_changes`), `verify/removal.py` (`REMOVAL_KINDS`:
   `removed_hidden_text`, `removed_notes`, `removed_empty_paragraphs`), `verify/watermark.py` (`added_watermark`,
   `removed_watermark`), `verify/links.py` (`removed_hyperlinks`, `unlinked_fields`), `verify/docprops.py`
-  (`document_properties`, `document_state`), over the shared `verify/fields.py` and `verify/markup.py`; `Ctx` gained
+  (`document_properties`, `document_state`), over the shared `verify/fields.py` and `verify/markup.py`; batch 3's
+  `verify/tabs.py` (`TAB_KINDS`: `tab_stops`); `Ctx` gained
   `verified_parts`, `expected_removed`, `verified_members`, `member_strip` (see "V10's batch-2 hooks").
 - `verify/explain.py` — why a check failed, in specifics, from the check's own data and the record's predictions
   (`failure_details`, `text_change` word diffs with ⇥ ⍽ ⏎ made visible); `VerificationRecord.failures()` and the
@@ -980,7 +1029,8 @@ teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without
 (`tests/test_keyless.py`, 2026-10-16), 768 with the plan-time conflicts for what an op reads
 (`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
 (`tests/test_chain.py`, 2026-10-16), 963 with built-in operations batch 1 (2026-10-16), 1556 with master's bounded
-recovery and built-in operations batch 2 (2026-10-16) — all pass but four that skip in the Linux container: the
+recovery and built-in operations batch 2 (2026-10-16), 1600 with built-in operations batch 3
+(`tests/test_tab_stops.py`, `tests/test_color_selector.py`, 2026-10-16) — all pass but four that skip in the Linux container: the
 Windows-only Credential Manager round trip and three `tests/test_llm.py` tests that need the `anthropic` package; in the
 container `python3 -m pytest -q -s`).
 
@@ -1730,3 +1780,37 @@ listed above. Built by six parallel builders on the shared machinery (§1), then
    revisions, rejecting section/table property changes, highlight in styles, `w:removePersonalInformation`.
 10. **Profiles show the markup** (`profile.markup`) so Claude can see what a clean-up op would find; it is descriptive
     only (no op reads a profile).
+
+## Built-in operations, batch 3 (2026-10-16)
+
+Abraham: "Let's add more prebuilt operations" — items 22–25 (bold/italic/underline/caps/small caps on chosen paragraphs ★,
+page-flow settings ★, text colour, tab stops). `docs/BUILTIN_OPS_BATCH3_DESIGN.md` is the design with every decision
+(taken on his behalf, each changeable); README → "Built-in operations, batch 3" is the user's view; the both-sides
+definitions are listed above. Rules that came out of it:
+
+1. **Items 22–23 are `set_properties`** (built in the round's part 1). What changed is the guidance: "each PART on a new
+   page" is pageBreakBefore on every PART heading AFTER the first (the PART pattern + `after_heading_regex` of the same
+   pattern) so PART 1 stays under the section title; "no stranded article titles" is keepNext on the article titles;
+   widowControl is on by default (ECMA-376 §17.3.1.44). Worked examples: `part-on-new-page.json`.
+2. **Recolouring chooses by the effective colour** (`runs.color_in`): a style's blue counts; "black" is `auto` unless the
+   user asks for `000000`; Claude takes the colours from the profiles and names them in assumptions. `runs` narrowing alone
+   is not "targeted" (§14.1: plain); a `paragraphs` predicate is. Worked example: `editors-blue-to-black.json`.
+3. **`set_tab_stops` is direct formatting with an "already" rule**, like `set_properties` (not `set_paragraph_props`' blind
+   merge): a paragraph whose stops are already as asked is untouched and uncounted; tracked records a change only where
+   one happens. Inherited stops are cleared with clear entries, own ones removed.
+4. **Margin positions are measured, never guessed**: per paragraph from its section's text width; a header/footer part shown
+   at two widths, a section without page size/margins, footnotes/endnotes/comments, or a margin position landing on another
+   asked position refuse the file (`tab-position`, file-specific — never `bad-params`, batch 2 rule 5). The reads are
+   declared (rule 9).
+5. **Numbered paragraphs: only own entries are certain.** The op does not read list definitions (their `num` tab); an
+   explicit clear writes a clear entry on a numbered paragraph, `clear_others` leaves the list's tab and is flagged. Do not
+   "improve" this into reading numbering.xml without a both-sides definition of list levels (pStyle links, lvlOverride,
+   numStyleLink) and its tests.
+6. **The assertion carries the user's own words** (batch 2 rule 3): `select` and the raw `set`/`clear`/`clear_others`/
+   `tracked`; the kind applies its own defaults (align left, leader none, scope document, tracked by §14.1). Tests plant a
+   wrong default alignment and a wrong default scope shared by plan and apply.
+7. **pPr granularity unchanged** (rule 9): tabs, spacing/indents and paragraph flags on the same paragraph are separate specs.
+8. **Custom transforms** may emit a `tab_stops` assertion (`CUSTOM_TRANSFORM_LIMITS`: "tab stops of paragraphs").
+9. **Not in this batch** (recorded): tab stops in style definitions, bold/colour on part of a paragraph (run-in headings), a
+   list-level selector, theme colours as a value to set.
+

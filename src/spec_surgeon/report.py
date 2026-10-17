@@ -288,6 +288,13 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The font size asked for makes the watermark larger than this file's text area (its page size and margins are in "
         "the reason). Use a smaller size, or 'auto' to fit every page.",
     ),
+    "tab-position": (
+        "A Tab Stop Position Cannot Be Measured Here",
+        "A tab stop was asked at the right margin or the centre of the text, and this file's paragraph has no single text "
+        "width to measure it from: a header or footer shown by sections with different margins, a section without page "
+        "size and margins, a footnote or comment — or the margin position lands on another asked position. Give the "
+        "position in inches (twips) for this file, or make the sections' margins agree in Word.",
+    ),
     "no-part": (
         "The File Has No Such Properties Part",
         "The file has no document-properties part (or no settings part) for what was asked — another program wrote it "
