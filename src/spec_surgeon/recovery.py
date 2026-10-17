@@ -305,7 +305,14 @@ def _goals(goal):
         for op in spec.get("ops", []):
             if op.get("op") == "set_page_setup":
                 params = op.get("params") or {}
-                a = {"kind": "page_setup", "sections": (op.get("select") or {}).get("sections", "all")}
+                sections = (op.get("select") or {}).get("sections", "all")
+                if isinstance(sections, dict):
+                    # sections chosen by what they contain (built-in batch 5): the final page_setup check names
+                    # sections by index only, so none is inferred — the stage's own V10 re-derives the choice
+                    notes.append("A page setup that chooses sections by their content has no independent final "
+                                 "check yet; its stage verification re-derives which sections it changed.")
+                    continue
+                a = {"kind": "page_setup", "sections": sections}
                 a.update({k: copy.deepcopy(params[k]) for k in ("margins", "size", "orientation") if k in params})
                 if a.get("size") and a.get("orientation"):
                     width, height = a["size"]["w"], a["size"]["h"]
