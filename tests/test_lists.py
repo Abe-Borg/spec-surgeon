@@ -42,7 +42,9 @@ def fixture(name: str) -> bytes:
                         "typed-lead": lambda: build_typed(leading_tab=True),
                         "typed-spaces": lambda: build_typed(spaces=True), "scheme": build_scheme_example,
                         "styles": build_styles, "style-template": build_style_template,
-                        "default-style": _default_style_doc}[name]()
+                        "default-style": _default_style_doc, "override-restart": _override_restart_doc,
+                        "ambiguous": _ambiguous_doc, "style-link": _style_link_doc,
+                        "negative": _negative_doc}[name]()
     return _CACHE[name]
 
 
@@ -115,7 +117,7 @@ def assert_sides_agree(data: bytes, override_t=None, defs_pair=None) -> None:
 
 
 FIXTURES = ["numbering", "numbering-clean", "typed", "typed-typo", "typed-lead", "typed-spaces", "scheme", "styles",
-            "style-template", "default-style"]
+            "style-template", "default-style", "override-restart", "ambiguous", "style-link", "negative"]
 
 
 @pytest.mark.parametrize("name", FIXTURES)
@@ -163,6 +165,83 @@ SHARED = {k: ("shared",) for k in OUTLINE}
 DEFAULT_STYLE = {"One": "1.", "Two": "2.", "Three under Body": "3."}
 
 
+def _two_levels(aid: int, start0: int = 1, legal1: bool = False, link: str = "") -> str:
+    return (f'<w:abstractNum w:abstractNumId="{aid}">{link}'
+            f'<w:lvl w:ilvl="0"><w:start w:val="{start0}"/><w:numFmt w:val="decimal"/><w:lvlText w:val="%1."/></w:lvl>'
+            f'<w:lvl w:ilvl="1"><w:start w:val="1"/>{"<w:isLgl/>" if legal1 else ""}<w:lvlText w:val="%1.%2"/></w:lvl>'
+            f'<w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/><w:lvlText w:val="%3)"/></w:lvl>'
+            f'</w:abstractNum>')
+
+
+def _numbered(text: str, num: int, ilvl: Optional[int], extra: str = "") -> str:
+    lvl = f'<w:ilvl w:val="{ilvl}"/>' if ilvl is not None else ""
+    return _p(text, f"{extra}<w:numPr>{lvl}<w:numId w:val=\"{num}\"/></w:numPr>")
+
+
+def _override_restart_doc() -> bytes:
+    """List 1 gives level 1 a startOverride of 5. Its first start is certain ("1.5"); every later start — after a
+    level-0 paragraph — may be Word's w:start (1) or the override (5): those paragraphs, and everything showing or
+    counting that level until it is reset, are not evaluated."""
+    numbering = _two_levels(1) + ('<w:num w:numId="1"><w:abstractNumId w:val="1"/><w:lvlOverride w:ilvl="1">'
+                                  '<w:startOverride w:val="5"/></w:lvlOverride></w:num>')
+    order = [("o-a", 0), ("o-b", 1), ("o-c", 1), ("o-d", 2), ("o-e", 0), ("o-f", 1), ("o-g", 2), ("o-h", 1), ("o-i", 0),
+             ("o-j", 1)]
+    return mini_docx("".join(_numbered(t, 1, k) for t, k in order), "", numbering)
+
+
+OVERRIDE_RESTART = {"o-a": "1.", "o-b": "1.5", "o-c": "1.6", "o-d": "a)", "o-e": "2.", "o-f": ("start-override",),
+                    "o-g": ("start-override",), "o-h": ("start-override",), "o-i": "3.", "o-j": ("start-override",)}
+
+
+def _ambiguous_doc() -> bytes:
+    """Own numPr with a numId and no ilvl: level 0 — unless the style chain carries an ilvl other than 0 (Word may take
+    it, whether it inherits numPr as a unit or element by element): then the level is ambiguous, and the rest of that
+    list cannot be counted either."""
+    styles = ('<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>'
+              '<w:style w:type="paragraph" w:styleId="StyLvl"><w:name w:val="StyLvl"/><w:pPr><w:numPr>'
+              '<w:ilvl w:val="2"/></w:numPr></w:pPr></w:style>'
+              '<w:style w:type="paragraph" w:styleId="StyZero"><w:name w:val="StyZero"/><w:pPr><w:numPr>'
+              '<w:ilvl w:val="0"/><w:numId w:val="9"/></w:numPr></w:pPr></w:style>'
+              '<w:style w:type="paragraph" w:styleId="StyNoLvl"><w:name w:val="StyNoLvl"/><w:basedOn w:val="StyLvl"/>'
+              '<w:pPr><w:numPr><w:numId w:val="9"/></w:numPr></w:pPr></w:style>'
+              '<w:style w:type="paragraph" w:styleId="StyDeep"><w:name w:val="StyDeep"/><w:basedOn w:val="StyNoLvl"/>'
+              '</w:style>')
+    numbering = "".join(_two_levels(a) for a in (1, 2, 3, 4, 9)) + "".join(
+        f'<w:num w:numId="{n}"><w:abstractNumId w:val="{n}"/></w:num>' for n in (1, 2, 3, 4, 9))
+    body = (_numbered("amb-1", 1, None, '<w:pStyle w:val="StyLvl"/>')       # the style says level 2
+            + _numbered("amb-1b", 1, 0)                                     # list 1 after an unknown level
+            + _numbered("amb-2", 2, None, '<w:pStyle w:val="StyZero"/>')    # the style says level 0: no doubt
+            + _numbered("amb-3", 3, None)                                   # no style level at all
+            + _numbered("amb-4", 4, None, '<w:pStyle w:val="StyDeep"/>'))   # first numPr has none; an ancestor's has 2
+    return mini_docx(body, styles, numbering)
+
+
+AMBIGUOUS = {"amb-1": ("ambiguous-level",), "amb-1b": ("earlier",), "amb-2": "1.", "amb-3": "1.",
+             "amb-4": ("ambiguous-level",)}
+
+
+def _style_link_doc() -> bytes:
+    """List 1's abstractNum is the definition behind a numbering style (w:styleLink): unsupported."""
+    numbering = (_two_levels(1, link='<w:styleLink w:val="MyListStyle"/>') + _two_levels(2)
+                 + '<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>'
+                   '<w:num w:numId="2"><w:abstractNumId w:val="2"/></w:num>')
+    return mini_docx(_numbered("link-a", 1, 0) + _numbered("link-b", 2, 0), "", numbering)
+
+
+STYLE_LINK = {"link-a": ("unsupported",), "link-b": "1."}
+
+
+def _negative_doc() -> bytes:
+    """Level 0 starts at -2: no format shows a negative number (Word does not show "-1"), legal levels included."""
+    numbering = _two_levels(1, start0=-2, legal1=True) + '<w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>'
+    order = [("neg-a", 0), ("neg-b", 0), ("neg-c", 1), ("neg-d", 0), ("neg-e", 0), ("neg-f", 1)]
+    return mini_docx("".join(_numbered(t, 1, k) for t, k in order), "", numbering)
+
+
+NEGATIVE = {"neg-a": ("unsupported",), "neg-b": ("unsupported",), "neg-c": ("unsupported",), "neg-d": "0.",
+            "neg-e": "1.", "neg-f": "1.1"}
+
+
 def _default_style_doc() -> bytes:
     """A crafted file: the DEFAULT paragraph style ("Body") is numbered by list 5; "Other" is not; a paragraph whose
     w:pStyle is EMPTY names no style (unnumbered)."""
@@ -198,7 +277,8 @@ FORMAT_CASES = [("upperLetter", 1, "A"), ("upperLetter", 26, "Z"), ("upperLetter
                 ("upperRoman", 0, None), ("upperRoman", 4000, None), ("decimalZero", 0, "00"), ("decimalZero", 1, "01"),
                 ("decimalZero", 9, "09"), ("decimalZero", 10, "10"), ("decimalZero", 123, "123"),
                 ("decimal", 0, "0"), ("decimal", 12, "12"), ("none", 5, ""), ("ordinal", 1, None),
-                ("cardinalText", 1, None)]
+                ("cardinalText", 1, None),
+                ("decimal", -1, None), ("decimalZero", -3, None), ("none", -1, None)]   # no negative in any format
 
 
 def expectation_failures(side: str) -> List[str]:
@@ -212,7 +292,8 @@ def expectation_failures(side: str) -> List[str]:
         fails.append("a bullet shows its text")
     clean = dict(OUTLINE, **OTHER_LISTS, **{k + " counters": v for k, v in COUNTERS.items()})
     for name, want in (("numbering-clean", clean), ("numbering", dict(SHARED, **OTHER_LISTS)),
-                       ("default-style", DEFAULT_STYLE)):
+                       ("default-style", DEFAULT_STYLE), ("override-restart", OVERRIDE_RESTART),
+                       ("ambiguous", AMBIGUOUS), ("style-link", STYLE_LINK), ("negative", NEGATIVE)):
         got = observed(side, fixture(name))
         if name == "numbering":
             got = {k: v for k, v in got.items() if not k.endswith(" counters")}
@@ -673,6 +754,106 @@ def test_a_skipped_level_is_not_evaluated(side):
     assert reason.startswith(tl.SKIPPED if side == "t" else vl.V_SKIPPED) and "level 1" in reason
 
 
+@pytest.mark.parametrize("name", ["override-restart", "ambiguous", "style-link", "negative"])
+def test_the_review_rules_on_both_sides(name):
+    """(a) a startOverride level started again, (c) an ambiguous own level, (b) a list behind a numbering style, (d)
+    negative values — the expectations, the reasons and the counters."""
+    want = {"override-restart": OVERRIDE_RESTART, "ambiguous": AMBIGUOUS, "style-link": STYLE_LINK,
+            "negative": NEGATIVE}[name]
+    for side in ("t", "v"):
+        assert observed(side, fixture(name)) == want, side
+        s = TSide(fixture(name)) if side == "t" else VSide(fixture(name))
+        rows = {par_text(s.pars[x.index]): x for x in s.count()}
+        if name == "override-restart":
+            assert rows["o-c"].counters == (1, 6) and rows["o-f"].counters is None
+            assert rows["o-f"].not_evaluated.startswith(tl.START_OVERRIDE if side == "t" else vl.V_START_OVERRIDE)
+            assert rows["o-i"].counters == (3,)
+        if name == "ambiguous":
+            assert rows["amb-1"].ilvl is None and rows["amb-2"].ilvl == 0 and rows["amb-3"].ilvl == 0
+            nb = (tl.paragraph_numbering(s.pars[0], s.sheet, s.defs) if side == "t"
+                  else vl.v_paragraph_numbering(s.pars[0], s.styles, s.defs))
+            assert nb.ambiguous and nb.num_id == 1 and nb.unreadable
+        if name == "style-link":
+            clean = tl.list_is_clean if side == "t" else vl.v_list_is_clean
+            assert "styleLink" in clean(s.defs, 1, s.count()) and clean(s.defs, 2, s.count()) is None
+        if name == "negative":
+            assert rows["neg-a"].counters == (-2,) and rows["neg-c"].counters == (-1, 1)
+
+
+def test_count_reads_every_counted_paragraphs_style_chain(tmp_path):
+    """The reads a counting op declares (design §6): the chain of EVERY counted paragraph — an unnumbered one included —,
+    the missing styles a chain names (verify:add), the extra styles; never a text box's paragraph."""
+    from spec_surgeon.ops.selectors import StyleSheet as Sheet
+    styles = ('<w:style w:type="paragraph" w:default="1" w:styleId="Normal"><w:name w:val="Normal"/></w:style>'
+              '<w:style w:type="paragraph" w:styleId="Note"><w:name w:val="Note"/><w:basedOn w:val="Normal"/></w:style>'
+              '<w:style w:type="paragraph" w:styleId="Gone"><w:name w:val="Gone"/><w:basedOn w:val="NoSuch"/></w:style>'
+              '<w:style w:type="paragraph" w:styleId="Scheme"><w:name w:val="Scheme"/></w:style>')
+    body = _p("note", '<w:pStyle w:val="Note"/>') + _p("gone", '<w:pStyle w:val="Gone"/>') + \
+        _p("missing", '<w:pStyle w:val="Missing"/>') + \
+        _p("deleted", '<w:pStyle w:val="Scheme"/>', mark='<w:del w:id="1" w:author="a" w:date="2026-01-01T00:00:00Z"/>')
+    pkg = DocxPackage(mini_docx(body, styles, ""))
+    sheet = Sheet(pkg)
+    reads = set(tl.count_reads(pkg, sheet, []))
+    S = "word/styles.xml"
+    assert {(S, "style:Note", "verify:pPr"), (S, "style:Normal", "verify:pPr"), (S, "style:Gone", "verify:pPr"),
+            (S, "style:NoSuch", "verify:add"), (S, "style:Missing", "verify:add"), (NUMBERING, "*", "verify"),
+            (MAIN, "*", "verify-props:pStyle"), (MAIN, "*", "verify-props:numPr")} <= reads
+    assert (S, "style:Scheme", "verify:pPr") not in reads            # a pending deletion is not counted
+    assert (S, "style:Scheme", "verify:pPr") in set(tl.count_reads(pkg, sheet, [], extra_styles=["Scheme"]))
+    t = TSide(fixture("numbering-clean"))
+    reads = tl.count_reads(t.pkg, t.sheet, t.count())
+    assert len(reads) == len(set(reads))                                 # deduplicated
+    assert (MAIN, "4", "verify:numPr") in reads and (S, "style:ArchParaAlt", "verify:pPr") in reads
+
+
+def _note_doc(based_on: str) -> bytes:
+    from docx import Document
+    from make_fixtures import _add_style
+    d = Document()
+    _add_style(d, f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="Note"><w:name w:val="Note"/>'
+                  f'<w:basedOn w:val="{based_on}"/></w:style>')
+    d.add_paragraph("A note.", style="Note")
+    d.add_paragraph("Body text.")
+    buf = io.BytesIO(); d.save(buf)
+    return buf.getvalue()
+
+
+def test_a_style_replaced_under_an_unnumbered_paragraph_conflicts_with_a_count(tmp_path):
+    """The review's repro: the document's "Note" is unnumbered; the template's "Note" is based on a numbered style
+    (List Number, which both files hold). apply_style with existing=replace swaps the definition and the note becomes
+    numbered — a count planned beside it from the SOURCE would miss it. count_reads reads the chain of every counted
+    paragraph, so merge_fragments refuses the pair; the reads of numbered paragraphs' chains alone let it through."""
+    from spec_surgeon.ops import get_op, merge_fragments
+    from spec_surgeon.ops.base import PlanFragment
+    from spec_surgeon.ops.selectors import StyleSheet as Sheet
+    tpl = tmp_path / "TEMPLATE.docx"
+    tpl.write_bytes(_note_doc("ListNumber"))
+    pkg = DocxPackage(_note_doc("Normal"))
+    sheet = Sheet(pkg)
+    pars = tl.count(pkg.xml(pkg.main_part()), sheet, tl.ListDefs.load(pkg))
+    assert pars == []                                                   # nothing is numbered in the source
+
+    def apply():
+        return get_op("apply_style").plan(pkg, {"paragraphs": {"style_in": ["Note"]}},
+                                          {"style": "Note", "template": str(tpl), "existing": "replace"})
+
+    def counter(touches):
+        return PlanFragment(job="audit_numbering", mode="formatting", params={}, intended_parts=[],
+                            op="audit_numbering", touches=list(touches))
+    reads = tl.count_reads(pkg, sheet, pars)
+    with pytest.raises(JobException) as e:
+        merge_fragments([apply(), counter(reads)])
+    assert e.value.code == "conflict" and "style:Note" in str(e.value)
+    numbered_chains_only = [r for r in reads if not r[1].startswith("style:")]     # the helper before the review
+    plan = merge_fragments([apply(), counter(numbered_chains_only)])
+    assert plan.ops
+    work = pkg.copy()                                                    # and the count really changes
+    get_op("apply_style").apply(work, apply())
+    out = DocxPackage(work.output_bytes())
+    got = tl.count(out.xml(out.main_part()), Sheet(out), tl.ListDefs.load(out))
+    assert [(par_text(list(out.xml(out.main_part()).iter(W + "p"))[x.index]), x.text) for x in got] == [("A note.", "1.")]
+
+
 def test_levels_carrying_a_restart_rule():
     """LibreOffice ignores w:lvlRestart: the model reads it as Word does, and the levels carrying one are listed for a
     flag."""
@@ -725,6 +906,13 @@ DEFECTS = {
         ("counted", "v_counted", lambda real: lambda p: real(p) or any(a.tag == W + "txbxContent"
                                                                        for a in p.iterancestors()))],
     "a skipped level shows its start": [("skipped_level", "_v_skipped", lambda real: lambda text, has: None)],
+    "startOverride reapplied on every restart": [
+        ("override_restart_uncertain", "_v_override_restart", lambda real: lambda nth, override: False)],
+    "an own list without a level always takes level 0": [
+        ("chain_ilvl", "_v_chain_ilvl", lambda real: lambda styles, sid: None)],
+    "negative numbers shown": [("format_value", "v_format_value",
+                                lambda real: lambda fmt, n, text=None: str(n) if n < 0 and fmt in ("decimal", "decimalZero")
+                                else real(fmt, n, text))],
 }
 
 
