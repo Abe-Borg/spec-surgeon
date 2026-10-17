@@ -495,4 +495,16 @@ are flagged (LibreOffice shows them at level 0).
 
 **Decisions left for Abraham** (recorded, not built): a typed spec without `word/numbering.xml` is refused (rule 10: the
 engine never creates a part — Word creates the part once any list is used); a scheme with both a roman and a letter
-level refuses roman typed PARTs as ambiguous (a typed "II." also reads as the letter level).
+level refuses roman typed PARTs as ambiguous (a typed "II." also reads as the letter level). And, from the merge with master
+below: compact the op catalog or raise the default context allowance.
+
+**Tests and the merge with master**: 2429 tests pass on the batch alone, 4 skip (the Windows-only Credential Manager round
+trip and three tests that need the `anthropic` package). Master's adaptive workspaces and correlated diagnostics (#29,
+#33) landed beside it; merged, 2838 pass and the same 4 skip. The merge found one interaction: every conversation's system
+prompt carries the whole op catalog, and this batch's six operations, their schema and nine worked examples took the
+first request from about 86,500 to about 105,000 estimated tokens of master's 120,000-token working context
+(`resources.DEFAULT_CONTEXT_TOKENS`, 3 bytes a token, 4,784 an image), so a conversation viewing a third page starts a new
+context epoch. `tests/test_vision.py`'s image-allowance test failed on that rollover; it now sets its own allowance, as
+master's rollover test already did, and `tests/test_contexts.py` guards the headroom left (a conversation viewing two pages
+must stay in its first epoch: about 5,300 estimated tokens to spare). Whether to compact the catalog (the schema repeats every op's parameters; the worked examples are
+sent whole) or raise the allowance is left for Abraham.
