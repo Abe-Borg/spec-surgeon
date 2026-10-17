@@ -65,6 +65,13 @@ in the same pPr — one ``w:pPrChange`` per paragraph when tracked):
   pPr then counts as changed. ``changes_needed(d, ppr_changes=False)`` is the number of revision ids it consumes
   tracked.
 * ``clear_rpr(rpr, names, stamp=None, next_id=0) -> (next_id, emptied)`` — one rPr (a run's or a mark's).
+* ``emptying_reads(p, d, tracked) -> [names]`` — the pPr children a plain mark-emptying clear depends on (see below).
+
+Touches (rule 9): ``(part, block, "rPr")`` per block with a cleared run, ``(part, block, "markRPr")`` per cleared mark,
+``(part, block, "pPr")`` and ``(part, block, <name>)`` for every pPr child cleared, ``(part, "scope", "verify")`` per part
+in scope; and, for a paragraph whose mark a plain clear empties while its pPr is otherwise untouched, the soft reads
+``(part, block, "verify-props:<name>")`` of ``emptying_reads`` — the pPr then goes when nothing else is left, which
+depends on those children should another op remove them.
 """
 from __future__ import annotations
 
@@ -76,7 +83,7 @@ from ..package import W, DocxPackage
 from ..ooxml import (RevisionStamp, block_full_text, file_uses_date_utc, max_revision_id, paragraph_ppr, paragraphs,
                      property_change)
 from . import register
-from .base import JobException, Op, PlanFragment
+from .base import VERIFY_PROPS, JobException, Op, PlanFragment
 from .replace_text import default_author
 from .selectors import (DEFAULT_PRESERVE_FONTS, StyleSheet, check_paragraph_selector, check_run_selector, in_revision,
                         is_symbol_rpr, is_targeted, mark_in_revision, paragraph_selected, rpr_selected,
@@ -93,6 +100,9 @@ PARA_CLEARED: Tuple[str, ...] = (
 PARA_OPT_IN: Tuple[str, ...] = ("outlineLvl", "framePr", "suppressOverlap")
 SYMBOL_KEPT: FrozenSet[str] = frozenset({"rFonts", "caps", "smallCaps"})      # a symbol run's glyphs depend on them
 KNOWN_NAMES: FrozenSet[str] = frozenset(RUN_CLEARED + RUN_OPT_IN + PARA_CLEARED + PARA_OPT_IN)
+# paragraph properties a formatting op may take away (this op, set_tab_stops' tabs, set_borders_shading's pBdr/shd —
+# each declares the element by name); pStyle, numPr, sectPr … are never removed, so a pPr holding one never empties
+REMOVABLE_PPR: FrozenSet[str] = frozenset(PARA_CLEARED + PARA_OPT_IN)
 REFLOW_REASON = ("clearing direct formatting changes fonts, sizes, spacing and indents back to the styles' values; text "
                  "reflows, so the source render is no layout reference")
 SCOPE_SCHEMA = {"type": "array", "items": {"type": "string", "enum": ["document", "headers", "footers", "footnotes",
@@ -233,6 +243,34 @@ def check_markers(p, runs: Sequence, d: ParagraphClearing, tracked: bool, where:
                                    "tracked-format", {"where": where})
             older_p += 1
     return older_r, older_p
+
+
+def emptying_reads(p, d: ParagraphClearing, tracked: bool) -> List[str]:
+    """What a plain clear that empties the paragraph mark (and changes nothing else in the pPr) depends on: it removes
+    the pPr when nothing else is left (``clear_paragraph``), so whether the pPr goes depends on its other children should
+    another op remove them — and an op that removes one leaves an emptied pPr by its own rule, which differs by order.
+    Returns the names of those other children, to declare as soft reads (``verify-props:<name>``): an op removing or
+    changing one of them (it declares the element by name) is then a plan-time conflict. Only when every other child is
+    a property some op may remove (``REMOVABLE_PPR``) — a pStyle, numPr or sectPr keeps the pPr in either order — and
+    none when the pPr holds only the mark (an op adding a child gives the same file in either order)."""
+    if tracked or d.mark is None or d.ppr:
+        return []
+    ppr = p.find(W + "pPr")
+    mrpr = ppr.find(W + "rPr") if ppr is not None else None
+    if mrpr is None or mrpr.attrib:
+        return []
+    wanted = set(d.mark)
+    if any(not (isinstance(c.tag, str) and c.tag.startswith(W) and c.tag[len(W):] in wanted) for c in mrpr):
+        return []                                           # the mark keeps something: the pPr stays
+    others = [c for c in ppr if c is not mrpr]
+    if ppr.attrib or not others:
+        return []
+    names = set()
+    for c in others:
+        if not (isinstance(c.tag, str) and c.tag.startswith(W) and c.tag[len(W):] in REMOVABLE_PPR):
+            return []
+        names.add(c.tag[len(W):])
+    return sorted(names)
 
 
 def changes_needed(d: ParagraphClearing, ppr_changes: bool = False) -> int:
@@ -418,6 +456,9 @@ class ClearDirectFormatting(Op):
                     if mark:
                         exp["marks"].append(bi)
                         frag.touches.append((part, str(bi), "markRPr"))
+                        frag.touches += [(part, str(bi), f"{VERIFY_PROPS}:{name}")
+                                         for name in emptying_reads(pars[bi], ParagraphClearing(mark=mark, ppr=ppr),
+                                                                    tracked)]
                     if ppr:
                         exp["paras"].append(bi)
                         # the pPr as a whole, and each cleared child by name: an op reading one of them in the

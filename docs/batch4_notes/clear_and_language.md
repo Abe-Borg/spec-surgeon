@@ -259,3 +259,47 @@ Verifier side, `spec_surgeon.verify.clearing` (module docstring, "Reuse"):
 ## (h) Test count
 
 44 new tests (`tests/test_clear_formatting.py` 28, `tests/test_language.py` 16). Full suite in the container (`PYTHONPATH=src QT_QPA_PLATFORM=offscreen python3 -m pytest -q -s`), with the two catalog entries absent: 1643 passed, 1 failed (`test_planner.py::test_catalog_and_schema_cover_every_op` — the missing `COMMON_ASSUMPTIONS` above), 4 skipped (baseline 1600 + 4 skipped). With the two entries pasted into `catalog.py` that test passes too (checked: `test_planner.py` + both new files, 54 passed), so 1644 passed, 4 skipped once the catalog is integrated.
+
+## Review round (after the integration at 880ac35)
+
+**F1 — the clearing check was stricter than the op declared.** `verify/clearing.py` now compares a paragraph's other
+pPr children only where the op changed the pPr (it declares `pPr` and every cleared name), places the mark's rPr
+(`MARK`) only where the op changed the mark (it declares `markRPr`), and judges "an emptied pPr goes" on the OUTPUT
+(`check_empty_ppr`: an empty `w:pPr` left in a paragraph the op changed fails, whichever op of the spec applied first;
+an absent pPr counts as empty for the attribute and marker checks, so someone's `w:pPrChange` may not vanish with it).
+The residual compares everything else, as before. Reuse API, backward compatible (positional calls unchanged):
+`v_expected_ppr(S, gone, mark_stays, mark=True)`, `v_ppr_sequence(O, mark=True)`,
+`check_cleared_ppr(S, O, expected, tracked, author, where, errs, changed=True, mark=True)`, new
+`check_empty_ppr(O, where, errs)`. `mark=False` leaves the mark's rPr out of both sequences — apply_style should pass
+`mark=(d is not None and d.mark is not None)` to both calls (checked in a scratch run: b6's and t3's apply_style cases then
+pass in both orders).
+
+The one order dependence left by the plan side: a plain clear that empties a mark removes the pPr when nothing else is
+left, and `set_tab_stops` leaves an emptied pPr in place by its own rule — so `[clear(mark), tab op removing the tabs]`
+and the reverse gave different files (and the tab kind failed "no pPr in the output" in one order, the clear's emptiness
+rule in the other). `clear_formatting.emptying_reads(p, d, tracked)` gives the pPr's other children a plain
+mark-emptying clear depends on, declared as soft reads `(part, bi, "verify-props:<name>")` — only when every one of them
+is a property some op may remove (`REMOVABLE_PPR` = the cleared and opt-in paragraph names: tabs, pBdr, shd, …); none when
+a pStyle/numPr/sectPr stays (the pPr never empties) or when the pPr holds only the mark (an op adding a child gives the
+same file in either order). So clear(mark) + set_tab_stops removing the paragraph's only other child is a plan-time
+conflict, while clear(mark) beside apply_style / set_tab_stops / set_properties flags / set_paragraph_props /
+set_borders_shading adding to the pPr plans and verifies in both orders.
+
+**F2 — set_language's post-condition reads every style reference.** It now declares, per text part, the whole-member soft
+reads `(part, "*", "verify-props:pStyle")`, `(part, "*", "verify-props:rStyle")`, `(part, "*", "verify-props:tblPr")`:
+apply_style and map_styles (paragraph, table — and character once map_styles declares `(part, bi, "rStyle")`) beside it
+are plan-time conflicts in both orders; a replace_text edit still plans and verifies (a soft read is not reached by
+`text`).
+
+**F4 — duplicate style ids.** The op and the kind work on the LAST `w:style` of a repeated id (`StyleSheet` and
+`Styles.by_id` both keep it); the test changing the FIRST duplicate fails V10 only once `_residual_styles` strips just the
+last element per id (the coordinator's fix).
+
+Tests added: `test_clear_formatting.py` +9 (the whole-document clear beside set_font in both orders; mark clear beside
+four pPr ops in both orders; pPr clear beside remove_highlight in both orders; the emptying-reads conflict and its two
+non-conflicts; emptied pPr left in place still fails, for a paragraph clear, a mark clear and beside set_font; the
+`mark=False` reuse keyword); `test_language.py` +7 (four restyles × both orders; the soft reads reached by a restyle of
+one paragraph/run/table; replace_text still plans and verifies; the first duplicate). Two of them wait on the
+coordinator's pending changes: `test_a_language_change_beside_a_restyle_conflicts_in_either_order[map_styles character]`
+(map_styles' `rStyle` touch) and `test_a_change_to_the_first_of_two_styles_with_one_id_is_caught` (`_residual_styles`);
+both pass with those two changes simulated in memory.
