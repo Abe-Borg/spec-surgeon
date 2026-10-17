@@ -181,10 +181,10 @@ def test_restart_after_a_level(clean):
     got = numbers(out)
     assert (got["NFPA 13."], got["UL listings."], got["Shop drawings."], got["Tyco."]) == ("E.", "G.", "H.", "A.")
     assert any("LibreOffice" in f for f in plan.flags)
-    # back to restarting after any higher level: the element goes
-    plan2, out2, rec2 = run(out, level({"style": "ArchPara", "restart": "after_higher"}))
-    assert rec2.passed, rec2.to_markdown()
-    assert lvl_of(out2, 10, 2).find(W + "lvlRestart") is None and numbers(out2) == numbers(clean)
+    # back to restarting after any higher level: "Product data." (level 3) would skip level 2 again, and the three
+    # letters after it would no longer be predictable (Word and LibreOffice count them differently) — refused, as
+    # the plan sees what V10 would check
+    assert "Shop drawings." in _refused(out, "list-level", style="ArchPara", restart="after_higher")
 
 
 def test_already_as_asked_is_a_no_op_with_a_note(clean):
@@ -479,3 +479,171 @@ def test_catalog_explanations_and_worked_examples(clean):
         out = apply_spec(pkg, frags).output_bytes()
         rec = run_suite(clean, out, plan.to_dict(), "src.docx", "out.docx")
         assert rec.passed and bool(plan.intended_parts) == expect_change, name
+
+
+# ---- the adversarial review's findings (each test fails without its fix) ---------------------------------------------
+
+def _relinked(clean: bytes) -> bytes:
+    """Every paragraph the outline (num 10) numbers gets a DIRECT numPr naming num 15 → abstractNum 14, a copy of
+    abstractNum 10 (what Word leaves after paragraphs were re-numbered through the ribbon) — the review's repro."""
+    pkg = DocxPackage(clean)
+    root = pkg.xml(MAIN)
+    levels = {np_.index: np_.ilvl for np_ in tl.count(root, StyleSheet(pkg), tl.ListDefs.load(pkg)) if np_.num_id == 10}
+
+    def numbering(r):
+        a14 = copy.deepcopy(abstract(r, 10))
+        a14.set(W + "abstractNumId", "14")
+        a14.find(W + "nsid").set(W + "val", "5A5A0014")
+        abstract(r, 10).addnext(a14)
+        r.findall(W + "num")[-1].addnext(etree.fromstring(
+            f'<w:num {WD} w:numId="15"><w:abstractNumId w:val="14"/></w:num>'))
+
+    def main(r):
+        ps = list(r.iter(W + "p"))
+        for i, k in levels.items():
+            ppr = ps[i].find(W + "pPr")
+            old = ppr.find(W + "numPr")
+            new = etree.fromstring(f'<w:numPr {WD}><w:ilvl w:val="{k}"/><w:numId w:val="15"/></w:numPr>')
+            if old is not None:
+                ppr.replace(old, new)
+            else:
+                ppr.find(W + "pStyle").addnext(new)
+    return patch_docx(clean, {NUMBERING: numbering, MAIN: main})
+
+
+def _par_by_text(root, text: str):
+    return next(p for p in root.iter(W + "p") if "".join(t.text or "" for t in p.iter(W + "t")) == text)
+
+
+def test_a_change_that_reaches_none_of_the_styles_paragraphs_is_flagged(clean):
+    """Item 2: the style's paragraphs are numbered by another list (num 15): the change to the style's list reaches no
+    paragraph — flagged; a style partly elsewhere is named with the list its other paragraphs are numbered by."""
+    data = _relinked(clean)
+    plan, out, rec = run(data, level({"style": "Arch Article", "zero_pad": False}))
+    assert rec.passed and numbers(out)["SUMMARY"] == "1.01"
+    assert any("no counted paragraph is numbered at this level, so this change reaches no paragraph" in f
+               for f in plan.flags), plan.flags
+
+    def back_to_the_style(r):
+        ppr = _par_by_text(r, "SUMMARY").find(W + "pPr")
+        ppr.remove(ppr.find(W + "numPr"))
+    one = patch_docx(data, {MAIN: back_to_the_style})
+    plan, out, rec = run(one, level({"style": "Arch Article", "zero_pad": False}))
+    assert rec.passed
+    assert any("7 of the 8 numbered paragraph(s) of style ArchArt are not numbered at this level — 7 by list 15 level 1"
+               in f and "the change does not reach them" in f for f in plan.flags), plan.flags
+    plan, out, rec = run(clean, level({"style": "Arch Article", "zero_pad": False}))
+    assert not any("not numbered at this level" in f or "reaches no paragraph" in f for f in plan.flags)
+
+
+def test_stale_cross_references_are_flagged(clean):
+    """Item 4: 1.02 → 1.2 leaves the REF field cached "1.02" and the written "Article 1.02" stale: both flagged, with the
+    wording convert_numbering uses (the shared ops/numbering_flags.py)."""
+    plan, out, rec = run(clean, level({"style": "Arch Article", "zero_pad": False}))
+    assert rec.passed
+    flags = "\n".join(plan.flags)
+    assert ("1 cross-reference field(s) point at paragraphs whose number changes; their shown number is a cached "
+            "result that goes stale until fields are updated in Word: REF _Ref1001 → ‘REFERENCES’") in flags
+    assert ("written references to old numbers that change (content: flagged, never edited): '1.02' (now '1.2') in "
+            "‘Calculations, as specified in Article 1…’") in flags
+
+
+def test_after_level_one_above_is_after_any_higher_level(clean):
+    """Item 5: {after_level: level − 1} means what "after_higher" means — already as asked, no element written, no
+    LibreOffice flag; on a level that never restarted, it removes the rule (the normal form)."""
+    plan, out, rec = run(clean, level({"style": "ArchPara", "restart": {"after_level": 1}}))
+    assert rec.passed and out == clean and any("already as asked" in n for n in plan.notes)
+    assert not any("LibreOffice ignores the restart rule" in f for f in plan.flags)
+    never = numbering_edit(clean, lambda r: abstract(r, 10).findall(W + "lvl")[4].find(W + "numFmt").addnext(
+        etree.fromstring(f'<w:lvlRestart {WD} w:val="0"/>')))
+    plan, out, rec = run(never, level({"style": "ArchSub2", "restart": {"after_level": 3}}))
+    assert rec.passed and lvl_of(out, 10, 4).find(W + "lvlRestart") is None
+    assert not any("LibreOffice ignores the restart rule" in f for f in plan.flags)
+    assert sll.restart_in_effect(2, 2) is None and sll.restart_in_effect(1, 2) == 1
+
+
+def test_a_shared_definition_says_how_many_paragraphs_are_not_evaluated(shared):
+    """Item 6: a format change on a shared definition reaches every article, none of which is evaluated."""
+    plan, out, rec = run(shared, level({"style": "Arch Article", "zero_pad": False}))
+    assert rec.passed
+    assert any("8 paragraph(s) at this level" in n and "8 paragraph(s) at this level are not evaluated" in n
+               for n in plan.notes), plan.notes
+    assert any("8 of the 8 paragraph(s) at this level are not evaluated (shared list definition" in f and
+               "neither predicted nor checked" in f for f in plan.flags), plan.flags
+
+
+def test_shared_with_names_only_lists_that_number_paragraphs(clean):
+    """Item 8: an orphan num of the same definition (it numbers nothing) is not named."""
+    data = numbering_edit(clean, lambda r: r.findall(W + "num")[-1].addnext(etree.fromstring(
+        f'<w:num {WD} w:numId="12"><w:abstractNumId w:val="10"/></w:num>')))
+    plan, out, rec = run(data, level({"style": "Arch Article", "zero_pad": False}))
+    assert rec.passed and not any("shared with list(s)" in f for f in plan.flags)
+    plan, out, rec = run(build_numbering(shared_restart=True), level({"style": "Arch Article", "zero_pad": False}))
+    assert any("shared with list(s) [11]" in f for f in plan.flags)
+
+
+def test_a_linked_level_is_flagged(clean):
+    """Item 9: the paragraphs of Arch Paragraph take level 2 from the link (their style names the list without a level):
+    LibreOffice shows them at level 0 — flagged; without links in the list, nothing is linked."""
+    plan, out, rec = run(clean, level({"style": "Arch Paragraph", "format": "lowerLetter"}))
+    assert rec.passed
+    assert any("take their level from a LINKED level" in f and "LibreOffice shows them at level 0" in f
+               for f in plan.flags)
+
+    def unlink(r):
+        for lvl in abstract(r, 10).findall(W + "lvl"):
+            if lvl.find(W + "pStyle") is not None:
+                lvl.remove(lvl.find(W + "pStyle"))
+    pkg = DocxPackage(numbering_edit(clean, unlink))
+    assert not any(p.linked for p in tl.count(pkg.xml(MAIN), StyleSheet(pkg), tl.ListDefs.load(pkg)))
+
+
+def test_a_style_numbered_two_ways_refuses(clean):
+    """Item 1 through the op: a style holding only its level, based on the style naming the list (Heading 2 under
+    Heading 1) — the level is ambiguous, so set_list_level refuses instead of changing the base style's level."""
+    from make_fixtures import build_scheme_example
+
+    def styles(r):
+        art = next(s for s in r.findall(W + "style") if s.get(W + "styleId") == "ART")
+        art.find(W + "basedOn").set(W + "val", "PRT")
+        numpr = art.find(W + "pPr/" + W + "numPr")
+        numpr.remove(numpr.find(W + "numId"))
+    data = patch_docx(build_scheme_example(), {STYLES: styles})
+    assert "ambiguous" in _refused(data, "numbering-unsupported", style="ART", start=5)
+
+
+def test_a_definition_behind_a_numbering_style_refuses(clean):
+    """The review's styleLink finding (fixed by the list-model hardening), kept: the definition carries w:styleLink."""
+    data = numbering_edit(clean, lambda r: abstract(r, 10).find(W + "multiLevelType").addnext(
+        etree.fromstring(f'<w:styleLink {WD} w:val="OutlineList"/>')))
+    _refused(data, "numbering-unsupported", style="ArchArt", zero_pad=False)
+
+
+def test_an_import_that_numbers_unnumbered_paragraphs_is_a_conflict(clean, tmp_path):
+    """The review's count_reads finding (fixed by the list-model hardening: the chains of EVERY counted paragraph are
+    read), kept: apply_style replacing an unnumbered style with one based on a numbered style numbers its paragraphs —
+    beside set_list_level or the audit's fix that is a plan-time conflict, never a V10 failure after apply."""
+    from docx import Document
+
+    def styles(r):
+        r.append(etree.fromstring(
+            f'<w:style {WD} w:type="paragraph" w:customStyle="1" w:styleId="SpecNote"><w:name w:val="Spec Note"/>'
+            f'<w:basedOn w:val="Normal"/><w:rPr><w:i/></w:rPr></w:style>'))
+
+    def main(r):
+        steel = _par_by_text(r, "Steel pipe.")
+        steel.addnext(etree.fromstring(f'<w:p {WD}><w:pPr><w:pStyle w:val="SpecNote"/></w:pPr>'
+                                       f'<w:r><w:t>Note one.</w:t></w:r></w:p>'))
+    data = patch_docx(clean, {STYLES: styles, MAIN: main})
+    doc = Document()
+    for xml in ('<w:style w:type="paragraph" w:customStyle="1" w:styleId="ArchPara"><w:name w:val="Arch Paragraph"/>'
+                '<w:basedOn w:val="Normal"/></w:style>',
+                '<w:style w:type="paragraph" w:customStyle="1" w:styleId="SpecNote"><w:name w:val="Spec Note"/>'
+                '<w:basedOn w:val="ArchPara"/><w:rPr><w:i/></w:rPr></w:style>'):
+        doc.styles.element.append(etree.fromstring(xml.replace("<w:style ", f"<w:style {WD} ", 1)))
+    tpl = tmp_path / "TPL.docx"
+    doc.save(str(tpl))
+    importing = {"op": "apply_style", "select": {"paragraphs": {"style_in": ["SpecNote"]}},
+                 "params": {"style": "SpecNote", "template": str(tpl), "existing": "replace", "tracked": False}}
+    conflict(data, level({"style": "Arch Article", "zero_pad": False}), importing)
+    conflict(data, {"op": "audit_numbering", "params": {"unnumber_empty": True}}, importing)

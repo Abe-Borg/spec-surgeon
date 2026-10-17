@@ -14,9 +14,14 @@ here comes from ops/ (rule 1): the numbering part is read through ``reader.VPack
   ``mc:AlternateContent``, a format outside the eight, a suffix outside tab/space/nothing;
 * a paragraph's numbering: its own numPr (numId, ilvl), else the first style on its chain (pStyle — empty names none —,
   else the default paragraph style; basedOn, cycle-safe) whose own numPr holds a numId, that style's ilvl, else the lowest
-  level naming that style, else 0; a direct numId without ilvl → 0, unless the first ``w:numPr/w:ilvl`` along the style
-  chain is there and not 0 — then the level is AMBIGUOUS (Word may take the style's), counted ``ambiguous-level`` and
-  blocking the rest of the list like an unreadable one; 0 or none → unnumbered; undefined → dangling;
+  level naming that style (``linked``), else 0; a direct numId without ilvl → 0, unless the first ``w:numPr/w:ilvl``
+  along the style chain is there and not 0 — then the level is AMBIGUOUS (Word may take the style's), counted
+  ``ambiguous-level`` and blocking the rest of the list like an unreadable one; a list named by a style and no own
+  ilvl: the level read as a unit (above: the numId's style's ilvl, else its link, else 0) and the level read element by
+  element (``_v_by_element``: the first own ilvl along the chain, nearest first — or the link at the numId's style
+  itself when it has no ilvl —, else 0) must agree, else AMBIGUOUS the same way (a nearer style holding only an ilvl;
+  an ilvl beyond a numId style with neither an ilvl nor a link); a level from the link under both readings is marked
+  ``linked`` (LibreOffice ignores links); 0 or none → unnumbered; undefined → dangling;
 * formats: a negative value is shown by no format (decimal included);
 * counting over ``root.iter(w:p)``, text boxes and pending-deletion marks left out, per numId: restarts (none → always,
   0 → never, r ≥ 1 → when L ≤ r − 1, ignored when r − 1 ≥ k — Word's reading; LibreOffice ignores ``w:lvlRestart``
@@ -28,7 +33,9 @@ here comes from ops/ (rule 1): the numbering part is read through ``reader.VPack
   ``start-override`` (a level 0…L or a named level holds an uncertain value; counters None), ``unsupported`` (the
   level, a level its text names, a value) and
   ``skipped`` (a ``%j`` naming a level with no current value — never reached, or restarted: Word, LibreOffice and a model
-  showing the start disagree there; the counters are kept);
+  showing the start disagree there; the counters are kept; or a paragraph AT, or naming, a level that a deeper paragraph
+  was counted without — ``_v_skipped_below`` —, until a restart resets it: LibreOffice started that level then, Word
+  starts it when it next comes; the counters are None);
 * the scheme (raises ValueError: the op must refuse ``scheme`` / ``bad-params``), the level patterns, typed numbers,
   the visible line, the main abstractNum and the clean destination list.
 
@@ -277,6 +284,7 @@ class VNumbering(NamedTuple):
     dangling: bool
     unreadable: Optional[str]
     ambiguous: bool = False
+    linked: bool = False
 
 
 def v_paragraph_style(p, styles: Styles) -> Optional[str]:
@@ -303,12 +311,27 @@ def _v_chain_ilvl(styles: Styles, sid: Optional[str]):
     return found[0] if found else None
 
 
+def _v_by_element(styles: Styles, sid: Optional[str], list_style: Optional[str], defs: "VListDefs", nid: int):
+    """The element-by-element level of a paragraph of style ``sid`` whose list ``nid`` style ``list_style`` names: the
+    first own w:numPr/w:ilvl along the chain — or the linked level at ``list_style`` itself when it has no ilvl —; None
+    when neither (the level is then 0)."""
+    for st in styles.chain(sid):
+        own = st.find(W + "pPr/" + W + "numPr/" + W + "ilvl")
+        if own is not None:
+            return own
+        if st.get(W + "styleId") == list_style:
+            link = _v_linked_level(defs, nid, list_style)
+            if link is not None:
+                return link
+    return None
+
+
 def _v_linked_level(defs: VListDefs, nid: int, sid: Optional[str]) -> Optional[int]:
     hits = [k for k, lv in defs.levels_of(nid).items() if sid and lv.pstyle == sid]
     return min(hits) if hits else None
 
 
-def _v_resolve(own_num, own_lvl, from_style, defs: VListDefs, chain_lvl=None) -> Optional[VNumbering]:
+def _v_resolve(own_num, own_lvl, from_style, defs: VListDefs, chain_lvl=None, by_element=None) -> Optional[VNumbering]:
     if not defs.present:
         return None
     if own_num is not None:
@@ -330,14 +353,26 @@ def _v_resolve(own_num, own_lvl, from_style, defs: VListDefs, chain_lvl=None) ->
         k = _v_lvl_index(lvl_el.get(W + "val"))
         if k is None:
             return VNumbering(nid, None, src, sid, False, f"ilvl {lvl_el.get(W + 'val')!r} cannot be read")
-        return VNumbering(nid, k, src, sid, False, None)
-    if src == "direct":
+        if own_lvl is not None:
+            return VNumbering(nid, k, src, sid, False, None)
+        is_linked = False
+    elif src == "direct":
         if chain_lvl is not None and _v_int(chain_lvl.get(W + "val")) != 0:
             return VNumbering(nid, None, src, sid, False, f"no own ilvl, the style chain's ilvl is "
                                                           f"{chain_lvl.get(W + 'val')!r}", True)
         return VNumbering(nid, 0, src, sid, False, None)
-    linked = _v_linked_level(defs, nid, sid)
-    return VNumbering(nid, 0 if linked is None else linked, src, sid, False, None)
+    else:
+        link = _v_linked_level(defs, nid, sid)
+        k, is_linked = (0, False) if link is None else (link, True)
+    if by_element is not None:                 # read element by element: the same level, or ambiguous
+        e = by_element(nid, sid)
+        other = 0 if e is None else (e if isinstance(e, int) else _v_lvl_index(e.get(W + "val")))
+        if other != k:
+            return VNumbering(nid, None, src, sid, False,
+                              f"style {sid} gives list {nid} level {k} as a unit, a style's own level "
+                              f"{e if isinstance(e, int) or e is None else e.get(W + 'val')!r} element by element",
+                              True)
+    return VNumbering(nid, k, src, sid, False, None, False, is_linked)
 
 
 def v_paragraph_numbering(p, styles: Styles, defs: VListDefs) -> Optional[VNumbering]:
@@ -345,14 +380,16 @@ def v_paragraph_numbering(p, styles: Styles, defs: VListDefs) -> Optional[VNumbe
     own_num = None if numpr is None else numpr.find(W + "numId")
     own_lvl = None if numpr is None else numpr.find(W + "ilvl")
     chain_lvl = None
+    mine = v_paragraph_style(p, styles)
     if own_num is not None and own_lvl is None:
-        chain_lvl = _v_chain_ilvl(styles, v_paragraph_style(p, styles))
-    return _v_resolve(own_num, own_lvl,
-                      _v_from_styles(styles, v_paragraph_style(p, styles)) if own_num is None else None, defs, chain_lvl)
+        chain_lvl = _v_chain_ilvl(styles, mine)
+    return _v_resolve(own_num, own_lvl, _v_from_styles(styles, mine) if own_num is None else None, defs, chain_lvl,
+                      lambda nid, list_style: _v_by_element(styles, mine, list_style, defs, nid))
 
 
 def v_style_numbering(sid: Optional[str], styles: Styles, defs: VListDefs) -> Optional[VNumbering]:
-    return _v_resolve(None, None, _v_from_styles(styles, sid), defs)
+    return _v_resolve(None, None, _v_from_styles(styles, sid), defs,
+                      by_element=lambda nid, list_style: _v_by_element(styles, sid, list_style, defs, nid))
 
 
 # ---- formats ---------------------------------------------------------------------------------------------------------
@@ -429,6 +466,11 @@ def _v_skipped(text: str, vals: Dict[int, int]) -> Optional[int]:
     return None
 
 
+def _v_skipped_below(vals: Dict[int, int], at: int) -> List[int]:
+    """The levels below ``at`` without a value when a paragraph at ``at`` is counted (LibreOffice starts them then)."""
+    return [k for k in range(at) if k not in vals]
+
+
 def _v_override_restart(nth: int, override: Optional[int]) -> bool:
     """A level's value is uncertain from its second start on when its num gives it a startOverride."""
     return nth >= 2 and override is not None
@@ -469,6 +511,7 @@ class VNumbered(NamedTuple):
     abstract_id: Optional[int]
     source: str
     style: Optional[str]
+    linked: bool = False
 
 
 def v_counted(p) -> bool:
@@ -508,12 +551,14 @@ def v_count(root, styles: Styles, defs: VListDefs,
     values: Dict[int, Dict[int, int]] = {}
     started: Dict[int, Dict[int, int]] = {}         # nid → level → starts so far
     uncertain: Dict[int, set] = {}                  # nid → levels whose value Word may give otherwise
+    passed_over: Dict[int, set] = {}                # nid → levels a deeper paragraph was numbered without
     blocked: Dict[Any, str] = {}            # nid (or "*" for every list) → why later paragraphs are not evaluated
     for index, nb in numbered:
         nid, at, aid = nb.num_id, nb.ilvl, defs.abstract_of(nb.num_id)
 
         def row(issue=None, why=None, counters=None, text=None, suff=None, fmt=None):
-            return VNumbered(index, nid, at, counters, text, suff, fmt, why, issue, aid, nb.source, nb.style)
+            return VNumbered(index, nid, at, counters, text, suff, fmt, why, issue, aid, nb.source, nb.style,
+                             nb.linked)
         if nb.unreadable:
             out.append(row("ambiguous-level" if nb.ambiguous else "unreadable", nb.unreadable))
             blocked.setdefault("*" if nid is None else nid, f"an earlier numbered paragraph: {nb.unreadable}")
@@ -527,11 +572,14 @@ def v_count(root, styles: Styles, defs: VListDefs,
             continue
         vals = values.setdefault(nid, {})
         counts, doubt = started.setdefault(nid, {}), uncertain.setdefault(nid, set())
-        for k in [k for k in vals if k > at]:
+        over = passed_over.setdefault(nid, set())
+        for k in [k for k in sorted(set(vals) | over) if k > at]:
             lv_k = defs.level(nid, k)
             if _v_restarts(None if lv_k is None else lv_k.restart, at, k):
-                del vals[k]
+                vals.pop(k, None)
                 doubt.discard(k)
+                over.discard(k)
+        over |= set(_v_skipped_below(vals, at))
         if at in vals:
             vals[at] += 1
         else:
@@ -559,6 +607,11 @@ def v_count(root, styles: Styles, defs: VListDefs,
         if shaky:
             out.append(row("start-override", f"{V_START_OVERRIDE}: level {shaky[0]} of num {nid} restarted with a "
                                              f"startOverride", suff=suff, fmt=fmt))
+            continue
+        unsure = [k for k in sorted(over) if (k == at or k in names) and k in vals]
+        if unsure:
+            out.append(row("skipped", f"{V_SKIPPED}: level {unsure[0]} of num {nid} was passed over by a deeper "
+                                      f"paragraph — LibreOffice and Word number it differently", suff=suff, fmt=fmt))
             continue
         shown = tuple(vals.get(k, _v_start_of(defs, nid, k)) for k in range(at + 1))
         if lv is None:

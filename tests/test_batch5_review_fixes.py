@@ -230,3 +230,22 @@ def test_recovery_says_different_first_page_has_no_final_check():
     spec = _spec({"op": "set_page_setup", "select": {"sections": [0]}, "params": {"different_first_page": True}})
     _, notes = recovery._goals(spec)
     assert any("different-first-page" in n for n in notes)
+
+
+# ---- merging an op with many repeated touches is not quadratic ----------------------------------------------------------
+
+def test_repeated_touches_merge_in_linear_time():
+    """One conversion over 2,000 paragraphs declared 16,000 touches, 6,000 distinct; the merge took 16 s."""
+    import time
+    from spec_surgeon.ops.base import PlanFragment, check_conflicts
+    a = PlanFragment(job="a", mode="formatting", params={}, intended_parts=[], op="a", op_index=0)
+    b = PlanFragment(job="b", mode="formatting", params={}, intended_parts=[], op="b", op_index=1)
+    a.touches = [("word/styles.xml", "style:Normal", "verify:pPr")] * 3000 + [("word/document.xml", "1", "rPr")]
+    b.touches = [("word/styles.xml", "style:Normal", "verify:pPr")] * 3000 + [("word/document.xml", "2", "rPr")]
+    t = time.perf_counter()
+    check_conflicts([a, b])
+    assert time.perf_counter() - t < 2.0
+    b.touches.append(("word/styles.xml", "style:Normal", "pPr"))         # still a conflict when there is one
+    with pytest.raises(JobException) as e:
+        check_conflicts([a, b])
+    assert e.value.code == "conflict"

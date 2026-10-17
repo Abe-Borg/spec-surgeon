@@ -69,6 +69,9 @@ from .fields import fields_of
 from .effective import PropResolver
 from .markup import Look
 from .numbering_convert import destination, look_of, planned_levels, replaced_in_chain, row, scheme_params, shown
+# shared with set_list_level and audit_numbering's fix (ops/numbering_flags.py): what a renumbering leaves stale
+from .numbering_flags import REF_FIELDS, number_rx
+from .numbering_flags import bookmark_paragraph as _bookmark_paragraph
 from .replace_text import default_author
 from .selectors import StyleSheet, runs_by_paragraph
 from .style_import import apply_import, check_template_unchanged, resolve_style
@@ -79,7 +82,6 @@ PARAM_KEYS = {"from", "level_map", "template", "levels", "existing", "direct_for
 USER_PARAMS = ("from", "level_map", "template", "levels", "existing", "direct_formatting", "tracked", "allow_missing")
 REFLOW_REASON = "the paragraphs take the scheme's styles and list: numbers, indents and spacing change, text reflows"
 REVISION_IN_NUMPR = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "numberingChange"}
-REF_FIELDS = ("REF", "PAGEREF", "NOTEREF")
 
 
 def restyle_edit(style_id: str):
@@ -138,30 +140,6 @@ def number_words(x: Optional[lists.NumberedPar]) -> str:
     if x is None:
         return "unnumbered"
     return repr(x.text) if x.evaluated else f"(not predictable: {x.issue})"
-
-
-def _bookmark_paragraph(root, name: str):
-    for bs in root.iter(W + "bookmarkStart"):
-        if bs.get(W + "name") != name:
-            continue
-        q = bs.getparent()
-        while q is not None and q.tag != W + "p":
-            q = q.getparent()
-        if q is not None:
-            return q
-        for sib in bs.itersiblings():
-            if sib.tag == W + "p":
-                return sib
-            inner = next(sib.iter(W + "p"), None)
-            if inner is not None:
-                return inner
-        return None
-    return None
-
-
-def number_rx(number: str):
-    """An old rendered number as a written reference: not inside a longer number or word."""
-    return re.compile(r"(?<![\w.])" + re.escape(number) + r"(?!\w)(?!\.\w)")
 
 
 @register
