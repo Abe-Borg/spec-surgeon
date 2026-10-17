@@ -988,16 +988,26 @@ definition):
   (`level_display_problem` ↔ `_v_levels_shown`).
 - **`convert_numbering`** (§1): source paragraphs = those of the main abstractNum (`main_abstract`: the most counted
   non-bullet paragraphs; tie → the first) at their ilvl, or of named styles per level (`from.styles`, numbered ones only);
-  `level_map`; a paragraph at a level beyond the scheme → `scheme-depth`; an unevaluated source number →
-  `numbering-unsupported`. Change: `w:pStyle` = the level's style first in pPr, own numPr removed, cleared children
-  (apply_style's clear) gone; tracked → one pPrChange. Predicted: every counted paragraph's counters and number over the
-  planned output; V10 predicts with its own model, compares with the plan's and with its own count of the output.
+  `level_map`; a paragraph at a level beyond the scheme → `scheme-depth`; an unevaluated source number converts only
+  when its LEVEL is known (`shared`, `start-override`, `skipped`, `override`) and its whole num is converted (flagged:
+  "could not predict before"; one still skipped after, at an unchanged level, flagged as the outline's own skip —
+  `skipped_both`), else `numbering-unsupported`; a held level style numbering differently from the template's level
+  (`level_pattern_sig` ↔ `_v_level_sig`) with `existing: "keep"` → `scheme` (use replace); a paragraph NOT converted that
+  would show another number → `numbering-mismatch` (convert every level) — the destination list's own paragraphs are
+  flagged instead. Change: `w:pStyle` = the level's style first in pPr, own numPr removed (an ilvl-only one too), cleared
+  children (apply_style's clear) gone; tracked → one pPrChange, refused (`tracked-format`) when a converted paragraph's
+  chain holds a style the import replaces (`replaced_in_chain`: reject-all would show two numbers). Predicted: every
+  counted paragraph's counters and number over the planned output; V10 predicts with its own model, compares with the
+  plan's and with its own count of the output. Flagged: linked scheme levels, a new style turning caps on.
 - **`convert_typed_numbers`** (§2): candidates = counted unnumbered paragraphs of the main part (not in tables unless
   `include_tables`), selected; prefix = position 0 to the end of the whitespace after the typed number; the plan refuses
   (`numbering-mismatch`) unless the visible line of EVERY counted paragraph is unchanged over the planned output and no
-  converted level's `suff` is `nothing`; refused (`typed-format`) a prefix run with effective vanish/caps/smallCaps on or
-  ambiguous, a hidden mark, or a planned mark that would show the number hidden or in capitals where the level can show
-  a lower-case letter (`display_problem`/`planned_mark_toggles` ↔ `_v_display`). Change: the prefix deleted by the edit
+  converted level's `suff` is `nothing`; refused (`typed-format`) a prefix run or mark with effective vanish/specVanish
+  on or ambiguous, caps/smallCaps where the typed number holds a lower-case letter, and — the number takes the planned
+  MARK's formatting (with the level's `w:lvl/w:rPr`) — a number whose planned look differs from the typed run's planned
+  look (both read in the planned output, over the new style) in strike, dstrike, vertAlign, position, colour (auto ≡
+  000000), size or a symbol font; bold, italic, underline or another font differing is flagged (`numbering_convert.
+  look_of`/`number_look`/`number_symbolic`, `display_problem` ↔ `_v_display`). Change: the prefix deleted by the edit
   core (`tabs=True`), pStyle + own numPr off as convert_numbering. V10 checks each converted paragraph by the item model
   (`verified_blocks`) and the visible-line post-condition over every counted paragraph on the OUTPUT.
 - **The edit core deletes a tab** (§2.3; `ops/textedit.py` ↔ `verify/edits.py`, keyword `tabs=True`, default off): a pure

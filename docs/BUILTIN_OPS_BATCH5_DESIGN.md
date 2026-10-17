@@ -458,6 +458,25 @@ must be a list; `with_tables` declares no text read; a set_page_setup assertion 
 content selection choosing every section is flagged; the landscape example matches a SCHEDULE heading, not "Schedule 40
 pipe".
 
+**The conversions (§1, §2)**: both take `allow_missing` (default true); `from.styles` converts only numbered paragraphs
+(removing an unnumbered one's numPr would make a number appear); one style named for two levels refuses `ambiguous`;
+tracked typed conversion with `direct_formatting: "clear"` refuses (one run would carry a tracked deletion and a tracked
+formatting change the item model cannot check); `convert_typed_numbers` reads the whole main part's text (a stronger read
+than §2.4's per-candidate one); a new code `typed-format`. Review: the list number takes the paragraph mark's formatting —
+a number whose planned look differs from the typed run's (both read in the planned output, over the new style, so a
+scheme style sizing text and number alike still converts) in strike, vertical alignment, position, colour, size or a
+symbol font refuses, a different bold/italic/underline/font is flagged (a white, 1 pt, superscript, struck or Wingdings
+mark used to pass); caps/smallCaps refuse only a typed number holding a lower-case letter (All Caps PART titles refused
+whole files); specVanish counts as hidden; an own numPr holding only an ilvl converts (it refused the builder's own
+fixture); a held style numbering differently from the template's level with `existing: "keep"` refuses `scheme` (an
+architect using MasterSpec's PRT/ART… was silently not converted); a non-converted paragraph whose number would change
+refuses (a partial `from.styles` conversion renumbered the paragraphs left behind); a source paragraph not evaluated
+converts when its level is known and its whole list moves (one Word "Restart numbering" refused the file), flagged, and
+a paragraph skipped before and after at an unchanged level converts with its own flag (`skipped_both`); tracked
+conversion over a style the import replaces refuses (reject-all showed "PART 1 - PART 1 - GENERAL"); linked scheme levels
+and a new style turning caps on are flagged; mismatch reasons name the nearest typed-looking line that matched no level
+(an en dash in "PART 1 – GENERAL").
+
 **List levels and the audit (§3, §4)**: a new file-specific code `list-level` (a start of 0 on a letter or roman
 level, an `after_level` not above the level, a change leaving an evaluated paragraph unevaluated); the audit's blank rule
 allows bookmarks (its own both-sides rule); the owner rule (`NUMBERING_OWNER_KINDS`) lets the import's no-copy check stand
