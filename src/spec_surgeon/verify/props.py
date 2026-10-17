@@ -819,7 +819,110 @@ def _doc_defaults_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 PPR_SET_ELEMENTS = ("spacing", "ind", "jc")
 
 
+def _v_merged(name: str, el, val) -> Dict[str, str]:
+    """The attributes a w:spacing / w:ind / w:jc must end with: the asked ones set, the others kept (firstLine drops
+    hanging/hangingChars and vice versa; jc gets w:val) — this module's reading of set_paragraph_props' merge."""
+    out = dict(el.attrib) if el is not None else {}
+    if name == "jc":
+        out[W + "val"] = val
+        return out
+    for k, v in val.items():
+        out[W + k] = str(v)
+    if name == "ind":
+        if "firstLine" in val:
+            out.pop(W + "hanging", None); out.pop(W + "hangingChars", None)
+        if "hanging" in val:
+            out.pop(W + "firstLine", None); out.pop(W + "firstLineChars", None)
+    return out
+
+
+_V_ON = ("1", "true", "on")
+
+
+def _v_style_spacing_refusal(st, styles: Styles, setv: Dict[str, Any]) -> Optional[str]:
+    """Why set_paragraph_props must refuse a style target (built-in batch 4 §2), or None: a side asked in points where
+    the style's own spacing is auto, or where the style, its basedOn ancestors or docDefaults set it in lines (the lines
+    not asked too); an indentation alias whose other spelling the style's own w:ind uses."""
+    sp, ind = st.find(W + "pPr/" + W + "spacing"), st.find(W + "pPr/" + W + "ind")
+    sv, iv = setv.get("spacing") or {}, setv.get("ind") or {}
+    dd = styles.doc_defaults_ppr()
+    for side in ("before", "after"):
+        if side not in sv:
+            continue
+        if sp is not None and sp.get(W + side + "Autospacing") in _V_ON:
+            return f"spacing {side} is auto ({side}Autospacing) on the style itself"
+        if f"{side}Lines" in sv:
+            continue
+        holders = [s.find(W + "pPr/" + W + "spacing") for s in styles.chain(st.get(W + "styleId"))]
+        holders.append(dd.find(W + "spacing") if dd is not None else None)
+        if any(h is not None and h.get(W + side + "Lines") not in (None, "") for h in holders):
+            return f"spacing {side} is set in lines ({side}Lines) on the style, a style it is based on or docDefaults"
+    for asked, other in (("left", "start"), ("start", "left"), ("right", "end"), ("end", "right")):
+        if asked in iv and ind is not None and ind.get(W + other) is not None:
+            return f"indentation asked as {asked} where the style's own w:ind uses {other}"
+    return None
+
+
+def _paragraph_props_styles(ctx: Ctx, a: Dict[str, Any], setv: Dict[str, Any], errs: List[str]) -> str:
+    """Built-in batch 4 §2: the values merged into paragraph style definitions — each changed style's pPr is the
+    source's with the asked values merged and every other child identical; a style already as asked is untouched; the
+    refusals re-derived; every selected style shows the asked values in the output."""
+    if ctx.styles_part is None:
+        errs.append("paragraph_props: no common styles part")
+        return "paragraph_props: no styles part"
+    if a.get("tracked"):
+        errs.append("paragraph_props: style definitions are never tracked (the op must refuse)")
+    ids = list((a.get("select") or {}).get("ids") or [])
+    changed: List[str] = []
+    for sid in ids:
+        st, o = ctx.src_styles.by_id.get(sid), ctx.out_styles.by_id.get(sid)
+        if st is None or o is None:
+            errs.append(f"paragraph_props: style {sid} missing from the {'source' if st is None else 'output'}")
+            continue
+        where = f"style {sid}"
+        if st.get(W + "type", "paragraph") != "paragraph":
+            errs.append(f"{where}: a {st.get(W + 'type')} style (the op must refuse)")
+            continue
+        why = _v_style_spacing_refusal(st, ctx.src_styles, setv)
+        if why:
+            errs.append(f"{where}: {why} — the op must refuse")
+            continue
+        S, O = st.find(W + "pPr"), o.find(W + "pPr")
+        expected = {name: _v_merged(name, S.find(W + name) if S is not None else None, val) for name, val in setv.items()}
+        if all(S is not None and S.find(W + name) is not None and dict(S.find(W + name).attrib) == exp
+               for name, exp in expected.items()):
+            pass                                            # already as asked: the residual compares it whole
+        else:
+            changed.append(sid)
+            ctx.strip_style_ppr.setdefault(sid, set()).update(setv)
+            for name, exp in expected.items():
+                oe = O.find(W + name) if O is not None else None
+                got = dict(oe.attrib) if oe is not None else None
+                if got != exp or (oe is not None and len(oe)):
+                    errs.append(f"{where}: {name} is {_plain(got)}, expected {_plain(exp)}")
+            others_s = [sig(c) for c in (S if S is not None else []) if _local(c) not in setv]
+            others_o = [sig(c) for c in (O if O is not None else []) if _local(c) not in setv]
+            if others_s != others_o:
+                errs.append(f"{where}: paragraph properties other than {sorted(setv)} changed")
+        for name, val in setv.items():                     # post-condition: the output style shows the asked values
+            oe = O.find(W + name) if O is not None else None
+            if oe is None or _v_merged(name, oe, val) != dict(oe.attrib):
+                errs.append(f"{where}: {name} does not show {val} in the output")
+    if sorted(changed) != sorted(a.get("expected_ids", [])):
+        errs.append(f"paragraph_props: style(s) {sorted(changed)} change here, plan predicted "
+                    f"{sorted(a.get('expected_ids', []))}")
+    return f"paragraph_props: style(s) {changed} → {setv}"
+
+
 def _paragraph_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    target = a.get("target", "direct")
+    if target == "styles":
+        setv = a.get("set") or {}
+        if not setv or set(setv) - set(PPR_SET_ELEMENTS):
+            raise ValueError(f"paragraph_props: unknown or no properties {sorted(setv)}")
+        return _paragraph_props_styles(ctx, a, setv, errs)
+    if target != "direct":
+        raise ValueError(f"unknown target {target!r}")
     parts = ctx.scope_parts(a.get("scope", []))
     if sorted(parts) != sorted(a.get("parts", [])):
         errs.append(f"paragraph_props: scope resolves to {sorted(parts)} here, plan says {sorted(a.get('parts', []))}")
@@ -1948,6 +2051,7 @@ from .docprops import DOCPROP_KINDS  # noqa: E402
 from .tabs import TAB_KINDS  # noqa: E402
 # built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md)
 from .unused import UNUSED_KINDS  # noqa: E402
+from .borders import BORDER_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -1956,3 +2060,4 @@ for _batch2 in (COMMENT_KINDS, HIGHLIGHT_KINDS, REVISION_KINDS, REMOVAL_KINDS, W
     KINDS.update(_batch2)
 KINDS.update(TAB_KINDS)
 KINDS.update(UNUSED_KINDS)
+KINDS.update(BORDER_KINDS)
