@@ -46,6 +46,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from . import diagnostics as diag
 from .llm import Usage
 
 ALLOWED_FROM: Dict[str, set] = {
@@ -201,6 +202,14 @@ def _tail(text: str, n: int = 15) -> str:
 def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict[str, Any], workdir: Path,
                    timeout: int = SANDBOX_TIMEOUT) -> SandboxResult:
     """plan + apply of the generated op on a COPY of ``docx`` in a separate isolated process."""
+    with diag.scope(sandbox_id=diag.new_id()), \
+            diag.span("codegen.sandbox", source=str(docx), workdir=str(workdir), timeout_seconds=timeout) as record:
+        result = _run_in_sandbox(source, docx, select, params, workdir, timeout)
+        record.update(ok=result.ok, code=result.code, output=str(result.output) if result.output else None)
+        return result
+
+
+def _run_in_sandbox(source, docx, select, params, workdir, timeout):
     t0 = time.perf_counter()
     workdir = Path(workdir).resolve()          # the sandbox runs with cwd=workdir: every path it gets is absolute
     workdir.mkdir(parents=True, exist_ok=True)
@@ -209,18 +218,25 @@ def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict
     req = workdir / "request.json"
     req.write_text(json.dumps({"source": source, "docx": str(copy_path), "select": select, "params": params}),
                    encoding="utf-8")
+    diag.event("codegen.sandbox.prepared", source_copy=str(copy_path), request_path=str(req))
     env = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONIOENCODING")}
     try:
-        proc = subprocess.run([sys.executable, "-I", "-m", "spec_surgeon.sandbox_runner", str(req)], cwd=str(workdir),
-                              env=env, timeout=timeout, capture_output=True, check=False)
+        with diag.span("codegen.sandbox.process", executable=sys.executable, timeout_seconds=timeout) as record:
+            proc = subprocess.run([sys.executable, "-I", "-m", "spec_surgeon.sandbox_runner", str(req)], cwd=str(workdir),
+                                  env=env, timeout=timeout, capture_output=True, check=False)
+            record["returncode"] = proc.returncode
     except subprocess.TimeoutExpired as e:
+        diag.event("codegen.sandbox.timeout", level="warning", timeout_seconds=timeout)
         err = (e.stderr or b"").decode("utf-8", "replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
         return SandboxResult(False, error=f"timed out after {timeout}s", code="timeout",
                              seconds=time.perf_counter() - t0, stderr=_tail(err))
     stderr = (proc.stderr or b"").decode("utf-8", "replace") if isinstance(proc.stderr, bytes) else str(proc.stderr or "")
     (workdir / "sandbox-stderr.txt").write_text(stderr, encoding="utf-8")
     res_path = workdir / "result.json"
+    diag.event("codegen.sandbox.exited", returncode=proc.returncode, result_present=res_path.is_file(),
+               stderr_characters=len(stderr), stderr_path=str(workdir / "sandbox-stderr.txt"))
     if not res_path.is_file():
+        diag.event("codegen.sandbox.result_missing", level="error", returncode=proc.returncode)
         return SandboxResult(False, error=f"the sandbox process died without a result (exit code {proc.returncode})"
                              + (f"; it printed: {_tail(stderr, 6)}" if stderr.strip() else ""), code="crash",
                              seconds=time.perf_counter() - t0, stderr=_tail(stderr, 40), returncode=proc.returncode)
@@ -291,6 +307,16 @@ class FileTrial:
 
 
 def trial(source: str, f: Path, select, params, workdir: Path) -> FileTrial:
+    with diag.scope(trial_id=diag.new_id()), \
+            diag.span("codegen.trial", source=str(f), workdir=str(workdir)) as record:
+        result = _trial(source, f, select, params, workdir)
+        record.update(passed=result.passed, problem_count=len(result.problems), output_md5=result.output_md5,
+                      failed_checks=[c.id for c in result.record.checks if c.status == "FAIL"]
+                      if result.record is not None else [])
+        return result
+
+
+def _trial(source, f, select, params, workdir):
     from .verify import run_suite
     sb = run_in_sandbox(source, f, select, params, workdir)
     if not sb.ok:
@@ -298,14 +324,18 @@ def trial(source: str, f: Path, select, params, workdir: Path) -> FileTrial:
         return FileTrial(f, False, [f"[{sb.code or 'error'}] {sb.error}"
                                     + (f"\n(traceback, last lines:)\n{where}" if where else "")])
     try:
-        limits = hard_limits(sb.plan, allowed_parts_of(f))
+        with diag.span("codegen.trial.limits") as record:
+            limits = hard_limits(sb.plan, allowed_parts_of(f))
+            record.update(accepted=not bool(limits), problem_count=len(limits))
     except Exception as e:  # noqa: BLE001 — a plan the engine cannot even read is a failed trial, with the reason
         return FileTrial(f, False, [f"the generated op's plan is malformed ({type(e).__name__}: {e})"], sb.output)
     if limits:
         return FileTrial(f, False, limits, sb.output)
     out_bytes = sb.output.read_bytes()
     try:
-        rec = run_suite(Path(f).read_bytes(), out_bytes, sb.plan, str(f), str(sb.output))
+        with diag.span("codegen.trial.verify") as outcome:
+            rec = run_suite(Path(f).read_bytes(), out_bytes, sb.plan, str(f), str(sb.output))
+            outcome.update(passed=rec.passed, checks={c.id: c.status for c in rec.checks})
     except Exception as e:  # noqa: BLE001 — an output the suite cannot read (a part removed, a broken zip): FAIL
         return FileTrial(f, False, [f"the verifier could not check the output at all ({type(e).__name__}: {e}); "
                                     f"the generated op produced a package the suite cannot read — a removed or "
@@ -415,6 +445,14 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                 model: Optional[str] = None, max_iter: int = MAX_ITER, log=None, brief: Optional[str] = None) -> GeneratedOp:
     """Look → generate → sandbox + verify on the samples → feed failures back: at most ``max_iter`` submissions and
     ``MAX_CALLS`` calls. Every tool call is answered in the next message."""
+    with diag.scope(Path(out_dir) / diag.LOGS / "events.jsonl", codegen_id=diag.new_id()), \
+            diag.span("codegen.generate", sample_count=len(samples), max_attempts=max_iter) as record:
+        result = _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief)
+        record.update(passed=result.passed, attempts=len(result.attempts), errors=len(result.errors))
+        return result
+
+
+def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief):
     from . import compiler, llm
     from .profile import profile
     from .package import DocxPackage
@@ -486,13 +524,17 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                 submitted = True
                 attempt = len(g.attempts) + 1
                 src, select, params = inp.get("source") or "", inp.get("select") or {}, inp.get("params") or {}
-                problems = check_source(src)
-                trials: List[FileTrial] = []
-                if not problems:
-                    for i, f in enumerate(samples):
-                        t = trial(src, Path(f), select, params, out_dir / "sandbox" / f"attempt{attempt}" / f"{i:02d}")
-                        trials.append(t)
-                        problems += [f"{Path(f).name}: {p}" for p in t.problems]
+                with diag.scope(codegen_attempt=attempt), \
+                        diag.span("codegen.attempt", model_turn=calls, tool_use_id=b.id) as record:
+                    problems = check_source(src)
+                    diag.event("codegen.source_checked", accepted=not bool(problems), problem_count=len(problems))
+                    trials: List[FileTrial] = []
+                    if not problems:
+                        for i, f in enumerate(samples):
+                            t = trial(src, Path(f), select, params, out_dir / "sandbox" / f"attempt{attempt}" / f"{i:02d}")
+                            trials.append(t)
+                            problems += [f"{Path(f).name}: {p}" for p in t.problems]
+                    record.update(passed=not bool(problems), problem_count=len(problems), trial_count=len(trials))
                 g.attempts.append({"attempt": attempt, "problems": problems, "trials": [t.to_dict() for t in trials],
                                    "source": src, "select": select, "params": params})
                 log(f"codegen attempt {attempt}: {'PASS' if not problems else f'{len(problems)} problem(s)'}")
@@ -580,28 +622,44 @@ def run_generated(g: GeneratedOp, inputs: Sequence[str], out_dir: Path, log=None
     out_dir = Path(out_dir)
     files = expand_inputs(inputs)
     check_inputs_outside(files, out_dir)
+    with diag.scope(out_dir / diag.LOGS / "events.jsonl", generated_run_id=diag.new_id()), \
+            diag.span("codegen.run", file_count=len(files)) as record:
+        result = _run_generated_files(g, files, out_dir, log, output_names)
+        record.update(passed=sum(t.passed for t in result), failed=sum(not t.passed for t in result))
+        return result
+
+
+def _run_generated_files(g, files, out_dir, log, output_names):
     names = output_names(files)
     results = []
     with tempfile.TemporaryDirectory() as tmp:
         for i, f in enumerate(files):
-            t = trial(g.source, f, g.select, g.params, Path(tmp) / f"{i:04d}")
-            name = names[str(f)]
-            if t.passed:
-                data = t.output.read_bytes()
-                if hashlib.md5(data).hexdigest() != t.output_md5:
-                    t.passed, t.output = False, None
-                    t.problems.append("the output is not the one the suite verified; not delivered")
+            with diag.scope(source=str(f)), diag.span("codegen.file") as outcome:
+                t = trial(g.source, f, g.select, g.params, Path(tmp) / f"{i:04d}")
+                name = names[str(f)]
+                if t.passed:
+                    data = t.output.read_bytes()
+                    actual_md5 = hashlib.md5(data).hexdigest()
+                    diag.event("codegen.delivery.identity", expected_md5=t.output_md5, actual_md5=actual_md5,
+                               matches=actual_md5 == t.output_md5)
+                    if actual_md5 != t.output_md5:
+                        t.passed, t.output = False, None
+                        t.problems.append("the output is not the one the suite verified; not delivered")
+                    else:
+                        dest = out_dir / "outputs" / name
+                        with diag.span("codegen.delivery.write", output=str(dest), size=len(data)):
+                            dest.parent.mkdir(parents=True, exist_ok=True)
+                            dest.write_bytes(data)
+                            t.output = dest
                 else:
-                    dest = out_dir / "outputs" / name
-                    dest.parent.mkdir(parents=True, exist_ok=True)
-                    dest.write_bytes(data)
-                    t.output = dest
-            else:
-                t.output = None
-            if t.record is not None:
-                rd = out_dir / "records"
-                rd.mkdir(parents=True, exist_ok=True)
-                (rd / f"{Path(name).stem}.record.md").write_text(t.record.to_markdown(), encoding="utf-8")
-            results.append(t)
-            log(f"{'PASS' if t.passed else 'FAIL'} {f.name}")
+                    t.output = None
+                if t.record is not None:
+                    rd = out_dir / "records"
+                    with diag.span("codegen.file.records", out_dir=str(rd)):
+                        rd.mkdir(parents=True, exist_ok=True)
+                        (rd / f"{Path(name).stem}.record.md").write_text(t.record.to_markdown(), encoding="utf-8")
+                results.append(t)
+                log(f"{'PASS' if t.passed else 'FAIL'} {f.name}")
+                outcome.update(passed=t.passed, problem_count=len(t.problems),
+                               output=str(t.output) if t.output else None, output_md5=t.output_md5)
     return results

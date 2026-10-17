@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from . import __version__, compiler, llm
+from . import __version__, compiler, diagnostics as diag, llm
 from .batch import check_inputs_outside, load_set_aside, output_names
 from .chain import chain_key, chain_templates, run_chain, validate_chain
 from .editspec import is_template_file, spec_input_files, spec_templates, validate_spec
@@ -99,6 +99,7 @@ class RecoveryResult:
     log_path: Optional[Path] = None
     seconds: float = 0.0
     _reviews: Dict[str, Any] = field(default_factory=dict, repr=False)
+    recovery_id: str = field(default_factory=diag.new_id)
 
     @property
     def ready(self):
@@ -109,7 +110,7 @@ class RecoveryResult:
         return self.notes
 
     def to_dict(self):
-        return {"request": self.request, "files": [f.to_dict() for f in self.files],
+        return {"recovery_id": self.recovery_id, "request": self.request, "files": [f.to_dict() for f in self.files],
                 "attempts": self.attempts, "questions": self.questions, "notes": self.notes,
                 "budget": self.budget, "seconds": round(self.seconds, 2),
                 "token": self.token, "token_inputs": self.token_inputs, "key": self.key,
@@ -200,7 +201,8 @@ def _recovery_token(key, files):
     try:
         return _hash({"preview": approval_token(key, files),
                       "contents": {str(p): _sha(p) for p in files}})
-    except OSError:
+    except OSError as exc:
+        diag.event("recovery.identity.unavailable", level="warning", **diag.error_fields(exc))
         return ""
 
 
@@ -220,6 +222,8 @@ def _withhold_name_collisions(result):
             for f in group:
                 f.status = "UNRESOLVED"
                 f.reason = f"Multiple repaired files would be named {f.out_name!r}; resolve the naming collision before export."
+                diag.event("recovery.naming.collision", level="warning", source=str(f.source),
+                           output_name=f.out_name, reason=f.reason)
                 f.output, f.output_md5 = None, ""
 
 
@@ -363,6 +367,12 @@ def _candidate(candidate, goal, request, sources, templates, assertions, aliases
 
 
 def _save(result):
+    with diag.span("recovery.save", path=str(result.out_dir / "recovery.json"),
+                   attempt_count=len(result.attempts)):
+        _save_records(result)
+
+
+def _save_records(result):
     result.out_dir.mkdir(parents=True, exist_ok=True)
     (result.out_dir / "recovery.json").write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
     (result.out_dir / "RECOVERY_REPORT.md").write_text(result.to_text() + "\n\n" +
@@ -430,76 +440,89 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
         raise ValueError("choose a new empty folder for this recovery investigation")
     out_dir.mkdir(parents=True, exist_ok=True)
     result = RecoveryResult(out_dir, request, [RecoveryFile(f) for f in files], rendered=options.render)
-    assertions, notes = _goals(goal)
-    result.notes.extend(notes)
-    result.key = {"request": request, "goal": goal, "stages": [{"spec": s} for s in _specs(goal)],
-                  "recovery_templates": [str(p) for p in templates.values()], "assertions": assertions,
-                  "recovery_inputs": [str(p) for p in input_files],
-                  "approved_words": list(approved_words)}
-    # approval_inputs reads templates from stages; attach the standalone template too.
-    result.key["stages"] += [{"spec": {"ops": [{"op": "apply_header_footer_template", "params": {"template": str(p)}}]}}
-                             for p in dict.fromkeys(paths)]
-    # These approval-only entries use the same input-slot reader as real operations; they
-    # are never executed. Pin even raw-request candidates' files before their first trial.
-    result.key["stages"] += [{"spec": {"ops": [{"op": "fill_variables", "params": {"table": {"file": str(p)}}}]}}
-                             for p in input_files]
-    result.token_inputs = approval_inputs(result.key, files)
-    result.token = _recovery_token(result.key, files)
-    sources = [request, *approved_words, *(w for s in _specs(goal) for w in compiler.placed_words(s))]
-    failure_by_file = {str(Path(f["source"]).resolve()): f for f in prior_failures if isinstance(f, dict) and f.get("source")}
-    groups: Dict[tuple, list] = {}
-    for f in result.files:
-        try:
-            f.pattern_id = fingerprint(DocxPackage.from_path(f.source))["pattern_id"]
-            failure = failure_by_file.get(str(f.source), {})
-            groups.setdefault((f.pattern_id, str(failure.get("code", "unknown"))), []).append(f)
-        except Exception as e:
-            f.reason = f"Cannot read this document: {type(e).__name__}: {e}"
-    store = None
-    if options.use_memory:
-        try:
-            store = CaseStore()
-        except Exception as e:
-            result.notes.append(f"Repair memory unavailable: {type(e).__name__}: {e}")
-    budget = llm.CallBudget(model=options.model or llm.DEFAULT_MODEL, effort=options.effort,
-                            max_calls=options.max_calls, max_output_tokens=options.max_output_tokens,
-                            max_total_tokens=options.max_total_tokens, max_cost_usd=options.max_cost_usd)
-    notify = log or (lambda message: None)
-    started = time.perf_counter()
-    memory_goal = _portable(goal or {"request": request}, templates)
-    if input_files:
-        input_hashes = {}
-        for path in input_files:
+    with diag.scope(out_dir / "logs" / "events.jsonl", recovery_id=result.recovery_id), \
+            diag.span("recovery.investigation", file_count=len(files), options=vars(options)) as record:
+        assertions, notes = _goals(goal)
+        result.notes.extend(notes)
+        result.key = {"request": request, "goal": goal, "stages": [{"spec": s} for s in _specs(goal)],
+                      "recovery_templates": [str(p) for p in templates.values()], "assertions": assertions,
+                      "recovery_inputs": [str(p) for p in input_files],
+                      "approved_words": list(approved_words)}
+        # approval_inputs reads templates from stages; attach the standalone template too.
+        result.key["stages"] += [{"spec": {"ops": [{"op": "apply_header_footer_template", "params": {"template": str(p)}}]}}
+                                 for p in dict.fromkeys(paths)]
+        # These approval-only entries use the same input-slot reader as real operations; they
+        # are never executed. Pin even raw-request candidates' files before their first trial.
+        result.key["stages"] += [{"spec": {"ops": [{"op": "fill_variables", "params": {"table": {"file": str(p)}}}]}}
+                                 for p in input_files]
+        result.token_inputs = approval_inputs(result.key, files)
+        result.token = _recovery_token(result.key, files)
+        sources = [request, *approved_words, *(w for s in _specs(goal) for w in compiler.placed_words(s))]
+        failure_by_file = {str(Path(f["source"]).resolve()): f for f in prior_failures if isinstance(f, dict) and f.get("source")}
+        groups: Dict[tuple, list] = {}
+        for f in result.files:
             try:
-                input_hashes[str(path)] = _sha(path)
-            except OSError:
-                input_hashes[str(path)] = "unreadable"
-        memory_goal = {"goal": memory_goal, "input_hashes": input_hashes}
-    context = dict(result=result, options=options, goal=goal, assertions=assertions, sources=sources,
-                   templates=templates, aliases=aliases, store=store, budget=budget, client=client, log=notify,
-                   input_files=input_files, goal_hash=goal_fingerprint(memory_goal))
-    try:
-        with llm.budget_scope(budget):
-            for (pid, code), group in groups.items():
-                notify(f"Investigating {len(group)} file(s), structure {pid}, failure {code}…")
-                failures = [failure_by_file.get(str(f.source), {}) for f in group]
-                _investigate(context, group, pid, code, failures, template, op_catalog(examples=False), applicable)
-    except llm.BudgetExceeded as e:
-        result.notes.append(f"Recovery stopped at its budget: {e}")
-    finally:
-        _restore_reviewable_candidates(context)
-        _withhold_name_collisions(result)
-        result.budget = budget.to_dict()
-        result.seconds = time.perf_counter() - started
-        if not result.token or _recovery_token(result.key, files) != result.token:
-            result.notes.append("A source or template changed during investigation; these results cannot be delivered.")
-            result.token = ""
-        else:
-            result.key["prepared"] = _prepared(result.files)
-            result.token = _recovery_token(result.key, files)
-            result.token_inputs = approval_inputs(result.key, files)
-        _save(result)
-    return result
+                with diag.span("recovery.fingerprint", source=str(f.source)) as reading:
+                    f.pattern_id = fingerprint(DocxPackage.from_path(f.source))["pattern_id"]
+                    reading["pattern_id"] = f.pattern_id
+                failure = failure_by_file.get(str(f.source), {})
+                groups.setdefault((f.pattern_id, str(failure.get("code", "unknown"))), []).append(f)
+            except Exception as e:
+                f.reason = f"Cannot read this document: {type(e).__name__}: {e}"
+        store = None
+        if options.use_memory:
+            try:
+                with diag.span("recovery.memory.open"):
+                    store = CaseStore()
+            except Exception as e:
+                result.notes.append(f"Repair memory unavailable: {type(e).__name__}: {e}")
+        budget = llm.CallBudget(model=options.model or llm.DEFAULT_MODEL, effort=options.effort,
+                                max_calls=options.max_calls, max_output_tokens=options.max_output_tokens,
+                                max_total_tokens=options.max_total_tokens, max_cost_usd=options.max_cost_usd)
+        notify = log or (lambda message: None)
+        started = time.perf_counter()
+        memory_goal = _portable(goal or {"request": request}, templates)
+        if input_files:
+            input_hashes = {}
+            for path in input_files:
+                try:
+                    input_hashes[str(path)] = _sha(path)
+                except OSError as exc:
+                    diag.event("recovery.input.unreadable", level="warning", source=str(path), **diag.error_fields(exc))
+                    input_hashes[str(path)] = "unreadable"
+            memory_goal = {"goal": memory_goal, "input_hashes": input_hashes}
+        context = dict(result=result, options=options, goal=goal, assertions=assertions, sources=sources,
+                       templates=templates, aliases=aliases, store=store, budget=budget, client=client, log=notify,
+                       input_files=input_files, goal_hash=goal_fingerprint(memory_goal))
+        try:
+            with llm.budget_scope(budget):
+                for (pid, code), group in groups.items():
+                    notify(f"Investigating {len(group)} file(s), structure {pid}, failure {code}…")
+                    failures = [failure_by_file.get(str(f.source), {}) for f in group]
+                    with diag.scope(pattern_id=pid, failure_code=code), \
+                            diag.span("recovery.group", file_count=len(group)) as grouping:
+                        _investigate(context, group, pid, code, failures, template, op_catalog(examples=False), applicable)
+                        grouping["statuses"] = dict(Counter(f.status for f in group))
+        except llm.BudgetExceeded as e:
+            diag.event("recovery.budget.stopped", level="warning", reason=str(e), budget=budget.to_dict())
+            result.notes.append(f"Recovery stopped at its budget: {e}")
+        finally:
+            _restore_reviewable_candidates(context)
+            _withhold_name_collisions(result)
+            result.budget = budget.to_dict()
+            result.seconds = time.perf_counter() - started
+            if not result.token or _recovery_token(result.key, files) != result.token:
+                diag.event("recovery.inputs.changed", level="warning", reason="source or template changed during investigation")
+                result.notes.append("A source or template changed during investigation; these results cannot be delivered.")
+                result.token = ""
+            else:
+                result.key["prepared"] = _prepared(result.files)
+                result.token = _recovery_token(result.key, files)
+                result.token_inputs = approval_inputs(result.key, files)
+            _save(result)
+            record.update(statuses=dict(Counter(f.status for f in result.files)), attempts=len(result.attempts),
+                          questions=len(result.questions), budget=result.budget)
+        return result
 
 
 def _investigate(ctx, group, pid, code, failures, template, catalog, applicable):
@@ -516,8 +539,10 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
     remembered = []
     if store is not None:
         try:
-            remembered = store.search(request=result.request, pattern_id=pid, failure_code=code,
-                                      template_hashes=sorted(ctx["templates"]), limit=5)
+            with diag.span("recovery.memory.search") as record:
+                remembered = store.search(request=result.request, pattern_id=pid, failure_code=code,
+                                          template_hashes=sorted(ctx["templates"]), limit=5)
+                record["matches"] = len(remembered)
         except Exception as e:
             result.notes.append(f"Could not read repair memory: {e}")
     attempted = set()
@@ -539,15 +564,18 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
                       template_hashes=sorted(ctx["templates"]), app_version=__version__):
             candidate = _portable(case["candidate"], ctx["templates"], restore=True)
             if _hash(candidate) in attempted:
+                diag.event("recovery.memory.skipped", reason="candidate already attempted", case_id=case.get("id"))
                 continue
             attempted.add(_hash(candidate))
             try:
                 _candidate(candidate, ctx["goal"], result.request, ctx["sources"], ctx["templates"],
                            ctx["assertions"], ctx["aliases"], input_files=ctx.get("input_files", ()))
             except ValueError as e:
+                diag.event("recovery.memory.rejected", reason=str(e), case_id=case.get("id"))
                 result.notes.append(f"A remembered repair could not be reused for this request: {e}")
                 continue
             used += 1
+            diag.event("recovery.memory.reusing", case_id=case.get("id"))
             _trial(ctx, group, candidate, pid, code, "Reusing a matching repair case", latest)
     if all(f.status == "READY" for f in group) or used >= options.max_attempts:
         return
@@ -564,10 +592,11 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
     while used < options.max_attempts and any(f.status != "READY" for f in group):
         before = time.perf_counter()
         try:
-            if ctx["client"] is None:
-                ctx["client"] = compiler._client()
-            resp = llm.call(ctx["client"], model=options.model or llm.DEFAULT_MODEL,
-                            system=system, tools=tools, messages=messages)
+            with diag.span("recovery.request", model_turn=ctx["budget"].calls + 1):
+                if ctx["client"] is None:
+                    ctx["client"] = compiler._client()
+                resp = llm.call(ctx["client"], model=options.model or llm.DEFAULT_MODEL,
+                                system=system, tools=tools, messages=messages)
         except llm.BudgetExceeded:
             raise
         except Exception as e:
@@ -579,11 +608,13 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
         result.transcript.append(llm.response_entry(ctx["budget"].calls, resp, time.perf_counter() - before))
         problem = llm.stop_problem(resp)
         if problem:
+            diag.event("recovery.model.stopped", level="warning", reason=problem)
             result.notes.append(f"Recovery model stopped: {problem}")
             return
         body = llm.history_content(resp)
         uses = llm.tool_uses(body)
         if not uses:
+            diag.event("recovery.model.finished", reason="response did not contain a tool call")
             result.notes.extend(llm.texts(body))
             return
         messages.append({"role": "assistant", "content": body})
@@ -591,76 +622,78 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
         for call in uses:
             answer = {"type": "tool_result", "tool_use_id": call.id}
             try:
-                inp = call.input
-                if not isinstance(inp, dict):
-                    raise ValueError("tool input must be an object")
-                if stop:
-                    raise ValueError("the investigation already stopped in this turn")
-                if call.name == "submit_repair":
-                    if used >= options.max_attempts:
-                        raise ValueError("repair attempt limit reached")
-                    candidate = inp.get("candidate")
-                    digest = _hash(candidate)
-                    if digest in attempted:
-                        raise ValueError("this candidate was already tried; investigate its failure before changing approach")
-                    attempted.add(digest)
-                    used += 1
-                    out = _trial(ctx, group, candidate, pid, code, str(inp.get("reason") or ""), latest)
-                elif call.name == "custom_transform" and options.allow_codegen:
-                    if used >= options.max_attempts:
-                        raise ValueError("repair attempt limit reached")
-                    used += 1
-                    out = _custom_trial(ctx, group, str(inp.get("proposal") or ""), pid, code, latest)
-                elif call.name in ("need_user", "unsupported"):
-                    text = str(inp.get("question" if call.name == "need_user" else "reason") or "").strip()
-                    if not text:
-                        raise ValueError("a specific question or missing capability is required")
-                    if call.name == "need_user":
-                        result.questions.append(text)
-                    for f in group:
-                        if f.status != "READY":
-                            f.status = "NEEDS_INPUT" if call.name == "need_user" else "UNRESOLVED"
-                            f.reason = text
-                    out, stop = "recorded; investigation stopped", True
-                elif call.name == "inspect_xml":
-                    pkg = (DocxPackage.from_path(primary_template) if inp.get("file") == "template" and primary_template
-                           else batch.pkg(inp.get("file")))
-                    part = inp.get("part")
-                    if not isinstance(part, str) or not part.endswith((".xml", ".rels")):
-                        raise ValueError("choose an XML or relationships package member")
-                    from lxml import etree
-                    text = etree.tostring(pkg.xml(part), encoding="unicode", pretty_print=True)
-                    start = inp.get("start", 0)
-                    if isinstance(start, bool) or not isinstance(start, int) or start < 0:
-                        raise ValueError("start must be a nonnegative character offset")
-                    out = {"part": part, "start": start, "total_characters": len(text), "xml": text[start:start+24000]}
-                elif call.name in ("view_result", "view_pages"):
-                    if not options.render or options.renderer == "none":
-                        raise ValueError("Page rendering is disabled for this investigation")
-                    f = primary_template if inp.get("file") == "template" else batch.files.get(inp.get("file"))
-                    path = latest.get(str(f)) if call.name == "view_result" else f
-                    if path is None:
-                        raise ValueError("no requested file or trial output is available")
-                    pages = inp.get("pages") or [1]
-                    if not isinstance(pages, list) or any(type(p) is not int or p < 1 for p in pages):
-                        raise ValueError("pages must be positive page numbers")
-                    from . import vision
-                    pngs = vision.page_pngs(path, sorted(set(pages))[:3], batch.work_dir / "pages" / _hash(str(path)),
-                                           renderer=options.renderer)
-                    out = {"_content_blocks": [{"type": "text", "text": call.name + ": " + str(inp.get("file"))}]
-                           + [vision.image_block(p) for p in pngs]}
-                elif call.name == "read_template":
-                    path = primary_template if inp.get("file") in (None, "template") else template_paths.get(inp["file"])
-                    if path is None:
-                        raise ValueError("choose a template path from this request")
-                    from .profile import profile, template_spec_summary
-                    pkg = DocxPackage.from_path(path)
-                    out = {"path": str(path), "template_spec": template_spec_summary(pkg), "profile": profile(pkg)}
-                elif call.name in (*READ_TOOLS, "view_pages"):
-                    out = getattr(batch, call.name)(**inp)
-                else:
-                    raise ValueError(f"unknown recovery tool {call.name}")
-                answer["content"] = out["_content_blocks"] if isinstance(out, dict) and "_content_blocks" in out else _json(out)[:30000]
+                with diag.span("recovery.tool", tool=call.name, tool_use_id=call.id,
+                               model_turn=ctx["budget"].calls):
+                    inp = call.input
+                    if not isinstance(inp, dict):
+                        raise ValueError("tool input must be an object")
+                    if stop:
+                        raise ValueError("the investigation already stopped in this turn")
+                    if call.name == "submit_repair":
+                        if used >= options.max_attempts:
+                            raise ValueError("repair attempt limit reached")
+                        candidate = inp.get("candidate")
+                        digest = _hash(candidate)
+                        if digest in attempted:
+                            raise ValueError("this candidate was already tried; investigate its failure before changing approach")
+                        attempted.add(digest)
+                        used += 1
+                        out = _trial(ctx, group, candidate, pid, code, str(inp.get("reason") or ""), latest)
+                    elif call.name == "custom_transform" and options.allow_codegen:
+                        if used >= options.max_attempts:
+                            raise ValueError("repair attempt limit reached")
+                        used += 1
+                        out = _custom_trial(ctx, group, str(inp.get("proposal") or ""), pid, code, latest)
+                    elif call.name in ("need_user", "unsupported"):
+                        text = str(inp.get("question" if call.name == "need_user" else "reason") or "").strip()
+                        if not text:
+                            raise ValueError("a specific question or missing capability is required")
+                        if call.name == "need_user":
+                            result.questions.append(text)
+                        for f in group:
+                            if f.status != "READY":
+                                f.status = "NEEDS_INPUT" if call.name == "need_user" else "UNRESOLVED"
+                                f.reason = text
+                        out, stop = "recorded; investigation stopped", True
+                    elif call.name == "inspect_xml":
+                        pkg = (DocxPackage.from_path(primary_template) if inp.get("file") == "template" and primary_template
+                               else batch.pkg(inp.get("file")))
+                        part = inp.get("part")
+                        if not isinstance(part, str) or not part.endswith((".xml", ".rels")):
+                            raise ValueError("choose an XML or relationships package member")
+                        from lxml import etree
+                        text = etree.tostring(pkg.xml(part), encoding="unicode", pretty_print=True)
+                        start = inp.get("start", 0)
+                        if isinstance(start, bool) or not isinstance(start, int) or start < 0:
+                            raise ValueError("start must be a nonnegative character offset")
+                        out = {"part": part, "start": start, "total_characters": len(text), "xml": text[start:start+24000]}
+                    elif call.name in ("view_result", "view_pages"):
+                        if not options.render or options.renderer == "none":
+                            raise ValueError("Page rendering is disabled for this investigation")
+                        f = primary_template if inp.get("file") == "template" else batch.files.get(inp.get("file"))
+                        path = latest.get(str(f)) if call.name == "view_result" else f
+                        if path is None:
+                            raise ValueError("no requested file or trial output is available")
+                        pages = inp.get("pages") or [1]
+                        if not isinstance(pages, list) or any(type(p) is not int or p < 1 for p in pages):
+                            raise ValueError("pages must be positive page numbers")
+                        from . import vision
+                        pngs = vision.page_pngs(path, sorted(set(pages))[:3], batch.work_dir / "pages" / _hash(str(path)),
+                                               renderer=options.renderer)
+                        out = {"_content_blocks": [{"type": "text", "text": call.name + ": " + str(inp.get("file"))}]
+                               + [vision.image_block(p) for p in pngs]}
+                    elif call.name == "read_template":
+                        path = primary_template if inp.get("file") in (None, "template") else template_paths.get(inp["file"])
+                        if path is None:
+                            raise ValueError("choose a template path from this request")
+                        from .profile import profile, template_spec_summary
+                        pkg = DocxPackage.from_path(path)
+                        out = {"path": str(path), "template_spec": template_spec_summary(pkg), "profile": profile(pkg)}
+                    elif call.name in (*READ_TOOLS, "view_pages"):
+                        out = getattr(batch, call.name)(**inp)
+                    else:
+                        raise ValueError(f"unknown recovery tool {call.name}")
+                    answer["content"] = out["_content_blocks"] if isinstance(out, dict) and "_content_blocks" in out else _json(out)[:30000]
             except llm.BudgetExceeded:
                 raise
             except Exception as e:
@@ -686,30 +719,32 @@ def _trial(ctx, group, candidate, pid, code, reason, latest):
     for f in pending:
         f.attempts += 1
     try:
-        chain = _candidate(candidate, ctx["goal"], result.request, ctx["sources"], ctx["templates"], ctx["assertions"], ctx["aliases"],
-                           input_files=ctx.get("input_files", ()))
-        renames = any(spec_renames_outputs(s) for s in _specs(chain))
-        folder = result.out_dir / "attempts" / f"{n:03d}"
-        ctx["log"](f"Trying repair {n} on {len(pending)} file(s)…")
-        run = run_chain([str(f.source) for f in pending], chain, folder, workers=1,
-                        renderer=options.renderer, do_render=options.render, in_place=False, progress=ctx["log"])
-        by_source = {str(f.source): f for f in run.files}
-        good = []
-        for f in pending:
-            cf = by_source.get(str(f.source))
-            if cf and cf.output:
-                latest[str(f.source)] = cf.output
-            if cf and cf.status == "PASS" and cf.output:
-                f.output, f.output_md5 = cf.output, cf.results[-1].output_md5
-                f.out_name = cf.out_name if renames else ""
-                f.outcomes = getattr(cf, "outcomes", [])
-                f.status, f.reason = "READY", "Every stage and declared final assertion passed; review the requested outcome."
-                good.append(f)
-            else:
-                f.reason = cf.reason if cf else "No result was produced for this file."
-        review = _review(ctx, good, folder)
-        if review is not None:
-            entry["visual_review"] = copy.deepcopy(review.to_dict())
+        with diag.scope(recovery_attempt=n), diag.span("recovery.trial", file_count=len(pending)) as record:
+            chain = _candidate(candidate, ctx["goal"], result.request, ctx["sources"], ctx["templates"], ctx["assertions"], ctx["aliases"],
+                               input_files=ctx.get("input_files", ()))
+            renames = any(spec_renames_outputs(s) for s in _specs(chain))
+            folder = result.out_dir / "attempts" / f"{n:03d}"
+            ctx["log"](f"Trying repair {n} on {len(pending)} file(s)…")
+            run = run_chain([str(f.source) for f in pending], chain, folder, workers=1,
+                            renderer=options.renderer, do_render=options.render, in_place=False, progress=ctx["log"])
+            by_source = {str(f.source): f for f in run.files}
+            good = []
+            for f in pending:
+                cf = by_source.get(str(f.source))
+                if cf and cf.output:
+                    latest[str(f.source)] = cf.output
+                if cf and cf.status == "PASS" and cf.output:
+                    f.output, f.output_md5 = cf.output, cf.results[-1].output_md5
+                    f.out_name = cf.out_name if renames else ""
+                    f.outcomes = getattr(cf, "outcomes", [])
+                    f.status, f.reason = "READY", "Every stage and declared final assertion passed; review the requested outcome."
+                    good.append(f)
+                else:
+                    f.reason = cf.reason if cf else "No result was produced for this file."
+            review = _review(ctx, good, folder)
+            if review is not None:
+                entry["visual_review"] = copy.deepcopy(review.to_dict())
+            record["statuses"] = dict(Counter(f.status for f in pending))
     except llm.BudgetExceeded:
         raise
     except Exception as e:
@@ -717,6 +752,7 @@ def _trial(ctx, group, candidate, pid, code, reason, latest):
         for f in pending:
             f.status, f.reason, f.output, f.output_md5 = "UNRESOLVED", entry["error"], None, ""
     entry["results"] = [f.to_dict() for f in pending]
+    _trial_outcomes(pending, n)
     _remember(ctx, group, candidate, pid, code, entry)
     return {"attempt": n, "files": [f.to_dict() for f in pending],
             "error": entry.get("error"), "visual_review": entry["visual_review"],
@@ -729,7 +765,15 @@ def _review(ctx, good, folder):
     The accumulated result review is for the batch UI; it is never evidence for a different repair case.
     """
     if not good:
+        diag.event("recovery.review.skipped", reason="no independently verified output")
         return
+    with diag.span("recovery.review", file_count=len(good), folder=str(folder)) as record:
+        review = _review_outputs(ctx, good, folder)
+        record.update(skipped=review.skipped, findings=len(review.findings), blocking=len(review.blocking()))
+        return review
+
+
+def _review_outputs(ctx, good, folder):
     from . import vision
     result, options = ctx["result"], ctx["options"]
     parked = ctx.setdefault("visually_blocked_candidates", {})
@@ -796,9 +840,12 @@ def _restore_reviewable_candidates(ctx):
             continue
         try:
             unchanged = hashlib.md5(f.output.read_bytes()).hexdigest() == f.output_md5
-        except OSError:
+        except OSError as exc:
+            diag.event("recovery.candidate.unreadable", level="warning", source=str(f.source),
+                       output=str(f.output), **diag.error_fields(exc))
             unchanged = False
         if not unchanged:
+            diag.event("recovery.candidate.withheld", source=str(f.source), reason="verified output is no longer unchanged")
             continue
         stopped_reason = f.reason
         f.status = "READY"
@@ -807,6 +854,8 @@ def _restore_reviewable_candidates(ctx):
         if stopped_reason != "Visual review found a blocking concern; investigate and try again.":
             f.reason += " Investigation stopped: " + stopped_reason
         restored.append(f.source.name)
+        diag.event("recovery.candidate.retained", source=str(f.source), status=f.status, reason=f.reason,
+                   recovery_attempt=f.attempts, blocking_review=True)
     if restored:
         result.notes.append("Investigation ended before another trial for " + ", ".join(restored) +
                             "; the verified candidates remain available with blocking findings that require acknowledgement.")
@@ -818,18 +867,27 @@ def _remember(ctx, group, candidate, pid, code, entry):
         return
     good = [f for f in group if f.status == "READY" and any(x.get("source") == str(f.source) for x in entry["results"])]
     try:
-        case = store.record({"request": result.request, "pattern_id": pid, "failure_code": code,
-                             "candidate": _portable(_canonical_templates(candidate, ctx["aliases"]), ctx["templates"]),
-                             "status": "success" if good else "failed", "structural_verified": bool(good),
-                             "visual_review": copy.deepcopy(entry.get("visual_review") or {"skipped": "not reviewed"}),
-                             "template_hashes": sorted(ctx["templates"]), "goal_fingerprint": ctx["goal_hash"],
-                             "app_version": __version__, "usage": ctx["budget"].to_dict(),
-                             "notes": entry.get("error") or "; ".join(f.reason for f in group)})
-        entry["case_id"] = case
-        for f in good:
-            f.case_id = case
+        with diag.span("recovery.memory.record", recovery_attempt=entry["number"]) as record:
+            case = store.record({"request": result.request, "pattern_id": pid, "failure_code": code,
+                                 "candidate": _portable(_canonical_templates(candidate, ctx["aliases"]), ctx["templates"]),
+                                 "status": "success" if good else "failed", "structural_verified": bool(good),
+                                 "visual_review": copy.deepcopy(entry.get("visual_review") or {"skipped": "not reviewed"}),
+                                 "template_hashes": sorted(ctx["templates"]), "goal_fingerprint": ctx["goal_hash"],
+                                 "app_version": __version__, "usage": ctx["budget"].to_dict(),
+                                 "notes": entry.get("error") or "; ".join(f.reason for f in group)})
+            entry["case_id"] = case
+            for f in good:
+                f.case_id = case
+            record["case_id"] = case
     except Exception as e:
         result.notes.append(f"Could not record repair memory: {e}")
+
+
+def _trial_outcomes(files, attempt):
+    for item in files:
+        diag.event("recovery.file.outcome", recovery_attempt=attempt, source=str(item.source), status=item.status,
+                   reason=item.reason, output=str(item.output) if item.output else None,
+                   output_md5=item.output_md5, final_assertions=item.outcomes)
 
 
 def _custom_trial(ctx, group, proposal, pid, code, latest):
@@ -860,81 +918,84 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
         f.attempts += 1
         f.status, f.output, f.output_md5, f.outcomes = "UNRESOLVED", None, "", []
     try:
-        # Apply the same authority/unsupported-requirement gate as ordinary repairs. In particular an original
-        # source-relative assertion cannot disappear merely because this repair happens to use generated code.
-        original = {"kind": "chain", "chain": {"stages": [{"spec": copy.deepcopy(s)} for s in _specs(ctx["goal"])]}}
-        approved = _candidate(original, ctx["goal"], result.request, ctx["sources"], ctx["templates"],
-                              ctx["assertions"], ctx["aliases"], input_files=ctx.get("input_files", ()))
-        boundary_spec = {"request": result.request, "summary": "Original approved page setup changes only",
-                         "mode": "formatting", "applies_to": {"or": "all"},
-                         "ops": [copy.deepcopy(op) for s in _specs(approved) for op in s["ops"]],
-                         "assertions": [copy.deepcopy(a) for s in _specs(approved) for a in s.get("assertions", [])]}
-        names = output_names([f.source for f in pending])
-        originals, plans, eligible = {}, {}, []
-        for f in pending:
-            try:
-                before = f.source.read_bytes()
-                # Retain each original spec's own planning constraints (including its geometry request) before
-                # combining the permitted changes into the single original-to-final preservation boundary.
-                for spec in _specs(approved):
-                    plan_spec(DocxPackage(before, name=str(f.source)), spec, f.pattern_id)
-                plan, _ = plan_spec(DocxPackage(before, name=str(f.source)), boundary_spec, f.pattern_id)
-                originals[str(f.source)], plans[str(f.source)] = before, plan.to_dict()
-                plan_path = folder / "approved-plans" / (Path(names[str(f.source)]).stem + ".json")
-                plan_path.parent.mkdir(parents=True, exist_ok=True)
-                plan_path.write_text(json.dumps(plan.to_dict(), indent=2), encoding="utf-8")
-                eligible.append(f)
-            except Exception as e:
-                f.reason = ("Cannot independently establish the original approved change boundary for this custom "
-                            f"repair: {type(e).__name__}: {e}")
-        if eligible:
-            g = generate_op(result.request, proposal, [f.source for f in eligible[:3]], folder / "codegen",
-                            client=ctx["client"], model=options.model, max_iter=1, log=ctx["log"])
-            if not g.passed:
-                for f in eligible:
-                    f.reason = "; ".join(g.errors or [p for a in g.attempts for p in a["problems"]])
-            else:
-                trials = run_generated(g, [str(f.source) for f in eligible], folder / "trial", log=ctx["log"])
-                by_source = {str(t.source): t for t in trials}
-                good = []
-                entry["approved_checks"] = []
-                for f in eligible:
-                    t = by_source.get(str(f.source))
-                    if t and t.output:
-                        latest[str(f.source)] = t.output
-                    if not t or not t.passed or not t.output:
-                        f.reason = "; ".join(t.problems) if t else "No custom transform result."
-                        continue
-                    data = t.output.read_bytes()
-                    if hashlib.md5(data).hexdigest() != t.output_md5:
-                        f.reason = "The generated output changed after verification; custom repair withheld."
-                        continue
-                    if f.source.read_bytes() != originals[str(f.source)]:
-                        f.reason = "The source changed after the approved changes were planned; custom repair withheld."
-                        continue
-                    # V10 now strips only the original op's requested properties. An extra honestly declared
-                    # generated change remains in its residual and fails, even if all final values are correct.
-                    record = run_suite(originals[str(f.source)], data, plans[str(f.source)], str(f.source), str(t.output))
-                    record_path = folder / "approved-records" / (Path(names[str(f.source)]).stem + ".json")
-                    record_path.parent.mkdir(parents=True, exist_ok=True)
-                    record_path.write_text(json.dumps(record.to_dict(), indent=2), encoding="utf-8")
-                    record_path.with_suffix(".md").write_text(record.to_markdown(), encoding="utf-8")
-                    entry["approved_checks"].append({"source": str(f.source), "passed": record.passed,
-                                                     "record": str(record_path)})
-                    if not record.passed:
-                        f.reason = "Generated formatting exceeded or missed the original approved changes: " + "; ".join(
-                            f"{check.id}: {check.summary}" for check in record.checks if check.status == "FAIL")
-                        continue
-                    f.outcomes = assert_outcomes(data, ctx["assertions"])
-                    if all(e["status"] == "PASS" for e in f.outcomes):
-                        f.status, f.output, f.output_md5 = "READY", t.output, t.output_md5
-                        f.reason = "Custom formatting passed the original approved change boundary and final checks; review its full effect."
-                        good.append(f)
-                    else:
-                        f.reason = "Custom formatting did not satisfy the original final requirements."
-                review = _review(ctx, good, folder)
-                if review is not None:
-                    entry["visual_review"] = copy.deepcopy(review.to_dict())
+        with diag.scope(recovery_attempt=n), diag.span("recovery.custom_trial", file_count=len(pending)) as trial_record:
+            # Apply the same authority/unsupported-requirement gate as ordinary repairs. In particular an original
+            # source-relative assertion cannot disappear merely because this repair happens to use generated code.
+            original = {"kind": "chain", "chain": {"stages": [{"spec": copy.deepcopy(s)} for s in _specs(ctx["goal"])]}}
+            approved = _candidate(original, ctx["goal"], result.request, ctx["sources"], ctx["templates"],
+                                  ctx["assertions"], ctx["aliases"], input_files=ctx.get("input_files", ()))
+            boundary_spec = {"request": result.request, "summary": "Original approved page setup changes only",
+                             "mode": "formatting", "applies_to": {"or": "all"},
+                             "ops": [copy.deepcopy(op) for s in _specs(approved) for op in s["ops"]],
+                             "assertions": [copy.deepcopy(a) for s in _specs(approved) for a in s.get("assertions", [])]}
+            names = output_names([f.source for f in pending])
+            originals, plans, eligible = {}, {}, []
+            for f in pending:
+                try:
+                    before = f.source.read_bytes()
+                    # Retain each original spec's own planning constraints (including its geometry request) before
+                    # combining the permitted changes into the single original-to-final preservation boundary.
+                    for spec in _specs(approved):
+                        plan_spec(DocxPackage(before, name=str(f.source)), spec, f.pattern_id)
+                    plan, _ = plan_spec(DocxPackage(before, name=str(f.source)), boundary_spec, f.pattern_id)
+                    originals[str(f.source)], plans[str(f.source)] = before, plan.to_dict()
+                    plan_path = folder / "approved-plans" / (Path(names[str(f.source)]).stem + ".json")
+                    plan_path.parent.mkdir(parents=True, exist_ok=True)
+                    plan_path.write_text(json.dumps(plan.to_dict(), indent=2), encoding="utf-8")
+                    eligible.append(f)
+                except Exception as e:
+                    diag.event("recovery.custom_boundary.failed", level="error", source=str(f.source), **diag.error_fields(e))
+                    f.reason = ("Cannot independently establish the original approved change boundary for this custom "
+                                f"repair: {type(e).__name__}: {e}")
+            if eligible:
+                g = generate_op(result.request, proposal, [f.source for f in eligible[:3]], folder / "codegen",
+                                client=ctx["client"], model=options.model, max_iter=1, log=ctx["log"])
+                if not g.passed:
+                    for f in eligible:
+                        f.reason = "; ".join(g.errors or [p for a in g.attempts for p in a["problems"]])
+                else:
+                    trials = run_generated(g, [str(f.source) for f in eligible], folder / "trial", log=ctx["log"])
+                    by_source = {str(t.source): t for t in trials}
+                    good = []
+                    entry["approved_checks"] = []
+                    for f in eligible:
+                        t = by_source.get(str(f.source))
+                        if t and t.output:
+                            latest[str(f.source)] = t.output
+                        if not t or not t.passed or not t.output:
+                            f.reason = "; ".join(t.problems) if t else "No custom transform result."
+                            continue
+                        data = t.output.read_bytes()
+                        if hashlib.md5(data).hexdigest() != t.output_md5:
+                            f.reason = "The generated output changed after verification; custom repair withheld."
+                            continue
+                        if f.source.read_bytes() != originals[str(f.source)]:
+                            f.reason = "The source changed after the approved changes were planned; custom repair withheld."
+                            continue
+                        # V10 now strips only the original op's requested properties. An extra honestly declared
+                        # generated change remains in its residual and fails, even if all final values are correct.
+                        record = run_suite(originals[str(f.source)], data, plans[str(f.source)], str(f.source), str(t.output))
+                        record_path = folder / "approved-records" / (Path(names[str(f.source)]).stem + ".json")
+                        record_path.parent.mkdir(parents=True, exist_ok=True)
+                        record_path.write_text(json.dumps(record.to_dict(), indent=2), encoding="utf-8")
+                        record_path.with_suffix(".md").write_text(record.to_markdown(), encoding="utf-8")
+                        entry["approved_checks"].append({"source": str(f.source), "passed": record.passed,
+                                                         "record": str(record_path)})
+                        if not record.passed:
+                            f.reason = "Generated formatting exceeded or missed the original approved changes: " + "; ".join(
+                                f"{check.id}: {check.summary}" for check in record.checks if check.status == "FAIL")
+                            continue
+                        f.outcomes = assert_outcomes(data, ctx["assertions"])
+                        if all(e["status"] == "PASS" for e in f.outcomes):
+                            f.status, f.output, f.output_md5 = "READY", t.output, t.output_md5
+                            f.reason = "Custom formatting passed the original approved change boundary and final checks; review its full effect."
+                            good.append(f)
+                        else:
+                            f.reason = "Custom formatting did not satisfy the original final requirements."
+                    review = _review(ctx, good, folder)
+                    if review is not None:
+                        entry["visual_review"] = copy.deepcopy(review.to_dict())
+            trial_record["statuses"] = dict(Counter(f.status for f in pending))
     except llm.BudgetExceeded as e:
         entry["error"] = f"{type(e).__name__}: {e}"
         for f in pending:
@@ -947,6 +1008,7 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
         for f in pending:
             f.status, f.reason, f.output, f.output_md5 = "UNRESOLVED", entry["error"], None, ""
     entry["results"] = [f.to_dict() for f in pending]
+    _trial_outcomes(pending, n)
     _remember(ctx, group, entry["candidate"], pid, code, entry)
     return entry
 
@@ -972,6 +1034,15 @@ def recover_from_run(run_dir: Path, out_dir: Path, *, request=None, options=None
 
 def deliver_recovery(result: RecoveryResult, out_dir=None, acknowledge_review=False) -> Path:
     """Export only the reviewed, verified bytes, after checking all source and template pins again."""
+    with diag.scope(result.out_dir / "logs" / "events.jsonl", recovery_id=result.recovery_id), \
+            diag.span("recovery.delivery", ready_count=len(result.ready),
+                      acknowledge_review=acknowledge_review) as record:
+        dest = _deliver_recovery(result, out_dir, acknowledge_review)
+        record["destination"] = str(dest)
+        return dest
+
+
+def _deliver_recovery(result, out_dir, acknowledge_review):
     if not result.ready:
         raise ValueError("No verified repair is ready to deliver.")
     if (not result.token or _recovery_token(result.key, [f.source for f in result.files]) != result.token
@@ -999,7 +1070,9 @@ def deliver_recovery(result: RecoveryResult, out_dir=None, acknowledge_review=Fa
     dest.mkdir(parents=True, exist_ok=True)
     for f, content in data:
         path = dest / names[str(f.source)]
-        path.write_bytes(content)
-        f.delivered_to = str(path)
+        with diag.span("recovery.delivery.write", source=str(f.source), output=str(path),
+                       output_md5=f.output_md5, bytes=len(content)):
+            path.write_bytes(content)
+            f.delivered_to = str(path)
     _save(result)
     return dest

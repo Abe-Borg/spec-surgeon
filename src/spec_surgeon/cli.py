@@ -48,6 +48,7 @@ from datetime import datetime
 from pathlib import Path
 
 from . import __version__
+from . import diagnostics as diag
 from .batch import expand_inputs, load_set_aside, run_batch
 from .fingerprint import fingerprint
 from .jobs import REGISTRY, get_job
@@ -110,11 +111,13 @@ def cmd_run_spec(args):
         spec = load_spec(args.spec)
         validate_spec(spec)
     except SpecError as e:
+        diag.event("cli.spec.refused", level="warning", code=e.code, reason=e.reason)
         print(f"EditSpec refused [{e.code}]: {e.reason}", file=sys.stderr)
         for q in e.details.get("questions", []):
             print(f"  ? {q}", file=sys.stderr)
         return 2
     except (OSError, ValueError) as e:
+        diag.event("cli.spec.unreadable", level="warning", **diag.error_fields(e))
         print(f"cannot read the EditSpec: {e}", file=sys.stderr)
         return 2
     print(f"EditSpec: {spec['request']!r} — {spec['summary']}")
@@ -125,6 +128,8 @@ def cmd_run_spec(args):
         from .preview import approval_inputs, approval_token, explain_approval_change
         files = [f for f in expand_inputs(args.files) if not is_template_file(f, spec_templates(spec))]
         if approval_token(spec, files) != args.approval:
+            diag.event("cli.approval.refused", level="warning", gate="approval_digest",
+                       reason="preview_inputs_changed")
             print("approval token does not match: the spec or a file changed since the preview (or the file set "
                   "differs) — preview again", file=sys.stderr)
             beside = Path(args.spec).parent / "preview.json" if not str(args.spec).lstrip().startswith("{") else None
@@ -148,10 +153,12 @@ def _load_valid_spec(arg):
         validate_spec(spec)
         return spec
     except SpecError as e:
+        diag.event("cli.spec.refused", level="warning", code=e.code, reason=e.reason)
         print(f"EditSpec refused [{e.code}]: {e.reason}", file=sys.stderr)
         for q in e.details.get("questions", []):
             print(f"  ? {q}", file=sys.stderr)
     except (OSError, ValueError) as e:
+        diag.event("cli.spec.unreadable", level="warning", **diag.error_fields(e))
         print(f"cannot read the EditSpec: {e}", file=sys.stderr)
     return None
 
@@ -270,6 +277,7 @@ def cmd_run(args, spec=None):
         batch = run_batch(args.files, args.job, params, out_dir, workers=args.workers, renderer=args.renderer,
                           do_render=not args.no_render, in_place=args.in_place, progress=progress, spec=spec)
     except ValueError as e:          # refused before anything was written (an input inside the results folder)
+        diag.event("cli.run.refused", level="warning", reason=str(e), out_dir=str(out_dir))
         print(f"refused: {e}", file=sys.stderr)
         return 2
     c = batch.counts()
@@ -331,6 +339,7 @@ def cmd_do(args):
         return 2
     from . import llm
     if not llm.credentials_found():               # keyless: say what works without a key, before anything is written
+        diag.event("cli.command.refused", level="warning", reason="model_authentication_missing", feature="conversation")
         print(NEEDS_KEY_DO, file=sys.stderr)
         return 2
     if getattr(args, "save_as", None):
@@ -424,6 +433,8 @@ def _preview_and_run(args, spec, files, out_dir, brief=None):
     if blocking and not getattr(args, "ack_review", False):
         print(f"\nClaude's visual check flagged {len(blocking)} problem(s) it rates as blocking (see above).")
         if args.yes and not _interactive():
+            diag.event("cli.approval.refused", level="warning", gate="visual_review",
+                       blocking_count=len(blocking), reason="review_not_acknowledged")
             print("Not run: look at the pages in the preview folder; re-run with --ack-review to run anyway.")
             return 2
     approved = args.yes and (not blocking or getattr(args, "ack_review", False))
@@ -431,6 +442,8 @@ def _preview_and_run(args, spec, files, out_dir, brief=None):
         question = (f"\nYou have looked at Claude's findings and want to run this on {len(pv.batch_plan.files)} "
                     f"file(s)? [y/N] " if blocking else f"\nRun this on {len(pv.batch_plan.files)} file(s)? [y/N] ")
         approved = bool(_confirm(question))
+    diag.event("cli.approval.decision", approved=bool(approved), source="flag" if args.yes else "prompt",
+               blocking_count=len(blocking), review_acknowledged=bool(getattr(args, "ack_review", False)))
     if not approved:
         print(f"\nNot run. To run exactly this:\n  spec-surgeon run-spec \"{out_dir / 'preview' / 'spec.json'}\" "
               + " ".join(f'"{f}"' for f in files) + f" --approval {pv.token}"
@@ -443,6 +456,8 @@ def _preview_and_run(args, spec, files, out_dir, brief=None):
     from .preview import changed_since_preview
     changed = changed_since_preview(spec, [f.source for f in pv.batch_plan.files], pv.token, pv.token_inputs)
     if changed is not None:
+        diag.event("cli.approval.refused", level="warning", gate="approval_digest",
+                   reason="preview_inputs_changed", changes=changed)
         print("Not run: a file or the template changed since the preview — run the command again for a new preview."
               + "".join(f"\n  • {w}" for w in changed), file=sys.stderr)
         return 2
@@ -487,6 +502,8 @@ def _preview_and_run_chain(args, chain, files, out_dir):
     if blocking and not getattr(args, "ack_review", False):
         print(f"\nClaude's visual check flagged {len(blocking)} problem(s) it rates as blocking (see above).")
         if args.yes and not _interactive():
+            diag.event("cli.approval.refused", level="warning", gate="visual_review",
+                       blocking_count=len(blocking), reason="review_not_acknowledged")
             print("Not run: look at the pages in the preview folder; re-run with --ack-review to run anyway.")
             return 2
     approved = args.yes and (not blocking or getattr(args, "ack_review", False))
@@ -495,12 +512,16 @@ def _preview_and_run_chain(args, chain, files, out_dir):
         question = (f"\nYou have looked at Claude's findings and want to run this chain on {n_files} file(s)? [y/N] "
                     if blocking else f"\nRun this chain ({len(chain['stages'])} stage(s)) on {n_files} file(s)? [y/N] ")
         approved = bool(_confirm(question))
+    diag.event("cli.approval.decision", approved=bool(approved), source="flag" if args.yes else "prompt",
+               blocking_count=len(blocking), review_acknowledged=bool(getattr(args, "ack_review", False)))
     if not approved:
         print(f"\nNot run. The chain is saved as {out_dir / 'preview' / 'chain.json'}; to run exactly this, run the "
               f"command again (or `spec-surgeon library use` once it is saved with --save-as).")
         return 0
     changed = changed_since_preview(chain_key(chain), [f.source for f in pv.batch_plan.files], pv.token, pv.token_inputs)
     if changed is not None:
+        diag.event("cli.approval.refused", level="warning", gate="approval_digest",
+                   reason="preview_inputs_changed", changes=changed)
         print("Not run: a file or a template changed since the preview — run the command again for a new preview."
               + "".join(f"\n  • {w}" for w in changed), file=sys.stderr)
         return 2
@@ -609,6 +630,7 @@ def _review(intent, samples, folder, args):
     review that says why: nothing is prepared or sent, and nothing is blocked (it can stop a run, never pass one)."""
     from . import compiler, llm, vision
     if not llm.credentials_found():
+        diag.event("cli.review.skipped", reason="model_authentication_missing")
         print(f"Claude's visual check skipped: {NO_KEY_REVIEW}", file=sys.stderr)
         return vision.VisualReview(skipped=NO_KEY_REVIEW)
     return vision.review_samples(intent, samples, folder, compiler._client,
@@ -991,6 +1013,8 @@ def _approve_and_run_generated(args, g, gp, files, out_dir, key, token, inputs, 
         print("note: generated transforms are never delivered in place; outputs go to the output folder")
     blocking = gp.review.blocking() if gp.review is not None else []
     if blocking and not getattr(args, "ack_review", False) and args.yes and not _interactive():
+        diag.event("cli.approval.refused", level="warning", gate="visual_review",
+                   blocking_count=len(blocking), reason="review_not_acknowledged")
         print(f"\nNot run: Claude's visual check flagged {len(blocking)} blocking problem(s); look at the pages, then "
               f"re-run with --ack-review to run anyway.")
         return 2
@@ -999,11 +1023,15 @@ def _approve_and_run_generated(args, g, gp, files, out_dir, key, token, inputs, 
         q = (f"\nYou have looked at Claude's findings and want to run it on {len(files)} file(s) (edited copies "
              f"only)? [y/N] " if blocking else f"\nRun it on {len(files)} file(s) (edited copies only)? [y/N] ")
         approved = bool(_confirm(q))
+    diag.event("cli.approval.decision", approved=bool(approved), source="flag" if args.yes else "prompt",
+               blocking_count=len(blocking), review_acknowledged=bool(getattr(args, "ack_review", False)))
     if not approved:
         print("Not run. Review the generated module and its preview before running it.")
         return 0
     changed = changed_since_preview(key, files, token, inputs)
     if changed is not None:
+        diag.event("cli.approval.refused", level="warning", gate="approval_digest",
+                   reason="preview_inputs_changed", changes=changed)
         print(f"Not run: {changed_msg} — run the command again."
               + "".join(f"\n  • {w}" for w in changed), file=sys.stderr)
         return 2
@@ -1184,6 +1212,7 @@ def cmd_advise(args):
     from . import llm
     from .advisor import advise_batch
     if not llm.credentials_found():
+        diag.event("cli.command.refused", level="warning", reason="model_authentication_missing", feature="advice")
         print(NEEDS_KEY_ADVISE, file=sys.stderr)
         return 2
     res = advise_batch(Path(args.out_dir), only=args.file, model=args.model,
@@ -1200,7 +1229,10 @@ def cmd_advise(args):
 def _run_folder(path: Path) -> Path:
     """A results folder, or a `do`/window folder whose run is in run/."""
     p = Path(path)
-    if not (p / "batch.json").exists() and not (p / "logs").is_dir() and (p / "run").is_dir():
+    # Conversation journals also create logs/ at the session level. Only actual run evidence keeps diagnosis here.
+    own_run = any((p / name).is_file() for name in
+                  ("batch.json", "BATCH_REPORT.md", "DIAGNOSTICS.md", "logs/run.log"))
+    if not own_run and (p / "run").is_dir():
         return p / "run"
     return p
 
@@ -1238,6 +1270,18 @@ def cmd_diagnose(args):
             print("## " + sec)
     else:
         print(text)
+    # Event journals remain useful even when a process stopped before writing the human-readable report.
+    root = diag.bundle_root(folder)
+    journals = sorted(root.rglob("*.jsonl"))
+    if journals:
+        print("\nStructured diagnostic journals (UTC times, correlation IDs, stage durations and failures):")
+        for journal in journals[:30]:
+            print(f"  {journal}")
+        if len(journals) > 30:
+            print(f"  … {len(journals) - 30} more journals under {root}")
+    app_journals = sorted(logs_dir().glob("app-events*.jsonl"))
+    if app_journals:
+        print(f"Application and command events: {logs_dir()} (app-events*.jsonl)")
     if args.bundle:
         res = diag.make_bundle(Path(args.bundle), folder, logs_dir(), note="spec-surgeon diagnose")
         print(f"\nDiagnostics bundle: {res['path']} — {len(res['included'])} file(s); "
@@ -1254,6 +1298,8 @@ def cmd_verify(args):
 
 
 def main(argv=None) -> int:
+    from .settings import logs_dir
+    diag.setup_app_logging(logs_dir())
     ap = argparse.ArgumentParser(prog="spec-surgeon", description=f"Spec Surgeon {__version__} — surgical, verified .docx edits at any scale.")
     sub = ap.add_subparsers(dest="cmd", required=True)
 
@@ -1443,11 +1489,25 @@ def main(argv=None) -> int:
     p.add_argument("--bundle", default=None, help="also write a diagnostics zip here")
     p.set_defaults(fn=cmd_diagnose)
 
-    args = ap.parse_args(argv)
+    try:
+        args = ap.parse_args(argv)
+    except SystemExit as exc:
+        diag.event("cli.arguments.finished", level="warning" if exc.code else "info", exit_code=exc.code)
+        raise
     if getattr(args, "model", None) is None and hasattr(args, "model"):
         from .compiler import DEFAULT_MODEL
         args.model = DEFAULT_MODEL
-    return args.fn(args)
+    # Metadata only: raw argv contains requests, document wording, inline specs and potentially credentials.
+    options = {key: getattr(args, key) for key in
+               ("in_place", "no_render", "no_review", "ack_review", "yes", "workers", "renderer", "model")
+               if hasattr(args, key)}
+    with diag.scope(component="cli", command_id=diag.new_id(), command=args.cmd):
+        with diag.span("cli.command", options=options,
+                       input_argument_count=len(getattr(args, "files", None) or [])) as completion:
+            code = args.fn(args)
+            completion.update(exit_code=code, outcome="ok" if not code else "refused" if code == 2 else "failed",
+                              out_dir=getattr(args, "out", None))
+            return code
 
 
 if __name__ == "__main__":  # pragma: no cover

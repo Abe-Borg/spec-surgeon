@@ -10,10 +10,14 @@ where it runs is not guaranteed), and never touch a widget from ``fn``: read eve
 from __future__ import annotations
 
 import threading
+import time
 import traceback
+from contextvars import copy_context
 from typing import Any, Callable
 
 from PySide6.QtCore import QObject, Signal
+
+from .. import diagnostics as diag
 
 
 class Bridge(QObject):
@@ -24,13 +28,17 @@ class Bridge(QObject):
 
 def start_job(bridge: Bridge, fn: Callable[[Callable[[str], None]], Any], name: str = "spec-surgeon-job") \
         -> threading.Thread:
+    context = copy_context()                     # preserve the UI action's session/span across the thread boundary
+    queued = time.perf_counter()
+
     def target():
         try:
-            result = fn(lambda m: bridge.log.emit(str(m)))
+            with diag.span("ui.worker", worker_name=name, queue_ms=round((time.perf_counter() - queued) * 1000, 3)):
+                result = fn(lambda m: bridge.log.emit(str(m)))
         except Exception as e:  # shown to the user, not swallowed
             bridge.failed.emit(f"{type(e).__name__}: {e}", traceback.format_exc())
         else:
             bridge.done.emit(result)
-    t = threading.Thread(target=target, daemon=True, name=name)
+    t = threading.Thread(target=context.run, args=(target,), daemon=True, name=name)
     t.start()
     return t

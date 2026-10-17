@@ -39,6 +39,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
+from . import diagnostics as diag
 from .editspec import apply_spec, plan_spec
 from .fingerprint import fingerprint
 from .package import DocxPackage
@@ -304,6 +305,9 @@ def _log_verification(log: Any, name: str, rec: Any) -> None:
     check's specifics."""
     if log is None or rec is None:
         return
+    diag.event("preview.verification", sample=name, passed=rec.passed,
+               checks={c.id: c.status for c in rec.checks},
+               failed_checks=[c.id for c in rec.checks if c.status == "FAIL"])
     log.detail(f"sample {name}: verification {'PASS' if rec.passed else 'FAIL'} — "
                + " · ".join(f"{c.id} {c.status}" for c in rec.checks if c.id not in ("V6", "V7", "V9")))
     for cid, cname, _summary, details in rec.failures():
@@ -328,6 +332,8 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
         warnings.append(msg)
         detail(msg)
     backend = render_mod.pick(renderer) if do_render else None
+    diag.event("preview.render_selected", enabled=do_render, requested=renderer, backend=backend,
+               sample_count=len(samples))
     if not do_render:
         warnings.append("rendering skipped: plan summaries and verification only")
     elif backend is None:
@@ -419,6 +425,13 @@ class GeneratedPreview:
 
 
 def preview_generated(g: Any, out_dir: Path, renderer: str = "auto", do_render: bool = True) -> GeneratedPreview:
+    with diag.scope(Path(out_dir) / diag.LOGS / "events.jsonl",
+                    run_id=diag.context().get("run_id") or diag.new_id(), preview_id=diag.new_id()), \
+            diag.span("preview.generated", out_dir=str(out_dir), renderer=renderer, do_render=do_render):
+        return _preview_generated(g, out_dir, renderer, do_render)
+
+
+def _preview_generated(g: Any, out_dir: Path, renderer: str, do_render: bool) -> GeneratedPreview:
     """The custom transform's preview, from the trials that made it pass: outputs copied out of the sandbox under names
     unique across the samples, rendered beside their sources. ``logs/preview.log`` has each sample's verification and
     what the renderer said."""
@@ -458,13 +471,25 @@ def preview_generated(g: Any, out_dir: Path, renderer: str = "auto", do_render: 
 def write_preview_files(pv: Any) -> None:
     """PREVIEW.md and preview.json beside the samples (rewritten when Claude's visual check arrives — preview.json keeps
     the approval inputs, so a refused run can still say what changed)."""
-    (pv.out_dir / "PREVIEW.md").write_text("```\n" + pv.to_text() + "\n```\n", encoding="utf-8")
-    (pv.out_dir / "preview.json").write_text(json.dumps(pv.to_dict(), indent=2, ensure_ascii=False, default=str),
-                                             encoding="utf-8")
+    with diag.span("preview.records", out_dir=str(pv.out_dir)):
+        (pv.out_dir / "PREVIEW.md").write_text("```\n" + pv.to_text() + "\n```\n", encoding="utf-8")
+        (pv.out_dir / "preview.json").write_text(json.dumps(pv.to_dict(), indent=2, ensure_ascii=False, default=str),
+                                                 encoding="utf-8")
 
 
 def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
                  do_render: bool = True) -> Preview:
+    with diag.scope(Path(out_dir) / diag.LOGS / "events.jsonl",
+                    run_id=diag.context().get("run_id") or diag.new_id(), preview_id=diag.new_id()), \
+            diag.span("preview", out_dir=str(out_dir), renderer=renderer, do_render=do_render) as outcome:
+        result = _make_preview(spec, inputs, out_dir, renderer, do_render)
+        outcome.update(samples=len(result.samples), exceptions=len(result.batch_plan.exceptions),
+                       warnings=result.warnings)
+        return result
+
+
+def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str,
+                  do_render: bool) -> Preview:
     from . import diagnostics as diag
     from .batch import output_names
     from .verify import run_suite
@@ -472,7 +497,8 @@ def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, ren
     out_dir.mkdir(parents=True, exist_ok=True)
     log = _preview_log(out_dir, repr(spec.get("request")))
     try:
-        bp = plan_batch(inputs, spec)
+        with diag.span("preview.plan_batch"):
+            bp = plan_batch(inputs, spec)
         pv = Preview(out_dir=out_dir, batch_plan=bp, log_path=log.path)
         log.detail(f"planned {len(bp.files)} file(s) in {bp.seconds:.2f}s: {len(bp.files) - len(bp.exceptions)} "
                    f"plan cleanly, {len(bp.exceptions)} exception(s)")
@@ -487,37 +513,50 @@ def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, ren
                 if e.get("traceback") and e.get("kind") in ("internal-error", "environment"):
                     log.block(e["traceback"])
         picks = _pick_samples(bp)
+        diag.event("preview.samples_selected", sources=[str(f) for f in picks], planned_files=len(bp.files))
         # names unique across the samples (two folders can each hold a "Spec.docx"): one sample's output never
         # overwrites another's, so each before/after picture and the visual check pair a source with its own output
         names = output_names(picks)
         for f in picks:
-            sv = SampleView(source=f)
-            stage, data = "open", None
-            try:
-                data = Path(f).read_bytes()
-                pkg = DocxPackage(data, name=str(f))
-                stage = "plan"
-                plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
-                stage = "apply"
-                out = apply_spec(pkg, frags).output_bytes()
-                stage = "write"
-                sv.output = out_dir / "samples" / names[str(f)]
-                sv.output.parent.mkdir(parents=True, exist_ok=True)
-                sv.output.write_bytes(out)
-                stage = "verify"
-                rec = run_suite(pkg.data, out, plan.to_dict(), str(f), str(sv.output))
-                sv.passed = rec.passed
-                sv.checks = {c.id: c.status for c in rec.checks}
-                _log_verification(log, f.name, rec)
-            except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
-                sv.exception = diag.exception_record(e, stage, data)
-                log.detail(f"sample {f.name}: EXCEPTION [{sv.exception['code']}] at {stage}: {sv.exception['reason']}")
-                if sv.exception.get("traceback") and sv.exception.get("kind") != "refusal":
-                    log.block(sv.exception["traceback"])
-            pv.samples.append(sv)
+            with diag.scope(source=str(f)), diag.span("preview.sample"):
+                sv = SampleView(source=f)
+                stage, data = "open", None
+                try:
+                    with diag.span("preview.sample.read"):
+                        data = Path(f).read_bytes()
+                    with diag.span("preview.sample.open"):
+                        pkg = DocxPackage(data, name=str(f))
+                    stage = "plan"
+                    with diag.span("preview.sample.plan"):
+                        plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+                    stage = "apply"
+                    with diag.span("preview.sample.apply"):
+                        out = apply_spec(pkg, frags).output_bytes()
+                    stage = "write"
+                    sv.output = out_dir / "samples" / names[str(f)]
+                    with diag.span("preview.sample.write", output=str(sv.output), size=len(out)):
+                        sv.output.parent.mkdir(parents=True, exist_ok=True)
+                        sv.output.write_bytes(out)
+                    stage = "verify"
+                    with diag.span("preview.sample.verify"):
+                        rec = run_suite(pkg.data, out, plan.to_dict(), str(f), str(sv.output))
+                    sv.passed = rec.passed
+                    sv.checks = {c.id: c.status for c in rec.checks}
+                    _log_verification(log, f.name, rec)
+                except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
+                    sv.exception = diag.exception_record(e, stage, data)
+                    diag.event("preview.sample_failed", level="error", source=str(f), stage=stage,
+                               exception=sv.exception)
+                    log.detail(f"sample {f.name}: EXCEPTION [{sv.exception['code']}] at {stage}: {sv.exception['reason']}")
+                    if sv.exception.get("traceback") and sv.exception.get("kind") != "refusal":
+                        log.block(sv.exception["traceback"])
+                pv.samples.append(sv)
+                diag.event("preview.sample_finished", source=str(f), passed=sv.passed,
+                           exception=sv.exception, checks=sv.checks)
         pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
-        pv.token = approval_token(spec, [f.source for f in bp.files])
-        pv.token_inputs = approval_inputs(spec, [f.source for f in bp.files])
+        with diag.span("preview.approval", file_count=len(bp.files)):
+            pv.token = approval_token(spec, [f.source for f in bp.files])
+            pv.token_inputs = approval_inputs(spec, [f.source for f in bp.files])
         (out_dir / "spec.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
         write_preview_files(pv)
         log.detail(f"approval token {pv.token}")
@@ -579,6 +618,13 @@ class ChainPreview(Preview):
 
 def make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
                        do_render: bool = True) -> ChainPreview:
+    with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), preview_id=diag.new_id()), \
+            diag.span("preview.chain", out_dir=str(out_dir), renderer=renderer, do_render=do_render):
+        return _make_chain_preview(chain, inputs, out_dir, renderer, do_render)
+
+
+def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str,
+                        do_render: bool) -> ChainPreview:
     """``make_preview`` for a chain: stage 1 planned on every file, the samples (``_pick_samples`` of that plan) run
     through every stage in memory — plan → apply → verify, each stage on the bytes the stage before it verified; a
     stage that refuses or fails verification stops that sample there —, the final output written under
@@ -593,88 +639,101 @@ def make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
     chain = copy.deepcopy(chain)
     validate_chain(chain)
     out_dir = Path(out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    log = _preview_log(out_dir, f"chain {chain_name(chain)!r}")
-    try:
-        templates = chain_templates(chain)
-        files = [f for f in expand_inputs(inputs) if not is_template_file(f, templates)]
-        stages = chain["stages"]
-        bp = plan_batch([str(f) for f in files], stages[0]["spec"])
-        pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path)
-        log.detail(f"stage 1 ({stage_name(stages[0], 1)}) planned on {len(bp.files)} file(s) in {bp.seconds:.2f}s: "
-                   f"{len(bp.files) - len(bp.exceptions)} plan cleanly, {len(bp.exceptions)} exception(s)")
-        for fpl in bp.files:
-            if fpl.status == "planned":
-                log.detail(f"  {fpl.source.name}: planned [{fpl.ms:.0f} ms] — " + " · ".join(fpl.summary))
-            else:
-                e = fpl.exception or {}
-                log.detail(f"  {fpl.source.name}: EXCEPTION [{e.get('code')}] at {e.get('stage')}: {e.get('reason')}")
-        picks = _pick_samples(bp)
-        names = output_names(picks)
-        for f in picks:
-            sv = SampleView(source=f)
-            phase, data, produced = "open", None, False
-            try:
-                data = Path(f).read_bytes()
-            except Exception as e:  # noqa: BLE001
-                sv.exception = diag.exception_record(e, phase, None)
-            for i, st in enumerate(stages, 1):
-                if sv.exception is not None:
-                    break
-                spec, label = st["spec"], stage_name(st, i)
+    with diag.scope(out_dir / diag.LOGS / "events.jsonl"), diag.span("preview.chain.execute"):
+        out_dir.mkdir(parents=True, exist_ok=True)
+        log = _preview_log(out_dir, f"chain {chain_name(chain)!r}")
+        try:
+            templates = chain_templates(chain)
+            files = [f for f in expand_inputs(inputs) if not is_template_file(f, templates)]
+            stages = chain["stages"]
+            bp = plan_batch([str(f) for f in files], stages[0]["spec"])
+            pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path)
+            log.detail(f"stage 1 ({stage_name(stages[0], 1)}) planned on {len(bp.files)} file(s) in {bp.seconds:.2f}s: "
+                       f"{len(bp.files) - len(bp.exceptions)} plan cleanly, {len(bp.exceptions)} exception(s)")
+            for fpl in bp.files:
+                if fpl.status == "planned":
+                    log.detail(f"  {fpl.source.name}: planned [{fpl.ms:.0f} ms] — " + " · ".join(fpl.summary))
+                else:
+                    e = fpl.exception or {}
+                    log.detail(f"  {fpl.source.name}: EXCEPTION [{e.get('code')}] at {e.get('stage')}: {e.get('reason')}")
+            picks = _pick_samples(bp)
+            names = output_names(picks)
+            for f in picks:
+                sv = SampleView(source=f)
+                phase, data, produced = "open", None, False
                 try:
-                    phase = "plan"
-                    pkg = DocxPackage(data, name=str(f))
-                    plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
-                    phase = "apply"
-                    out = apply_spec(pkg, frags).output_bytes()
-                    produced = True
-                    phase = "verify"
-                    rec = run_suite(pkg.data, out, plan.to_dict(), str(f), str(out_dir / "samples" / names[str(f)]))
-                    checks = {c.id: c.status for c in rec.checks}
-                    sv.stages.append({"stage": i, "name": label, "passed": rec.passed, "checks": checks})
-                    _log_verification(log, f"{f.name} · stage {i} ({label})", rec)
-                    data = out
-                    sv.checks = checks
-                    if not rec.passed:
-                        sv.passed = False
+                    data = Path(f).read_bytes()
+                except Exception as e:  # noqa: BLE001
+                    sv.exception = diag.exception_record(e, phase, None)
+                    diag.event("preview.sample_failed", level="error", source=str(f), stage=phase,
+                               exception=sv.exception)
+                for i, st in enumerate(stages, 1):
+                    if sv.exception is not None:
                         break
-                except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
-                    exc = diag.exception_record(e, phase, data)
-                    exc["chain_stage"] = i
-                    exc["reason"] = f"stage {i} ({label}): {exc.get('reason', '')}"
-                    sv.exception = exc
-                    sv.stages.append({"stage": i, "name": label, "exception": {"code": exc.get("code"),
-                                                                                "reason": exc.get("reason")}})
-                    log.detail(f"sample {f.name}: stage {i} EXCEPTION [{exc['code']}] at {phase}: {exc['reason']}")
-                    if exc.get("traceback") and exc.get("kind") != "refusal":
-                        log.block(exc["traceback"])
-            else:
-                if sv.exception is None and sv.passed is None:
-                    sv.passed = True
-            if sv.passed and chain.get("assertions"):
-                sv.outcomes = assert_outcomes(data, chain["assertions"])
-                sv.checks["FINAL"] = "PASS" if all(entry["status"] == "PASS" for entry in sv.outcomes) else "FAIL"
-                sv.passed = sv.checks["FINAL"] == "PASS"
-                for entry in sv.outcomes:
-                    log.detail(f"sample {f.name}: final requirement {entry['index']} {entry['status']}: {entry['summary']}")
-            if produced:
-                sv.output = out_dir / "samples" / names[str(f)]
-                sv.output.parent.mkdir(parents=True, exist_ok=True)
-                sv.output.write_bytes(data)
-            pv.samples.append(sv)
-        pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
-        key = chain_key(chain)
-        planned = [f.source for f in bp.files]
-        pv.token = approval_token(key, planned)
-        pv.token_inputs = approval_inputs(key, planned)
-        (out_dir / "chain.json").write_text(json.dumps(chain, indent=2, ensure_ascii=False), encoding="utf-8")
-        write_preview_files(pv)
-        log.detail(f"approval token {pv.token}")
-        return pv
-    except BaseException as e:
-        log.detail(f"THE PREVIEW STOPPED: {type(e).__name__}: {e}")
-        log.block(traceback.format_exc())
-        raise
-    finally:
-        log.close()
+                    spec, label = st["spec"], stage_name(st, i)
+                    with diag.scope(source=str(f), chain_stage=i, chain_stage_name=label), \
+                            diag.span("preview.chain_stage"):
+                        try:
+                            phase = "plan"
+                            pkg = DocxPackage(data, name=str(f))
+                            with diag.span("preview.sample.plan"):
+                                plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+                            phase = "apply"
+                            with diag.span("preview.sample.apply"):
+                                out = apply_spec(pkg, frags).output_bytes()
+                            produced = True
+                            phase = "verify"
+                            with diag.span("preview.sample.verify"):
+                                rec = run_suite(pkg.data, out, plan.to_dict(), str(f), str(out_dir / "samples" / names[str(f)]))
+                            checks = {c.id: c.status for c in rec.checks}
+                            sv.stages.append({"stage": i, "name": label, "passed": rec.passed, "checks": checks})
+                            _log_verification(log, f"{f.name} · stage {i} ({label})", rec)
+                            data = out
+                            sv.checks = checks
+                            if not rec.passed:
+                                sv.passed = False
+                                break
+                        except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
+                            exc = diag.exception_record(e, phase, data)
+                            exc["chain_stage"] = i
+                            exc["reason"] = f"stage {i} ({label}): {exc.get('reason', '')}"
+                            sv.exception = exc
+                            diag.event("preview.sample_failed", level="error", source=str(f), chain_stage=i,
+                                       stage=phase, exception=exc)
+                            sv.stages.append({"stage": i, "name": label, "exception": {"code": exc.get("code"),
+                                                                                        "reason": exc.get("reason")}})
+                            log.detail(f"sample {f.name}: stage {i} EXCEPTION [{exc['code']}] at {phase}: {exc['reason']}")
+                            if exc.get("traceback") and exc.get("kind") != "refusal":
+                                log.block(exc["traceback"])
+                else:
+                    if sv.exception is None and sv.passed is None:
+                        sv.passed = True
+                if sv.passed and chain.get("assertions"):
+                    sv.outcomes = assert_outcomes(data, chain["assertions"])
+                    sv.checks["FINAL"] = "PASS" if all(entry["status"] == "PASS" for entry in sv.outcomes) else "FAIL"
+                    sv.passed = sv.checks["FINAL"] == "PASS"
+                    for entry in sv.outcomes:
+                        log.detail(f"sample {f.name}: final requirement {entry['index']} {entry['status']}: {entry['summary']}")
+                if produced:
+                    sv.output = out_dir / "samples" / names[str(f)]
+                    sv.output.parent.mkdir(parents=True, exist_ok=True)
+                    sv.output.write_bytes(data)
+                pv.samples.append(sv)
+                diag.event("preview.sample_finished", source=str(f), passed=sv.passed,
+                           exception=sv.exception, checks=sv.checks, stages=sv.stages)
+            pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
+            key = chain_key(chain)
+            planned = [f.source for f in bp.files]
+            with diag.span("preview.approval", file_count=len(planned)):
+                pv.token = approval_token(key, planned)
+                pv.token_inputs = approval_inputs(key, planned)
+            (out_dir / "chain.json").write_text(json.dumps(chain, indent=2, ensure_ascii=False), encoding="utf-8")
+            write_preview_files(pv)
+            log.detail(f"approval token {pv.token}")
+            return pv
+        except BaseException as e:
+            log.detail(f"THE PREVIEW STOPPED: {type(e).__name__}: {e}")
+            log.block(traceback.format_exc())
+            raise
+        finally:
+            log.close()

@@ -1499,6 +1499,16 @@ every error with its traceback (rotating); a session that ends without closing i
 its `crash-<time>-<pid>.log`. Word automation (COM) produces first-chance exceptions that Windows' fault handler would
 log as "Windows fatal exception" although they are handled, so the crash log is paused while Word renders.
 
+**The developer's timeline.** Diagnostics also write JSONL events automatically: `logs/events.jsonl` for runs,
+previews, conversations, chains and recovery, `logs/<name>.trace.events.jsonl` for each worker, and
+`app-events-<pid>.jsonl` in the application logs folder for GUI actions, background jobs and CLI commands. Events
+carry full UTC timestamps, process/thread identities, shared correlation IDs, parent/child spans, durations,
+decisions and exception chains. Model calls leave evidence before waiting for a response; individual verification
+checks, retries, recovery trials, approval refusals, rendering and delivery are traced. Application journals rotate
+per process, and the diagnostics bundle includes them. Logging failures produce a warning instead of silently
+discarding evidence. See [the developer diagnostics guide](docs/DEVELOPER_DIAGNOSTICS.md) for how to reconstruct an
+incident, follow an unfinished operation, and distinguish a returned function from a verified/delivered document.
+
 **Sending it to someone.** **Help → Save diagnostics bundle…** (or `spec-surgeon diagnose OUT_DIR --bundle diag.zip`)
 zips the last run's reports, logs, traces, records, plans, exceptions, set-aside manifest and conversation,
 compile and preview records, the app's own logs and an `environment.json` — **never the documents** (no source, edited or failed copy,

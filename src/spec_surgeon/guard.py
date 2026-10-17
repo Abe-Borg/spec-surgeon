@@ -17,6 +17,8 @@ from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import List, Optional
 
+from . import diagnostics as diag
+
 
 class GuardError(RuntimeError):
     pass
@@ -88,20 +90,34 @@ def is_read_only(path: os.PathLike | str) -> bool:
     return not (os.stat(path).st_mode & stat.S_IWRITE)
 
 
-def check_before_write(identity: Identity) -> None:
+def check_before_write(identity: Identity, *, _record: bool = True) -> None:
+    if _record:
+        diag.event("guard.check.started", source=identity.path, expected_identity=identity.to_dict())
     d = drifted(identity)
     if d:
+        diag.event("guard.refused", level="warning", source=identity.path, check="source_identity", reason=d)
         raise GuardError(f"{identity.path}: {d}. Rebase: re-acquire, re-run the transform, re-verify.")
     locks = word_lock_files(identity.path)
     if locks:
+        diag.event("guard.refused", level="warning", source=identity.path, check="word_lock", locks=locks)
         raise GuardError(f"{identity.path}: appears to be open in Word (lock file {locks[0]}). "
                          f"Close it, then retry. Word would otherwise overwrite the delivered file on its next save.")
     if is_read_only(identity.path):
+        diag.event("guard.refused", level="warning", source=identity.path, check="read_only")
         raise GuardError(f"{identity.path}: the file is read-only (its read-only attribute or permissions). Clear "
                          f"that in the file's properties and run again, or run in copies mode.")
+    if _record:
+        diag.event("guard.check.succeeded", source=identity.path)
 
 
 def write_back(identity: Identity, data: bytes) -> Identity:
+    with diag.span("guard.write_back", source=identity.path, size=len(data)) as outcome:
+        result = _write_back(identity, data)
+        outcome["identity"] = result.to_dict()
+        return result
+
+
+def _write_back(identity: Identity, data: bytes) -> Identity:
     """Guarded, atomic overwrite in place. Returns the new identity. Every reason the write cannot happen — drift,
     a Word lock, a read-only file, a replace the file system refuses (a lock held by another program, a permission
     denied, a share that went away) — is a ``GuardError`` with the reason, never a raw ``OSError``: the batch records
@@ -117,9 +133,13 @@ def write_back(identity: Identity, data: bytes) -> Identity:
             fh.write(data)
             fh.flush()
             os.fsync(fh.fileno())
-        # Re-check immediately before the swap: the window is small but not zero.
-        check_before_write(identity)
+        diag.event("guard.temporary_synced", source=identity.path, temporary=tmp, size=len(data))
+        diag.event("guard.replace.started", source=identity.path, temporary=tmp)
+        # No diagnostic I/O between the decisive check and the swap: a slow log
+        # destination must not enlarge the window in which an external save could be lost.
+        check_before_write(identity, _record=False)
         os.replace(tmp, p)
+        diag.event("guard.replace.succeeded", source=identity.path, final_source_check="passed")
     except GuardError:
         _unlink_quietly(tmp)
         raise
@@ -135,8 +155,9 @@ def write_back(identity: Identity, data: bytes) -> Identity:
 def _unlink_quietly(path: str) -> None:
     try:
         os.unlink(path)
-    except OSError:
-        pass
+    except OSError as e:
+        diag.event("guard.cleanup.failed", level="warning", temporary=path,
+                   exception_type=type(e).__name__, reason=str(e))
 
 
 def write_new(path: os.PathLike | str, data: bytes) -> Identity:

@@ -53,7 +53,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from . import compiler, llm
+from . import compiler, diagnostics as diag, llm
 
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from Claude's own label and wording
 LIBRARY_CHOICE_KINDS = ("recipe", "operation")                       # named by Claude, built from the library (rule 13)
@@ -489,6 +489,8 @@ class Conversation:
 
     def _finish(self, turn: Turn) -> Turn:
         self.turn = turn
+        diag.event("conversation.turn.outcome", status=turn.status, model_calls=self.calls,
+                   question_count=len(turn.questions), choice_count=len(turn.choices), errors=turn.errors)
         shown = [turn.message or ("" if turn.questions else str((turn.spec or {}).get("summary") or ""))]
         shown += [f"• {q}" for q in turn.questions]
         self.entries.append(Entry("claude", "\n".join(x for x in shown if x), status=turn.status,
@@ -507,20 +509,26 @@ class Conversation:
         tid = _bid(block)
         allowed = {t["name"] for t in self.tools} - {"ask_user", "submit_editspec"}
         try:
-            if name not in allowed:
-                raise KeyError(f"unknown tool {name}")
-            out = getattr(self.batch, name)(**inp)
-            if isinstance(out, dict) and out.get("_content_blocks"):
-                images += [str(p) for p in out.get("_images", [])]
-                return {"type": "tool_result", "tool_use_id": tid, "content": out["_content_blocks"]}
-            return {"type": "tool_result", "tool_use_id": tid, "content": json.dumps(out, ensure_ascii=False)[:20000]}
+            with diag.span("conversation.tool", tool=name, tool_use_id=tid, model_turn=self.calls):
+                if name not in allowed:
+                    raise KeyError(f"unknown tool {name}")
+                out = getattr(self.batch, name)(**inp)
+                if isinstance(out, dict) and out.get("_content_blocks"):
+                    images += [str(p) for p in out.get("_images", [])]
+                    return {"type": "tool_result", "tool_use_id": tid, "content": out["_content_blocks"]}
+                return {"type": "tool_result", "tool_use_id": tid, "content": json.dumps(out, ensure_ascii=False)[:20000]}
         except Exception as e:  # noqa: BLE001 — every call gets an answer, or the next request is refused
             return {"type": "tool_result", "tool_use_id": tid, "is_error": True, "content": f"{type(e).__name__}: {e}"[:2000]}
 
     def _advance(self) -> Turn:
         t0 = time.perf_counter()
         try:
-            return self._advance_calls()
+            path = self.work_dir / "logs" / "events.jsonl" if self.work_dir else None
+            with diag.scope(path, conversation_id=self.id, user_turn=self.user_turns()):
+                with diag.span("conversation.turn", mode=self.mode, file_count=len(self.files)) as record:
+                    turn = self._advance_calls()
+                    record.update(status=turn.status, model_calls=self.calls)
+                    return turn
         finally:
             self.seconds += time.perf_counter() - t0
 
@@ -538,8 +546,9 @@ class Conversation:
             self.calls += 1
             t_call = time.perf_counter()
             try:
-                resp = llm.call(self._client_now(), model=self.model, system=self.system, tools=self.tools,
-                                messages=self.messages)
+                with diag.scope(model_turn=self.calls), diag.span("conversation.request"):
+                    resp = llm.call(self._client_now(), model=self.model, system=self.system, tools=self.tools,
+                                    messages=self.messages)
             except Exception as e:  # noqa: BLE001 — classified below
                 if not llm.is_api_error(e):
                     raise                  # a defect (a wrong argument, a test's script running out) propagates
@@ -577,35 +586,45 @@ class Conversation:
                 self.tool_calls.append({"tool": name, "input": inp if name != "submit_editspec" else "(spec)"})
                 self.log(f"Claude: {name}")
                 if name == "ask_user":
+                    diag.event("conversation.tool.waiting", tool=name, tool_use_id=_bid(b), model_turn=self.calls)
                     asks.append((b, inp))
                     results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "content": "(waiting for the user)"}
                     continue
                 if name == "submit_editspec":
                     if accepted is not None:
+                        diag.event("conversation.submission.rejected", tool_use_id=_bid(b), model_turn=self.calls,
+                                   reason="one submission per turn; an earlier submission was already accepted")
                         results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "is_error": True,
                                             "content": "one submission per turn — this one was not considered"}
                         continue
                     spec = inp.get("spec")
                     try:
-                        errs = compiler.check_submission(spec, self.batch, self.sources)
+                        with diag.span("conversation.submission.validate", tool_use_id=_bid(b), model_turn=self.calls) as record:
+                            errs = compiler.check_submission(spec, self.batch, self.sources)
+                            record.update(accepted=not bool(errs), errors=errs)
                     except Exception as e:  # noqa: BLE001 — the call must be answered (rule 14): a spec the checks
                         # cannot even read goes back to Claude as rejected, with what went wrong
                         self.log(f"Claude: the submitted spec could not be checked ({type(e).__name__})")
                         errs = [f"[spec] the spec could not be checked ({type(e).__name__}: {e}) — fix its shape "
                                 f"(see the EditSpec JSON schema in the catalog)"]
                     if errs:
+                        diag.event("conversation.submission.rejected", tool_use_id=_bid(b), model_turn=self.calls,
+                                   errors=errs)
                         rejected += 1
                         rejections += errs
                         results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "is_error": True,
                                             "content": "REJECTED — fix and call submit_editspec again:\n- " + "\n- ".join(errs)}
                         continue
                     accepted = (b, spec, inp)
+                    diag.event("conversation.submission.accepted", tool_use_id=_bid(b), model_turn=self.calls)
                     results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "content": ACCEPTED_RESULT}
                     continue
                 results[_bid(b)] = self._dispatch(b, name, inp, images)
             ordered = [dict(results[_bid(b)]) for b in uses]
             if asks:
                 if accepted is not None:
+                    diag.event("conversation.submission.deferred", tool_use_id=_bid(accepted[0]), model_turn=self.calls,
+                               reason="user clarification requested in the same turn; submission must be repeated")
                     for r in ordered:
                         if r["tool_use_id"] == _bid(accepted[0]):
                             r["content"] = "not taken: you asked the user in the same turn — resubmit after their reply"
