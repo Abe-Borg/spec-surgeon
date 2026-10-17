@@ -23,7 +23,7 @@ from spec_surgeon.verify import run_suite
 from spec_surgeon.verify.props import Styles, check_properties
 from spec_surgeon.verify.reader import VPackage
 from spec_surgeon.verify.restyle import v_resolve_style
-from spec_surgeon.verify.styleimport import v_derive_import
+from spec_surgeon.verify.styleimport import v_derive_import, v_used_ids
 
 STYLES = "word/styles.xml"
 NUMBERING = "word/numbering.xml"
@@ -441,7 +441,7 @@ def test_a_shared_closure_that_forgets_the_list_levels_is_caught(src, tpl, monke
 
 def test_a_shared_allocator_that_reuses_a_list_id_is_caught(src, tpl, monkeypatch):
     real = imp_module.next_ids
-    monkeypatch.setattr(imp_module, "next_ids", lambda root: tuple(n - 1 for n in real(root)))
+    monkeypatch.setattr(imp_module, "next_ids", lambda pkg, root: tuple(n - 1 for n in real(pkg, root)))
     plan, out, rec = mapping(src, [("Heading 1", "PRT")], template=tpl)
     assert imported_assertion(plan)["num_map"] == {"10": "9"}                          # num 9 exists already
     assert "V10" in failed(rec) and "list ids" in v10(rec)
@@ -497,6 +497,279 @@ def test_the_template_is_an_input_file_of_the_spec(src, tpl, tmp_path):
     loaded = load_spec(tmp_path / "spec.json")
     assert Path(loaded["ops"][0]["params"]["template"]) == Path(tpl).resolve()
     assert Path(tpl).resolve() in spec_input_files(loaded)
+
+
+# ---- fix round (adversarial review): numbering untouched, one id two styles, names, list ids, levels, mc, template ----
+
+def zip_with(docx: bytes, part: str, data: bytes) -> bytes:
+    zin = zipfile.ZipFile(io.BytesIO(docx))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        for info in zin.infolist():
+            z.writestr(info, data if info.filename == part else zin.read(info.filename))
+    return buf.getvalue()
+
+
+def plan_or_code(data: bytes, ops):
+    from spec_surgeon.editspec import plan_spec
+    try:
+        return plan_spec(DocxPackage(data), {"request": "r", "summary": "s", "mode": "formatting",
+                                             "ops": [{"op": o, "select": s, "params": p} for o, s, p in ops]})
+    except JobException as e:
+        return e.code, str(e)
+
+
+def test_c1_numbering_changed_without_a_list_copied_fails(src, tpl, monkeypatch):
+    """A shared defect: the import names numbering.xml as intended and rewrites list 1 although it copies no list
+    (CMT is unnumbered). numbering.xml is under no residual: styles_imported compares it whole anyway."""
+    orig_ip, orig_apply = imp_module.StyleImport.intended_parts, imp_module.apply_import
+
+    def ip(self):
+        out = orig_ip(self)
+        return out + ([self.numbering_part] if self.numbering_part and self.numbering_part not in out else [])
+
+    def ap(pkg, data):
+        orig_apply(pkg, data)
+        if data and data.get("numbering_part"):
+            r = pkg.xml(data["numbering_part"])
+            r.findall(W + "num")[0].find(W + "abstractNumId").set(W + "val", "5")
+            pkg.write_xml(data["numbering_part"], r)
+    monkeypatch.setattr(imp_module.StyleImport, "intended_parts", ip)
+    import spec_surgeon.ops.map_styles as map_module
+    monkeypatch.setattr(map_module, "apply_import", ap)
+    plan, out, rec = mapping(src, [("Normal", "CMT")], template=tpl)
+    assert NUMBERING in plan.intended_parts and imported_assertion(plan)["num_map"] == {}
+    assert "V10" in failed(rec) and "changed although no list is copied" in v10(rec)
+
+
+def test_c1_numbering_changed_by_an_op_that_imports_nothing_fails(src, tpl):
+    """map_styles without any import (the file's own Heading 2): its kind compares numbering.xml whole too."""
+    plan, out, rec = mapping(src, [("ArchNote", "Heading 2")])
+    assert rec.passed
+    bad = mutate(out, NUMBERING, lambda r: r.findall(W + "num")[0].find(W + "abstractNumId").set(W + "val", "5"))
+    rec = run_suite(src, bad, plan.to_dict(), "src.docx", "out.docx")
+    assert "V10" in failed(rec) and "changed although no list is copied" in v10(rec)
+
+
+def test_c1_apply_style_without_an_import_is_covered_too(src):
+    """apply_style with the file's own style: its kind calls check_requested with nothing requested, which compares
+    numbering.xml whole as well."""
+    plan, out, rec = run_ops(src, [("apply_style", {"paragraphs": {"text_regex": "^NOTE TO"}}, {"style": "Heading 2"})])
+    assert rec.passed, rec.to_markdown()
+    bad = mutate(out, NUMBERING, lambda r: r.findall(W + "num")[0].find(W + "abstractNumId").set(W + "val", "5"))
+    rec = run_suite(src, bad, plan.to_dict(), "src.docx", "out.docx")
+    assert "V10" in failed(rec) and "changed although no list is copied" in v10(rec)
+
+
+def test_c1_an_import_without_lists_beside_one_with_lists_passes(src, tpl):
+    """One op copies a list, the other none: the list-copying op's check owns numbering.xml (expected = source + its
+    lists); the other does not demand an unchanged part."""
+    from spec_surgeon.editspec import apply_spec, plan_spec
+    spec = {"request": "r", "summary": "s", "mode": "formatting", "ops": [
+        {"op": "map_styles", "params": {"map": [{"from": "ArchNote", "to": "SpecNote"}], "template": tpl}},
+        {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^Coordinate"}},
+         "params": {"style": "PRT", "template": tpl}}]}
+    plan, frags = plan_spec(DocxPackage(src), spec)
+    out = apply_spec(DocxPackage(src), frags).output_bytes()
+    rec = run_suite(src, out, plan.to_dict(), "src.docx", "out.docx")
+    assert rec.passed, rec.to_markdown()
+    assert [a["num_map"] for a in plan.property_assertions if a["kind"] == "styles_imported"] == [{}, {"10": "10"}]
+
+
+def _same_id_other_style(src, tpl_bytes, tmp_path):
+    def tfix(root):
+        style_of(root, "CMT").find(W + "name").set(W + "val", "Office Comment")
+    t = tmp_path / "OFFICE_N.docx"
+    t.write_bytes(mutate(tpl_bytes, STYLES, tfix))
+    d = mutate(src, STYLES, lambda r: r.append(etree.fromstring(
+        f'<w:style xmlns:w="{W[1:-1]}" w:type="paragraph" w:customStyle="1" w:styleId="CMT"><w:name '
+        f'w:val="Architect Callout"/><w:basedOn w:val="Normal"/><w:rPr><w:color w:val="FF0000"/></w:rPr></w:style>')))
+    return d, str(t)
+
+
+def test_c2_a_template_id_the_file_uses_for_another_style_is_refused(src, tpl_bytes, tmp_path):
+    d, t = _same_id_other_style(src, tpl_bytes, tmp_path)
+    for ops in ([("map_styles", {}, {"map": [{"from": "ArchNote", "to": "Office Comment"}], "template": t})],
+                [("apply_style", {"paragraphs": {"text_regex": "^NOTE TO"}}, {"style": "Office Comment", "template": t})]):
+        code, reason = plan_or_code(d, ops)
+        assert code == "style-import" and "'Office Comment'" in reason and "'Architect Callout'" in reason, reason
+    # the same style under one id, its name written with other spacing and case: names resolve whitespace-collapsed
+    # and casefolded, so "Office Comment" is the file's own CMT — mapped to, nothing imported
+    d2 = mutate(d, STYLES, lambda r: style_of(r, "CMT").find(W + "name").set(W + "val", "office   COMMENT"))
+    plan, out, rec = mapping(d2, [("ArchNote", "Office Comment")], template=t)
+    assert rec.passed, rec.to_markdown()
+    assert not any(a["kind"] == "styles_imported" for a in plan.property_assertions)
+    assert any("ArchNote → CMT (paragraph; this file's own definition)" in n for n in plan.notes)
+
+
+def test_c2_held_closure_style_under_one_id_is_refused_too(src, tpl_bytes, tmp_path):
+    """CMT (imported) is based on CMTBase; the file has its own CMTBase that is another style: refused."""
+    d = mutate(src, STYLES, lambda r: r.append(etree.fromstring(
+        f'<w:style xmlns:w="{W[1:-1]}" w:type="paragraph" w:customStyle="1" w:styleId="CMTBase"><w:name '
+        f'w:val="Callout Base"/></w:style>')))
+    t = tmp_path / "T.docx"
+    t.write_bytes(tpl_bytes)
+    code, reason = plan_or_code(d, [("map_styles", {}, {"map": [{"from": "Normal", "to": "CMT"}], "template": str(t)})])
+    assert code == "style-import" and "CMTBase" in reason
+
+
+def test_c2_a_shared_check_that_misses_it_is_caught(src, tpl_bytes, tmp_path, monkeypatch):
+    """The plan keeps the file's CMT ("Architect Callout") for the template's "Office Comment": nothing to import, so
+    no styles_imported assertion — mapped_styles derives that the template's CMT is needed and fails the plan; the
+    verifier's own derivation refuses the import outright (test_transform_and_verifier_derive_the_same_import)."""
+    d, t = _same_id_other_style(src, tpl_bytes, tmp_path)
+    monkeypatch.setattr(imp_module, "same_style", lambda mine, theirs: True)
+    plan, out, rec = mapping(d, [("ArchNote", "Office Comment")], template=t)
+    assert pstyle_of(out, "NOTE TO") == "CMT"                                # the architect's callout, wrongly
+    assert "V10" in failed(rec) and "styles_imported assertion(s) of this op" in v10(rec)
+
+
+def pstyle_of(data: bytes, needle: str):
+    from spec_surgeon.ooxml import paragraphs
+    p = next(p for p in paragraphs(DocxPackage(data).xml("word/document.xml"))
+             if "".join(t.text or "" for t in p.iter(W + "t")).startswith(needle))
+    e = p.find(f"{W}pPr/{W}pStyle")
+    return e.get(W + "val") if e is not None else None
+
+
+def test_c3_two_imports_of_one_name_from_two_templates_conflict(src, tpl_bytes, tmp_path):
+    t1 = tmp_path / "T1.docx"
+    t1.write_bytes(tpl_bytes)
+
+    def t2fix(root):
+        root.append(etree.fromstring(f'<w:style xmlns:w="{W[1:-1]}" w:type="paragraph" w:customStyle="1" '
+                                     f'w:styleId="OfficeNote2"><w:name w:val="Spec  NOTE"/><w:basedOn w:val="Normal"/>'
+                                     f'</w:style>'))
+        root.remove(style_of(root, "SpecNote"))
+    t2 = tmp_path / "T2.docx"
+    t2.write_bytes(mutate(tpl_bytes, STYLES, t2fix))
+    first = ("map_styles", {}, {"map": [{"from": "ArchNote", "to": "SpecNote"}], "template": str(t1)})
+    for second in (("map_styles", {}, {"map": [{"from": "ArchPara", "to": "OfficeNote2"}], "template": str(t2)}),
+                   ("apply_style", {"paragraphs": {"text_regex": "^Coordinate"}},
+                    {"style": "OfficeNote2", "template": str(t2)})):
+        code, reason = plan_or_code(src, [first, second])
+        assert code == "conflict" and "name:spec note" in reason, reason
+    f = get_op("map_styles").plan(DocxPackage(src), {}, first[2])
+    assert (STYLES, "name:spec note", "add") in set(map(tuple, f.touches))
+
+
+def test_c3_a_replaced_style_whose_name_changes_declares_the_new_name(src, tpl_bytes, tmp_path):
+    t = tmp_path / "T.docx"
+    t.write_bytes(mutate(tpl_bytes, STYLES, lambda r: style_of(r, "Heading1").find(W + "name").set(W + "val",
+                                                                                                    "Office Heading")))
+    f = get_op("map_styles").plan(DocxPackage(src), {}, {"map": [{"from": "ArchArticle", "to": "Heading1"}],
+                                                         "template": str(t), "existing": "replace"})
+    assert (STYLES, "name:office heading", "add") in set(map(tuple, f.touches))
+    same = tmp_path / "SAME.docx"
+    same.write_bytes(tpl_bytes)
+    keep_name = get_op("map_styles").plan(DocxPackage(src), {}, {"map": [{"from": "ArchArticle", "to": "Heading 1"}],
+                                                                 "template": str(same), "existing": "replace"})
+    assert imported_assertion(keep_name)["replaced"] == ["Heading1"]
+    assert not any(t_[1].startswith("name:") for t_ in keep_name.touches)    # same name: nothing new
+
+
+def test_c5a_new_list_ids_go_above_ids_paragraphs_point_at(src, tpl):
+    def dangle(root):
+        for n in root.iter(W + "numId"):
+            if n.get(W + "val") == "1":
+                n.set(W + "val", "10")                       # list 10 is not defined: a dangling reference
+    d = mutate(src, "word/document.xml", dangle)
+    plan, out, rec = mapping(d, [("Heading 1", "PRT")], template=tpl)
+    assert rec.passed, rec.to_markdown()
+    assert imported_assertion(plan)["num_map"] == {"10": "11"}
+
+
+def test_c5a_a_shared_allocator_that_ignores_references_is_caught(src, tpl, monkeypatch):
+    def dangle(root):
+        for n in root.iter(W + "numId"):
+            if n.get(W + "val") == "1":
+                n.set(W + "val", "10")
+    d = mutate(src, "word/document.xml", dangle)
+    real = imp_module.used_ids
+
+    def defined_only(pkg, root):
+        return ([imp_module._int_attr(n, "numId") for n in root.iter(W + "num")],
+                [imp_module._int_attr(a, "abstractNumId") for a in root.iter(W + "abstractNum")])
+    monkeypatch.setattr(imp_module, "used_ids", defined_only)
+    plan, out, rec = mapping(d, [("Heading 1", "PRT")], template=tpl)
+    assert imported_assertion(plan)["num_map"] == {"10": "10"}               # captures the dangling paragraph
+    assert "V10" in failed(rec) and "list ids" in v10(rec)
+
+
+def _masterspec(src):
+    def add(root):
+        root.append(etree.fromstring(f'<w:style xmlns:w="{W[1:-1]}" w:type="paragraph" w:customStyle="1" '
+                                     f'w:styleId="PRT"><w:name w:val="PRT"/><w:basedOn w:val="Normal"/><w:pPr><w:numPr>'
+                                     f'<w:numId w:val="3"/></w:numPr></w:pPr></w:style>'))
+        root.append(etree.fromstring(f'<w:style xmlns:w="{W[1:-1]}" w:type="paragraph" w:customStyle="1" '
+                                     f'w:styleId="ART"><w:name w:val="ART"/><w:basedOn w:val="PRT"/></w:style>'))
+    return mutate(src, STYLES, add)
+
+
+def test_c5b_a_list_naming_the_files_own_numbered_styles_is_refused(src, tpl):
+    """The file holds PRT (on its list 3) and ART (based on PRT, numbered through it); the template's list that PR1
+    uses names both for its levels: importing it would split that numbering — refused."""
+    code, reason = plan_or_code(_masterspec(src), [("map_styles", {}, {"map": [{"from": "ArchPara", "to": "PR1"}],
+                                                                        "template": tpl})])
+    assert code == "style-numbering" and "list 3" in reason, reason
+
+
+def test_c5b_a_shared_rule_that_misses_it_is_caught(src, tpl, monkeypatch):
+    monkeypatch.setattr(imp_module, "numbered_in", lambda sheet, sid: None)
+    plan, out, rec = mapping(_masterspec(src), [("ArchPara", "PR1")], template=tpl)
+    assert "V10" in failed(rec) and "numbers with its own list" in v10(rec)
+
+
+def test_c5b_an_unnumbered_held_level_style_is_flagged(src, tpl):
+    def own_pr1(r):
+        r.append(etree.fromstring(f'<w:style xmlns:w="{W[1:-1]}" w:type="paragraph" w:customStyle="1" '
+                                  f'w:styleId="PR1"><w:name w:val="PR1"/><w:basedOn w:val="Normal"/></w:style>'))
+    plan, out, rec = mapping(mutate(src, STYLES, own_pr1), [("Heading 1", "PRT")], template=tpl)
+    assert rec.passed, rec.to_markdown()
+    assert any("levels name ['PR1']" in f for f in plan.flags)
+
+
+def _alternate_in_level(tpl_bytes, tmp_path):
+    mc = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+
+    def tnum(root):
+        a = next(x for x in root.findall(W + "abstractNum") if x.get(W + "abstractNumId") == "10")
+        lvl = a.findall(W + "lvl")[3]
+        nf = lvl.find(W + "numFmt")
+        at = list(lvl).index(nf)
+        lvl.remove(nf)
+        lvl.insert(at, etree.fromstring(f'<mc:AlternateContent xmlns:mc="{mc}" xmlns:w="{W[1:-1]}"><mc:Choice '
+                                        f'Requires="w14"><w:numFmt w:val="custom" w:format="01, 02, 03, ..."/>'
+                                        f'</mc:Choice><mc:Fallback><w:numFmt w:val="decimal"/></mc:Fallback>'
+                                        f'</mc:AlternateContent>'))
+    p = tmp_path / "OFFICE_A.docx"
+    p.write_bytes(mutate(tpl_bytes, NUMBERING, tnum))
+    return str(p)
+
+
+def test_c5c_alternate_content_in_a_list_is_refused(src, tpl_bytes, tmp_path):
+    t = _alternate_in_level(tpl_bytes, tmp_path)
+    code, reason = plan_or_code(src, [("map_styles", {}, {"map": [{"from": "Heading 1", "to": "PRT"}], "template": t})])
+    assert code == "style-numbering" and "mc:AlternateContent" in reason, reason
+    plan, out, rec = mapping(src, [("Normal", "CMT")], template=t)          # a list it does not copy: fine
+    assert rec.passed, rec.to_markdown()
+
+
+def test_c5c_a_shared_strip_that_drops_it_is_caught(src, tpl_bytes, tmp_path, monkeypatch):
+    t = _alternate_in_level(tpl_bytes, tmp_path)
+    monkeypatch.setattr(imp_module, "MC_ALTERNATE", "{urn:nothing}nothing")
+    plan, out, rec = mapping(src, [("Heading 1", "PRT")], template=t)
+    assert "V10" in failed(rec) and "mc:AlternateContent" in v10(rec)
+
+
+def test_c6_a_malformed_template_numbering_part(src, tpl_bytes, tmp_path):
+    p = tmp_path / "BROKEN_NUM.docx"
+    p.write_bytes(zip_with(tpl_bytes, NUMBERING, b"<w:numbering xmlns:w='x'><w:num"))
+    code, reason = plan_or_code(src, [("map_styles", {}, {"map": [{"from": "Heading 1", "to": "PRT"}],
+                                                          "template": str(p)})])
+    assert code == "bad-params" and "numbering part" in reason, reason
+    plan, out, rec = mapping(src, [("Normal", "CMT")], template=str(p))     # no list needed: never read
+    assert rec.passed, rec.to_markdown()
 
 
 # ---- the two sides agree ---------------------------------------------------------------------------------------------
@@ -557,6 +830,40 @@ def test_transform_and_verifier_resolvers_agree(src, tpl_bytes):
             assert t == v, ref
 
 
+def test_transform_and_verifier_agree_on_the_review_cases(src, tpl_bytes, tmp_path):
+    """One id two styles (C2), a list naming the file's own numbered styles (C5b), a dangling list id (C5a), an
+    alternate-content level (C5c): the two derivations reach the same decision."""
+    d_c2, t_c2 = _same_id_other_style(src, tpl_bytes, tmp_path)
+
+    def dangle(root):
+        for n in root.iter(W + "numId"):
+            if n.get(W + "val") == "1":
+                n.set(W + "val", "10")
+    t_plain = tmp_path / "PLAIN.docx"
+    t_plain.write_bytes(tpl_bytes)
+    t_alt = _alternate_in_level(tpl_bytes, tmp_path)
+    cases = [(d_c2, t_c2, ["CMT"], "keep", "refused"), (d_c2, t_c2, ["CMT"], "replace", None),
+             (_masterspec(src), str(t_plain), ["PR1"], "keep", "refused"),
+             (mutate(src, "word/document.xml", dangle), str(t_plain), ["PRT"], "keep", None),
+             (src, t_alt, ["PRT"], "keep", "refused"), (src, t_alt, ["CMT"], "keep", None)]
+    for data, t, requested, existing, expect in cases:
+        try:
+            imp = plan_import(DocxPackage(data), TemplateStyles.load(t), requested, existing)
+            mine = (imp.imported, imp.replaced, sorted(imp.held), imp.num_map, imp.abs_map)
+        except JobException as e:
+            assert e.code in ("style-import", "style-numbering"), e.code
+            mine = "refused"
+        vp, tp = VPackage(data), VPackage(Path(t).read_bytes())
+        try:
+            dv = v_derive_import(Styles(vp.xml(STYLES)), vp.xml(NUMBERING), Styles(tp.xml(STYLES)), tp.xml(NUMBERING),
+                                 requested, existing, used=v_used_ids(vp, vp.xml(NUMBERING)))
+            theirs = (dv["imported"], dv["replaced"], dv["held"], dv["num_map"], dv["abs_map"])
+        except ValueError:
+            theirs = "refused"
+        assert mine == theirs, (requested, existing, mine, theirs)
+        assert (mine == "refused") == (expect == "refused"), (requested, existing, mine)
+
+
 @pytest.mark.parametrize("requested,existing", [
     (["PRT"], "keep"), (["ART"], "keep"), (["PR2"], "keep"), (["CMT"], "keep"), (["SpecNote", "CharMine"], "keep"),
     (["TblMine"], "keep"), (["Heading1"], "replace"), (["Heading1", "PRT"], "replace"), (["Heading1"], "keep"),
@@ -574,7 +881,7 @@ def test_transform_and_verifier_derive_the_same_import(src, tpl, requested, exis
         vp, tp = VPackage(data), VPackage(Path(tpl).read_bytes())
         try:
             d = v_derive_import(Styles(vp.xml(STYLES)), vp.xml(NUMBERING), Styles(tp.xml(STYLES)), tp.xml(NUMBERING),
-                                requested, existing)
+                                requested, existing, used=v_used_ids(vp, vp.xml(NUMBERING)))
             theirs = (d["imported"], d["replaced"], d["held"], d["num_map"], d["abs_map"])
         except ValueError:
             theirs = "refused"

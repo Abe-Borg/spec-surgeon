@@ -26,7 +26,12 @@ verify/restyle.py):
   style F — every ``w:p`` whose style (``w:pStyle``, else the default paragraph style) is F; character style F — every
   ``w:r`` (runs grouped by their nearest paragraph) and every paragraph mark (``w:pPr/w:rPr``) whose ``w:rStyle`` is F;
   table style F — every ``w:tbl`` whose ``w:tblPr/w:tblStyle`` is F. A pair with no element is skipped (``unused``) and
-  imports nothing.
+  imports nothing. A character F also used where this op does not restyle it — a content control's run properties
+  (``w:sdtPr/w:rPr``, ``w:sdtEndPr/w:rPr``) or an equation run's (``m:r/w:rPr``) in a part in scope, a list level's
+  number formatting (``w:lvl/w:rPr``) in the numbering part — refuses ``structure`` (``unmapped_uses``): never left in
+  use while every other use changes.
+* The template, when given, is pinned (rule 12): apply refuses a changed one (``internal``) whether or not anything is
+  imported — the pairs were resolved through it.
 * **The change**: a paragraph's ``w:pStyle/@w:val`` becomes the style mapped to (a new ``w:pStyle`` goes first in the pPr;
   a pPr is created first in the paragraph); a run's or mark's ``w:rStyle/@w:val``; a table's ``w:tblStyle/@w:val``.
   Nothing else: the ``from`` definition stays, ``basedOn`` / ``next`` / numbering links naming it stay. Tracked: one
@@ -56,8 +61,10 @@ from . import register
 from .base import JobException, Op, PlanFragment
 from .replace_text import default_author
 from .selectors import SCOPE_KINDS, StyleSheet, mark_in_revision, runs_by_paragraph, scope_parts
-from .style_import import TemplateStyles, apply_import, plan_import, resolve_style, style_name, style_type
+from .style_import import (TemplateStyles, apply_import, check_template_unchanged, numbering_part, plan_import,
+                           resolve_style, style_name, style_type)
 
+M = "{http://schemas.openxmlformats.org/officeDocument/2006/math}"
 MAPPABLE = ("paragraph", "character", "table")
 REVISION_MARKS = (W + "ins", W + "del", W + "moveFrom", W + "moveTo")
 SCOPE_SCHEMA = {"type": "array", "items": {"type": "string", "enum": list(SCOPE_KINDS)}, "default": list(SCOPE_KINDS)}
@@ -123,6 +130,31 @@ def mapped_holders(p, runs) -> List[Tuple[str, Optional[int], Any]]:
     """What a character style can be mapped on in one paragraph: ("run", index, rPr) per run, then ("mark", None, rPr)."""
     out: List[Tuple[str, Optional[int], Any]] = [("run", ri, r.find(W + "rPr")) for ri, r in enumerate(runs)]
     out.append(("mark", None, p.find(f"{W}pPr/{W}rPr")))
+    return out
+
+
+UNMAPPED_PLACES = {"sdtPr": "a content control's run properties (w:sdtPr/w:rPr)",
+                   "sdtEndPr": "a content control's end-mark run properties (w:sdtEndPr/w:rPr)",
+                   "r": "an equation's run properties (m:r/w:rPr)", "lvl": "a list level's number formatting (w:lvl/w:rPr)"}
+
+
+def unmapped_uses(pkg: DocxPackage, parts: List[str], styles) -> List[Tuple[str, str, str]]:
+    """(part, place, style id) of every use of one of ``styles`` (character styles) this op does not restyle — a
+    content control's run properties (``w:sdtPr/w:rPr``, ``w:sdtEndPr/w:rPr``) and an equation run's (``m:r/w:rPr``) in
+    the parts in scope, a list level's number formatting (``w:lvl/w:rPr``) in the numbering part. The op refuses them
+    (``structure``): it never leaves a mapped style in use while claiming every use changed."""
+    out: List[Tuple[str, str, str]] = []
+    for part in parts:
+        for holder in pkg.xml(part).iter(W + "sdtPr", W + "sdtEndPr", M + "r"):
+            v = run_style_of(holder.find(W + "rPr"))
+            if v in styles:
+                out.append((part, UNMAPPED_PLACES[etree.QName(holder).localname], v))
+    npart = numbering_part(pkg)
+    if npart is not None:
+        for lvl in pkg.xml(npart).iter(W + "lvl"):
+            v = run_style_of(lvl.find(W + "rPr"))
+            if v in styles:
+                out.append((npart, UNMAPPED_PLACES["lvl"], v))
     return out
 
 
@@ -241,6 +273,13 @@ class MapStyles(Op):
         pmap = {e["from_id"]: e["to_id"] for e in live if e["type"] == "paragraph"}
         cmap = {e["from_id"]: e["to_id"] for e in live if e["type"] == "character"}
         tmap = {e["from_id"]: e["to_id"] for e in live if e["type"] == "table"}
+        left = unmapped_uses(pkg, parts, set(cmap)) if cmap else []
+        if left:
+            part, place, sid = left[0]
+            raise JobException(f"character style {sid} is also used by {place} in {part}, which map_styles does not "
+                               f"restyle; mapping every other use would leave it there — change that use in Word, or "
+                               f"leave the pair out" + (f" (+{len(left) - 1} more)" if len(left) > 1 else ""),
+                               "structure", {"style": sid, "part": part, "place": place})
 
         # ---- the elements ----
         frag = self.fragment(raw_select, {**params, "tracked": tracked, "author": author})
@@ -349,7 +388,11 @@ class MapStyles(Op):
                                "marks": [bi for bi, _ in v["marks"]], "tables": [k for k, _ in v["tables"]]}
                         for part, v in targets.items()}})
         frag.transform_data = {"targets": targets, "tracked": tracked, "author": author,
-                               "import": imp.transform_data() if imp is not None and imp.changes else None}
+                               "import": imp.transform_data() if imp is not None and imp.changes else None,
+                               # rule 12: the pairs were resolved through the template — apply refuses a changed one
+                               # even when nothing is imported
+                               "template": tpl.path if tpl is not None else None,
+                               "template_md5": tpl.md5 if tpl is not None else None}
         if tracked and (n_p or n_r or n_m):
             if n_p:
                 frag.rev_delta["pPrChange"] = n_p
@@ -373,8 +416,11 @@ class MapStyles(Op):
             else:
                 frag.notes.append(f"{label}: {e['from_id']} → {e['to_id']} ({e['type']}; "
                                   + ("this file's own definition" if e["source"] == "document" else
-                                     ("the template's, replacing this file's" if e["to_id"] in sheet.styles
-                                      else "imported from the template")) + f") on {uses[e['from_id']]} "
+                                     ("the template's, replacing this file's" if imp is not None and
+                                      e["to_id"] in imp.replaced else
+                                      "imported from the template" if imp is not None and e["to_id"] in imp.imported
+                                      else "this file's own definition of the template's style"))
+                                  + f") on {uses[e['from_id']]} "
                                   + {"paragraph": "paragraph(s)", "character": "run(s)/paragraph mark(s)",
                                      "table": "table(s)"}[e["type"]])
         if not targets:
@@ -426,6 +472,8 @@ class MapStyles(Op):
 
     def apply(self, pkg: DocxPackage, frag: PlanFragment) -> None:
         td = frag.transform_data
+        if td.get("template"):
+            check_template_unchanged(td["template"], td["template_md5"])
         apply_import(pkg, td.get("import"))
         stamp = RevisionStamp.now(td["author"], td.get("use_date_utc", False)) if td["tracked"] else None
         next_id = td.get("first_rev_id", 0)
