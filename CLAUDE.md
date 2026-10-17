@@ -94,9 +94,9 @@ fire sprinkler designer; these files go to clients;
    (`apply_style`, `map_styles`, `apply_table_style`) still requires the member byte-for-byte unchanged
    (`styleimport.check_numbering_unchanged`) unless another assertion owns it — a `styles_imported` copying lists, or a
    kind in `NUMBERING_OWNER_KINDS` (`list_level`), whose own whole comparison still fails any other change. Table
-   properties are stripped from the text-part residual only through `ctx.strip_tbl` / `strip_tr` / `strip_tc` (part →
-   table ordinal / (ordinal, row) / (ordinal, row, cell) → element names) by the kind that compared each element; an
-   emptied `w:trPr`/`w:tcPr` is dropped on both sides.
+   properties are stripped from the text-part residual only through `ctx.strip_tbl` / `strip_tr` / `strip_tc` /
+   `strip_tblprex` (part → table ordinal / (ordinal, row) / (ordinal, row, cell) → element names) by the kind that
+   compared each element; an emptied `w:trPr`/`w:tcPr`/`w:tblPrEx` is dropped on both sides.
 9. **Overlapping ops are refused, never ordered by guess.** `merge_fragments` raises `conflict` when two ops
    touch the same block's text, the same property family of the same target, or anything in a member another
    op removes/restructures. Ops declare what they touch in `touches`; keep that list honest — including a
@@ -1024,12 +1024,18 @@ definition):
   level shows visibly → `nil`, else absent; `w:tblCellMar` merged (asked sides `{w:w, w:type=dxa}`); `w:tblW` (pct ×50,
   dxa, auto 0); header rows: the first n rows `<w:tblHeader/>`, later rows `w:val="0"` where the chain's trPr turns it
   on, else none; `cant_split` likewise; "already" = own element equal (both absent counts); written in schema order
-  (`ooxml.TBLPR_ORDER`, `TRPR_ORDER`, `TCPR_ORDER` ↔ the bundled schema); `start`/`end` sides and right-to-left tables
-  refuse `conflict-property`; never tracked.
+  (`ooxml.TBLPR_ORDER`, `TRPR_ORDER`, `TCPR_ORDER` ↔ the bundled schema); never tracked. `clear_cell_overrides` removes
+  only the **competing** cell sides (`competing` ↔ `_v_competing_sides`: borders — every side but the diagonals
+  `tl2br`/`tr2bl`; margins — the asked sides, either spelling), an emptied tcBorders/tcMar/tcPr going. **Per table**
+  (`disposition` ↔ `_v_skip_or_refuse`): a table in a text box under an every-table selection, or with fewer own rows
+  than the header rows asked, is left alone and flagged (named explicitly: refused); a row or cell in a content control
+  when rows or cells change → `table-structure`; `start`/`end` sides and a right-to-left (`bidiVisual`) table asked for
+  borders or margins → `conflict-property`.
 - **Applying a table style** (§5.3; `ops/apply_table_style.py` ↔ `verify/applytablestyle.py`): apply_style's resolution
   for a TABLE style (the import only when a selected table is restyled); restyled = its style is not the asked one;
-  `w:tblStyle` first in tblPr; `clear` removes the table's own tblBorders/shd/tblCellMar, its rows' tblPrEx ones and its
-  cells' tcBorders/shd/tcMar.
+  `w:tblStyle` first in tblPr; `clear` removes the table's own tblBorders/shd/tblCellMar, its rows' `w:tblPrEx` ones and
+  its cells' tcBorders/shd/tcMar, soft-reads all of them on every selected table (an already-styled one included) and
+  its V10 kind checks on the OUTPUT that none is left and every selected table is in the style.
 - **Sections by content** (§7; `ops/selectors.resolve_sections(…, content=True)` ↔ `verify/props._v_resolve_sections`):
   `{containing: <paragraph predicate>, with_tables, index_range}`, every given key holding; a paragraph's section by
   `paragraph_sections` ↔ `tabs._v_sections`, a table's by its first paragraph; `set_page_setup`'s assertion carries the
