@@ -107,7 +107,9 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Another Setting Would Override the Requested Value",
         "A setting on the same paragraph or run wins over the requested value: spacing given in lines, an indent "
         "written as start/end, or — for a style change — direct formatting or a symbol-font run that would keep its own "
-        "look. Set the property directly on the selected paragraphs instead, or clear the other setting in Word.",
+        "look. Set the property directly on the selected paragraphs instead, or clear the other setting in Word. For a "
+        "table: its borders or cell margins (or its table style's borders) name a side start/end, whose meaning depends "
+        "on the table's direction — set them as left/right in Word first.",
     ),
     "bad-params": (
         "Operation Parameters Rejected",
@@ -367,6 +369,13 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "This file's document properties or settings hold something Word itself does not write — one property twice, "
         "two custom properties with the same name, an unreadable property number, or a custom-properties file nothing "
         "refers to. Open the file in Word, save it, and run again.",
+    ),
+    # built-in batch 5 (tables)
+    "table-structure": (
+        "The Table Cannot Be Changed Safely",
+        "A selected table has fewer rows than the header rows asked, rows or cells wrapped in a content control or "
+        "custom XML (so they cannot be counted safely), or no table properties at all. Ask for fewer header rows, or "
+        "fix the table in Word (remove the content control around its rows), then run again.",
     ),
 }
 

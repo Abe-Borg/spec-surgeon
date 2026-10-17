@@ -456,6 +456,26 @@ SECTPR_ORDER = [
     "pgNumType", "cols", "formProt", "vAlign", "noEndnote", "titlePg", "textDirection", "bidi", "rtlGutter",
     "docGrid", "printerSettings", "sectPrChange",
 ]
+# Tables (built-in batch 5, items 37–38). w:tblPr children (CT_TblPr = CT_TblPrBase's sequence + tblPrChange).
+TBLPR_ORDER = [
+    "tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize", "tblW", "jc",
+    "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook", "tblCaption",
+    "tblDescription", "tblPrChange",
+]
+# w:trPr children: CT_TrPrBase is a choice (any order is valid); written in the order Word writes them (the schema's
+# listing), then CT_TrPr's own sequence (ins, del, trPrChange).
+TRPR_ORDER = [
+    "cnfStyle", "divId", "gridBefore", "gridAfter", "wBefore", "wAfter", "cantSplit", "trHeight", "tblHeader",
+    "tblCellSpacing", "jc", "hidden", "ins", "del", "trPrChange",
+]
+# w:tcPr children (CT_TcPr = CT_TcPrBase + EG_CellMarkupElements + tcPrChange)
+TCPR_ORDER = [
+    "cnfStyle", "tcW", "gridSpan", "hMerge", "vMerge", "tcBorders", "shd", "noWrap", "tcMar", "textDirection",
+    "tcFitText", "vAlign", "hideMark", "headers", "cellIns", "cellDel", "cellMerge", "tcPrChange",
+]
+# w:tblBorders sides (CT_TblBorders) and w:tblCellMar sides (CT_TblCellMar), schema order
+TBL_BORDERS_ORDER = ["top", "start", "left", "bottom", "end", "right", "insideH", "insideV"]
+TBL_CELLMAR_ORDER = ["top", "start", "left", "bottom", "end", "right"]
 # w:style children (CT_Style)
 STYLE_ORDER = [
     "name", "aliases", "basedOn", "next", "link", "autoRedefine", "hidden", "uiPriority", "semiHidden",
