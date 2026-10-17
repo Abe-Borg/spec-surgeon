@@ -85,7 +85,8 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Paragraph Holds Unsupported Content",
         "The paragraph contains elements the operation does not handle in this mode (a hyperlink, content control, "
         "comment anchor or similar) — or the file holds something the operation cannot tell apart safely (two comments "
-        "with one id, a watermark sharing its run with other content). Bookmarks and proofing markers are fine.",
+        "with one id, a watermark sharing its run with other content, a style named by a content control, an equation "
+        "or a list level that a style mapping cannot reach). Bookmarks and proofing markers are fine.",
     ),
     "textbox": (
         "Target Inside a Text Box",
@@ -307,15 +308,18 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "style-import": (
         "Your Style Cannot Be Imported Into This File",
         "A style from your template cannot be copied in as it is: it is a default style this file lacks, it would "
-        "replace this file's default style, another style here already has its name under a different id, or it holds "
-        "extension markup with text in it. The reason names the style. Rename it in the template or in this file, or "
-        "import it in Word (Organizer).",
+        "replace this file's default style, another style here already has its name under a different id, this file "
+        "has a different style under the same id, or it holds extension or alternate-content markup Word would read "
+        "differently once copied. The reason names the style. Rename it in the template or in this file, or import it "
+        "in Word (Organizer).",
     ),
     "style-numbering": (
         "Your Style's Numbering Cannot Be Imported",
         "The style from your template is numbered by a list this file cannot take as it is: this file has no numbering "
-        "definitions at all, the list uses picture bullets, it is defined through a numbering style, or the template "
-        "lacks part of its definition. Import the style in Word once (Organizer), or use a style without numbering.",
+        "definitions at all, the list uses picture bullets, it is defined through a numbering style, its levels name a "
+        "style this file already numbers with its own list (the import would split that list), it holds alternate-"
+        "content markup, or the template lacks part of its definition. Import the style in Word once (Organizer), or "
+        "use a style without numbering.",
     ),
     "no-part": (
         "The File Has No Such Properties Part",

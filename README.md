@@ -1347,8 +1347,9 @@ changed), re-derives the refusals, and checks that every selected style shows th
   second stage of a chain), and so do `basedOn`/`next` links that name them.
 * **`template`** — your styles. A style the file lacks is **imported** with everything it needs: the styles it is based on,
   linked to (a paragraph style's character twin) and followed by, and — for a numbered style — its list: the template's
-  `w:num` and `w:abstractNum`, copied into the file's `numbering.xml` with new ids (above the file's own, so they never
-  collide), and the styles that list's levels name. A style the file already has **keeps the file's definition**
+  `w:num` and `w:abstractNum`, copied into the file's `numbering.xml` with new ids (above every id the file defines or
+  names — a paragraph pointing at a list the file lacks is never captured by your list), and the styles that list's
+  levels name. Names are matched with spacing and case ignored ("Spec  Note" is "spec note"). A style the file already has **keeps the file's definition**
   (`existing: "keep"`, the default) or is **replaced in its place** by yours (`existing: "replace"`). The template is an
   input like a template spec: pinned by md5 at plan time, refused at apply if it changed (`internal`), re-read by the check,
   hashed by the preview's approval token; a relative path is the spec's folder.
@@ -1356,9 +1357,14 @@ changed), re-derives the refusals, and checks that every selected style shows th
   default true; false refuses `not-found`) — and imports nothing. A pair whose two styles are one is skipped.
 * **What sets the file aside**: a `to` of another type than its `from` (`style-mismatch`); the default character or table
   style as `from` (text without a style uses it implicitly — nothing to map); two pairs naming one style; importing a style
-  whose name another style holds (`style-import` — Word finds styles by name); replacing a default style; a list the import
-  cannot copy (`style-numbering`: no numbering part in the file, a picture bullet, a list defined through a numbering style).
-  A `to` the template lacks is a spec error (`bad-params`).
+  whose name another style holds (`style-import` — Word finds styles by name); a style of the file under the same id as
+  yours but another name (`style-import`: it is a different style — the import would silently keep the architect's);
+  replacing a default style; Word's alternate-content markup in a style or list to copy (its fallback alone would change
+  the numbering format); a list the import cannot copy (`style-numbering`: no numbering part in the file, a picture
+  bullet, a list defined through a numbering style, a list whose levels name a style the file already numbers with its
+  own list — it would split that list); a character style also used in a content control's properties, an equation or a
+  list level, which the mapping cannot reach (`structure`). A `to` the template lacks, or a template whose list part will
+  not open, is a spec error (`bad-params`).
 * **Flagged for review**: field codes naming a mapped style (a TOC `\t` switch, STYLEREF) — not edited, they no longer find
   the paragraphs until you edit them; runs still in the mapped style's linked character style ("Heading 1 Char"); an
   imported style based on a style this file defines differently from the template (it renders on the file's own);
@@ -1374,7 +1380,7 @@ changed), re-derives the refusals, and checks that every selected style shows th
   by the shared rules) and `styles_imported` (`verify/styleimport.py`: the closure, the imported and replaced styles and the
   new list ids re-derived from the template; each copy compared whole with the template's definition, imported styles
   appended in the template's order, replaced ones in their old place; `numbering.xml` compared whole with the file's own
-  plus exactly the copied lists in their places). Nothing is shared with the op.
+  plus exactly the copied lists in their places — and unchanged when no list is copied). Nothing is shared with the op.
 
 #### `remove_unused_styles` — remove the styles nothing uses (item 32)
 
@@ -1454,7 +1460,7 @@ paragraphs are *soft*: a change of their words does not reach them. A font chang
 
 #### Refusals, in plain words (batch 4)
 
-Three new codes, each explained in the set-aside report and `DIAGNOSTICS.md` (`report.FAILURE_EXPLANATIONS`; `tests/test_batch4_integration.py` scans the batch's operations for codes without an explanation and checks that none of these file-specific codes rejects a whole spec): `style-mismatch` (the style named is of another kind here, two styles answer to the name, or the default character/table style was to be mapped), `style-import` (your style cannot be copied in as it is: a default style, a name clash under another id, extension markup with text), `style-numbering` (your style's list cannot be copied: no numbering part here, picture bullets, a list defined through a numbering style). `missing-style` now also says that a template can supply the style.
+Three new codes, each explained in the set-aside report and `DIAGNOSTICS.md` (`report.FAILURE_EXPLANATIONS`; `tests/test_batch4_integration.py` scans the batch's operations for codes without an explanation and checks that none of these file-specific codes rejects a whole spec): `style-mismatch` (the style named is of another kind here, two styles answer to the name, or the default character/table style was to be mapped), `style-import` (your style cannot be copied in as it is: a default style, a name clash under another id, another style of the file under your style's id, extension or alternate-content markup), `style-numbering` (your style's list cannot be copied: no numbering part here, picture bullets, a list defined through a numbering style, a list whose levels name a style the file numbers with its own list). `missing-style` now also says that a template can supply the style.
 
 **Not in this batch** (recorded in the design note): run (character) borders, page borders, table cell borders and shading; theme colours as a border or shading colour to set; tab stops in styles; mapping a style's linked character style automatically; editing field codes that name a mapped style; a style for part of a paragraph.
 

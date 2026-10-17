@@ -382,6 +382,31 @@ without them. Each module's docstring is the full definition; the departures fro
   restyled paragraph's old one; `remove_unused_styles` reads `(styles, "*", "verify:uses-")` — mapping beside removing is
   now refused (it used to plan and keep the mapped-away style), the removal runs as a chain's last stage.
 
+**The review round — each builder's findings** (each reproduced first, each fix pinned by a test that fails without it):
+- *Items 26–27.* Word gives `leftChars`/`rightChars`/`startChars`/`endChars`/`firstLineChars`/`hangingChars` priority over
+  twips: `ind` takes the six Chars keys, and an indentation side asked in twips where the target or a level it inherits
+  from gives it in characters is `conflict-property` unless the spec gives the Chars value too (the first-line and
+  hanging families are exclusive as wholes). Autospacing is read through the ancestors — the nearest level naming it
+  decides, so a style turning it off itself under "Normal (Web)" is written. One level definition serves both targets and
+  both sides (own pPr, paragraph style chain, table style chain, docDefaults; a style: own pPr, ancestors, docDefaults):
+  `set_paragraph_props.inherited_refusal` ↔ `verify/props._v_inherited_refusal`; the direct path declares those reads
+  (and its table's style, `chain_reads`) and V10's direct branch re-derives the refusals. An empty `w:pStyle/@w:val`
+  names no style on both sides. The styles assertion carries the raw params; a duplicated element fails. A style id of
+  another type in this file is `style-mismatch` (file-specific, never `bad-params`).
+- *Items 28–29.* The clearing check compares what the op declares: the pPr's other children only when it changed the pPr,
+  the mark's rPr only when it changed the mark (`mark=`), "an emptied pPr goes" judged on the output; a clear that empties
+  a mark soft-reads the pPr's other removable children (`emptying_reads`). `set_language` declares whole-member soft
+  reads of `pStyle`, `rStyle`, `tblPr` per text part (its post-condition reads every chain).
+- *Item 31.* `numbering.xml` is compared whole even when no list is copied; a held style under the template style's id
+  but another name refuses `style-import`; names resolve by `name_key` (whitespace collapsed, casefolded) on both sides;
+  every imported copy declares `(styles, "name:<key>", "add")`; new list ids go above every id defined OR referenced (a
+  dangling reference is never captured); a copied list naming a held style the file numbers with its own list refuses
+  `style-numbering`; `mc:AlternateContent` in a copy refuses (the Fallback alone would change "01, 02" to "1, 2"); the
+  template's numbering part is read only when needed (malformed → `bad-params`, the same for every file); map_styles'
+  apply refuses a changed template whether or not it imports (`check_template_unchanged`, also apply_style's); a character
+  `from` used in a content control's properties, an equation or a list level refuses `structure`; the paragraph check
+  leaves the mark's rPr to the residual unless the kind restyled the mark (`applied_style` the same).
+
 And the reads each op's prediction makes through the style levels (`selectors.chain_reads`): the nearest table's style
 (`verify-props:tblPr` of `tbl:<k>`, which `map_styles` remaps), `verify:replace` of every chain style (an import swapping
 the definition), `verify:add` of a chain style the file lacks — in `set_properties` (direct; also `verify:props`, the family

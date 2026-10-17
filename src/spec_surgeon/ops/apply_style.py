@@ -33,9 +33,7 @@ Verified by V10's ``applied_style`` kind (verify/applystyle.py) — and, when th
 """
 from __future__ import annotations
 
-import hashlib
 from collections import Counter
-from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..package import W, DocxPackage
@@ -46,7 +44,8 @@ from .clear_formatting import (ClearSettings, ParagraphClearing, changes_needed,
                                paragraph_clearing)
 from .replace_text import default_author
 from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, runs_by_paragraph, scope_parts
-from .style_import import TemplateStyles, apply_import, plan_import, resolve_style, style_type
+from .style_import import (TemplateStyles, apply_import, check_template_unchanged, plan_import, resolve_style,
+                           style_type)
 
 SCOPE_SCHEMA = {"type": "array", "items": {"type": "string", "enum": ["document", "headers", "footers", "footnotes",
                                                                        "endnotes", "comments"]}, "default": ["document"]}
@@ -282,12 +281,7 @@ class ApplyStyle(Op):
         td = frag.transform_data
         if td.get("template") and not td.get("import"):
             # rule 12: the plan read the template (the style's resolution) even when nothing is copied from it
-            try:
-                raw = Path(td["template"]).read_bytes()
-            except OSError as e:
-                raise JobException(f"the template file cannot be read again: {e}", "internal")
-            if hashlib.md5(raw).hexdigest() != td["template_md5"]:
-                raise JobException("the template file changed between plan and apply", "internal")
+            check_template_unchanged(td["template"], td["template_md5"])
         apply_import(pkg, td.get("import"))
         stamp = RevisionStamp.now(td["author"], td.get("use_date_utc", False)) if td["tracked"] else None
         next_id = td.get("first_rev_id", 0)

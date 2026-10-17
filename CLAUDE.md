@@ -803,7 +803,13 @@ definition):
   PARA_OPT_IN/SYMBOL_KEPT`, `cleared_names`, `gone_names`, `paragraph_clearing`, `check_markers`, `clear_rpr`,
   `clear_paragraph`; verifier: `verify/clearing.V_RUN_CLEARED/V_RUN_OPT_IN/V_PARA_CLEARED/V_PARA_OPT_IN/V_SYMBOL_KEPT/
   V_DEFAULT_PRESERVE`, `v_cleared_sets`, `_v_gone`, `v_decide`, `check_cleared_rpr`, `check_runs_and_mark`,
-  `v_expected_ppr`, `check_cleared_ppr` (the symbol rule through `props.symbolic`). `tests/test_clear_formatting.py::
+  `v_expected_ppr`, `check_cleared_ppr`, `check_empty_ppr` (the symbol rule through `props.symbolic`). The check matches
+  what the op declares (review round): the pPr's other children are compared only when the op changed the pPr (it
+  touches `pPr` + each cleared name), the mark's rPr only when it changed the mark (`markRPr`; `mark=` of
+  `v_expected_ppr`/`v_ppr_sequence`/`check_cleared_ppr`, which `apply_style` passes too), and "an emptied pPr goes" is
+  judged on the OUTPUT (an empty `w:pPr` left in a paragraph the op changed fails, whichever op ran first). A plain clear
+  that empties a mark without touching the pPr's own children soft-reads those children (`emptying_reads`) when every one
+  is a property some op may remove, so whether the pPr empties cannot depend on the order. `tests/test_clear_formatting.py::
   test_transform_and_verifier_decisions_agree` compares the two decisions on every paragraph of four fixtures under four
   settings and plants shared defects (vanish, vertAlign or numPr in the cleared sets; a symbol rule that forgets the
   paragraph style chain or w:sym; an empty default symbol-font list; marks skipped; emptied elements left).
@@ -820,22 +826,33 @@ definition):
   `tests/test_language.py` plants shared defects (docDefaults skipped, styles skipped, a case-sensitive replace_only, a
   writer that drops the lang's other attributes).
 - **Style import** (built-in batch 4 §5; shared by `map_styles` and `apply_style`). Resolution of a style reference: exact
-  `w:styleId`, else the one `w:name` equal casefolded (two → `style-mismatch`), else none. Copied = imported ∪ replaced.
+  `w:styleId`, else the one `w:name` equal by `name_key` (whitespace collapsed, casefolded; two → `style-mismatch`), else
+  none. Copied = imported ∪ replaced.
   Closure: the requested template styles; for every COPIED closure style its `basedOn`/`link`/`next` targets and the
   `w:pStyle` of every level of its numbering definition (`abstractNum/lvl`, `num/lvlOverride/lvl`), to a fixpoint; a style
   the document holds and does not replace is in the closure (held) but not walked; a reference the template does not
   define is skipped. Imported = closure styles the document lacks (template order); replaced (`existing: "replace"`) = the
   requested styles the document holds; refusals `style-import` (no styles part, an imported template default, a replaced
-  style that is a default on either side or of another type, a copy's casefolded name another style holds after the import,
-  an extension element carrying text) and `style-numbering` (no numbering part, a numId not a whole number, num/abstractNum
-  missing, `numStyleLink`/`styleLink`, `lvlPicBulletId` in a level or a `lvlOverride` level). New ids: copied styles in
-  template order, each template numId first met → the document's largest numId + 1… (none → 1), its abstractNum first met
-  → largest abstractNumId + 1… (none → 0). Copies: extension markup stripped, ids set. Places: abstractNums after the last
+  style that is a default on either side or of another type, a copy's `name_key` another style holds after the import,
+  an extension element carrying text, `mc:AlternateContent` anywhere in a copy, a HELD style whose name differs from the
+  template style of that id — another style under the same id —, naming both) and `style-numbering` (no numbering part, a
+  numId not a whole number, num/abstractNum missing, `numStyleLink`/`styleLink`, `lvlPicBulletId` in a level or a
+  `lvlOverride` level, `mc:AlternateContent` in a list, a copied list's level naming a held style the file numbers with its
+  own list — the first numId on its basedOn chain; a held level style the file does not number is flagged). The template's
+  numbering part is read only when a copied style is numbered (malformed → `bad-params`, fatal: the same for every file).
+  New ids: copied styles in template order, each template numId first met → above every numId the document DEFINES OR
+  REFERENCES (every `w:numId/@w:val` of the text, styles and numbering parts, `w:numIdMacAtCleanup`; none → 1), its
+  abstractNum first met → above every abstractNumId defined or referenced (none → 0) — a dangling reference is never
+  captured by an imported list. Copies: extension markup stripped, ids set. Places: abstractNums after the last
   abstractNum (else before the first num, else before `numIdMacAtCleanup`, else at the end), nums after the last num (else
   before `numIdMacAtCleanup`, else at the end); imported styles appended, replaced in place. Transform:
-  `ops/style_import.resolve_style/closure_of/style_links/numbering_styles/own_num_id/check_definition/next_ids/allocate_ids/
-  build_copies/insert_numbering/plan_import/apply_import`; verifier: `verify/restyle.v_resolve_style`,
-  `verify/styleimport.v_derive_import/_v_refs/_v_levels/_v_num_id/_v_lists/v_expected_numbering/check_styles_imported`.
+  `ops/style_import.name_key/resolve_style/closure_of/style_links/numbering_styles/own_num_id/check_definition/same_style/
+  numbered_in/used_ids/next_ids/allocate_ids/stripped/build_copies/insert_numbering/plan_import/apply_import/
+  check_template_unchanged`; verifier: `verify/restyle.v_resolve_style`, `verify/styleimport.v_derive_import/_v_refs/
+  _v_levels/_v_num_id/_v_lists/_v_chain_list/_v_has_alternate/v_used_ids/v_expected_numbering/check_styles_imported/
+  check_numbering_unchanged` — `numbering.xml` is compared whole by the import kinds even when no list is copied (by
+  `styles_imported`, or by `check_requested` when the op imports nothing), unless another import of the plan copies lists
+  and owns the comparison.
   The style copies use `apply_header_footer_template.strip_foreign` ↔ `template.strip_extensions`.
   `tests/test_style_import.py` compares the resolvers on every style of both fixtures, the derivations on 14 requests ×
   2 documents and the placements on 6 numbering shapes, and plants shared defects (closure without link/next, without list
@@ -849,9 +866,12 @@ definition):
   `from`; runs (nearest paragraph) and paragraph marks whose `w:rStyle` is a character `from`; tables whose
   `w:tblPr/w:tblStyle` is a table `from`; a pair without elements is `unused` and imports nothing. The change: `w:val` set
   (a new `w:pStyle` first in the pPr, a pPr first in the paragraph); tracked: `pPrChange` / `rPrChange` with the source
-  snapshot. Transform: `ops/map_styles.clean_params/paragraph_style_of/run_style_of/table_style_of/mapped_holders/
-  set_paragraph_style/set_run_style`; verifier: `verify/restyle._v_map/_v_pairs/_v_holders/_v_rstyle/_v_tblstyle/
-  _check_paragraph/_check_rpr/_check_table/_mapped_styles`. `tests/test_map_styles.py` plants shared defects (resolution by
+  snapshot. A character `from` also used where the mapping cannot reach (`w:sdtPr/w:rPr`, `w:sdtEndPr/w:rPr`, `m:r/w:rPr`
+  in the parts in scope, `w:lvl/w:rPr` in numbering) refuses `structure` — never left referenced while every use is
+  claimed changed. The paragraph check compares the mark's rPr only when the kind restyled the mark; else the residual
+  does. Transform: `ops/map_styles.clean_params/paragraph_style_of/run_style_of/table_style_of/mapped_holders/
+  unmapped_uses/set_paragraph_style/set_run_style`; verifier: `verify/restyle._v_map/_v_pairs/_v_holders/_v_rstyle/
+  _v_tblstyle/_v_unmapped/_check_paragraph/_check_rpr/_check_table/_mapped_styles`. `tests/test_map_styles.py` plants shared defects (resolution by
   id only, unstyled paragraphs forgotten for the default style, marks forgotten, tables forgotten, a tracked default, a
   default scope without the headers).
 - **Applying a style** (`apply_style`, §6). The style resolved by the style import's resolution — map_styles' rule: with

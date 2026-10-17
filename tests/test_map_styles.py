@@ -309,9 +309,8 @@ def test_every_refusal_code_is_known():
                     codes.add(n.args[1].value)
     assert codes == {"bad-params", "style-mismatch", "style-import", "style-numbering", "missing-style", "not-found",
                      "tracked-format", "internal", "structure"}
-    # the three new codes get their plain-words explanations at integration (docs/batch4_notes/)
-    assert set(c for c in codes if c not in FAILURE_EXPLANATIONS) <= {"style-mismatch", "style-import",
-                                                                      "style-numbering", "internal"}
+    # every code but `internal` (an internal error: diagnostics.classify) has its plain-words explanation
+    assert set(c for c in codes if c not in FAILURE_EXPLANATIONS) <= {"internal"}
 
 
 # ---- a wrong output per rule ---------------------------------------------------------------------------------------
