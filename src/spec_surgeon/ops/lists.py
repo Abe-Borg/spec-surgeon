@@ -14,8 +14,9 @@ Definitions
 * **abstractNum**: a ``w:abstractNum`` child of the numbering root whose ``w:abstractNumId`` is whole (others define
   nothing). **Unreadable** when two abstractNums share the id, or one of its ``w:lvl`` children has a ``w:ilvl`` that is
   not an ilvl, or two of them share an ilvl, or a level's ``w:start/@w:val`` / ``w:lvlRestart/@w:val`` is present and not
-  whole (a negative restart counts as not whole). It carries ``w:numStyleLink`` (a list defined through a numbering
-  style: **unsupported**) and ``w:styleLink``.
+  whole (a negative restart counts as not whole). An abstractNum carrying ``w:numStyleLink`` (a list defined through a
+  numbering style) or ``w:styleLink`` (the definition behind a numbering style — Word may join its count with the lists
+  that link to it) is **unsupported**.
 * **num**: a ``w:num`` child of the root whose ``w:numId`` is whole (others define nothing; a numId that no such
   ``w:num`` carries is **dangling**). **Unreadable** when two nums share the id, its ``w:abstractNumId/@w:val`` is
   missing or not whole, one of its ``w:lvlOverride`` has a ``w:ilvl`` that is not an ilvl, two share an ilvl, or a
@@ -42,11 +43,16 @@ Definitions
      part → unnumbered; a dangling numId → ``Numbering.dangling`` (unnumbered for counting, reported by the audit);
   4. ilvl = d_lvl when present; else, when numId came from the style: s_lvl when present, else the **linked level** (the
      lowest ilvl whose level definition names s_style in its ``pstyle``), else 0; when numId came from the paragraph and it
-     has no ilvl: 0. An ilvl that is not an ilvl → **unreadable**.
+     has no ilvl: 0 — unless a style on the paragraph's chain carries a ``w:numPr/w:ilvl`` (``chain_ilvl``: the first one,
+     nearest first) that is not the whole number 0: Word may take the style's level (whether it inherits numPr as a unit —
+     the first numPr's ilvl — or element by element — the first ilvl), so the level is **ambiguous**
+     (``Numbering.ambiguous``, the reason in ``unreadable``; counted as ``ambiguous-level``, below). An ilvl that is not
+     an ilvl → **unreadable**.
 * **Formats** (``format_value``): ``decimal`` str(n); ``decimalZero`` ``0`` + str(n) when 0 ≤ n ≤ 9, else str(n);
   ``upperLetter``/``lowerLetter`` (n ≥ 1) the letter of (n−1) mod 26 repeated (n−1) div 26 + 1 times (27 → AA, 28 → BB);
   ``upperRoman``/``lowerRoman`` (1–3999) the standard numerals; ``bullet`` the level's text as written; ``none`` "".
-  Another format, or a value out of its range → None (unsupported).
+  Another format, a value out of its range, or a NEGATIVE value in any format (Word shows no "-1") → None
+  (unsupported).
 
 Counting (``count``; design §0.2)
 ---------------------------------
@@ -61,7 +67,10 @@ paragraphs in ``root.iter(w:p)`` order, each counted paragraph with a numbering 
    (ECMA-376 §17.9.11). LibreOffice ignores ``w:lvlRestart`` (0 and r ≥ 1 alike): wherever a level carries one, the
    render proofs differ from Word (``has_restart_rule`` lists those levels, for a flag);
 2. level L's value = its start (``start_of``: N's ``startOverride`` for L when it has one, else the level's ``start``, else
-   0) when it has no current value, else the current value + 1;
+   0) when it has no current value, else the current value + 1. Word may apply a ``startOverride`` only at the level's
+   FIRST start in N and its ``w:start`` on later restarts; the model reapplies it — so a level carrying a
+   ``startOverride`` that starts a SECOND (or later) time in N holds an uncertain value until it is reset again
+   (``override_restart_uncertain``; the first start is certain under both readings);
 3. the **counters** = the values of levels 0…L (a level with no current value shows its start); the **rendered number**
    (``render``) = the level's ``text`` with each ``%j`` (j = 1…9) replaced by level j−1's value in level j−1's format —
    in decimal when level L is ``legal``; no ``text`` (or a missing level) → "". A ``%j`` naming a level with NO current
@@ -73,14 +82,17 @@ could be counted (none of the first three issues below); else None.
 **Not evaluated** (``NumberedPar.not_evaluated`` = the reason, ``NumberedPar.issue`` = one of the codes below; the
 counters and the rendered number are None unless said), checked in this order:
 
-* ``unreadable`` — the paragraph's own numId or ilvl (or its style's) cannot be read. It changes no count, so every LATER
+* ``unreadable`` — the paragraph's own numId or ilvl (or its style's) cannot be read; ``ambiguous-level`` — its own
+  numPr names a list without a level while its style chain carries one (step 4). Either changes no count, so every LATER
   paragraph of that instance (an unknown numId: of every instance) is not evaluated either (``earlier``);
 * ``earlier`` — see above;
 * ``unreadable`` / ``unsupported`` — the instance (``ListDefs.problem``): the num or its abstractNum is unreadable, the
-  abstractNum is not defined or carries ``w:numStyleLink``;
+  abstractNum is not defined or carries ``w:numStyleLink`` / ``w:styleLink``;
 * ``shared`` (``SHARED``) — the num shares its abstractNum with ANOTHER num that numbers a counted paragraph: Word
   continues one count across such nums, LibreOffice keeps them apart (design §0.2); counting still runs per numId;
 * ``override`` — a level 0…L of N is a full override level (its value is in the counters);
+* ``start-override`` (``START_OVERRIDE``) — a level 0…L of N, or a level its text names, holds an uncertain value (step
+  2: a ``startOverride`` level started again). The counters are None;
 * ``unsupported`` — level L is unsupported, or its text names a level that is missing or unsupported, or a value it shows
   is out of its format's range. The counters are kept (the count itself is certain);
 * ``skipped`` (``SKIPPED``; ``skipped_level``) — its text names a level that has no current value in N: never reached,
@@ -112,9 +124,14 @@ Scheme and typed numbers (design §0.3, §2.1)
 * **Main abstractNum** (``main_abstract``, design §1 ``from: "main"``): the abstractNum numbering the most counted
   paragraphs at a non-``bullet`` level (a paragraph whose level is missing or whose list cannot be read does not count);
   a tie → the one of the first such paragraph.
-* **A clean destination list** (``list_is_clean``): the num is readable and has no instance problem, carries no
-  ``w:lvlOverride`` at all, its abstractNum is numbered by no OTHER num that numbers a counted paragraph, and every level
-  its abstractNum defines is supported.
+* **A clean destination list** (``list_is_clean``): the num is readable and has no instance problem (no
+  ``w:numStyleLink`` / ``w:styleLink`` either), carries no ``w:lvlOverride`` at all, its abstractNum is numbered by no
+  OTHER num that numbers a counted paragraph, and every level its abstractNum defines is supported.
+* **What a count reads** (``count_reads``, rule 9; design §6): the numbering part whole; the whole-member soft family
+  reads of ``pStyle`` and ``numPr`` over the main part; ``verify:numPr`` of every counted numbered paragraph;
+  ``verify:pPr`` of every style on the chain of EVERY counted paragraph of the main part (an unnumbered paragraph's
+  style may become numbered: a replaced definition based on a numbered style) and of ``extra_styles``, and
+  ``verify:add`` of a style such a chain names that the file lacks (an import adding it changes the chain).
 
 API (for the batch-5 ops)
 -------------------------
@@ -149,10 +166,14 @@ API (for the batch-5 ops)
 ``list_is_clean(defs, num_id, counted_pars) -> str | None``
 ``has_restart_rule(defs, num_id) -> [ilvl]``
     The levels of the list whose definition carries a ``w:lvlRestart`` (LibreOffice ignores it: flag them).
+``count_reads(pkg, sheet, pars, extra_styles=()) -> [touch]``
+    The reads a counting op declares (above); ``pars`` is ``count``'s result over the SOURCE.
 Lower-level pieces (each a module function, so a test can plant a defect in it): ``whole``, ``read_level``,
-``style_chain``, ``linked_level``, ``render``, ``skipped_level``, ``restarts``, ``start_of``, ``counted``;
-``ListDefs.is_override``; constants ``FORMATS``, ``SUFFIXES``, ``FORMAT_PATTERNS``, ``SHARED`` / ``SKIPPED`` (every
-``shared`` / ``skipped`` reason starts with it), ``OVERRIDE_REASON``.
+``style_chain``, ``chain_ilvl``, ``linked_level``, ``render``, ``skipped_level``, ``named_levels``, ``restarts``,
+``start_of``, ``override_restart_uncertain``, ``counted``; ``ListDefs.is_override``; constants ``FORMATS``, ``SUFFIXES``,
+``FORMAT_PATTERNS``, ``SHARED`` / ``SKIPPED`` / ``START_OVERRIDE`` (every ``shared`` / ``skipped`` /
+``start-override`` reason starts with it), ``OVERRIDE_REASON``. ``Numbering.ambiguous`` (default False) marks step 4's
+ambiguous level.
 """
 from __future__ import annotations
 
@@ -172,6 +193,7 @@ FORMAT_PATTERNS = {"decimal": "[0-9]+", "decimalZero": "[0-9]{2,}", "upperLetter
                    "upperRoman": "[IVXLCDM]+", "lowerRoman": "[ivxlcdm]+", "none": ""}
 SHARED = "shared list definition"
 SKIPPED = "skipped level"
+START_OVERRIDE = "start override restarted"
 OVERRIDE_REASON = ("is a full override level (w:lvlOverride/w:lvl); Word does not read those as the standard describes, "
                    "so its numbers are not modelled")
 _WHOLE = re.compile(r"-?[0-9]+")
@@ -364,6 +386,10 @@ class ListDefs:
         if self.abstracts[a].num_style_link is not None:
             return "unsupported", (f"list {num_id} is defined through the numbering style "
                                    f"{self.abstracts[a].num_style_link!r} (w:numStyleLink), which is not modelled")
+        if self.abstracts[a].style_link is not None:
+            return "unsupported", (f"list {num_id}'s definition is the one behind the numbering style "
+                                   f"{self.abstracts[a].style_link!r} (w:styleLink): Word may join its count with the "
+                                   f"lists that link to it — not modelled")
         return None
 
     def abstract_of(self, num_id: Optional[int]) -> Optional[int]:
@@ -409,6 +435,7 @@ class Numbering:
     style: Optional[str] = None         # the style whose w:numPr gave the list (source "style")
     dangling: bool = False
     unreadable: Optional[str] = None
+    ambiguous: bool = False             # its own numPr has a numId and no ilvl, its style chain an ilvl (step 4)
 
 
 def paragraph_style(p, sheet) -> Optional[str]:
@@ -441,6 +468,15 @@ def _styled(sheet, sid: Optional[str]):
     return None
 
 
+def chain_ilvl(sheet, sid: Optional[str]):
+    """The first ``w:pPr/w:numPr/w:ilvl`` along the style chain of ``sid`` (nearest first), or None."""
+    for _, st in style_chain(sheet, sid):
+        e = st.find(f"{W}pPr/{W}numPr/{W}ilvl")
+        if e is not None:
+            return e
+    return None
+
+
 def linked_level(defs: ListDefs, num_id: int, style_id: Optional[str]) -> Optional[int]:
     """The lowest ilvl of list ``num_id`` whose level definition names ``style_id`` in its w:pStyle, else None."""
     for k in range(9):
@@ -450,7 +486,7 @@ def linked_level(defs: ListDefs, num_id: int, style_id: Optional[str]) -> Option
     return None
 
 
-def _numbering(d_num, d_lvl, styled, defs: ListDefs) -> Optional[Numbering]:
+def _numbering(d_num, d_lvl, styled, defs: ListDefs, style_ilvl=None) -> Optional[Numbering]:
     if not defs.present:
         return None
     if d_num is not None:
@@ -479,6 +515,10 @@ def _numbering(d_num, d_lvl, styled, defs: ListDefs) -> Optional[Numbering]:
     elif source == "style":
         k = linked_level(defs, n, s_style)
         k = 0 if k is None else k
+    elif style_ilvl is not None and whole(style_ilvl.get(W + "val")) != 0:
+        return Numbering(n, None, source, s_style, ambiguous=True,
+                         unreadable=f"its numPr names list {n} without a level while its style carries the level "
+                                    f"{style_ilvl.get(W + 'val')!r}: Word may take that level — ambiguous")
     else:
         k = 0
     return Numbering(n, k, source, s_style)
@@ -489,7 +529,8 @@ def paragraph_numbering(p, sheet, defs: ListDefs) -> Optional[Numbering]:
     d_num = numpr.find(W + "numId") if numpr is not None else None
     d_lvl = numpr.find(W + "ilvl") if numpr is not None else None
     styled = _styled(sheet, paragraph_style(p, sheet)) if d_num is None else None
-    return _numbering(d_num, d_lvl, styled, defs)
+    style_ilvl = chain_ilvl(sheet, paragraph_style(p, sheet)) if d_num is not None and d_lvl is None else None
+    return _numbering(d_num, d_lvl, styled, defs, style_ilvl)
 
 
 def style_numbering(style_id: Optional[str], sheet, defs: ListDefs) -> Optional[Numbering]:
@@ -510,7 +551,9 @@ def _roman(n: int) -> str:
 
 def format_value(fmt: str, n: int, text: Optional[str] = None) -> Optional[str]:
     """The counter value ``n`` shown in format ``fmt`` (``text``: the level's own text, shown as written by ``bullet``);
-    None when the format is not supported or ``n`` is out of its range."""
+    None when the format is not supported, ``n`` is out of its range, or ``n`` is negative (any format)."""
+    if n < 0:
+        return None
     if fmt == "decimal":
         return str(n)
     if fmt == "decimalZero":
@@ -547,7 +590,7 @@ def render(text: str, legal: bool, value_of: Callable[[int], int],
             if ref.unsupported:
                 return None, f"its number text names level {k}, which {ref.unsupported}"
             v = value_of(k)
-            s = str(v) if legal else format_value(ref.fmt, v, ref.text)
+            s = format_value("decimal" if legal else ref.fmt, v, ref.text)
             if s is None:
                 return None, f"level {k}'s value {v} cannot be shown in its format {ref.fmt!r}"
             out.append(s)
@@ -570,6 +613,25 @@ def skipped_level(text: str, has_value: Callable[[int], bool]) -> Optional[int]:
         else:
             i += 1
     return None
+
+
+def named_levels(text: Optional[str]) -> List[int]:
+    """The levels the ``%j`` of ``text`` name, in order."""
+    out: List[int] = []
+    i = 0
+    while text and i < len(text):
+        if text[i] == "%" and i + 1 < len(text) and text[i + 1] in "123456789":
+            out.append(int(text[i + 1]) - 1)
+            i += 2
+        else:
+            i += 1
+    return out
+
+
+def override_restart_uncertain(nth_start: int, start_override: Optional[int]) -> bool:
+    """Whether a level's value is uncertain after its ``nth_start`` start in its instance: it carries a startOverride
+    (Word may apply it at the first start only) and this is not its first start."""
+    return start_override is not None and nth_start > 1
 
 
 def has_restart_rule(defs: ListDefs, num_id: int) -> List[int]:
@@ -658,6 +720,8 @@ def count(root, sheet, defs: ListDefs, override: Optional[Mapping[int, Optional[
 
     out: List[NumberedPar] = []
     states: Dict[int, Dict[int, int]] = {}
+    starts: Dict[int, Dict[int, int]] = {}             # instance → level → how many times it started
+    doubt: Dict[int, set] = {}                          # instance → levels holding an uncertain value (step 2)
     poisoned: Dict[int, str] = {}
     poisoned_all: Optional[str] = None
     for index, nb in found:
@@ -667,7 +731,7 @@ def count(root, sheet, defs: ListDefs, override: Optional[Mapping[int, Optional[
         def par(counters=None, text=None, suff=None, fmt=None, why=None, issue=None):
             return NumberedPar(index, n, L, counters, text, suff, fmt, why, issue, a, nb.source, nb.style)
         if nb.unreadable is not None:
-            out.append(par(why=nb.unreadable, issue="unreadable"))
+            out.append(par(why=nb.unreadable, issue="ambiguous-level" if nb.ambiguous else "unreadable"))
             if n is None:
                 poisoned_all = poisoned_all or f"an earlier paragraph's list cannot be read ({nb.unreadable})"
             else:
@@ -682,10 +746,20 @@ def count(root, sheet, defs: ListDefs, override: Optional[Mapping[int, Optional[
             out.append(par(why=prob[1], issue=prob[0]))
             continue
         state = states.setdefault(n, {})
+        began, unsure = starts.setdefault(n, {}), doubt.setdefault(n, set())
         for k in sorted(state):
             if k > L and restarts(_restart(defs, n, k), L, k):
                 del state[k]
-        state[L] = start_of(defs, n, L) if L not in state else state[L] + 1
+                unsure.discard(k)
+        if L not in state:
+            state[L] = start_of(defs, n, L)
+            began[L] = began.get(L, 0) + 1
+            if override_restart_uncertain(began[L], defs.start_override(n, L)):
+                unsure.add(L)
+            else:
+                unsure.discard(L)
+        else:
+            state[L] += 1
         lv = defs.level(n, L)
         own = lv is not None and not defs.is_override(n, L)
         suff, fmt = (lv.suff, lv.fmt) if own else (None, None)
@@ -698,6 +772,13 @@ def count(root, sheet, defs: ListDefs, override: Optional[Mapping[int, Optional[
         over = [k for k in range(L + 1) if defs.is_override(n, k)]
         if over:
             out.append(par(suff=suff, fmt=fmt, issue="override", why=f"level {over[0]} of list {n} {OVERRIDE_REASON}"))
+            continue
+        named = named_levels(lv.text) if lv is not None else []
+        shaky = sorted(k for k in unsure if k <= L or k in named)
+        if shaky:
+            out.append(par(suff=suff, fmt=fmt, issue="start-override",
+                           why=f"{START_OVERRIDE}: level {shaky[0]} of list {n} carries a startOverride and started "
+                               f"again — Word may restart it at its w:start instead"))
             continue
         counters = tuple(state[k] if k in state else start_of(defs, n, k) for k in range(L + 1))
         if lv is None:
@@ -920,22 +1001,31 @@ def count_reads(pkg: DocxPackage, sheet, pars: Sequence[NumberedPar], extra_styl
     whole; the whole-member soft family reads of ``pStyle`` and ``numPr`` over the main part (any paragraph restyled or
     given numbering by another op changes the count); ``verify:numPr`` of every counted numbered paragraph (a tracked
     deletion of one is a ``text`` change of it — a conflict; untracked insertions and deletions are whole-member ``text``
-    changes, rule 1); and ``verify:pPr`` of every style on the chains of those paragraphs and of ``extra_styles`` (the
-    scheme's) — a style's numbering is in its pPr: a replaced, removed or re-spaced style is a conflict, a font change of
-    it (``rPr``) is not. ``pars`` is ``count``'s result over the SOURCE; ``sheet`` the source's ``StyleSheet``."""
+    changes, rule 1); ``verify:pPr`` of every style on the chain of EVERY counted paragraph of the main part — numbered or
+    not: an unnumbered paragraph becomes numbered when another op replaces its style with a definition based on a
+    numbered style — and of ``extra_styles`` (the scheme's): a style's numbering is in its pPr, so a replaced, removed or
+    re-spaced style is a conflict, a font change of it (``rPr``) is not; and ``verify:add`` of a style such a chain names
+    that the file lacks (an import adding it changes the chain). ``pars`` is ``count``'s result over the SOURCE;
+    ``sheet`` the source's ``StyleSheet``."""
     main = pkg.main_part()
     out: List[Tuple[str, str, str]] = []
     part = numbering_part(pkg)
     if part is not None:
         out.append((part, "*", "verify"))
     out += [(main, "*", "verify-props:pStyle"), (main, "*", "verify-props:numPr")]
-    every = list(pkg.xml(main).iter(W + "p"))
-    styles: List[str] = []
-    for np_ in pars:                     # its own style chain: its numbering may come from any level of it
-        out.append((main, str(np_.index), "verify:numPr"))
-        styles += [sid for sid, _ in style_chain(sheet, paragraph_style(every[np_.index], sheet))]
-    for ref in extra_styles:
-        styles += [sid for sid, _ in style_chain(sheet, ref)]
-    if sheet.part is not None:
-        out += [(sheet.part, f"style:{sid}", "verify:pPr") for sid in dict.fromkeys(styles)]
-    return out
+    out += [(main, str(np_.index), "verify:numPr") for np_ in pars]
+    if sheet.part is None:
+        return out
+    chains: List[Tuple[str, str, str]] = []
+    heads = [paragraph_style(p, sheet) for p in pkg.xml(main).iter(W + "p") if counted(p)] + list(extra_styles)
+    for sid in dict.fromkeys(heads):
+        seen = set()
+        while sid and sid not in seen:
+            seen.add(sid)
+            if sid not in sheet.styles:
+                chains.append((sheet.part, f"style:{sid}", "verify:add"))
+                break
+            chains.append((sheet.part, f"style:{sid}", "verify:pPr"))
+            b = sheet.styles[sid].find(W + "basedOn")
+            sid = b.get(W + "val") if b is not None else None
+    return out + list(dict.fromkeys(chains))
