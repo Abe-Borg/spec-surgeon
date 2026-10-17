@@ -18,6 +18,14 @@ import tempfile
 import traceback
 
 
+def _check_schemas(folder, expected):
+    actual = {p.relative_to(folder).as_posix() for p in folder.rglob("*.xsd")}
+    expected = set(expected)
+    assert actual == expected, (f"Schema inventory mismatch: missing={sorted(expected - actual)}, "
+                                f"unexpected={sorted(actual - expected)}")
+    return len(actual)
+
+
 def _gui(request, result):
     import anthropic
     import pymupdf
@@ -32,7 +40,7 @@ def _gui(request, result):
     from spec_surgeon.verify.xsd import SCHEMA_DIR
 
     assert getattr(sys, "frozen", False), "Test must run from the installed executable"
-    assert len(list(SCHEMA_DIR.rglob("*.xsd"))) == 39
+    schema_count = _check_schemas(SCHEMA_DIR, request["schemas"])
     assert (SKILL_DIR / "SKILL.md").is_file()
     assert "set_page_setup.py" in _examples()
     examples = catalog.worked_examples()
@@ -90,7 +98,7 @@ def _gui(request, result):
     _updater_offline(updater)
     result.update({"ok": True, "version": __version__, "gui_preview_run": "PASS 2",
                    "process_pool": "PASS", "isolated_generated_op": "PASS",
-                   "schemas": 39, "sources_unchanged": True, "qt_style": app.style().name(),
+                   "schemas": schema_count, "sources_unchanged": True, "qt_style": app.style().name(),
                    "updater_offline": "PASS", "credential_manager": "PASS",
                    "anthropic": anthropic.__version__, "pymupdf": pymupdf.VersionBind, "word_modules": True})
 

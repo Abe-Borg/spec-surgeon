@@ -10,7 +10,8 @@ permissions:
 
 concurrency:
   group: release-${{ github.ref }}
-  cancel-in-progress: false
+  # An explicit tag correction supersedes validation of the previous commit.
+  cancel-in-progress: ${{ github.event.forced == true }}
 
 jobs:
   build:

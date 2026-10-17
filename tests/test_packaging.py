@@ -70,6 +70,38 @@ def test_version_and_package_data():
     assert (ROOT / "docs" / "releases" / f"v{__version__}.md").is_file()
 
 
+def test_installer_schema_check_uses_source_inventory_and_rejects_substitutions(tmp_path):
+    import importlib.util
+    import json
+    import subprocess
+    import pytest
+
+    subprocess.run([sys.executable, str(ROOT / "packaging/windows/prepare_smoke.py"), str(tmp_path)],
+                   check=True, capture_output=True)
+    request = json.loads((tmp_path / "request.json").read_text(encoding="utf-8"))
+    source = ROOT / "src/spec_surgeon/schemas"
+    expected = {p.relative_to(source).as_posix() for p in source.rglob("*.xsd")}
+    assert set(request["schemas"]) == expected
+    assert {"dublincore/dc.xsd", "dublincore/dcterms.xsd"} <= expected
+
+    module_spec = importlib.util.spec_from_file_location(
+        "_test_installed_smoke", ROOT / "packaging/windows/installed_smoke.py")
+    smoke = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(smoke)
+    assert smoke._check_schemas(source, request["schemas"]) == len(expected)
+
+    installed = tmp_path / "schemas"
+    installed.mkdir()
+    for name in expected:
+        path = installed / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.touch()
+    (installed / "dublincore/dc.xsd").unlink()
+    (installed / "unexpected.xsd").touch()
+    with pytest.raises(AssertionError, match="Schema inventory mismatch"):
+        smoke._check_schemas(installed, request["schemas"])
+
+
 def test_frozen_analyzer_dispatches_before_opening_the_app(monkeypatch):
     import importlib.util
     import multiprocessing

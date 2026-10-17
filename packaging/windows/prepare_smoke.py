@@ -34,4 +34,6 @@ if __name__ == "__main__":
         "input_dir": str(inputs), "output_dir": str(work / "Results"),
         "report": str(work / "smoke-result.json"), "generated_source": GOOD_OP,
         "config_dir": str(work / "config"),
+        "schemas": sorted(p.relative_to(root / "src/spec_surgeon/schemas").as_posix()
+                          for p in (root / "src/spec_surgeon/schemas").rglob("*.xsd")),
     }), encoding="utf-8")
