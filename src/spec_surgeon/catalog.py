@@ -151,6 +151,31 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "last stage",
         "styles.xml only, never tracked; a file with nothing unused is left as it is",
     ],
+    # built-in batch 5 (tables, docs/BUILTIN_OPS_BATCH5_DESIGN.md §5)
+    "set_table_props": [
+        "the tables are every table of the body unless a selection narrows them (by position, table style, the first "
+        "row's text, any text in the table, nested or not); tables in headers and footers only when asked",
+        "the asked borders are the table's whole border set: a side not named has no border, so a side its table style "
+        "shows is cancelled with a 'nil' side (the style keeps its definition); 'none' removes every border; size in "
+        "eighths of a point (4 = ½ pt), space 0",
+        "cell margins are in twips (1440 = 1 inch) and merge into the table's own (sides not named stay); width is a "
+        "percentage of the text width, twips or auto",
+        "repeat_header_rows n makes the first n rows repeat at the top of each page and no later row; cant_split keeps "
+        "every row on one page (true) or lets rows break (false)",
+        "cells with their own borders or margins keep them (flagged) unless clear_cell_overrides; a table already as "
+        "asked is left alone; never tracked",
+    ],
+    "apply_table_style": [
+        "every table of the body gets the style unless a selection narrows them; a table already in the style is left "
+        "alone",
+        "the style is named by its id or name as the profiles show it; a style this file lacks comes from the template "
+        "file with the styles it is based on (existing 'replace' takes the template's definition even where this file "
+        "has one)",
+        "direct_formatting 'keep' (the default) leaves the tables' own borders, shading and cell margins, which win over "
+        "the style; 'clear' removes them and the cells' own, so the style shows; which conditional parts show (first "
+        "row, banding — w:tblLook) stays as it is",
+        "never tracked",
+    ],
     "set_page_setup": ["margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given"],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
                      "tracked unless the user said otherwise"],

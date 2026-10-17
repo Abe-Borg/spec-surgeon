@@ -530,6 +530,12 @@ class Ctx:
         self.removed_styles: Set[str] = set()       # style ids a kind expects GONE: out of the residual's source copy only
         self.strip_tbl_style: Dict[str, Set[int]] = {}   # part → ordinals (root.iter(w:tbl)) of tables whose
         #                                             tblPr/tblStyle a kind checked
+        # built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §5.2): table, row and cell properties a kind checked —
+        # removed from both sides before the part's residual (an emptied w:trPr / w:tcPr dropped on both sides). Tables
+        # by ordinal (root.iter(w:tbl)), rows by index among the table's own w:tr, cells among the row's own w:tc.
+        self.strip_tbl: Dict[str, Dict[int, Set[str]]] = {}                # part → {ordinal: tblPr child names}
+        self.strip_tr: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}     # part → {(ordinal, row): trPr child names}
+        self.strip_tc: Dict[str, Dict[Tuple[int, int, int], Set[str]]] = {}   # part → {(ordinal, row, cell): tcPr …}
 
     def view(self, part):
         if part not in self.views:
@@ -1894,6 +1900,44 @@ def mask_picture_sizes(drawing) -> None:
                 e.set("cy", "masked")
 
 
+def _strip_table_props(ctx: Ctx, part: str, s_root, o_root) -> None:
+    """Built-in batch 5: the table, row and cell property elements a kind checked (``strip_tbl``/``strip_tr``/
+    ``strip_tc``) leave both sides; a row's ``w:trPr`` or a cell's ``w:tcPr`` left empty by that goes on both sides."""
+    by_tbl = ctx.strip_tbl.get(part, {})
+    by_tr = ctx.strip_tr.get(part, {})
+    by_tc = ctx.strip_tc.get(part, {})
+    if not (by_tbl or by_tr or by_tc):
+        return
+
+    def strip(holder, names: Set[str]) -> None:
+        if holder is None:
+            return
+        for c in list(holder):
+            if _local(c) in names:
+                holder.remove(c)
+        _drop_empty(holder)
+
+    for root in (s_root, o_root):
+        tables = list(root.iter(W + "tbl"))               # ordinals: no op adds, removes or moves a table
+        rows = lambda k: [c for c in tables[k] if c.tag == W + "tr"] if k < len(tables) else []
+        for k, names in by_tbl.items():
+            if k < len(tables):
+                pr = tables[k].find(W + "tblPr")
+                if pr is not None:
+                    for c in list(pr):
+                        if _local(c) in names:
+                            pr.remove(c)
+        for (k, r), names in by_tr.items():
+            trs = rows(k)
+            if r < len(trs):
+                strip(trs[r].find(W + "trPr"), names)
+        for (k, r, c), names in by_tc.items():
+            trs = rows(k)
+            tcs = [x for x in trs[r] if x.tag == W + "tc"] if r < len(trs) else []
+            if c < len(tcs):
+                strip(tcs[c].find(W + "tcPr"), names)
+
+
 def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
     sv, ov = ctx.view(part)
     s_root = etree.fromstring(etree.tostring(sv.root))   # private copies: stripping must not disturb the views
@@ -1973,6 +2017,7 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                 ts = tables[k].find(W + "tblPr/" + W + "tblStyle") if k < len(tables) else None
                 if ts is not None:
                     ts.getparent().remove(ts)
+    _strip_table_props(ctx, part, s_root, o_root)
     if part == ctx.src.main_part() and ctx.strip_sect:
         ss, os_ = sect_prs(s_root), sect_prs(o_root)
         for i, names in ctx.strip_sect.items():
@@ -2141,6 +2186,9 @@ from .language import LANGUAGE_KINDS  # noqa: E402
 from .styleimport import IMPORT_KINDS  # noqa: E402
 from .restyle import RESTYLE_KINDS  # noqa: E402
 from .applystyle import APPLY_KINDS  # noqa: E402
+# built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §5): tables
+from .tableprops import TABLE_PROP_KINDS  # noqa: E402
+from .applytablestyle import APPLY_TABLE_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -2155,3 +2203,5 @@ KINDS.update(LANGUAGE_KINDS)
 KINDS.update(IMPORT_KINDS)
 KINDS.update(RESTYLE_KINDS)
 KINDS.update(APPLY_KINDS)
+KINDS.update(TABLE_PROP_KINDS)
+KINDS.update(APPLY_TABLE_KINDS)

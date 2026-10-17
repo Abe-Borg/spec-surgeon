@@ -1341,6 +1341,158 @@ def add_parts(data: bytes, parts: dict, rels=(), overrides: dict = None) -> byte
     return out.getvalue()
 
 
+# ---- built-in batch 5, tables (docs/BUILTIN_OPS_BATCH5_DESIGN.md §5) ------------------------------------------------
+
+_TBLPR_ORDER = ["tblStyle", "tblpPr", "tblOverlap", "bidiVisual", "tblStyleRowBandSize", "tblStyleColBandSize", "tblW",
+                "jc", "tblCellSpacing", "tblInd", "tblBorders", "shd", "tblLayout", "tblCellMar", "tblLook",
+                "tblCaption", "tblDescription", "tblPrChange"]
+
+
+def _tblpr_add(table, xml: str):
+    """Add w:tblPr children written as XML to a python-docx table, each in schema order (fixture surgery)."""
+    pr = table._tbl.tblPr
+    for el in etree.fromstring(f"<w:x {_W_DECL}>{xml}</w:x>"):
+        rank = _TBLPR_ORDER.index(etree.QName(el).localname)
+        at = next((i for i, c in enumerate(pr) if _TBLPR_ORDER.index(etree.QName(c).localname) > rank), len(pr))
+        pr.insert(at, el)
+    return pr
+
+
+def _tcpr_add(cell, xml: str):
+    """Append w:tcPr children written as XML to a python-docx cell (give them in schema order, after w:tcW)."""
+    tcpr = cell._tc.get_or_add_tcPr()
+    for el in etree.fromstring(f"<w:x {_W_DECL}>{xml}</w:x>"):
+        tcpr.append(el)
+    return tcpr
+
+
+def _row_first(row, xml: str):
+    """Insert row-level elements written as XML (w:tblPrEx, w:trPr) first in a python-docx row, in the given order."""
+    for i, el in enumerate(etree.fromstring(f"<w:x {_W_DECL}>{xml}</w:x>")):
+        row._tr.insert(i, el)
+
+
+def _fill(table, rows):
+    for r, values in enumerate(rows):
+        for c, v in enumerate(values):
+            table.cell(r, c).text = v
+
+
+def build_tables(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS", *,
+                 start_end: bool = False) -> bytes:
+    """The batch-5 table fixture (set_table_props / apply_table_style). Two sections (the second landscape, for schedules);
+    every table is found by its ordinal (``root.iter(w:tbl)`` per part) and its first row's text. python-docx's template
+    underneath: ``TableNormal`` (the default table style: cell margins left/right 108, no borders) and ``TableGrid``
+    ("Table Grid": all six border sides single 4, cell margins 108).
+
+    Styles added: ``ArchGrid`` ("Arch Grid", based on TableNormal: tblBorders top, bottom and insideH single 4 — a
+    side not asked must be written nil — and ``w:trPr/w:cantSplit`` on: rows that may break need an explicit off);
+    ``ArchBanded`` ("Arch Banded", based on TableGrid, a ``w:tblStylePr`` firstRow with ``w:tcPr/w:tcBorders`` —
+    conditional borders, flagged); ``ArchHeader`` ("Arch Header", based on TableNormal, ``w:trPr/w:tblHeader`` on);
+    ``ArchStartEnd`` (only with ``start_end``: tblBorders spelled start/end).
+
+    Body, section 1: "SECTION …"; table 0 — Table Grid with direct tblBorders (top and bottom double), direct shading
+    EEEEEE, 3 rows "Item | Value" / "Riser | 4 in" / "Main | 6 in"; cell (1, 0) has its own tcBorders (bottom single
+    12), cell (2, 1) its own tcMar (left 200), cell (0, 0) its own shading D9D9D9. "Valve schedule"; table 1 — no style
+    (the default), 3 rows "Valve | Size" / "Gate | 4 in" / "Check | 6 in"; row 0 already carries tblHeader, row 1 cantSplit;
+    tblW pct 5000 (100 %); own tblCellMar left/right 115 dxa. "Pipe schedule"; table 2 — ArchGrid, 2 rows "Size |
+    Material" / "2 in | Steel". Table 3 — ArchBanded, 3 rows "Banded | Table" / …; row 1 carries a w:tblPrEx with its own
+    tblBorders (flagged). Table 4 — no style, 1 row "Outer | cell"; its cell (0, 0) holds table 5 — Table Grid, nested,
+    1 row "Nested | table". Table 6 — ArchHeader, 2 rows "Tracked | table"; a pending w:tblPrChange (Jeremy, id 401)
+    and, in row 0, a w:trPrChange (id 402). Section break (new page). Section 2 (landscape): "EQUIPMENT SCHEDULE";
+    table 7 — Table Grid, 2 rows "Tag | Description" / "FP-1 | Fire pump". With ``start_end``: table 8 — ArchStartEnd,
+    own tblBorders start/end and tblCellMar start/end, 1 row "Aliased | sides".
+
+    Header (section 1): table 0 — no style, 1 row "SECTION | {section_number}".
+    """
+    from docx.enum.section import WD_ORIENT
+    doc = Document()
+    _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="ArchGrid"><w:name w:val="Arch Grid"/>'
+                    '<w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders>'
+                    '<w:top w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                    '<w:bottom w:val="single" w:sz="4" w:space="0" w:color="auto"/>'
+                    '<w:insideH w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr>'
+                    '<w:trPr><w:cantSplit/></w:trPr></w:style>')
+    _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="ArchBanded"><w:name w:val="Arch Banded"/>'
+                    '<w:basedOn w:val="TableGrid"/><w:tblPr><w:tblStyleRowBandSize w:val="1"/></w:tblPr>'
+                    '<w:tblStylePr w:type="firstRow"><w:rPr><w:b/></w:rPr><w:tcPr><w:tcBorders>'
+                    '<w:bottom w:val="single" w:sz="12" w:space="0" w:color="auto"/></w:tcBorders></w:tcPr>'
+                    '</w:tblStylePr></w:style>')
+    _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="ArchHeader"><w:name w:val="Arch Header"/>'
+                    '<w:basedOn w:val="TableNormal"/><w:trPr><w:tblHeader/></w:trPr></w:style>')
+    if start_end:
+        _add_style(doc, '<w:style w:type="table" w:customStyle="1" w:styleId="ArchStartEnd"><w:name w:val="Arch Start End"/>'
+                        '<w:basedOn w:val="TableNormal"/><w:tblPr><w:tblBorders>'
+                        '<w:start w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders></w:tblPr></w:style>')
+
+    ht = doc.sections[0].header.add_table(1, 2, doc.sections[0].page_width - doc.sections[0].left_margin
+                                          - doc.sections[0].right_margin)
+    _fill(ht, [["SECTION", section_number]])
+    doc.sections[0].header.add_paragraph("")                      # a header ends with a paragraph
+
+    doc.add_paragraph(f"SECTION {section_number} - {title}")
+    t0 = doc.add_table(rows=3, cols=2)
+    t0.style = doc.styles["Table Grid"]
+    _fill(t0, [["Item", "Value"], ["Riser", "4 in"], ["Main", "6 in"]])
+    _tblpr_add(t0, '<w:tblBorders><w:top w:val="double" w:sz="4" w:space="0" w:color="auto"/>'
+                   '<w:bottom w:val="double" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>'
+                   '<w:shd w:val="clear" w:color="auto" w:fill="EEEEEE"/>')
+    _tcpr_add(t0.cell(1, 0), '<w:tcBorders><w:bottom w:val="single" w:sz="12" w:space="0" w:color="auto"/></w:tcBorders>')
+    _tcpr_add(t0.cell(2, 1), '<w:tcMar><w:left w:w="200" w:type="dxa"/></w:tcMar>')
+    _tcpr_add(t0.cell(0, 0), '<w:shd w:val="clear" w:color="auto" w:fill="D9D9D9"/>')
+
+    doc.add_paragraph("Valve schedule")
+    t1 = doc.add_table(rows=3, cols=2)
+    _fill(t1, [["Valve", "Size"], ["Gate", "4 in"], ["Check", "6 in"]])
+    w = t1._tbl.tblPr.find(qn("w:tblW"))
+    w.set(qn("w:w"), "5000"); w.set(qn("w:type"), "pct")
+    _tblpr_add(t1, '<w:tblCellMar><w:left w:w="115" w:type="dxa"/><w:right w:w="115" w:type="dxa"/></w:tblCellMar>')
+    _row_first(t1.rows[0], "<w:trPr><w:tblHeader/></w:trPr>")
+    _row_first(t1.rows[1], "<w:trPr><w:cantSplit/></w:trPr>")
+
+    doc.add_paragraph("Pipe schedule")
+    t2 = doc.add_table(rows=2, cols=2)
+    t2.style = doc.styles["Arch Grid"]
+    _fill(t2, [["Size", "Material"], ["2 in", "Steel"]])
+
+    t3 = doc.add_table(rows=3, cols=2)
+    t3.style = doc.styles["Arch Banded"]
+    _fill(t3, [["Banded", "Table"], ["Row", "one"], ["Row", "two"]])
+    _row_first(t3.rows[1], '<w:tblPrEx><w:tblBorders><w:top w:val="single" w:sz="8" w:space="0" w:color="auto"/>'
+                           '</w:tblBorders></w:tblPrEx>')
+
+    t4 = doc.add_table(rows=1, cols=2)
+    _fill(t4, [["Outer", "cell"]])
+    t5 = t4.cell(0, 0).add_table(1, 2)
+    t5.style = doc.styles["Table Grid"]
+    _fill(t5, [["Nested", "table"]])
+
+    t6 = doc.add_table(rows=2, cols=2)
+    t6.style = doc.styles["Arch Header"]
+    _fill(t6, [["Tracked", "table"], ["Older", "change"]])
+    _tblpr_add(t6, '<w:tblPrChange w:id="401" w:author="Jeremy" w:date="2026-09-22T11:00:00Z"><w:tblPr>'
+                   '<w:tblW w:w="0" w:type="auto"/></w:tblPr></w:tblPrChange>')
+    _row_first(t6.rows[0], '<w:trPr><w:trPrChange w:id="402" w:author="Jeremy" w:date="2026-09-22T11:00:00Z">'
+                           '<w:trPr/></w:trPrChange></w:trPr>')
+
+    first = doc.sections[0]
+    second = doc.add_section(WD_SECTION.NEW_PAGE)
+    second.orientation = WD_ORIENT.LANDSCAPE
+    second.page_width, second.page_height = first.page_height, first.page_width
+    doc.add_paragraph("EQUIPMENT SCHEDULE")
+    t7 = doc.add_table(rows=2, cols=2)
+    t7.style = doc.styles["Table Grid"]
+    _fill(t7, [["Tag", "Description"], ["FP-1", "Fire pump"]])
+    if start_end:
+        t8 = doc.add_table(rows=1, cols=2)
+        t8.style = doc.styles["Arch Start End"]
+        _fill(t8, [["Aliased", "sides"]])
+        _tblpr_add(t8, '<w:tblBorders><w:start w:val="single" w:sz="4" w:space="0" w:color="auto"/></w:tblBorders>'
+                       '<w:tblCellMar><w:start w:w="100" w:type="dxa"/><w:end w:w="100" w:type="dxa"/></w:tblCellMar>')
+    doc.add_paragraph("END OF SECTION")
+    return docx_bytes(doc)
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir")
