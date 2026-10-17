@@ -6,6 +6,7 @@ parameters; the reuse API apply_style builds on."""
 from __future__ import annotations
 
 import ast
+import copy
 import io
 import zipfile
 from pathlib import Path
@@ -15,7 +16,7 @@ import pytest
 from lxml import etree
 
 from make_fixtures import build_formatted, build_rich, build_styles
-from spec_surgeon.editspec import plan_spec, validate_spec
+from spec_surgeon.editspec import apply_spec, plan_spec, validate_spec
 from spec_surgeon.ooxml import RevisionStamp, paragraphs
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import clear_formatting as clear_module
@@ -536,6 +537,127 @@ def test_set_properties_reads_the_runs_it_finds_already_as_asked(src):
     assert (MAIN, "0", "verify:pPr") in keep.touches
 
 
+# ---- what the op declares is what its kind checks (review round, F1) ---------------------------------------------------
+
+def _both_orders(data: bytes, a: dict, b: dict):
+    """Plan, apply and verify ``[a, b]`` and ``[b, a]``; the two outputs must be the same file."""
+    outs = []
+    for ops in ([a, b], [b, a]):
+        pkg = DocxPackage(data)
+        plan, frags = plan_spec(pkg, _spec(*copy.deepcopy(ops)))
+        out = apply_spec(pkg, frags).output_bytes()
+        rec = run_suite(data, out, plan.to_dict(), "src.docx", "out.docx")
+        assert rec.passed, ([o["op"] for o in ops], rec.to_markdown())
+        outs.append(serialize_xml(DocxPackage(out).xml(MAIN)))
+    assert outs[0] == outs[1]
+
+
+def _refused_both_orders(data: bytes, a: dict, b: dict) -> None:
+    for ops in ([a, b], [b, a]):
+        with pytest.raises(JobException) as e:
+            plan_spec(DocxPackage(data), _spec(*copy.deepcopy(ops)))
+        assert e.value.code == "conflict", [o["op"] for o in ops]
+
+
+def test_a_paragraph_clear_beside_a_font_change_of_every_run_verifies_in_either_order(src):
+    """"Reset the paragraph formatting and make everything Calibri": the clear empties pPrs that set_font gives a mark
+    rPr. The kind compares a paragraph's other pPr children (the clear declares pPr and every cleared name) but leaves the
+    mark to set_font, and an emptied pPr is judged on the OUTPUT — it used to expect the pPr gone and fail on every
+    paragraph."""
+    _both_orders(src, {"op": OP, "select": {}, "params": {"run": False}},
+                 {"op": "set_font", "select": {}, "params": {"font": "Calibri"}})
+
+
+@pytest.mark.parametrize("other", [
+    {"op": "set_tab_stops", "params": {"set": [{"pos": 2880}], "tracked": False}},
+    {"op": "set_properties", "params": {"paragraph": {"keepNext": True}, "tracked": False}},
+    {"op": "set_paragraph_props", "params": {"spacing": {"before": 120}, "tracked": False}},
+    {"op": "set_borders_shading", "params": {"shading": {"fill": "D9D9D9"}, "tracked": False}},
+])
+def test_a_mark_clear_beside_another_paragraph_property_change_verifies_in_either_order(src, other):
+    """A clear of the "A." paragraph's mark only (paragraph: false) declares markRPr; the other op changes the pPr. The
+    kind checks the mark and leaves the pPr's other children to the residual (it used to compare them all against the
+    source and fail "paragraph properties are …")."""
+    sel = {"paragraphs": {"text_regex": "^A\\."}}
+    _both_orders(src, {"op": OP, "select": sel, "params": {"paragraph": False, "tracked": False}},
+                 {**other, "select": sel})
+
+
+def test_a_paragraph_clear_beside_a_highlight_removal_that_empties_the_mark_verifies_in_either_order(src):
+    def lit_mark(root):
+        ppr = para(root, "Coordinate").find(W + "pPr")
+        ppr.append(el('<w:rPr><w:highlight w:val="yellow"/></w:rPr>'))
+    data = mutate(src, MAIN, lit_mark)
+    _both_orders(data, {"op": OP, "select": {"paragraphs": {"text_regex": "^Coordinate"}},
+                        "params": {"run": False, "tracked": False}},
+                 {"op": "remove_highlight", "select": {}, "params": {}})
+    root = root_of(apply_spec(DocxPackage(data), plan_spec(DocxPackage(data), _spec(
+        {"op": OP, "select": {"paragraphs": {"text_regex": "^Coordinate"}}, "params": {"run": False, "tracked": False}},
+        {"op": "remove_highlight", "select": {}, "params": {}}))[1]).output_bytes())
+    assert para(root, "Coordinate").find(W + "pPr") is None                  # emptied by the two together: gone
+
+
+def test_where_an_emptied_mark_takes_the_ppr_with_it_the_order_dependence_is_a_conflict(src):
+    """A plain clear that empties a mark removes the pPr when nothing else is left. When the pPr's other children are
+    properties another op may remove (here a tab list set_tab_stops takes away and, by its own rule, leaves the pPr in
+    place), the result would depend on the order — the clear declares soft reads of them (``emptying_reads``) and the
+    pair is refused. A pPr holding a pStyle never empties: no read, and the pair verifies in either order; so does a
+    pPr holding only the mark beside an op that adds a child."""
+    def tabbed(root):
+        p = para(root, "PART 2")
+        p.insert(0, el('<w:pPr><w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs><w:rPr><w:b/></w:rPr></w:pPr>'))
+    data = mutate(src, MAIN, tabbed)
+    sel = {"paragraphs": {"text_regex": "^PART 2"}}
+    mark_clear = {"op": OP, "select": sel, "params": {"paragraph": False, "tracked": False}}
+    frag = get_op(OP).plan(DocxPackage(data), sel, mark_clear["params"])
+    bi = next(i for i, p in enumerate(paragraphs(DocxPackage(data).xml(MAIN))) if text_of(p).startswith("PART 2"))
+    assert (MAIN, str(bi), "verify-props:tabs") in frag.touches
+    _refused_both_orders(data, mark_clear, {"op": "set_tab_stops", "select": sel,
+                                            "params": {"clear_others": True, "tracked": False}})
+    # tracked: the mark keeps its rPrChange, the pPr never empties — no read
+    assert not [t for t in get_op(OP).plan(DocxPackage(data), sel, {"paragraph": False}).touches
+                if t[2].startswith("verify-props")]
+
+    def styled(root):
+        p = para(root, "PART 2")
+        p.insert(0, el('<w:pPr><w:pStyle w:val="Normal"/><w:tabs><w:tab w:val="left" w:pos="720"/></w:tabs>'
+                       '<w:rPr><w:b/></w:rPr></w:pPr>'))
+    data2 = mutate(src, MAIN, styled)
+    assert not [t for t in get_op(OP).plan(DocxPackage(data2), sel, mark_clear["params"]).touches
+                if t[2].startswith("verify-props")]
+    _both_orders(data2, mark_clear, {"op": "set_tab_stops", "select": sel,
+                                     "params": {"clear_others": True, "tracked": False}})
+
+    def bare(root):
+        para(root, "PART 2").insert(0, el('<w:pPr><w:rPr><w:b/></w:rPr></w:pPr>'))
+    data3 = mutate(src, MAIN, bare)
+    for other in ({"op": "set_tab_stops", "params": {"set": [{"pos": 1440}], "tracked": False}},
+                  {"op": "set_paragraph_props", "params": {"spacing": {"after": 120}, "tracked": False}},
+                  {"op": "set_borders_shading", "params": {"shading": {"fill": "D9D9D9"}, "tracked": False}}):
+        _both_orders(data3, mark_clear, {**other, "select": sel})
+
+
+def test_an_emptied_ppr_left_in_place_still_fails(src):
+    """The output-based rule is no weaker: a pPr the clear emptied and left behind fails, for a paragraph clear and for
+    a mark clear alike."""
+    plan, out, rec = clear(src, {}, {"author": AUTHOR})
+    assert rec.passed
+    _caught(src, plan, out, MAIN, lambda r: para(r, "WET-PIPE").insert(0, etree.Element(W + "pPr")), "emptied w:pPr")
+
+    def bare(root):
+        para(root, "PART 2").insert(0, el('<w:pPr><w:rPr><w:b/></w:rPr></w:pPr>'))
+    data = mutate(src, MAIN, bare)
+    plan, out, rec = clear(data, {"paragraphs": {"text_regex": "^PART 2"}}, {"paragraph": False, "tracked": False})
+    assert rec.passed and para(root_of(out), "PART 2").find(W + "pPr") is None
+    _caught(data, plan, out, MAIN, lambda r: para(r, "PART 2").insert(0, etree.Element(W + "pPr")), "emptied w:pPr")
+    # and a paragraph clear that leaves a cleared child behind beside a mark set_font gave it still fails
+    plan, frags = plan_spec(DocxPackage(src), _spec({"op": OP, "select": {}, "params": {"run": False}},
+                                                    {"op": "set_font", "select": {}, "params": {"font": "Calibri"}}))
+    out = apply_spec(DocxPackage(src), frags).output_bytes()
+    _caught(src, plan, out, MAIN, lambda r: para(r, "WET-PIPE").find(W + "pPr").insert(0, el('<w:jc w:val="center"/>')),
+            "paragraph properties are")
+
+
 # ---- the reuse API (apply_style's direct_formatting "clear") ---------------------------------------------------------
 
 def test_the_reuse_api_clears_and_sets_a_style_in_one_paragraph_change(src):
@@ -594,6 +716,31 @@ def test_the_reuse_api_clears_and_sets_a_style_in_one_paragraph_change(src):
     w_pars = paragraphs(w_root)
     clear_module.clear_paragraph(w_pars[bi], runs_by_paragraph(w_root, w_pars)[bi], d, None, 0, set_style)
     assert locals_of(w_pars[bi].find(W + "pPr")) == ["pStyle", "rPr"]
+
+
+def test_the_reuse_api_leaves_the_mark_to_others_with_mark_false():
+    """``mark=False`` (apply_style passes whether ITS clear changes the mark): the mark's rPr is in neither sequence, so a
+    mark another op created or emptied in the same spec does not fail the pPr check; the default keeps the mark's place
+    checked. An emptied pPr is judged on the output either way."""
+    S = el('<w:pPr><w:jc w:val="center"/></w:pPr>')                       # the source: a pPr clear, no mark
+    O = el('<w:pPr><w:pStyle w:val="Heading1"/><w:rPr><w:rFonts w:ascii="Arial"/></w:rPr></w:pPr>')   # + set_font's mark
+    exp = vclear.v_with_pstyle(vclear.v_expected_ppr(S, {"jc"}, False, mark=False), "Heading1")
+    errs: List[str] = []
+    vclear.check_cleared_ppr(S, O, exp, False, AUTHOR, "p", errs, mark=False)
+    assert errs == []
+    vclear.check_cleared_ppr(S, O, vclear.v_with_pstyle(vclear.v_expected_ppr(S, {"jc"}, False), "Heading1"), False,
+                             AUTHOR, "p", errs)
+    assert errs and "paragraph properties are ['pStyle', 'rPr'], expected ['pStyle']" in errs[0]
+    # positional calls of the earlier signature still work, and an empty output pPr fails whatever is expected
+    errs = []
+    vclear.check_cleared_ppr(S, etree.Element(W + "pPr"), [], False, AUTHOR, "p", errs, True)
+    assert errs == ["p: an emptied w:pPr is left in place (it must be removed)"]
+    errs = []
+    vclear.check_cleared_ppr(S, None, [], False, AUTHOR, "p", errs, mark=False)    # gone: nothing expected, fine
+    assert errs == []
+    marked = el('<w:pPr><w:jc w:val="center"/><w:pPrChange w:id="1" w:author="J"><w:pPr/></w:pPrChange></w:pPr>')
+    vclear.check_cleared_ppr(marked, None, [], False, AUTHOR, "p", errs, mark=False)
+    assert errs and "w:pPrChange changed" in errs[0]                         # someone's marker may not vanish
 
 
 def _codes(module) -> set:

@@ -27,7 +27,11 @@ first whose ``w:lang`` carries the attribute) is V10's post-condition and exists
 
 Touches: ``(part, block, "rPr" | "markRPr")`` per changed run's / mark's block, ``(styles, "style:<id>", "rPr")``,
 ``(styles, "docDefaults", "rPr")``, ``(part, "scope", "verify")`` for every text part and ``(styles, "*", "verify")``
-(the post-condition reads every style chain: a style import or a style's font change beside it is a conflict).
+(the post-condition reads every style chain: a style import or a style's font change beside it is a conflict), and per
+text part the whole-member soft reads ``(part, "*", "verify-props:pStyle" | "verify-props:rStyle" |
+"verify-props:tblPr")`` — the post-condition resolves every run through its paragraph's, its own and its table's style
+in the OUTPUT, so a restyle anywhere in the part (apply_style, map_styles) is a plan-time conflict, while an edit of the
+words (a soft read is not reached by ``text``) still plans.
 """
 from __future__ import annotations
 
@@ -39,7 +43,7 @@ from lxml import etree
 from ..package import W, DocxPackage
 from ..ooxml import RPR_ORDER, get_or_add, paragraphs
 from . import register
-from .base import JobException, Op, PlanFragment
+from .base import VERIFY_PROPS, JobException, Op, PlanFragment
 from .docprops import settings_member
 from .selectors import StyleSheet, runs_by_paragraph
 
@@ -210,7 +214,10 @@ class SetLanguage(Op):
         frag.touches += [(sheet.part, f"style:{sid}", "rPr") for sid in styles]
         for part in pkg.text_parts():
             frag.touches.append((part, "scope", "verify"))     # V10's post-condition reads every run of every text part
-        frag.touches.append((sheet.part, "*", "verify"))       # … through every style chain
+            # … through each paragraph's pStyle, each run's and mark's rStyle and each table's tblStyle in the OUTPUT: a
+            # restyle anywhere in the part (apply_style, map_styles) is a plan-time conflict; an edit of the words is not
+            frag.touches += [(part, "*", f"{VERIFY_PROPS}:{family}") for family in ("pStyle", "rStyle", "tblPr")]
+        frag.touches.append((sheet.part, "*", "verify"))       # … and every style definition and docDefaults
         n_runs = sum(len(v["runs"]) for v in parts.values())
         n_marks = sum(len(v["marks"]) for v in parts.values())
         frag.property_assertions.append({

@@ -17,10 +17,13 @@ the definitions that must stay identical on both sides). Nothing here comes from
 
 Fails when the changed targets or their counts differ from the plan's; when an output ``w:rPr`` is not exactly the
 source's minus the cleared children, in order (absent when emptied and plain; the ``w:rPrChange`` by the shared
-run-property rules); when an output ``w:pPr`` is not exactly the source's minus the cleared children — the mark's
-``w:rPr`` in its place unless it was emptied (plain), the ``w:pPrChange`` by the shared paragraph-property rules — or an
-emptied pPr is left in place. The checked runs (``strip_runs``), marks (``strip_marks``) and the cleared pPr children with
-``pPrChange`` (``strip_ppr``) leave the residual.
+run-property rules); where the op changed the pPr (it declares ``pPr`` and every cleared name), when the output pPr's
+other children are not exactly the source's minus the cleared ones (the mark's ``w:rPr`` in its place only where the op
+also changed the mark — it declares ``markRPr``; another op may give the mark an rPr or empty it), the ``w:pPrChange`` by
+the shared paragraph-property rules; and when a paragraph whose pPr or mark it changed is left with an empty ``w:pPr`` in
+the OUTPUT (an emptied one goes — judged on the output, so the result is the same whichever op of the spec applied
+first). The checked runs (``strip_runs``), marks (``strip_marks``) and the cleared pPr children with ``pPrChange``
+(``strip_ppr``) leave the residual, which compares everything else.
 
 **Reuse** (``apply_style``'s ``direct_formatting: "clear"`` — the DEFAULT rules, its own ``w:pStyle`` in the same pPr):
 
@@ -33,14 +36,19 @@ emptied pPr is left in place. The checked runs (``strip_runs``), marks (``strip_
   cleared children, the change-marker rules (tracked: a w:rPrChange whose snapshot is the source rPr; plain: the
   marker unchanged, an emptied rPr absent); registers ``ctx.strip_runs`` / ``ctx.strip_marks``. ``mark_stays`` — the
   mark's w:rPr is still in the output pPr (what ``v_expected_ppr`` needs).
-* ``v_expected_ppr(S, gone, mark_stays) -> list`` — the signature sequence the output pPr must show: the source pPr's
-  children without the cleared ones and without ``w:pPrChange`` (the change marker, checked apart), the mark's w:rPr
-  as the placeholder ``MARK`` (its content is ``check_runs_and_mark``'s) when it stays. ``v_with_pstyle(seq, style_id)``
-  puts a ``w:pStyle`` first in such a sequence (replacing one), for another kind's expectation.
-* ``check_cleared_ppr(S, O, expected, tracked, author, where, errs, changed=True)`` — the output pPr ``O`` against an
-  expected sequence (``v_ppr_sequence(O)`` compared), the w:pPrChange rules when ``changed`` (tracked: present, its
-  snapshot the source pPr without rPr/sectPr/pPrChange; plain or unchanged: as in the source), and plain: ``O`` absent
-  exactly when nothing is left. The caller registers ``ctx.strip_ppr``.
+* ``v_expected_ppr(S, gone, mark_stays, mark=True) -> list`` — the signature sequence the output pPr must show: the
+  source pPr's children without the cleared ones and without ``w:pPrChange`` (the change marker, checked apart), the
+  mark's w:rPr as the placeholder ``MARK`` (its content is ``check_runs_and_mark``'s) when it stays. ``mark=False``
+  leaves the mark out altogether — pass it when the caller's op does not change the mark (``d.mark is None``): the mark
+  is then another op's or the residual's. ``v_with_pstyle(seq, style_id)`` puts a ``w:pStyle`` first in such a sequence
+  (replacing one), for another kind's expectation.
+* ``check_cleared_ppr(S, O, expected, tracked, author, where, errs, changed=True, mark=True)`` — the output pPr ``O``
+  against an expected sequence built with the same ``mark`` (``v_ppr_sequence(O, mark)`` compared; an absent ``O`` is the
+  empty sequence), the w:pPrChange rules when ``changed`` (tracked: present, its snapshot the source pPr without
+  rPr/sectPr/pPrChange; plain or unchanged: as in the source — a source marker may not vanish with the pPr), and an
+  empty output ``O`` is an error (``check_empty_ppr``). Call it only where the op changed the pPr (the other children
+  are compared). The caller registers ``ctx.strip_ppr``.
+* ``check_empty_ppr(O, where, errs)`` — the output rule alone, for a paragraph where the op changed only the mark.
 """
 from __future__ import annotations
 
@@ -190,16 +198,18 @@ def check_runs_and_mark(ctx: Ctx, part: str, bi: int, oi: int, d: VClearing, tra
     return len(d.runs), int(d.mark is not None), stays
 
 
-def v_expected_ppr(S, gone: Set[str], mark_stays: bool) -> List[Any]:
+def v_expected_ppr(S, gone: Set[str], mark_stays: bool, mark: bool = True) -> List[Any]:
     """The sequence the output pPr must show (``v_ppr_sequence``): the source pPr's children minus the cleared ones and
-    ``w:pPrChange``, the mark's rPr as ``MARK`` when it stays."""
+    ``w:pPrChange``, the mark's rPr as ``MARK`` when it stays. ``mark=False`` leaves the mark's rPr out altogether — the
+    caller's op does not change the mark, so its place and content are another op's or the residual's business (a
+    ``set_font`` in the same spec may give the mark an rPr it never had)."""
     out: List[Any] = []
     for c in (S if S is not None else []):
         loc = _local(c)
         if loc == "pPrChange":
             continue
         if loc == "rPr":
-            if mark_stays:
+            if mark and mark_stays:
                 out.append(MARK)
             continue
         if loc and loc in gone:
@@ -208,9 +218,11 @@ def v_expected_ppr(S, gone: Set[str], mark_stays: bool) -> List[Any]:
     return out
 
 
-def v_ppr_sequence(O) -> List[Any]:
-    """An output pPr as a sequence: each child's signature, the mark's rPr as ``MARK``, ``w:pPrChange`` left out."""
-    return [MARK if _local(c) == "rPr" else sig(c) for c in (O if O is not None else []) if _local(c) != "pPrChange"]
+def v_ppr_sequence(O, mark: bool = True) -> List[Any]:
+    """An output pPr as a sequence: each child's signature, the mark's rPr as ``MARK`` (left out with ``mark=False``),
+    ``w:pPrChange`` left out; an absent pPr is the empty sequence."""
+    return [MARK if _local(c) == "rPr" else sig(c) for c in (O if O is not None else [])
+            if _local(c) != "pPrChange" and (mark or _local(c) != "rPr")]
 
 
 def v_with_pstyle(seq: List[Any], style_id: str) -> List[Any]:
@@ -220,27 +232,36 @@ def v_with_pstyle(seq: List[Any], style_id: str) -> List[Any]:
     return [sig(ps)] + [x for x in seq if not (isinstance(x, tuple) and x and x[0] == W + "pStyle")]
 
 
+def check_empty_ppr(O, where: str, errs: List[str]) -> None:
+    """The "an emptied pPr goes" rule, judged on the OUTPUT: a ``w:pPr`` with no children and no attributes left in a
+    paragraph this op changed is an error (plain: an emptied one is removed; tracked: a changed one holds its marker) —
+    whichever op of the spec applied first."""
+    if O is not None and not len(O) and not O.attrib:
+        errs.append(f"{where}: an emptied w:pPr is left in place (it must be removed)")
+
+
 def check_cleared_ppr(S, O, expected: List[Any], tracked: bool, author, where: str, errs: List[str],
-                      changed: bool = True) -> None:
-    """The output pPr ``O`` of a paragraph whose pPr or mark this op changed, against ``expected`` (``v_expected_ppr``,
-    possibly with another kind's additions). ``changed``: the pPr itself gets a change (a w:pPrChange when tracked)."""
+                      changed: bool = True, mark: bool = True) -> None:
+    """The output pPr ``O`` of a paragraph whose pPr this op changed, against ``expected`` (``v_expected_ppr``, possibly
+    with another kind's additions — built with the same ``mark``). ``changed``: the pPr itself gets a change (a
+    w:pPrChange when tracked). ``mark=False``: the mark's rPr is in neither sequence (the op leaves the mark to others).
+    An absent output pPr is an empty one (nothing may be expected of it); an empty one left in place fails
+    (``check_empty_ppr``)."""
     def names(seq):
         return ["rPr" if x == MARK else (etree.QName(x[0]).localname if isinstance(x[0], str) and x[0].startswith("{")
                                          else str(x[0])) for x in seq]
-    if not tracked and not expected and not (S is not None and (S.find(W + "pPrChange") is not None or S.attrib)):
-        if O is not None:
-            errs.append(f"{where}: an emptied w:pPr is left in place (plain: it must be removed)")
-        return
-    if O is None:
-        errs.append(f"{where}: no w:pPr in the output (expected {names(expected)})")
-        return
-    got = v_ppr_sequence(O)
+    check_empty_ppr(O, where, errs)
+    got = v_ppr_sequence(O, mark)
     if got != expected:
-        errs.append(f"{where}: paragraph properties are {names(got)}, expected {names(expected)}"
-                    + ("" if names(got) != names(expected) else " — a kept property changed"))
-    if dict(O.attrib) != (dict(S.attrib) if S is not None else {}):
+        if O is None:
+            errs.append(f"{where}: no w:pPr in the output (expected {names(expected)})")
+        else:
+            errs.append(f"{where}: paragraph properties are {names(got)}, expected {names(expected)}"
+                        + ("" if names(got) != names(expected) else " — a kept property changed"))
+    present = O if O is not None else etree.Element(W + "pPr")      # absent: no attributes, no marker
+    if dict(present.attrib) != (dict(S.attrib) if S is not None else {}):
         errs.append(f"{where}: w:pPr attributes changed")
-    _check_ppr_change(S, O, tracked and changed, author, where, errs)
+    _check_ppr_change(S, present, tracked and changed, author, where, errs)
 
 
 def _v_settings(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -307,10 +328,15 @@ def _cleared_formatting(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 continue
             nr, nm, mark_stays = check_runs_and_mark(ctx, part, bi, oi, d, tracked, author, errs)
             n_runs, n_marks = n_runs + nr, n_marks + nm
-            if d.ppr or d.mark is not None:
-                S, O = p.find(W + "pPr"), ov.pars[oi].find(W + "pPr")
-                check_cleared_ppr(S, O, v_expected_ppr(S, d.ppr, mark_stays), tracked, author, where, errs,
-                                  changed=bool(d.ppr))
+            S, O = p.find(W + "pPr"), ov.pars[oi].find(W + "pPr")
+            mark = d.mark is not None
+            if d.ppr:
+                # the pPr's other children compared only where the op changed the pPr (it declares pPr and every
+                # cleared name); the mark's rPr only where it changed the mark (markRPr) — the rest is the residual's
+                check_cleared_ppr(S, O, v_expected_ppr(S, d.ppr, mark_stays, mark=mark), tracked, author, where, errs,
+                                  changed=True, mark=mark)
+            elif mark:
+                check_empty_ppr(O, where, errs)
             if d.ppr:
                 n_paras += 1
                 ctx.strip_ppr.setdefault(part, {}).setdefault(bi, set()).update(d.ppr | {"pPrChange"})

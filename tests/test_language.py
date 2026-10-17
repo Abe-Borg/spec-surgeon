@@ -15,7 +15,7 @@ import pytest
 from lxml import etree
 
 from make_fixtures import build, build_styles
-from spec_surgeon.editspec import load_spec, plan_spec, validate_spec
+from spec_surgeon.editspec import apply_spec, load_spec, plan_spec, validate_spec
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import set_language as lang_module
 from spec_surgeon.package import DocxPackage, W, serialize_xml
@@ -369,6 +369,94 @@ def test_a_language_change_beside_other_run_property_ops_conflicts(src):
         get_op(f.op).apply(work, f)
     rec = run_suite(src, work.output_bytes(), plan.to_dict(), "src.docx", "out.docx")
     assert rec.passed, rec.to_markdown()
+
+
+RESTYLES = {
+    "apply_style": {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^Coordinate"}},
+                    "params": {"style": "ArchNote", "tracked": False}},
+    "map_styles paragraph": {"op": "map_styles", "params": {"map": [{"from": "ArchArticle", "to": "ArchNote"}]}},
+    "map_styles character": {"op": "map_styles", "params": {"map": [{"from": "ArchStrong", "to": "Heading1Char"}]}},
+    "map_styles table": {"op": "map_styles", "params": {"map": [{"from": "ArchTable", "to": "TableGrid"}]}},
+}
+
+
+@pytest.mark.parametrize("name", list(RESTYLES))
+def test_a_language_change_beside_a_restyle_conflicts_in_either_order(src, name):
+    """set_language's post-condition resolves every run through its paragraph's, its own and its table's style in the
+    OUTPUT: a restyle in the same spec (to a style with its own language, say) used to plan cleanly and fail "resolved to
+    'en-GB' in the source and resolves to 'fr-FR' now" (review round, F2). Its whole-member soft reads of pStyle, rStyle
+    and tblPr make it a plan-time conflict, both ways round."""
+    def french(root):
+        st = style(root, "ArchNote")
+        st.find(W + "rPr").append(etree.Element(W + "lang", {W + "val": "fr-FR"}))
+    data = mutate(src, STYLES, french)
+    lang_op = {"op": OP, "select": {}, "params": {"language": "en-US", "replace_only": ["en-GB"]}}
+    for ops in ([lang_op, RESTYLES[name]], [RESTYLES[name], lang_op]):
+        with pytest.raises(JobException) as e:
+            plan_spec(DocxPackage(data), _spec(*copy.deepcopy(ops)))
+        assert e.value.code == "conflict", ops
+
+
+def test_the_restyle_reads_are_whole_part_soft_reads(src):
+    frag = get_op(OP).plan(DocxPackage(src), {}, {"language": "en-US"})
+    for part in DocxPackage(src).text_parts():
+        for family in ("pStyle", "rStyle", "tblPr"):
+            assert (part, "*", f"verify-props:{family}") in frag.touches
+    # reached by a restyle of any one paragraph, run or table of the part, as the base grammar promises
+    for touch in ((MAIN, "11", "pStyle"), (MAIN, "3", "rStyle"), (MAIN, "tbl:0", "tblPr")):
+        other = copy.deepcopy(frag)
+        other.op, other.op_index, other.touches, other.property_assertions = "restyle", 1, [touch], []
+        other.diffs = []
+        with pytest.raises(JobException) as e:
+            merge_fragments([frag, other])
+        assert e.value.code == "conflict", touch
+
+
+def test_a_language_change_beside_an_edit_of_the_words_still_plans_and_verifies(src):
+    """A soft read is not reached by a text change: replacing words in a paragraph whose runs name no language (the
+    title) beside set_language plans, and both verify."""
+    ops = [{"op": OP, "select": {}, "params": {"language": "en-US"}},
+           {"op": "replace_text", "select": {}, "params": {"find": "WET-PIPE SPRINKLER", "replace": "DRY-PIPE SPRINKLER"}}]
+    for order in (ops, ops[::-1]):
+        pkg = DocxPackage(src)
+        plan, frags = plan_spec(pkg, {**_spec(*copy.deepcopy(order)), "mode": "content"})   # tracked words
+        out = apply_spec(pkg, frags).output_bytes()
+        rec = run_suite(src, out, plan.to_dict(), "src.docx", "out.docx")
+        assert rec.passed, rec.to_markdown()
+        assert "DRY-PIPE" in "".join(t.text or "" for t in root_of(out).iter(W + "t"))
+
+
+def test_a_change_to_the_first_of_two_styles_with_one_id_is_caught(src):
+    """Two w:style elements with one id: the op and the kind both work on the LAST (as both style readers keep it); the
+    first is the residual's to compare — changing it (bold and colour dropped, caps added) must fail V10, not hide
+    behind the language kind's stripping of the id (review round, F4; passes with verify/props._residual_styles
+    stripping only the last element per id)."""
+    def dup(root):
+        root.append(el_styles('<w:style w:type="paragraph" w:styleId="Dup"><w:name w:val="Dup A"/><w:basedOn '
+                              'w:val="Normal"/><w:rPr><w:b/><w:color w:val="FF0000"/><w:lang w:val="en-GB"/></w:rPr>'
+                              '</w:style>'))
+        root.append(el_styles('<w:style w:type="paragraph" w:styleId="Dup"><w:name w:val="Dup B"/><w:basedOn '
+                              'w:val="Normal"/><w:rPr><w:lang w:val="en-GB"/></w:rPr></w:style>'))
+    data = mutate(src, STYLES, dup)
+    data = mutate(data, MAIN, lambda r: para(r, "Coordinate").find(W + "pPr").insert(
+        0, etree.Element(W + "pStyle", {W + "val": "Dup"})))
+    plan, out, rec = lang(data, {"language": "en-US"})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"]["styles"]["Dup"] == {"val": "en-US"}
+    dups = [s for s in root_of(out, STYLES).findall(W + "style") if s.get(W + "styleId") == "Dup"]
+    assert lang_attrs(dups[0].find(W + "rPr")) == {"val": "en-GB"} and lang_attrs(dups[1].find(W + "rPr")) == {"val": "en-US"}
+
+    def wreck(root):
+        first = [s for s in root.findall(W + "style") if s.get(W + "styleId") == "Dup"][0].find(W + "rPr")
+        for c in list(first):
+            if c.tag in (W + "b", W + "color"):
+                first.remove(c)
+        first.append(etree.Element(W + "caps"))
+    _caught(data, plan, out, STYLES, wreck)
+
+
+def el_styles(xml: str):
+    return etree.fromstring(xml.replace("<w:style ", f'<w:style xmlns:w="{W[1:-1]}" ', 1))
 
 
 def test_a_language_change_beside_the_templating_op_conflicts():
