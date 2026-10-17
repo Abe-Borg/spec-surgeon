@@ -16,6 +16,7 @@ import json
 import math
 import re
 import sqlite3
+import time
 import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -43,6 +44,30 @@ _CASE_FIELDS = {"request", "pattern_id", "failure_code", "candidate", "status", 
 
 class RepairMemoryError(ValueError):
     """Invalid case data, or an unavailable/unreadable local repair database."""
+
+
+def _enable_wal(connection):
+    """Serialize first-writer journal setup, which can bypass SQLite's busy timeout.
+
+    A competing connection may have enabled WAL while this connection was waiting.
+    Re-read the persisted mode before retrying; no case transaction has begun yet.
+    """
+    deadline = time.monotonic() + 10
+    while True:
+        try:
+            if connection.execute("PRAGMA journal_mode").fetchone()[0].lower() == "wal":
+                return
+            mode = connection.execute("PRAGMA journal_mode = WAL").fetchone()[0]
+            if mode.lower() != "wal":
+                raise sqlite3.OperationalError("repair memory could not enable WAL")
+            return
+        except sqlite3.OperationalError as exc:
+            code = getattr(exc, "sqlite_errorcode", None)
+            busy = (code & 255 in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)) if isinstance(code, int) else (
+                str(exc).lower() in {"database is locked", "database table is locked", "database is busy"})
+            if not busy or time.monotonic() >= deadline:
+                raise
+            time.sleep(0.02)
 
 
 def memory_path() -> Path:
@@ -243,7 +268,7 @@ class CaseStore:
             if version not in (0, 1, SCHEMA_VERSION):
                 raise RepairMemoryError("repair memory uses a newer database format")
             if write:
-                con.execute("PRAGMA journal_mode = WAL")
+                _enable_wal(con)
                 con.execute("PRAGMA secure_delete = ON")
                 con.execute("BEGIN IMMEDIATE")
                 con.execute("""CREATE TABLE IF NOT EXISTS cases (

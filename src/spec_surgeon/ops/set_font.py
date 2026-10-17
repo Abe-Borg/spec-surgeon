@@ -11,7 +11,9 @@ Size (``size``, points; ``size_from``): set only on selected runs/marks that car
 ``size_from`` when given) — a run without one inherits its size from its styles, which set_style_font changes; adding
 direct sizes would override them. ``only_where_defined`` does the same for the font: it is then set only on runs that
 carry a direct font (``has_direct_font``), so one op can fix both direct fonts and direct sizes ("match the template's
-font"). A run gets whichever of the two applies to it; one that gets neither is not selected.
+font"). Explicit ``add_missing_size: true`` instead pins the requested size on inheriting selected runs and marks,
+without changing any shared style definition. A run gets whichever of the two applies to it; one that gets neither
+is not selected.
 A tracked change on a run that already carries someone's w:rPrChange is an exception (two snapshots cannot
 be expressed); a plain change on such a run is made and flagged (reject-all would restore that older snapshot).
 """
@@ -37,7 +39,7 @@ FONT_REFLOW = "a font change re-measures every glyph it touches; text reflows, s
 class SetFont(Op):
     name = "set_font"
     mode = "formatting"
-    description = ("Set the font (w:rFonts) and/or size (w:sz, only where a run already sets one) of selected runs "
+    description = ("Set the font (w:rFonts) and/or size (w:sz, by default only where a run already sets one) of selected runs "
                    "and their paragraph marks; symbol/dingbat runs are left alone. Compose with set_style_font + "
                    "set_doc_defaults_font for 'change all fonts'.")
     params_schema = {
@@ -50,7 +52,11 @@ class SetFont(Op):
             "include_paragraph_marks": {"type": "boolean", "default": True},
             "only_where_defined": {"type": "boolean", "default": False,
                                    "description": "set the font only on selected runs that carry a direct font "
-                                                  "(the size is always set only where a run carries its own)"},
+                                                  "(size normally changes only where a run carries its own; "
+                                                  "add_missing_size explicitly includes inherited sizes)"},
+            "add_missing_size": {"type": "boolean", "default": False,
+                                 "description": "Pin the requested size on selected runs and marks that inherit it; "
+                                                "explicitly overrides inherited size without changing style definitions."},
             "tracked": {"type": "boolean", "description": "w:rPrChange per change; default: plain for whole-document "
                                                           "selections, tracked when paragraphs are targeted"},
             "author": {"type": "string"},
@@ -62,7 +68,7 @@ class SetFont(Op):
         "paragraphs": {"description": "'all' or {style_in, text_regex, in_table, is_empty, index_range}"}}}
     verification_profile = {
         "V2": "zero text diffs", "V4": "tracked: +1 w:rPrChange per run/mark changed",
-        "V10": "run_fonts: selection re-resolved, count matched, only rFonts (and w:sz where the run set one) changed, "
+        "V10": "run_fonts: selection re-resolved, count matched, only requested rFonts and w:sz changed, "
                "theme attrs cleared; residual identical",
         "V7": "none — a font change reflows the text",
     }
@@ -87,6 +93,7 @@ class SetFont(Op):
             raise JobException("in_revisions must be 'include' or 'exclude'", "bad-params")
         marks_too = bool(params.get("include_paragraph_marks", True))
         only = bool(params.get("only_where_defined", False))
+        add_missing_size = bool(params.get("add_missing_size", False))
         tracked = bool(params.get("tracked", is_targeted(select)))
         author = params.get("author") or default_author()
         sheet = StyleSheet(pkg)
@@ -97,7 +104,8 @@ class SetFont(Op):
 
         def changes(rpr) -> Tuple[bool, bool]:
             """(the font goes on this run/mark, the size does)."""
-            return (bool(values) and (not only or has_direct_font(rpr)), size_applies(own_size(rpr), size))
+            return (bool(values) and (not only or has_direct_font(rpr)),
+                    size_applies(own_size(rpr), size, add_missing_size))
         older_snapshots = 0
         theme_blocked: List[str] = []
         for part in parts:
@@ -170,7 +178,7 @@ class SetFont(Op):
             "skip_sym_runs": skip_sym, "in_revisions": in_revs, "set": values, "clear_theme": clear,
             "include_paragraph_marks": marks_too, "tracked": tracked, "author": author,
             "expected_runs": n_runs, "expected_marks": n_marks, "size": size, "expected_sized": n_sized,
-            "only_where_defined": only})
+            "only_where_defined": only, "add_missing_size": add_missing_size})
         n = n_runs + n_marks
         frag.transform_data = {"targets": targets, "values": values, "clear_theme": clear, "tracked": tracked,
                                "author": author, "size": size}
@@ -183,7 +191,8 @@ class SetFont(Op):
             frag.geometry_reference, frag.geometry_reason = "none", FONT_REFLOW
         what = [str(values) + (" where a run sets its own font" if only else "")] if values else []
         if size:
-            what.append(f"size {size['sz'] / 2:g} pt on the {n_sized} that set their own size"
+            what.append(f"size {size['sz'] / 2:g} pt on the {n_sized}"
+                        + (" selected run(s)/mark(s), including inherited sizes" if add_missing_size else " that set their own size")
                         + (f" ({', '.join(f'{h / 2:g}' for h in size['from'])} pt)" if size["from"] else ""))
         frag.notes.append(f"{n_runs} run(s) and {n_marks} paragraph mark(s) → {' and '.join(what)} across "
                           f"{len(targets)} part(s); "

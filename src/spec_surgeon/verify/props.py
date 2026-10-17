@@ -631,7 +631,8 @@ def _run_fonts(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
     def gets(rpr) -> Tuple[bool, Optional[int]]:
         """(the font goes here, the size it must end with or None) — per property, from the SOURCE rPr."""
-        return fonts_set and (not only or _has_direct_font(rpr)), _v_size_to(_v_own_sz(rpr), size)
+        return (fonts_set and (not only or _has_direct_font(rpr)),
+                _v_size_to(_v_own_sz(rpr), size, bool(a.get("add_missing_size", False))))
     for part in parts:
         if part not in ctx.both:
             errs.append(f"run_fonts: {part} missing from the output")
@@ -1693,13 +1694,19 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                 if rpr is not None:
                     view.runs[b][ri].remove(rpr)
     for bi in ctx.strip_marks.get(part, set()):
+        source_ppr = sv.pars[bi].find(W + "pPr")
+        # A source can already contain <w:pPr/>. Stripping a newly added mark
+        # must leave that original container present on both sides; only a
+        # container introduced for the checked mark may disappear here.
+        keep_empty_ppr = source_ppr is not None and not len(source_ppr)
         for view, b in ((s, bi), (o, amap.get(bi))):
             if b is None:
                 continue
             ppr = view.pars[b].find(W + "pPr")
             if ppr is not None and ppr.find(W + "rPr") is not None:
                 ppr.remove(ppr.find(W + "rPr"))
-                _drop_empty(ppr)
+                if not keep_empty_ppr:
+                    _drop_empty(ppr)
     for bi, names in ctx.strip_ppr.get(part, {}).items():
         for view, b in ((s, bi), (o, amap.get(bi))):
             if b is None:

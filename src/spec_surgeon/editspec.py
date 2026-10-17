@@ -4,7 +4,7 @@ with conflict detection → apply in spec order on a working copy → the verifi
 
 Rules enforced here (nothing runs when one is broken):
 * every spec-level field has the shape the published schema gives it (``request``/``summary`` text, ``assumptions``/
-  ``questions`` lists of text, ``review``/``applies_to`` objects with ``sample_files`` 1–3, ``pattern_ids`` a list of
+  ``questions`` lists of text, ``review``/``applies_to`` objects with a positive ``sample_files`` count, ``pattern_ids`` a list of
   text and ``or`` only ``"all"``, ``assertions`` a list, an op's ``op`` a name) → else refuse (code ``spec``), never a
   TypeError or a misreading;
 * ``questions`` non-empty or ``unsupported`` present → refuse (code ``questions`` / ``unsupported``);
@@ -296,8 +296,8 @@ def validate_spec(spec: Dict[str, Any]) -> None:
     if review.get("geometry_reference") not in (None, "source", "template", "none"):
         raise SpecError("review.geometry_reference must be source | template | none", "spec")
     n = review.get("sample_files")
-    if n is not None and (not isinstance(n, int) or isinstance(n, bool) or not 1 <= n <= 3):
-        raise SpecError(f"review.sample_files must be a whole number from 1 to 3, got {n!r}", "spec")
+    if n is not None and (type(n) is not int or n < 1):
+        raise SpecError(f"review.sample_files must be a whole number of at least 1, got {n!r}", "spec")
     applies = spec.get("applies_to") or {}
     if set(applies) - {"pattern_ids", "or"}:
         raise SpecError("applies_to takes pattern_ids and/or \"or\": \"all\"", "spec")
