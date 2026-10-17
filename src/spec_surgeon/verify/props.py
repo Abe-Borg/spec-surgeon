@@ -2057,6 +2057,7 @@ from .language import LANGUAGE_KINDS  # noqa: E402
 # built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md): the shared style import (§5) and map_styles (§7)
 from .styleimport import IMPORT_KINDS  # noqa: E402
 from .restyle import RESTYLE_KINDS  # noqa: E402
+from .applystyle import APPLY_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -2070,3 +2071,4 @@ KINDS.update(CLEARING_KINDS)
 KINDS.update(LANGUAGE_KINDS)
 KINDS.update(IMPORT_KINDS)
 KINDS.update(RESTYLE_KINDS)
+KINDS.update(APPLY_KINDS)

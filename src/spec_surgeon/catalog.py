@@ -110,6 +110,32 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "never tracked (Word does not track a language change); a spec of its own — beside another operation that "
         "changes run properties or styles it is a conflict (offer a chain)",
     ],
+    "map_styles": [
+        "every use of the style changes: paragraphs whose style it is (with the default paragraph style — Normal — also "
+        "the paragraphs that name no style), runs and paragraph marks in a character style, tables in a table style, in "
+        "the body, headers, footers, footnotes, endnotes and comments unless a scope is given",
+        "your styles come from the template file: a style this file lacks is imported with the styles it is based on, "
+        "linked to and followed by, and its list numbering (copied with new list ids); a style this file already has "
+        "keeps this file's definition unless existing is 'replace'",
+        "nothing else changes: the architect's style definitions stay (removing unused styles is its own operation, a "
+        "second stage), and field codes that name a style (a TOC \\t switch, STYLEREF) are flagged, not edited",
+        "a style the file lacks, or that nothing uses, is skipped and noted (allow_missing); a 'to' of another type, or a "
+        "name two styles share, sets the file aside",
+        "plain formatting (a whole-document change); tracked on request — one Formatted: Style revision per paragraph, "
+        "run or mark (a table's style cannot be tracked)",
+    ],
+    "apply_style": [
+        "the paragraphs are chosen by how they look (bold, all caps), by a text pattern, by what comes before them or by "
+        "their current style — the selection rules say which; a paragraph that already has the style is left alone",
+        "the style is named by its id or name as the profiles show it; a style this file lacks comes from the template "
+        "file with the styles it is based on, links to and is followed by, and its numbering (existing 'replace' takes "
+        "the template's definition even where this file has one)",
+        "direct_formatting 'keep' (the default) leaves the paragraphs' own formatting, which wins over the style; "
+        "'clear' removes it by clear_direct_formatting's default rules (hidden text, list numbers, superscripts, "
+        "highlight and symbol fonts stay) so the paragraphs look exactly like the style",
+        "tracked (Formatted: Style) when particular paragraphs are chosen, plain for the whole document; a paragraph "
+        "numbered by its own list keeps that numbering (flagged)",
+    ],
     "remove_unused_styles": [
         "a style is used when a paragraph, run or table names it (body, headers, footers, footnotes, endnotes, comments — "
         "pending tracked changes included, a reject-all would bring them back), when the numbering or the settings name "
