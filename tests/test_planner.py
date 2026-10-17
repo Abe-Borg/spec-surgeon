@@ -57,8 +57,9 @@ def test_bound_always_fits_and_cuts_samples_before_structure():
     prof = profile(DocxPackage(build_rich(), name="rich.docx"))
     roomy = bound(json.loads(json.dumps(prof)), limit=3500)
     assert roomy["sections"] == prof["sections"] and not roomy["first_paragraphs"]          # samples went first
-    # batch 4's character/table styles in use go before any section or part (they matter less than the page setup)
-    assert roomy["truncated"] == ["header/footer text", "character styles in use"]
+    # batch 4's character/table styles in use go before any section or part (they matter less than the page setup), and
+    # so does batch 5's table summary (its count stays under counts)
+    assert roomy["truncated"] == ["header/footer text", "character styles in use", "tables"]
     for limit in (3000, 1500, 800, 300):
         small = bound(json.loads(json.dumps(prof)), limit=limit)
         assert len(json.dumps(small, ensure_ascii=False)) <= limit, limit

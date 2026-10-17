@@ -347,6 +347,12 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         marked = {"error": f"{type(e).__name__}: {e}"}
     if marked:
         prof["markup"] = marked
+    try:
+        tables = table_summary(pkg, root, sheet)
+    except Exception as e:  # noqa: BLE001 — descriptive only, like markup
+        tables = {"error": f"{type(e).__name__}: {e}"}
+    if tables:
+        prof["tables"] = tables
     hygiene = fp.get("body_hygiene") or {}
     anomalies = {}
     if hygiene.get("has_nbsp"):
@@ -364,6 +370,54 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
     if anomalies not in ({}, {"style_regime": "normal_only"}) and anomalies != {"style_regime": "styled"}:
         prof["hygiene"] = anomalies
     return bound(prof)
+
+
+TABLE_LIMIT = 8          # tables listed one by one (the rest are counted by style)
+OFF_VALUES = ("0", "false", "off")
+
+
+def _on(el) -> bool:
+    return el is not None and el.get(W + "val") not in OFF_VALUES
+
+
+def table_summary(pkg: DocxPackage, root, sheet: StyleSheet) -> Dict[str, Any]:
+    """What built-in batch 5's table operations would find in the body (descriptive; set_table_props and
+    apply_table_style read the file themselves): how many tables, their styles, and the first few one by one — index
+    (the table selector's ordinal), style, rows, header rows that repeat, rows that may break across pages, nested, the
+    first row's text. Nothing when the body has no table."""
+    tables = list(root.iter(W + "tbl"))
+    if not tables:
+        return {}
+    default = sheet.defaults.get("table")
+    styles: Counter = Counter()
+    listed: List[Dict[str, Any]] = []
+    for k, tbl in enumerate(tables):
+        ts = tbl.find(f"{W}tblPr/{W}tblStyle")
+        sid = ts.get(W + "val") if ts is not None and ts.get(W + "val") else (default or "(none)")
+        styles[sid] += 1
+        if len(listed) >= TABLE_LIMIT:
+            continue
+        rows = tbl.findall(W + "tr")
+        header = 0
+        for tr in rows:
+            if not _on(tr.find(f"{W}trPr/{W}tblHeader")):
+                break
+            header += 1
+        cells = rows[0].findall(W + "tc") if rows else []
+        first = " | ".join(" ".join(display_text(p) for p in c.iter(W + "p")).strip() for c in cells)
+        entry = {"index": k, "style": sid, "rows": len(rows), "header_rows": header,
+                 "rows_may_split": sum(1 for tr in rows if not _on(tr.find(f"{W}trPr/{W}cantSplit"))),
+                 "first_row": _clip(first)}
+        q = tbl.getparent()
+        while q is not None and q.tag != W + "tbl":
+            q = q.getparent()
+        if q is not None:
+            entry["nested"] = True
+        listed.append(entry)
+    out: Dict[str, Any] = {"count": len(tables), "styles": dict(styles.most_common(6)), "first": listed}
+    if len(tables) > TABLE_LIMIT:
+        out["more"] = len(tables) - TABLE_LIMIT
+    return out
 
 
 W15 = "{http://schemas.microsoft.com/office/word/2012/wordml}"
@@ -688,6 +742,16 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
                 omitted.append(key.replace("_", " "))
         prof.pop("styles_unused", None)       # two counts, descriptive: silently, like the samples
 
+    def thin_tables():
+        t = prof.get("tables")
+        if t and len(t.get("first") or []) > 3:
+            omitted.append(f"{len(t['first']) - 3} table view(s)")
+            t["first"] = t["first"][:3]
+
+    def drop_tables():                        # the table count stays under counts
+        if prof.pop("tables", None):
+            omitted.append("tables")
+
     def thin_markup():
         m = prof.get("markup")
         if not m:
@@ -712,10 +776,12 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         lambda: prof["fonts"].__setitem__("direct_in_runs", dict(list(prof["fonts"]["direct_in_runs"].items())[:4])),
         lambda: prof.pop("hygiene", None),
         thin_markup,
+        thin_tables,
         drop_part_text,
         thin_styles,
         thin_other_styles,
         drop_other_styles,
+        drop_tables,
         lambda: cut_sections(6),
         lambda: cut_parts(8),
         lambda: cut_sections(2),
