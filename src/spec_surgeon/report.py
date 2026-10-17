@@ -378,13 +378,6 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "fix the table in Word (remove the content control around its rows), then run again.",
     ),
     # built-in batch 5 (list levels and the audit)
-    "numbering-unsupported": (
-        "Numbering the Engine Cannot Predict",
-        "The list this change needs cannot be read or predicted safely: its definition is unreadable, is defined through "
-        "a numbering style, uses a number format the engine does not model, or is shared by several lists that all "
-        "number paragraphs (Word continues one count across them, LibreOffice keeps them apart). Nothing was changed. "
-        "Restart or redefine the list in Word (Define New Multilevel List), or run the numbering audit to see where.",
-    ),
     "numbering-override": (
         "A List Overrides This Level",
         "A list using this definition replaces the level with one of its own (a level override). Word does not read "
@@ -397,6 +390,44 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The asked change does not fit this file's list level: a letter or roman level cannot start at 0, a restart "
         "rule must name a higher level, or after the change some numbers could no longer be shown or predicted. Nothing "
         "was changed. Ask for another start or restart rule for this file.",
+    ),
+    # built-in batch 5 (numbering conversions)
+    "scheme": (
+        "Your Numbering Scheme Does Not Fit This File",
+        "The levels you named are not one numbering scheme in this file: one of the styles is missing, is not numbered, "
+        "or is numbered by another list or at another level than its place in the scheme (often because this file "
+        "already has a style of that name, defined its own way). Name the styles of one list, level 0 first, or give "
+        "the example file with existing 'replace', then run again.",
+    ),
+    "scheme-depth": (
+        "This File Has More Levels Than Your Scheme",
+        "This file numbers paragraphs at a level your scheme does not have (for example a sixth level under a "
+        "five-level scheme). Add the level to the scheme in the example file, or say with level_map which scheme level "
+        "it becomes, then run again.",
+    ),
+    "numbering-mismatch": (
+        "The Numbers Would Not Read the Same",
+        "Turning the typed numbers into list numbers would change what the document shows: a typed number is not the "
+        "one the list would give at that place (two \"B.\"s, a skipped letter, an article before its PART), a list "
+        "already numbers paragraphs here and would move, or the scheme puts no space after the number. Nothing was "
+        "changed. Fix the typed numbers in Word (the numbering audit shows where), then run again.",
+    ),
+    "typed-format": (
+        "A Typed Number Does Not Show as Typed",
+        "A typed number to convert is hidden text, is shown in capitals or small capitals (a typed \"a.\" that reads "
+        "\"A.\"), sits in a paragraph whose mark is hidden, or its list number would take a hidden or capitalised "
+        "format from the paragraph mark. Turning it into a list number would change what the reader sees, so nothing "
+        "was changed. Remove the hidden or capitals formatting from those numbers in Word (or type them as they show), "
+        "then run again.",
+    ),
+    "numbering-unsupported": (
+        "Numbering the Engine Cannot Predict",
+        "The list this change needs, or a paragraph to convert, uses numbering the engine cannot predict with "
+        "certainty: list definitions shared by two lists that both number paragraphs (Word continues one count across "
+        "them, LibreOffice keeps them apart), overridden list levels, a list defined through a numbering style, a number "
+        "format the engine does not model, a level that has no value yet, or an unreadable definition. Nothing was "
+        "changed. Simplify the list in Word (Restart / Continue Numbering, Define New Multilevel List), or run the "
+        "numbering audit to see where, then run again.",
     ),
 }
 

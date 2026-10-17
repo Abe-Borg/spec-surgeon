@@ -20,6 +20,15 @@ run holding a character of the range holds only ``w:rPr`` and ``w:t``, and nothi
 (``slot-structure``). A transparent element strictly inside the range stays where it is (untracked) or goes into the
 ``w:del`` with the deleted text around it (tracked).
 
+**Tabs** (built-in batch 5, ``convert_typed_numbers`` — docs/BUILTIN_OPS_BATCH5_DESIGN.md §2.3): behind the explicit keyword
+``tabs=True`` (``check_edits``, ``plan_paragraph``, ``apply_part_edits``; off by default, so every other op keeps the strict
+core) a PURE deletion (``text == ""``) may also cover ``w:tab`` run children — never a ``w:ptab``, a break or any other
+element. The "no other text-bearing element inside" rule is then judged in document order between the range's first and
+last position (a tab may stand at either edge): no ``w:t``/``w:delText``/``w:instrText``/``w:delInstrText``/``m:t`` of the
+block other than the range's own ``w:t`` lies strictly between them. Untracked: the ``w:tab`` is removed with the
+characters (its run removed when only ``w:rPr`` is left; V3: the plan declares the block's ``struct_after``); tracked: it
+goes into the ``w:del`` with the deleted characters around it (a run holding only the tab gets its own ``w:del``).
+
 **Untracked result**: the characters leave their ``w:t``; ``text`` is written where the first one was (that run, its
 properties; ``w:highlight`` removed when ``drop_highlight``). A ``w:t`` emptied by the edit, and a run left holding only
 its properties, are removed; containers never are. No run is split.
@@ -41,7 +50,8 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
 
-from ..ooxml import FULL_TEXT_TAGS, RevisionStamp, clone_run_shell, paragraphs, set_text, to_del_text
+from ..ooxml import (FULL_TEXT_TAGS, RevisionStamp, block_struct_counts, clone_run_shell, paragraphs, set_text,
+                     to_del_text)
 from ..package import W
 from .base import BlockDiff, JobException, PlanFragment
 
@@ -179,8 +189,28 @@ def _has_highlight(rpr) -> bool:
     return rpr is not None and rpr.find(W + "highlight") is not None
 
 
-def check_edits(rt: RunText, edits: Sequence[Edit], tracked: bool, in_field: Set[Any], where: str) -> List[Edit]:
-    """The edits of one paragraph, sorted, after every rule of the module docstring (JobException otherwise)."""
+def is_tab_position(ps: Position) -> bool:
+    """A run-text position that is a ``w:tab`` run child (an element position — never a ``w:ptab``)."""
+    return ps.offset < 0 and ps.child.tag == W + "tab"
+
+
+def _between_ok(rt: RunText, e: Edit) -> bool:
+    """With tabs: no text-bearing element of the block (``FULL_TEXT_TAGS`` whose nearest paragraph is the block) lies
+    strictly between the range's first and last position in document order, other than the range's own ``w:t``."""
+    order = {id(el): i for i, el in enumerate(rt.p.iter())}
+    pos = rt.positions[e.start:e.end]
+    lo, hi = order[id(pos[0].child)], order[id(pos[-1].child)]
+    own = {id(ps.child) for ps in pos if ps.offset >= 0}
+    for el in rt.p.iter(*FULL_TEXT_TAGS):
+        if nearest_p(el) is rt.p and lo < order[id(el)] < hi and id(el) not in own:
+            return False
+    return True
+
+
+def check_edits(rt: RunText, edits: Sequence[Edit], tracked: bool, in_field: Set[Any], where: str,
+                tabs: bool = False) -> List[Edit]:
+    """The edits of one paragraph, sorted, after every rule of the module docstring (JobException otherwise).
+    ``tabs``: a pure deletion may cover ``w:tab`` run children (see the module docstring)."""
     out = sorted(edits, key=lambda e: (e.start, e.end))
     for a, b in zip(out, out[1:]):
         if b.start < a.end:
@@ -194,7 +224,8 @@ def check_edits(rt: RunText, edits: Sequence[Edit], tracked: bool, in_field: Set
         if not 0 <= e.start < e.end <= len(rt.text):
             raise JobException(f"{where}: an edit outside the paragraph's text ({e.start}, {e.end})", "internal")
         piece = rt.text[e.start:e.end]
-        bad = [i for i in range(e.start, e.end) if rt.positions[i].offset < 0]
+        bad = [i for i in range(e.start, e.end) if rt.positions[i].offset < 0
+               and not (tabs and not e.text and is_tab_position(rt.positions[i]))]
         if bad:
             raise JobException(f"{where}: {WHAT[rt.text[bad[0]]]} sits inside {shown(piece)!r}; only plain text is "
                                f"changed — change this one in Word", "structure",
@@ -204,10 +235,14 @@ def check_edits(rt: RunText, edits: Sequence[Edit], tracked: bool, in_field: Set
             raise JobException(f"{where}: {shown(piece)!r} is shown by a field (a cross-reference, a document "
                                f"property …); Word would put the field's own result back when it updates fields",
                                "field-result", {"where": where, "text": shown(rt.text)})
-        first, last = rt.positions[e.start], rt.positions[e.end - 1]
-        b0 = starts[id(first.child)] + first.offset
-        b1 = starts[id(last.child)] + last.offset + 1
-        if b1 - b0 != e.end - e.start:
+        if any(ps.offset < 0 for ps in rt.positions[e.start:e.end]):
+            inside_ok = _between_ok(rt, e)          # tabs=True: a tab may stand at an edge of the range
+        else:
+            first, last = rt.positions[e.start], rt.positions[e.end - 1]
+            b0 = starts[id(first.child)] + first.offset
+            b1 = starts[id(last.child)] + last.offset + 1
+            inside_ok = b1 - b0 == e.end - e.start
+        if not inside_ok:
             raise JobException(f"{where}: deleted text or a field code sits inside {shown(piece)!r} (a pending "
                                f"tracked change in the middle of it); accept or reject it first", "structure",
                                {"where": where, "text": shown(rt.text)})
@@ -254,7 +289,11 @@ def predict(rt: RunText, edits: Sequence[Edit], tracked: bool) -> Tuple[str, str
     after, accepted = before, acc
     delta = {"ins": 0, "del": 0}
     for e in sorted(edits, key=lambda e: -e.start):
-        first, last = rt.positions[e.start], rt.positions[e.end - 1]
+        chars = [ps for ps in rt.positions[e.start:e.end] if ps.offset >= 0]   # (tabs=True: a w:tab is no block text)
+        if not chars:                               # only tabs: a pure deletion of no block text
+            delta["del"] += len(rt.runs_in(e.start, e.end)) if tracked else 0
+            continue
+        first, last = chars[0], chars[-1]
         b0, b1 = bstarts[id(first.child)] + first.offset, bstarts[id(last.child)] + last.offset + 1
         a0, a1 = astarts[id(first.child)] + first.offset, astarts[id(last.child)] + last.offset + 1
         if tracked:
@@ -278,13 +317,26 @@ def _drop_highlight(rpr) -> None:
         rpr.getparent().remove(rpr)
 
 
-def apply_untracked(p, edits: Sequence[Edit]) -> None:
+def _no_elements(rt: RunText, e: Edit, tabs: bool) -> None:
+    """Apply's own guard: an element position in a range is a ``w:tab`` of a pure deletion planned with ``tabs``."""
+    for ps in rt.positions[e.start:e.end]:
+        if ps.offset < 0 and not (tabs and not e.text and is_tab_position(ps)):
+            raise JobException(f"an edit covers {etree.QName(ps.child).localname}, which this op did not plan to "
+                               f"remove", "internal")
+
+
+def apply_untracked(p, edits: Sequence[Edit], tabs: bool = False) -> None:
     rt = RunText(p)
     touched_t: List[Any] = []
     touched_r: List[Any] = []
+    gone_tabs: List[Any] = []
     for e in sorted(edits, key=lambda e: -e.start):
+        _no_elements(rt, e, tabs)
         groups: List[List[Any]] = []                     # [w:t, lo, hi] in document order
         for ps in rt.positions[e.start:e.end]:
+            if ps.offset < 0:                            # a w:tab (tabs=True): removed with the characters
+                gone_tabs.append(ps.child)
+                continue
             if groups and groups[-1][0] is ps.child:
                 groups[-1][2] = ps.offset + 1
             else:
@@ -300,6 +352,9 @@ def apply_untracked(p, edits: Sequence[Edit]) -> None:
         for r in rt.runs_in(e.start, e.end):
             if r not in touched_r:
                 touched_r.append(r)
+    for tab in gone_tabs:
+        if tab.getparent() is not None:
+            tab.getparent().remove(tab)
     for t in touched_t:
         if not (t.text or "") and t.getparent() is not None:
             t.getparent().remove(t)
@@ -329,6 +384,12 @@ def _split_run(r, inside: List[Position], first_run: bool, last_run: bool) -> Tu
         if state == "after":
             groups["after" if last_run else "inside"].append(c)
             continue
+        if c.tag != W + "t":
+            # an element between the range's characters (a transparent mark), or — tabs=True — a w:tab position of the
+            # range (it may be the first or the last): inside, whole
+            groups["inside"].append(c)
+            state = "after" if c is last.child else "inside"
+            continue
         txt = c.text or ""
         lo = first.offset if c is first.child else 0
         if c is last.child:
@@ -355,9 +416,10 @@ def _split_run(r, inside: List[Position], first_run: bool, last_run: bool) -> Tu
     return out[0], out[1], out[2]
 
 
-def apply_tracked(p, edits: Sequence[Edit], stamp: RevisionStamp, next_id: List[int]) -> None:
+def apply_tracked(p, edits: Sequence[Edit], stamp: RevisionStamp, next_id: List[int], tabs: bool = False) -> None:
     for e in sorted(edits, key=lambda e: -e.start):
         rt = RunText(p)                 # a later edit changed only positions after this one's start
+        _no_elements(rt, e, tabs)
         pos = rt.positions[e.start:e.end]
         runs = rt.runs_in(e.start, e.end)
         pending = pending_insertion(runs[0], p)
@@ -409,23 +471,27 @@ def apply_tracked(p, edits: Sequence[Edit], stamp: RevisionStamp, next_id: List[
 # ---- what an op does with it ------------------------------------------------------------------------
 
 def plan_paragraph(frag: PlanFragment, part: str, bi: int, p, edits: Sequence[Edit], tracked: bool,
-                   in_field: Set[Any], where: str, note: str = "") -> List[Edit]:
+                   in_field: Set[Any], where: str, note: str = "", tabs: bool = False) -> List[Edit]:
     """Check the paragraph's edits and put their predictions in the fragment: the block's text diff (V2) and, tracked,
-    its accepted view (V8), the revision delta (V4), the touch, the intended part. Returns the checked edits."""
+    its accepted view (V8), the revision delta (V4), the touch, the intended part. Returns the checked edits.
+    ``tabs``: pure deletions may cover ``w:tab`` run children; untracked, the tabs they remove are declared as the
+    block's ``struct_after`` (V3)."""
     rt = RunText(p)
     edits = [e for e in edits if e.drop_highlight or rt.text[e.start:e.end] != e.text]   # a no-op edit is no edit
     if not edits:
         return []
-    edits = check_edits(rt, edits, tracked, in_field, where)
+    edits = check_edits(rt, edits, tracked, in_field, where, tabs=tabs)
     before, after, accepted, delta = predict(rt, edits, tracked)
+    gone_tabs = [ps.child for e in edits for ps in rt.positions[e.start:e.end] if ps.offset < 0]
+    struct_after = block_struct_counts(p, gone_tabs) if gone_tabs and not tracked else None
     if tracked:
         if after != before:
             frag.diffs.append(BlockDiff(part=part, block_index=bi, before=before, after=after, accepted_view=accepted,
                                         note=note or f"{len(edits)} change(s), tracked"))
         else:
             frag.accepted_views.append({"part": part, "block_index": bi, "accepted_view": accepted})
-    elif after != before:
-        frag.diffs.append(BlockDiff(part=part, block_index=bi, before=before, after=after,
+    elif after != before or struct_after is not None:
+        frag.diffs.append(BlockDiff(part=part, block_index=bi, before=before, after=after, struct_after=struct_after,
                                     note=note or f"{len(edits)} change(s), untracked"))
     for k, v in delta.items():
         if v:
@@ -445,13 +511,16 @@ def edits_from_data(rows: Sequence[Sequence[Any]]) -> List[Edit]:
 
 
 def apply_part_edits(root, by_block: Dict[str, List[List[Any]]], tracked: bool, stamp: Optional[RevisionStamp],
-                     next_id: List[int]) -> None:
-    """Apply ``{block index: edits}`` (from the plan's transform data) to one part's tree, highest block first."""
+                     next_id: List[int], tabs: bool = False) -> None:
+    """Apply ``{block index: edits}`` (from the plan's transform data) to one part's tree, highest block first.
+    ``tabs``: the edits were planned with ``tabs=True`` (pure deletions covering ``w:tab``); without it an element in a
+    range is an internal error."""
     pars = paragraphs(root)
     for bi in sorted(by_block, key=int, reverse=True):
         p = pars[int(bi)]
         edits = edits_from_data(by_block[bi])
+        more = {"tabs": True} if tabs else {}           # (the strict core's call is unchanged)
         if tracked:
-            apply_tracked(p, edits, stamp, next_id)
+            apply_tracked(p, edits, stamp, next_id, **more)
         else:
-            apply_untracked(p, edits)
+            apply_untracked(p, edits, **more)
