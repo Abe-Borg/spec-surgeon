@@ -309,12 +309,13 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "numbered_paragraphs": numbered,
         "pending_revisions": count_revisions(root),
     }
+    styles_unused = None
     if sheet.part:                     # batch 4: what remove_unused_styles would find (all / the document's own)
         try:
             from .ops.remove_unused_styles import analyze
             unused = analyze(pkg, sheet.part, [], "all", ("paragraph", "character", "table", "numbering"))["removed"]
             custom = analyze(pkg, sheet.part, [], "custom", ("paragraph", "character", "table", "numbering"))["removed"]
-            counts["styles_unused"] = {"all": len(unused), "custom": len(custom)}
+            styles_unused = {"all": len(unused), "custom": len(custom)}
         except JobException:          # descriptive only: a styles part the op would refuse
             pass
     kinds = pkg.parts_by_kind()
@@ -338,6 +339,8 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "counts": counts,
         "first_paragraphs": first,
     }
+    if styles_unused is not None:      # not under counts: the size bound drops it before any section (counts stay)
+        prof["styles_unused"] = styles_unused
     try:
         marked = markup(pkg)
     except Exception as e:  # noqa: BLE001 — descriptive only: a file the summary cannot read still profiles
@@ -683,6 +686,7 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         for key in ("character_styles_in_use", "table_styles_in_use"):
             if prof.pop(key, None):
                 omitted.append(key.replace("_", " "))
+        prof.pop("styles_unused", None)       # two counts, descriptive: silently, like the samples
 
     def thin_markup():
         m = prof.get("markup")

@@ -118,9 +118,9 @@ def test_catalog_prompt_and_custom_transform_limits_know_the_batch():
 
 
 def test_the_profile_counts_unused_styles(src):
-    counts = profile(DocxPackage(src, name="spec.docx"))["counts"]
-    assert counts["styles_unused"]["custom"] == 4                 # ArchUnused(+Char), ArchLinkedPara(+Char)
-    assert counts["styles_unused"]["all"] > counts["styles_unused"]["custom"]
+    unused = profile(DocxPackage(src, name="spec.docx"))["styles_unused"]
+    assert unused["custom"] == 4                                  # ArchUnused(+Char), ArchLinkedPara(+Char)
+    assert unused["all"] > unused["custom"]
 
 
 def test_map_then_remove_unused_runs_as_a_chain(tmp_path):
