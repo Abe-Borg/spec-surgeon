@@ -204,23 +204,23 @@ def test_tool_exceptions_become_error_results(folder, monkeypatch):
     assert_well_formed(fake)
 
 
-def test_second_rejection_fails_the_turn_and_the_next_reply_answers_it(folder):
+def test_equivalent_rejections_stall_and_the_next_reply_answers_the_last_call(folder):
     bad = copy.deepcopy(REMOVE)
     bad["ops"][0]["op"] = "remove_headers"
-    fake = FakeClient(submit(bad, "s1"), submit(bad, "s2"), submit(REMOVE, "s3"))
+    fake = FakeClient(submit(bad, "s1"), submit(bad, "s2"), submit(bad, "s3"), submit(REMOVE, "s4"))
     c = conv(folder, fake)
     t = c.start()
-    assert t.status == "failed" and "rejected twice" in t.errors[0]
-    assert [r["tool_use_id"] for r in c.pending] == ["s2"] and "user decides" in c.pending[0]["content"]
+    assert t.status == "failed" and "stalled" in t.errors[0]
+    assert [r["tool_use_id"] for r in c.pending] == ["s3"] and "new evidence" in c.pending[0]["content"]
     assert c.reply("use the remove_header_footer operation").status == "ok"
-    assert fake.requests[2]["messages"][-1]["content"][0]["tool_use_id"] == "s2"
+    assert fake.requests[3]["messages"][-1]["content"][0]["tool_use_id"] == "s3"
     assert_well_formed(fake)
 
 
 def test_the_call_cap_leaves_every_call_answered(folder):
     looping = [resp(tool("inspect_profile", {"pattern_id": "x"}, f"t{i}")) for i in range(12)]
     fake = FakeClient(*looping, submit(REMOVE, "s1"))
-    c = conv(folder, fake)
+    c = conv(folder, fake, max_calls=12)
     t = c.start()
     assert t.status == "failed" and "12 calls" in t.message and [r["tool_use_id"] for r in c.pending] == ["t11"]
     assert c.reply("just submit the remove spec").status == "ok"

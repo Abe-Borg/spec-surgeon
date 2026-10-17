@@ -251,7 +251,7 @@ MALFORMED = [
     ({"applies_to": {"or": "any"}}, "applies_to.or can only be"),
     ({"review": {"sample_files": "two"}}, "sample_files must be a whole number"),
     ({"review": {"sample_files": 0}}, "sample_files must be a whole number"),
-    ({"review": {"sample_files": 4}}, "sample_files must be a whole number"),
+    ({"review": {"sample_files": -1}}, "sample_files must be a whole number"),
     ({"review": {"sample_files": True}}, "sample_files must be a whole number"),
     ({"mode": ["formatting"]}, "mode must be one of"),
 ]
@@ -736,7 +736,7 @@ def test_a_log_that_raises_never_stops_the_review(tmp_path):
 
 
 def test_the_view_pages_budget_figure_is_derived_from_est_tokens(tmp_path):
-    """review-26: 60,000 image tokens is about 20 letter pages, not "about a dozen"."""
+    """The ample configurable allowance still reports actual image-token costs."""
     letter = vision.rasterize_pages(_pdf(tmp_path / "letter.pdf"), [1], tmp_path / "l")[0]
     tabloid = vision.rasterize_pages(_pdf(tmp_path / "tabloid.pdf", size=(792, 1224)), [1], tmp_path / "t")[0]
     a4 = vision.rasterize_pages(_pdf(tmp_path / "a4.pdf", size=(595.28, 841.89)), [1], tmp_path / "a")[0]
@@ -748,12 +748,12 @@ def test_the_view_pages_budget_figure_is_derived_from_est_tokens(tmp_path):
     one_at_a_time = budget // per_letter
     in_threes = 3 * (budget // (3 * per_letter))
     tabloids = budget // vision.page_tokens(792, 1224)
-    assert (one_at_a_time, in_threes, tabloids) == (22, 21, 18)
+    assert (one_at_a_time, in_threes, tabloids) == (368, 366, 301)
     src = inspect.getsource(vision)
     start = src.index("TOKENS_PER_IMAGE_CAP = ")
     comment = " ".join(src[start:src.index("SEVERITIES = ", start)].replace("#", " ").split())
-    assert "VIEW_BUDGET_TOKENS = 60000" in comment
-    assert "dozen" not in comment and "about 20 letter pages" in comment
+    assert "VIEW_BUDGET_TOKENS = DEFAULT_MAX_IMAGE_TOKENS" in comment
+    assert "Configurable investigation allowance" in comment
     assert f"{per_letter:,}" in comment and f"{one_at_a_time} one at a time" in comment
     assert f"{in_threes} in calls of three" in comment and f"{tabloids} pages of 11×17" in comment
 
@@ -905,7 +905,8 @@ def test_no_passing_attempt_is_told_to_claude_once_and_saved(folder, tmp_path):
     with pytest.raises(TransformFailed) as e:
         s.reply(choice_id=s.turn.choices[0].id, log=quiet)
     assert isinstance(e.value, RuntimeError)                         # the window's job error, as before
-    assert str(e.value) == "No custom transform passed verification: no passing op after 3 attempt(s)"
+    assert str(e.value) == ("No custom transform passed verification: no passing op after 3 attempt(s): "
+                            "investigation stalled; equivalent rejected transforms repeated without new evidence")
     assert s.conversation.notes[-1] == str(e.value)                  # the prefix once, never doubled
     assert sum("passed verification" in n for n in s.conversation.notes) == 1
     assert _saved(s)["entries"][-1] == {**_saved(s)["entries"][-1], "role": "app", "text": str(e.value)}

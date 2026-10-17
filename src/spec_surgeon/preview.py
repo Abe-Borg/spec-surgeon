@@ -3,8 +3,8 @@ Phase 4).
 
 ``make_preview(spec, inputs, out_dir)``:
 1. plans the spec on every file (planner.plan_batch — summaries and exceptions, nothing written);
-2. picks sample files — the first plannable file of each structure pattern, up to ``review.sample_files``
-   (default 2, at most 3, but always one per pattern up to 3) — and runs plan → apply → verify on them in memory,
+2. picks representative plannable files — automatically eight or enough to cover every structure pattern,
+   with an explicit positive ``review.sample_files`` count honored — and runs plan → apply → verify on them in memory,
    writing the outputs into ``out_dir/samples`` (never over a source) under names unique across the samples
    (``batch.output_names``: two folders' ``Spec.docx`` are ``Spec.docx`` and ``Spec (1).docx``); the preview text (and
    the note Claude gets) names each sample by ``sample_labels`` — ``a/Spec.docx`` and ``b/Spec.docx``, as Claude's
@@ -108,8 +108,9 @@ def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
 
 def generated_key(g: Any) -> Dict[str, Any]:
     """What a custom transform's approval token hashes beside the files (in place of a spec): its code, selection and
-    parameters — the same key as the window's ``Session._generated_key``."""
-    return {"generated_source": g.source, "select": g.select, "params": g.params}
+    parameters and approved adaptive outcome — the same key as the window's ``Session._generated_key``."""
+    return {"generated_source": g.source, "select": g.select, "params": g.params,
+            "goal_contract": getattr(g, "goal_contract", None), "goal_bindings": getattr(g, "goal_bindings", {})}
 
 
 def changed_since_preview(key: Dict[str, Any], files: Sequence[Path], token: str,
@@ -278,16 +279,12 @@ def side_by_side(src_pdf: Path, out_pdf: Path, page: int, png: Path, dpi: int = 
 
 
 def _pick_samples(bp: BatchPlan) -> List[Path]:
-    """One plannable file per structure pattern (largest pattern first), topped up to review.sample_files;
-    never more than 3."""
-    want = min(max(int((bp.spec.get("review") or {}).get("sample_files") or 2), 1), 3)
-    groups = sorted(([f for f in fs if f.status == "planned"] for fs in bp.patterns.values()), key=lambda fs: -len(fs))
-    groups = [g for g in groups if g]
-    picks = [g[0].source for g in groups][:3]
-    rest = [f.source for g in groups for f in g[1:]]
-    while len(picks) < want and rest:
-        picks.append(rest.pop(0))
-    return picks
+    """Cover every planned pattern automatically, or honor an explicit sample count."""
+    from .sampling import representative_samples
+    planned = [f for f in bp.files if f.status == "planned"]
+    samples = representative_samples(planned, pattern_key=lambda f: f.pattern_id or str(f.source),
+                                     count=(bp.spec.get("review") or {}).get("sample_files"))
+    return [f.source for f in samples]
 
 
 def _preview_log(out_dir: Path, title: str):

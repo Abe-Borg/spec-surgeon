@@ -21,8 +21,9 @@ required capability is unavailable.
    for this preview. **Export recovery copies** then rechecks the inputs and verified output
    bytes before exporting. Recovery never writes over the originals.
 
-Export any ready copies before starting another investigation. The next investigation reads
-only the current recovery's unresolved-file manifest. A new failed conversation or preview uses
+Ready copies remain in the recovery workspace while unresolved files are investigated. Reopen
+the saved investigation to continue with its attempts, evidence and pending decisions intact.
+A new failed conversation or preview uses
 its current files, rather than silently retrying an unrelated older run. A chain that already
 wrote stages in place cannot be replayed automatically: start from original copies to avoid
 performing successful earlier edits twice.
@@ -32,7 +33,8 @@ performing successful earlier edits twice.
 From a prior batch, chain or recovery folder containing `set_aside.json`:
 
 ```text
-spec-surgeon resolve "previous-run" --out "recovery-01" --budget 5 --max-attempts 3 --max-calls 12
+spec-surgeon resolve "previous-run" --out "recovery-01"
+spec-surgeon resolve "recovery-01" --request "Use the title shown in the table"
 ```
 
 In a terminal, the command shows the investigation and visual findings, then asks before
@@ -47,9 +49,11 @@ Useful options:
 | --- | --- |
 | `--request "..."` | Append a clarification or answer to the original request; it does not replace the pinned goal. |
 | `--model MODEL --effort medium` | Choose recovery's model and effort (`low`, `medium`, `high`, `max`). |
-| `--budget 5` | Estimated model-spending limit in USD, default 5. |
-| `--max-attempts 3` | Candidate-attempt limit per problem group, default 3. |
-| `--max-calls 12` | Shared model-call limit for the investigation, default 12. |
+| `--budget 250` | Estimated model-spending allowance in USD, default 250. |
+| `--max-attempts 50` | Candidate-attempt allowance per problem group, default 50. |
+| `--max-calls 512` | Model-call allowance for the investigation, default 512. |
+| `--max-output-tokens 64000` | Maximum output tokens per model call. |
+| `--max-total-tokens 20000000` | Estimated total input/output token allowance. |
 | `--allow-codegen` | Permit offered custom formatting transforms within the restricted recovery contract. |
 | `--no-memory` | Neither retrieve nor record local repair cases for this investigation. |
 | `--no-render` | Skip rendering and visual review; this leaves visual acceptance to you. |
@@ -59,11 +63,17 @@ The same budget covers investigation, generated-transform calls and visual-revie
 conservative reservation is checked before each call; calls with missing usage retain their
 reservation. Unknown pricing prevents further calls under a USD budget. These are listed-price
 estimates and application limits, not a provider billing guarantee. The report retains usage,
-reservations and stop reasons. The Python `RecoveryOptions` also exposes output and total-token
-limits; its defaults are 8,000 output tokens per call and 500,000 total tokens.
+reservations and stop reasons. Output and total-token allowances are exposed in the CLI and
+desktop resource controls. Default reasoning effort is `max`. Independent problem groups take
+turns investigating, so a long first group does not monopolize the initial model calls.
+Reopening restores the saved resource settings. Explicit CLI flags override individual values;
+`--render`, `--memory`, and `--no-codegen` reverse saved choices. Each continuation receives a fresh
+allowance at those settings, with prior usage retained in the resource history.
 
 `RECOVERY_REPORT.md` and `recovery.json` retain the investigation, attempts and evidence.
-`set_aside.json` retains unresolved files and their goal for another pass. Exported copies go
+`set_aside.json` retains unresolved files and their goal for compatibility with older workflows.
+The durable recovery state retains the full investigation for resume, including ready candidates.
+Exported copies go
 under `outputs/`; intermediate trials and their verification records stay in the investigation
 folder. Reusing a nonempty delivery folder is refused.
 
@@ -98,11 +108,13 @@ EditSpec size assertions still exempt runs containing symbols, so recovery canno
 those into universal final-size checks even with an empty preservation list. Recovery cannot
 remove preservation rules from the original request to make a candidate pass.
 
-Custom recovery is opt-in and currently restricted to a goal made entirely of page-setup
-operations. Generated code remains sandboxed and subject to the existing formatting limits.
-Its output must also pass verification against the original goal's analytically predicted
-plan, independently of the plan supplied by the generated transform. Broader custom recovery
-requires additional independent verification support.
+For legacy EditSpecs without an adaptive outcome contract, custom recovery remains opt-in and
+restricted to page-setup goals. Approved adaptive contracts provide a broader independent boundary:
+agents can choose another built-in sequence or a sandboxed custom method, including supported
+exact-wording edits. Automatic custom methods are enabled for these contracts unless explicitly
+disabled. Every result must pass both the ordinary suite and independent original-to-final checks.
+A separately prompted critic can reject a candidate or request more investigation; it cannot
+override a failed check. See [Adaptive workspaces](ADAPTIVE_WORKSPACES.md) for the full workflow.
 
 ## What the application remembers
 

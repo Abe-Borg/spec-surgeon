@@ -849,14 +849,13 @@ def cmd_retry(args):
 
 
 def cmd_resolve(args):
-    """Investigate copies within a fixed budget; exporting is a separate approval."""
-    from .recovery import RecoveryOptions, deliver_recovery, recover_from_run
+    """Investigate or resume copies; exporting is a separate approval."""
+    from .recovery import deliver_recovery, recover_from_run, load_recovery
+    from .workspace_cli import recovery_options
     out = Path(args.out) if args.out else Path("SpecSurgeon_out") / datetime.now().strftime("%Y%m%d-%H%M%S-%f-recovery")
     try:
-        options = RecoveryOptions(max_attempts=args.max_attempts, max_calls=args.max_calls,
-                                  max_cost_usd=args.budget, model=args.model, effort=args.effort,
-                                  render=not args.no_render, renderer=args.renderer,
-                                  allow_codegen=args.allow_codegen, use_memory=not args.no_memory)
+        saved = load_recovery(Path(args.run_dir)).options_snapshot if (Path(args.run_dir) / "recovery.json").is_file() else None
+        options = recovery_options(args, saved)
         result = recover_from_run(Path(args.run_dir), out, request=args.request, options=options,
                                   log=lambda m: print(m, file=sys.stderr))
         print(result.to_text())
@@ -875,7 +874,7 @@ def cmd_resolve(args):
                 return 2
         approved = args.yes or (_interactive() and _confirm("\nExport the verified recovery copies? [y/N] "))
         if not approved:
-            print(f"Not exported. Investigation and review: {out}")
+            print(f"Not exported. Investigation and review: {result.out_dir}")
             return 0
         destination = deliver_recovery(result, acknowledge_review=acknowledged)
         print(f"Recovery copies exported: {destination}. Original files were not changed.")
@@ -1350,18 +1349,13 @@ def main(argv=None) -> int:
     p.add_argument("run_dir", help="previous batch or chain output folder containing set_aside.json")
     p.add_argument("--request", default=None, help="append a clarification or answer to the original request")
     p.add_argument("--out", default=None)
-    p.add_argument("--budget", type=float, default=5.0, help="maximum estimated model spend in USD (default 5)")
-    p.add_argument("--max-attempts", type=int, default=3)
-    p.add_argument("--max-calls", type=int, default=12)
-    p.add_argument("--model", default=None)
-    p.add_argument("--effort", choices=["low", "medium", "high", "max"], default="high")
-    p.add_argument("--allow-codegen", action="store_true", help="allow offered, sandboxed custom formatting transforms")
-    p.add_argument("--no-render", action="store_true")
-    p.add_argument("--renderer", choices=["auto", "word", "libreoffice", "none"], default="auto")
-    p.add_argument("--no-memory", action="store_true", help="do not consult or record local repair cases")
+    from .workspace_cli import add_resource_arguments, add_workspace_parser
+    add_resource_arguments(p)
     p.add_argument("--yes", action="store_true", help="approve exporting ready copies after investigation")
     p.add_argument("--ack-review", action="store_true", help="acknowledge blocking visual findings you inspected; separate from --yes")
     p.set_defaults(fn=cmd_resolve)
+
+    add_workspace_parser(sub)
 
     p = sub.add_parser("memory", help="inspect, correct, or forget local repair evidence")
     p.add_argument("action", choices=["list", "show", "accept", "reject", "forget"])
@@ -1444,7 +1438,8 @@ def main(argv=None) -> int:
     p.set_defaults(fn=cmd_diagnose)
 
     args = ap.parse_args(argv)
-    if getattr(args, "model", None) is None and hasattr(args, "model"):
+    if (getattr(args, "model", None) is None and hasattr(args, "model")
+            and not getattr(args, "_saved_resource_policy", False)):
         from .compiler import DEFAULT_MODEL
         args.model = DEFAULT_MODEL
     return args.fn(args)
