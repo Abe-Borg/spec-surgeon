@@ -805,8 +805,11 @@ def test_libreoffice_shows_every_typed_number_exactly_once_in_order(tpl, tmp_pat
         out = pkg.output_bytes()
     doc = tmp_path / "out.docx"
     doc.write_bytes(out)
-    subprocess.run(["soffice", "--headless", "--convert-to", "pdf", "--outdir", str(tmp_path), str(doc)], check=True,
-                   capture_output=True, timeout=240, env={"HOME": str(tmp_path), "PATH": "/usr/bin:/bin"})
+    # Keep the executable's discovered PATH (including non-system installations) and isolate
+    # LibreOffice's profile without replacing the user's HOME or the runtime environment.
+    profile = (tmp_path / "libreoffice-profile").as_uri()
+    subprocess.run(["soffice", f"-env:UserInstallation={profile}", "--headless", "--convert-to", "pdf",
+                    "--outdir", str(tmp_path), str(doc)], check=True, capture_output=True, timeout=240)
     subprocess.run(["pdftotext", "-layout", str(tmp_path / "out.pdf"), str(tmp_path / "out.txt")], check=True,
                    timeout=60)
     lines = [" ".join(line.split()) for line in (tmp_path / "out.txt").read_text().splitlines()]

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 from pathlib import Path
 
@@ -14,7 +15,7 @@ from spec_surgeon.editspec import load_spec, plan_spec
 from spec_surgeon.fingerprint import fingerprint
 from spec_surgeon.ops import JobException
 from spec_surgeon.package import DocxPackage, W
-from spec_surgeon.recovery_evaluation import EvaluationError, evaluate, main
+from spec_surgeon.recovery_evaluation import EvaluationError, evaluate, main, markdown
 from spec_surgeon.repair_memory import CaseStore
 
 
@@ -146,6 +147,287 @@ def test_local_evaluation_cli_reads_reports_only_and_reports_expectation_failure
 def test_invalid_measurements_are_refused_instead_of_misreported(tmp_path, extra):
     with pytest.raises(EvaluationError):
         evaluate(_manifest(tmp_path, [(_report(), extra)]))
+
+
+def _paired_manifest(tmp_path, *, scope="recovery", pairs=1, execution="live"):
+    entries = []
+    for pair in range(pairs):
+        for variant in ("baseline", "current"):
+            report = _report(cost=2 if variant == "baseline" else 1)
+            report["recovery_id"] = f"{pair}-{variant}"
+            report["request"] = "Use the architect's approved styles."
+            report["key"].update(request=report["request"], recovery_templates=["/not-opened/template.docx"],
+                                recovery_inputs=[], goal={"ops": [{"op": "map_styles",
+                                "params": {"template": "/not-opened/template.docx"}}]})
+            report["input_pins"] = {"/not-opened/source.docx": "a" * 64,
+                                    "/not-opened/template.docx": "b" * 64}
+            name = f"{pair}-{variant}.json"
+            path = tmp_path / name
+            path.write_text(json.dumps(report), encoding="utf-8")
+            entries.append({"id": f"{pair}-{variant}", "pair_id": f"batch-{pair}",
+                            "variant": variant, "cohort": "holdout-cold", "execution": execution,
+                            "revision": ("1" if variant == "baseline" else "2") * 40,
+                            "report": name, "report_sha256": hashlib.sha256(path.read_bytes()).hexdigest(),
+                            "human_interventions": 2 if variant == "baseline" else 1,
+                            "human_review": _accepted(), **({"workflow": {
+                                "elapsed_seconds": 120 if variant == "baseline" else 90,
+                                "human_interventions": 3 if variant == "baseline" else 1,
+                                "additional_model_cost_usd": 4}} if scope == "workflow" else {})})
+    manifest = tmp_path / "paired.json"
+    manifest.write_text(json.dumps({"version": 2, "measurement_scope": scope, "cases": entries}), encoding="utf-8")
+    return manifest
+
+
+def _change_case(manifest, index, change):
+    data = json.loads(manifest.read_text())
+    change(data["cases"][index])
+    manifest.write_text(json.dumps(data), encoding="utf-8")
+
+
+def _change_report(manifest, index, change, *, repin=True):
+    data = json.loads(manifest.read_text())
+    path = manifest.parent / data["cases"][index]["report"]
+    report = json.loads(path.read_text())
+    change(report)
+    path.write_text(json.dumps(report), encoding="utf-8")
+    if repin:
+        _change_case(manifest, index, lambda c: c.update(report_sha256=hashlib.sha256(path.read_bytes()).hexdigest()))
+
+
+def test_paired_workflow_reports_include_failed_batches_and_pre_recovery_spending(tmp_path):
+    manifest = _paired_manifest(tmp_path, scope="workflow", pairs=2)
+    _change_report(manifest, 0, lambda r: r["files"][0].update(status="UNRESOLVED"))
+    _change_case(manifest, 0, lambda c: c["human_review"].update(request_satisfied=False))
+    result = evaluate(manifest)
+    group = result["comparisons"][0]
+    assert group["baseline"]["human_accepted_batches"] == 1
+    assert group["current"]["human_accepted_batches"] == 2
+    assert group["baseline"]["estimated_cost_usd"] == 12
+    assert group["baseline"]["cost_per_human_accepted_batch_usd"] == 12
+    assert group["current"]["cost_per_human_accepted_batch_usd"] == 5
+    assert group["current_minus_baseline"]["human_acceptance_rate"] == 0.5
+    assert group["current_minus_baseline"]["elapsed_seconds"] == -60
+    assert group["current_minus_baseline"]["human_interventions"] == -4
+    assert result["cases"][0]["seconds"] == 2.5  # Recovery time remains separately observable.
+    assert result["pairs"][0]["human_accepted_delta"] == 1
+    assert "Measurement scope: **workflow**" in markdown(result)
+    assert "live_estimated_cost_usd" not in result["summary"]  # Never pool the two variants' recovery costs.
+    assert "groups" not in result
+
+
+def test_partial_measurements_never_make_missing_review_time_interventions_or_cost_zero(tmp_path):
+    manifest = _paired_manifest(tmp_path, scope="workflow")
+    _change_case(manifest, 1, lambda c: c.update(workflow={"elapsed_seconds": None,
+                        "human_interventions": None, "additional_model_cost_usd": None}, human_review={}))
+    result = evaluate(manifest)
+    group = result["comparisons"][0]
+    for field in ("human_acceptance_rate", "elapsed_seconds", "human_interventions", "estimated_cost_usd"):
+        assert group["current"][field] is None
+        assert group["current_minus_baseline"][field] is None
+    assert group["current"]["human_review_coverage"] == 0
+    assert result["pairs"][0]["human_accepted_delta"] is None
+    assert result["pairs"][0]["estimated_cost_usd_delta"] is None
+
+
+def test_scripted_and_unknown_pairs_never_enter_live_economics(tmp_path):
+    manifest = _paired_manifest(tmp_path, pairs=3)
+    for index in (2, 3):
+        _change_case(manifest, index, lambda c: c.update(execution="scripted"))
+    for index in (4, 5):
+        _change_case(manifest, index, lambda c: c.update(execution="unknown"))
+    result = evaluate(manifest)
+    groups = {g["execution"]: g for g in result["comparisons"]}
+    assert len(groups) == 3
+    assert groups["live"]["baseline"]["estimated_cost_usd"] == 2
+    for execution in ("scripted", "unknown"):
+        assert groups[execution]["baseline"]["estimated_cost_usd"] is None
+        assert groups[execution]["current_minus_baseline"]["estimated_cost_usd"] is None
+
+
+def test_pair_identity_follows_bytes_across_relocated_paths_and_discloses_condition_changes(tmp_path):
+    manifest = _paired_manifest(tmp_path)
+    def relocate(report):
+        report["files"][0]["source"] = "/new/source.docx"
+        report["input_pins"] = {"/new/source.docx": "a" * 64, "/new/template.docx": "b" * 64}
+        report["key"]["goal"]["ops"][0]["params"]["template"] = "/new/template.docx"
+        report["key"]["recovery_templates"] = ["/new/template.docx"]
+        report["renderer"] = "word"
+    _change_report(manifest, 1, relocate)
+    result = evaluate(manifest)
+    assert result["pairs"][0]["changed_conditions"] == ["renderer"]
+    assert result["cases"][0]["identity_sha256"] == result["cases"][1]["identity_sha256"]
+
+
+@pytest.mark.parametrize("literal_location", ["approved_words", "replacement"])
+def test_input_path_relocation_never_rewrites_approved_literal_words(tmp_path, literal_location):
+    manifest = _paired_manifest(tmp_path)
+    def change(report, path):
+        report["files"][0]["source"] = path
+        report["input_pins"] = {path: "a" * 64, "/not-opened/template.docx": "b" * 64}
+        if literal_location == "approved_words":
+            report["key"]["approved_words"] = [path]
+        else:
+            report["key"]["goal"] = {"ops": [{"op": "replace_text", "params": {"replace": path}}]}
+    _change_report(manifest, 0, lambda r: change(r, "/not-opened/source.docx"))
+    _change_report(manifest, 1, lambda r: change(r, "/new/source.docx"))
+    with pytest.raises(EvaluationError, match="identity"):
+        evaluate(manifest)
+
+
+def test_comparison_discloses_prior_resource_policies_and_actual_serving_models(tmp_path):
+    manifest = _paired_manifest(tmp_path)
+    _change_report(manifest, 0, lambda r: r.update(resource_history=[{
+        "calls": 2, "estimated_cost_usd": 3, "model": "earlier-model", "effort": "low", "max_calls": 4,
+        "usage": {"cost_usd": 3, "served_models": ["fallback-model"]}}]))
+    result = evaluate(manifest)
+    changed = result["pairs"][0]["changed_conditions"]
+    assert "resource_policies" in changed and "served_models" in changed and "resource_segment_count" in changed
+    assert result["comparisons"][0]["baseline"]["estimated_cost_usd"] == 5
+    policies = result["cases"][0]["conditions"]["resource_policies"]
+    assert any(p["model"] == "earlier-model" and p["effort"] == "low" and p["max_calls"] == 4 for p in policies)
+
+
+def test_same_independent_outcome_allows_different_execution_recipes(tmp_path):
+    manifest = _paired_manifest(tmp_path)
+    for index in (0, 1):
+        _change_report(manifest, index, lambda r: r["key"].update(adaptive_contract={
+            "kind": "document_effects", "effects": [{"type": "format", "font": "Arial"}]}))
+    _change_report(manifest, 1, lambda r: r["key"].update(goal={"ops": [{"op": "different_method"}]}))
+    result = evaluate(manifest)
+    assert result["pairs"][0]["changed_implementation"]
+    assert result["pairs"][0]["outcome_basis"] == "independent_contract"
+
+
+def test_different_legacy_recipes_need_explicit_reviewed_common_outcome(tmp_path):
+    manifest = _paired_manifest(tmp_path)
+    _change_report(manifest, 1, lambda r: r["key"].update(goal={"ops": [{"op": "different_method"}]}))
+    with pytest.raises(EvaluationError, match="identity"):
+        evaluate(manifest)
+    declaration = {"statement": "Same reviewed style mappings and all original wording retained.", "reviewer": "Test reviewer"}
+    for index in (0, 1):
+        _change_case(manifest, index, lambda c: c.update(reviewed_outcome=declaration))
+    result = evaluate(manifest)
+    assert result["pairs"][0]["changed_implementation"]
+    assert result["pairs"][0]["outcome_basis"] == "reviewed_declaration"
+    _change_case(manifest, 1, lambda c: c["reviewed_outcome"].update(statement="Different outcome"))
+    with pytest.raises(EvaluationError, match="identity"):
+        evaluate(manifest)
+
+
+@pytest.mark.parametrize("change", [
+    lambda r: r.update(request="Use a different request."),
+    lambda r: r["input_pins"].update({"/not-opened/source.docx": "c" * 64}),
+    lambda r: r["input_pins"].update({"/not-opened/template.docx": "c" * 64}),
+    lambda r: r["key"].update(approved_words=["Different literal wording"]),
+    lambda r: r["key"]["goal"]["ops"][0]["params"].update(mapping={"A": "B"}),
+    lambda r: r["input_pins"].pop("/not-opened/source.docx"),
+    lambda r: r["input_pins"].update({"/not-opened/source.docx": "not-a-sha256"}),
+    lambda r: r["files"].append(dict(r["files"][0])),
+])
+def test_pair_label_never_overrides_mismatched_or_incomplete_report_identity(tmp_path, change):
+    manifest = _paired_manifest(tmp_path)
+    _change_report(manifest, 1, change)
+    with pytest.raises(EvaluationError):
+        evaluate(manifest)
+
+
+@pytest.mark.parametrize("change", [
+    lambda c: c.update(variant="baseline"),
+    lambda c: c.update(pair_id="unmatched-batch"),
+    lambda c: c.update(execution="scripted"),
+    lambda c: c.update(cohort="warm"),
+    lambda c: c.update(revision="1" * 40),
+    lambda c: c.update(revision="main"),
+    lambda c: c.update(report_sha256="b" * 64),
+])
+def test_invalid_comparisons_are_refused_instead_of_silently_omitting_runs(tmp_path, change):
+    manifest = _paired_manifest(tmp_path)
+    _change_case(manifest, 1, change)
+    with pytest.raises(EvaluationError):
+        evaluate(manifest)
+
+
+def test_reusing_same_report_cannot_count_as_an_independent_second_run(tmp_path):
+    manifest = _paired_manifest(tmp_path)
+    first = json.loads(manifest.read_text())["cases"][0]
+    _change_case(manifest, 1, lambda c: c.update(report=first["report"], report_sha256=first["report_sha256"]))
+    with pytest.raises(EvaluationError, match="reused"):
+        evaluate(manifest)
+
+
+def test_modified_report_requires_explicit_repinning(tmp_path):
+    manifest = _paired_manifest(tmp_path)
+    _change_report(manifest, 1, lambda r: r.update(seconds=0), repin=False)
+    with pytest.raises(EvaluationError, match="changed since"):
+        evaluate(manifest)
+
+
+def test_different_snapshots_of_same_recovery_session_cannot_double_count_costs(tmp_path):
+    manifest = _paired_manifest(tmp_path, pairs=2)
+    _change_report(manifest, 2, lambda r: r.update(recovery_id="0-baseline", seconds=100))
+    with pytest.raises(EvaluationError, match="snapshots"):
+        evaluate(manifest)
+
+
+def test_user_selected_targets_cannot_silently_change_between_paired_runs(tmp_path):
+    manifest = _paired_manifest(tmp_path)
+    for index, paragraph in ((0, 2), (1, 9)):
+        _change_report(manifest, index, lambda r, p=paragraph: r["key"].update(adaptive_bindings={
+            "/not-opened/source.docx": {"source_sha256": "a" * 64, "effects": {"heading": {
+                "targets": [{"part": "word/document.xml", "paragraph_index": p}], "choice": "user"}}}}))
+    with pytest.raises(EvaluationError, match="target selections"):
+        evaluate(manifest)
+    # An unresolved baseline is a legitimate failure, not a conflicting human selection.
+    _change_report(manifest, 0, lambda r: r["key"].update(adaptive_bindings={}))
+    result = evaluate(manifest)
+    assert result["pairs"][0]["changed_target_bindings"]
+
+
+def test_declared_template_without_its_pin_is_not_comparison_evidence(tmp_path):
+    manifest = _paired_manifest(tmp_path)
+    for index in (0, 1):
+        _change_report(manifest, index, lambda r: r["input_pins"].pop("/not-opened/template.docx"))
+    with pytest.raises(EvaluationError, match="auxiliary inputs"):
+        evaluate(manifest)
+
+
+@pytest.mark.parametrize("measurement", [
+    {"elapsed_seconds": 1, "human_interventions": 0},
+    {"elapsed_seconds": True, "human_interventions": 0, "additional_model_cost_usd": 0},
+    {"elapsed_seconds": 1, "human_interventions": -1, "additional_model_cost_usd": 0},
+    {"elapsed_seconds": 1, "human_interventions": 0, "additional_model_cost_usd": -1},
+])
+def test_workflow_measurements_require_explicit_unknowns_and_valid_numbers(tmp_path, measurement):
+    manifest = _paired_manifest(tmp_path, scope="workflow")
+    _change_case(manifest, 1, lambda c: c.update(workflow=measurement))
+    with pytest.raises(EvaluationError):
+        evaluate(manifest)
+
+
+def test_paired_cli_is_read_only_offline_and_writes_comparison_artifacts(tmp_path, monkeypatch):
+    monkeypatch.setattr("spec_surgeon.llm.client", lambda: pytest.fail("evaluation must never access a model"))
+    manifest = _paired_manifest(tmp_path, scope="workflow", execution="scripted")
+    before = {p: p.read_bytes() for p in tmp_path.glob("*.json")}
+    output = tmp_path / "comparison"
+    assert main([str(manifest), "--out", str(output)]) == 0
+    result = json.loads((output / "evaluation.json").read_text())
+    assert result["version"] == 2 and len(result["pairs"]) == 1
+    assert result["comparisons"][0]["current"]["estimated_cost_usd"] is None
+    assert "current_minus_baseline" in (output / "EVALUATION.md").read_text()
+    assert all(path.read_bytes() == content for path, content in before.items())
+
+
+def test_shipped_example_uses_real_input_hashes_without_claiming_measured_improvement():
+    root = Path(__file__).resolve().parent.parent
+    manifest = root / "examples/evaluation/paired-scripted.json"
+    result = evaluate(manifest)
+    assert all(row["execution"] == "scripted" and not row["human_accepted"] for row in result["cases"])
+    assert result["comparisons"][0]["current"]["elapsed_seconds"] is None
+    assert result["comparisons"][0]["current"]["estimated_cost_usd"] is None
+    for case in json.loads(manifest.read_text())["cases"]:
+        report = json.loads((manifest.parent / case["report"]).read_text())
+        for path, digest in report["input_pins"].items():
+            assert hashlib.sha256((root / path).read_bytes()).hexdigest() == digest
 
 
 def _template_goal(template):

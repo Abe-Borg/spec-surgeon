@@ -134,10 +134,25 @@ def test_real_conversation_continues_after_multiple_context_rollovers(tmp_path):
     assert chat.to_dict()["context"]["archives"]
 
 
+def test_default_keeps_substantial_investigation_evidence_in_active_context(tmp_path):
+    from spec_surgeon.compiler import CHAT_TOOLS, system_prompt
+
+    # About half a million estimated evidence tokens, plus the complete catalog:
+    # an investigation must retain these in working context instead of rolling early.
+    messages = [{"role": "user", "content": "Document evidence. " * 80000}]
+    state = {}
+    fresh = manage_context(messages, system=system_prompt(chat=True), tools=CHAT_TOOLS,
+                           folder=tmp_path, state=state, authority={"request": "Investigate all documents"})
+    assert fresh is messages
+    assert state["epoch"] == 0 and state["archives"] == []
+    active = json.loads((tmp_path / "context" / "active-0.json").read_text())
+    assert active["messages"] == messages
+
+
 def test_the_default_allowance_leaves_a_conversation_room_for_two_page_images(tmp_path, monkeypatch):
     """Headroom guard. Every conversation's system prompt carries the whole op catalog (ops, schema, worked
     examples), so each batch of operations shrinks what is left of the default context allowance before a first
-    new epoch (built-in batch 5 took it from about 33,500 estimated tokens to about 15,000). A conversation that
+    new epoch. A conversation that
     looks at two pages (one ``view_pages`` exchange: Claude's call, then the labelled images as its result) must
     still send its next request in the first epoch; when this fails, compacting the catalog or raising
     ``resources.DEFAULT_CONTEXT_TOKENS`` is the owner's decision — never loosen this guard to pass."""
