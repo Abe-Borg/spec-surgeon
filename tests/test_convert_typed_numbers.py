@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import dataclasses
 import io
-import re
 import shutil
 import subprocess
 import zipfile
@@ -786,13 +785,56 @@ def test_touches_are_declared_once(tpl):
 
 # ---- the LibreOffice proof ---------------------------------------------------------------------------------------------
 
+def _assert_rendered_words(source: bytes, rendered: str) -> None:
+    """The fixture's literal typed numbers are the oracle, independent of either numbering model.
+
+    PDF line and page breaks vary with the renderer and installed fonts. Compare every visible token instead:
+    a missing, duplicated, changed or reordered number or word still fails, including table and unnumbered text.
+    """
+    with zipfile.ZipFile(io.BytesIO(source)) as archive:
+        root = etree.fromstring(archive.read(MAIN))
+    expected = [word for paragraph in root.iter(W + "p") for word in live(paragraph).split()]
+    assert rendered.split() == expected
+
+
+def test_rendered_numbering_oracle_accepts_only_layout_whitespace():
+    doc = Document()
+    doc.add_paragraph("1. Alpha beta gamma.")
+    doc.add_paragraph("2. Delta epsilon.")
+    _assert_rendered_words(docx_of(doc), "1.\tAlpha beta\n   gamma.\n\f2. Delta\n epsilon.\n")
+
+
+@pytest.mark.parametrize("rendered", [
+    "Alpha beta gamma. 2. Delta epsilon.",                   # missing number
+    "1. 1. Alpha beta gamma. 2. Delta epsilon.",             # duplicate number
+    "3. Alpha beta gamma. 2. Delta epsilon.",                # changed number
+    "1. Alpha gamma. 2. Delta epsilon.",                    # missing word
+    "1. Alpha beta beta gamma. 2. Delta epsilon.",           # duplicate word
+    "1. Alpha beta gamma 2. Delta epsilon.",                # changed punctuation
+    "2. Delta epsilon. 1. Alpha beta gamma.",                # reordered paragraphs
+])
+def test_rendered_numbering_oracle_rejects_changed_content(rendered):
+    doc = Document()
+    doc.add_paragraph("1. Alpha beta gamma.")
+    doc.add_paragraph("2. Delta epsilon.")
+    with pytest.raises(AssertionError):
+        _assert_rendered_words(docx_of(doc), rendered)
+
+
 @pytest.mark.skipif(not (shutil.which("soffice") and shutil.which("pdftotext")), reason="LibreOffice/poppler missing")
 @pytest.mark.parametrize("tracked", [False, True])
-def test_libreoffice_shows_every_typed_number_exactly_once_in_order(tpl, tmp_path, tracked):
+@pytest.mark.parametrize("narrow_page", [False, True], ids=["default-width", "wrapped"])
+def test_libreoffice_shows_every_typed_number_exactly_once_in_order(tpl, tmp_path, tracked, narrow_page):
     """The converted file rendered by LibreOffice (whose numbering follows the example file's explicit w:ilvl levels,
-    ooxml-lessons §6): every converted paragraph's line shows its number once — never twice, never missing — and the
-    lines come in the document's order."""
-    plan, out, rec = converting(build_typed(), tpl, tracked=tracked)
+    ooxml-lessons §6): every converted paragraph shows its number once — never twice, never missing — and all visible
+    words and numbers remain in the document's order, even when a paragraph wraps across physical PDF lines."""
+    source = build_typed()
+    if narrow_page:
+        def narrow(root):
+            for size in root.iter(W + "pgSz"):
+                size.set(W + "w", "10080")  # 7-inch page; the long indented paragraph must wrap.
+        source = patch_docx(source, {MAIN: narrow})
+    plan, out, rec = converting(source, tpl, tracked=tracked)
     assert rec.passed
     if tracked:                                         # LibreOffice shows deletions struck through: accept them first
         root = DocxPackage(out).xml(MAIN)
@@ -812,12 +854,8 @@ def test_libreoffice_shows_every_typed_number_exactly_once_in_order(tpl, tmp_pat
                     "--outdir", str(tmp_path), str(doc)], check=True, capture_output=True, timeout=240)
     subprocess.run(["pdftotext", "-layout", str(tmp_path / "out.pdf"), str(tmp_path / "out.txt")], check=True,
                    timeout=60)
-    lines = [" ".join(line.split()) for line in (tmp_path / "out.txt").read_text().splitlines()]
-    at = -1
-    for rest, number in TYPED.items():
-        want = f"{number} {rest}"
-        hits = [i for i, line in enumerate(lines) if line == want]
-        assert len(hits) == 1, (want, [l for l in lines if rest in l])
-        assert hits[0] > at, f"{want!r} out of order"
-        at = hits[0]
-        assert len(re.findall(re.escape(number), lines[hits[0]])) == 1 or rest.count(number), lines[hits[0]]
+    rendered = (tmp_path / "out.txt").read_text()
+    if narrow_page:
+        longest = 'Division 21 Section "Common Work Results for Fire Suppression".'
+        assert not any(longest in line for line in rendered.splitlines()), "fixture did not exercise line wrapping"
+    _assert_rendered_words(source, rendered)

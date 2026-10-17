@@ -174,7 +174,7 @@ def test_planner_count_inspection_is_read_only_scoped_and_source_pinned(tmp_path
     assert proposed["expected_count"] == "all"
     with pytest.raises(ValueError, match="inside this project"):
         inspect_goal_effect([document], "foreign", proposed)
-    proposed.update(template="/tmp/foreign-template.docx", template_sha256="0" * 64)
+    proposed.update(template=str(tmp_path / "foreign-template.docx"), template_sha256="0" * 64)
     with pytest.raises(ValueError, match="explicitly attached"):
         inspect_goal_effect([document], "doc1", proposed)
     source_doc(source, 4)

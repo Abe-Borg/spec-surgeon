@@ -145,7 +145,7 @@ def test_default_keeps_substantial_investigation_evidence_in_active_context(tmp_
                            folder=tmp_path, state=state, authority={"request": "Investigate all documents"})
     assert fresh is messages
     assert state["epoch"] == 0 and state["archives"] == []
-    active = json.loads((tmp_path / "context" / "active-0.json").read_text())
+    active = json.loads((tmp_path / "context" / "active-0.json").read_text(encoding="utf-8"))
     assert active["messages"] == messages
 
 

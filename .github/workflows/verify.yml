@@ -40,7 +40,9 @@ jobs:
         run: python -c "from PySide6.QtWidgets import QApplication; QApplication([])"
       - name: Check Linux renderer
         if: runner.os == 'Linux'
-        run: python -c "from spec_surgeon.render.libreoffice import find_soffice; assert find_soffice()"
+        run: |
+          python -c "from spec_surgeon.render.libreoffice import find_soffice; assert find_soffice()"
+          python -m pytest -q tests/test_convert_typed_numbers.py -k libreoffice_shows_every_typed_number_exactly_once_in_order
       - name: Run tests
         run: python -m pytest -q --junitxml=test-results.xml
       - name: Build and check distributions
