@@ -62,7 +62,7 @@ def test_visual_planner_uses_selected_renderer_scope_budget_and_persisted_multim
     state = campaign.projects[pid]["planning_state"]
     assert campaign.projects[pid]["proposed_plan"]["status"] == "NEEDS_INPUT", campaign.to_text()
     assert [r[0] for r in renders] == [source, template]
-    assert all(r[3] == "word" and "visual/word" in str(r[2]) for r in renders)
+    assert all(r[3] == "word" and "visual/word" in Path(r[2]).as_posix() for r in renders)
     assert state["image_tokens"] == 2 * vision.est_tokens(png)
     assert len(state["visual_evidence"]) == 2
     assert any("foreign.docx" in attempt["error"] for attempt in state["attempts"])
