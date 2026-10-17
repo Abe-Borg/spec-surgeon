@@ -112,9 +112,12 @@ fire sprinkler designer; these files go to clients;
    `[Content_Types].xml` as whole members); `add_watermark` reads `verify:pgSz`/`verify:pgMar`/`verify:hfref` of every
    section showing a header it sizes for. Not declared, as for `set_font` (see "Plan-time conflicts for what an op
    reads" 5): the clean-up ops' reads of the style chains (hidden, colour) — their kinds re-derive from the SOURCE.
-   Batch 3: `set_tab_stops` touches `(part, bi, "pPr")` per changed paragraph (so `set_paragraph_props` or
-   `set_properties` paragraph flags on the same paragraph are a `conflict`; its run properties are not) and
-   `(part, "scope", "verify")` per part in scope; with a margin position (`right_margin`/`center`) it reads
+   Batch 3: `set_tab_stops` touches `(part, bi, "pPr")` and `(part, bi, "tabs")` per changed paragraph (so
+   `set_paragraph_props` or `set_properties` paragraph flags on the same paragraph are a `conflict`; its run properties are
+   not), reads `(part, bi, "verify:tabs")` of EVERY selected paragraph — its post-condition checks the output's stops of
+   an already-as-asked paragraph too, so a second tab op changing them is a plan-time conflict (Codex on #28: it used to
+   plan and fail V10 after apply), while a spacing change there still plans — and `(part, "scope", "verify")` per part in
+   scope; with a margin position (`right_margin`/`center`) it reads
    `(main, "sectPr:N", "verify:pgSz"/"verify:pgMar")` of every section it measured and `verify:hfref` of every section
    for a header/footer part (a `set_page_setup` beside it is a plan-time conflict). Not declared: its reads of the style
    chains' tabs and of numbering (no op changes either), and `color_in`'s read of the colour chain (as `set_font`'s
@@ -1026,7 +1029,7 @@ teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without
 (`tests/test_keyless.py`, 2026-10-16), 768 with the plan-time conflicts for what an op reads
 (`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
 (`tests/test_chain.py`, 2026-10-16), 963 with built-in operations batch 1 (2026-10-16), 1556 with master's bounded
-recovery and built-in operations batch 2 (2026-10-16), 1599 with built-in operations batch 3
+recovery and built-in operations batch 2 (2026-10-16), 1600 with built-in operations batch 3
 (`tests/test_tab_stops.py`, `tests/test_color_selector.py`, 2026-10-16) — all pass but four that skip in the Linux container: the
 Windows-only Credential Manager round trip and three `tests/test_llm.py` tests that need the `anthropic` package; in the
 container `python3 -m pytest -q -s`).

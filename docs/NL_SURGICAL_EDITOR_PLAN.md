@@ -625,7 +625,7 @@ after the first; "no stranded titles" = keep with next) and worked examples. Ite
 (the effective colour, both sides) so "the editor's blue to black" recolours only the blue; item 25 is the new operation
 `set_tab_stops` with its V10 kind `tab_stops` (stops set and cleared on selected paragraphs, inherited stops cleared with
 clear entries, positions in twips or at each section's own right margin / centre, an "already" rule, numbered paragraphs
-certain only through their own entries). README → "Built-in operations, batch 3" is the user's view; 1599 tests pass
+certain only through their own entries). README → "Built-in operations, batch 3" is the user's view; 1600 tests pass
 (four skip in the Linux container). Not in this batch: tab stops in style definitions, formatting part of a paragraph, a
 list-level selector, theme colours as a value to set.
 

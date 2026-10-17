@@ -133,8 +133,11 @@ a cleared position still shows one (numbered: has no own clear entry), or, with 
 effect. It strips only `tabs` and `pPrChange` of the changed paragraphs; the residual compares everything else, so a
 neighbouring pPr child, an unselected paragraph or a no-op `pPrChange` on an already-right paragraph fails.
 
-Touches: `(part, block, "pPr")` per changed paragraph (so `set_paragraph_props` or `set_properties` paragraph flags on the
-same paragraph are a `conflict` — one spec each, or a chain), `(part, "scope", "verify")` per part in scope; with a
+Touches: `(part, block, "pPr")` and `(part, block, "tabs")` per changed paragraph (so `set_paragraph_props` or
+`set_properties` paragraph flags on the same paragraph are a `conflict` — one spec each, or a chain), a read
+`(part, block, "verify:tabs")` of every selected paragraph (the post-condition checks an already-as-asked paragraph's stops
+in the output too: a second tab op changing them is a plan-time conflict — Codex on #28 — while a spacing change there
+still plans), `(part, "scope", "verify")` per part in scope; with a
 margin position, the reads `(main, "sectPr:N", "verify:pgSz"/"verify:pgMar")` of every section it measured and
 `verify:hfref` of every section for a header/footer part (so a `set_page_setup` beside it is a plan-time conflict, never
 a stale position). Not declared, as for `set_font` (CLAUDE.md "Plan-time conflicts for what an op reads" 5): the reads of

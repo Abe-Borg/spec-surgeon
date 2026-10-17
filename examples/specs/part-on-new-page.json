@@ -15,7 +15,7 @@
       "op": "set_properties",
       "select": {
         "scope": ["document"],
-        "paragraphs": {"text_regex": "^PART\\s+[1-9]\\s*[-–—]", "after_heading_regex": "^PART\\s+[1-9]\\s*[-–—]"}
+        "paragraphs": {"text_regex": "^PART\\s+[1-9]\\d*\\s*[-–—]", "after_heading_regex": "^PART\\s+[1-9]\\d*\\s*[-–—]"}
       },
       "params": {"paragraph": {"pageBreakBefore": true}},
       "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}

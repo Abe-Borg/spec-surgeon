@@ -121,7 +121,9 @@ def test_margin_reads_are_declared(src):
     assert {(MAIN, "sectPr:0", "verify:pgMar"), (MAIN, "sectPr:1", "verify:pgSz"), (MAIN, "sectPr:1", "verify:hfref"),
             ("word/footer2.xml", "0", "pPr"), ("word/footer1.xml", "scope", "verify")} <= set(map(tuple, f.touches))
     plain = get_op("set_tab_stops").plan(DocxPackage(src), ARTICLES, {"set": [{"pos": 720}]})
-    assert not any(t[2].startswith("verify:") for t in plain.touches)          # an explicit position reads no section
+    assert not any(t[1].startswith("sectPr:") for t in plain.touches)          # an explicit position reads no section
+    assert (MAIN, "2", "verify:tabs") in set(map(tuple, plain.touches))         # every selected paragraph's stops are read
+    assert {(MAIN, "3", "pPr"), (MAIN, "3", "tabs")} <= set(map(tuple, plain.touches))
 
 
 def test_a_header_shown_at_two_widths_is_refused(src):
@@ -410,6 +412,24 @@ def test_paragraph_property_ops_on_the_same_paragraphs_conflict(src):
     # run properties on the same paragraphs are another family: one spec, verified
     plan, frags = plan_spec(DocxPackage(src), _spec(tabs_op, {"op": "set_properties", "select": ARTICLES,
                                                               "params": {"run": {"b": True}}}))
+    work = DocxPackage(src).copy()
+    for f in frags:
+        get_op(f.op).apply(work, f)
+    rec = run_suite(src, work.output_bytes(), plan.to_dict(), "src.docx", "out.docx")
+    assert rec.passed, rec.to_markdown()
+
+
+def test_a_second_tab_op_on_a_paragraph_the_first_leaves_alone_conflicts(src):
+    """The first op finds the ArticleTabs paragraphs already as asked (a stop at 1440); the second would clear it. The
+    first's post-condition reads those stops in the output, so the pair is refused at plan time (Codex on #28) — it used
+    to plan and fail V10 after apply. A spacing change there (another pPr family) still plans."""
+    sel = {"paragraphs": {"style_in": ["ArticleTabs"]}}
+    first = {"op": "set_tab_stops", "select": sel, "params": {"set": [{"pos": 1440}]}}
+    with pytest.raises(JobException) as e:
+        plan_spec(DocxPackage(src), _spec(first, {"op": "set_tab_stops", "select": sel, "params": {"clear": [1440]}}))
+    assert e.value.code == "conflict"
+    plan, frags = plan_spec(DocxPackage(src), _spec(first, {"op": "set_paragraph_props", "select": sel,
+                                                            "params": {"spacing": {"after": 120}}}))
     work = DocxPackage(src).copy()
     for f in frags:
         get_op(f.op).apply(work, f)

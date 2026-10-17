@@ -339,6 +339,9 @@ class SetTabStops(Op):
                     raise JobException(f"{where}: {e}", e.code, {"part": part, "paragraph": bi})
                 is_num = numbered(p, sheet)
                 numbered_others += bool(is_num and others)
+                # V10's post-condition reads this paragraph's stops in the output whether or not it changes: another op
+                # changing them (a second set_tab_stops) is a plan-time conflict, never a failure after apply
+                frag.touches.append((part, str(bi), "verify:tabs"))
                 after = decide(want, gone, others, own, inherited_stops(res, p), is_num)
                 if after is None:
                     already += 1
@@ -353,7 +356,7 @@ class SetTabStops(Op):
             if chosen:
                 targets[part] = chosen
                 frag.intended_parts.append(part)
-                frag.touches += [(part, str(bi), "pPr") for bi, _ in chosen]
+                frag.touches += [(part, str(bi), aspect) for bi, _ in chosen for aspect in ("pPr", "tabs")]
             frag.touches.append((part, "scope", "verify"))      # V10 re-resolves the selection over this part
         main = pkg.main_part()
         for k in sorted(read_secs):
