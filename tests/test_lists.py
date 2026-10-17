@@ -111,6 +111,7 @@ def assert_sides_agree(data: bytes, override_t=None, defs_pair=None) -> None:
         assert (tl.list_is_clean(t.defs, nid, tc) is None) == (vl.v_list_is_clean(v.defs, nid, vc) is None), nid
         assert [lvl_row(t.defs.level(nid, k)) for k in range(9)] == [lvl_row(v.defs.level(nid, k)) for k in range(9)]
         assert (t.defs.problem(nid) or (None,))[0] == (v.defs.problem(nid) or (None,))[0]
+        assert tl.has_restart_rule(t.defs, nid) == vl.v_has_restart_rule(v.defs, nid)
 
 
 FIXTURES = ["numbering", "numbering-clean", "typed", "typed-typo", "typed-lead", "typed-spaces", "scheme", "styles",
@@ -151,7 +152,7 @@ OTHER_LISTS = {
     "Double B": "BB.",                    # 28 — never AB
     "Roman one": "(i)",
     "Appendix two": "APPENDIX IV",
-    "Legal three": "4.26.1",              # level 1 has no value after the restart: it shows its start
+    "Legal three": ("skipped",),          # "%1.%2.%3": level 1 has no value after the restart — not offered
     "Roman two": "(ii)",                  # lvlRestart 0: never restarts
     "Zed again": "Z.",
     "Override first": "1.", "Override sub": ("override",), "Override second": "2.",
@@ -184,7 +185,7 @@ def observed(side: str, data: bytes) -> Dict[str, Any]:
         while key in out:                                  # a paragraph counted twice under one text: a failure
             key += " (again)"
         out[key] = x.text if x.not_evaluated is None else (x.issue,)
-        if key in COUNTERS and x.not_evaluated is None and data is fixture("numbering-clean"):
+        if key in COUNTERS and x.counters is not None and data is fixture("numbering-clean"):
             out[key + " counters"] = x.counters
     return out
 
@@ -629,10 +630,56 @@ def test_override_none_and_numbering_off():
     for s in (t, v):
         got = s.count({first: None})
         assert first not in [x.index for x in got]
-        assert got[0].text == "1.1"                      # level 0 never seen: shows its start
+        assert (got[0].issue, got[0].text, got[0].counters) == ("skipped", None, (1, 1))   # "%1.%2", level 0 never seen
+        assert [x.text for x in got[1:4]] == ["A.", "1.", "a."]                          # "%3." etc. name only their own
         got = s.count({first: (10, 1)})
-        assert [x.text for x in got[:2]] == ["1.1", "1.2"]
+        assert [(x.issue, x.counters) for x in got[:2]] == [("skipped", (1, 1)), ("skipped", (1, 2))]
         assert first not in [x.index for x in s.count({first: (0, 0)})]
+
+
+SKIPS = ('<w:abstractNum w:abstractNumId="1">'
+         '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:lvlText w:val="%1."/></w:lvl>'
+         '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:lvlText w:val="%1.%2"/></w:lvl>'
+         '<w:lvl w:ilvl="2"><w:start w:val="1"/><w:lvlText w:val="%1.%2.%3"/></w:lvl>'
+         '<w:lvl w:ilvl="3"><w:start w:val="1"/><w:lvlRestart w:val="0"/><w:lvlText w:val="(%4)"/></w:lvl>'
+         '<w:lvl w:ilvl="4"><w:start w:val="1"/><w:lvlText w:val="%5 of %4"/></w:lvl>'
+         '</w:abstractNum><w:num w:numId="1"><w:abstractNumId w:val="1"/></w:num>')
+
+
+@pytest.mark.parametrize("side", ["t", "v"])
+def test_a_skipped_level_is_not_evaluated(side):
+    """A %j naming a level that has no current value — never reached, or reset by a restart — is not offered: Word shows
+    0 there ("1.0.1"), LibreOffice the start and then continues from it. A level that never restarts (lvlRestart 0) keeps
+    its value and may be named; the paragraph's own level always has one."""
+    order = [("a", 0), ("b", 2), ("c", 1), ("d", 2), ("e", 0), ("f", 2), ("g", 3), ("h", 0), ("i", 4), ("j", 1)]
+    body = "".join(_p(t, f'<w:numPr><w:ilvl w:val="{k}"/><w:numId w:val="1"/></w:numPr>') for t, k in order)
+    data = mini_docx(body, "", SKIPS)
+    assert_sides_agree(data)
+    s = TSide(data) if side == "t" else VSide(data)
+    got = {par_text(s.pars[x.index]): (x.issue, x.text, x.counters) for x in s.count()}
+    assert got == {
+        "a": (None, "1.", (1,)),
+        "b": ("skipped", None, (1, 1, 1)),          # level 1 never reached
+        "c": (None, "1.1", (1, 1)),
+        "d": (None, "1.1.1", (1, 1, 1)),
+        "e": (None, "2.", (2,)),                    # restarts levels 1 and 2 (not 3: lvlRestart 0)
+        "f": ("skipped", None, (2, 1, 1)),          # level 1 reset by the restart
+        "g": (None, "(1)", (2, 1, 1, 1)),
+        "h": (None, "3.", (3,)),
+        "i": (None, "1 of 1", (3, 1, 1, 1, 1)),     # names level 3, which never restarts and still holds 1
+        "j": (None, "3.1", (3, 1)),
+    }
+    reason = next(x.not_evaluated for x in s.count() if par_text(s.pars[x.index]) == "b")
+    assert reason.startswith(tl.SKIPPED if side == "t" else vl.V_SKIPPED) and "level 1" in reason
+
+
+def test_levels_carrying_a_restart_rule():
+    """LibreOffice ignores w:lvlRestart: the model reads it as Word does, and the levels carrying one are listed for a
+    flag."""
+    t, v = TSide(fixture("numbering-clean")), VSide(fixture("numbering-clean"))
+    for nid, want in ((22, [2, 3]), (10, []), (21, []), (23, [])):
+        assert tl.has_restart_rule(t.defs, nid) == vl.v_has_restart_rule(v.defs, nid) == want, nid
+    assert tl.has_restart_rule(t.defs, 99) == vl.v_has_restart_rule(v.defs, 99) == []
 
 
 # ---- shared defects: the comparison cannot see them, the expectations do -------------------------------------------
@@ -677,6 +724,7 @@ DEFECTS = {
     "text boxes counted": [
         ("counted", "v_counted", lambda real: lambda p: real(p) or any(a.tag == W + "txbxContent"
                                                                        for a in p.iterancestors()))],
+    "a skipped level shows its start": [("skipped_level", "_v_skipped", lambda real: lambda text, has: None)],
 }
 
 
