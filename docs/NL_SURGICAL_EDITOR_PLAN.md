@@ -640,8 +640,12 @@ asked); `set_language` (the proofing language of every level that names one, and
 kept or cleared); ★ `map_styles` over a shared style import (the closure through basedOn/link/next and list levels,
 list numbering copied with new ids, `styles_imported` checking the copies and `numbering.xml` whole); and
 `remove_unused_styles` (used = text, numbering, settings, field instructions, tracked-change snapshots, defaults and the
-basedOn/next/link closure; no dangling reference in the output). New plan-time aspects: a paragraph's style (`pStyle`,
-read as `verify:pStyle`) and reads of the styles an op names. README → "Built-in operations, batch 4" is the user's view.
+basedOn/next/link closure; no dangling reference in the output). New plan-time aspects: a paragraph's style (`pStyle`),
+a run's character style (`rStyle`), a table's style (`tblPr` of `tbl:<k>`), which elements name a style (`uses+`/`uses-`),
+and three new read forms in the conflict grammar — soft reads (`verify-props:`, never reached by a word change), whole-member
+family reads (a selection reading every paragraph's chain) and incremental changes; the adversarial review round closed
+every order-dependent pair it found (`tests/test_batch4_conflicts.py`). README → "Built-in operations, batch 4" is the
+user's view.
 Not in this batch: run, page and table-cell borders; theme colours to set; tab stops in styles; mapping linked character
 styles automatically; editing field codes that name a mapped style.
 

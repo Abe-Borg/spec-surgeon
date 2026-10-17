@@ -1266,7 +1266,7 @@ teardown fix (`tests/test_qt_lifetime.py`, 2026-10-16), 756 with running without
 (`tests/test_read_conflicts.py` and two tests in `tests/test_ops_base.py`, 2026-10-16), 784 with chains
 (`tests/test_chain.py`, 2026-10-16), 963 with built-in operations batch 1 (2026-10-16), 1556 with master's bounded
 recovery and built-in operations batch 2 (2026-10-16), 1600 with built-in operations batch 3
-(`tests/test_tab_stops.py`, `tests/test_color_selector.py`, 2026-10-16), TESTCOUNT with built-in operations batch 4 (2026-10-17) —
+(`tests/test_tab_stops.py`, `tests/test_color_selector.py`, 2026-10-16), 1938 with built-in operations batch 4 and its review round (2026-10-17) —
 all pass but four that skip in the Linux container: the
 Windows-only Credential Manager round trip and three `tests/test_llm.py` tests that need the `anthropic` package; in the
 container `python3 -m pytest -q -s`).
