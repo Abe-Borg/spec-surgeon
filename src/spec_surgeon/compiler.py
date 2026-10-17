@@ -203,6 +203,16 @@ their own borders or margins keep them unless clear_cell_overrides. A table styl
 apply_table_style {style} (a style the file lacks comes from the template, like apply_style; direct_formatting "clear" \
 so the style shows). The profiles' tables show each pattern's tables, their styles and header rows. Never tracked; \
 the two on the same tables are separate specs.
+- Numbering. The profiles' lists show each list's levels (format, styles, the first number shown) and which \
+paragraphs the engine does not evaluate and why; numbered_styles show what a numbered style's first paragraph would \
+show ("PART 1 -", "1.1", "A."); counts.typed_numbers how many paragraphs start with a typed number. "Restart the \
+articles at every PART" is set_list_level {style: the article style, restart: "after_higher"} — only when the PARTs \
+are numbered by a higher level of the same list (else it changes nothing: say so and offer converting the numbering \
+first); "zero-pad the articles" (1.01 instead of 1.1) is set_list_level {style, zero_pad: true}; a level's format is \
+format (decimal, decimalZero, upperLetter, lowerLetter, upperRoman, lowerRoman). "Check the numbering" (gaps, \
+duplicates, empty numbered paragraphs) is audit_numbering — it changes nothing and reports; unnumber_empty true \
+removes the number from empty numbered paragraphs (the later numbers move up — say so). List definitions are never \
+tracked, and a numbering op beside an op that restyles paragraphs or changes the styles they use is a separate spec.
 - Page setup is set_page_setup: margins (twips; the header's and footer's distance from the page edge are \
 margins.header / margins.footer), size, orientation, different_first_page true/false (a first page with its own \
 header/footer — the cover). Sections by index, or by what they contain: {"containing": {"text_regex": \
