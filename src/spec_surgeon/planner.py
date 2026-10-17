@@ -93,8 +93,12 @@ class FilePlan:
     ms: float = 0.0
 
     def to_dict(self):
-        return {"source": str(self.source), "pattern_id": self.pattern_id, "status": self.status,
+        result = {"source": str(self.source), "pattern_id": self.pattern_id, "status": self.status,
                 "summary": self.summary, "exception": self.exception, "ms": round(self.ms, 1)}
+        if self.plan and any(a.get("kind") == "character_hygiene" for a in self.plan.get("property_assertions", [])):
+            result["character_changes"] = [c for a in self.plan["property_assertions"]
+                                           if a.get("kind") == "character_hygiene" for c in a["changes"]]
+        return result
 
 
 @dataclass
@@ -138,6 +142,17 @@ class BatchPlan:
                     out += [f"      {line}" for line in f.summary]
             if not per_file and len(fs) > 1:
                 out.append(f"   … and {len(fs) - 1} more file(s) of this pattern")
+        # Hygiene changes must be reviewable for EVERY file, even when other summaries
+        # are grouped by structure pattern. JSON quoting exposes ordinary/NBSP differences.
+        import json
+        for f in self.files:
+            changes = f.to_dict().get("character_changes", [])
+            if changes:
+                out.append(f"\nEXACT CHARACTER CHANGES: {f.source}")
+                for c in changes:
+                    before = json.dumps(c["before"], ensure_ascii=True)
+                    after = json.dumps(c["after"], ensure_ascii=True)
+                    out.append(f"   {c['part']} paragraph {c['paragraph']+1}, character {c['start']+1}: {before} → {after}")
         return "\n".join(out)
 
 

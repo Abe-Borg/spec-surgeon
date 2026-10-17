@@ -1,0 +1,6 @@
+{
+  "request": "Collapse double spaces and remove trailing spaces",
+  "summary": "Ordinary spaces only, with every character change predicted and tracked.",
+  "mode": "content",
+  "ops": [{"op": "normalize_whitespace", "params": {}}]
+}

@@ -281,6 +281,18 @@ when the schedule shares a section with other text); margins are not rotated unl
 in fill_variables.table.file, replace_table.pairs_table.file or swap_image.image / match.image — what a table holds is \
 the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
 END OF SECTION wording) must be the user's exact words, like any replacement.
+- Character hygiene: normalize_whitespace collapses ordinary spaces and trims trailing spaces; normalize_punctuation \
+needs explicit quotes (straight/curly), dash (en/em) and/or section_separator (space/hyphen/en/em); \
+protect_nonbreaking_spaces keeps numbers with units (default psi) and spaced section numbers together. No words \
+are added. Show the exact predicted changes. Use separate chain stages when text operations touch one paragraph. \
+Defined-term capitalization is capitalize_defined_terms: in chat, call propose_defined_terms for each file, inspect the \
+contexts, and offer each desired change separately as ask_user kind capitalization with its proposal_id. Only a user \
+pick authorizes that occurrence; copy only picked records into approvals. Capitalization runs first in a chain, \
+or on separately reopened outputs with fresh proposals and picks. Never use replace_table for a broad \
+defined-term capitalization request; never claim that the original request approves individual occurrences. \
+Spec QA audits (placeholders, cross-references, standards, readiness and project identity) are report-only via \
+the Spec QA audits window or spec-surgeon audit. Do not submit edits to satisfy an audit. A standards audit records \
+editions as found; an explicit subsequent replacement request chooses the published or AHJ-adopted edition. \
 - Text-changing ops are tracked unless the user asks for clean copies (tracked false). name_output, and \
 make_values_agree with the file name among its places, rename the outputs: they write copies, never in place.
 - Clean-up ops (remove_comments, remove_highlight, remove_hidden_text, remove_notes, remove_empty_paragraphs, \
@@ -382,6 +394,12 @@ SNIPPET_WORDS_RULE = ("this text counts as the user's ONLY once the user picks t
                       "words the user did not give — after it, place it verbatim with insert_paragraph")
 
 LIBRARY_TOOLS = [
+    {"name": "propose_defined_terms", "description": "Find each candidate defined-term capitalization change in one file. "
+     "Offer each desired occurrence separately with ask_user kind capitalization and proposal_id. The app shows its "
+     "exact before/after and context; only a user pick approves that occurrence.",
+     "input_schema": {"type": "object", "properties": {"file": {"type": "string"},
+         "terms": {"type": "array", "items": {"type": "string"}}, "start": {"type": "integer", "minimum": 0},
+         "count": {"type": "integer", "minimum": 1, "maximum": 40}}, "required": ["file", "terms"]}},
     {"name": "list_library", "description": "The user's library: every saved recipe (a spec they previewed before: its "
      "op names, mode, template files, how many words it places), operation (a custom transform that passed: its "
      "proposal) and snippet (a saved paragraph: how long it is, its style), each with its name, description and the "
@@ -406,7 +424,8 @@ def _chat_ask_user() -> Dict[str, Any]:
     and ``operation``, with ``name``); the app builds that choice from the library. The one-shot tool is unchanged."""
     tool = copy.deepcopy(next(t for t in TOOLS if t["name"] == "ask_user"))
     choice = tool["input_schema"]["properties"]["choices"]["items"]
-    choice["properties"]["kind"]["enum"] = ["clarify", "alternative", "rephrase", "recipe", "operation", "snippet"]
+    choice["properties"]["kind"]["enum"] = ["clarify", "alternative", "rephrase", "capitalization", "recipe", "operation", "snippet"]
+    choice["properties"]["proposal_id"] = {"type": "string", "description": "kind capitalization: exact id returned by propose_defined_terms"}
     choice["properties"]["name"] = {
         "type": "string", "description": "for kind recipe, operation or snippet only: the exact name of the user's "
                                          "library item to offer (the app builds that choice from the library; your "
@@ -584,6 +603,7 @@ class _Batch:
         self._relabel(paths)
         self.template = Path(template) if template else None
         self._pkgs: Dict[str, DocxPackage] = {}
+        self.capitalization_proposals: Dict[str, Dict[str, Any]] = {}
         self.work_dir: Optional[Path] = None      # where a conversation keeps its page renders (chat only)
         self.artifact_dir: Optional[Path] = None  # stable investigation root across recovery passes
         self.analysis_limits = None              # host-configured investigation.AnalysisLimits
@@ -656,6 +676,16 @@ class _Batch:
                     "profile": "(call inspect_profile)"} for p in self.prof["patterns"][4:]]}
 
     # ---- tools ----
+    def propose_defined_terms(self, file, terms, start=0, count=40):
+        from .ops.hygiene import propose_defined_terms
+        self._offset("start", start)
+        self._page_size("count", count, 40)
+        records = propose_defined_terms(self.pkg(file), terms)
+        page = records[start:start+count]
+        self.capitalization_proposals.update({r["id"]: r for r in page})
+        return {"file": file, "total": len(records), "proposals": page,
+                "next_start": start+count if start+count < len(records) else None}
+
     def check_source_pin(self, path):
         pin = next((p for p in self.source_pins if p["path"] == str(Path(path).resolve())), None)
         if pin and hashlib.sha256(Path(path).read_bytes()).hexdigest() != pin["sha256"]:
@@ -1109,6 +1139,27 @@ def check_submission(spec: Any, batch: _Batch, sources: Sequence[str]) -> List[s
         validate_spec(spec)
     except SpecError as e:
         return [f"[{e.code}] {e.reason}"]
+    from .ops.hygiene import approval_source
+    for operation in spec.get("ops", []):
+        params = operation.get("params", {})
+        pairs = params.get("pairs", []) if operation.get("op") == "replace_table" else (
+            [params] if operation.get("op") == "replace_text" else [])
+        for pair in pairs:
+            before, after = pair.get("find"), pair.get("replace")
+            if (isinstance(before, str) and isinstance(after, str) and before and before.lower() == after.lower()
+                    and (before != after or pair.get("match_case") is False)):
+                return ["Use capitalize_defined_terms with individually picked proposal records for case-only "
+                        "wording changes; a global replacement does not provide occurrence approval."]
+        if operation.get("op") == "capitalize_defined_terms":
+            for record in operation.get("params", {}).get("approvals", []):
+                try:
+                    approved = approval_source(record) in sources
+                except (KeyError, TypeError, ValueError):
+                    approved = False
+                if not approved:
+                    return ["Each defined-term capitalization occurrence needs its own user pick. "
+                            "Call propose_defined_terms and offer kind capitalization with proposal_id; "
+                            "a broad instruction or approval of the same word elsewhere does not approve this occurrence."]
     bad = untraceable(spec, sources)
     if bad:
         return [f"these words would be placed in the documents but the user never gave them verbatim: {bad}. Use "

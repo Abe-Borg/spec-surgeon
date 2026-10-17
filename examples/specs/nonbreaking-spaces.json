@@ -1,0 +1,6 @@
+{
+  "request": "Keep values with psi and keep spaced section numbers together",
+  "summary": "Replace ordinary spaces with non-breaking spaces in numeric psi values and spaced section numbers.",
+  "mode": "content",
+  "ops": [{"op": "protect_nonbreaking_spaces", "params": {"units": ["psi"], "section_numbers": true}}]
+}

@@ -115,6 +115,9 @@ def validate_chain(chain: Any) -> None:
         except SpecError as e:
             raise ChainError(f"stage {i} ({stage_name(st, i)}): [{e.code}] {e.reason}",
                              {"stage": i, "code": e.code, **e.details}) from e
+        if i > 1 and any(o["op"] == "capitalize_defined_terms" for o in st["spec"].get("ops", [])):
+            raise ChainError("Source-bound capitalization approvals must run in the first stage. "
+                             "Run earlier edits first and review fresh proposals on their outputs, or capitalize first.")
 
 
 def chain_from_specs(specs: Sequence[Any], name: str = "", description: str = "",

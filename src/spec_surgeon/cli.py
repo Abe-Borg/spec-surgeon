@@ -7,6 +7,8 @@
                                    [--renderer auto|word|libreoffice|none] [--no-render]
     spec-surgeon ops [--catalog]                             (list the operation library; --catalog: JSON for the compiler)
     spec-surgeon profile FILES... [--json]                   (per-structure-pattern document profiles, no model)
+    spec-surgeon audit FILES... [--audit NAME]... [--identity JSON|@file] [--json] [--out REPORT.md|REPORT.json]
+                                                             (read-only specification QA across the batch)
     spec-surgeon plan-spec SPEC.json FILES... [--json] [--per-file]   (dry run of an EditSpec: nothing written)
     spec-surgeon run-spec SPEC.json FILES... [--out DIR] [--in-place] [--workers N] [--renderer …] [--no-render]
                                                              (execute a hand-written EditSpec end to end)
@@ -188,6 +190,40 @@ def cmd_profile(args):
         if p["fonts"]["direct_in_runs"]:
             print(f"   direct fonts in runs: {p['fonts']['direct_in_runs']}")
     return 0
+
+
+def cmd_audit(args):
+    from .spec_qa import audit_batch, audit_markdown
+    try:
+        files = expand_inputs(args.files)
+    except OSError as e:
+        print(f"Audit input could not be read: {e}", file=sys.stderr)
+        return 2
+    if not files:
+        print("No DOCX files found to audit.", file=sys.stderr)
+        return 2
+    try:
+        report = audit_batch(files, args.audit, _params(args.identity))
+    except (OSError, ValueError) as e:
+        print(f"Audit refused: {e}", file=sys.stderr)
+        return 2
+    as_json = args.json or (args.out and Path(args.out).suffix.lower() == ".json")
+    rendered = json.dumps(report, indent=2, ensure_ascii=False) if as_json else audit_markdown(report)
+    if args.out:
+        target = Path(args.out).resolve()
+        if target.suffix.lower() not in (".md", ".json") or target in {Path(f).resolve() for f in files}:
+            print("Audit output must be a .md or .json report, separate from the source files.", file=sys.stderr)
+            return 2
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(rendered, encoding="utf-8")
+        except OSError as e:
+            print(f"Audit report could not be saved: {e}", file=sys.stderr)
+            return 2
+        print(f"Audit report: {target}")
+    else:
+        print(rendered)
+    return 0 if report["complete"] else 1
 
 
 def cmd_plan_spec(args):
@@ -1326,6 +1362,15 @@ def main(argv=None) -> int:
 
     p = sub.add_parser("profile", help="document profiles per structure pattern (what the compiler sees)")
     p.add_argument("files", nargs="+"); p.add_argument("--json", action="store_true"); p.set_defaults(fn=cmd_profile)
+
+    from .spec_qa import AUDITS
+    p = sub.add_parser("audit", help="report-only spec QA: placeholders, section references, standards, readiness and identity")
+    p.add_argument("files", nargs="+")
+    p.add_argument("--audit", action="append", choices=AUDITS, help="repeat to select audits; default: all five")
+    p.add_argument("--identity", help="JSON or @file with canonical project_name, project_number and date")
+    p.add_argument("--json", action="store_true", help="machine-readable report")
+    p.add_argument("--out", help="save a .md or .json report; DOCX files are never written")
+    p.set_defaults(fn=cmd_audit)
 
     p = sub.add_parser("plan-spec", help="dry run of an EditSpec over files: per-file plan summary or exception")
     p.add_argument("spec", help="EditSpec JSON file (or inline JSON)"); p.add_argument("files", nargs="+")

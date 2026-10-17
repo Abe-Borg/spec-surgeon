@@ -433,11 +433,12 @@ class MainWindow(QMainWindow):
         self.act_library_folder = QAction("Open library folder", self)
         self.act_memory = QAction("Repair memory…", self)
         self.act_campaign = QAction("Multi-project workspace…", self)
+        self.act_audit = QAction("Spec QA audits…", self)
         self.act_recovery = QAction("Open recovery workspace…", self)
         self.act_open = QAction("Open results folder", self)
         self.act_settings = QAction("Settings…", self, shortcut=QKeySequence("Ctrl+,"))
         self.act_exit = QAction("Exit", self, shortcut=QKeySequence("Ctrl+Q"))
-        for a in (self.act_campaign, self.act_recovery, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
+        for a in (self.act_campaign, self.act_recovery, self.act_audit, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
                   self.act_settings):
             m.addAction(a)
         m.addSeparator()
@@ -521,6 +522,7 @@ class MainWindow(QMainWindow):
         self.act_library_folder.triggered.connect(self._open_library_folder)
         self.act_memory.triggered.connect(self.do_memory)
         self.act_campaign.triggered.connect(self.do_campaign)
+        self.act_audit.triggered.connect(self.do_audit)
         self.act_recovery.triggered.connect(self.do_load_recovery)
         r.library_btn.clicked.connect(self.do_library)
         r.chain_btn.clicked.connect(self.do_chain)
@@ -545,7 +547,7 @@ class MainWindow(QMainWindow):
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn, run.resolve_btn,
                             p.review_ack_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
-                            self.act_chain, self.act_memory, self.act_campaign, self.act_recovery,
+                            self.act_chain, self.act_memory, self.act_campaign, self.act_recovery, self.act_audit,
                             run.load_recovery_btn]
 
     # ---- values ---------------------------------------------------------------------------------------
@@ -1945,6 +1947,29 @@ class MainWindow(QMainWindow):
         dialog.show()
         dialog.raise_()
         return True
+
+    @Slot()
+    def do_audit(self):
+        return self._start_audit()
+
+    def _start_audit(self, identity=None):
+        if self.busy or self.updating:
+            return False
+
+        def audit(log):
+            from ..spec_qa import audit_batch
+            files = self.session.files(outcome=False)
+            if not files:
+                raise ValueError("Choose a folder containing DOCX specification files first.")
+            log(f"Auditing {len(files)} file(s); source files are read only.")
+            return audit_batch(files, identity=identity)
+
+        def done(report):
+            from .qa_dialog import AuditReportDialog
+            self.audit_dialog = AuditReportDialog(report, self.prompts, self, rerun=self._start_audit)
+            self.audit_dialog.show()
+
+        return self._work("Spec QA audits", audit, on_done=done, page=self.files_page)
 
     @Slot()
     def do_load_recovery(self):

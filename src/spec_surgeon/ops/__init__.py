@@ -41,3 +41,4 @@ from . import apply_style  # noqa: E402,F401  — built-in batch 4 (item 30, ove
 from . import apply_table_style, set_table_props  # noqa: E402,F401  — built-in batch 5 (tables, items 37, 38)
 from . import audit_numbering, set_list_level  # noqa: E402,F401  — built-in batch 5 (list levels and the audit, items 35, 36)
 from . import convert_numbering, convert_typed_numbers  # noqa: E402,F401  — built-in batch 5 (numbering, items 33, 34)
+from . import hygiene  # noqa: E402,F401 — character hygiene, items 41–44
