@@ -1946,6 +1946,9 @@ from .links import LINK_KINDS  # noqa: E402
 from .docprops import DOCPROP_KINDS  # noqa: E402
 # built-in batch 3 (docs/BUILTIN_OPS_BATCH3_DESIGN.md)
 from .tabs import TAB_KINDS  # noqa: E402
+# built-in batch 4 (docs/BUILTIN_OPS_BATCH4_DESIGN.md): the shared style import (§5) and map_styles (§7)
+from .styleimport import IMPORT_KINDS  # noqa: E402
+from .restyle import RESTYLE_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -1953,3 +1956,5 @@ KINDS.update(IMAGE_KINDS)
 for _batch2 in (COMMENT_KINDS, HIGHLIGHT_KINDS, REVISION_KINDS, REMOVAL_KINDS, WATERMARK_KINDS, LINK_KINDS, DOCPROP_KINDS):
     KINDS.update(_batch2)
 KINDS.update(TAB_KINDS)
+KINDS.update(IMPORT_KINDS)
+KINDS.update(RESTYLE_KINDS)
