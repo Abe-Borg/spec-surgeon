@@ -8,10 +8,18 @@ outcomes as well as the original text and formatting effects. See [Built-in work
 the supported combinations, input examples and review requirements. The default working-context allowance is now
 900,000 estimated tokens so investigations can retain substantial evidence before archiving a conversation.
 
+When overriding the model for `do` or `retry`, use `--max-context-tokens` and `--max-output-tokens` to fit its
+context and output limits. Both interactive chat and noninteractive compilation honor these settings, including
+an approved custom-transform handoff. Leave room for output and estimation error within the model's context window;
+the defaults remain 900,000 estimated input tokens and 64,000 output tokens.
+
 **Measure changes on your own batches.** The [paired evaluation workflow](docs/WORKFLOW_EVALUATION.md) compares
 baseline and current runs with pinned reports and input identities, explicit human acceptance, elapsed time,
 interventions and model spending. Scripted runs remain separate from live-provider measurements. These source changes
 do not announce a new published installer.
+
+Paired evaluations count human review only when a nonblank reviewer name accompanies the completed judgments and
+visual check. Anonymous judgments remain recorded, but do not count as accepted results or a completed review.
 
 **New in v0.8.0: text hygiene and specification QA (items 41–49).** Character-only
 space, quote, dash and non-breaking-space operations predict every change. Defined-term

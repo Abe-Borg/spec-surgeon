@@ -190,6 +190,7 @@ def _case(case: Dict[str, Any], base: Path, *, paired: bool = False,
                expectation_mismatches=mismatches)
     if paired:
         row.update(_comparison_metadata(case, report, row, measurement_scope))
+        row["human_accepted"] = row["human_accepted"] and row["human_review_complete"]
     return row
 
 
@@ -301,7 +302,7 @@ def _comparison_metadata(case, report, row, scope):
         elapsed, interventions, additional, cost = (row["seconds"], row["human_interventions"],
                                                    None, row["estimated_cost_usd"])
     human = row["human_review"]
-    reviewed = (human["visual_checked"] is True and
+    reviewed = (bool(human["reviewer"].strip()) and human["visual_checked"] is True and
                 all(type(human[k]) is bool for k in ("request_satisfied", "content_preserved")))
     policies = {}
     for segment in [*report.get("resource_history", []), report.get("budget", {})]:

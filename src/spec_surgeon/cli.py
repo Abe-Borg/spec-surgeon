@@ -396,6 +396,11 @@ def cmd_run(args, spec=None):
     return 0 if c["FAIL"] == 0 and c["EXCEPTION"] == 0 else 1
 
 
+def _conversation_token_limits(args):
+    return {name: getattr(args, name) for name in ("max_context_tokens", "max_output_tokens")
+            if getattr(args, name, None) is not None}
+
+
 def cmd_do(args):
     """Natural language end to end: compile (Claude) → preview (dry plan + sample apply/verify/render) → approval →
     the verified batch. Nothing touches a source before approval; --in-place delivery is guarded as always."""
@@ -454,7 +459,8 @@ def cmd_do(args):
     else:
         print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
         res = compile_request(args.request, files, template=template, answers=args.answer or [],
-                              model=args.model, log=log, prior_failures=prior_failures)
+                              model=args.model, log=log, prior_failures=prior_failures,
+                              **_conversation_token_limits(args))
         if write_json(out_dir / "compile.json", {"request": args.request, "answers": args.answer or [],
                                                  **res.to_dict()}):
             print(f"compile record (the model's whole exchange): {out_dir / 'compile.json'}", file=sys.stderr)
@@ -799,7 +805,8 @@ def _chat(args, files, template, out_dir, prior_failures, log):
     from .diagnostics import write_json
     print(f"talking {args.request!r} through with Claude ({args.model}) over {len(files)} file(s) …", file=sys.stderr)
     conv = Conversation(args.request, files, template=template, model=args.model, prior_failures=prior_failures,
-                        answers=args.answer or [], work_dir=out_dir / "chat", log=log)
+                        answers=args.answer or [], work_dir=out_dir / "chat", log=log,
+                        **_conversation_token_limits(args))
 
     def save(turn=None):
         try:
@@ -1040,7 +1047,8 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     before_writing = approval_inputs({}, files)
     print(f"Tier B: generating a transform, tested on {[s.name for s in samples]} …", file=sys.stderr)
     g = generate_op(args.request, spec.get("proposal") or spec.get("unsupported") or "", samples, out_dir / "codegen",
-                    model=args.model, log=lambda m: print(m, file=sys.stderr), brief=brief)
+                    model=args.model, log=lambda m: print(m, file=sys.stderr), brief=brief,
+                    **_conversation_token_limits(args))
     for a in g.attempts:
         print(f"  attempt {a['attempt']}: " + ("PASS" if not a["problems"] else f"{len(a['problems'])} problem(s): "
                                                 + "; ".join(a["problems"][:3])))
@@ -1385,6 +1393,27 @@ def cmd_verify(args):
     return 0 if rec.passed else 1
 
 
+def _add_conversation_token_arguments(parser):
+    from .resources import DEFAULT_CONTEXT_TOKENS, DEFAULT_MAX_OUTPUT_TOKENS
+
+    def positive(value):
+        try:
+            number = int(value)
+            if number > 0:
+                return number
+        except ValueError:
+            pass
+        raise argparse.ArgumentTypeError("must be a positive integer")
+
+    parser.add_argument("--max-context-tokens", type=positive, default=None,
+                        help=f"estimated conversation/custom-transform input limit before history rollover (default "
+                             f"{DEFAULT_CONTEXT_TOKENS}); set with --model for smaller windows, leaving "
+                             "room for output and estimation error")
+    parser.add_argument("--max-output-tokens", type=positive, default=None,
+                        help=f"maximum output tokens per conversation/custom-transform call (default {DEFAULT_MAX_OUTPUT_TOKENS}); "
+                             "must fit the selected model's output limit")
+
+
 def main(argv=None) -> int:
     from .settings import logs_dir
     diag.setup_app_logging(logs_dir())
@@ -1477,6 +1506,7 @@ def main(argv=None) -> int:
     p.add_argument("--model", default=None)
     p.add_argument("--no-review", action="store_true",
                    help="skip Claude's visual check of the rendered sample pages (--no-render skips it too)")
+    _add_conversation_token_arguments(p)
     p.add_argument("--ack-review", action="store_true",
                    help="run even when Claude's visual check flagged a blocking problem (you have looked at it)")
     p.add_argument("--save-as", default=None, metavar="NAME",
@@ -1504,6 +1534,7 @@ def main(argv=None) -> int:
     p.add_argument("--no-render", action="store_true")
     p.add_argument("--model", default=None)
     p.add_argument("--no-review", action="store_true", help="skip Claude's visual check of the sample pages")
+    _add_conversation_token_arguments(p)
     p.add_argument("--ack-review", action="store_true", help="run even when Claude's visual check flagged a problem")
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)

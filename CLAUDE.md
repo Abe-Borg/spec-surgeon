@@ -1509,8 +1509,12 @@ tells you every other place that must follow.
   explicit reviewed common-outcome declaration. Keep scripted/live cohorts, unknown measurements, human review and
   engine readiness distinct. End-to-end workflow measurements explicitly include additional model spend and human work
   outside recovery. Never describe the scripted demonstration as measured customer or model performance.
+  Version 2 requires a nonblank reviewer name before counting completed review or human acceptance; unnamed
+  judgments remain recorded and their runs remain in cost/time totals, with acceptance rates unknown.
 - Working context defaults to 900,000 estimated input tokens. Prioritize agent capability during development;
   resource optimization comes later. Preserve rollover, archival integrity and explicitly saved resource overrides.
+  `do` and `retry` expose context/output token overrides for smaller models and carry them through chat,
+  noninteractive compilation and an approved custom-transform handoff.
 
 ## Environment notes
 

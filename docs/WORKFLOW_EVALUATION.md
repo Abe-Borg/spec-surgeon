@@ -158,8 +158,10 @@ less elapsed time, fewer interventions and lower cost are better only at accepta
 The tables show total batches/files, ready files, review coverage, confirmed accepted counts,
 acceptance rates, elapsed time, interventions and live estimated cost per accepted batch.
 
-Human acceptance requires all files READY, recorded supported final assertions passing, and
-all three human-review judgments true. An acceptance rate remains unknown until every batch
+Human acceptance requires all files READY, recorded supported final assertions passing, all three
+human-review judgments true, and a nonblank reviewer name. A missing, empty or whitespace-only name
+leaves the review incomplete even when every judgment is true; the supplied judgments remain recorded.
+An acceptance rate remains unknown until every batch
 in that cohort has complete human review; the confirmed accepted count is still shown. An
 unknown time, intervention count or cost makes that aggregate and its delta unknown. Live cost
 per confirmed accepted batch includes failed and unreviewed live runs; its denominator may

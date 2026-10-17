@@ -229,6 +229,44 @@ def test_partial_measurements_never_make_missing_review_time_interventions_or_co
     assert result["pairs"][0]["estimated_cost_usd_delta"] is None
 
 
+@pytest.mark.parametrize("reviewer", [None, "", " \t\n"])
+@pytest.mark.parametrize("satisfied", [True, False])
+def test_paired_review_without_a_named_reviewer_never_counts_as_complete(tmp_path, reviewer, satisfied):
+    manifest = _paired_manifest(tmp_path)
+
+    def change(case):
+        case["human_review"]["request_satisfied"] = satisfied
+        if reviewer is None:
+            case["human_review"].pop("reviewer")
+        else:
+            case["human_review"]["reviewer"] = reviewer
+
+    _change_case(manifest, 1, change)
+    result = evaluate(manifest)
+    row = result["cases"][1]
+    assert row["human_review"]["request_satisfied"] is satisfied  # Preserve the supplied judgment.
+    assert row["human_review_complete"] is False and row["human_accepted"] is False
+    current = result["comparisons"][0]["current"]
+    assert current["human_reviewed_batches"] == current["human_accepted_batches"] == 0
+    assert current["human_review_coverage"] == 0
+    assert current["human_acceptance_rate"] is None
+    assert current["cost_per_human_accepted_batch_usd"] is None
+    assert current["estimated_cost_usd"] == 1  # Unreviewed work still costs money.
+    assert result["pairs"][0]["human_accepted_delta"] is None
+    assert result["comparisons"][0]["current_minus_baseline"]["human_acceptance_rate"] is None
+
+
+def test_named_reviewer_can_complete_a_negative_review(tmp_path):
+    manifest = _paired_manifest(tmp_path)
+    _change_case(manifest, 1, lambda c: c["human_review"].update(request_satisfied=False))
+    result = evaluate(manifest)
+    assert result["cases"][1]["human_review_complete"] is True
+    assert result["cases"][1]["human_accepted"] is False
+    current = result["comparisons"][0]["current"]
+    assert current["human_reviewed_batches"] == 1 and current["human_acceptance_rate"] == 0
+    assert result["pairs"][0]["human_accepted_delta"] == -1
+
+
 def test_scripted_and_unknown_pairs_never_enter_live_economics(tmp_path):
     manifest = _paired_manifest(tmp_path, pairs=3)
     for index in (2, 3):

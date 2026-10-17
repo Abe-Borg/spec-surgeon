@@ -123,6 +123,9 @@ settings; resume with `--max-context-tokens 900000` to increase an older investi
 Use `--budget`, `--max-attempts`, `--max-calls`, `--max-output-tokens`, `--max-total-tokens`,
 `--max-context-tokens`, `--model`, and `--effort` on `workspace plan`, `workspace run` or `resolve`. The desktop exposes budget, iteration,
 token, and effort controls and preserves a previously selected model.
+The `do` and `retry` commands also accept `--max-context-tokens` and `--max-output-tokens` alongside `--model`;
+both chat and noninteractive compilation, plus an approved custom-transform handoff, honor those token limits.
+Choose a response limit supported by the model and leave additional room for token-estimation error.
 Resource pauses preserve work. Increasing an allowance does not weaken validation.
 Saved resource settings are restored when reopening a workspace or investigation. CLI flags
 override only the settings supplied: lowering a budget remains effective on later continuations.
