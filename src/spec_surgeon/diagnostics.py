@@ -54,6 +54,9 @@ from pathlib import Path
 from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence
 
 from . import __version__
+from .telemetry import (APP_EVENTS, RedactingFormatter, SafeRotatingHandler, context, context_scope,
+                        diagnostic_failure, error_fields, event, install_exception_hooks, new_id,
+                        redact_text, scope, setup_events, span)
 
 LOGS = "logs"
 RUN_LOG = "run.log"
@@ -391,8 +394,9 @@ class Tracer:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 self._fh = open(self.path, "a" if append else "w", encoding="utf-8", newline="\n")
-            except OSError:
+            except OSError as exc:
                 self._fh = None
+                diagnostic_failure(self.path, exc)
         if append:
             self._raw("")
         self._raw(title)
@@ -401,15 +405,18 @@ class Tracer:
         self._raw("")
 
     def _raw(self, text: str) -> None:
+        text = redact_text(text)
         self.lines.append(text)
         if self._fh is not None:
             try:
                 self._fh.write(text + "\n")
                 self._fh.flush()
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as exc:
+                diagnostic_failure(self.path, exc)
 
     def note(self, stage: str, msg: str) -> None:
+        event("file.checkpoint", stage=stage, message=msg, trace_path=self.path,
+              op_number=self.op[0] if self.op else None, op=self.op[1] if self.op else None)
         first, *rest = (str(msg).splitlines() or [""])
         self._raw(f"{now()}  {stage:<11} {first}")
         for line in rest:
@@ -467,16 +474,16 @@ def append_trace(path: Optional[Path], lines: Sequence[str]) -> None:
         return
     try:
         with open(path, "a", encoding="utf-8", newline="\n") as fh:
-            fh.write("".join(line + "\n" for line in lines))
-    except OSError:
-        pass
+            fh.write("".join(redact_text(line) + "\n" for line in lines))
+    except OSError as exc:
+        diagnostic_failure(path, exc)
 
 
 def trace_event(stage: str, msg: str, block: str = "") -> List[str]:
     """The lines ``Tracer.note`` + ``Tracer.block`` would write, for a trace continued by ``append_trace``."""
-    first, *rest = (str(msg).splitlines() or [""])
+    first, *rest = (redact_text(str(msg)).splitlines() or [""])
     out = [f"{now()}  {stage:<11} {first}"] + [TRACE_INDENT + r for r in rest]
-    out += [TRACE_INDENT + line for line in str(block).rstrip("\n").splitlines()] if block else []
+    out += [TRACE_INDENT + line for line in redact_text(str(block)).rstrip("\n").splitlines()] if block else []
     return out
 
 
@@ -537,15 +544,19 @@ class RunLog:
             try:
                 self.path.parent.mkdir(parents=True, exist_ok=True)
                 self._fh = open(self.path, "a", encoding="utf-8", newline="\n")
-            except OSError:
+            except OSError as exc:
                 self._fh = None
+                diagnostic_failure(self.path, exc)
         for h in header:
             self._write(h, stamp=False)
 
     def __call__(self, msg: str) -> None:
-        if self.progress is not None:
-            self.progress(msg)
         self._write(msg)
+        if self.progress is not None:
+            try:
+                self.progress(msg)
+            except Exception as exc:
+                event("diagnostics.progress_callback_failed", level="warning", **error_fields(exc))
 
     def detail(self, msg: str) -> None:
         self._write(msg)
@@ -557,14 +568,14 @@ class RunLog:
     def _write(self, msg: str, stamp: bool = True) -> None:
         if self._fh is None:
             return
-        first, *rest = (str(msg).splitlines() or [""])
+        first, *rest = (redact_text(str(msg)).splitlines() or [""])
         text = (f"{now()}  {first}" if stamp else first) + "\n" + "".join(" " * 14 + r + "\n" for r in rest)
         with self._lock:
             try:
                 self._fh.write(text)
                 self._fh.flush()
-            except (OSError, ValueError):
-                pass
+            except (OSError, ValueError) as exc:
+                diagnostic_failure(self.path, exc)
 
     def close(self) -> None:
         with self._lock:
@@ -582,16 +593,23 @@ def setup_app_logging(log_dir: Path) -> Optional[Path]:
     """Send the ``spec_surgeon`` loggers to ``<log_dir>/spec-surgeon.log`` (rotating: 2 MB × 4). Idempotent; None when
     the folder cannot be written (the app runs on without a log)."""
     path = Path(log_dir) / APP_LOG
+    setup_events(log_dir)
+    install_exception_hooks()
     logger = logging.getLogger("spec_surgeon")
-    for h in logger.handlers:
-        if isinstance(h, RotatingFileHandler) and Path(h.baseFilename) == path.resolve():
+    for h in list(logger.handlers):
+        if (isinstance(h, RotatingFileHandler) and Path(h.baseFilename) == path.resolve()
+                and getattr(h, "owner_pid", os.getpid()) == os.getpid()):
             return path
+        if isinstance(h, SafeRotatingHandler):
+            logger.removeHandler(h)
+            h.close()
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        handler = RotatingFileHandler(path, maxBytes=2 * 2 ** 20, backupCount=3, encoding="utf-8", delay=True)
-    except OSError:
+        handler = SafeRotatingHandler(path, maxBytes=2 * 2 ** 20, backupCount=3, encoding="utf-8")
+    except OSError as exc:
+        diagnostic_failure(path, exc)
         return None
-    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)-7s %(message)s"))
+    handler.setFormatter(RedactingFormatter("%(asctime)s %(levelname)-7s %(name)s [%(process)d:%(threadName)s] %(message)s"))
     logger.addHandler(handler)
     logger.setLevel(logging.INFO)
     return path
@@ -743,6 +761,13 @@ records, the Tier B history — and, under app-logs/, the application's own logs
 computer and the program. When the window's session moved on after that run (a reply, a new request or a newer
 preview opened a newer session folder), that folder is under results-later/<folder name>/, laid out the same way.
 
+Structured timelines are in logs/events.jsonl, logs/<name>.trace.events.jsonl, and
+app-logs/app-events-<pid>.jsonl (including retained rotations). These contain UTC timestamps,
+session/run/action/span IDs, process/thread identity, durations, decisions and exception chains.
+Follow parent_span_id to the initiating operation; deduplicate mirrored events by event_id.
+A *.succeeded event means a function returned: inspect status/passed/counts for the document outcome.
+For an unfinished operation, find its *.started event and its last checkpoint, then inspect crash/trace logs.
+
 Not in here: the documents — no source file, edited copy, failed copy, rendered PDF or page image. The records, plans
 and logs do quote document text (the paragraphs that changed or failed): share this bundle the way you would share
 the specs themselves.
@@ -825,7 +850,8 @@ def make_bundle(dest: Path, run_dir: Optional[Path] = None, app_logs: Optional[P
             later.append(root)
         if app_logs is not None and Path(app_logs).is_dir():
             for p in sorted(Path(app_logs).iterdir()):
-                if p.is_file() and (p.suffix == ".log" or ".log." in p.name or p.name.startswith("compile-")) \
+                if p.is_file() and (p.suffix in (".log", ".jsonl") or ".log." in p.name
+                                    or ".jsonl." in p.name or p.name.startswith("compile-")) \
                         and p.stat().st_size <= MAX_BUNDLED_FILE:
                     arc = "app-logs/" + p.name
                     z.write(p, arc)
@@ -848,5 +874,6 @@ def write_json(path: Path, data: Any) -> Optional[Path]:
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         Path(path).write_text(json.dumps(data, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
         return Path(path)
-    except (OSError, TypeError, ValueError):
+    except (OSError, TypeError, ValueError) as exc:
+        diagnostic_failure(path, exc)
         return None

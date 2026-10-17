@@ -293,6 +293,7 @@ class MainWindow(QMainWindow):
         self._refresh_files()
         self._inputs_changed()
         self.go(0)
+        diag.event("ui.window.ready", session_id=session.diagnostic_id, fresh=fresh)
 
     # ---- layout -----------------------------------------------------------------------------------
     def _build(self) -> None:
@@ -590,6 +591,7 @@ class MainWindow(QMainWindow):
     def sync(self) -> None:
         """Read the paths into the session (on the GUI thread, before a job starts)."""
         s, f = self.session, self.files_page
+        before = (s.folder, s.template, s.out_root)
         new_folder = Path(f.folder.text()) if f.folder.text() else None
         if new_folder != s.folder:
             s.reset_set_aside()
@@ -598,6 +600,10 @@ class MainWindow(QMainWindow):
         s.template = Path(f.template.text()) if f.template.text() else None
         if f.out.text():
             s.out_root = Path(f.out.text())
+        if before != (s.folder, s.template, s.out_root):
+            diag.event("ui.inputs.changed", session_id=s.diagnostic_id,
+                       folder=str(s.folder) if s.folder else None, template=str(s.template) if s.template else None,
+                       out_root=str(s.out_root), conversation_open=s.conversation is not None)
 
     def _widget_key(self, keep_spec: bool = True, request: Optional[str] = None) -> tuple:
         """The inputs a preview depends on that live in the widgets. A loaded spec counts only while no request is
@@ -711,6 +717,7 @@ class MainWindow(QMainWindow):
     @Slot(int)
     def _nav_changed(self, row: int) -> None:
         if row >= 0:
+            diag.event("ui.navigation.changed", session_id=self.session.diagnostic_id, step=row + 1)
             self.stack.setCurrentIndex(row)
             self._refresh_nav()
 
@@ -1064,6 +1071,8 @@ class MainWindow(QMainWindow):
         """Run ``fn(log)`` in the background; ``on_done(result)`` runs on the GUI thread; an error is shown on
         ``page`` (the step whose button started the job)."""
         if self.busy or self.updating:
+            diag.event("ui.action.refused", level="warning", session_id=self.session.diagnostic_id,
+                       action=label_, reason="busy" if self.busy else "updating")
             return False
         self.sync()
         self._on_done = on_done
@@ -1073,7 +1082,11 @@ class MainWindow(QMainWindow):
         self.write(f"\n=== {label_} ===")
         for page in (self.request_page, self.preview_page, self.run_page, self.files_page):
             page.info.hide()
-        start_job(self.bridge, fn)
+        self._job_context = {"session_id": self.session.diagnostic_id, "action_id": diag.new_id(), "action": label_}
+        self._job_started = time.perf_counter()
+        with diag.scope(**self._job_context):
+            diag.event("ui.action.queued", tracked=track, step=self.stack.currentIndex() + 1)
+            start_job(self.bridge, fn)
         return True
 
     @Slot(str)
@@ -1096,11 +1109,15 @@ class MainWindow(QMainWindow):
     @Slot(object)
     def _job_done(self, result) -> None:
         on_done, self._on_done = self._on_done, None
+        displayed = False
         try:
-            if on_done is not None:
-                on_done(result)
-            elif result:
-                self.write(str(result))
+            with diag.scope(**getattr(self, "_job_context", {})):
+                with diag.span("ui.result.display"):
+                    if on_done is not None:
+                        on_done(result)
+                    elif result:
+                        self.write(str(result))
+                    displayed = True
         except Exception:
             self.write("ERROR while showing the result:\n" + traceback.format_exc())
         finally:
@@ -1108,9 +1125,16 @@ class MainWindow(QMainWindow):
             self.set_busy(False)
             self._refresh_chat()
             self._refresh_nav()
+            diag.event("ui.action.completed", **getattr(self, "_job_context", {}), displayed=displayed,
+                       duration_ms=round((time.perf_counter() - getattr(self, "_job_started", time.perf_counter()))
+                                         * 1000, 3))
 
     @Slot(str, str)
     def _job_failed(self, message: str, tb: str) -> None:
+        diag.event("ui.action.failed", level="error", **getattr(self, "_job_context", {}),
+                   message=message, traceback=tb,
+                   duration_ms=round((time.perf_counter() - getattr(self, "_job_started", time.perf_counter()))
+                                     * 1000, 3))
         self._on_done = None
         self.log.appendPlainText("ERROR: " + message + "\n" + "\n".join("    " + line for line in tb.rstrip().splitlines()))
         self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
@@ -2137,7 +2161,10 @@ class MainWindow(QMainWindow):
                 "Spec Surgeon", "A Preview or Run is in progress. Close anyway?\n\nA run that started still finishes "
                 "its files before the program exits."):
             event.ignore()
+            diag.event("ui.window.close_cancelled", session_id=self.session.diagnostic_id, busy=self.busy)
             return
+        diag.event("ui.window.closing", session_id=self.session.diagnostic_id, busy=self.busy,
+                   updating=self.updating, forced=self.force_close)
         self.save_settings()
         for v in self._viewers:
             v.close()
@@ -2239,6 +2266,8 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
 
 
 def _install_excepthook(window_ref: List[Optional[MainWindow]]) -> None:
+    previous_hook = sys.excepthook
+
     def hook(exc_type, exc, tb):
         text = "".join(traceback.format_exception(exc_type, exc, tb))
         _append_error_log("UNEXPECTED ERROR in the window\n" + text)
@@ -2250,7 +2279,8 @@ def _install_excepthook(window_ref: List[Optional[MainWindow]]) -> None:
                                                         f"{logs_dir() / 'spec-surgeon.log'}):\n\n{exc}")
         except Exception:
             pass
-        sys.__excepthook__(exc_type, exc, tb)
+        previous_hook(exc_type, exc, tb)          # preserves diagnostics and any host-installed exception hook
+    hook._spec_surgeon = True
     sys.excepthook = hook
 
 
