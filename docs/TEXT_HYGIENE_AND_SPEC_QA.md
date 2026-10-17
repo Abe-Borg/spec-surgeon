@@ -1,6 +1,6 @@
 # Text hygiene and specification QA — items 41–49
 
-Available in the source checkout; the published installer version is unchanged.
+Available starting in v0.8.0.
 
 | Item | Operation or audit | Behavior |
 |---|---|---|

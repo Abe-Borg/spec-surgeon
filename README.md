@@ -1,13 +1,13 @@
 # Spec Surgeon
 
-**Source additions: text hygiene and specification QA (items 41–49).** Character-only
+**New in v0.8.0: text hygiene and specification QA (items 41–49).** Character-only
 space, quote, dash and non-breaking-space operations predict every change. Defined-term
 capitalization requires an individual user pick for each occurrence Claude proposes.
 Five report-only audits cover placeholders, section references, reference-standard editions,
 issue readiness and project identity. Open **File → Spec QA audits…** or run
 `spec-surgeon audit Specs --out SPEC_QA.md`. [Usage and limits](docs/TEXT_HYGIENE_AND_SPEC_QA.md).
 
-**In this source checkout: persistent multi-project workspaces and ample agent resources.**
+**New in v0.8.0: persistent multi-project workspaces and ample agent resources.**
 The new `spec-surgeon workspace` commands and desktop **Multi-project workspace** window inventory multiple
 folders recursively, keep project facts and requests separate, and retain verified candidates while remaining
 documents are investigated. Recovery can be reopened and continued with its evidence, attempts, and scoped user
@@ -15,8 +15,7 @@ answers intact. Agents investigate and propose an explicit outcome contract for 
 methods while independent checks enforce that contract. Supported outcomes include per-document title roles,
 formatting, exact wording edits, paragraph insertion/deletion, page setup, and header/footer templates or removal.
 Read-only analysis scripts, durable context archives, sandboxed custom methods, and a separate critic support
-difficult cases. See [Adaptive workspaces](docs/ADAPTIVE_WORKSPACES.md). This is source functionality; the published
-installer remains the version identified below.
+difficult cases. See [Adaptive workspaces](docs/ADAPTIVE_WORKSPACES.md).
 
 The default investigation allowance is now **50 candidate attempts per problem group, 512 model calls,
 64,000 output tokens per call, 20 million estimated total tokens, maximum reasoning effort, and $250 estimated
@@ -24,7 +23,7 @@ model spend**. These are configurable ceilings, not spending targets. Each proje
 allowance; a workspace containing several projects can spend more than one allowance. No model call or charge is
 needed to inventory files, review saved progress, or execute an unambiguous approved goal using built-in operations.
 
-**Latest: v0.7.1 — built-in edits and snippets, verified chains, bounded recovery and local repair memory.** Includes everything in v0.6.0 and the recovery review fixes. [v0.7.1 release notes](docs/releases/v0.7.1.md) include installation and update instructions.
+**Latest: v0.8.0 — adaptive workspaces, document cleanup, styles, numbering, tables and specification QA.** Includes everything in v0.7.1, built-in operations batches 2–5, text hygiene and report-only audits, resumable investigations and expanded local diagnostics. [v0.8.0 release notes](docs/releases/v0.8.0.md) include installation and update instructions. Earlier: [v0.7.1 release notes](docs/releases/v0.7.1.md).
 
 **New in v0.7.1: bounded recovery and local repair memory.** Investigate failed requests, previews and batches within an explicit model budget, try verified repairs or sequences on copies, review the final result, and remember useful cases for future investigations. See [Recovery and local repair memory](docs/RECOVERY.md) for desktop and CLI usage, limits and privacy details, and the [real-batch evaluation protocol](docs/RECOVERY_EVALUATION.md) for validation still to be done.
 

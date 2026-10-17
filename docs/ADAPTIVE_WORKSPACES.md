@@ -2,8 +2,8 @@
 
 Workspaces retain project boundaries, requests, evidence, user decisions, candidate outputs,
 and remaining problems above the existing EditSpec, chain and recovery engine. Originals remain
-untouched; exporting verified copies is a separate action. This source feature does not announce
-a released Windows installer. The existing single-folder workflow remains available.
+untouched; exporting verified copies is a separate action. Available starting in v0.8.0.
+The existing single-folder workflow remains available.
 
 ## Start and inspect
 
