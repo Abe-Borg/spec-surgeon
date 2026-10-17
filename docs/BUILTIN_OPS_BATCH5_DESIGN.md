@@ -413,3 +413,53 @@ whole. Batch 4's import already touches `(numbering, "*", "add")`.
    rotated for landscape.
 9. Not in this batch: inserting section breaks around a schedule, restarting lists with new `w:num` instances, tracked
    table or numbering changes, numbering in headers/footers/text boxes, numStyleLink lists, custom (`001`) formats.
+
+## Built (2026-10-17): what the build and the review changed
+
+Built verifier-first by a list-model builder (the groundwork), then four builders in parallel — the numbering conversions
+(33–34), list levels and the audit (35–36), tables (37–38), sections (39–40) — each put through an adversarial review.
+Every finding was reproduced before it was fixed, and each fix is pinned by a test that fails without it. Each module's
+docstring is the full definition; the departures from the sections above:
+
+**The list model (§0)** — `ops/lists.py` ↔ `verify/lists.py`, compared on every paragraph of ten fixture variants and
+~10,000 random paragraphs, with planted shared defects in each rule. Departures: a value that is present but not a whole
+number makes its definition unreadable; an unreadable paragraph makes the rest of its list `earlier`. **Not evaluated**
+grew from the design's list to every case where Word's behaviour is uncertain or Word and LibreOffice differ: full
+override levels (Codex on #32), shared abstractNums (Codex), a `%j` naming a level with no value (`skipped` — LibreOffice
+shows the level's start and continues from it, and a level a deeper paragraph reached while it had no value stays
+uncertain for its next paragraph), a startOverride level starting a second time (Word may apply the override only once),
+lists defined through a numbering style (`numStyleLink` and the `styleLink` definition behind it), a paragraph whose
+level the two readings of numPr inheritance (as a unit / element by element) give differently (`ambiguous-level`), and
+negative values. `list_is_clean` refuses any `w:lvlOverride` on a destination. `has_restart_rule` names the levels whose
+restart rule LibreOffice ignores. `count_reads` reads the chain of EVERY counted paragraph (an import replacing the
+definition of an unnumbered note's style with one based on a numbered style changed the count unseen).
+
+**The plans check what V10 checks** (Codex on #32): the conversions predict every counted paragraph's number over the
+planned output and refuse (typed) or flag (scheme) before anything is written.
+
+**Tables (§5)**: border `space` defaults to 0 (Word's value for tables); whole-element aspects `tblProps`/`trPr`/`tcPr`
+beside the element aspects; rows get an explicit `w:val="0"` where the style chain turns a row property on; the style
+chain is read as `verify:tblPr` + `verify:replace` (+ `verify:add` of a missing style) instead of a bare read. Review:
+`apply_table_style`'s clear also removes the rows' own `w:tblPrEx` borders/shading/margins (hook `strip_tblprex`),
+soft-reads everything it would clear on every selected table and checks on the output that nothing is left (a
+`set_table_props` beside it planned and passed with the style not showing); the style is imported only when a selected
+table is restyled (with `replace` and a selection matching nothing, unselected tables changed look); `clear_cell_overrides`
+removes only the competing sides (never diagonals, never unasked margin sides); flags count rows and cells inside content
+controls; right-to-left tables refuse borders and margins like `start`/`end`; header rows of floating or nested tables
+and a style's conditional row settings are flagged; a table in a text box (under "all") or shorter than the header rows
+asked is left alone and flagged instead of refusing the file.
+
+**Sections (§7)**: one `section_props` assertion per op carrying the user's raw `select`/`params` and `per_section`
+specs; the landscape flag reads the header/footer types a section displays. Review: `package.sections()` reads
+`<w:titlePg w:val="0"/>` as off (fix_page_numbering's cover-unnumbered edited a footer the cover never showed and
+passed — V10 gains `cover_unnumbered`, which reads what the cover shows in the output); `remove_header_footer` declares
+its reads of every titlePg; the verifier's selector reads an empty pStyle as no style (as the transform does); `style_in`
+must be a list; `with_tables` declares no text read; a set_page_setup assertion without its `select` fails V10; a
+content selection choosing every section is flagged; the landscape example matches a SCHEDULE heading, not "Schedule 40
+pipe".
+
+**Merging**: `check_conflicts` takes each distinct touch once (a conversion over 2,000 paragraphs took 16 s to merge).
+
+**Decisions left for Abraham** (recorded, not built): a typed spec without `word/numbering.xml` is refused (rule 10: the
+engine never creates a part — Word creates the part once any list is used); a scheme with both a roman and a letter
+level refuses roman typed PARTs as ambiguous (a typed "II." also reads as the letter level).
