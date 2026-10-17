@@ -653,6 +653,98 @@ def _hard_campaign(tmp_path, names=("a.docx", "b.docx")):
     return campaign, pid
 
 
+def test_reassigned_documents_need_new_scoped_approval_even_when_moved_back(tmp_path):
+    campaign = make(tmp_path)
+    north, south = campaign.projects
+    original = campaign.projects[north]["document_ids"][0]
+    moved = campaign.projects[south]["document_ids"][0]
+    campaign.plan(north, "One-inch left margin", options=opts(), client=FakeClient(proposal()))
+    campaign.approve_plan(north, campaign.projects[north]["proposed_plan"]["id"])
+    for _ in range(2):
+        campaign.set_project([moved], north)
+        campaign = load_campaign(campaign.out_dir)
+        campaign.run(options=opts(), client=FakeClient())
+        assert campaign.documents[original]["status"] == "READY", campaign.to_text()
+        assert campaign.documents[moved]["status"] != "READY", campaign.to_text()
+        assert not campaign.documents[moved].get("output")
+        assert moved in campaign.projects[north]["review_required_docs"]
+        campaign.plan(north, "One-inch left margin", doc_ids=[moved], options=opts(), client=FakeClient(proposal()))
+        campaign.approve_plan(north, campaign.projects[north]["proposed_plan"]["id"])
+        campaign.run(options=opts(), client=FakeClient())
+        assert campaign.documents[moved]["status"] == "READY", campaign.to_text()
+        campaign.set_project([moved], south)
+
+
+def test_missing_document_goal_cannot_inherit_a_scoped_plan_after_reload(tmp_path):
+    source = doc(tmp_path / "source", "a.docx")
+    doc(source.parent, "b.docx")
+    campaign = create_campaign([str(source.parent)], tmp_path / "workspace")
+    pid = next(iter(campaign.projects))
+    approved, unapproved = campaign.projects[pid]["document_ids"]
+    campaign.plan(pid, "One-inch left margin", doc_ids=[approved], options=opts(), client=FakeClient(proposal()))
+    campaign.approve_plan(pid, campaign.projects[pid]["proposed_plan"]["id"])
+    # Older workspaces could contain newly assigned documents without map entries.
+    del campaign.projects[pid]["document_goals"][unapproved]
+    campaign._save("legacy_missing_scoped_goal")
+    loaded = load_campaign(campaign.out_dir)
+    loaded.run(options=opts(), client=FakeClient())
+    assert loaded.documents[approved]["status"] == "READY", loaded.to_text()
+    assert loaded.documents[unapproved]["status"] != "READY", loaded.to_text()
+    assert not loaded.documents[unapproved].get("output")
+
+
+def test_ready_output_without_a_scoped_goal_cannot_be_exported_after_reload(tmp_path):
+    source = doc(tmp_path / "source")
+    campaign = create_campaign([str(source)], tmp_path / "workspace")
+    pid, did = next(iter(campaign.projects)), next(iter(campaign.documents))
+    campaign.plan(pid, "One-inch left margin", options=opts(), client=FakeClient(proposal()))
+    campaign.approve_plan(pid, campaign.projects[pid]["proposed_plan"]["id"])
+    campaign.run(options=opts(), client=FakeClient())
+    assert campaign.documents[did]["status"] == "READY", campaign.to_text()
+    # A pre-fix checkpoint may contain a verified candidate with no scoped approval.
+    del campaign.projects[pid]["document_goals"][did]
+    campaign._save("legacy_ready_output_without_approval")
+    loaded = load_campaign(campaign.out_dir)
+    with pytest.raises(ValueError, match="no approved scoped goal"):
+        loaded.export(tmp_path / "delivery")
+    assert not (tmp_path / "delivery").exists()
+
+
+@pytest.mark.parametrize("changed", ["request", "scope", "template"])
+def test_approval_rejects_changed_saved_draft_after_reload(tmp_path, changed):
+    source = doc(tmp_path / "source", "a.docx")
+    doc(source.parent, "b.docx")
+    campaign = create_campaign([str(source.parent)], tmp_path / "workspace")
+    pid = next(iter(campaign.projects))
+    request = "One-inch left margin"
+    campaign.plan(pid, request, options=opts(), client=FakeClient(proposal()))
+    plan_id = campaign.projects[pid]["proposed_plan"]["id"]
+    ids = campaign.projects[pid]["document_ids"]
+    template = str(doc(tmp_path / "templates")) if changed == "template" else None
+    campaign.save_plan_draft(pid, "Two-inch left margin" if changed == "request" else request,
+                             doc_ids=ids[:1] if changed == "scope" else ids, template=template)
+    before = (campaign.out_dir / "campaign.json").read_bytes()
+    loaded = load_campaign(campaign.out_dir)
+    with pytest.raises(ValueError, match="draft changed"):
+        loaded.approve_plan(pid, plan_id)
+    assert (campaign.out_dir / "campaign.json").read_bytes() == before
+    assert not loaded.projects[pid].get("approvals")
+
+
+def test_approval_accepts_unchanged_draft_with_reordered_scope(tmp_path):
+    source = doc(tmp_path / "source", "a.docx")
+    doc(source.parent, "b.docx")
+    campaign = create_campaign([str(source.parent)], tmp_path / "workspace")
+    pid = next(iter(campaign.projects))
+    campaign.plan(pid, "One-inch left margin", options=opts(), client=FakeClient(proposal()))
+    plan_id = campaign.projects[pid]["proposed_plan"]["id"]
+    campaign.save_plan_draft(pid, "One-inch left margin", doc_ids=campaign.projects[pid]["document_ids"][::-1])
+    loaded = load_campaign(campaign.out_dir)
+    loaded.approve_plan(pid, plan_id)
+    loaded.run(options=opts(), client=FakeClient())
+    assert all(d["status"] == "READY" for d in loaded.documents.values()), loaded.to_text()
+
+
 def test_refinement_rotates_hard_documents_without_resetting_attempt_allowance(tmp_path):
     campaign, pid = _hard_campaign(tmp_path)
     wrong_second = goal()

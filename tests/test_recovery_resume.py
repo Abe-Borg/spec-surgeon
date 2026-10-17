@@ -61,6 +61,59 @@ def test_scoped_answer_splits_a_group_without_resuming_unanswered_documents(tmp_
     assert second.decisions[0]["files"] == [str(paths[0])]
 
 
+@pytest.mark.parametrize("sliced", [False, True])
+def test_scoped_unsupported_keeps_other_files_running_and_can_resume_later(tmp_path, sliced):
+    paths = documents(tmp_path)
+    goal = spec([margin()])
+    originals = [p.read_bytes() for p in paths]
+    reason = "This document needs an unsupported layout capability."
+    unavailable = resp(thinking("Keep this signed investigation"),
+                       tool("unsupported", {"files": [str(paths[0])], "reason": reason}, "unsupported"),
+                       tool("list_styles", {"file": str(paths[0])}, "after-stop"))
+    policy = opts(group_call_slice=1)
+    first = recovery.recover(paths, goal["request"], tmp_path / "session", spec=goal, options=policy,
+        _single_round=sliced, client=FakeClient(unavailable) if sliced else FakeClient(unavailable, submit(candidate(goal))))
+    if sliced:
+        reopened = recovery.load_recovery(first.out_dir)
+        assert len(reopened.session_state["groups"]) == 2
+        client = FakeClient(submit(candidate(goal)))
+        first = recovery.resume_recovery(first.out_dir, options=policy, _single_round=True,
+                                         _continue_from=first, client=client)
+        assert len(client.requests) == 1
+    assert [f.status for f in first.files] == ["UNRESOLVED", "READY"], first.to_text()
+    assert first.files[0].reason == reason and first.files[0].attempts == 0
+    assert first.attempts[0]["results"][0]["source"] == str(paths[1])
+    states = list(recovery.load_recovery(first.out_dir).session_state["groups"].values())
+    assert {s["status"] for s in states} == {"unsupported", "complete"}
+    assert len({s["context_folder"] for s in states}) == 2
+    assert all("Keep this signed investigation" in json.dumps(s["messages"]) for s in states)
+    from spec_surgeon.conversation import check_pairing
+    for state in states:
+        check_pairing(state["messages"])
+    ready_bytes = first.files[1].output.read_bytes()
+    retry = FakeClient(submit(candidate(goal)))
+    final = recovery.resume_recovery(first.out_dir, options=policy, client=retry)
+    assert len(retry.requests) == 1 and len(final.ready) == 2, final.to_text()
+    assert final.files[1].output.read_bytes() == ready_bytes
+    assert [f.attempts for f in final.files] == [1, 1]
+    assert [p.read_bytes() for p in paths] == originals
+
+
+def test_scoped_unsupported_preserves_another_files_pending_question(tmp_path):
+    paths = documents(tmp_path, 3)
+    goal = spec([margin()])
+    result = recovery.recover(paths, goal["request"], tmp_path / "session", spec=goal,
+        options=opts(group_call_slice=1), client=FakeClient(
+            resp(tool("need_user", {"files": [str(paths[0])], "question": "Which margin for the cover?"})),
+            resp(tool("unsupported", {"files": [str(paths[1])], "reason": "Needs a layout capability."})),
+            submit(candidate(goal))))
+    assert [f.status for f in result.files] == ["NEEDS_INPUT", "UNRESOLVED", "READY"], result.to_text()
+    assert result.question_records[0]["files"] == [str(paths[0])]
+    assert result.question_records[0]["status"] == "open"
+    assert {s["status"] for s in result.session_state["groups"].values()} == {"needs_input", "unsupported"}
+    assert [r["source"] for r in result.attempts[0]["results"]] == [str(paths[2])]
+
+
 @pytest.mark.parametrize("changed", ["source", "template", "input", "output"])
 def test_reload_refuses_changed_pinned_inputs_and_verified_outputs(tmp_path, changed):
     source = documents(tmp_path, 1)[0]

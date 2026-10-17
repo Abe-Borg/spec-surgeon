@@ -174,15 +174,24 @@ class Campaign:
                                          "provisional": False, "evidence": [{"kind": "user_assignment"}],
                                          "unresolved": [], "document_ids": [], "goal": {}, "decisions": [],
                                          "runs": [], "questions": [], "status": "NEEDS_GOAL"}
-        affected = {project_id}
+        affected = set()
+        target = self.projects[project_id]
         for doc_id in ids:
             doc = self.documents[doc_id]
             old = self.projects[doc["project_id"]]
             if old["id"] == project_id:
                 continue
             old["document_ids"].remove(doc_id)
-            affected.add(old["id"])
-            self.projects[project_id]["document_ids"].append(doc_id)
+            old.get("document_goals", {}).pop(doc_id, None)
+            if "review_required_docs" in old:
+                old["review_required_docs"] = [d for d in old["review_required_docs"] if d != doc_id]
+            affected.update((old["id"], project_id))
+            target["document_ids"].append(doc_id)
+            if "document_goals" in target:
+                # An existing scoped approval never covers a newly assigned file,
+                # even if that file belonged to this project before.
+                target["document_goals"][doc_id] = {}
+                target.setdefault("review_required_docs", []).append(doc_id)
             doc["project_id"] = project_id
             doc["evidence"].append({"kind": "user_project_assignment", "project_id": project_id})
         for pid in affected:
@@ -365,6 +374,11 @@ class Campaign:
         if proposed["digest"] != _hash({k: v for k, v in proposed.items() if k != "digest"}):
             raise ValueError("The plan changed since it was proposed; generate and review it again.")
         self._scope(project, proposed["document_ids"])
+        draft = project.get("planning_draft") or {}
+        if (draft.get("request") != proposed["request"]
+                or set(draft.get("document_ids", [])) != set(proposed["document_ids"])
+                or draft.get("template") != proposed.get("template")):
+            raise ValueError("The planning draft changed since this proposal; generate and review a new plan.")
         if set(proposed["source_pins"]) != set(proposed["document_ids"]):
             raise ValueError("The proposed plan's source pins differ from its reviewed document scope.")
         validate_contract(proposed["contract"])
@@ -525,7 +539,9 @@ class Campaign:
         return answer
 
     def _goal_for(self, project, doc_id):
-        return project.get("document_goals", {}).get(doc_id, project.get("goal") or {})
+        if "document_goals" in project:
+            return project["document_goals"].get(doc_id, {})
+        return project.get("goal") or {}
 
     def _execution_files(self, project):
         from .chain import chain_templates
@@ -562,7 +578,7 @@ class Campaign:
             for project in self.projects.values():
                 if not project["document_ids"] or not project.get("goal"):
                     continue
-                if not (project.get("document_goals") or project.get("review_required_docs")
+                if not ("document_goals" in project or project.get("review_required_docs")
                         or project["goal"].get("adaptive_contract")):
                     continue
                 try:
@@ -577,7 +593,7 @@ class Campaign:
             for project in self.projects.values():
                 if not project["document_ids"] or not project.get("goal"):
                     continue
-                per_document = bool(project.get("document_goals") or project.get("review_required_docs")
+                per_document = bool("document_goals" in project or project.get("review_required_docs")
                                     or (project.get("goal") or {}).get("adaptive_contract"))
                 failures = self._check_sources(project, [] if per_document else None)
                 if failures:
@@ -964,7 +980,10 @@ class Campaign:
                         if self.documents[d]["source"] == str(f.source.resolve())), None)
             if doc is None:
                 raise ValueError("A prepared result lies outside this project.")
-            contract = self._goal_for(project, doc["id"]).get("adaptive_contract")
+            goal = self._goal_for(project, doc["id"])
+            if "document_goals" in project and not goal:
+                raise ValueError("This document has no approved scoped goal; review a new plan before export.")
+            contract = goal.get("adaptive_contract")
             if contract is None:
                 continue
             if doc is None or not doc.get("binding"):
