@@ -301,6 +301,9 @@ class MapStyles(Op):
                     frag.touches += [(part, str(bi), "pPr"), (part, str(bi), "pStyle")]
                 frag.touches += [(part, str(bi), "rPr") for bi in sorted({b for b, _, _ in t_r})]
                 frag.touches += [(part, str(bi), "markRPr") for bi, _ in t_m]
+                # the character style a run or the mark names: what set_language's and set_properties' reads of the
+                # character chains meet (batch 4)
+                frag.touches += [(part, str(bi), "rStyle") for bi in sorted({b for b, _, _ in t_r} | {b for b, _ in t_m})]
                 frag.touches += [(part, f"tbl:{k}", "tblPr") for k, _ in t_t]
             frag.touches.append((part, "scope", "verify"))      # V10 re-resolves the elements over this part
         for e in live:
@@ -330,6 +333,13 @@ class MapStyles(Op):
                 frag.touches.append((sheet.part, f"style:{e['from_id']}", "verify"))
                 if e["to_id"] in sheet.styles:
                     frag.touches.append((sheet.part, f"style:{e['to_id']}", "verify"))
+                # which elements name each style (rule 9, batch 4): every use of the from goes, the to gains uses — an
+                # op applying the from (apply_style, uses+) or mapping the to away (uses-) beside it would make the
+                # order decide which elements end where; a selection by either style (verify:uses) and
+                # remove_unused_styles' judgement (verify:uses-) read them. Declared also where nothing in scope uses
+                # the from: another op could add a use the plan never saw.
+                frag.touches += [(sheet.part, f"style:{e['from_id']}", "uses-"),
+                                 (sheet.part, f"style:{e['to_id']}", "uses+")]
 
         n_p = sum(len(v["paragraphs"]) for v in targets.values())
         n_r = sum(len(v["runs"]) for v in targets.values())

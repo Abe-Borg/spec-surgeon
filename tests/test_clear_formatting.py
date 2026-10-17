@@ -521,19 +521,19 @@ def test_clearing_beside_other_formatting_of_the_same_paragraphs_conflicts(src):
 
 def test_set_properties_reads_the_runs_it_finds_already_as_asked(src):
     """The gap the clear's builder recorded: set_properties' V10 post-condition reads every selected run, mark and
-    paragraph in the output — an already-as-asked one included — so it declares reads of them (verify:rPr, verify:markRPr,
-    verify:pPr). The SECTION title already has direct caps: set_properties alone changes nothing there, and beside a
+    paragraph in the output — an already-as-asked one included — so it declares soft reads of them (verify-props:rPr,
+    verify-props:markRPr, verify-props:pPr: an in-paragraph text edit does not reach them). The SECTION title already has direct caps: set_properties alone changes nothing there, and beside a
     clear of the same paragraph (which removes that caps) the spec is refused at plan time instead of failing V10."""
     sel = {"paragraphs": {"text_regex": "^SECTION"}}
     caps = {"op": "set_properties", "select": sel, "params": {"run": {"caps": True}, "include_paragraph_marks": False}}
     alone = get_op("set_properties").plan(DocxPackage(src), sel, caps["params"])
     assert alone.property_assertions[0]["expected_runs"] == 0                          # already as asked
-    assert (MAIN, "0", "verify:rPr") in alone.touches
+    assert (MAIN, "0", "verify-props:rPr") in alone.touches
     with pytest.raises(JobException) as e:
         plan_spec(DocxPackage(src), _spec({"op": OP, "select": sel, "params": {"paragraph": False}}, caps))
     assert e.value.code == "conflict" and "rPr" in e.value.reason
     keep = get_op("set_properties").plan(DocxPackage(src), sel, {"paragraph": {"keepNext": True}})
-    assert (MAIN, "0", "verify:pPr") in keep.touches
+    assert (MAIN, "0", "verify-props:pPr") in keep.touches
 
 
 # ---- the reuse API (apply_style's direct_formatting "clear") ---------------------------------------------------------

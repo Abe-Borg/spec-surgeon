@@ -318,3 +318,76 @@ input like a template spec (rule 12: pinned by md5, hashed by the approval token
    definition unless `existing: "replace"`.
 7. "Unused" counts field instructions that name a style, links, `basedOn`/`next` chains and tracked-change snapshots as
    uses — never removes something a reject-all or a field update could bring back into use.
+
+## Built (2026-10-17): what the build changed
+
+Built by four parallel builders on the groundwork commit, `apply_style` last on their reuse APIs, then integrated and put
+through an adversarial review (four reviewers: items 26–27, 28–29, the style import/map/apply, and remove_unused_styles with
+the verifier hooks and the profile). Every finding was reproduced before it was fixed; the tests that pin the fixes fail
+without them. Each module's docstring is the full definition; the departures from the sections above:
+
+**Items 26–27** (`set_borders_shading`, `set_paragraph_props` on styles):
+- The direct target reads `verify:pPr` of every style level below each selected paragraph and of docDefaults; the styles
+  target the same for the ancestors. Without it, "box the notes" beside "ArchNote gets a between border" planned and showed
+  another box. Cost: any style pPr change beside direct borders on a paragraph whose chain holds that style conflicts
+  (a finer aspect vocabulary for style pPr is a follow-up).
+- A post-condition on every selected paragraph (already-as-asked ones included) under both readings of border
+  inheritance, with soft reads of `pBdr`/`shd` per selected paragraph.
+- Only the elements that change are written, touched and stripped (stricter than §1.2); an emptied pPr goes.
+- `borders: {}` is `bad-params` (say `"none"`); `shading.fill` is required; colours upper-cased.
+- `set_paragraph_props`' direct path reads the style lineage when its lines rule reads it (the new styles target can set
+  `beforeLines` on a style in the same spec); one merge function (`merged_attrs`/`write_values`) for both targets.
+
+**Items 28–29** (`clear_direct_formatting`, `set_language`):
+- `keep`/`also` take element names (`b` keeps `w:b`, not `w:bCs`); a name both lists hold applies to runs and paragraphs.
+- Clear touches `(part, bi, <name>)` for every pPr child it clears, so `verify:tabs`/`verify:pBdr` readers conflict.
+- `set_language` refuses a file without a styles part; "≠ V" is exact (`en-us` is rewritten `en-US`), `replace_only`
+  casefolded; a style without `w:styleId` is left alone, a repeated id: the last one; the language kind checks the created
+  containers' places.
+
+**Item 31** (the style import, `map_styles`):
+- The closure walks only through COPIED styles; held closure styles are read with a bare `verify`.
+- With a template every `to` must resolve in the template (`bad-params` otherwise — file-independent); `keep` resolves in
+  the file first, `replace` always in the template.
+- Two extra `style-import` refusals for replaced styles (a template default; another type than the file's style of that
+  id); the name-clash rule runs after the import, copies included.
+- A pair with no element is `unused`: skipped, noted, imports nothing.
+- A numbering style as `from` is `style-mismatch`; a non-numeric `w:numId` or extension text in a numbering copy refuses
+  `style-numbering`.
+- The field-instruction flag matches a `from` in every text part's instructions (headers' STYLEREF fields name body
+  styles).
+
+**Item 32** (`remove_unused_styles`):
+- What stays is the closure of the used styles AND of every style the op does not consider (`which`/`types`), so `custom`
+  never strands a built-in's linked character style.
+- A TOC, INDEX or TOA field keeps the styles a field update applies; every `w:default` style counts as a default; `keep`
+  matches id, name or alias, casefolded.
+- The output post-condition covers the text, numbering and settings references, every basedOn/next/link and every
+  field-named style; a reference dangles only when the source defined the style.
+- Two definitions of one style id refuse (`structure`); id-less styles are never removed.
+
+**Item 30** (`apply_style`): built on the clear's reuse API (`paragraph_clearing`/`clear_paragraph` ↔ `v_decide`/
+`check_runs_and_mark`) and the import's (`plan_import`/`apply_import` ↔ `check_requested`); the style's resolution is
+`map_styles`' (with `keep` the file's own style when it has one, with `replace` always the template's).
+
+**The review round — rule 9.** Restyling is new in this batch, and the conflict grammar (`ops/base.py`) gained three forms:
+- **Soft reads** (`verify-props:<family>`, `soft_read`): reached by a change of the family, never by a `text` change of the
+  target. `set_properties`' per-paragraph reads (added in this batch) are soft — as hard reads they refused any text edit
+  of the same paragraph, which planned and passed before batch 4 (a regression the review caught).
+- **Whole-member family reads** (`(member, "*", "verify:<family>")`): a selection by `style_in`/`has_bold`/
+  `is_all_caps`/runs `color_in`, `remove_hidden_text` and `remove_notes`' colour/hidden rules read every paragraph's chain
+  (`selectors.selection_families`, added by `editspec.plan_spec`).
+- **Incremental changes** (`uses+`/`uses-`, `incremental`/`changes_collide`/`read_covers`): which elements name a style.
+  `map_styles` declares `uses-` of every from and `uses+` of every to, `apply_style` `uses+` of its style and `uses-` of each
+  restyled paragraph's old one; `remove_unused_styles` reads `(styles, "*", "verify:uses-")` — mapping beside removing is
+  now refused (it used to plan and keep the mapped-away style), the removal runs as a chain's last stage.
+
+And the reads each op's prediction makes through the style levels (`selectors.chain_reads`): the nearest table's style
+(`verify-props:tblPr` of `tbl:<k>`, which `map_styles` remaps), `verify:replace` of every chain style (an import swapping
+the definition), `verify:add` of a chain style the file lacks — in `set_properties` (direct; also `verify:props`, the family
+`set_properties` on a style now declares, which closes the gap recorded in CLAUDE.md "Plan-time conflicts for what an op
+reads" 5), `set_tab_stops` and `set_borders_shading`. `map_styles` touches `rStyle` per paragraph whose runs or mark get
+another character style; `set_style_font` with `"all"`/types reads `verify:add`/`verify:replace` of the whole styles part;
+the import declares `(styles, "name:<name>", "add")` per copy. An empty `scope` list is refused (`bad-params`); the styles
+residual strips only the last definition of a duplicated id (the one the kinds checked); the profile's unused-style counts
+survive a part that will not parse.

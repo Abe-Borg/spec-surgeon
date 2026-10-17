@@ -133,28 +133,49 @@ fire sprinkler designer; these files go to clients;
    for a header/footer part (a `set_page_setup` beside it is a plan-time conflict). Not declared: its reads of the style
    chains' tabs and of numbering (no op changes either), and `color_in`'s read of the colour chain (as `set_font`'s
    symbol rule).
-   Batch 4 (`docs/BUILTIN_OPS_BATCH4_DESIGN.md` §0.1): a paragraph-style change (`apply_style`, `map_styles`) touches
-   `(part, bi, "pPr")` and `(part, bi, "pStyle")`; an op whose prediction or post-condition reads a paragraph's style chain
-   declares `(part, bi, "verify:pStyle")` for it — `set_properties` (direct), `set_tab_stops`, `set_borders_shading`.
-   `set_properties` (direct) also reads `(part, bi, "verify:rPr" | "verify:markRPr" | "verify:pPr")` of every run, mark and
-   paragraph it selects, an already-as-asked one included (its post-condition reads them in the output: a clear or a font
-   change of the same text is a plan-time conflict). `set_borders_shading` touches `(part, bi, "pPr")` + `(part, bi,
-   "pBdr" | "shd")` per changed paragraph (only the elements that change), reads `verify:pBdr`/`verify:shd` of every
-   selected paragraph and `(styles, "style:<id>" | "docDefaults", "verify:pPr")` of every level below; its styles target
-   touches `(styles, "style:<id>", "pPr")`. `set_paragraph_props` on styles touches `(styles, "style:<id>", "pPr")` and
-   reads `verify:pPr` of every selected style (and, when its lines rule ran, of the ancestors and docDefaults — the direct
-   path reads the paragraph style lineage under the same condition). `clear_direct_formatting` touches `(part, bi, "rPr" |
-   "markRPr" | "pPr")` and `(part, bi, <name>)` for every pPr child it clears (so `verify:tabs`/`verify:pBdr` readers
-   conflict). `set_language` touches every changed run/mark rPr, style rPr and docDefaults rPr, reads `(part, "scope",
-   "verify")` of every text part and `(styles, "*", "verify")`. `map_styles` touches each restyled paragraph (`pPr`,
-   `pStyle`), run (`rPr`), mark (`markRPr`) and table (`(part, "tbl:<k>", "tblPr")`) and reads `(styles, "style:<id>",
-   "verify")` of every `from` and every `to` the document holds; `apply_style` reads the style it applies; `insert_paragraph`
-   / `ensure_end_of_section` read the style they name. The style import touches `(styles, "style:<id>", "add")` per
-   imported style, `(styles, "style:<id>", a)` for `a` in `replace, rPr, pPr, tblPr` per replaced one, `(numbering, "*",
-   "add")` when lists are copied, and reads `(styles, "style:<id>", "verify")` of every style the document holds that a
-   copy names (basedOn/link/next) or an imported list level names. `remove_unused_styles` touches `(styles, "style:<id>",
-   a)` for `a` in `remove, rPr, pPr, tblPr` per removed style and declares no reads (it re-derives from the SOURCE; the
-   ops that ADD a reference to a style read it, and the templating op reads the styles part whole).
+   Batch 4 (`docs/BUILTIN_OPS_BATCH4_DESIGN.md` §0.1 and "Built"; `base.check_conflicts`' docstring is the grammar):
+   three more forms. A **soft read** `verify-props:<family>` (`base.soft_read`) is reached by a change of that family only,
+   never by a `text` change of the target (the reading kind re-resolves its targets over the output — an in-paragraph
+   edit beside `set_properties` plans, as it did before batch 4). A **whole-member family read** `(member, "*",
+   "verify[-props]:<family>")` is reached by a change of that family anywhere in the member. **Incremental changes**
+   `uses+`/`uses-` of `(styles, "style:<id>")` — which elements name the style (`base.incremental`): two of one direction
+   commute, opposite directions collide (`base.changes_collide`); a bare `verify` read of a style (its definition) is not
+   reached by them (`base.read_covers`), `verify:uses` is by both, `verify:uses-` only by a removal.
+   A paragraph-style change (`apply_style`, `map_styles`) touches `(part, bi, "pPr")` and `(part, bi, "pStyle")`, a
+   character-style change of a run or mark `(part, bi, "rStyle")` (`map_styles`), a table-style change `(part, "tbl:<k>",
+   "tblPr")` (k = ordinal over `root.iter(w:tbl)`); `apply_style` declares `uses+` of the style it applies and `uses-` of each
+   restyled paragraph's old style, and soft-reads `pStyle` of a selected paragraph already in it; `map_styles` declares
+   `uses-` of every `from` and `uses+` of every `to` (also where nothing in scope uses the from). An op whose prediction or
+   post-condition reads a paragraph's effective formatting declares a soft `pStyle` read of it plus `selectors.chain_reads`:
+   the nearest table's `(part, "tbl:<k>", "verify-props:tblPr")`, `verify:replace` (an import swapping the definition) of
+   every style of the table, paragraph and character chains, `verify:add` of a style the chain names that the file lacks —
+   `set_properties` (direct; also `verify:props` of the chain styles, its own families, which `set_properties` on a style
+   declares as `(styles, "style:<id>", "props")`, so direct-beside-style is a conflict while `set_style_font` beside it still
+   plans), `set_tab_stops`, `set_borders_shading` (direct). `set_properties` (direct) also soft-reads `rPr`/`rStyle` of every
+   paragraph whose runs it selects, `markRPr`/`rStyle` for marks and `pPr` for paragraph flags, an already-as-asked target
+   included (its post-condition reads them in the output). A selection that reads every paragraph's chain declares
+   whole-member soft reads per part it chose from (`selectors.selection_reads`, added by `editspec.plan_spec`): `style_in`
+   → `pStyle`; `has_bold`, `is_all_caps`, runs `color_in`, `remove_hidden_text`, `remove_notes`' colour/hidden rules and
+   inline runs → `pStyle`, `rStyle`, `tblPr`. `set_borders_shading` touches `(part, bi, "pPr")` + `(part, bi, "pBdr" |
+   "shd")` per changed paragraph (only the elements that change), soft-reads `pBdr`/`shd` of every selected paragraph and
+   reads `(styles, "style:<id>" | "docDefaults", "verify:pPr")` of every level below; its styles target touches `(styles,
+   "style:<id>", "pPr")`. `set_paragraph_props` on styles touches `(styles, "style:<id>", "pPr")` and reads `verify:pPr` of
+   every selected style (and, when its lines rule ran, of the ancestors and docDefaults — the direct path reads the
+   paragraph style lineage under the same condition). `clear_direct_formatting` touches `(part, bi, "rPr" | "markRPr" |
+   "pPr")` and `(part, bi, <name>)` for every pPr child it clears (so `verify:tabs`/`verify:pBdr` readers conflict).
+   `set_language` touches every changed run/mark rPr, style rPr and docDefaults rPr, reads `(part, "scope", "verify")` of
+   every text part, whole-member soft reads `pStyle`/`rStyle`/`tblPr` of each, and `(styles, "*", "verify")`.
+   `map_styles` reads `(styles, "style:<id>", "verify")` of every `from` and every `to` the document holds; `apply_style`
+   reads the style it applies; `insert_paragraph` / `ensure_end_of_section` read the style they name. The style import
+   touches `(styles, "style:<id>", "add")` per imported style, `(styles, "name:<casefolded name>", "add")` per imported
+   copy (two imports bringing one name from two templates collide), `(styles, "style:<id>", a)` for `a` in `replace, rPr,
+   pPr, tblPr` per replaced one, `(numbering, "*", "add")` when lists are copied, and reads `(styles, "style:<id>",
+   "verify")` of every style the document holds that a copy names (basedOn/link/next) or an imported list level names.
+   `set_style_font` with `"all"` or a type selector reads `(styles, "*", "verify:add")` and `verify:replace` (an import
+   beside it would leave a style with its own font). `remove_unused_styles` touches `(styles, "style:<id>", a)` for `a` in
+   `remove, rPr, pPr, tblPr` per removed style and reads `(styles, "*", "verify:uses-")`: an op taking uses away beside it
+   (mapping, applying another style) would make the order decide what is unused — a plan-time conflict, the removal runs as
+   a chain's last stage; an op adding uses plans beside it.
 10. **Never create a part to make an edit work.** E.g. `remove_header_footer` refuses (`inheritance`) rather
     than add an empty header part. Adding members is allowed only when the op's whole purpose is the added
     member and it is predicted in `members_added` — today `apply_header_footer_template`, whose new parts
@@ -897,8 +918,10 @@ proposals and recorded in the plan's status sections.
 - `ops/base.py` — `Op`, `Plan` (v0.1.0 fields + `members_removed/added`, `property_assertions`,
   `geometry_reference/reason/template`, `ops`), `PlanFragment` (+ `touches`, `rev_ids_needed`), `JobException`,
   `merge_fragments` (conflicts, mode, revision-id ranges, geometry), `check_conflicts` + `verify_family` (the read
-  grammar of `touches`: `verify`, `verify:<family>`; rule 9). `ops/__init__.py` — registry (`@register`).
-- `ops/selectors.py` — transform-side selector resolution, `DEFAULT_PRESERVE_FONTS`, font param parsing.
+  grammar of `touches`: `verify`, `verify:<family>`, the soft `verify-props:<family>`, whole-member family reads, and —
+  batch 4 — `soft_read`, `incremental` (`uses+`/`uses-`), `read_covers`, `changes_collide`; rule 9). `ops/__init__.py` —
+  registry (`@register`).
+- `ops/selectors.py` — transform-side selector resolution, `DEFAULT_PRESERVE_FONTS`, font param parsing; (batch 4) `chain_reads`/`table_ordinals` (what an effective value reads through the style levels) and `selection_families`/`selection_reads` (what a selection reads through every paragraph's chain; `editspec.plan_spec` adds them); an empty `scope` list is refused (`bad-params`).
 - `ops/*.py` — `fix_page_numbering`, `replace_text`, `remove_header_footer`, `set_font`, `set_style_font`, `set_properties`,
   `set_doc_defaults_font`, `set_paragraph_props`, `set_page_setup`, `apply_header_footer_template`; built-in batch 1:
   `replace_table.py` (`replace_table`, `set_issue_stamp`, `_Replacing`, `find_all`, `resolve_scope`, `tracked_of`),
@@ -1784,8 +1807,11 @@ and the file PASSED with the page number still on the cover (V7 skips page 1 the
    both strip their own before V10's residual) and stays pinned as planning and verifying in both orders.
 5. **Not changed, recorded:** `set_font`'s symbol-run rule and `set_properties`' effective values with provenance also
    read the style chains from the source; a `set_style_font` beside them plans today and the compiler's "change all
-   fonts" spec relies on it (`test_sweep_fixes.py`). A style change to a symbol font beside a `set_font` is the only
-   way that read goes wrong — left for the built-in-operations round, not widened here.
+   fonts" spec relies on it (`test_sweep_fixes.py`). A style change to a symbol font beside a `set_font` is still
+   undeclared. Built-in batch 4 found a second way, now closed: `set_properties` on a style beside a direct
+   `set_properties` judging the same paragraphs by their effective value through that style planned and failed V10 — the
+   style target declares its own family (`props`) and the direct op reads it through its chains (`verify:props`), while
+   fonts (`set_style_font`) stay a family of their own (`tests/test_batch4_conflicts.py`).
 
 ## 2026-10-16 Bounded recovery, final assertions and local repair memory
 
@@ -2008,17 +2034,25 @@ fixtures `build_styles`/`build_style_template`), `apply_style` last on their reu
 Rules that came out of it:
 
 1. **A paragraph's style is a property family others read** (`pStyle`, §0.1): restyling changes how every inherited
-   property resolves, so an op whose plan or post-condition reads the style chain declares `verify:pStyle` per
-   paragraph, and the restyling ops touch `pStyle`. A new op that reads a paragraph's effective formatting in the output
-   must declare it too.
+   property resolves, so an op whose plan or post-condition reads the style chain declares a soft `verify-props:pStyle`
+   per paragraph plus `selectors.chain_reads` (the table's style, `verify:replace` of every chain style, `verify:add` of a
+   chain style the file lacks), and the restyling ops touch `pStyle`/`rStyle`/`tblPr`. A new op that reads a paragraph's
+   effective formatting in the output must declare it too. A selection that reads every paragraph's chain (`style_in`,
+   `has_bold`, `is_all_caps`, runs `color_in`, effective hidden) gets whole-member soft reads from
+   `selectors.selection_families` — add a key there when a selector starts reading the chains.
 2. **A post-condition on an already-as-asked target needs a read** (Codex on #28, again here): an op whose V10 check reads
    a target in the OUTPUT whether or not it changed it declares a family read of that target (`verify:tabs`,
-   `verify:pBdr`, `verify:rPr` …), and an op that removes property elements declares one touch per element name it
-   removes (`clear_direct_formatting`), so the two meet at plan time.
-3. **Styles named by an op are read; removals are every aspect.** An op that writes a reference to an existing style
-   (applies it, maps to it, inserts with it, imports a style based on it) reads `(styles, "style:<id>", "verify")`;
-   `remove_unused_styles` declares its removals as `remove`/`rPr`/`pPr`/`tblPr` of that style. "Used" is judged on the
-   SOURCE: mapping then removing is a chain, the removal last.
+   `verify-props:pBdr`, `verify-props:rPr` …), and an op that removes property elements declares one touch per element
+   name it removes (`clear_direct_formatting`), so the two meet at plan time. Make such a read soft (`verify-props:`) when
+   the kind re-resolves its targets over the output: a hard one refused every text edit of the paragraph (the review's
+   regression: `set_properties` beside `replace_text`).
+3. **Styles named by an op are read; removals are every aspect; uses are counted.** An op that writes a reference to an
+   existing style (applies it, maps to it, inserts with it, imports a style based on it) reads `(styles, "style:<id>",
+   "verify")`; `remove_unused_styles` declares its removals as `remove`/`rPr`/`pPr`/`tblPr` of that style. Which elements
+   name a style is the incremental family `uses+`/`uses-`: mapping A→B beside B→C, applying a style beside mapping it
+   away, applying a style beside a selection by it, and mapping beside removing unused styles are plan-time conflicts
+   (each order gave another file); two ops adding uses of one style still plan. "Used" is judged on the SOURCE, so mapping
+   then removing is a chain, the removal last — in one spec it is refused.
 4. **The style import is shared and checked on its own** (`ops/style_import.py` ↔ `verify/styleimport.py`): an op that
    imports adds the import's touches and its `styles_imported` assertion, and its own kind checks that assertion carries
    exactly the template styles it found needed (`check_requested`) — an op can neither skip the import's check nor smuggle

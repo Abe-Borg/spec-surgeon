@@ -17,7 +17,7 @@ from make_fixtures import build_style_template, build_styles
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, op_catalog
 from spec_surgeon.editspec import plan_spec
 from spec_surgeon.ooxml import paragraphs
-from spec_surgeon.ops import JobException, get_op, merge_fragments
+from spec_surgeon.ops import JobException, check_conflicts, get_op, merge_fragments
 from spec_surgeon.ops import apply_style as apply_module
 from spec_surgeon.ops import clear_formatting as clear_module
 from spec_surgeon.package import DocxPackage, W, serialize_xml
@@ -284,10 +284,21 @@ def test_restyling_beside_formatting_that_reads_the_style_conflicts(src):
 
 
 def test_removing_the_applied_style_beside_conflicts(src):
+    """Two reasons, each enough: the applied style is one remove_unused_styles removes (a read of it meets the removal),
+    and the restyled paragraphs' old style loses uses its judgement read (uses- against verify:uses-)."""
+    apply_op = {"op": "apply_style", "select": PARTS, "params": {"style": "ArchUnused"}}
+    remove = {"op": "remove_unused_styles", "params": {"which": "custom"}}
+    for ops in ((apply_op, remove), (remove, apply_op)):
+        with pytest.raises(JobException) as e:
+            plan_spec(DocxPackage(src), _spec(*ops))
+        assert e.value.code == "conflict" and "remove_unused_styles" in e.value.reason
     pkg = DocxPackage(src)
+    frags = [get_op("apply_style").plan(pkg, PARTS, apply_op["params"]),
+             get_op("remove_unused_styles").plan(pkg, {}, remove["params"])]
+    frags[0].op_index, frags[1].op_index = 1, 2
+    frags[1].touches = [t for t in frags[1].touches if t[1] != "*"]          # the per-style reason alone
     with pytest.raises(JobException) as e:
-        plan_spec(pkg, _spec({"op": "apply_style", "select": PARTS, "params": {"style": "ArchUnused"}},
-                             {"op": "remove_unused_styles", "params": {"which": "custom"}}))
+        check_conflicts(frags)
     assert e.value.code == "conflict" and "ArchUnused" in e.value.reason
 
 

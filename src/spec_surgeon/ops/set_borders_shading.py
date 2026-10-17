@@ -47,7 +47,8 @@ from . import register
 from .base import JobException, Op, PlanFragment
 from .effective import Resolver
 from .replace_text import default_author
-from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts
+from .selectors import (StyleSheet, chain_reads, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts,
+                        table_ordinals)
 
 SIDES = ("top", "left", "bottom", "right", "between", "bar")
 BORDER_STYLES = ("single", "thick", "double", "dotted", "dashed", "dotDash", "dotDotDash", "triple",
@@ -342,16 +343,20 @@ class SetBordersShading(Op):
         already = older = 0
         reads: set = set()
         for part in parts:
-            pars = paragraphs(pkg.xml(part))
+            root = pkg.xml(part)
+            pars = paragraphs(root)
+            tables = table_ordinals(root)
             chosen: List[list] = []
             for bi, p in enumerate(pars):
                 if not paragraph_selected(pred, p, bi, block_full_text(p), sheet):
                     continue
                 # the levels below come through this paragraph's style (and its table's); V10's post-condition reads
-                # its own border box and shading in the output whether or not it changes: another op restyling it or
-                # changing those elements is a plan-time conflict, never a failure after apply
-                frag.touches.append((part, str(bi), "verify:pStyle"))
-                frag.touches += [(part, str(bi), f"verify:{e}") for e in asked]
+                # its own border box and shading in the output whether or not it changes: another op restyling it,
+                # remapping its table's style, adding a style its chain names but the file lacks, or changing those
+                # elements is a plan-time conflict, never a failure after apply (soft reads: a text edit leaves them)
+                frag.touches.append((part, str(bi), "verify-props:pStyle"))
+                frag.touches += [(part, str(bi), f"verify-props:{e}") for e in asked]
+                frag.touches += sorted(chain_reads(sheet, part, p, tables))
                 levels = paragraph_levels(res, p)
                 reads.update(label for label, _ in levels)
                 gets = decide(p.find(W + "pPr"), [ppr for _, ppr in levels], borders, shading)

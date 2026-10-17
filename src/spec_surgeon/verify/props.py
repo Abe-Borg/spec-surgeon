@@ -1937,7 +1937,12 @@ def _residual_styles(ctx: Ctx, errs: List[str]) -> None:
                 parent.remove(rpr)
                 _drop_empty(parent)
                 _drop_empty(root.find(W + "docDefaults"))
+        # only the definition the kinds checked: the LAST w:style of an id (``Styles.by_id`` keeps it, as the
+        # transform's sheet does) — another one sharing the id is compared whole, never stripped unchecked (rule 8)
+        last = {st.get(W + "styleId"): st for st in root.findall(W + "style")}
         for st in root.findall(W + "style"):
+            if last.get(st.get(W + "styleId")) is not st:
+                continue
             if st.get(W + "styleId") in ctx.strip_styles and st.find(W + "rPr") is not None:
                 st.remove(st.find(W + "rPr"))
             names = ctx.strip_style_ppr.get(st.get(W + "styleId"))

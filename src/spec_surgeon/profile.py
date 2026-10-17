@@ -316,8 +316,8 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
             unused = analyze(pkg, sheet.part, [], "all", ("paragraph", "character", "table", "numbering"))["removed"]
             custom = analyze(pkg, sheet.part, [], "custom", ("paragraph", "character", "table", "numbering"))["removed"]
             styles_unused = {"all": len(unused), "custom": len(custom)}
-        except JobException:          # descriptive only: a styles part the op would refuse
-            pass
+        except Exception:  # noqa: BLE001 — descriptive only: a styles, numbering or settings part the op would refuse
+            pass               # (or that will not parse) leaves the counts out; the file still profiles
     kinds = pkg.parts_by_kind()
     for k in ("footnotes", "endnotes", "comments"):
         if kinds.get(k):

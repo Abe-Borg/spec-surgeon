@@ -15,7 +15,7 @@ from spec_surgeon import compiler
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, CUSTOM_TRANSFORM_LIMITS, op_catalog
 from spec_surgeon.chain import chain_from_specs, run_chain
 from spec_surgeon.editspec import load_spec, plan_spec, spec_input_files, validate_spec
-from spec_surgeon.ops import get_op
+from spec_surgeon.ops import JobException, get_op
 from spec_surgeon.package import DocxPackage, W
 from spec_surgeon.profile import profile
 from spec_surgeon.report import FAILURE_EXPLANATIONS
@@ -125,8 +125,9 @@ def test_the_profile_counts_unused_styles(src):
 
 def test_map_then_remove_unused_runs_as_a_chain(tmp_path):
     """The workflow the prompt recommends: stage 1 maps the architect's ArchLines to the office CMT (imported from the
-    template), stage 2 removes the custom styles nothing uses any more — ArchLines among them, which in a single spec
-    would still count as used (it judges the file before the spec)."""
+    template), stage 2 removes the custom styles nothing uses any more — ArchLines among them. In a single spec the
+    order would decide whether ArchLines goes (remove_unused_styles judges the source, the mapping takes its uses away):
+    a plan-time conflict naming the chain (rule 9)."""
     tpl = tmp_path / "OFFICE STYLES.docx"
     tpl.write_bytes(build_style_template())
     docs = tmp_path / "docs"
@@ -144,9 +145,9 @@ def test_map_then_remove_unused_runs_as_a_chain(tmp_path):
     out = DocxPackage(Path(f.delivered_to).read_bytes())
     ids = {s.get(W + "styleId") for s in out.xml("word/styles.xml").findall(W + "style")}
     assert {"CMT", "CMTBase"} <= ids and "ArchLines" not in ids and "ArchUnused" not in ids
-    # in ONE spec the mapping's from style still counts as used: it stays
-    pkg = DocxPackage(build_styles())
-    plan, frags = plan_spec(pkg, {"request": "both", "summary": "both", "mode": "formatting",
-                                  "ops": map_spec["ops"] + clean_spec["ops"]})
-    removed = next(a for a in plan.property_assertions if a["kind"] == "removed_styles")["expected_removed"]
-    assert "ArchLines" not in removed
+    # in ONE spec, in either order: refused, with the chain as the way out
+    for ops in (map_spec["ops"] + clean_spec["ops"], clean_spec["ops"] + map_spec["ops"]):
+        with pytest.raises(JobException) as e:
+            plan_spec(DocxPackage(build_styles()), {"request": "both", "summary": "both", "mode": "formatting",
+                                                    "ops": ops})
+        assert e.value.code == "conflict" and "split out" in e.value.reason and "remove_unused_styles" in e.value.reason

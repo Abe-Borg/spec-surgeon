@@ -28,13 +28,13 @@ a w:sym (unless ``skip_sym_runs`` is false). Theme font references are never sym
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Set
 
 from lxml import etree
 
 from ..ooxml import block_full_text
 from ..package import W, DocxPackage, REL_TYPE_BASE
-from .base import JobException
+from .base import JobException, Touch
 
 STYLES_REL = REL_TYPE_BASE + "styles"
 SCOPE_KINDS = ("document", "headers", "footers", "footnotes", "endnotes", "comments")
@@ -54,6 +54,10 @@ FONT_ATTRS = ("ascii", "hAnsi", "eastAsia", "cs", "asciiTheme", "hAnsiTheme", "e
 def scope_parts(pkg: DocxPackage, scope) -> List[str]:
     if isinstance(scope, str):
         scope = [scope]
+    if scope is not None and not scope:
+        # an empty list names no part: the verifiers resolve it to nothing, so taking it for the document would plan
+        # one thing and check another (built-in batch 4 review)
+        raise JobException("scope is an empty list; leave it out for the document, or name the parts", "bad-params")
     kinds = pkg.parts_by_kind()
     parts: List[str] = []
     for k in scope or ["document"]:
@@ -164,6 +168,103 @@ class StyleSheet:
     def paragraph_style_id(self, p: etree._Element) -> Optional[str]:
         ps = p.find(W + "pPr/" + W + "pStyle")
         return ps.get(W + "val") if ps is not None else self.defaults.get("paragraph")
+
+
+CHAIN_FAMILIES = ("pStyle", "rStyle", "tblPr")
+
+
+def selection_families(op: str, select: Dict[str, Any], params: Dict[str, Any]) -> List[str]:
+    """The style families every paragraph's (and run's) choice reads, for an op's selection (rule 9, built-in batch 4):
+    ``style_in`` reads each paragraph's ``pStyle``; ``has_bold``/``is_all_caps`` and the run selector ``color_in`` an
+    effective value through the table, paragraph and character chains (``pStyle``, ``rStyle``, the table's
+    ``tblPr``); so do ``remove_hidden_text`` (effective hidden) and ``remove_notes``' colour/hidden rules and inline
+    runs. A restyle anywhere in scope (apply_style, map_styles) beside them would make the order decide what they
+    choose — ``selection_reads`` turns these into whole-member soft reads."""
+    fams: set = set()
+    pred = select.get("paragraphs") if isinstance(select, dict) else None
+    if isinstance(pred, dict):
+        if "style_in" in pred:
+            fams.add("pStyle")
+        if "has_bold" in pred or "is_all_caps" in pred:
+            fams.update(CHAIN_FAMILIES)
+    runs = select.get("runs") if isinstance(select, dict) else None
+    if isinstance(runs, dict) and "color_in" in runs:
+        fams.update(CHAIN_FAMILIES)
+    if op == "remove_hidden_text":
+        fams.update(CHAIN_FAMILIES)
+    if op == "remove_notes" and isinstance(params, dict):
+        for rule in params.get("rules") or []:
+            if isinstance(rule, dict):
+                if "style_in" in rule:
+                    fams.add("pStyle")
+                if "color_in" in rule or "hidden" in rule:
+                    fams.update(CHAIN_FAMILIES)
+        if params.get("runs"):
+            fams.update(CHAIN_FAMILIES)
+    return sorted(fams)
+
+
+def selection_reads(pkg: DocxPackage, op: str, select: Dict[str, Any], params: Dict[str, Any],
+                    touches: Sequence[Touch]) -> List[Touch]:
+    """``(part, "*", "verify-props:<family>")`` for each family ``selection_families`` names and each part the op chose
+    from: the parts its V10 kind re-resolves (``(part, "scope", "verify")`` touches), else its ``select.scope``."""
+    fams = selection_families(op, select or {}, params or {})
+    if not fams:
+        return []
+    parts = [m for m, t, a in touches if t == "scope" and a == "verify"]
+    if not parts:
+        scope = (select or {}).get("scope") or (params or {}).get("scope")
+        try:
+            parts = scope_parts(pkg, scope)
+        except JobException:
+            return []
+    return [(part, "*", f"verify-props:{fam}") for part in dict.fromkeys(parts) for fam in fams]
+
+
+def table_ordinals(root: etree._Element) -> Dict[etree._Element, int]:
+    """w:tbl → its ordinal in ``root.iter(w:tbl)`` (``map_styles``' ``tbl:<k>`` targets). Keyed by the element itself:
+    the dict keeps lxml's proxies alive, so the same table found again from a paragraph is the same key (an ``id()`` of a
+    proxy nobody holds is not stable)."""
+    return {t: k for k, t in enumerate(root.iter(W + "tbl"))}
+
+
+def chain_reads(sheet: StyleSheet, part: str, p: etree._Element, tables: Dict[etree._Element, int],
+                rprs: Sequence[Optional[etree._Element]] = (), families: Sequence[str] = ("replace",)) -> Set[Touch]:
+    """What an effective value of paragraph ``p`` (and of its runs/mark with properties ``rprs``) reads through the
+    style levels, as ``verify`` touches (rule 9; built-in batch 4): the nearest table's style
+    (``(part, "tbl:<k>", "verify-props:tblPr")`` — ``map_styles`` remaps it), each style of the table, paragraph and
+    character chains (``(styles, "style:<id>", "verify:<family>")`` for each of ``families`` — ``replace`` is a style
+    import swapping the definition, ``props`` ``set_properties``' families on a style), and a style the chain names
+    that the file lacks (``verify:add`` — an import adding it changes the chain). The pStyle and rStyle the paragraph
+    names are read by the caller's own ``verify-props:pStyle``/``rStyle`` touches."""
+    out: Set[Touch] = set()
+    if sheet.part is None:
+        return out
+    q = p.getparent()
+    while q is not None and q.tag != W + "tbl":
+        q = q.getparent()
+    ids: List[Optional[str]] = []
+    if q is not None:
+        if q in tables:
+            out.add((part, f"tbl:{tables[q]}", "verify-props:tblPr"))
+        ts = q.find(f"{W}tblPr/{W}tblStyle")
+        ids.append(ts.get(W + "val") if ts is not None else sheet.defaults.get("table"))
+    ps = p.find(f"{W}pPr/{W}pStyle")
+    ids.append(ps.get(W + "val") if ps is not None else sheet.defaults.get("paragraph"))
+    for rpr in rprs:
+        rs = rpr.find(W + "rStyle") if rpr is not None else None
+        ids.append(rs.get(W + "val") if rs is not None else sheet.defaults.get("character"))
+    for sid in ids:
+        seen: Set[str] = set()
+        while sid and sid not in seen:
+            seen.add(sid)
+            if sid not in sheet.styles:
+                out.add((sheet.part, f"style:{sid}", "verify:add"))
+                break
+            out.update((sheet.part, f"style:{sid}", f"verify:{fam}") for fam in families)
+            based = sheet.styles[sid].find(W + "basedOn")
+            sid = based.get(W + "val") if based is not None else None
+    return out
 
 
 def explicit_font_names(rpr: Optional[etree._Element]) -> List[str]:

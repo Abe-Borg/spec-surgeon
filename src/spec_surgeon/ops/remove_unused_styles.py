@@ -322,6 +322,11 @@ class RemoveUnusedStyles(Op):
                 raise JobException("this file has no styles part: there are no styles to remove", "not-found")
             frag.notes.append("remove_unused_styles: this file has no styles part — nothing to do.")
             return frag
+        # the judgement reads which elements name each style in the SOURCE (rule 9, batch 4): an op in the same spec
+        # taking uses away (map_styles' from, apply_style's old styles: uses-) would leave a style the chain of the two
+        # specs removes — a plan-time conflict, run this op as a second spec; an op adding uses (uses+) cannot change
+        # what is unused here and plans beside it
+        frag.touches.append((sheet.part, "*", "verify:uses-"))
         found = analyze(pkg, sheet.part, keep, which, types)
         removed = found["removed"]
         table = dict((sid, el) for sid, el in found["table"] if sid is not None)
@@ -339,8 +344,8 @@ class RemoveUnusedStyles(Op):
         # each removal is every aspect of that style: an op in the same spec applying it (apply_style), mapping to it,
         # inserting with it (they read it, "verify") or changing its definition is a plan-time conflict, never a
         # dangling reference
-        frag.touches = [(sheet.part, f"style:{sid}", aspect) for sid in removed
-                        for aspect in ("remove", "rPr", "pPr", "tblPr")]
+        frag.touches += [(sheet.part, f"style:{sid}", aspect) for sid in removed
+                         for aspect in ("remove", "rPr", "pPr", "tblPr")]
         by_type: Dict[str, int] = {}
         for sid in removed:
             by_type[style_type(table[sid])] = by_type.get(style_type(table[sid]), 0) + 1

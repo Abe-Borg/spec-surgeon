@@ -33,7 +33,9 @@ Verified by V10's ``applied_style`` kind (verify/applystyle.py) — and, when th
 """
 from __future__ import annotations
 
+import hashlib
 from collections import Counter
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..package import W, DocxPackage
@@ -175,6 +177,7 @@ class ApplyStyle(Op):
         already = 0
         n_paras = n_restyled = n_runs = n_marks = rev_ids = 0
         older_r = older_p = own_numbering = 0
+        uses: set = set()
         for part in parts:
             root = pkg.xml(part)
             pars = paragraphs(root)
@@ -183,8 +186,17 @@ class ApplyStyle(Op):
             for bi, p in enumerate(pars):
                 if not paragraph_selected(pred, p, bi, block_full_text(p), sheet, all_pars=pars):
                     continue
-                restyle = sheet.paragraph_style_id(p) != sid
+                old = sheet.paragraph_style_id(p)
+                restyle = old != sid
                 d = paragraph_clearing(p, groups[bi], sheet, settings) if settings else ParagraphClearing()
+                # which paragraphs name which style (rule 9, batch 4): this one gains a use of the style and, restyled,
+                # its old style loses one — mapping the style away (map_styles, uses-) or a selection by either style
+                # beside it is a plan-time conflict; an already-styled paragraph is a read (another op restyling it)
+                uses.add((sheet.part, f"style:{sid}", "uses+"))
+                if restyle and old:
+                    uses.add((sheet.part, f"style:{old}", "uses-"))
+                if not restyle:
+                    frag.touches.append((part, str(bi), "verify-props:pStyle"))
                 if not restyle and not d.changed:
                     already += 1
                     continue
@@ -213,6 +225,7 @@ class ApplyStyle(Op):
                 targets[part] = chosen
                 frag.intended_parts.append(part)
             frag.touches.append((part, "scope", "verify"))          # V10 re-resolves the selection over this part
+        frag.touches += sorted(uses)
 
         # ---- the record ----
         frag.property_assertions.append({
@@ -225,7 +238,9 @@ class ApplyStyle(Op):
             "expected_runs": n_runs, "expected_marks": n_marks,
             "changed": {part: [[bi, restyle] for bi, restyle, _ in v] for part, v in targets.items()}})
         frag.transform_data = {"targets": targets, "style_id": sid, "tracked": tracked, "author": author,
-                               "import": imp.transform_data() if imp is not None and imp.changes else None}
+                               "import": imp.transform_data() if imp is not None and imp.changes else None,
+                               "template": tpl.path if tpl is not None else None,
+                               "template_md5": tpl.md5 if tpl is not None else None}
         if imp is not None and imp.changes:
             frag.intended_parts += [p for p in imp.intended_parts() if p not in frag.intended_parts]
             frag.touches += imp.touches()
@@ -265,6 +280,14 @@ class ApplyStyle(Op):
 
     def apply(self, pkg: DocxPackage, frag: PlanFragment) -> None:
         td = frag.transform_data
+        if td.get("template") and not td.get("import"):
+            # rule 12: the plan read the template (the style's resolution) even when nothing is copied from it
+            try:
+                raw = Path(td["template"]).read_bytes()
+            except OSError as e:
+                raise JobException(f"the template file cannot be read again: {e}", "internal")
+            if hashlib.md5(raw).hexdigest() != td["template_md5"]:
+                raise JobException("the template file changed between plan and apply", "internal")
         apply_import(pkg, td.get("import"))
         stamp = RevisionStamp.now(td["author"], td.get("use_date_utc", False)) if td["tracked"] else None
         next_id = td.get("first_rev_id", 0)

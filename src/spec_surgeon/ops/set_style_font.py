@@ -109,6 +109,10 @@ class SetStyleFont(Op):
             frag.intended_parts = [sheet.part]
             frag.touches = [(sheet.part, f"style:{sid}", "rPr") for sid in ids]
             frag.geometry_reference, frag.geometry_reason = "none", FONT_REFLOW
+        if not (isinstance(sel, dict) and "ids" in sel):
+            # "all" or by type: the set of styles is read from the source (rule 9, batch 4) — a style an import adds, or
+            # a definition it replaces, would keep its own font beside the ones this op changed
+            frag.touches += [(sheet.part, "*", "verify:add"), (sheet.part, "*", "verify:replace")]
         skipped_symbol = [sid for sid, st in sheet.styles.items() if is_symbol_style(st, sheet, preserve)]
         if values:
             frag.notes.append(f"{sum(f for f, _ in changes.values())} style(s) → {values}: "

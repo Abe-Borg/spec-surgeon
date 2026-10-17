@@ -177,7 +177,7 @@ def test_a_partly_right_paragraph_changes_only_the_element_that_differs(src):
     t = set(map(tuple, _touches(src, {"paragraphs": {"text_regex": "^Coordinate"}},
                                 {"borders": {"top": {"style": "double"}, "bottom": {"style": "double"}},
                                  "shading": "none"})))
-    assert {(MAIN, "7", "pPr"), (MAIN, "7", "shd"), (MAIN, "7", "verify:pBdr")} <= t and (MAIN, "7", "pBdr") not in t
+    assert {(MAIN, "7", "pPr"), (MAIN, "7", "shd"), (MAIN, "7", "verify-props:pBdr")} <= t and (MAIN, "7", "pBdr") not in t
 
 
 def test_a_table_style_and_the_document_defaults_count_as_lower_levels(src):
@@ -248,13 +248,13 @@ def _touches(data, select, params):
 
 def test_touches_declare_changes_and_reads(src):
     t = set(map(tuple, _touches(src, NOTES, {"borders": {"top": {}}})))
-    assert {(MAIN, "5", "pPr"), (MAIN, "5", "pBdr"), (MAIN, "5", "verify:pStyle"), (MAIN, "5", "verify:pBdr"),
+    assert {(MAIN, "5", "pPr"), (MAIN, "5", "pBdr"), (MAIN, "5", "verify-props:pStyle"), (MAIN, "5", "verify-props:pBdr"),
             (MAIN, "scope", "verify"), (STYLES, "style:ArchNote", "verify:pPr"), (STYLES, "style:Normal", "verify:pPr"),
             (STYLES, "docDefaults", "verify:pPr")} <= t
-    assert (MAIN, "5", "shd") not in t and (MAIN, "5", "verify:shd") not in t
+    assert (MAIN, "5", "shd") not in t and (MAIN, "5", "verify-props:shd") not in t
     # an already-as-asked paragraph is read (its post-condition), not changed
     t = set(map(tuple, _touches(src, {"paragraphs": {"text_regex": "^Coordinate"}}, {"shading": {"fill": "FFFF00"}})))
-    assert (MAIN, "7", "verify:shd") in t and (MAIN, "7", "pPr") not in t
+    assert (MAIN, "7", "verify-props:shd") in t and (MAIN, "7", "pPr") not in t
 
 
 # ---- a wrong output per rule ---------------------------------------------------------------------------------------

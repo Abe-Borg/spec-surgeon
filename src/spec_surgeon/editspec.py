@@ -32,7 +32,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from .ooxml import CELL_REV_TAGS, CONTENT_REV_TAGS, PROPERTY_REV_TAGS
 from .ops import OPS, JobException, Plan, PlanFragment, get_op, merge_fragments
 from .ops.base import text_diffs
-from .ops.selectors import DEFAULT_PRESERVE_FONTS, size_values
+from .ops.selectors import DEFAULT_PRESERVE_FONTS, selection_reads, size_values
 from .package import DocxPackage
 
 SPEC_KEYS = {"request", "summary", "assumptions", "questions", "applies_to", "mode", "review", "ops",
@@ -405,6 +405,9 @@ def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] 
         except JobException as e:
             raise JobException(f"op #{i} ({o['op']}): {e.reason}", e.code,
                                {**e.details, "op": o["op"], "op_number": i}) from e
+        # what its selection read through every paragraph's style chain (rule 9, built-in batch 4): a restyle in scope
+        # by another op of the spec is a plan-time conflict
+        frag.touches += selection_reads(pkg, o["op"], o.get("select") or {}, _op_params(o), frag.touches)
         _check_expect(i, o, frag, expect_notes)
         frags.append(frag)
         if trace:
