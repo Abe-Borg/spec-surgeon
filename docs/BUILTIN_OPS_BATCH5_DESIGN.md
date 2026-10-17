@@ -50,10 +50,12 @@ fixtures and on random list definitions, and plants shared defects in each rule.
      the lowest ilvl whose level definition (0.1, *level*) names s_style in its `w:pStyle` —, else 0; when numId came
      from the paragraph and it has no ilvl: 0.
   A numId no `w:num` defines is **dangling**: unnumbered for counting, reported by the audit.
-* **Level definition** of `(numId, ilvl)`: the num's full override level for ilvl when it has one, else the
-  abstractNum's level ilvl (abstractNum = the num's). An abstractNum with `w:numStyleLink` (a list defined through a
-  numbering style) is **unsupported**; so is a level holding `mc:AlternateContent` (Word 2010's custom formats such as
-  `001`). A missing level → the paragraph shows no number (it still counts — 0.2). Its fields: `start` (`w:start/@w:val`,
+* **Level definition** of `(numId, ilvl)`: the abstractNum's level ilvl (abstractNum = the num's). A num with a FULL
+  override level for ilvl (`w:lvlOverride/w:lvl`) makes that level **unsupported**: Word does not read an override
+  level as ECMA-376 describes it (MS-OI29500: it ignores `w:lvlRestart` there, and by Codex's reading of §17.9 its
+  `w:start` too), so the engine does not predict it (Codex on #32). An abstractNum with `w:numStyleLink` (a list defined
+  through a numbering style) is **unsupported**; so is a level holding `mc:AlternateContent` (Word 2010's custom formats
+  such as `001`). A missing level → the paragraph shows no number (it still counts — 0.2). Its fields: `start` (`w:start/@w:val`,
   default 0), `fmt` (`w:numFmt/@w:val`, default `decimal`), `text` (`w:lvlText/@w:val`, none when absent), `restart`
   (`w:lvlRestart/@w:val`, whole, or none), `legal` (`w:isLgl` on: present and `w:val` not 0/false/off), `suff`
   (`w:suff/@w:val`, default `tab`), `pstyle` (`w:pStyle/@w:val`).
@@ -83,9 +85,17 @@ The model returns, per counted numbered paragraph: its index (`root.iter(w:p)` o
 rendered text, `suff`, and "not evaluated" with a reason.
 
 **Word and LibreOffice.** Word continues one count across nums that share an abstractNum (unless a num restarts with a
-`startOverride`); LibreOffice keeps each num separate. The model counts per numId and the audit flags every abstractNum
-whose several nums number body paragraphs ("Word and LibreOffice number these differently"). The paragraphs this batch's
-ops number all use one num, so their predictions do not depend on the difference.
+`startOverride`); LibreOffice keeps each num separate. The model counts per numId, and a paragraph whose num shares its
+abstractNum with another num that numbers a counted paragraph is **not evaluated** ("Word and LibreOffice number these
+differently") — the audit flags those lists. An op never predicts through one (Codex on #32): the **destination list**
+of a conversion (§1, §2: the scheme's num) must not be such a list, and must have no `w:lvlOverride` at all, else the
+file refuses (`numbering-unsupported`); an imported scheme gets fresh ids and is never shared. `set_list_level` with
+`start`/`restart` on such a list refuses the same way (a format change does not change counts, so it plans).
+
+**Plans see what V10 checks.** Every post-condition below that compares numbers over the whole document is first
+computed by the plan over the planned output, analytically, and the plan refuses (or, where the design says so, flags)
+before anything is written — V10 never discovers a number change the plan did not predict (Codex on #32: converting a
+typed item ahead of paragraphs the destination list already numbers shifts them).
 
 ### 0.3 The scheme ("your PART / 1.1 / A. / 1. / a.")
 
@@ -132,13 +142,15 @@ file read with `read_template`.
   2.3" — a shift from a source glitch, the playbook's "a correction, not a defect"), every paragraph whose text starts
   with a typed number (double numbering), REF/PAGEREF/NOTEREF fields whose bookmark lies in a converted paragraph (their
   cached number goes stale), and each occurrence in another paragraph's text of a converted paragraph's OLD rendered
-  number that changes ("as specified in 1.05" — written cross-references are content: flagged, never edited). Other
-  lists are untouched: their paragraphs' numbers are predicted unchanged.
+  number that changes ("as specified in 1.05" — written cross-references are content: flagged, never edited). Every
+  counted paragraph's number is predicted: other lists keep theirs, and a paragraph the destination list already
+  numbered (a held scheme) that the conversion shifts is flagged by name.
 * **V10 `converted_numbering`**: re-derives the scheme, the source paragraphs, their levels and each change from the
   SOURCE with `verify/lists.py`; each changed paragraph's pPr = the source's with pStyle set, numPr gone (and the cleared
   children, `clearing.check_runs_and_mark`/`check_cleared_ppr`); the import by `styles_imported` (`check_requested`);
-  **post-condition on the OUTPUT**: the verifier's own count gives every converted paragraph exactly the plan's
-  predicted counters and rendered number, and every other counted paragraph the number it had in the source. Strips
+  **post-condition on the OUTPUT**: the verifier predicts every counted paragraph's counters and rendered number from
+  the SOURCE with its own model (the converted paragraphs given the destination list), its prediction must equal the
+  plan's, and its own count of the output must equal both. Strips
   `pStyle`, `numPr`, `pPrChange` (and the cleared names) of the changed paragraphs.
 * Touches (rule 9): per changed paragraph `(main, bi, "pPr")`, `"pStyle"`, `"numPr"` (+ cleared names, `rPr`,
   `markRPr`), `uses+`/`uses-` as apply_style; the reads of §6.
@@ -183,9 +195,10 @@ Planted-defect tests: a tab left behind, a tab outside the range taken, a ptab a
 
 ### 2.4 The guarantee: the document reads the same
 
-The plan predicts the scheme's numbers over the planned output (§0.2) and **refuses the file** (`numbering-mismatch`,
-naming the first paragraphs) unless, for every converted paragraph, the rendered number equals its typed number exactly
-and the level's `suff` is not `nothing` (the separator was whitespace). V10 `typed_numbers` re-derives candidates,
+The plan predicts every counted paragraph's number over the planned output (§0.2) and **refuses the file**
+(`numbering-mismatch`, naming the first paragraphs) unless the visible line (below) of EVERY counted paragraph of the
+main part is unchanged — a converted one shows its typed number exactly, and a paragraph the destination list already
+numbered keeps its number (Codex on #32) — and no converted level's `suff` is `nothing` (the separator was whitespace). V10 `typed_numbers` re-derives candidates,
 typed numbers, prefixes and levels from the SOURCE with its own code, checks every converted paragraph with the item
 model (`check_edited_paragraph`, tabs on) and its pPr as §1, and — **post-condition on the OUTPUT, over every counted
 paragraph of the main part** — its **visible line** (rendered number, then the accepted run text; every run of
