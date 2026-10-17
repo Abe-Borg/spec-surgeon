@@ -336,6 +336,11 @@ class Conversation:
             raise ValueError("type a reply or pick one of the choices")
         if chosen is not None and chosen.kind == SNIPPET_CHOICE_KIND:
             self._check_item(chosen)          # LibraryChanged: nothing approved, nothing sent — the turn stays open
+        if chosen is not None and chosen.kind == "capitalization":
+            from .ops.hygiene import approval_source
+            record = chosen.snapshot
+            self.batch.check_source_pin(Path(record["file"]))
+            self.sources.append(approval_source(record))
         if chosen is not None and chosen.words:
             self.sources += list(chosen.words)   # each its own source: never stitched together
         if text:
@@ -351,6 +356,8 @@ class Conversation:
                             + (repr(sn["style"]) if sn.get("style") else "'inherit'")
                             + f", formatting {sn.get('formatting', 'inherit')!r}; ask the user which paragraph it goes "
                               f"after (or before) if that is not clear yet.")
+            if chosen.kind == "capitalization":
+                said.append("Individually approved capitalize_defined_terms record: " + json.dumps(chosen.snapshot, ensure_ascii=False))
         if text:
             said.append(f"The user replied: {text}")
         said_text = "\n".join(said)
@@ -718,6 +725,17 @@ class Conversation:
                 errors.append("a choice that was not an object was dropped")
                 continue
             label, kind = str(c.get("label") or "").strip(), str(c.get("kind") or "").strip()
+            if kind == "capitalization":
+                record = self.batch.capitalization_proposals.get(c.get("proposal_id", ""))
+                if self.mode != "chat" or record is None:
+                    errors.append("capitalization choice dropped: first inspect the exact occurrence with propose_defined_terms")
+                    continue
+                label = (f"{Path(record['file']).name}, {record['part']}, paragraph {record['paragraph']+1}, "
+                         f"character {record['start']+1}: {record['before']!r} → {record['after']!r}\n"
+                         f"Context: {record['context']}")
+                out.append(Choice(self._next_choice_id(), label, kind, wording=record["after"],
+                                  detail="Approves only this occurrence in this source file.", snapshot=copy.deepcopy(record)))
+                continue
             if kind in NAMED_LIBRARY_KINDS:
                 if self.mode != "chat":               # the one-shot compile: nobody is there to pick it
                     errors.append(f"a choice was dropped (kind {kind!r} is offered in a conversation only)")

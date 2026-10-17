@@ -649,6 +649,16 @@ user's view.
 Not in this batch: run, page and table-cell borders; theme colours to set; tab stops in styles; mapping linked character
 styles automatically; editing field codes that name a mapped style.
 
+## Built-in additions — items 41–49 (2026-10-17)
+
+Four character-only operations and five report-only audits are implemented. `ops/hygiene.py`
+predicts exact occurrences; independent `verify/hygiene.py` checks them. Defined-term
+capitalization uses inspected source-bound proposals, app-built choices and one user pick
+per occurrence. Every file's character predictions appear in plans and previews.
+`spec_qa.py` audits whole batches without writing DOCX files; CLI `audit` and the desktop
+**Spec QA audits…** viewer expose the reports. Standards editions are inventoried, never
+updated by an audit. See [usage and limits](TEXT_HYGIENE_AND_SPEC_QA.md).
+
 ---
 
 ## Appendix A — EditSpec JSON schema (draft)

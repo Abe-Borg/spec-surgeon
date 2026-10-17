@@ -1,5 +1,12 @@
 # Spec Surgeon
 
+**Source additions: text hygiene and specification QA (items 41–49).** Character-only
+space, quote, dash and non-breaking-space operations predict every change. Defined-term
+capitalization requires an individual user pick for each occurrence Claude proposes.
+Five report-only audits cover placeholders, section references, reference-standard editions,
+issue readiness and project identity. Open **File → Spec QA audits…** or run
+`spec-surgeon audit Specs --out SPEC_QA.md`. [Usage and limits](docs/TEXT_HYGIENE_AND_SPEC_QA.md).
+
 **In this source checkout: persistent multi-project workspaces and ample agent resources.**
 The new `spec-surgeon workspace` commands and desktop **Multi-project workspace** window inventory multiple
 folders recursively, keep project facts and requests separate, and retain verified candidates while remaining

@@ -2443,9 +2443,11 @@ from .numberingaudit import AUDIT_KINDS  # noqa: E402
 # built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §1, §2): numbering conversions
 from .numberingconvert import CONVERT_KINDS  # noqa: E402
 from .typednumbers import TYPED_KINDS  # noqa: E402
+from .hygiene import HYGIENE_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
+KINDS.update(HYGIENE_KINDS)
 KINDS.update(IMAGE_KINDS)
 for _batch2 in (COMMENT_KINDS, HIGHLIGHT_KINDS, REVISION_KINDS, REMOVAL_KINDS, WATERMARK_KINDS, LINK_KINDS, DOCPROP_KINDS):
     KINDS.update(_batch2)

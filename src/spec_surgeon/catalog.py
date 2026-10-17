@@ -23,6 +23,10 @@ EXAMPLES_DIR = Path(__file__).resolve().parent.parent.parent / "examples" / "spe
 REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_document_state")
 
 COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
+    "normalize_whitespace": ["ordinary spaces only; tabs, line breaks and non-breaking spaces stay", "tracked unless clean copies requested"],
+    "normalize_punctuation": ["choose the quote, dash and section-number styles explicitly; numeric inch/foot marks are retained"],
+    "protect_nonbreaking_spaces": ["default units: psi; spaced section numbers included; no words change"],
+    "capitalize_defined_terms": ["one source-bound user pick per occurrence; a broad request authorizes no occurrence"],
     "remove_header_footer": [
         "'all' means every section, including first-page and even-page variants",
         "page margins stay as they are (the header/footer space collapses)",
@@ -612,6 +616,13 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
                      "common_assumptions": COMMON_ASSUMPTIONS.get(name, [])}
     cat = {
         "ops": ops,
+        "report_only_audits": {
+            "placeholders": "Unresolved bracketed options, insert markers, XXXX, TBD and variable placeholders per section.",
+            "cross_references": "Section existence, stated titles, duplicates and sections with no incoming references in the batch.",
+            "standards": "NFPA, UL, FM, ASTM and ASME designations and editions as written; no edition updates.",
+            "readiness": "Comments, tracked changes, highlights, hidden text and placeholders per file.",
+            "project_identity": "Project name, number and date variants across files; optional expected identity values.",
+        },
         "selector_grammar": SELECTOR_GRAMMAR,
         "modes": {"formatting": "no op writes characters", "content": "an op places the user's words, tracked",
                   "untracked": "an op places the user's words untracked (or a literal template fill)"},

@@ -44,6 +44,14 @@ fire sprinkler designer; these files go to clients;
 
 ## Hard rules
 
+**Items 41–49 (source additions):** `ops/hygiene.py` and independent `verify/hygiene.py`
+implement space, punctuation, non-breaking-space and individually approved case changes.
+`character_hygiene` verifies exact source occurrences; previews show every file's changes.
+Capitalization choices are built from inspected proposals, and only an actual user pick adds
+the source-bound approval marker. `spec_qa.py`, CLI `audit` and the desktop QA viewer are
+report-only; never route an audit through a document transform or infer an adopted edition.
+See `docs/TEXT_HYGIENE_AND_SPEC_QA.md` for interfaces and limits.
+
 1. **Verifier independence.** Nothing under `src/spec_surgeon/verify/` may import `spec_surgeon.jobs`,
    `spec_surgeon.ops`, `spec_surgeon.editspec`, `spec_surgeon.ooxml`, `spec_surgeon.package`,
    `spec_surgeon.goals`, or `spec_surgeon.goal_contracts`

@@ -163,11 +163,12 @@ class ChatView(Card):
         h.setSpacing(10)
         text = c.get("label", "")
         for w in c.get("words") or ([c["wording"]] if c.get("wording") else []):
-            text += f"\nExact words: «{w}» — choosing approves these exact words for your documents."
+            text += (f"\nChoosing approves only this occurrence: «{w}»." if c.get("kind") == "capitalization"
+                     else f"\nExact words: «{w}» — choosing approves these exact words for your documents.")
         lab = _plain(text, selectable=True)
         h.addWidget(lab, 1)
         b = QPushButton({"custom_transform": "Do this", "recipe": "Use it", "operation": "Try it",
-                         "snippet": "Insert it"}.get(c.get("kind"), "Choose"))
+                         "snippet": "Insert it", "capitalization": "Approve this change"}.get(c.get("kind"), "Choose"))
         b.setProperty("choice_id", c.get("id"))
         detail = c.get("detail") or ""        # Claude's words: a tooltip renders what looks like markup as rich text,
         b.setToolTip(f"<p style='white-space:pre-wrap'>{html.escape(detail)}</p>" if detail else "")   # so escape it
