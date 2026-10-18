@@ -117,6 +117,7 @@ retain their reservations instead of being reported as cheaply completed work.
 All 49 worked EditSpecs ship as package resources. The source checkout, wheel and frozen application use the same
 examples and compiler prompt; a missing bundle fails visibly. Installer publication checks the exact source SHA
 against the release tag and never replaces an existing version's installer with a different master build.
+Checksum publication verifies the actual release assets and retains the prior manifest as a backup while promoting a staged replacement, so interrupted updates can be retried without replacing the installer.
 
 Regression tests exercise synthetic Word packages, real local LibreOffice PDFs, scripted model exchanges and real
 SDK streaming through an offline HTTP transport. They do not establish success rates on customer projects,

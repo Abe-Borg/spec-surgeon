@@ -165,10 +165,13 @@ def test_installer_publication_only_adds_a_missing_asset_from_the_tagged_commit(
         assert not output.exists()
     else:
         assert run.returncode == 0, run.stderr
-        assert output.read_text().strip() == f"publish={str(release_exists and not published).lower()}"
-    publishing = _workflow_script("windows-installer.yml", "Add a missing installer from the exact tagged revision")
-    installer_upload = next(line for line in publishing.splitlines() if '"dist/$installer"' in line)
-    assert "--clobber" not in installer_upload
+        assert dict(line.split("=", 1) for line in output.read_text().splitlines()) == {
+            "publish": str(release_exists and not published).lower(), "repair": str(release_exists).lower()}
+    publishing = _workflow_script("windows-installer.yml",
+        "Verify or repair installer checksums without replacing published assets")
+    assert "packaging/windows/publish_installer.py" in publishing
+    assert "--allow-installer-upload" in publishing and '"$ALLOW_INSTALLER_UPLOAD" = "true"' in publishing
+    assert "--clobber" not in publishing
     assert "gh release edit" not in publishing
 
 
