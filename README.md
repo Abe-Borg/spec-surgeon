@@ -81,7 +81,7 @@ Details: ["Talk it through with Claude"](#talk-it-through-with-claude), ["Claude
 
 **v0.4.1 fixed the hands-on sweep of v0.4.0.** A changed template requires a new preview; conflicting header/footer and formatting operations are refused at plan time; single-section specs work in batches using a cover/body template; read-only files are set aside without stopping the batch; and preview summaries explain tracked deletions. [v0.4.1 release notes](docs/releases/v0.4.1.md) describe those fixes, all included in v0.5.0.
 
-Fast, provably lossless surgical edits to Word (.docx) specification files — a few files or dozens — with a mandatory verification record per file.
+Surgical edits to Word (.docx) specification files — a few files or dozens — with independent checks and a mandatory verification record per file.
 
 Spec Surgeon is the engine form of the `docx-surgical-edit` method: the transform is a deterministic Python/lxml script, the verifier is an independent script that reads only the before/after packages, the expected result is predicted *before* the transform runs, and the output is never written back unless every check passes and the source has not moved. No language model is in the per-file loop; the model's jobs are to build new job modules, to advise on exceptions, and (optionally) to turn a natural-language request into a job call.
 
