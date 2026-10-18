@@ -16,11 +16,12 @@ def fingerprint(value):
 
 
 def _add_usage(c, usage):
+    from .llm import TOKEN_KEYS
     c.usage.calls += usage.get("calls", 0)
     c.usage.fallbacks += usage.get("fallbacks", 0)
     c.usage.served.extend(usage.get("served_models", []))
     for model, counts in usage.get("by_model", {}).items():
-        row = c.usage.by_model.setdefault(model, {})
+        row = c.usage.by_model.setdefault(model, {key: 0 for key in TOKEN_KEYS})
         for key, value in counts.items():
             row[key] = row.get(key, 0) + value
 
@@ -67,7 +68,9 @@ def propose(conversation):
             questions=[q["text"] for q in draft["questions"]])
     contract = copy.deepcopy(draft["contract"])
     contract["request"] = c.request
-    snapshot = {"contract": contract, "pins": pins}
+    snapshot = {"contract": contract, "pins": pins,
+                "files": [str(p.resolve()) for p in c.files],
+                "template": str(c.template.resolve()) if c.template else None}
     words = approved_goal_words(contract)
     try:
         for word in words:
@@ -113,6 +116,9 @@ def execute(conversation, snapshot, out_dir, *, render=False, options=None):
     from .recovery import prepare_recovery, resume_recovery
     if fingerprint(snapshot) != getattr(conversation, "approved_recovery_hash", None):
         raise ValueError("Recovery requires the exact outcomes reviewed in this conversation.")
+    if ([str(p.resolve()) for p in conversation.files] != snapshot["files"]
+            or (str(conversation.template.resolve()) if conversation.template else None) != snapshot["template"]):
+        raise ValueError("The approved source scope or template role changed before recovery.")
     for name, pin in snapshot["pins"].items():
         if digest(Path(name)) != pin:
             raise ValueError("An approved input changed before recovery.")

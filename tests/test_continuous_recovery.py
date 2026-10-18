@@ -57,7 +57,7 @@ def test_followup_question_stays_in_same_conversation_and_authority(tmp_path):
     assert "Use FIRE SUPPRESSION" in str(c._client.requests[-1]["messages"])
 
 
-@pytest.mark.parametrize("change", ["source", "proposal", "wording", "execution"])
+@pytest.mark.parametrize("change", ["source", "proposal", "wording", "execution", "scope"])
 def test_changed_source_or_outcome_never_reuses_approval(tmp_path, change):
     c, source = conversation(tmp_path, proposal())
     choice = c.start().choices[0]
@@ -69,8 +69,11 @@ def test_changed_source_or_outcome_never_reuses_approval(tmp_path, change):
         choice.words.append("unshown words")
     else:
         snapshot = approve(c, choice.id)
-        snapshot["contract"]["effects"][0]["run"]["i"] = True
-        with pytest.raises(ValueError, match="exact outcomes"):
+        if change == "scope":
+            c.files = [write_document(tmp_path / "unapproved.docx")]
+        else:
+            snapshot["contract"]["effects"][0]["run"]["i"] = True
+        with pytest.raises(ValueError, match="exact outcomes|source scope"):
             execute(c, snapshot, tmp_path / "recovery", options=opts())
         return
     with pytest.raises(ValueError, match="changed"):
