@@ -1,6 +1,6 @@
 # Spec Surgeon
 
-**Reliability updates (unreleased).** **File → Built-in operations…** now exposes all 50 deterministic operations,
+**New in v1.1.0: reliability and approved outcomes.** **File → Built-in operations…** now exposes all 50 deterministic operations,
 with searchable inputs, behavior, limits and verification details. The four guided workflows remain available without
 an API key. Ordinary natural-language editing now adds an independently proposed **outcome review**: inspect every
 document's targets, resolve ambiguous choices, then approve the exact review before Run. Final delivery checks the
@@ -16,12 +16,12 @@ Continuous recovery preserves this outcome review before custom generation. A ve
 continue into investigation, and terminal answers to recovery or critic questions resume the existing evidence and
 candidates. See [continuous recovery and reusable repairs](docs/CONTINUOUS_RECOVERY.md).
 
-**Source checkout: automatic template style reconciliation.** Header/footer templates now work across Word
+**New in v1.1.0: automatic template style reconciliation.** Header/footer templates now work across Word
 languages without a manual rebuild. The importer matches default roles, style names and linked character styles,
 remaps copied references, and isolates unrelated ID collisions. Agents can inspect the mapping before submitting
 a job. Governed generated repairs also receive their approved template files as pinned in-memory inputs; their
 instructions describe the broader independently verified capabilities instead of the legacy formatting-only limit.
-See [template compatibility and recovery](docs/TEMPLATE_STYLE_RECOVERY.md). These changes are not a published installer.
+See [template compatibility and recovery](docs/TEMPLATE_STYLE_RECOVERY.md).
 
 **New in 1.0: built-in workflows and broader workspace outcomes.** Choose **Built-in workflows…** in the desktop
 or run `spec-surgeon workflows list` to configure repeatable style, numbering, table and proofing-language work without
@@ -72,7 +72,7 @@ model spend**. These are configurable ceilings, not spending targets. Each proje
 allowance; a workspace containing several projects can spend more than one allowance. No model call or charge is
 needed to inventory files, review saved progress, or execute an unambiguous approved goal using built-in operations.
 
-**Latest: Spec Surgeon 1.0 (v1.0.0) — built-in workflows, broader verified workspace outcomes and paired evaluations.** Includes all v0.8.0 capabilities and the latest merged workflow improvements. [1.0 release notes](docs/releases/v1.0.0.md) include installation and update instructions. Earlier: [v0.8.0 release notes](docs/releases/v0.8.0.md) and [v0.7.1 release notes](docs/releases/v0.7.1.md).
+**Latest: Spec Surgeon 1.1 (v1.1.0) — approved outcomes, continuous recovery and automatic template compatibility.** Includes all v1.0.0 capabilities and the latest merged reliability and recovery improvements. [1.1 release notes](docs/releases/v1.1.0.md) include installation and update instructions. Earlier: [v1.0.0 release notes](docs/releases/v1.0.0.md), [v0.8.0 release notes](docs/releases/v0.8.0.md) and [v0.7.1 release notes](docs/releases/v0.7.1.md).
 
 **New in v0.7.1: bounded recovery and local repair memory.** Investigate failed requests, previews and batches within an explicit model budget, try verified repairs or sequences on copies, review the final result, and remember useful cases for future investigations. See [Recovery and local repair memory](docs/RECOVERY.md) for desktop and CLI usage, limits and privacy details, and the [real-batch evaluation protocol](docs/RECOVERY_EVALUATION.md) for validation still to be done.
 
