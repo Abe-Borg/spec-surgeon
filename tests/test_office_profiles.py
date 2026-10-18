@@ -169,7 +169,8 @@ def test_changed_source_profile_scope_and_review_refuse_approval(tmp_path):
     with pytest.raises(ProfileError, match="review changed"):
         validate_review(changed)
     before = source.stat()
-    os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns + 1))
+    os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns + 1_000_000_000))
+    assert source.stat().st_mtime_ns != before.st_mtime_ns
     with pytest.raises(ProfileError, match="original document changed"):
         validate_review(review)
     os.utime(source, ns=(before.st_atime_ns, before.st_mtime_ns))

@@ -59,7 +59,7 @@ def comment_part(data):
     (build_plain(), "Nothing"),
     (build_commented(side=False), "^G\\."),
     (build_commented(), "^G\\."),
-])
+], ids=["plain", "legacy-comments", "modern-comments"])
 def test_complete_verification_with_new_legacy_and_modern_comments(data, pattern):
     plan, output, record = run(data, spec(pattern, source="Approved coordination memo, item 3.", initials="AR"))
     assert record.passed, failures(record)
@@ -298,7 +298,8 @@ def relocated(data, non_xml=False):
     return output.getvalue()
 
 
-@pytest.mark.parametrize("data,pattern", [(build_plain(), "Nothing"), (build_commented(), "^G\\.")])
+@pytest.mark.parametrize("data,pattern", [(build_plain(), "Nothing"), (build_commented(), "^G\\.")],
+                         ids=["plain", "modern-comments"])
 @pytest.mark.parametrize("non_xml", [False, True])
 def test_relationships_resolve_nonstandard_main_and_comment_part_paths(data, pattern, non_xml):
     data = relocated(data, non_xml=non_xml)
@@ -321,7 +322,8 @@ def contract_for(data, recipe=None):
     return goal, binding
 
 
-@pytest.mark.parametrize("data,pattern", [(build_plain(), "Nothing"), (build_commented(), "^G\\.")])
+@pytest.mark.parametrize("data,pattern", [(build_plain(), "Nothing"), (build_commented(), "^G\\.")],
+                         ids=["plain", "modern-comments"])
 def test_original_to_final_outcome_proof_uses_no_execution_plan(data, pattern):
     recipe = spec(pattern, source="Approved source reference")
     _, output, record = run(data, recipe)
