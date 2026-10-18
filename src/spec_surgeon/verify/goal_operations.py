@@ -14,14 +14,16 @@ from pathlib import Path
 from .props import Ctx, Styles, PartView, para_matches, _residual_styles, _strip_table_props, KINDS
 from .reader import STYLES_REL, VPackage, W
 from .clearing import v_cleared_sets, v_decide
+from .styleowned import v_style_owned_decision, v_style_ownership
 from .restyle import v_resolve_style, _v_pairs, _v_map, _v_holders, _v_rstyle, _v_tblstyle
 from .styleimport import NUMBERING_REL, v_type, v_derive_import, v_used_ids
 from .tableselect import VTables, v_parse_select, v_rows, v_cells, v_table_style, v_in_text_box, v_style_chain
 from . import tableprops, applytablestyle, language
 
 TYPES = {"paragraph_borders", "paragraph_style", "style_mapping", "proofing_language", "table_format", "table_style",
-         "numbering", "typed_numbering"}
+         "numbering", "typed_numbering", "review_comments"}
 PARAMS = {
+    "review_comments": {"text", "source", "author", "initials", "allow_missing", "expected_count"},
     "paragraph_borders": {"borders", "shading", "tracked", "author"},
     "paragraph_style": {"style", "direct_formatting", "existing", "tracked", "author"},
     "style_mapping": {"map", "existing", "allow_missing", "tracked", "author"},
@@ -32,6 +34,7 @@ PARAMS = {
     "typed_numbering": {"levels", "existing", "direct_formatting", "tracked", "author", "allow_missing"},
 }
 SELECT = {"paragraph_borders": {"scope", "paragraphs"}, "paragraph_style": {"scope", "paragraphs"}, "style_mapping": {"scope"},
+          "review_comments": {"scope", "paragraphs"},
           "proofing_language": set(), "table_format": {"scope", "tables"}, "table_style": {"scope", "tables"},
           "numbering": set(), "typed_numbering": {"paragraphs", "include_tables"}}
 SCOPES = {"document", "headers", "footers", "footnotes", "endnotes", "comments"}
@@ -96,7 +99,13 @@ def validate(effect):
             raise ValueError("unsupported or duplicate scope")
     if "paragraphs" in sel:
         paragraph_selector(sel["paragraphs"])
-    if "direct_formatting" in params and params["direct_formatting"] not in ("keep", "clear"):
+    if kind == "review_comments":
+        from .comment_additions import validate_request
+        validate_request(sel, params)
+        if "template" in effect or "template_sha256" in effect:
+            raise ValueError("review comments do not use templates")
+    direct_rules = {"keep", "clear", "replace_style_owned"} if kind == "paragraph_style" else {"keep", "clear"}
+    if "direct_formatting" in params and params["direct_formatting"] not in direct_rules:
         raise ValueError("invalid direct_formatting")
     if params.get("existing", "keep") not in ("keep", "replace"):
         raise ValueError("invalid existing style rule")
@@ -225,6 +234,8 @@ def _paragraph_style(ctx, a):
     a.update(kind="applied_style", parts=parts, style_id=sid, changed={}, expected_paragraphs=0,
              expected_restyled=0, expected_runs=0, expected_marks=0)
     clear = a["params"].get("direct_formatting", "keep") == "clear"
+    selective = a["params"].get("direct_formatting") == "replace_style_owned"
+    ownership = v_style_ownership(ctx.src_styles, _template_styles(a), sid, imported) if selective else None
     rn, pn = v_cleared_sets() if clear else (set(), set())
     count = 0
     for part in parts:
@@ -237,6 +248,8 @@ def _paragraph_style(ctx, a):
             current = ps.get(W + "val") if ps is not None else ctx.src_styles.default.get("paragraph")
             restyle = current != sid
             d = v_decide(p, sv.runs[i], ctx.src_styles, rn, pn) if clear else None
+            if selective:
+                d = v_style_owned_decision(p, sv.runs[i], ctx.src_styles, ownership)
             if not restyle and not (d and d.changed):
                 continue
             a["changed"].setdefault(part, []).append([i, restyle])
@@ -375,6 +388,10 @@ def _table_style(ctx, a):
 
 def verify_operations(source, output, effects, author, errors, binding):
     """Return context containing only masks justified by independently checked outcomes."""
+    if len(effects) == 1 and effects[0]["type"] == "review_comments":
+        from .comment_additions import verify_review_effect
+        validate(effects[0])
+        return verify_review_effect(source, output, effects[0], errors, binding)
     source_context = Ctx(source, source, {"property_assertions": []})
     assertions = source_context.plan["property_assertions"]
     for effect in effects:

@@ -22,6 +22,7 @@ from typing import Any, Dict, Sequence
 
 from . import guard
 from .inventory import digest, inspect_source, inventory_inputs, stable_id
+from .project_evidence import approved_context_words, validate_context
 
 
 SCHEMA_VERSION = 1
@@ -200,8 +201,8 @@ class Campaign:
         return self
 
     def set_project_context(self, project_id, context: dict):
-        if not isinstance(context, dict):
-            raise ValueError("Project context must be a JSON object.")
+        from .project_evidence import validate_context
+        context = validate_context(context)
         _json(context)
         project = self._project(project_id)
         project["context"] = copy.deepcopy(context)
@@ -210,9 +211,23 @@ class Campaign:
         project["provisional"] = False
         project["unresolved"] = []
         project["label"] = str(context.get("name") or context.get("project_name") or project["label"])
+        if project.get("proposed_plan"):
+            project["proposed_plan"]["status"] = "STALE"
         self._invalidate(project, "Project facts changed; the affected scope must be planned again.")
         self._save("set_project_context", {"project_id": project_id})
         return self
+
+    def set_project_fact(self, project_id, fact):
+        from .project_evidence import set_fact
+        return self.set_project_context(project_id, set_fact(self._project(project_id)["context"], fact))
+
+    def supersede_project_fact(self, project_id, old_id, replacement):
+        from .project_evidence import supersede_fact
+        return self.set_project_context(project_id, supersede_fact(self._project(project_id)["context"], old_id, replacement))
+
+    def set_standards_register(self, project_id, entries):
+        from .project_evidence import set_standards_register
+        return self.set_project_context(project_id, set_standards_register(self._project(project_id)["context"], entries))
 
     def set_goal(self, project_id, request: str, *, spec=None, chain=None, template=None,
                  approved_words=(), adaptive_contract=None, doc_ids=None):
@@ -693,7 +708,7 @@ class Campaign:
                             self._save("project_started", {"project_id": project["id"], "path": str(run_dir)})
                             words = list(goal["approved_words"])
                             if project["context"]:
-                                words.append(_json(project["context"]))
+                                words.append(approved_context_words(project["context"]))
                             result = recovery.recover(files, goal["request"], run_dir,
                                 template=goal["template"], approved_words=words, options=options, client=client,
                                 log=notify, project_context=project["context"], input_files=[])
@@ -723,7 +738,7 @@ class Campaign:
         self._save("project_started", {"project_id": project["id"], "path": str(run_dir)})
         words = list(goal["approved_words"])
         if project["context"]:
-            words.append(_json(project["context"]))
+            words.append(approved_context_words(project["context"]))
         log(f"Project {project['label']}: trying the approved saved work without model calls.")
         return recovery.prepare_recovery(files, goal["request"], run_dir, spec=goal.get("spec"), chain=goal.get("chain"),
             template=goal["template"], approved_words=words, options=options, project_context=project["context"], input_files=[])
@@ -898,7 +913,12 @@ class Campaign:
             self._save("adaptive_trial_started", {"project_id": project["id"], "document_id": doc_id})
             words = list(goal.get("approved_words") or [])
             if project["context"]:
-                words.append(_json(project["context"]))
+                scopes = [{"kind": "document", "value": str(source)}]
+                if (doc.get("section_status") == "identified" and doc.get("section")
+                        and any(e.get("kind") == "section_heading" and e.get("value") == doc["section"]
+                                for e in doc.get("evidence", []))):
+                    scopes.append({"kind": "section", "value": doc["section"]})
+                words.append(approved_context_words(project["context"], scopes=scopes))
             kwargs = dict(spec=goal.get("spec"), chain=goal.get("chain"), template=goal.get("template"),
                           approved_words=words, options=options, project_context=project["context"],
                           input_files=[], adaptive_contract=contract)
@@ -1106,6 +1126,7 @@ def create_campaign(inputs: Sequence[str], out_dir: Path, request: str = "", *, 
     if str(out_dir) in inventory["roots"]:
         raise ValueError("The campaign workspace cannot be an input root.")
     for project in inventory["projects"].values():
+        validate_context(project["context"])
         project.update(goal={"request": request, "spec": None, "chain": None, "template": None,
                              "approved_words": [], "adaptive_contract": None} if request.strip() else {},
                        decisions=[], runs=[], questions=[], status="PENDING" if request.strip() else "NEEDS_GOAL")
@@ -1127,6 +1148,7 @@ def load_campaign(out_dir: Path) -> Campaign:
         raise ValueError("Malformed campaign state.")
     seen = set()
     for pid, project in state["projects"].items():
+        validate_context(project["context"])
         for doc_id in project["document_ids"]:
             if doc_id in seen or doc_id not in state["documents"] or state["documents"][doc_id]["project_id"] != pid:
                 raise ValueError("Conflicting campaign document identity or project membership.")

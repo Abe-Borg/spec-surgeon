@@ -1,0 +1,331 @@
+"""Archive fidelity, bounded intake, and explicit desktop-safe process creation."""
+from __future__ import annotations
+
+import io
+import importlib.util
+import json
+import struct
+import sys
+import zipfile
+from copy import copy
+from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
+
+from make_fixtures import build
+from spec_surgeon import batch
+from spec_surgeon.editspec import plan_spec
+from spec_surgeon.package import DocxPackage
+from spec_surgeon.package_limits import ArchiveLimitError, ArchiveLimits, check_archive
+from spec_surgeon.render import word_com, word_worker
+from spec_surgeon.verify.reader import VPackage
+from spec_surgeon.verify import run_suite
+
+
+def _archive(entries, comment=b""):
+    output = io.BytesIO()
+    with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+        archive.comment = comment
+        for name, data in entries:
+            archive.writestr(name, data)
+    return output.getvalue()
+
+
+def _with_metadata(data):
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(data)) as original, zipfile.ZipFile(output, "w") as result:
+        result.comment = b"office archive comment"
+        for number, info in enumerate(original.infolist()):
+            info = copy(info)
+            info.comment = f"member {number}".encode()
+            info.extra = b"\xfe\xca\x04\x00data"
+            info.internal_attr = 1
+            result.writestr(info, original.read(info.filename))
+    return output.getvalue()
+
+
+@pytest.mark.parametrize("limits,entries", [
+    (ArchiveLimits(max_members=1), [("first", b"1"), ("second", b"2")]),
+    (ArchiveLimits(max_member_bytes=8), [("large", b"a" * 9)]),
+    (ArchiveLimits(max_total_bytes=10), [("first", b"a" * 6), ("second", b"b" * 6)]),
+    (ArchiveLimits(max_archive_bytes=10), [("first", b"1")]),
+])
+def test_archive_declared_limits_refuse_before_document_use(limits, entries):
+    with pytest.raises(ArchiveLimitError):
+        DocxPackage(_archive(entries), limits=limits)
+
+
+def test_archive_stream_checks_real_counts_not_just_central_directory():
+    requests = []
+
+    class Stream(io.BytesIO):
+        def read(self, count=-1):
+            requests.append(count)
+            return super().read(count)
+
+    info = SimpleNamespace(filename="lied-about-size", file_size=4)
+    archive = SimpleNamespace(infolist=lambda: [info], open=lambda entry: Stream(b"a" * 20))
+    with pytest.raises(ArchiveLimitError, match="expansion exceeds"):
+        check_archive(archive, ArchiveLimits(max_member_bytes=8))
+    assert requests == [9]
+
+
+def test_archive_member_count_is_bounded_before_zipinfo_allocation(monkeypatch):
+    import spec_surgeon.package as package_module
+    data = bytearray(_archive([("a", b"1"), ("b", b"2")]))
+    end = data.rfind(b"PK\x05\x06")
+    # A dishonest end record cannot hide the actual central-directory record count.
+    struct.pack_into("<HH", data, end + 8, 1, 1)
+    monkeypatch.setattr(package_module.zipfile, "ZipFile", lambda *args: pytest.fail("metadata should be bounded first"))
+    with pytest.raises(ArchiveLimitError, match="central directory"):
+        DocxPackage(bytes(data), limits=ArchiveLimits(max_members=1))
+
+
+def test_small_zip64_archive_and_prepended_stub_keep_compatible_intake():
+    data = _archive([("body", b"text"), ("metadata", b"kept")], comment=b"office")
+    end = data.rfind(b"PK\x05\x06")
+    original = struct.unpack_from("<4s4H2LH", data, end)
+    extended = struct.pack("<4sQ2H2L4Q", b"PK\x06\x06", 44, 45, 45, 0, 0,
+                           original[3], original[4], original[5], original[6])
+    locator = struct.pack("<4sLQL", b"PK\x06\x07", 0, end, 1)
+    classic = bytearray(data[end:])
+    struct.pack_into("<HHLL", classic, 8, 65535, 65535, 0xFFFFFFFF, 0xFFFFFFFF)
+    zip64 = data[:end] + extended + locator + bytes(classic)
+    for source in (zip64, b"inert archive prefix" + zip64):
+        package = DocxPackage(source, limits=ArchiveLimits(max_members=2))
+        assert package.read("body") == b"text" and package.repack() == source
+
+
+def test_archive_checks_actual_aggregate_and_mismatched_declarations():
+    infos = [SimpleNamespace(filename="a", file_size=4), SimpleNamespace(filename="b", file_size=4)]
+    archive = SimpleNamespace(infolist=lambda: infos, open=lambda entry: io.BytesIO(b"a" * 4))
+    check_archive(archive, ArchiveLimits(max_total_bytes=8))  # exact bound is accepted
+    archive.open = lambda entry: io.BytesIO(b"a" * 3)
+    with pytest.raises(ArchiveLimitError, match="not its declared"):
+        check_archive(archive, ArchiveLimits())
+    archive.open = lambda entry: io.BytesIO(b"a" * (4 if entry.filename == "a" else 6))
+    with pytest.raises(ArchiveLimitError, match="expansion exceeds"):
+        check_archive(archive, ArchiveLimits(max_total_bytes=8))
+
+
+def test_archive_limits_environment_and_copy(monkeypatch):
+    monkeypatch.setenv("SPEC_SURGEON_ARCHIVE_MAX_MEMBER_BYTES", "3")
+    with pytest.raises(ArchiveLimitError):
+        DocxPackage(_archive([("odd/../name", b"aaaa")]))
+    limits = ArchiveLimits(max_member_bytes=4)
+    package = DocxPackage(_archive([("odd/../name", b"aaaa")]), limits=limits)
+    assert package.member_names == ["odd/../name"]  # never extract or normalize names
+    assert package.copy().limits == limits
+    monkeypatch.setenv("SPEC_SURGEON_ARCHIVE_MAX_MEMBER_BYTES", "invalid")
+    with pytest.raises(ValueError, match="positive integer"):
+        DocxPackage(_archive([]))
+
+
+def test_archive_limit_is_a_per_file_refusal_without_source_mutation(tmp_path, monkeypatch):
+    source = tmp_path / "oversized.docx"
+    data = build("21 13 13", "WET-PIPE")
+    source.write_bytes(data)
+    monkeypatch.setenv("SPEC_SURGEON_ARCHIVE_MAX_MEMBERS", "1")
+    result = batch.run_batch([str(source)], "page-numbering", {"option": "continuous"},
+                             tmp_path / "results", workers=1, do_render=False)
+    assert result.files[0].exception["code"] == "archive-limit"
+    assert source.read_bytes() == data and result.files[0].delivered_to is None
+
+
+def test_noop_repack_and_equal_substitutions_keep_entire_archive_bytes():
+    data = _with_metadata(build("21 13 13", "WET-PIPE"))
+    package = DocxPackage(data)
+    assert package.repack() is data
+    assert package.repack({"word/document.xml": package.read("word/document.xml")}) is data
+
+
+def test_repack_keeps_archive_metadata_and_distinct_duplicate_inert_members():
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        data = _archive([("main", b"original"), ("[trash]/same.dat", b"first"),
+                         ("[trash]/same.dat", b"second")], comment=b"comment")
+    package = DocxPackage(data)
+    with pytest.warns(UserWarning, match="Duplicate name"):
+        output = package.repack({"main": b"changed"})
+    with zipfile.ZipFile(io.BytesIO(output)) as archive:
+        assert archive.comment == b"comment"
+        assert [archive.read(info) for info in archive.infolist()] == [b"changed", b"first", b"second"]
+
+
+def test_metadata_survives_changes_and_independent_reader_catches_dropped_comments():
+    data = _with_metadata(build("21 13 13", "WET-PIPE"))
+    package = DocxPackage(data)
+    output = package.repack({"word/document.xml": package.read("word/document.xml") + b"\n"})
+    assert VPackage(data).metadata_changes(VPackage(output)) == []
+    damaged = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(output)) as source, zipfile.ZipFile(damaged, "w") as destination:
+        for info in source.infolist():
+            info = copy(info)
+            info.comment = b""
+            destination.writestr(info, source.read(info.filename))
+    changes = VPackage(data).metadata_changes(VPackage(damaged.getvalue()))
+    assert "archive comment" in changes
+    assert any("word/document.xml: comment" == change for change in changes)
+
+
+def test_v1_fails_metadata_damage_even_when_member_bytes_are_unchanged():
+    source = _with_metadata(build("21 13 13", "WET-PIPE"))
+    package = DocxPackage(source)
+    spec = {"request": "Use Arial", "summary": "Apply Arial", "mode": "formatting",
+            "ops": [{"op": "set_font", "select": {"scope": ["document"]},
+                                             "params": {"font": "Arial"}}]}
+    damaged = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(source)) as original, zipfile.ZipFile(damaged, "w") as changed:
+        for info in original.infolist():
+            changed.writestr(info, original.read(info))
+    # Use the existing plan, but no mutation: absent requested font would independently fail V10 too.
+    plan, _ = plan_spec(package, spec)
+    record = run_suite(source, damaged.getvalue(), plan.to_dict(), "source.docx", "damaged.docx")
+    v1 = next(check for check in record.checks if check.id == "V1")
+    assert v1.status == "FAIL" and "archive comment" in v1.data["metadata_changes"]
+
+
+def test_both_batch_pools_use_spawn_even_when_frozen(monkeypatch):
+    calls = []
+    context = object()
+    monkeypatch.setattr(sys, "frozen", True, raising=False)
+    monkeypatch.setattr(batch.multiprocessing, "get_context", lambda method: calls.append(method) or context)
+    monkeypatch.setattr(batch, "ProcessPoolExecutor", lambda **kwargs: kwargs)
+    assert batch._process_pool(3) == {"max_workers": 3, "mp_context": context}
+    assert batch._process_pool(1) == {"max_workers": 1, "mp_context": context}
+    assert calls == ["spawn", "spawn"]
+
+
+def test_frozen_launcher_handles_spawn_before_app_mutex_or_ui(monkeypatch):
+    from spec_surgeon import winapp
+    path = Path(__file__).resolve().parents[1] / "packaging/windows/launcher_bootstrap.py"
+    module_spec = importlib.util.spec_from_file_location("_runtime_spawn_launcher", path)
+    launcher = importlib.util.module_from_spec(module_spec)
+    module_spec.loader.exec_module(launcher)
+
+    def worker_exit():
+        raise SystemExit(0)  # freeze_support owns the child and never opens a window
+
+    monkeypatch.setattr(launcher.multiprocessing, "freeze_support", worker_exit)
+    monkeypatch.setattr(winapp, "hold_app_mutex", lambda: pytest.fail("worker must not acquire the app mutex"))
+    with pytest.raises(SystemExit) as result:
+        launcher.prepare()
+    assert result.value.code == 0
+
+
+def _fake_worker_context(monkeypatch, *, messages=None, result=None, alive=False, pdf=b"PDF", exitcode=0):
+    controls = SimpleNamespace(terminated=False, killed=False, closed=False, opened=[], cleanup=[])
+    pending = list(messages if messages is not None else [{"kind": "finished"}])
+    receive = SimpleNamespace(poll=lambda timeout: bool(pending), recv=lambda: pending.pop(0), close=lambda: None)
+    send = SimpleNamespace(close=lambda: None)
+
+    class Process:
+        def __init__(self, target, args, name):
+            self.request = args[1]
+            self.exitcode = exitcode
+            self.alive = alive
+
+        def start(self):
+            folder = Path(self.request["scratch"])
+            (folder / "result.json").write_text(json.dumps(result or {"ok": True, "version": "mock"}))
+            if pdf is not None:
+                (folder / "render.pdf").write_bytes(pdf)
+
+        def is_alive(self):
+            return self.alive
+
+        def join(self, timeout):
+            pass
+
+        def terminate(self):
+            controls.terminated = True
+            self.alive = False
+
+        def kill(self):
+            controls.killed = True
+            self.alive = False
+
+        def close(self):
+            controls.closed = True
+
+    context = SimpleNamespace(Pipe=lambda duplex: (receive, send), Process=Process)
+    monkeypatch.setattr(word_worker.multiprocessing, "get_context", lambda method: context if method == "spawn" else None)
+    monkeypatch.setattr(word_worker, "_open_private_handle", lambda identity: controls.opened.append(identity) or "private")
+    monkeypatch.setattr(word_worker, "_close_private_handle", lambda handle, **kwargs: controls.cleanup.append((handle, kwargs)))
+    return controls
+
+
+def test_word_worker_success_publishes_only_completed_pdf(tmp_path, monkeypatch):
+    controls = _fake_worker_context(monkeypatch)
+    destination = tmp_path / "output.pdf"
+    result = word_worker.run_word("render", tmp_path / "source.docx", pdf=destination, timeout=1)
+    assert result["version"] == "mock" and destination.read_bytes() == b"PDF"
+    assert controls.closed and not controls.terminated
+
+
+def test_word_timeout_terminates_worker_and_only_pinned_private_word(tmp_path, monkeypatch):
+    controls = _fake_worker_context(monkeypatch, messages=[{"kind": "started", "identity": {"pid": 42, "created": "time"}}],
+                                    alive=True)
+    ticks = iter([0, 0.1, 2])
+    monkeypatch.setattr(word_worker.time, "monotonic", lambda: next(ticks))
+    with pytest.raises(word_worker.WordWorkerError) as caught:
+        word_worker.run_word("render", tmp_path / "source.docx", pdf=tmp_path / "output.pdf", timeout=1)
+    assert caught.value.code == "word-timeout"
+    assert controls.terminated and controls.cleanup == [("private", {"terminate": True})]
+    assert not (tmp_path / "output.pdf").exists()
+
+
+def test_word_timeout_without_ownership_never_selects_another_word_process(tmp_path, monkeypatch):
+    controls = _fake_worker_context(monkeypatch, messages=[], alive=True)
+    ticks = iter([0, 2])
+    monkeypatch.setattr(word_worker.time, "monotonic", lambda: next(ticks))
+    with pytest.raises(word_worker.WordWorkerError) as caught:
+        word_worker.run_word("accept_reject", tmp_path / "source.docx", timeout=1)
+    assert not caught.value.details["private_cleanup_available"]
+    assert controls.opened == [] and controls.cleanup == [(None, {"terminate": True})]
+
+
+@pytest.mark.parametrize("result,pdf,code", [
+    ({"ok": False, "code": "word-com", "reason": "COM error 0x80020009", "stage": "word_export"}, b"partial", "word-com"),
+    ({"ok": True}, None, "word-no-pdf"),
+])
+def test_word_failed_or_missing_result_cannot_publish_partial_pdf(tmp_path, monkeypatch, result, pdf, code):
+    _fake_worker_context(monkeypatch, result=result, pdf=pdf)
+    with pytest.raises(word_worker.WordWorkerError) as caught:
+        word_worker.run_word("render", tmp_path / "source.docx", pdf=tmp_path / "output.pdf", timeout=1)
+    assert caught.value.code == code
+    assert not (tmp_path / "output.pdf").exists()
+
+
+def test_word_render_discards_stale_pdf_and_continues_after_timeout(tmp_path, monkeypatch):
+    first, second = tmp_path / "one.docx", tmp_path / "two.docx"
+    out = tmp_path / "pdf"
+    out.mkdir()
+    (out / "one.pdf").write_bytes(b"stale")
+
+    def run(action, source, *, pdf, timeout):
+        if source == first:
+            raise word_worker.WordWorkerError("word-timeout", "timed out", {"timeout_seconds": timeout})
+        pdf.write_bytes(b"fresh")
+        return {"version": "mock"}
+
+    monkeypatch.setattr(word_worker, "run_word", run)
+    errors = []
+    assert word_com.render_pdfs([first, second], out, log=errors.append, timeout=2) == {second: out / "two.pdf"}
+    assert not (out / "one.pdf").exists() and "timed out" in errors[0]
+
+
+def test_word_process_identity_never_adopts_an_existing_pid(monkeypatch):
+    monkeypatch.setitem(sys.modules, "win32process", SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42)))
+    monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace(OpenProcess=lambda *args: pytest.fail("must not open existing Word")))
+    assert word_worker._private_identity(SimpleNamespace(Hwnd=5), {42}) is None
+
+
+def test_word_process_handle_creation_time_prevents_pid_reuse(monkeypatch):
+    closed = []
+    handle = SimpleNamespace(Close=lambda: closed.append(True))
+    monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace(OpenProcess=lambda *args: handle))
+    monkeypatch.setitem(sys.modules, "win32process", SimpleNamespace(
+        GetProcessTimes=lambda handle: {"CreationTime": SimpleNamespace(isoformat=lambda: "different process")}))
+    assert word_worker._open_private_handle({"pid": 42, "created": "original process"}) is None
+    assert closed == [True]

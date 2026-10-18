@@ -12,7 +12,10 @@ input pinned by md5 (rule 12); ``existing`` (``keep`` | ``replace``, with ``temp
 has keeps the document's definition, or takes the template's; ``direct_formatting``: ``keep`` (default) — the
 paragraphs' own formatting stays (it wins over the style, as in Word) — or ``clear``: the paragraphs' direct paragraph
 formatting and their runs' and marks' direct run formatting are cleared by clear_direct_formatting's DEFAULT rules
-(``clear_formatting.ClearSettings()``), so the paragraphs follow the new style completely; ``tracked`` / ``author``.
+(``clear_formatting.ClearSettings()``); ``replace_style_owned`` narrows those safe rules to properties explicitly
+supplied by the resulting destination basedOn chain. Font, spacing and indent attributes are cleared separately;
+unrelated direct attributes remain. Partial border/tab containers remain and are flagged. Document defaults and
+linked or inactive built-in styles grant no ownership. ``tracked`` / ``author`` follow the existing rules.
 
 Definitions (the verifier's own reading is verify/applystyle.py):
 
@@ -36,6 +39,8 @@ from __future__ import annotations
 from collections import Counter
 from typing import Any, Dict, List, Optional, Tuple
 
+from lxml import etree
+
 from ..package import W, DocxPackage
 from ..ooxml import RevisionStamp, block_full_text, file_uses_date_utc, max_revision_id, paragraphs
 from . import register
@@ -46,6 +51,7 @@ from .replace_text import default_author
 from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, runs_by_paragraph, scope_parts
 from .style_import import (TemplateStyles, apply_import, check_template_unchanged, plan_import, resolve_style,
                            style_type)
+from .style_owned import style_owned_clearing, style_owned_properties
 
 SCOPE_SCHEMA = {"type": "array", "items": {"type": "string", "enum": ["document", "headers", "footers", "footnotes",
                                                                        "endnotes", "comments"]}, "default": ["document"]}
@@ -54,11 +60,20 @@ REFLOW_REASON = "a new paragraph style changes the paragraphs' fonts, spacing an
 
 
 def _clearing_data(d: ParagraphClearing) -> Dict[str, Any]:
-    return {"runs": [[ri, list(n)] for ri, n in d.runs], "mark": list(d.mark) if d.mark else None, "ppr": list(d.ppr)}
+    def encode(items):
+        return {name: etree.tostring(prop, encoding="unicode") for name, prop in items.items()}
+    return {"runs": [[ri, list(n)] for ri, n in d.runs], "mark": list(d.mark) if d.mark else None, "ppr": list(d.ppr),
+            "run_replacements": {str(ri): encode(items) for ri, items in d.run_replacements.items()},
+            "mark_replacements": encode(d.mark_replacements), "ppr_replacements": encode(d.ppr_replacements)}
 
 
 def _clearing_from(data: Dict[str, Any]) -> ParagraphClearing:
-    return ParagraphClearing(runs=[(ri, list(n)) for ri, n in data["runs"]], mark=data["mark"], ppr=list(data["ppr"]))
+    def decode(items):
+        return {name: etree.fromstring(prop.encode("utf-8")) for name, prop in items.items()}
+    return ParagraphClearing(runs=[(ri, list(n)) for ri, n in data["runs"]], mark=data["mark"], ppr=list(data["ppr"]),
+        run_replacements={int(ri): decode(items) for ri, items in data.get("run_replacements", {}).items()},
+        mark_replacements=decode(data.get("mark_replacements", {})),
+        ppr_replacements=decode(data.get("ppr_replacements", {})))
 
 
 def set_pstyle(style_id: str):
@@ -81,7 +96,8 @@ class ApplyStyle(Op):
     description = ("Give the selected paragraphs a paragraph style — chosen by appearance (bold, all caps), by pattern "
                    "(text, 'after a heading', between two paragraphs) or by their current style; the style from the "
                    "document or imported from a template (with its numbering). direct_formatting 'clear' also removes "
-                   "the paragraphs' own formatting so they follow the style completely. Adds no characters.")
+                   "eligible direct formatting; 'replace_style_owned' replaces only formatting explicitly controlled "
+                   "by the destination style. Adds no characters.")
     params_schema = {"type": "object", "required": ["style"], "properties": {
         "style": {"type": "string", "description": "the paragraph style's id or name (as the profiles show it)"},
         "template": {"type": "string", "description": "a .docx/.dotx holding the style when the document lacks it: "
@@ -90,9 +106,11 @@ class ApplyStyle(Op):
         "existing": {"type": "string", "enum": ["keep", "replace"], "default": "keep",
                      "description": "with template: a style the document already has keeps the document's definition "
                                     "(keep) or takes the template's (replace); the style must be in the template"},
-        "direct_formatting": {"type": "string", "enum": ["keep", "clear"], "default": "keep",
+        "direct_formatting": {"type": "string", "enum": ["keep", "clear", "replace_style_owned"], "default": "keep",
                               "description": "keep the paragraphs' own formatting (it wins over the style), or clear "
-                                             "it by clear_direct_formatting's default rules"},
+                                             "it by clear_direct_formatting's default rules; replace_style_owned "
+                                             "replaces only eligible properties explicitly supplied by the destination "
+                                             "style and its basedOn chain, retaining unrelated direct formatting"},
         "tracked": {"type": "boolean", "description": "w:pPrChange per paragraph (w:rPrChange per cleared run); "
                                                       "default: plain for whole-document selections, tracked when "
                                                       "paragraphs are targeted"},
@@ -121,8 +139,8 @@ class ApplyStyle(Op):
         if not isinstance(ref, str) or not ref.strip():
             raise JobException("apply_style needs 'style': a paragraph style's id or name", "bad-params")
         direct = params.get("direct_formatting", "keep")
-        if direct not in ("keep", "clear"):
-            raise JobException("direct_formatting must be 'keep' or 'clear'", "bad-params")
+        if direct not in ("keep", "clear", "replace_style_owned"):
+            raise JobException("direct_formatting must be 'keep', 'clear', or 'replace_style_owned'", "bad-params")
         existing = params.get("existing", "keep")
         if existing not in ("keep", "replace"):
             raise JobException("existing must be 'keep' or 'replace'", "bad-params")
@@ -172,6 +190,15 @@ class ApplyStyle(Op):
 
         # ---- the paragraphs ----
         settings = ClearSettings() if direct == "clear" else None
+        owned, retained = None, set()
+        if direct == "replace_style_owned":
+            resulting_styles = dict(sheet.styles)
+            if imp is not None:
+                resulting_styles.update({style_id: tpl.sheet.styles[style_id]
+                                         for style_id in imp.imported + imp.replaced})
+            owned, chain_ids = style_owned_properties(resulting_styles, sid)
+            # The clearing decision reads every ancestor, including held definitions.
+            frag.touches += [(sheet.part, f"style:{style_id}", "verify") for style_id in sorted(chain_ids)]
         targets: Dict[str, List[list]] = {}
         already = 0
         n_paras = n_restyled = n_runs = n_marks = rev_ids = 0
@@ -188,6 +215,9 @@ class ApplyStyle(Op):
                 old = sheet.paragraph_style_id(p)
                 restyle = old != sid
                 d = paragraph_clearing(p, groups[bi], sheet, settings) if settings else ParagraphClearing()
+                if owned is not None:
+                    d, skipped = style_owned_clearing(p, groups[bi], sheet, owned)
+                    retained |= skipped
                 # which paragraphs name which style (rule 9, batch 4): this one gains a use of the style and, restyled,
                 # its old style loses one — mapping the style away (map_styles, uses-) or a selection by either style
                 # beside it is a plan-time conflict; an already-styled paragraph is a read (another op restyling it)
@@ -257,12 +287,17 @@ class ApplyStyle(Op):
         if targets or (imp is not None and imp.changes):
             frag.geometry_reference, frag.geometry_reason = "none", REFLOW_REASON
         frag.notes.append(f"{n_restyled} paragraph(s) get style {sid}"
-                          + (f"; direct formatting cleared on {n_paras} paragraph(s), {n_runs} run(s), {n_marks} mark(s) "
+                          + (f"; destination-style-owned direct formatting replaced on {n_paras} paragraph(s), "
+                             f"{n_runs} run(s), {n_marks} mark(s)" if owned is not None else
+                             f"; direct formatting cleared on {n_paras} paragraph(s), {n_runs} run(s), {n_marks} mark(s) "
                              f"(clear_direct_formatting's default rules)" if settings else
                              "; their own direct formatting stays (it wins over the style)")
                           + f"; {'tracked' if tracked else 'plain'} — "
                           + ("explicit 'tracked'" if "tracked" in params else
                              "default for " + ("targeted" if tracked else "whole-document") + " formatting (§14.1)"))
+        if retained:
+            frag.flags.append("Selective style formatting retained compound properties with unrelated direct "
+                              f"components: {', '.join(sorted(retained))}; review these in Word.")
         if already:
             frag.notes.append(f"already as asked, left alone: {already} paragraph(s)")
         if own_numbering:

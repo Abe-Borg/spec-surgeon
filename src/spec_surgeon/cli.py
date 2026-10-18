@@ -272,7 +272,8 @@ def cmd_audit(args):
         identity = _params(args.identity)
         if not isinstance(identity, dict):
             raise ValueError("identity must be a JSON object")
-        report = audit_batch(files, args.audit, identity)
+        project_context = _params(args.project_context) if args.project_context else None
+        report = audit_batch(files, args.audit, identity, project_context=project_context)
     except (OSError, ValueError) as e:
         print(f"Audit refused: {e}", file=sys.stderr)
         return 2
@@ -1665,14 +1666,32 @@ def main(argv=None) -> int:
     p.add_argument("--replace", action="store_true", help="replace a saved chain of the same name")
     p.set_defaults(fn=cmd_workflows)
 
+    from .office_cli import add_parsers as add_office_parsers
+    add_office_parsers(sub)
+
+    p = sub.add_parser("evaluate", help="adapt workflow reports and compare paired evaluation evidence")
+    p.add_argument("arguments", nargs=argparse.REMAINDER)
+    def evaluate_command(args):
+        from .workflow_evaluation import main as evaluate_main
+        return evaluate_main(args.arguments)
+    p.set_defaults(fn=evaluate_command)
+
+    p = sub.add_parser("evidence", help="manage scoped project facts and approved standards in a workspace")
+    p.add_argument("arguments", nargs=argparse.REMAINDER)
+    def evidence_command(args):
+        from .project_evidence_cli import main as evidence_main
+        return evidence_main(args.arguments)
+    p.set_defaults(fn=evidence_command)
+
     p = sub.add_parser("profile", help="document profiles per structure pattern (what the compiler sees)")
     p.add_argument("files", nargs="+"); p.add_argument("--json", action="store_true"); p.set_defaults(fn=cmd_profile)
 
     from .spec_qa import AUDITS
     p = sub.add_parser("audit", help="report-only spec QA: placeholders, section references, standards, readiness and identity")
     p.add_argument("files", nargs="+")
-    p.add_argument("--audit", action="append", choices=AUDITS, help="repeat to select audits; default: all five")
+    p.add_argument("--audit", action="append", choices=AUDITS, help="repeat to select audits; default: all")
     p.add_argument("--identity", help="JSON or @file with canonical project_name, project_number and date")
+    p.add_argument("--project-context", help="JSON or @file with project_evidence and its approved standards register")
     p.add_argument("--json", action="store_true", help="machine-readable report")
     p.add_argument("--out", help="save a .md or .json report; DOCX files are never written")
     p.set_defaults(fn=cmd_audit)

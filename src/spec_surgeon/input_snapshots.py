@@ -87,7 +87,8 @@ def snapshot_inputs(value, out_dir, identities=None, extra_paths=()):
         # Missing inputs stay missing in the execution copy, even if an original
         # appears transiently after acquisition.
         copies[str(original)] = str(target)
-        manifest.append({"source": str(original), "snapshot": str(target), "identity": pin})
+        manifest.append({"source": str(original), "snapshot": str(target), "identity": pin,
+                         "sha256": hashlib.sha256(data).hexdigest() if data is not None and pin != "missing" else None})
     specs = ([stage["spec"] for stage in working["stages"]] if isinstance(working, dict) and "stages" in working
              and "ops" not in working else [working] if isinstance(working, dict) else [])
     for spec in specs:

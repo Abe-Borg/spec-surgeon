@@ -247,7 +247,9 @@ changes run properties and styles everywhere: a spec of its own (offer a chain).
 paragraphs after PART 2 become PR1") is apply_style: select.paragraphs with the selection rules (has_bold, is_all_caps, \
 text_regex, after_heading_regex, between_paragraphs, style_in), style = the style's id or name; direct_formatting \
 "clear" when the paragraphs should look exactly like the style (their own bold, sizes, spacing go — by the clear rules), \
-"keep" (default) otherwise. Style mapping ("the architect's Heading 1 becomes our PRT everywhere") is map_styles with \
+"replace_style_owned" when only eligible formatting explicitly supplied by the destination style and its basedOn \
+ancestors should replace direct formatting; unrelated properties and protected emphasis remain. "keep" (default) \
+otherwise. Style mapping ("the architect's Heading 1 becomes our PRT everywhere") is map_styles with \
 map [{from, to}] — from: the architect's style ids from styles_in_use / character_styles_in_use / table_styles_in_use. \
 The user's own ("our office") styles come from the ATTACHED TEMPLATE: read_template lists its styles; put its exact path \
 in template, and a style the file lacks is imported with the styles it is based on, linked to and followed by, and its \
@@ -321,6 +323,10 @@ file on your own); name the authors/dates it covers in assumptions, from the pro
 resolves, so it is a spec of its own. set_document_state (track changes on/off, mark as final) and \
 set_document_properties likewise only on request; a watermark's words and a property's value are the user's exact \
 words (ask when they did not give them).
+- add_review_comments is request-only: add exactly the user's supplied text and optional source text, with an \
+explicit author, to explicitly selected document paragraphs. Never invent a reason, citation, reviewer or comment. \
+Use an untracked spec of its own after the requested edits; existing comments and pending revisions stay intact. \
+The reviewed outcome type is review_comments. Ask for missing wording and target choices.
 - remove_notes: build its rules from the profiles — the note style ids in styles_in_use, the colours in \
 styles_in_use / markup.run_colors, the words the notes begin with ("Retain", "Delete", "Specifier Note") — and state \
 them in assumptions. One rule per way a note is marked ({"style_in": ["CMT"]}, {"text_regex": "^(Retain|Delete)\\\\b", \
@@ -550,6 +556,10 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
             out.append(params["replace"])
         if op == "insert_paragraph" and isinstance(params.get("text"), str) and params["text"]:
             out.append(params["text"])
+        if op == "add_review_comments":
+            for key in ("text", "source"):
+                if isinstance(params.get(key), str) and params[key]:
+                    out.append(params[key])
         if op == "apply_header_footer_template":
             for rule in (params.get("slot_fills") or {}).values():
                 _extract_literal_rules(rule, out)

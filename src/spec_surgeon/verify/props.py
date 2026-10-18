@@ -2438,6 +2438,7 @@ from .textops import TEXT_OP_KINDS  # noqa: E402
 from .images import IMAGE_KINDS  # noqa: E402
 # built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md)
 from .comments import COMMENT_KINDS  # noqa: E402
+from .comment_additions import COMMENT_ADDITION_KINDS  # noqa: E402
 from .highlight import HIGHLIGHT_KINDS  # noqa: E402
 from .revisions import REVISION_KINDS  # noqa: E402
 from .removal import REMOVAL_KINDS  # noqa: E402
@@ -2473,6 +2474,7 @@ KINDS["literal_replacement"] = literal_replacement
 KINDS["paragraph_edits"] = paragraph_edits
 KINDS.update(HYGIENE_KINDS)
 KINDS.update(IMAGE_KINDS)
+KINDS.update(COMMENT_ADDITION_KINDS)
 for _batch2 in (COMMENT_KINDS, HIGHLIGHT_KINDS, REVISION_KINDS, REMOVAL_KINDS, WATERMARK_KINDS, LINK_KINDS, DOCPROP_KINDS):
     KINDS.update(_batch2)
 KINDS.update(TAB_KINDS)

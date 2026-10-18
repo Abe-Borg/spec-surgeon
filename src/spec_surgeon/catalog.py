@@ -20,10 +20,10 @@ from .ops import OPS
 EXAMPLES_DIR = Path(__file__).resolve().parent / "examples" / "specs"
 
 # What a compiled spec usually has to state about each op (the user sees these in the preview and can veto them).
-# The method's three request-only operations (built-in batch 2, design §0): accepting/rejecting tracked changes, editing
+# Request-only operations: accepting/rejecting tracked changes, editing
 # the document properties, changing the Track Changes setting / Mark as Final — never on a model's own initiative, only
 # when the user asks for exactly that. The advisor never adds one to a respec (advisor._respec_errors).
-REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_document_state")
+REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_document_state", "add_review_comments")
 
 COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "normalize_whitespace": ["ordinary spaces only; tabs, line breaks and non-breaking spaces stay", "tracked unless clean copies requested"],
@@ -142,6 +142,18 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "highlight and symbol fonts stay) so the paragraphs look exactly like the style",
         "tracked (Formatted: Style) when particular paragraphs are chosen, plain for the whole document; a paragraph "
         "numbered by its own list keeps that numbering (flagged)",
+        "direct_formatting 'replace_style_owned' removes only eligible direct properties supplied by the destination "
+        "style and its basedOn chain; unrelated properties and unsupported partial overrides are preserved. "
+        "The preview names retained overrides; symbol fonts, hidden text and superscripts stay protected",
+    ],
+    "add_review_comments": [
+        "adds exactly the user's approved text and optional literal source as Word review comments; never invents "
+        "a reason or inserts comments automatically",
+        "requires an explicit author and paragraph selection; anchors are outside tracked-change wrappers. "
+        "Ambiguous overlapping comment ranges and unsupported structures are refused",
+        "existing comments, document wording and revisions are preserved; every new comment, anchor, relationship "
+        "and package part is predicted and independently checked",
+        "comment additions are an untracked annotation, not acceptance of the document's tracked revisions",
     ],
     "remove_unused_styles": [
         "a style is used when a paragraph, run or table names it (body, headers, footers, footnotes, endnotes, comments — "
@@ -629,6 +641,8 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
             "standards": "NFPA, UL, FM, ASTM and ASME designations and editions as written; no edition updates.",
             "readiness": "Comments, tracked changes, highlights, hidden text and placeholders per file.",
             "project_identity": "Project name, number and date variants across files; optional expected identity values.",
+            "duplicate_provisions": "Exact and near-duplicate sibling provisions; differing numeric tokens remain distinct; report only.",
+            "internal_references": "Article and paragraph references against reliable specification hierarchy; uncertain regions stay unassessed.",
         },
         "selector_grammar": SELECTOR_GRAMMAR,
         "modes": {"formatting": "no op writes characters", "content": "an op places the user's words, tracked",

@@ -330,17 +330,21 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
         new_problems = sorted(new_problems)
         src_refd, out_refd = src.referenced_members(), out.referenced_members()
         orphaned = sorted(n for n in out.names if n in src_refd and n not in out_refd)
-        v1_ok = members_ok and not unexpected and order_ok and not new_problems and not orphaned
+        metadata_changes = src.metadata_changes(out, pred_removed)
+        v1_ok = (members_ok and not unexpected and order_ok and not new_problems and not orphaned
+                 and not metadata_changes)
         rec.set(CheckResult("V1", "Package hash whitelist", "PASS" if v1_ok else "FAIL",
                             f"changed {changed} ⊆ intended {sorted(intended)}: {'yes' if not unexpected else 'NO ' + str(unexpected)}; "
                             f"added {added or 'none'} (predicted {pred_added or 'none'}); "
                             f"removed {removed or 'none'} (predicted {sorted(pred_removed) or 'none'})"
                             + ("" if members_ok else " — MEMBER SET MISMATCH")
                             + f"; member order {'kept' if order_ok else 'CHANGED'}"
+                            + (f"; ZIP metadata CHANGED {metadata_changes[:3]}" if metadata_changes else "; ZIP metadata kept")
                             + (f"; NEW integrity problems {new_problems[:3]}" if new_problems else "; no new dangling rels/overrides/untyped members")
                             + (f"; ORPHANED (still present, no longer referenced) {orphaned[:5]}" if orphaned else ""),
                             {"changed": changed, "added": added, "removed": removed, "unexpected": unexpected,
-                             "integrity": new_problems, "orphaned": orphaned, "order": order_detail}))
+                             "integrity": new_problems, "orphaned": orphaned, "order": order_detail,
+                             "metadata_changes": metadata_changes}))
         check.update(changed_parts=len(changed), added_parts=len(added), removed_parts=len(removed),
                      unexpected_parts=len(unexpected), integrity_problems=len(new_problems), orphaned_members=len(orphaned))
 
@@ -348,7 +352,9 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
     with _check(rec, "V2", "Text preservation", shared_computation="V2/V3") as text_check, \
             _check(rec, "V3", "Structural children", shared_computation="V2/V3") as structure_check:
         src_tp, out_tp = src.text_parts(), out.text_parts()
-        scope = sorted(p for p in set(src_tp) | set(out_tp) if p.endswith(".xml"))
+        # Text-bearing parts are identified by their relationships, not filename
+        # extensions; Word permits a comments or main part named *.data too.
+        scope = sorted(set(src_tp) | set(out_tp))
         parts = [p for p in scope if p in src_tp and p in out_tp]
         actual_text_changes = []
         struct_changes = []

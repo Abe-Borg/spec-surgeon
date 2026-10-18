@@ -2,6 +2,25 @@
 
 Working notes for any Claude session touching this repository. Read before editing.
 
+## Office profiles and specification evidence
+
+`office_profiles.py` bundles declarative templates/policies; `structure.py` proposes roles but never grants verifier
+authority. Every original paragraph receives an explicit disposition. Fresh approved targets become exact source-bound
+selections, then existing chains and independent original-to-final checks govern delivery. CLI `profiles` and desktop
+**Office profiles…** require separate outcome and preview approvals; profiles cannot authorize in-place execution.
+See [office profiles](docs/OFFICE_PROFILES.md) for supported compositions and numbered-style limits.
+
+`apply_style` accepts `replace_style_owned`; its transform and verifier independently derive the destination's explicit
+style-chain ownership. Preserve unowned attributes and protected formatting. `add_review_comments` is request-only,
+literal, untracked and independently proved as a standalone approved stage. Never generate comment rationale or
+citations. See [comments](docs/EDIT_REASON_COMMENTS.md). QA findings are advisory and never edit documents.
+
+Structured `project_evidence` distinguishes scope, confirmation and history; assumptions or superseded values are not
+wording authority. Evaluation v3 adapts actual reports without equating automated success with human acceptance.
+See [evaluation and project evidence](docs/WORKFLOW_EVALUATION_V3.md). ZIP intake is bounded; surviving package metadata
+is preserved and independently checked. Batch workers and Word rendering use explicit process contexts. Word cleanup
+may terminate only the private process handle acquired for that session. See [runtime reliability](docs/RUNTIME_RELIABILITY.md).
+
 ## Reliability and request authority
 
 Ordinary natural-language edits use `ordinary_outcomes.py` to propose a contract from the original request and

@@ -49,6 +49,20 @@ SCHEMA_FOR = {
     "people.xml": "microsoft/wml-2012.xsd",
 }
 
+# Relationship targets may have arbitrary names or extensions. Choose among
+# the schemas already shipped by their root namespace before filename fallback.
+ROOT_SCHEMAS = {
+    "http://schemas.openxmlformats.org/wordprocessingml/2006/main": SCHEMA_FOR["word"],
+    "http://schemas.openxmlformats.org/package/2006/content-types": SCHEMA_FOR["[Content_Types].xml"],
+    "http://schemas.openxmlformats.org/package/2006/relationships": SCHEMA_FOR[".rels"],
+    "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties": SCHEMA_FOR["app.xml"],
+    "http://schemas.openxmlformats.org/package/2006/metadata/core-properties": SCHEMA_FOR["core.xml"],
+    "http://schemas.openxmlformats.org/officeDocument/2006/custom-properties": SCHEMA_FOR["custom.xml"],
+    "http://schemas.microsoft.com/office/word/2012/wordml": SCHEMA_FOR["commentsExtended.xml"],
+    "http://schemas.microsoft.com/office/word/2016/wordml/cid": SCHEMA_FOR["commentsIds.xml"],
+    "http://schemas.microsoft.com/office/word/2018/wordml/cex": SCHEMA_FOR["commentsExtensible.xml"],
+}
+
 
 # Imports a vendored schema makes from the web, answered from the package instead (validation never uses the network):
 # the OPC core-properties schema imports Dublin Core's element set and terms (schemas/dublincore/ — local definitions
@@ -72,7 +86,15 @@ def _schema(rel: str) -> etree.XMLSchema:
     return etree.XMLSchema(doc)
 
 
-def schema_for(part: str) -> Optional[str]:
+def schema_for(part: str, data: Optional[bytes] = None) -> Optional[str]:
+    if data is not None:
+        try:
+            root = etree.fromstring(data, etree.XMLParser(resolve_entities=False, huge_tree=True))
+            found = ROOT_SCHEMAS.get(etree.QName(root).namespace)
+            if found:
+                return found
+        except etree.XMLSyntaxError:
+            pass  # The chosen schema's validator reports malformed XML below.
     name = posixpath.basename(part)
     if name in SCHEMA_FOR:
         return SCHEMA_FOR[name]
@@ -116,13 +138,13 @@ def _clean(root: etree._Element) -> etree._Element:
 _RESULTS: Dict[Tuple[str, bool, str], Set[str]] = {}
 
 
-def validate_part(part: str, data: bytes) -> Optional[Set[str]]:
+def validate_part(part: str, data: bytes, schema: Optional[str] = None) -> Optional[Set[str]]:
     """Set of error messages (line numbers stripped so before/after sets compare), or None if no schema.
     Results are cached by (schema, content hash): a batch from one template validates its shared parts once."""
-    rel = schema_for(part)
+    rel = schema or schema_for(part, data)
     if rel is None:
         return None
-    key = (rel, part.startswith("word/"), hashlib.sha1(data).hexdigest())
+    key = (rel, rel == SCHEMA_FOR["word"], hashlib.sha1(data).hexdigest())
     if key not in _RESULTS:
         if len(_RESULTS) > 512:
             _RESULTS.clear()
@@ -136,7 +158,7 @@ def _validate(part: str, rel: str, data: bytes) -> Set[str]:
         root = etree.fromstring(data, etree.XMLParser(remove_blank_text=False, resolve_entities=False, huge_tree=True))
     except etree.XMLSyntaxError as e:
         return {f"not well-formed: {e}"}
-    if part.startswith("word/"):
+    if rel == SCHEMA_FOR["word"]:
         root = _clean(root)
     schema.validate(root)
     errs = set()
@@ -201,11 +223,14 @@ def in_schema_order(data: bytes) -> Optional[bytes]:
 def compare(part: str, before: Optional[bytes], after: bytes) -> Tuple[Optional[Set[str]], Optional[Set[str]], Optional[Set[str]]]:
     """(baseline_errors, output_errors, new_errors) — any of them None when the part has no schema. The baseline is the
     source's errors, plus — for a part REORDER_BASELINE names — those of the source with its children in schema order."""
-    out = validate_part(part, after)
+    # Keep the source's schema when a renamed part's output changes namespace;
+    # otherwise that corruption could silently become a no-schema skip.
+    rel = schema_for(part, before) if before is not None else schema_for(part, after)
+    out = validate_part(part, after, schema=rel)
     if out is None:
         return None, None, None
-    base = validate_part(part, before) if before is not None else set()
+    base = validate_part(part, before, schema=rel) if before is not None else set()
     ordered = in_schema_order(before) if before is not None else None
     if ordered is not None:
-        base = (base or set()) | (validate_part(part, ordered) or set())
+        base = (base or set()) | (validate_part(part, ordered, schema=rel) or set())
     return base, out, out - (base or set())

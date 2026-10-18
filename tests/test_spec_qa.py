@@ -264,7 +264,7 @@ def test_desktop_audit_and_exports_are_read_only(tmp_path, monkeypatch):
         assert "TBD" in dialog.text.toPlainText()
         assert not dialog.save("json")
         assert dialog.save("json")
-        assert json.loads(output.read_text())["report_only"]
+        assert json.loads(output.read_text(encoding="utf-8"))["report_only"]
         assert path.read_bytes() == original
         dialog.identity_fields["project_name"].setText("Harbor Tower")
         dialog.recheck_button.click()

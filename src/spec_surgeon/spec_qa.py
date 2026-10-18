@@ -18,8 +18,10 @@ from .ooxml import paragraphs, revision_kind
 from .ops.markup import Look
 from .ops.selectors import StyleSheet
 from .package import DocxPackage, W
+from .structure import analyze_structure, canonical_reference
 
-AUDITS = ("placeholders", "cross_references", "standards", "readiness", "project_identity")
+AUDITS = ("placeholders", "cross_references", "standards", "readiness", "project_identity",
+          "duplicate_provisions", "internal_references")
 NUMBER = r"\d{2}[ \u00a0–—-]*\d{2}[ \u00a0–—-]*\d{2}(?:\.\d{2})?"
 PLACEHOLDER = re.compile(r"\[[^\[\]\r\n]*\]|<\s*Insert\b[^>]*>|\bX{4,}\b|\bTBD\b|\{\{[^{}]+\}\}", re.I)
 FAMILY = re.compile(r"\b(?:NFPA|UL|FM|ASTM|ASME)\b", re.I)
@@ -84,7 +86,124 @@ def _sections(pkg, rows):
 
 def _location(row, start=0, text=None):
     return {k: row.get(k) for k in ("file", "section", "part", "paragraph")} | {
-        "start": start, "text": row["text"] if text is None else text, "context": row["text"]}
+        "start": start, "text": row["text"] if text is None else text, "context": row["text"],
+        **({"location": row["location"]} if row.get("location") else {})}
+
+
+def _structure_location(row, file):
+    return {"file": str(file), "section": row["section_id"], "part": row["part"],
+            "paragraph": row["paragraph"], "text": row["text"], "location": row["location"]}
+
+
+def _unassessed_structure(structure, file):
+    return [{**_structure_location(r, file), "reason": r["reason"] if r["disposition"] != "classified"
+             else "logical hierarchy contains repeated or ambiguous labels"}
+            for r in structure["paragraphs"] if r["text"].strip() and
+            (r["disposition"] != "classified" or not r["hierarchy_reliable"])]
+
+
+def _duplicate_provisions(structure, file):
+    """Advisory sibling comparisons; wording similarity never authorizes deletion."""
+    groups = defaultdict(list)
+    for row in structure["paragraphs"]:
+        if row["depth"] is not None and row["depth"] >= 3 and row["hierarchy_reliable"]:
+            groups[row["parent"]].append(row)
+    findings, unassessed = [], _unassessed_structure(structure, file)
+    comparisons = 0
+    for siblings in groups.values():
+        previous = []
+        for row in siblings:
+            content = _normalized(row["content"])
+            numbers = re.findall(r"[0-9]+(?:[./-][0-9]+)*", row["content"])
+            for earlier, normalized, earlier_numbers in previous:
+                if comparisons >= 50000:
+                    unassessed.append({**_structure_location(row, file),
+                                       "reason": "document comparison limit reached (50000 sibling pairs)"})
+                    break
+                comparisons += 1
+                if numbers != earlier_numbers or not content:
+                    continue
+                exact = content == normalized
+                if not exact and min(len(content.split()), len(normalized.split())) < 6:
+                    continue
+                matcher = SequenceMatcher(None, normalized, content, autojunk=False)
+                if not exact and (matcher.real_quick_ratio() < .92 or matcher.quick_ratio() < .92):
+                    continue
+                similarity = 1.0 if exact else matcher.ratio()
+                if similarity >= .92:
+                    findings.append({**_structure_location(row, file), "status": "duplicate" if exact else "near_duplicate",
+                                     "similarity": round(similarity, 4), "parent": row["parent"],
+                                     "other": _structure_location(earlier, file),
+                                     "reason": "similar sibling provisions with identical numeric tokens; review both requirements"})
+                    break
+            previous.append((row, content, numbers))
+    return {"status": "partial" if unassessed else "evaluated", "findings": findings,
+            "unassessed": unassessed, "coverage": structure["coverage"], "comparisons": comparisons,
+            "limitations": ["Only provisions with an unambiguous immediate parent are compared.",
+                            "Numeric tokens must match; labels are excluded from wording comparison.",
+                            "Similarity is advisory and never authorizes removing a requirement."]}
+
+
+_INTERNAL_REFERENCE = re.compile(
+    r"\b(Article|Paragraph)\s+([0-9]+(?:\.[0-9]+)?(?:\.[A-Za-z0-9]+)*|[A-Z](?:\.[A-Za-z0-9]+)*)(?!\w)", re.I)
+
+
+def _external_reference(text, match):
+    # Limit the qualifier to the same semicolon/newline-delimited clause. This
+    # avoids treating a separate citation elsewhere in the paragraph as authority.
+    before = re.split(r"[;\n]|[.!?](?=\s|$)", text[:match.start()])[-1]
+    after = re.split(r"[;\n]", text[match.end():])[0]
+    # Sentence boundaries after ordinary prose stop a following standard citation.
+    after = re.split(r"[.!?](?=\s|$)", after)[0]
+    external = r"(?:NFPA|UL|FM|ASTM|ASME|IBC|IFC|ISO|ANSI|AWWA|CSA|IEC|EN|API|Section\s+" + NUMBER + r")\b"
+    if re.search(external, before, re.I):
+        return True
+    return bool(re.match(r"\s+(?:of|in|under|per)\s+(?:the\s+)?" + external, after, re.I))
+
+
+def _internal_references(structure, file):
+    rows = structure["paragraphs"]
+    addresses = defaultdict(list)
+    uncertain_sections = set()
+    for row in rows:
+        if row["reference_id"]:
+            addresses[(row["section_paragraph"], row["reference_id"])].append(row)
+        if row["text"].strip() and (row["disposition"] != "classified" or not row["hierarchy_reliable"]):
+            uncertain_sections.add(row["section_paragraph"])
+    findings = []
+    for row in rows:
+        for match in _INTERNAL_REFERENCE.finditer(row["text"]):
+            label = canonical_reference(match[2])
+            if row["role"] == "article" and not row["text"][:match.start()].strip() and label == row["reference_id"]:
+                continue
+            if re.match(r"^[A-Z](?:\.|$)", label) and row["article_label"]:
+                label = row["article_label"] + "." + label
+            targets = addresses.get((row["section_paragraph"], label), [])
+            if _external_reference(row["text"], match):
+                status, reason = "external_reference", "citation is qualified by an external standard or another section"
+                targets = []
+            elif row["disposition"] == "excluded" or row["section_paragraph"] is None:
+                status, reason = "unassessed", "source location has no supported section hierarchy"
+            elif not re.fullmatch(r"[0-9]+\.[0-9]+(?:\.[A-Za-z0-9]+)*", label):
+                status, reason = "unassessed", "reference syntax or relative article context is unsupported"
+            elif len(targets) > 1:
+                status, reason = "ambiguous_target", "more than one paragraph has this logical address"
+            elif targets and targets[0]["hierarchy_reliable"]:
+                status, reason = "matched", "one unambiguous target exists in this section"
+            elif targets or row["section_paragraph"] in uncertain_sections:
+                status, reason = "unassessed", "incomplete or ambiguous hierarchy cannot prove this target absent"
+            else:
+                status, reason = "missing_target", "no target exists in the fully classified section hierarchy"
+            findings.append({**_structure_location(row, file), "start": match.start(), "text": match[0],
+                             "context": row["text"], "reference_id": label, "status": status, "reason": reason,
+                             "targets": [_structure_location(target, file) for target in targets]})
+    unassessed = _unassessed_structure(structure, file)
+    return {"status": "partial" if unassessed or any(f["status"] == "unassessed" for f in findings) else "evaluated",
+            "findings": findings, "unassessed": unassessed, "coverage": structure["coverage"],
+            "limitations": ["Explicit singular Article/Paragraph references use section-local addresses.",
+                            "Known external standards and other-section qualifiers are not resolved here.",
+                            "Missing targets are reported only when the section hierarchy is fully assessed.",
+                            "Plural lists, ranges, named headings and bare numeric citations are outside coverage."]}
 
 
 def _standards(row):
@@ -151,7 +270,7 @@ def _identity_rows(row, canonical):
     return out
 
 
-def _read_file(path, canonical):
+def _read_file(path, canonical, structural_audits=()):
     data = path.read_bytes()
     pkg = DocxPackage(data, name=str(path))
     kinds = pkg.parts_by_kind()
@@ -258,12 +377,20 @@ def _read_file(path, canonical):
     readiness = {"status": "not_ready" if any(counts.values()) else "incomplete" if unknown else "no_findings",
                  "counts": counts, "findings": markup + [{**p, "type": "placeholders"} for p in placeholders],
                  "limitations": list(dict.fromkeys(unknown))}
-    return {"file": str(path), "source_sha256": hashlib.sha256(data).hexdigest(), "sections": sections,
+    result = {"file": str(path), "source_sha256": hashlib.sha256(data).hexdigest(), "sections": sections,
             "placeholders": placeholders, "cross_references": references, "standards": standards,
             "readiness": readiness, "project_identity": identity}
+    if structural_audits:
+        structure = analyze_structure(pkg)
+        result["structure"] = {k: structure[k] for k in ("schema_version", "analyzer_version", "coverage", "limitations")}
+        if "duplicate_provisions" in structural_audits:
+            result["duplicate_provisions"] = _duplicate_provisions(structure, path)
+        if "internal_references" in structural_audits:
+            result["internal_references"] = _internal_references(structure, path)
+    return result
 
 
-def audit_batch(files, audits=None, identity=None):
+def audit_batch(files, audits=None, identity=None, project_context=None):
     selected = list(audits or AUDITS)
     if set(selected)-set(AUDITS):
         raise ValueError(f"unknown audits: {sorted(set(selected)-set(AUDITS))}")
@@ -271,15 +398,33 @@ def audit_batch(files, audits=None, identity=None):
     if not isinstance(canonical, dict) or any(k not in ("project_name", "project_number", "date") or
                                               not isinstance(v, str) or not v.strip() for k, v in canonical.items()):
         raise ValueError("identity is an object with optional non-empty project_name, project_number and date strings")
-    report = {"schema_version": 1, "report_only": True, "audits": selected, "files": [], "errors": [],
-              "text_view": "Current text, including pending insertions, excluding pending deletions. All tracked changes are audited separately.",
+    if project_context is not None:
+        from .project_evidence import validate_context
+        # Validate caller input before scanning; invalid registers are not partial
+        # document failures and must not silently produce an empty comparison.
+        project_context = validate_context(project_context)
+    report = {"schema_version": 2, "report_only": True, "audits": selected, "files": [], "errors": [],
+              "text_view": ("Current text, including pending insertions, excluding pending deletions. All tracked changes are audited separately. "
+                            "Structural evidence retains source wording in excluded revision paragraphs; those paragraphs are never assessed."),
               "limitations": ["Audits inspect DOCX content; no standard editions or document text are changed.",
                               "Latest and AHJ-adopted standard editions are not inferred from a publication year.",
                               "Project identity uses labels and properties; unlabelled near-matches need canonical identity values.",
                               "No findings means none detected by these checks; it is not an issue certification."]}
     for path in dict.fromkeys(Path(f).resolve() for f in files):
         try:
-            report["files"].append(_read_file(path, canonical))
+            file = _read_file(path, canonical, set(selected) & {"duplicate_provisions", "internal_references"})
+            if project_context is not None and "standards" in selected:
+                from .project_evidence import audit_standards_register
+                file["standards_register"] = []
+                for ref in file["standards"]:
+                    observation = {"identifier": f"{ref['family']} {ref['designation']}" if ref["designation"] else ref["family"],
+                                   "edition": ref["edition"], "location": ref}
+                    scopes = [{"kind": "document", "value": str(path)}]
+                    if ref["section"] and any(s["number"] == ref["section"] and s["identity_source"] == "heading"
+                                              for s in file["sections"]):
+                        scopes.append({"kind": "section", "value": ref["section"]})
+                    file["standards_register"] += audit_standards_register([observation], project_context, scopes=scopes)
+            report["files"].append(file)
         except (OSError, ValueError, KeyError, BadZipFile, etree.Error) as e:
             report["errors"].append({"file": str(path), "error": f"{type(e).__name__}: {e}"})
     index = defaultdict(list)
@@ -356,8 +501,15 @@ def audit_markdown(report):
                 lines += [f"{items['status']}: {items['counts']}", ""]
                 lines += [f"- {_literal(x)}" for x in items["limitations"]]
                 items = items["findings"]
+            elif audit in ("duplicate_provisions", "internal_references"):
+                lines += [f"Assessment: {items['status']}; paragraph coverage: {items['coverage']}", ""]
+                lines += [f"- {_literal(x)}" for x in items["limitations"]]
+                for item in items["unassessed"]:
+                    lines.append(f"- Unassessed: {_literal(item['location'])}: {_literal(item['reason'])}")
+                lines.append("")
+                items = items["findings"]
             for item in items:
-                location = f"{item.get('part', '?')} paragraph {item['paragraph']+1}" if isinstance(item.get("paragraph"), int) else item.get("part", "?")
+                location = item.get("location") or (f"{item.get('part', '?')} paragraph {item['paragraph']+1}" if isinstance(item.get("paragraph"), int) else item.get("part", "?"))
                 if audit == "readiness":
                     detail = item["type"] + " " + "; ".join(str(item[k]) for k in ("revision", "color", "text", "id", "author")
                                                               if item.get(k) is not None)
@@ -365,11 +517,20 @@ def audit_markdown(report):
                     detail = f"{item['text']} — {item['status']}; titles: {item['target_titles']}"
                 elif audit == "standards":
                     detail = f"{item['text']} — edition(s): {item['editions'] or 'NOT STATED'} ({item['status']})"
+                elif audit == "duplicate_provisions":
+                    detail = f"{item['status']} ({item['similarity']}): {item['text']}; compare {item['other']['location']}"
+                elif audit == "internal_references":
+                    detail = f"{item['text']} — {item['status']}: {item['reason']}"
                 else:
                     detail = item["text"]
                 lines.append(f"- Section {item.get('section') or '?'}; {_literal(location)}: {_literal(detail)}")
             if not items:
                 lines.append("No occurrences detected.")
+            lines.append("")
+        if "standards_register" in file:
+            lines += ["### Approved standards register", ""]
+            for item in file["standards_register"]:
+                lines.append(f"- {_literal(item['identifier'])}: {item['status']} — {_literal(item['reason'])}")
             lines.append("")
     if "unreferenced_sections" in report:
         lines += ["## Sections with no incoming reference", ""]

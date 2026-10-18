@@ -75,6 +75,7 @@ depends on those children should another op remove them.
 """
 from __future__ import annotations
 
+import copy
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Sequence, Tuple
@@ -158,6 +159,11 @@ class ParagraphClearing:
     mark: Optional[List[str]] = None
     ppr: List[str] = field(default_factory=list)
     already: Counter = field(default_factory=Counter)
+    # apply_style's selective policy can retain part of a compound property.
+    # The names in runs/mark/ppr still enumerate every changed property family.
+    run_replacements: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    mark_replacements: Dict[str, Any] = field(default_factory=dict)
+    ppr_replacements: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def changed(self) -> bool:
@@ -282,7 +288,8 @@ def _empty(el) -> bool:
     return el is not None and not len(el) and not el.attrib
 
 
-def clear_rpr(rpr, names: Iterable[str], stamp: Optional[RevisionStamp] = None, next_id: int = 0) -> Tuple[int, bool]:
+def clear_rpr(rpr, names: Iterable[str], stamp: Optional[RevisionStamp] = None, next_id: int = 0,
+              replacements: Optional[Dict[str, Any]] = None) -> Tuple[int, bool]:
     """Remove ``rpr``'s w: children named in ``names`` (in place). Tracked (``stamp``): a w:rPrChange — snapshot = the
     rPr before, without rPrChange — appended as the last child. Returns (the next revision id, emptied: True when the
     rPr has nothing left — the caller removes it, plain)."""
@@ -293,7 +300,11 @@ def clear_rpr(rpr, names: Iterable[str], stamp: Optional[RevisionStamp] = None, 
         next_id += 1
     for c in list(rpr):
         if isinstance(c.tag, str) and c.tag.startswith(W) and c.tag[len(W):] in wanted:
-            rpr.remove(c)
+            replacement = (replacements or {}).get(c.tag[len(W):])
+            if replacement is None:
+                rpr.remove(c)
+            else:
+                rpr.replace(c, copy.deepcopy(replacement))
     if chg is not None:
         rpr.append(chg)
     return next_id, _empty(rpr)
@@ -309,7 +320,7 @@ def clear_paragraph(p, runs: Sequence, d: ParagraphClearing, stamp: Optional[Rev
     for ri, names in d.runs:
         r = runs[ri]
         rpr = r.find(W + "rPr")
-        next_id, emptied = clear_rpr(rpr, names, stamp, next_id)
+        next_id, emptied = clear_rpr(rpr, names, stamp, next_id, d.run_replacements.get(ri))
         if emptied and stamp is None:
             r.remove(rpr)
     ppr = p.find(W + "pPr")
@@ -325,12 +336,16 @@ def clear_paragraph(p, runs: Sequence, d: ParagraphClearing, stamp: Optional[Rev
         gone = set(d.ppr)
         for c in list(ppr):
             if isinstance(c.tag, str) and c.tag.startswith(W) and c.tag[len(W):] in gone:
-                ppr.remove(c)
+                replacement = d.ppr_replacements.get(c.tag[len(W):])
+                if replacement is None:
+                    ppr.remove(c)
+                else:
+                    ppr.replace(c, copy.deepcopy(replacement))
         if ppr_edit is not None:
             ppr_edit(ppr)
     if d.mark:
         mrpr = ppr.find(W + "rPr")
-        next_id, emptied = clear_rpr(mrpr, d.mark, stamp, next_id)
+        next_id, emptied = clear_rpr(mrpr, d.mark, stamp, next_id, d.mark_replacements)
         if emptied and stamp is None:
             ppr.remove(mrpr)
     if chg is not None:

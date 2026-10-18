@@ -110,6 +110,9 @@ class VClearing:
     runs: Dict[int, Set[str]] = field(default_factory=dict)
     mark: Optional[Set[str]] = None
     ppr: Set[str] = field(default_factory=set)
+    run_replacements: Dict[int, Dict[str, Any]] = field(default_factory=dict)
+    mark_replacements: Dict[str, Any] = field(default_factory=dict)
+    ppr_replacements: Dict[str, Any] = field(default_factory=dict)
 
     @property
     def changed(self) -> bool:
@@ -147,15 +150,17 @@ def v_decide(p, runs: List[Any], styles, run_names: Set[str], para_names: Set[st
     return d
 
 
-def _v_left(S, gone: Set[str]) -> List[Any]:
+def _v_left(S, gone: Set[str], replacements=None) -> List[Any]:
     """The children of a source rPr that stay (everything not cleared, comments and foreign elements included)."""
-    return [c for c in (S if S is not None else []) if not (_local(c) and _local(c) in gone)]
+    return [(replacements or {}).get(_local(c), c) for c in (S if S is not None else [])
+            if _local(c) not in gone or _local(c) in (replacements or {})]
 
 
-def check_cleared_rpr(S, O, gone: Set[str], tracked: bool, author, where: str, errs: List[str]) -> None:
+def check_cleared_rpr(S, O, gone: Set[str], tracked: bool, author, where: str, errs: List[str],
+                      replacements=None) -> None:
     """One run's or mark's output rPr ``O``: the source rPr ``S`` minus exactly the children named in ``gone``, in order;
     plain and nothing left → ``O`` absent; the w:rPrChange by the shared rules."""
-    left = _v_left(S, gone)
+    left = _v_left(S, gone, replacements)
     if not tracked and not left and not (S is not None and S.attrib):
         if O is not None:
             errs.append(f"{where}: an emptied w:rPr is left in place (plain: it must be removed)")
@@ -187,18 +192,18 @@ def check_runs_and_mark(ctx: Ctx, part: str, bi: int, oi: int, d: VClearing, tra
     for ri, gone in sorted(d.runs.items()):
         ctx.strip_runs.setdefault(part, set()).add((bi, ri))
         check_cleared_rpr(sv.runs[bi][ri].find(W + "rPr"), ov.runs[oi][ri].find(W + "rPr"), gone, tracked, author,
-                          f"{part} block {bi} run {ri}", errs)
+                          f"{part} block {bi} run {ri}", errs, d.run_replacements.get(ri))
     s_m = sv.pars[bi].find(W + "pPr/" + W + "rPr")
     stays = s_m is not None
     if d.mark is not None:
         ctx.strip_marks.setdefault(part, set()).add(bi)
         check_cleared_rpr(s_m, ov.pars[oi].find(W + "pPr/" + W + "rPr"), d.mark, tracked, author,
-                          f"{part} block {bi} paragraph mark", errs)
-        stays = tracked or bool(_v_left(s_m, d.mark)) or bool(s_m is not None and s_m.attrib)
+                          f"{part} block {bi} paragraph mark", errs, d.mark_replacements)
+        stays = tracked or bool(_v_left(s_m, d.mark, d.mark_replacements)) or bool(s_m is not None and s_m.attrib)
     return len(d.runs), int(d.mark is not None), stays
 
 
-def v_expected_ppr(S, gone: Set[str], mark_stays: bool, mark: bool = True) -> List[Any]:
+def v_expected_ppr(S, gone: Set[str], mark_stays: bool, mark: bool = True, replacements=None) -> List[Any]:
     """The sequence the output pPr must show (``v_ppr_sequence``): the source pPr's children minus the cleared ones and
     ``w:pPrChange``, the mark's rPr as ``MARK`` when it stays. ``mark=False`` leaves the mark's rPr out altogether — the
     caller's op does not change the mark, so its place and content are another op's or the residual's business (a
@@ -213,6 +218,8 @@ def v_expected_ppr(S, gone: Set[str], mark_stays: bool, mark: bool = True) -> Li
                 out.append(MARK)
             continue
         if loc and loc in gone:
+            if loc in (replacements or {}):
+                out.append(sig(replacements[loc]))
             continue
         out.append(sig(c))
     return out

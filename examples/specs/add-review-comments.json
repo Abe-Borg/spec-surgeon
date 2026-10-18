@@ -1,0 +1,21 @@
+{
+  "request": "Add a comment to A. Provide listed sprinklers. with the approved text Retain the approved project requirement. and the approved source Source: approved coordination memo, item 3. Author: Abraham Borg; initials: AB.",
+  "summary": "Attach one approved review reason and source as a Word comment.",
+  "mode": "untracked",
+  "ops": [
+    {
+      "op": "add_review_comments",
+      "select": {
+        "scope": ["document"],
+        "paragraphs": {"text_regex": "^A\\. Provide listed sprinklers\\.$"}
+      },
+      "params": {
+        "text": "Retain the approved project requirement.",
+        "source": "Source: approved coordination memo, item 3.",
+        "author": "Abraham Borg",
+        "initials": "AB",
+        "expected_count": 1
+      }
+    }
+  ]
+}

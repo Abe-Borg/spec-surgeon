@@ -13,6 +13,8 @@ This module's own reading of the op's definitions (transform side: ops/apply_sty
 * the selection (``props.para_matches``), each paragraph's style (pStyle, else the default paragraph style) and, with
   ``clear``, its cleared targets under clear_direct_formatting's DEFAULT rules (``clearing.v_decide`` with
   ``clearing.v_cleared_sets()``) are re-derived from the SOURCE.
+* ``replace_style_owned`` derives destination ownership from the source/template graph independently through
+  ``styleowned``. Exact retained attributes are proved alongside removals; projected transform XML is never evidence.
 
 Fails when the changed paragraphs (and which are restyled) or the counts differ from the plan's; when a changed
 paragraph's output pPr is not the source's with ``w:pStyle`` = the style first (restyled) and the cleared children gone
@@ -32,6 +34,7 @@ from .clearing import (check_cleared_ppr, check_runs_and_mark, v_cleared_sets, v
                        v_with_pstyle)
 from .restyle import v_resolve_style
 from .styleimport import check_requested, v_type
+from .styleowned import v_style_owned_decision, v_style_ownership
 
 
 def _v_template_styles(path: str, md5: Optional[str], errs: List[str]) -> Optional[Styles]:
@@ -58,7 +61,7 @@ def _applied_style(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         raise ValueError("no style asked")
     direct = params.get("direct_formatting", "keep")
     existing = params.get("existing", "keep")
-    if direct not in ("keep", "clear") or existing not in ("keep", "replace"):
+    if direct not in ("keep", "clear", "replace_style_owned") or existing not in ("keep", "replace"):
         raise ValueError(f"bad direct_formatting/existing {direct!r}/{existing!r}")
     pred = sel.get("paragraphs", "all")
     tracked = bool(params["tracked"]) if "tracked" in params else pred not in (None, "all", {})
@@ -68,6 +71,7 @@ def _applied_style(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     # template's) and the import it needs ----
     did = v_resolve_style(ctx.src_styles, ref)
     tid = None
+    tstyles = None
     template = params.get("template")
     if template is not None:
         tstyles = _v_template_styles(a.get("template") or template, a.get("template_md5"), errs)
@@ -100,6 +104,7 @@ def _applied_style(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
     # ---- the paragraphs ----
     run_names, para_names = v_cleared_sets() if direct == "clear" else (set(), set())
+    ownership = v_style_ownership(ctx.src_styles, tstyles, sid, bool(requested)) if direct == "replace_style_owned" else None
     changed: Dict[str, List[List[Any]]] = {}
     n_paras = n_restyled = n_runs = n_marks = 0
     for part in parts:
@@ -115,6 +120,8 @@ def _applied_style(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             current = ps.get(W + "val") if ps is not None else ctx.src_styles.default.get("paragraph")
             restyle = current != sid
             d = v_decide(p, sv.runs[bi], ctx.src_styles, run_names, para_names) if direct == "clear" else None
+            if ownership is not None:
+                d = v_style_owned_decision(p, sv.runs[bi], ctx.src_styles, ownership)
             cleared = d is not None and d.changed
             if not restyle and not cleared:
                 continue
@@ -139,7 +146,8 @@ def _applied_style(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             # is checked by its own kind, and the residual compares the rest (review D2)
             mark = d is not None and d.mark is not None
             if restyle or gone or mark:
-                expected = v_expected_ppr(S, gone, mark_stays, mark=mark)
+                expected = v_expected_ppr(S, gone, mark_stays, mark=mark,
+                                          replacements=d.ppr_replacements if d is not None else None)
                 if restyle:
                     expected = v_with_pstyle(expected, sid)
                 check_cleared_ppr(S, O, expected, tracked, author, where, errs, changed=restyle or bool(gone), mark=mark)
@@ -156,7 +164,7 @@ def _applied_style(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         errs.append(f"applied_style: the paragraphs that change here {changed} are not the plan's {planned}")
     return (f"applied_style: {n_restyled} paragraph(s) → style {sid}"
             + (f", direct formatting cleared on {n_paras} paragraph(s), {n_runs} run(s), {n_marks} mark(s)"
-               if direct == "clear" else "") + (" (tracked)" if tracked else ""))
+               if direct != "keep" else "") + (" (tracked)" if tracked else ""))
 
 
 APPLY_KINDS = {"applied_style": _applied_style}
