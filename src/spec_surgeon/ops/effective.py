@@ -116,6 +116,9 @@ class Resolver:
         """Root-most style first, the named style last (cycle-safe)."""
         seen, out = set(), []
         while sid and sid not in seen and sid in self.styles:
+            # MS-OI29500 §2.1.242(a): these IDs ignore all child elements.
+            if sid in {"DefaultParagraphFont", "TableNormal", "NoList"}:
+                break
             seen.add(sid)
             out.append(self.styles[sid])
             b = self.styles[sid].find(W + "basedOn")

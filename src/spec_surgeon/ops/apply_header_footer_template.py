@@ -14,8 +14,8 @@ evenAndOddHeaders) the template part is copied into the target as a NEW part:
   target (its styles, docDefaults and theme differ) the template's effective value is written as direct
   formatting (ops/effective.py lists the properties) — the playbook's "pin spacing" generalised; nested (textbox)
   paragraphs are copied untouched;
-* styles the copied content names and the target lacks are imported (basedOn/link/next closure, extension
-  markup stripped); existing target styles are never overwritten;
+* styles are reconciled by default role, name and linked-style identity across Word languages; genuinely
+  missing dependencies are imported with isolated IDs for collisions. Existing target styles stay intact;
 * images are copied under new names, ``wp:docPr`` ids renumbered above the target's, a content-type override
   and a document relationship added per part;
 * the target's old header/footer parts of the selected kinds go (with their rels, overrides, orphaned media);
@@ -46,6 +46,7 @@ from .effective import AmbiguousToggle, Resolver, rescale_tabs, text_width, them
 from .hf_common import (FOOTER_CT, HEADER_CT, KINDS, TYPES, apply_removal, check_part_relationships, effective_refs,
                         plan_removal, refs)
 from .selectors import StyleSheet
+from .template_styles import reconcile_styles, remap_references, reference_parts
 from .slots import (apply_slot, expected_block_text, extract_fill, field_runs, find_slots, mark_slots, nearest_p,
                     paragraph_runs, reference_values, rule_uses_literal)
 
@@ -163,7 +164,8 @@ class ApplyHeaderFooterTemplate(Op):
     mode = "formatting"
     description = ("Give every section the headers/footers of a project template: template parts copied, slots "
                    "(yellow highlight / {{NAME}}) filled from each document's own content by rule, tab stops "
-                   "rescaled, rendering properties pinned, missing styles imported, old parts removed.")
+                   "rescaled, rendering properties pinned, localized styles reconciled automatically, missing "
+                   "styles imported, old parts removed.")
     params_schema = {"type": "object", "properties": {
         "template": {"type": "string", "description": "path of the template .docx (relative paths: the spec's folder)"},
         "template_sections": {"type": "object", "description": "{\"cover\": i, \"body\": j} or {\"all\": i}"},
@@ -190,7 +192,10 @@ class ApplyHeaderFooterTemplate(Op):
                                          "description": "set each section's pgMar header/footer to the template's"},
         "align_title_page": {"type": "boolean", "default": True,
                              "description": "set each section's titlePg to the template section's"},
-        "import_missing_styles": {"type": "boolean", "default": True},
+        "import_missing_styles": {"type": "boolean", "default": True,
+                                  "description": "Automatically reuse equivalent styles across Word languages; "
+                                                 "import only genuinely missing dependencies. False still allows "
+                                                 "reusing equivalent existing styles, but disallows new definitions."},
         "tracked": {"type": "boolean", "enum": [False], "description": "not tracked (only false is accepted)"}},
         "required": ["template", "template_sections", "slot_fills"]}
     select_schema = {"type": "object", "properties": {"sections": {"enum": ["all"], "description": "'all' only"}}}
@@ -358,36 +363,10 @@ class ApplyHeaderFooterTemplate(Op):
 
         # ---- styles ----
         tsheet, sheet = StyleSheet(tpkg), StyleSheet(pkg)
-        used: set = set()
-        for c in copies:
-            troot = tpkg.xml(c["template_part"])
-            for tag in ("pStyle", "rStyle", "tblStyle"):
-                used |= {e.get(W + "val") for e in troot.iter(W + tag) if e.get(W + "val")}
-        closure, todo = set(), list(used)
-        while todo:
-            sid = todo.pop()
-            if sid in closure or sid not in tsheet.styles:
-                continue
-            closure.add(sid)
-            for tag in ("basedOn", "link", "next"):
-                e = tsheet.styles[sid].find(W + tag)
-                if e is not None and e.get(W + "val"):
-                    todo.append(e.get(W + "val"))
-        order = [st.get(W + "styleId") for st in tsheet.root.findall(W + "style")] if tsheet.root is not None else []
-        missing = [sid for sid in order if sid in closure and sid not in sheet.styles]
-        if missing and not import_missing:
-            raise JobException(f"styles {missing} used by the template parts are missing here", "missing-style",
-                               {"styles": missing})
-        if missing and sheet.part is None:
-            raise JobException("document has no styles part to import into", "structure")
-        imported: Dict[str, Any] = {}
-        for sid in missing:
-            st = tsheet.styles[sid]
-            if st.get(W + "default") in ("1", "true", "on"):
-                raise JobException(f"template style {sid} is a default style missing here; not imported", "structure")
-            if st.find(f".//{W}numPr") is not None:
-                raise JobException(f"template style {sid} carries numbering; not handled", "structure")
-            imported[sid] = strip_foreign(st, f"template style {sid}")
+        style_parts = sorted({c["template_part"] for c in copies})
+        style_map, imported = reconcile_styles(pkg, tpkg, style_parts, import_missing, strip_foreign)
+        implicit_defaults = {kind: style_map[sid] for kind, sid in tsheet.defaults.items()
+                             if style_map.get(sid) in imported}
 
         # ---- pins (template-effective vs target-effective) ----
         tres = Resolver(tsheet, theme_fonts(tpkg))
@@ -395,27 +374,32 @@ class ApplyHeaderFooterTemplate(Op):
         n_pins = 0
         for c in copies:
             troot = tpkg.xml(c["template_part"])
+            mapped = etree.fromstring(etree.tostring(troot))
+            remap_references(mapped, style_map, implicit_defaults)
+            mapped_pars = dict(_top_level(mapped))
             pins: Dict[str, Any] = {}
             try:
                 for bi, p in _top_level(troot):
                     entry: Dict[str, Any] = {}
-                    T, O = tres.paragraph(p), ores.paragraph(p)
+                    destination_p = mapped_pars[bi]
+                    T, O = tres.paragraph(p), ores.paragraph(destination_p)
                     if rescale and not _in_table(p):
                         T = dict(T, tabs=rescale_tabs(T["tabs"], c["template_width"], c["target_width"]))
                     d = _diff(T, O, PARA_KEYS)
                     if "tabs" in d:
-                        style_tabs = ores.paragraph(p, direct=False)["tabs"]
+                        style_tabs = ores.paragraph(destination_p, direct=False)["tabs"]
                         wanted = {pos for pos, _, _ in T["tabs"]}
                         d["tabs_clear"] = sorted({pos for pos, _, _ in style_tabs} - wanted)
                     if d:
                         entry["ppr"] = _json_pins(d)
                     mr = p.find(f"{W}pPr/{W}rPr")
-                    d = _diff(tres.run(mr, p), ores.run(mr, p), RUN_KEYS)
+                    d = _diff(tres.run(mr, p), ores.run(destination_p.find(f"{W}pPr/{W}rPr"), destination_p), RUN_KEYS)
                     if d:
                         entry["mark"] = _json_pins(d)
                     runs = {}
+                    destination_runs = paragraph_runs(destination_p)
                     for ri, r in enumerate(paragraph_runs(p)):
-                        d = _diff(tres.run(r.find(W + "rPr"), p), ores.run(r.find(W + "rPr"), p), RUN_KEYS)
+                        d = _diff(tres.run(r.find(W + "rPr"), p), ores.run(destination_runs[ri].find(W + "rPr"), destination_p), RUN_KEYS)
                         if d:
                             runs[str(ri)] = _json_pins(d)
                     if runs:
@@ -532,8 +516,12 @@ class ApplyHeaderFooterTemplate(Op):
         # (titlePg, pgMar where they follow the template; imported styles) are not conflicts with its own reads.
         frag.touches += [(main, f"sectPr:{i}", f"verify:{fam}") for i in range(len(secs))
                          for fam in ("pgSz", "pgMar", "titlePg")]
-        if styles_part is not None:
-            frag.touches.append((styles_part, "*", "verify"))
+        for reference_part in reference_parts(pkg, sheet):
+            if reference_part in pkg.text_parts():
+                frag.touches.extend((reference_part, "*", "verify-props:" + family)
+                                    for family in ("pStyle", "rStyle", "tblStyle"))
+            else:
+                frag.touches.append((reference_part, "*", "verify"))
         theme = theme_part(pkg)
         if theme is not None:
             frag.touches.append((theme, "*", "verify"))
@@ -549,10 +537,13 @@ class ApplyHeaderFooterTemplate(Op):
                 "template_md5": tmd5, "template_part": c["template_part"], "template_section": c["template_section"],
                 "target_sections": c["target_sections"], "rescale_tabs": rescale, "slot_markers": markers,
                 "highlight_colors": colors, "fills": fills_spec, "expected_fills": fills,
+                "style_map": style_map, "style_parts": style_parts, "import_missing_styles": import_missing,
                 **({"template_values": ref_values} if reference else {})})
         if imported:
             frag.property_assertions.append({"kind": "styles_added", "styles_part": styles_part, "ids": list(imported),
-                                             "template": str(Path(tpath).resolve()), "template_md5": tmd5})
+                                             "template": str(Path(tpath).resolve()), "template_md5": tmd5,
+                                             "style_map": style_map, "style_parts": style_parts,
+                                             "import_missing_styles": import_missing})
         for i, d in dist_changes.items():
             frag.property_assertions.append({"kind": "section_props", "part": main, "sections": [i],
                                              "elements": {"pgMar": {"set": d}}, "expected_sections": 1})
@@ -568,7 +559,8 @@ class ApplyHeaderFooterTemplate(Op):
                          for i, kd in new_refs.items()},
             "fills": fills, "title_changes": {str(i): v for i, v in title_changes.items()},
             "dist_changes": {str(i): d for i, d in dist_changes.items()},
-            "styles_part": styles_part, "imported": {sid: etree.tostring(el).decode() for sid, el in imported.items()},
+            "style_map": style_map, "implicit_defaults": implicit_defaults, "styles_part": styles_part,
+            "imported": {sid: etree.tostring(el).decode() for sid, el in imported.items()},
             "removal": {"rids": rp.gone_rids, "members": rp.members, "media": rp.media},
             "media_ct": {m: (t_overrides.get(m) or t_defaults.get(posixpath.splitext(m)[1].lstrip(".").lower()))
                          for m in media_map},
@@ -587,6 +579,9 @@ class ApplyHeaderFooterTemplate(Op):
             frag.flags.extend(frag_flags)
         frag.notes.append(f"{n_pins} property value(s) pinned so the copies render as in the template"
                           + (f"; styles imported: {list(imported)}" if imported else "; no styles imported"))
+        if any(k != v for k, v in style_map.items()):
+            frag.notes.append("template styles reconciled: " + "; ".join(
+                f"{k} → {v}" for k, v in sorted(style_map.items()) if k != v))
         frag.notes.append(f"old parts removed: {rp.parts_gone or 'none'}; media removed: {rp.media or 'none'}")
         if title_changes:
             frag.notes.append(f"titlePg set to the template's on sections {sorted(title_changes)}")
@@ -609,6 +604,7 @@ class ApplyHeaderFooterTemplate(Op):
         payload: Dict[str, Tuple[bytes, Optional[str]]] = {}
         for c in td["copies"]:
             troot = tpkg.xml(c["template_part"])
+            remap_references(troot, td.get("style_map", {}), td.get("implicit_defaults", {}))
             pars = paragraphs(troot)
             for bi, entry in c["pins"].items():
                 p = pars[int(bi)]

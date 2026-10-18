@@ -73,6 +73,19 @@ ALLOWED_FROM: Dict[str, set] = {
 }
 ALLOWED_IMPORT = {"re", "copy", "math", "itertools", "functools", "json"}
 GOAL_FROM = {
+    "hashlib": {"md5", "sha256"},
+    "posixpath": {"join", "dirname", "basename", "splitext", "relpath", "normpath"},
+    "spec_surgeon.package": {"CT_PART", "REL", "REL_TYPE_BASE", "MEDIA_REL_TYPES"},
+    "spec_surgeon.ops.template_styles": {"reconcile_styles", "remap_references", "reference_parts"},
+    "spec_surgeon.ops.apply_header_footer_template": {"strip_foreign", "pin_paragraph", "pin_rpr",
+                                                     "PARA_KEYS", "RUN_KEYS"},
+    "spec_surgeon.ops.effective": {"Resolver", "AmbiguousToggle", "rescale_tabs", "text_width", "theme_fonts",
+                                   "theme_part"},
+    "spec_surgeon.ops.hf_common": {"apply_removal", "plan_removal", "check_part_relationships", "effective_refs",
+                                   "refs", "HEADER_CT", "FOOTER_CT", "KINDS", "TYPES"},
+    "spec_surgeon.ops.slots": {"Slot", "apply_slot", "extract_fill", "find_slots", "field_runs", "fill_reads",
+                               "expected_block_text", "mark_slots", "nearest_p", "paragraph_runs", "reference_values",
+                               "rule_uses_literal"},
     "spec_surgeon.ooxml": {"RevisionStamp", "property_change", "max_revision_id", "file_uses_date_utc"},
     "spec_surgeon.ops.textedit": {"Edit", "RunText", "run_text", "plan_paragraph", "edits_to_data",
                                   "edits_from_data", "apply_part_edits"},
@@ -87,8 +100,8 @@ def allowed_imports(goal_contract=None):
         for name, values in GOAL_FROM.items():
             allowed.setdefault(name, set()).update(values)
     return allowed
-# What the reference ops import that a generated op may NOT: the tracked-formatting helpers (generated ops are plain
-# formatting — no revision of any kind) and the engine's registration hook. tests/test_codegen.py pins that every name
+# What legacy formatting methods may not import: tracked-formatting helpers and the engine's registration hook.
+# Governed methods have the additional GOAL_FROM helpers. tests/test_codegen.py pins that every name
 # the examples import is either allowed above or listed here.
 EXCLUDED_FROM_EXAMPLES: Dict[str, set] = {
     "spec_surgeon.ooxml": {"RevisionStamp", "property_change", "max_revision_id", "file_uses_date_utc"},
@@ -255,9 +268,29 @@ def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contrac
         shutil.copyfile(Path(docx).resolve(), copy_path)
     else:
         copy_path.write_bytes(source_bytes)
+    # Give generated methods the approved supporting files as immutable bytes,
+    # rather than forcing filesystem access or pretending the template is absent.
+    inputs = []
+    if goal_contract is not None:
+        from .goals import goal_templates
+        try:
+            for index, path in enumerate(goal_templates(goal_contract)):
+                data = path.read_bytes()
+                digest = hashlib.sha256(data).hexdigest()
+                approved = {e["template_sha256"] for e in goal_contract.get("effects", [])
+                            if e.get("template") and Path(e["template"]).resolve() == path}
+                if approved != {digest}:
+                    raise ValueError("approved template bytes have changed: " + str(path))
+                snapshot = workdir / f"input-{index}.docx"
+                snapshot.write_bytes(data)
+                aliases = sorted({e["template"] for e in goal_contract.get("effects", [])
+                                  if e.get("template") and Path(e["template"]).resolve() == path} | {str(path)})
+                inputs.append({"path": str(path), "aliases": aliases, "snapshot": str(snapshot), "sha256": digest})
+        except (ValueError, OSError) as exc:
+            return SandboxResult(False, error=str(exc), code="stale-template", seconds=time.perf_counter() - t0)
     req = workdir / "request.json"
     req.write_text(json.dumps({"source": source, "docx": str(copy_path), "select": select, "params": params,
-                              "goal_contract": goal_contract, "limits": limits}),
+                              "goal_contract": goal_contract, "inputs": inputs, "limits": limits}),
                    encoding="utf-8")
     diag.event("codegen.sandbox.prepared", source_copy=str(copy_path), request_path=str(req))
     env = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONIOENCODING")}
@@ -323,7 +356,8 @@ def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contrac
 
 
 def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = None, *, goal_contract=None) -> List[str]:
-    """What a generated op may never do, judged from its own plan before the suite runs. ``allowed_parts``: the source's
+    """Check a generated plan before the suite runs; governed methods also face the independent final-goal check.
+    Legacy ``allowed_parts``: the source's
     text parts and its styles part — the parts V10's residual identity covers; any other part (numbering.xml, docProps,
     a chart…) could carry a change no verified assertion checks, so it is refused outright."""
     probs = []
@@ -595,9 +629,37 @@ def system_prompt(goal_contract=None) -> str:
             "paragraph items. Predict all text/revision/member changes first.\n"
         ) + prompt[end:]
         prompt = prompt.replace('name, mode = "formatting", description', 'name, mode, description')
+        start = prompt.index("- apply() mutates")
+        end = prompt.index("- CONTRACT-GOVERNED METHOD", start)
+        prompt = prompt[:start] + (
+            "- apply() changes only the working package. Use pkg.xml / pkg.write_xml for XML and "
+            "pkg.add_member / pkg.remove_member / pkg.edit_rels for approved package graph changes. "
+            "All member, relationship, content-type and text changes must be predicted in plan first.\n"
+        ) + prompt[end:]
+        # The legacy formatting allowlist is not the capability boundary of an
+        # approved, independently verified outcome. Leaving it here told writers
+        # to refuse header/footer graphs even on the governed path.
+        start = prompt.index("- Only these property families")
+        end = prompt.index("- If the request cannot", start)
+        from .verify.props import KINDS
+        prompt = prompt[:start] + (
+            "- Use existing independent V10 assertion kinds for every change. Available kind names: "
+            + json.dumps(sorted(KINDS)) + ". Header/footer templates use template_parts, styles_added and "
+            "hf_template_refs; their source/template/output checks cover copied text, fields, styles and the "
+            "package graph. Those changes are permitted when the approved contract includes them. If an "
+            "assertion cannot describe the intended change, report that specific verification gap.\n"
+            "- Supporting templates are available in both plan and apply as pkg.inputs: an immutable mapping "
+            "from each approved absolute template path to its pinned bytes. Use DocxPackage(pkg.inputs[path]) "
+            "to inspect or copy their XML/media. Do not open a path or mutate an input. The host rechecks input "
+            "hashes; all template-dependent assertions still name the original approved template path.\n"
+        ) + prompt[end:]
         prompt += "\nAPPROVED IMMUTABLE GOAL:\n" + json.dumps(goal_contract, ensure_ascii=False, sort_keys=True)
         helper = Path(__file__).resolve().parent / "ops" / "textedit.py"
         prompt += "\nPure text-edit planning/application helper reference:\n" + helper.read_text(encoding="utf-8")
+        if any(e.get("type") == "header_footer_template" for e in goal_contract.get("effects", [])):
+            reference = Path(__file__).resolve().parent / "ops" / "apply_header_footer_template.py"
+            prompt += ("\nHeader/footer reference implementation (reference only; imports still obey the whitelist; "
+                       "replace external template reads with pkg.inputs):\n" + reference.read_text(encoding="utf-8"))
     return prompt
 
 
@@ -652,7 +714,16 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
     goal_contract = copy.deepcopy(goal_contract)
     system = system_prompt(goal_contract)
     profiles = [profile(DocxPackage.from_path(f)) for f in samples]
-    batch = compiler._Batch(list(samples), None)
+    from .goals import goal_templates
+    templates = goal_templates(goal_contract) if goal_contract is not None else []
+    batch = compiler._Batch(list(samples), templates[0] if templates else None)
+    for path in templates:
+        batch.files[str(path)] = path
+        if not any(pin["path"] == str(path) for pin in batch.source_pins):
+            batch.source_pins.append({"path": str(path), "sha256": hashlib.sha256(path.read_bytes()).hexdigest()})
+    for effect in (goal_contract or {}).get("effects", []):
+        if effect.get("template"):
+            batch.files[effect["template"]] = Path(effect["template"]).resolve()
     batch.work_dir = out_dir
     batch.analysis_limits = analysis_limits
     batch.context_dir = out_dir

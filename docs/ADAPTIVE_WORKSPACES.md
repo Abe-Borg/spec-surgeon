@@ -1,5 +1,8 @@
 # Persistent multi-project workspaces
 
+Header/footer style reconciliation and the supporting-template inputs available to generated
+recovery methods are documented in [Template compatibility and recovery](TEMPLATE_STYLE_RECOVERY.md).
+
 Workspaces retain project boundaries, requests, evidence, user decisions, candidate outputs,
 and remaining problems above the existing EditSpec, chain and recovery engine. Originals remain
 untouched; exporting verified copies is a separate action. Available starting in v0.8.0.

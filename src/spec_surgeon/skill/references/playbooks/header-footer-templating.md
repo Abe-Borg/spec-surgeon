@@ -1,5 +1,11 @@
 # Playbook — header/footer/cover templating and style transplant
 
+Spec Surgeon's built-in importer reconciles localized Word style IDs automatically. Use
+`inspect_template_styles` to inspect the proposed mapping; submit the original template with
+`apply_header_footer_template`. Different IDs or translated linked-character names alone do
+not require a manual Word rebuild. Existing destination styles remain intact, missing dependencies
+are isolated from collisions, and independent verification re-derives the mapping from the inputs.
+
 Applying a project template's headers, footers, and cover design to one or more existing documents, filling the template's placeholder slots from each document's own content. Formatting mode: every fill value is extracted from the document by a deterministic rule, never typed. This playbook is a sequence; the lessons it depends on are in `ooxml-lessons.md` and are cited by section rather than repeated.
 
 ## Before the transform

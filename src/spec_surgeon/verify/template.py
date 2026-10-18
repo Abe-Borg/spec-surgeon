@@ -22,8 +22,8 @@
       run (its highlight gone for highlight slots), every run's content (text and other children, in order) as
       modelled;
     - ``wp:docPr`` ids of the part unique in the whole output.
-* ``styles_added`` — exactly the listed styles are new, each equal to the template's definition with extension
-  markup removed.
+* ``styles_added`` — independently derive equivalent styles and the missing dependency closure; exactly those
+  definitions may be added, with checked reference/identity remapping and extension markup removed.
 
 Definitions shared with the transform side (slot detection, display text, fill rules, effective properties,
 tab rescaling) are restated in CLAUDE.md and implemented here separately.
@@ -41,6 +41,7 @@ from lxml import etree
 from .reader import VPackage, W, R, STYLES_REL, THEME_REL
 from .textcheck import blocks
 from .props import Styles, Theme, sig, sect_prs, first_difference
+from .template_styles import style_plan, mapped_tree, private_defaults
 
 WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 DOCPR = "{%s}docPr" % WP_NS
@@ -441,18 +442,28 @@ class Eff:
 
     def _levels(self, p, rpr=None, run=False) -> List[Any]:
         """Style elements, lowest priority first: table chain, paragraph chain, [character chain]."""
+        def chain(sid):
+            active = []
+            for style in self.styles.chain(sid):
+                # Word discards these definitions' children, including basedOn.
+                # MS-OI29500 §2.1.242(a); do not turn them into formatting pins.
+                if style.get(W + "styleId") in ("NoList", "TableNormal", "DefaultParagraphFont"):
+                    break
+                active.insert(0, style)
+            return active
+
         out = []
         q = p.getparent()
         while q is not None and q.tag != W + "tbl":
             q = q.getparent()
         if q is not None:
             ts = q.find(f"{W}tblPr/{W}tblStyle")
-            out += list(reversed(self.styles.chain(ts.get(W + "val") if ts is not None else self.styles.default.get("table"))))
+            out += chain(ts.get(W + "val") if ts is not None else self.styles.default.get("table"))
         ps = p.find(f"{W}pPr/{W}pStyle")
-        out += list(reversed(self.styles.chain(ps.get(W + "val") if ps is not None else self.styles.default.get("paragraph"))))
+        out += chain(ps.get(W + "val") if ps is not None else self.styles.default.get("paragraph"))
         if run:
             rs = rpr.find(W + "rStyle") if rpr is not None else None
-            out += list(reversed(self.styles.chain(rs.get(W + "val") if rs is not None else self.styles.default.get("character"))))
+            out += chain(rs.get(W + "val") if rs is not None else self.styles.default.get("character"))
         return out
 
     def para(self, p, with_direct=True) -> Dict[str, Any]:
@@ -690,6 +701,20 @@ def check_hf_template_refs(ctx, a: Dict[str, Any], errs: List[str]) -> str:
     return f"hf_template_refs: {len(o_secs)} section(s) reference the predicted template copies"
 
 
+def _style_parts(ctx, a):
+    # In V10, tie the dependency roots to the parts actually being checked,
+    # rather than accepting arbitrary extra roots from a generated plan.
+    # The final goal checker supplies roots derived directly from its graph.
+    if hasattr(ctx, "plan"):
+        parts = sorted({entry["template_part"] for entry in ctx.plan.get("property_assertions", [])
+                        if entry.get("kind") == "template_parts" and entry.get("template") == a["template"]
+                        and entry.get("template_md5") == a.get("template_md5")})
+        if "style_parts" in a and sorted(set(a["style_parts"])) != parts:
+            raise ValueError("style dependency roots differ from the copied template parts")
+        return parts
+    return a.get("style_parts", [a["template_part"]] if "template_part" in a else [])
+
+
 def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
     part = a["part"]
     tag = f"template_parts {part}"
@@ -760,8 +785,19 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
         bad = [k for k, (x, y) in enumerate(zip(want_text, got_text)) if x != y][:3]
         errs.append(f"{tag}: block text differs from template+fills at {bad or 'count'}: "
                     + "; ".join(f"{want_text[k]!r}≠{got_text[k]!r}" for k in bad))
+    # Derive style identities from the two inputs, never from the claimed mapping.
+    try:
+        mapping, imported = style_plan(ctx.src, tpl, _style_parts(ctx, a),
+                                a.get("import_missing_styles", True), strip_extensions)
+    except ValueError as exc:
+        errs.append(f"{tag}: {exc}")
+        return tag
+    if "style_map" in a and a["style_map"] != mapping:
+        errs.append(f"{tag}: claimed style mapping differs from the input-derived mapping")
+    mapped = mapped_tree(troot, mapping, private_defaults(tpl, mapping, imported))
+    m_pars = list(mapped.iter(W + "p"))
     # skeleton
-    d = first_difference(_skeleton(troot), _skeleton(oroot))
+    d = first_difference(_skeleton(mapped), _skeleton(oroot))
     if d:
         errs.append(f"{tag}: structure differs from the template: {d}")
         return tag
@@ -773,7 +809,8 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
             if _owner_p(tp_) is not None:
                 continue                       # textbox content: covered by the run content comparison
             where = f"{tag} block {k}"
-            if _ppr_rest(tp_) != _ppr_rest(op_):
+            mp_ = m_pars[k]
+            if _ppr_rest(mp_) != _ppr_rest(op_):
                 errs.append(f"{where}: paragraph properties outside the pinnable set changed")
             T, O = teff.para(tp_), oeff.para(op_)
             if a.get("rescale_tabs", True) and not in_table(tp_):
@@ -782,11 +819,12 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 errs.append(f"{where}: effective paragraph properties {({k2: O[k2] for k2 in O if O[k2] != T[k2]})} "
                             f"≠ template's {({k2: T[k2] for k2 in T if O[k2] != T[k2]})}")
             tm, om = tp_.find(f"{W}pPr/{W}rPr"), op_.find(f"{W}pPr/{W}rPr")
-            if _rpr_rest(tm) != _rpr_rest(om):
+            if _rpr_rest(mp_.find(f"{W}pPr/{W}rPr")) != _rpr_rest(om):
                 errs.append(f"{where}: paragraph-mark properties outside the pinnable set changed")
             if teff.run(tm, tp_) != oeff.run(om, op_):
                 errs.append(f"{where}: effective paragraph-mark properties differ from the template's")
-            model = _run_model(tp_, slots.get(k, []), fills)
+            model = _run_model(mp_, slots.get(k, []), fills)
+            original_model = _run_model(tp_, slots.get(k, []), fills)
             oruns = _runs_of(op_)
             if len(model) != len(oruns):
                 errs.append(f"{where}: {len(oruns)} run(s), expected {len(model)} (template runs, slots collapsed)")
@@ -803,8 +841,9 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 if _items(orr) != items:
                     errs.append(f"{rw}: run content (text, tabs, fields, drawings… in order) differs from the "
                                 f"template's")
-                if teff.run(trpr, tp_) != oeff.run(orpr, op_):
-                    errs.append(f"{rw}: effective run properties {oeff.run(orpr, op_)} ≠ template's {teff.run(trpr, tp_)}")
+                source_rpr = original_model[n][0].find(W + "rPr")
+                if teff.run(source_rpr, tp_) != oeff.run(orpr, op_):
+                    errs.append(f"{rw}: effective run properties {oeff.run(orpr, op_)} ≠ template's {teff.run(source_rpr, tp_)}")
     except ValueError as e:
         errs.append(f"{tag}: {e}")
     # drawing ids unique in the whole output
@@ -846,19 +885,23 @@ def check_styles_added(ctx, a: Dict[str, Any], errs: List[str]) -> str:
     if md5 != a.get("template_md5"):
         errs.append(f"styles_added: template file changed since planning (md5 {md5} ≠ {a.get('template_md5')})")
         return "styles_added"
-    tsp = tpl.related(STYLES_REL)
-    tstyles = Styles(tpl.xml(tsp) if tsp else None)
+    try:
+        mapping, expected = style_plan(ctx.src, tpl, _style_parts(ctx, a),
+                                       a.get("import_missing_styles", True), strip_extensions)
+    except ValueError as exc:
+        errs.append(f"styles_added: {exc}")
+        return "styles_added"
+    if a.get("style_map", mapping) != mapping or sorted(a.get("ids", [])) != sorted(expected):
+        errs.append("styles_added: claimed imports or mapping differ from the input-derived closure")
     new = sorted(set(ctx.out_styles.by_id) - set(ctx.src_styles.by_id))
     gone = sorted(set(ctx.src_styles.by_id) - set(ctx.out_styles.by_id))
-    if new != sorted(a.get("ids", [])) or gone:
-        errs.append(f"styles_added: new styles {new} (predicted {sorted(a.get('ids', []))}), removed {gone}")
-    for sid in a.get("ids", []):
-        o, t = ctx.out_styles.by_id.get(sid), tstyles.by_id.get(sid)
-        if o is None or t is None:
-            errs.append(f"styles_added: {sid} missing in output or template")
-            continue
-        if sig(o) != sig(strip_extensions(t)):
-            errs.append(f"styles_added: {sid} differs from the template's definition")
+    if new != sorted(expected) or gone:
+        errs.append(f"styles_added: new styles {new} (expected {sorted(expected)}), removed {gone}")
+    for sid, definition in expected.items():
+        out = ctx.out_styles.by_id.get(sid)
+        count = sum(el.get(W + "styleId") == sid for el in ctx.out_styles.root.findall(W + "style"))
+        if count != 1 or sig(out) != sig(definition):
+            errs.append(f"styles_added: {sid} differs from the reconciled template definition or occurs more than once")
         ctx.added_styles.add(sid)
     return f"styles_added: {a.get('ids')}"
 

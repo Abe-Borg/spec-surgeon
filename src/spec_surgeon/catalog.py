@@ -536,6 +536,9 @@ SELECTOR_GRAMMAR = {
 # verified check for a custom transform, so a custom transform cannot do it: it needs a built-in operation. Shown to
 # Claude in the compiler's and the transform writer's instructions.
 CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
+    "scope": "Legacy custom transforms without an approved independent outcome contract. These limits do not "
+             "describe contract-governed project recovery; that path permits the approved effects, including "
+             "template header/footer graphs, subject to V1–V10 and independent original-to-final verification.",
     "families": {
         "run fonts and font sizes of selected text": "run_fonts",
         "fonts and sizes defined in styles": "style_fonts",

@@ -131,7 +131,9 @@ def test_unsupported_offers_the_custom_transform_only_when_claude_judged_it_poss
     outside = conv(folder, FakeClient(submit(UNSUPPORTED, custom_transform="outside_limits",
                                              custom_transform_reason="bold is not verifiable yet")))
     t2 = outside.start()
-    assert t2.status == "unsupported" and t2.choices == [] and "new built-in capability" in t2.message
+    assert t2.status == "unsupported" and t2.choices == [] and "formatting-only custom fallback" in t2.message
+    assert "It needs a new built-in capability" not in t2.message
+    assert "Project recovery" in t2.message
     with pytest.raises(ValueError, match="not offered"):
         outside.reply(choice_id="c99")
 
