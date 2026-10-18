@@ -1,8 +1,7 @@
 """V6/V7 — rendered-page evidence via PyMuPDF (no poppler dependency on Windows).
 
-* word boxes per page → geometry assertion: for every word that appears in both renders of a page,
-  |Δy| and |Δx| vs the reference; pages the plan declares as expected-to-change are reported but not
-  asserted.
+* word boxes per page → geometry assertion: every word must correspond and retain its position;
+  pages the plan declares as expected-to-change are reported but not asserted.
 * page rasters and a contact sheet for the human "actually look" step.
 """
 from __future__ import annotations
@@ -27,6 +26,7 @@ class PageGeom:
     words_only_in_ref: int
     words_only_in_out: int
     expected_change: bool
+    expected_removed_words: int = 0
 
 
 @dataclass
@@ -36,6 +36,7 @@ class GeometryResult:
     pages: List[PageGeom] = field(default_factory=list)
     worst_dy_asserted: float = 0.0
     worst_dx_asserted: float = 0.0
+    evidence_problems: List[str] = field(default_factory=list)
 
     def to_dict(self):
         return {
@@ -43,6 +44,7 @@ class GeometryResult:
             "worst_dy_asserted_pt": round(self.worst_dy_asserted, 2),
             "worst_dx_asserted_pt": round(self.worst_dx_asserted, 2),
             "pages": [vars(p) for p in self.pages],
+            "evidence_problems": self.evidence_problems,
         }
 
 
@@ -50,13 +52,71 @@ def _words(page) -> List[Tuple[str, float, float]]:
     return [(w[4], float(w[0]), float(w[1])) for w in page.get_text("words")]
 
 
-def compare_pdfs(ref_pdf: Path, out_pdf: Path, expected_change_pages: Sequence[int] = ()) -> GeometryResult:
+def _removal_margins(source: Path) -> Tuple[float, float]:
+    """Conservative bands outside EVERY source section's body, in PDF points.
+
+    Missing/negative margins grant no allowance. A header that intrudes into the body therefore
+    needs review rather than silently exempting body text from the geometry assertion.
+    """
+    from .props import sect_prs
+    from .reader import VPackage, W
+    pkg = VPackage(Path(source).read_bytes())
+    sections = sect_prs(pkg.xml(pkg.main_part()))
+    result = []
+    for name in ("top", "bottom"):
+        values = []
+        for section in sections:
+            margin = section.find(W + "pgMar")
+            values.append(max(0, int(margin.get(W + name, "0"))) / 20 if margin is not None else 0)
+        result.append(min(values, default=0))
+    return result[0], result[1]
+
+
+def _removed_margin_words(original, baseline, margins: Tuple[float, float], tol: float) -> Tuple[int, List[str]]:
+    """Validate the independently stripped reference against original word coordinates.
+
+    Match by text AND position, so a repeated header word cannot consume its body occurrence.
+    Every baseline word must survive at its original position. Only missing original words wholly
+    outside the conservative body bounds may be attributed to the approved header/footer removal.
+    """
+    source = original.get_text("words")
+    by_text = {}
+    for i, word in enumerate(source):
+        by_text.setdefault(word[4], []).append(i)
+    used = set()
+    for word in baseline.get_text("words"):
+        match = next((i for i in by_text.get(word[4], []) if i not in used
+                      and abs(source[i][0] - word[0]) <= tol and abs(source[i][1] - word[1]) <= tol), None)
+        if match is None:
+            return 0, ["independent header/footer-removal reference added or moved a surviving word"]
+        used.add(match)
+    removed = [word for i, word in enumerate(source) if i not in used]
+    top, bottom = margins
+    if any(not (word[3] <= top or word[1] >= original.rect.height - bottom) for word in removed):
+        return 0, ["independent header/footer-removal reference lost a word in the source body region"]
+    if original.rect != baseline.rect:
+        return 0, ["independent header/footer-removal reference changed the page size"]
+    return len(removed), []
+
+
+def compare_pdfs(ref_pdf: Path, out_pdf: Path, expected_change_pages: Sequence[int] = (), *,
+                 removed_hf_pdf: Optional[Path] = None, removed_hf_source: Optional[Path] = None) -> GeometryResult:
     ref = fitz.open(str(ref_pdf))
     out = fitz.open(str(out_pdf))
     res = GeometryResult(ref_pages=ref.page_count, out_pages=out.page_count)
+    baseline = fitz.open(str(removed_hf_pdf)) if removed_hf_pdf is not None else None
+    margins = _removal_margins(removed_hf_source) if baseline is not None and removed_hf_source is not None else None
+    if baseline is not None and (margins is None or baseline.page_count != ref.page_count):
+        res.evidence_problems.append("independent header/footer-removal reference lacks source bounds or has a different page count")
     n = min(ref.page_count, out.page_count)
     for i in range(n):
-        rw, ow = _words(ref[i]), _words(out[i])
+        removed = 0
+        reference_page = ref[i]
+        if baseline is not None and i < baseline.page_count and margins is not None:
+            removed, problems = _removed_margin_words(ref[i], baseline[i], margins, 0.5)
+            res.evidence_problems.extend(f"page {i + 1}: {problem}" for problem in problems)
+            reference_page = baseline[i]
+        rw, ow = _words(reference_page), _words(out[i])
         sm = difflib.SequenceMatcher(a=[w[0] for w in rw], b=[w[0] for w in ow], autojunk=False)
         max_dy = max_dx = 0.0
         matched = 0
@@ -71,12 +131,62 @@ def compare_pdfs(ref_pdf: Path, out_pdf: Path, expected_change_pages: Sequence[i
         only_ref = sum(i2 - i1 for op, i1, i2, _, _ in sm.get_opcodes() if op in ("delete", "replace"))
         only_out = sum(j2 - j1 for op, _, _, j1, j2 in sm.get_opcodes() if op in ("insert", "replace"))
         exp = (i + 1) in expected_change_pages
-        res.pages.append(PageGeom(i + 1, matched, round(max_dy, 2), round(max_dx, 2), only_ref, only_out, exp))
+        res.pages.append(PageGeom(i + 1, matched, round(max_dy, 2), round(max_dx, 2), only_ref, only_out, exp, removed))
         if not exp:
             res.worst_dy_asserted = max(res.worst_dy_asserted, max_dy)
             res.worst_dx_asserted = max(res.worst_dx_asserted, max_dx)
     ref.close(); out.close()
+    if baseline is not None:
+        baseline.close()
     return res
+
+
+def hf_removal_copy(docx: Path, out_docx: Path, plan: Dict) -> Optional[Path]:
+    """Independently remove ONLY the raw-approved header/footer references from a source copy.
+
+    The original body, section setup and all other members remain unchanged. Rendering this copy
+    identifies the exact intentionally removed word anchors, including rendered PAGE fields. Neither
+    transform data, planned target lists nor the actual output are used to construct the reference.
+    """
+    import zipfile
+    from lxml import etree
+    from .props import Styles, _v_resolve_sections, sect_prs
+    from .reader import VPackage, W, STYLES_REL
+    operations = [op for op in plan.get("ops", []) if op.get("op") == "remove_header_footer"]
+    if not operations:
+        return None
+    pkg = VPackage(Path(docx).read_bytes())
+    main = pkg.main_part()
+    root = pkg.xml(main)
+    sections = sect_prs(root)
+    style_part = pkg.related(STYLES_REL)
+    styles = Styles(pkg.xml(style_part) if style_part else None)
+    changed = False
+    for op in operations:
+        selection = op.get("select") or {}
+        if op.get("params") or set(selection) - {"sections", "kinds", "types"}:
+            raise ValueError("unsupported raw header/footer-removal parameters")
+        chosen = _v_resolve_sections(pkg, selection.get("sections", "all"), styles)
+        kinds = selection.get("kinds", ["header", "footer"])
+        types = selection.get("types", ["default", "first", "even"])
+        if not kinds or set(kinds) - {"header", "footer"} or not types or set(types) - {"default", "first", "even"}:
+            raise ValueError("invalid raw header/footer-removal kinds or types")
+        for index in chosen:
+            section = sections[index]
+            for kind in kinds:
+                for reference in list(section.findall(W + kind + "Reference")):
+                    if reference.get(W + "type", "default") in types:
+                        section.remove(reference)
+                        changed = True
+    if not changed:
+        return None
+    out_docx = Path(out_docx)
+    out_docx.parent.mkdir(parents=True, exist_ok=True)
+    xml = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    with zipfile.ZipFile(out_docx, "w", zipfile.ZIP_DEFLATED) as output:
+        for info in pkg.infos:
+            output.writestr(info, xml if info.filename == main else pkg.read(info.filename))
+    return out_docx
 
 
 def rasterize(pdf: Path, out_dir: Path, pages: Optional[Sequence[int]] = None, dpi: int = 80) -> List[Path]:

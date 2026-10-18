@@ -14,8 +14,8 @@ ooxml.py — a selector bug on the transform side must not be able to hide behin
 2. **Residual identity.** For every text part present on both sides and for the styles part, strip what the
    assertions cover (the selected runs' rPr, the selected sectPr children, …) and remove the blocks whose text
    the plan predicted to change; what remains must be identical, element for element, attribute for
-   attribute. Blocks with predicted text changes must keep their pPr and introduce no run-property signature
-   the source block did not have.
+   attribute. Text-edited paragraphs leave the residual only after an independent
+   item-level check proves their exact approved change and preserves their envelope.
 
 An assertion kind this module does not know is a FAIL, never a skip.
 """
@@ -56,18 +56,6 @@ def sig(el) -> Any:
     if el.tag not in TEXT_TAGS:
         text = text.strip()
     return (el.tag, tuple(sorted(el.attrib.items())), text, tuple(sig(c) for c in el))
-
-
-def _rpr_sig_for_tc(rpr) -> Any:
-    """Signature of a run's rPr inside a text-edited block: normalizes w:rPrChange/@w:id when a run carrying
-    rPrChange was split (V4 and V5c check revision id uniqueness and snapshot grammar)."""
-    if rpr is None:
-        return None
-    c = copy.deepcopy(rpr)
-    for chg in c.findall(W + "rPrChange"):
-        if W + "id" in chg.attrib:
-            chg.set(W + "id", "#")
-    return sig(c)
 
 
 def _name(el) -> str:
@@ -551,7 +539,13 @@ class Ctx:
         if part not in self.views:
             a, b = PartView(self.src.xml(part)), PartView(self.out.xml(part))
             self.views[part] = (a, b)
-            self.maps[part] = align(a.texts, b.texts)
+            diffs = [d for d in self.plan.get("diffs", []) if d.get("part") == part]
+            deleted = {d["block_index"] for d in diffs if d.get("before") is not None and d.get("after") is None}
+            inserted = {d["block_index"] for d in diffs if d.get("before") is None and d.get("after") is not None}
+            source_indices = [i for i in range(len(a.pars)) if i not in deleted]
+            output_indices = [i for i in range(len(b.pars)) if i not in inserted]
+            self.maps[part] = (dict(zip(source_indices, output_indices))
+                               if len(source_indices) == len(output_indices) else align(a.texts, b.texts))
         return self.views[part]
 
     def scope_parts(self, scope: Iterable[str]) -> List[str]:
@@ -1076,9 +1070,12 @@ def _paragraph_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
 
 def _deleted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    from .edits import check_deleted_paragraph, part_revision_ids
+
     parts = ctx.scope_parts(a.get("scope", ["document"]))
     pred = (a.get("select") or {}).get("paragraphs")
     tracked = bool(a.get("tracked", True))
+    old_ids = set().union(*(part_revision_ids(ctx.src.xml(name)) for name in ctx.src_tp))
     n = 0
     for part in parts:
         if part not in ctx.both:
@@ -1097,6 +1094,12 @@ def _deleted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     errs.append(f"deleted_paragraphs: {part} block {bi} missing in tracked output")
                     continue
                 op = ov.pars[oi]
+                check_deleted_paragraph(p, op, a.get("author"), old_ids,
+                                        f"deleted_paragraphs {part} block {bi}", errs)
+                from .effects import _check_edit_envelope
+                _check_edit_envelope(p, op, old_ids, f"deleted_paragraphs {part} block {bi}", errs,
+                                     deleting=True)
+                ctx.verified_blocks.setdefault(part, {})[bi] = oi
                 if a.get("mark_deleted", True):
                     mrpr = op.find(W + "pPr/" + W + "rPr")
                     d_el = mrpr.find(W + "del") if mrpr is not None else None
@@ -1527,6 +1530,42 @@ def _cover_unnumbered(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         errs.append(f"cover_unnumbered: the cover shows footer {shown!r}, the plan edited {a.get('footer')!r}")
     elif shown and _v_page_field(ctx.out.xml(shown)):
         errs.append(f"cover_unnumbered: the footer the cover shows ({shown}) still holds a PAGE field")
+    # Re-derive the source paragraph being removed, rather than granting its
+    # predicted text diff a blanket exemption. Every retained footer paragraph
+    # remains in the ordinary residual (including other checked operations).
+    source_sections = sect_prs(ctx.src.xml(ctx.src.main_part()))
+    source_rels = ctx.src.rels_targets(ctx.src.main_part())
+    source_own = {}
+    for ref in source_sections[0].findall(W + "footerReference") if source_sections else []:
+        relation = source_rels.get(ref.get(R + "id"), {})
+        source_own[ref.get(W + "type", "default")] = relation.get("target")
+    source_shown = (source_own.get("first") if source_sections and _v_title_pg_on(source_sections[0])
+                    and source_own.get("first") else source_own.get("default"))
+    if source_shown != shown or source_shown != a.get("footer") or source_shown not in ctx.both:
+        errs.append("cover_unnumbered: the source and output do not show the same independently resolved footer")
+    else:
+        source_view, output_view = ctx.view(source_shown)
+        hits = [(index, paragraph) for index, paragraph in enumerate(source_view.pars) if _v_page_field(paragraph)]
+        if len(hits) != 1:
+            errs.append(f"cover_unnumbered: expected one source PAGE paragraph, found {len(hits)}")
+        else:
+            index, paragraph = hits[0]
+            if len(source_view.pars) == 1:
+                expected = copy.deepcopy(paragraph)
+                for child in list(expected):
+                    if child.tag != W + "pPr":
+                        expected.remove(child)
+                if len(output_view.pars) != 1:
+                    errs.append("cover_unnumbered: clearing the sole PAGE paragraph changed the footer's paragraph count")
+                else:
+                    difference = first_difference(expected, output_view.pars[0])
+                    if difference:
+                        errs.append("cover_unnumbered: not exactly the cleared source PAGE paragraph: " + difference)
+                    ctx.verified_blocks.setdefault(source_shown, {})[index] = 0
+            else:
+                if len(output_view.pars) != len(source_view.pars) - 1:
+                    errs.append("cover_unnumbered: removing the PAGE paragraph changed more than one paragraph")
+                ctx.deleted_src_blocks.setdefault(source_shown, set()).add(index)
     return f"cover_unnumbered: the cover shows {shown}, without a page number"
 
 
@@ -2103,19 +2142,6 @@ def _drop_empty(el):
         el.getparent().remove(el)
 
 
-def _ppr_without_mark_del(ppr):
-    if ppr is None:
-        return None
-    c = copy.deepcopy(ppr)
-    rpr = c.find(W + "rPr")
-    if rpr is not None:
-        for d in list(rpr.findall(W + "del")):
-            rpr.remove(d)
-        _drop_empty(rpr)
-    _drop_empty(c)
-    return c if (len(c) or c.attrib) else None
-
-
 _WP_EXTENT = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}extent"
 _PIC_EXT = ("{http://schemas.openxmlformats.org/drawingml/2006/main}graphic/"
             "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicData/"
@@ -2207,23 +2233,8 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
     tc = ctx.text_changed.get(part, set()) | set(vb)
     del_src = ctx.deleted_src_blocks.get(part, set())
     ins_out = ctx.inserted_out_blocks.get(part, set())
-    out_of = lambda b: vb[b] if b in vb else amap.get(b)
-    # predicted text changes: pPr identical, no new run-property signature, then out of the residual (a block an edit
-    # kind checked item by item has had every character's properties compared already — a filled highlight slot's
-    # run legitimately has a signature the source block never had)
-    for bi in sorted(tc):
-        if bi >= len(s.pars) or bi in del_src or bi in vb:
-            continue
-        oi = amap.get(bi)
-        if oi is not None:
-            sppr = s.pars[bi].find(W + "pPr")
-            oppr = o.pars[oi].find(W + "pPr")
-            if sig(sppr) != sig(oppr) and sig(_ppr_without_mark_del(sppr)) != sig(_ppr_without_mark_del(oppr)):
-                errs.append(f"{part} block {bi}: paragraph properties changed in a text-edited block")
-            src_sigs = {_rpr_sig_for_tc(r.find(W + "rPr")) for r in s.runs[bi]}
-            new = [r for r in o.runs[oi] if _rpr_sig_for_tc(r.find(W + "rPr")) not in src_sigs]
-            if new:
-                errs.append(f"{part} block {bi}: {len(new)} run(s) with run properties the source block never had")
+    for bi in sorted(tc - del_src - set(vb)):
+        errs.append(f"{part} block {bi}: predicted text change has no independent paragraph preservation proof")
     # strip what assertions cover (source coordinates → aligned output)
     for bi, ri in ctx.strip_runs.get(part, set()):
         oi = amap.get(bi)
@@ -2274,7 +2285,14 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                     for c in list(secs[i]):
                         if _local(c) in names:
                             secs[i].remove(c)
-    # remove text-changed blocks, deleted source blocks, and inserted output blocks
+    # Restore only independently checked paragraph contents. Keeping the nodes
+    # in the tree makes a move into another cell/container visible to the
+    # residual; dropping both paragraphs would conceal that relocation.
+    for bi, oi in vb.items():
+        if bi < len(s.pars) and oi < len(o.pars) and o.pars[oi].getparent() is not None:
+            o.pars[oi].getparent().replace(o.pars[oi], copy.deepcopy(s.pars[bi]))
+    # Untracked deletions and independently checked inserted paragraphs are the
+    # remaining structural changes excluded from this comparison.
     def remove_blocks(view, idxs):
         els = [view.pars[i] for i in sorted(idxs) if i < len(view.pars)]
         chosen = set(map(id, els))
@@ -2287,8 +2305,8 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                 q = q.getparent()
             if not inside and el.getparent() is not None:
                 el.getparent().remove(el)
-    remove_blocks(s, tc | del_src)
-    remove_blocks(o, {out_of(b) for b in tc if out_of(b) is not None} | ins_out)
+    remove_blocks(s, del_src)
+    remove_blocks(o, ins_out)
     for el in gone:
         if el.getparent() is not None:
             el.getparent().remove(el)
@@ -2382,7 +2400,10 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_
     errs: List[str] = []
     summaries: List[str] = []
     assertions = plan.get("property_assertions", []) or []
-    for a in assertions:
+    # Rule-based assertions independently rederive built-in decisions first.
+    # Generic custom-method primitives then cover only paragraphs not already
+    # proved by one of those stricter operation rules.
+    for a in sorted(assertions, key=lambda value: value.get("kind") == "paragraph_edits"):
         fn = KINDS.get(a.get("kind"))
         if fn is None:
             errs.append(f"unknown assertion kind {a.get('kind')!r} — cannot be evaluated")
@@ -2444,9 +2465,12 @@ from .numberingaudit import AUDIT_KINDS  # noqa: E402
 from .numberingconvert import CONVERT_KINDS  # noqa: E402
 from .typednumbers import TYPED_KINDS  # noqa: E402
 from .hygiene import HYGIENE_KINDS  # noqa: E402
+from .replacement import literal_replacement, paragraph_edits  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
+KINDS["literal_replacement"] = literal_replacement
+KINDS["paragraph_edits"] = paragraph_edits
 KINDS.update(HYGIENE_KINDS)
 KINDS.update(IMAGE_KINDS)
 for _batch2 in (COMMENT_KINDS, HIGHLIGHT_KINDS, REVISION_KINDS, REMOVAL_KINDS, WATERMARK_KINDS, LINK_KINDS, DOCPROP_KINDS):

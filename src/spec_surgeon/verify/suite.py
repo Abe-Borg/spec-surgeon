@@ -72,6 +72,14 @@ class VerificationRecord:
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
         d["passed"] = self.passed
+        render = self.get("V6")
+        d["verification_coverage"] = {
+            "performed_checks": [c.id for c in self.checks if c.status in ("PASS", "FAIL")],
+            "not_applicable_checks": [c.id for c in self.checks if c.status == "NA"],
+            "renderer": render.data.get("renderer") if render is not None else None,
+            "human_visual_acceptance": "not_recorded_by_this_suite",
+            "pass_meaning": "no performed automated check failed; NA checks were not evaluated",
+        }
         return d
 
     @classmethod
@@ -118,6 +126,13 @@ class VerificationRecord:
             lines.append(f"    {c.summary}")
         lines.append("")
         lines.append(f"RESULT: {'PASS' if self.passed else 'FAIL'}")
+        performed = [c.id for c in self.checks if c.status in ("PASS", "FAIL")]
+        na = [c.id for c in self.checks if c.status == "NA"]
+        lines.append(f"Automated checks performed ({len(performed)}): {', '.join(performed) or 'none'}. "
+                     f"Not evaluated / not applicable ({len(na)}): {', '.join(na) or 'none'}.")
+        lines.append("PASS means no performed automated check failed; NA is not evidence of success. "
+                     "Human visual acceptance is not recorded by this suite. Render evidence applies to the "
+                     "recorded renderer and does not establish another renderer's appearance.")
         if self.notes:
             lines.append("")
             lines.append("Judgment calls:")
@@ -601,7 +616,7 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
         rec.set(CheckResult("V10", "Property assertions", "PASS" if ok10 else "FAIL", summary10, data10))
 
     # V6, V7, V9 are filled in by the batch runner (they need renders / the write-back step)
-    rec.set(CheckResult("V6", "Render and look", "NA", "no renderer run yet"))
+    rec.set(CheckResult("V6", "Automated render comparison", "NA", "no renderer run yet"))
     rec.set(CheckResult("V7", "Geometry assertion", "NA", "no renderer run yet"))
     rec.set(CheckResult("V9", "Overwrite guard", "NA", "not delivered yet"))
     for check_id, reason in (("V6", "render_pending"), ("V7", "render_pending"), ("V9", "delivery_pending")):

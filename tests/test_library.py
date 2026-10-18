@@ -16,7 +16,7 @@ from spec_surgeon.codegen import generate_op
 from spec_surgeon.gui import Session
 from spec_surgeon.library import LibraryError
 from test_codegen import GOOD_OP
-from test_compiler import FakeClient, resp, tool
+from test_compiler import FakeClient, outcome_cli_flags, resp, tool
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
@@ -133,8 +133,10 @@ def test_session_saves_only_current_previews(folder, tmp_path):
 
 def test_the_command_line_library_and_save_as(folder, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
+    approval = outcome_cli_flags(tmp_path / "approved-outcomes.json", "remove all headers and footers",
+                                 sorted(folder.glob("*.docx")))
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(tmp_path / "o"), "--no-render",
-                     "--save-as", "Strip headers"]) == 0
+                     "--save-as", "Strip headers", *approval]) == 0
     assert "Saved to your library: Recipe: Strip headers" in capsys.readouterr().out
     assert cli_main(["do", "x", str(folder), "--out", str(tmp_path / "o2"), "--no-render", "--save-as",
                      "strip HEADERS"]) == 2                                    # taken: refused before any compile

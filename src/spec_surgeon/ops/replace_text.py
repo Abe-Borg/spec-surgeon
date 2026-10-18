@@ -200,7 +200,7 @@ class ReplaceText(Op):
         "V4": "+1 del per occurrence, +1 ins when the replacement is non-empty, +1 ins per re-wrapped suffix",
         "V5b": "tracked: reject-all view unchanged; untracked: enumerated-list mode",
         "V8": "accept-all view of every edited block predicted",
-        "V10": "edited blocks keep their pPr and introduce no new run-property signature; nothing else changes",
+        "V10": "independently re-derived literal edits preserve every other paragraph item, property and container",
     }
 
     # ---- plan -----------------------------------------------------------------------------
@@ -345,6 +345,12 @@ class ReplaceText(Op):
             if stop:
                 break
 
+        plan.property_assertions.append({
+            "kind": "literal_replacement", "select": sel_dict, "params": dict(params),
+            "author": author, "expected_edits": total,
+            "edited_blocks": {part: [e["paragraph"] for e in edits if e["part"] == part]
+                              for part in parts if any(e["part"] == part for e in edits)},
+        })
         if total == 0:
             if params.get("allow_missing"):
                 plan.notes.append(f"{find!r} does not occur in scope {scope}; no-op.")

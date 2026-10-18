@@ -12,8 +12,8 @@ Phase 4).
 3. renders source and output of each sample (Word when available, else LibreOffice — a visible warning says so:
    decision on §14.5, "fall back with a warning", never silently) and composes side-by-side PNGs of page 1 and of
    the first page whose words moved;
-4. writes ``spec.json`` and ``PREVIEW.md`` and computes an **approval token** — a hash of the spec and of every
-   planned file's path, size and mtime. ``run-spec --approval TOKEN`` refuses to run when the spec or any file
+4. writes ``spec.json`` and ``PREVIEW.md`` with an **approval token** captured before planning — a hash of the spec
+   and every planned file's path, size, mtime and content. ``run-spec --approval TOKEN`` refuses when any input
    changed since the preview — and says which (``approval_inputs`` are kept in ``preview.json``;
    ``explain_approval_change`` compares them with the files as they are now). ``do`` re-checks it after the y/N (or
    ``--yes``) and before the run (``changed_since_preview``) — for a custom transform with ``generated_key`` in place
@@ -51,21 +51,22 @@ def key_templates(key: Any) -> List[Path]:
     (``editspec.spec_input_files``), or — a chain key (``chain.chain_key``: ``{"stages": [{"name", "spec"}, …]}``) —
     those of every stage, once each. A file edited after the preview voids the approval whichever stage reads it
     (CLAUDE.md rule 12)."""
-    from .editspec import spec_input_files
-    if not isinstance(key, dict):
-        return []
-    if isinstance(key.get("stages"), list) and "ops" not in key:
-        out: List[Path] = []
-        for st in key["stages"]:
-            for t in spec_input_files((st or {}).get("spec") or {}) if isinstance(st, dict) else []:
-                if t not in out:
-                    out.append(t)
-        return out
-    return spec_input_files(key)
+    from .input_snapshots import input_paths
+    return input_paths(key)
+
+
+def _snapshot_preview_inputs(value, token_inputs, out_dir):
+    """Run preview plans and checks against copies of exactly the approved auxiliary bytes.
+
+    Public specs and approval keys keep their original paths. The execution copy alone
+    names these persistent snapshots, whose manifest preserves the original provenance.
+    """
+    from .input_snapshots import snapshot_inputs
+    return snapshot_inputs(value, out_dir, token_inputs["templates"])
 
 
 def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, Any]:
-    """What the approval token is a hash of, as data: the spec's digest, every planned file's size and mtime, and every
+    """What the approval token is a hash of, as data: the spec's digest, every planned file's size, mtime and md5, and every
     file the spec reads beside the documents — templates, tables, pictures (``key_templates``) — its size, mtime and md5,
     kept beside the preview so a refused run can say exactly what changed. ``spec`` may be a chain key
     (``chain.chain_key``): then the files are every stage's."""
@@ -75,7 +76,7 @@ def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, An
     for f in sorted(Path(x).resolve() for x in files):
         try:
             st = f.stat()
-            out["files"][str(f)] = [st.st_size, st.st_mtime_ns]
+            out["files"][str(f)] = [st.st_size, st.st_mtime_ns, hashlib.md5(f.read_bytes()).hexdigest()]
         except OSError:
             out["files"][str(f)] = "missing"
     for t in sorted(set(key_templates(spec))):
@@ -88,11 +89,32 @@ def approval_inputs(spec: Dict[str, Any], files: Sequence[Path]) -> Dict[str, An
 
 
 def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
-    """A hash of the spec, of every planned file's path, size and mtime, and of every file the spec reads beside the
+    """A hash of the spec, of every planned file's path, size, mtime and content, and every file read beside the
     documents — templates, tables, pictures (``key_templates`` → ``editspec.spec_input_files``: path, size, mtime and
     content hash): they are inputs like the source (CLAUDE.md rule 12), so one edited after the preview voids the
     approval exactly as an edited spec file does. A spec with templates only hashes exactly as before. ``spec`` may be
     a chain key (``chain.chain_key``): every stage's files count."""
+    return _approval_token_from_inputs(spec, approval_inputs(spec, files))
+
+
+def _approval_token_from_inputs(spec, inputs):
+    """Bind a token to one captured identity snapshot, never to files re-read after the preview work."""
+    h = hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8"))
+    for path, pin in sorted(inputs["files"].items()):
+        if pin == "missing":
+            raise FileNotFoundError(path)
+        h.update(f"\n{path}|{pin[0]}|{pin[1]}|{pin[2]}".encode("utf-8"))
+    for path, pin in sorted(inputs["templates"].items()):
+        identity = "missing" if pin == "missing" else f"{pin[0]}|{pin[1]}|{pin[2]}"
+        h.update(f"\ntemplate {path}|{identity}".encode("utf-8"))
+    return h.hexdigest()[:16]
+
+
+def _legacy_approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
+    """Pre-content-pin digest, solely for migration of independently revalidated recovery checkpoints.
+
+    This is not an approval capability for new previews or runs.
+    """
     h = hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8"))
     for f in sorted(Path(x).resolve() for x in files):
         st = f.stat()
@@ -100,10 +122,10 @@ def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
     for t in sorted(set(key_templates(spec))):
         try:
             st = t.stat()
-            digest = hashlib.md5(t.read_bytes()).hexdigest()
-            h.update(f"\ntemplate {t}|{st.st_size}|{st.st_mtime_ns}|{digest}".encode("utf-8"))
+            identity = f"{st.st_size}|{st.st_mtime_ns}|{hashlib.md5(t.read_bytes()).hexdigest()}"
         except OSError:
-            h.update(f"\ntemplate {t}|missing".encode("utf-8"))
+            identity = "missing"
+        h.update(f"\ntemplate {t}|{identity}".encode("utf-8"))
     return h.hexdigest()[:16]
 
 
@@ -155,6 +177,8 @@ def explain_approval_change(before: Dict[str, Any], now: Dict[str, Any], limit: 
             continue
         if b == "missing" or a == "missing":
             out.append(f"{Path(f).name}: {'missing now' if b == 'missing' else 'back again'}")
+        elif a[:2] == b[:2] and len(a) > 2 and len(b) > 2:
+            out.append(f"{Path(f).name}: content changed since {since} (size and saved timestamp unchanged)")
         else:
             out.append(f"{Path(f).name}: modified since {since} (size {a[0]:,} → {b[0]:,} bytes; saved "
                        f"{_stamp(a[1])} → {_stamp(b[1])})")
@@ -225,6 +249,7 @@ class Preview:
     review_ack: str = ""                          # the token whose blocking findings the user acknowledged
     token_inputs: Dict[str, Any] = field(default_factory=dict)   # approval_inputs at preview time
     log_path: Optional[Path] = None                               # logs/preview.log
+    input_snapshots: List[Dict[str, Any]] = field(default_factory=list)
 
     def to_text(self) -> str:
         spec = self.batch_plan.spec
@@ -253,7 +278,7 @@ class Preview:
         return {"token": self.token, "renderer": self.renderer, "warnings": self.warnings,
                 "plan": self.batch_plan.to_dict(), "samples": [s.to_dict() for s in self.samples],
                 "visual_review": self.review.to_dict() if self.review is not None else None,
-                "approval_inputs": self.token_inputs, "log": "logs/preview.log"}
+                "approval_inputs": self.token_inputs, "input_snapshots": self.input_snapshots, "log": "logs/preview.log"}
 
 
 def side_by_side(src_pdf: Path, out_pdf: Path, page: int, png: Path, dpi: int = 70) -> Optional[Path]:
@@ -476,6 +501,11 @@ def write_preview_files(pv: Any) -> None:
 
 def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
                  do_render: bool = True) -> Preview:
+    from .batch import check_inputs_outside, expand_inputs
+    from .editspec import spec_input_files, validate_spec
+    spec = copy.deepcopy(spec)
+    validate_spec(spec)
+    check_inputs_outside([*expand_inputs(inputs), *spec_input_files(spec)], out_dir)
     with diag.scope(Path(out_dir) / diag.LOGS / "events.jsonl",
                     run_id=diag.context().get("run_id") or diag.new_id(), preview_id=diag.new_id()), \
             diag.span("preview", out_dir=str(out_dir), renderer=renderer, do_render=do_render) as outcome:
@@ -488,15 +518,32 @@ def make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, ren
 def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str,
                   do_render: bool) -> Preview:
     from . import diagnostics as diag
-    from .batch import output_names
+    from .batch import check_inputs_outside, expand_inputs, output_names
+    from .editspec import is_template_file, spec_input_files, spec_templates, validate_spec
     from .verify import run_suite
+    from .input_snapshots import changed_inputs
+    spec = copy.deepcopy(spec)
+    validate_spec(spec)
     out_dir = Path(out_dir)
+    files = expand_inputs(inputs)
+    check_inputs_outside([*files, *spec_input_files(spec)], out_dir)
+    templates = spec_templates(spec)
+    planned = [f for f in files if not is_template_file(f, templates)]
+    token_inputs = approval_inputs(spec, planned)
+    token = _approval_token_from_inputs(spec, token_inputs)
     out_dir.mkdir(parents=True, exist_ok=True)
     log = _preview_log(out_dir, repr(spec.get("request")))
     try:
+        execution_spec, snapshots = _snapshot_preview_inputs(spec, token_inputs, out_dir)
         with diag.span("preview.plan_batch"):
-            bp = plan_batch(inputs, spec)
-        pv = Preview(out_dir=out_dir, batch_plan=bp, log_path=log.path)
+            bp = plan_batch([str(f) for f in planned], execution_spec)
+        bp.spec, bp.skipped = spec, [str(f) for f in files if f not in planned]
+        pv = Preview(out_dir=out_dir, batch_plan=bp, log_path=log.path, token=token, token_inputs=token_inputs,
+                     input_snapshots=snapshots)
+        input_changed = (changed_since_preview(spec, planned, token, token_inputs) is not None or
+                         bool(changed_inputs(snapshots)) or
+                         {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
+                         any(f.source_md5 != token_inputs["files"][str(f.source.resolve())][2] for f in bp.files))
         log.detail(f"planned {len(bp.files)} file(s) in {bp.seconds:.2f}s: {len(bp.files) - len(bp.exceptions)} "
                    f"plan cleanly, {len(bp.exceptions)} exception(s)")
         for fpl in bp.files:
@@ -521,11 +568,13 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
                 try:
                     with diag.span("preview.sample.read"):
                         data = Path(f).read_bytes()
+                    if hashlib.md5(data).hexdigest() != token_inputs["files"][str(Path(f).resolve())][2]:
+                        input_changed = True
                     with diag.span("preview.sample.open"):
                         pkg = DocxPackage(data, name=str(f))
                     stage = "plan"
                     with diag.span("preview.sample.plan"):
-                        plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+                        plan, frags = plan_spec(pkg, execution_spec, fingerprint(pkg)["pattern_id"])
                     stage = "apply"
                     with diag.span("preview.sample.apply"):
                         out = apply_spec(pkg, frags).output_bytes()
@@ -548,12 +597,14 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
                     if sv.exception.get("traceback") and sv.exception.get("kind") != "refusal":
                         log.block(sv.exception["traceback"])
                 pv.samples.append(sv)
+                input_changed = (input_changed or changed_since_preview(spec, planned, token, token_inputs) is not None
+                                 or bool(changed_inputs(snapshots)))
                 diag.event("preview.sample_finished", source=str(f), passed=sv.passed,
                            exception=sv.exception, checks=sv.checks)
         pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
-        with diag.span("preview.approval", file_count=len(bp.files)):
-            pv.token = approval_token(spec, [f.source for f in bp.files])
-            pv.token_inputs = approval_inputs(spec, [f.source for f in bp.files])
+        if input_changed or changed_since_preview(spec, planned, token, token_inputs) is not None or changed_inputs(snapshots):
+            pv.token = ""  # an observed mismatch cannot become approved by restoring an earlier file later
+            pv.warnings.append("An input changed while the preview was being prepared; press Preview again before Run.")
         (out_dir / "spec.json").write_text(json.dumps(spec, indent=2, ensure_ascii=False), encoding="utf-8")
         write_preview_files(pv)
         log.detail(f"approval token {pv.token}")
@@ -628,23 +679,37 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
     ``samples/`` (unique names), rendered beside the source. Writes ``chain.json``, PREVIEW.md and preview.json;
     ``logs/preview.log`` has every stage's verdict per sample."""
     from . import diagnostics as diag
-    from .batch import expand_inputs, output_names
+    from .batch import check_inputs_outside, expand_inputs, output_names
     from .chain import chain_key, chain_name, chain_templates, stage_name, validate_chain
-    from .editspec import is_template_file
+    from .editspec import is_template_file, spec_input_files
     from .verify import run_suite
+    from .input_snapshots import changed_inputs
     from .verify.outcomes import assert_outcomes
     chain = copy.deepcopy(chain)
     validate_chain(chain)
     out_dir = Path(out_dir)
+    candidates = expand_inputs(inputs)
+    auxiliary = [path for stage in chain["stages"] for path in spec_input_files(stage["spec"])]
+    check_inputs_outside([*candidates, *auxiliary], out_dir)
+    templates = chain_templates(chain)
+    files = [f for f in candidates if not is_template_file(f, templates)]
+    key = chain_key(chain)
+    token_inputs = approval_inputs(key, files)
+    token = _approval_token_from_inputs(key, token_inputs)
     with diag.scope(out_dir / diag.LOGS / "events.jsonl"), diag.span("preview.chain.execute"):
         out_dir.mkdir(parents=True, exist_ok=True)
         log = _preview_log(out_dir, f"chain {chain_name(chain)!r}")
         try:
-            templates = chain_templates(chain)
-            files = [f for f in expand_inputs(inputs) if not is_template_file(f, templates)]
-            stages = chain["stages"]
+            execution_chain, snapshots = _snapshot_preview_inputs(chain, token_inputs, out_dir)
+            stages = execution_chain["stages"]
             bp = plan_batch([str(f) for f in files], stages[0]["spec"])
-            pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path)
+            bp.spec = chain["stages"][0]["spec"]
+            pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path,
+                              token=token, token_inputs=token_inputs, input_snapshots=snapshots)
+            input_changed = (changed_since_preview(key, files, token, token_inputs) is not None or
+                             bool(changed_inputs(snapshots)) or
+                             {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
+                             any(f.source_md5 != token_inputs["files"][str(f.source.resolve())][2] for f in bp.files))
             log.detail(f"stage 1 ({stage_name(stages[0], 1)}) planned on {len(bp.files)} file(s) in {bp.seconds:.2f}s: "
                        f"{len(bp.files) - len(bp.exceptions)} plan cleanly, {len(bp.exceptions)} exception(s)")
             for fpl in bp.files:
@@ -660,6 +725,8 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                 phase, data, produced = "open", None, False
                 try:
                     data = Path(f).read_bytes()
+                    if hashlib.md5(data).hexdigest() != token_inputs["files"][str(Path(f).resolve())][2]:
+                        input_changed = True
                 except Exception as e:  # noqa: BLE001
                     sv.exception = diag.exception_record(e, phase, None)
                     diag.event("preview.sample_failed", level="error", source=str(f), stage=phase,
@@ -716,14 +783,14 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                     sv.output.parent.mkdir(parents=True, exist_ok=True)
                     sv.output.write_bytes(data)
                 pv.samples.append(sv)
+                input_changed = (input_changed or changed_since_preview(key, files, token, token_inputs) is not None
+                                 or bool(changed_inputs(snapshots)))
                 diag.event("preview.sample_finished", source=str(f), passed=sv.passed,
                            exception=sv.exception, checks=sv.checks, stages=sv.stages)
             pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
-            key = chain_key(chain)
-            planned = [f.source for f in bp.files]
-            with diag.span("preview.approval", file_count=len(planned)):
-                pv.token = approval_token(key, planned)
-                pv.token_inputs = approval_inputs(key, planned)
+            if input_changed or changed_since_preview(key, files, token, token_inputs) is not None or changed_inputs(snapshots):
+                pv.token = ""
+                pv.warnings.append("An input changed while the preview was being prepared; press Preview again before Run.")
             (out_dir / "chain.json").write_text(json.dumps(chain, indent=2, ensure_ascii=False), encoding="utf-8")
             write_preview_files(pv)
             log.detail(f"approval token {pv.token}")

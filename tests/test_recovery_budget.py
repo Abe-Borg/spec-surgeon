@@ -220,7 +220,7 @@ def test_actual_usage_overrun_is_recorded_without_discarding_response(which):
 
 
 def test_missing_usage_keeps_reservation_and_discloses_estimate():
-    response = SimpleNamespace(model="claude-opus-5-5", usage=None, content=[])
+    response = SimpleNamespace(model="claude-opus-5-5", usage=None, content=[], stop_reason="end_turn")
     budget = llm.CallBudget()
     with llm.budget_scope(budget):
         ask(FakeClient(response))
@@ -237,7 +237,7 @@ def test_unreported_unknown_model_never_becomes_free_in_diagnostics():
     assert unknown.to_dict()["unreported_reserved_cost_usd"] is None
 
     fallback = llm.CallBudget()
-    response = SimpleNamespace(model="claude-mystery", usage=None)
+    response = SimpleNamespace(model="claude-mystery", usage=None, stop_reason="end_turn")
     with llm.budget_scope(fallback):
         assert ask(FakeClient(response)) is response
         with pytest.raises(llm.BudgetExceeded, match="unknown price"):

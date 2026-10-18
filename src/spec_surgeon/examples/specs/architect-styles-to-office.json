@@ -1,0 +1,43 @@
+{
+  "request": "Map the architect's headings to our office styles: Heading 1 becomes PRT, Heading 2 becomes ART",
+  "summary": "Every paragraph in the architect's Heading 1 gets the office PRT style and every Heading 2 paragraph the office ART style, both imported from the office styles template with their list numbering when the file lacks them; the architect's definitions stay (remove unused styles is a second stage).",
+  "assumptions": [
+    "the office styles come from the attached template OFFICE STYLES.docx; a style the file lacks is imported with the styles it is based on, linked to and followed by, and its list numbering (new list ids)",
+    "a style the file already has keeps the file's definition (existing keep)",
+    "a file without Heading 2 paragraphs simply has that pair skipped",
+    "field codes that name Heading 1 or Heading 2 (a TOC, STYLEREF) are flagged, not edited",
+    "a whole-document style change is plain formatting"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "map_styles",
+      "params": {
+        "map": [
+          {
+            "from": "Heading 1",
+            "to": "PRT"
+          },
+          {
+            "from": "Heading 2",
+            "to": "ART"
+          }
+        ],
+        "template": "../templates/OFFICE STYLES.docx"
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

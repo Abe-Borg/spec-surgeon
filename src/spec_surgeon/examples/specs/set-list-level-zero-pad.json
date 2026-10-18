@@ -1,0 +1,32 @@
+{
+  "request": "Number the articles 1.1, 1.2 instead of 1.01, 1.02",
+  "summary": "The article level of the outline list (the level the Arch Article style numbers with) loses its zero padding: 1.01 becomes 1.1, 2.03 becomes 2.3; the change is made in the list's definition, so every article follows. A file whose style is missing or not numbered is left as it is.",
+  "assumptions": [
+    "the articles are numbered by the list level of the 'Arch Article' style (as the profiles show it)",
+    "only the zero padding changes (decimalZero becomes decimal); the PART number before the dot and the paragraph letters stay",
+    "every list that shares the definition follows (flagged); never tracked"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_list_level",
+      "params": {
+        "style": "Arch Article",
+        "zero_pad": false
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

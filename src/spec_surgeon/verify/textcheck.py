@@ -99,6 +99,12 @@ def diff_blocks(before: List[Block], after: List[Block], deleted_hint: Optional[
         return changes + diff_blocks([x for x in before if x.index not in dh], [y for y in after if y.index not in ih])
     a = [b.text for b in before]
     b = [c.text for c in after]
+    # Once explicitly predicted insertions/deletions have been set aside, a
+    # paragraph-preserving edit binds positions. Text similarity can pair the
+    # second of two identical paragraphs with the first and invent a deletion.
+    if len(before) == len(after):
+        return [BlockChange(x.index, y.index, x.text, y.text, x.struct, y.struct)
+                for x, y in zip(before, after) if x.text != y.text or x.struct != y.struct]
     sm = difflib.SequenceMatcher(a=a, b=b, autojunk=False)
     changes: List[BlockChange] = []
     for op, i1, i2, j1, j2 in sm.get_opcodes():

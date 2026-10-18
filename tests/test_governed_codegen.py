@@ -30,7 +30,7 @@ class ReplaceTitle(Op):
             content = RunText(p).text
             if content == "FIRE SUPPRESSION":
                 edits = [Edit(0, 4, params["replacement"])]
-                edits = plan_paragraph(frag, part, i, p, edits, tracked, set(), "title")
+                edits = plan_paragraph(frag, part, i, p, edits, tracked, set(), "title", author="Tester")
                 data[str(i)] = edits_to_data(edits)
         if not data:
             raise JobException("title not found", "not-found")

@@ -54,6 +54,7 @@ jobs:
           python -m pytest -q -s --junitxml=release-tests.xml
       - name: Build and validate distributions
         run: |
+          python packaging/installed_wheel_smoke.py --print-prompt-fingerprints > /tmp/spec-surgeon-source-prompts.json
           python -m build
           python -m twine check dist/*
           python -m venv /tmp/spec-surgeon-release-smoke
@@ -61,6 +62,7 @@ jobs:
           cd /tmp
           /tmp/spec-surgeon-release-smoke/bin/spec-surgeon --help
           /tmp/spec-surgeon-release-smoke/bin/spec-surgeon ops --catalog > /tmp/spec-surgeon-catalog.json
+          /tmp/spec-surgeon-release-smoke/bin/python "$GITHUB_WORKSPACE/packaging/installed_wheel_smoke.py" "$GITHUB_WORKSPACE/examples/specs" --expected-prompts /tmp/spec-surgeon-source-prompts.json
           # without the gui extra the window explains how to get Qt instead of crashing
           set +e; /tmp/spec-surgeon-release-smoke/bin/spec-surgeon-gui; code=$?; set -e
           test "$code" = 2
@@ -98,6 +100,15 @@ jobs:
         with:
           name: windows-installer
           path: dist/
+      - name: Check the source and installer still match the release tag
+        env:
+          WINDOWS_BUILD_REVISION: ${{ needs.windows.outputs.revision }}
+        run: |
+          git fetch --no-tags origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          source_revision="$(git rev-parse HEAD)"
+          tag_revision="$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
+          test "$source_revision" = "$tag_revision"
+          test "$WINDOWS_BUILD_REVISION" = "$tag_revision"
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}

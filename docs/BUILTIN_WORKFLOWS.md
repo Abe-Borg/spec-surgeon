@@ -2,6 +2,10 @@
 
 Available starting in Spec Surgeon 1.0 (v1.0.0).
 
+**File → Built-in operations…** lists all 50 operation contracts offline, including their inputs and limitations.
+The browser links relevant operations to these four guided forms. Natural-language requests also use a separate
+outcome review; see [Reliability and approved outcomes](RELIABILITY.md).
+
 Built-in workflows turn common combinations of operations into named starting points. They ship with the installed
 package and work without an API key or a previously populated personal library. Each produces an ordinary chain:
 preview every stage, inspect the proposed changes, approve execution, and receive independently verified copies.

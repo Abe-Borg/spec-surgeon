@@ -1,0 +1,23 @@
+{
+  "request": "Put a NOT FOR CONSTRUCTION watermark on every page, replacing the DRAFT one where it is there",
+  "summary": "Every header the document shows gets Word's text watermark with the words NOT FOR CONSTRUCTION — diagonal, silver, half transparent, as large as fits the page — and a DRAFT watermark already there is taken out first.",
+  "assumptions": [
+    "the watermark's words are exactly NOT FOR CONSTRUCTION, as the user wrote them",
+    "Word's usual look: diagonal, Calibri, silver (C0C0C0), half transparent, sized to fit the page",
+    "an existing watermark (DRAFT) is replaced; a page without a header gets no watermark and is flagged"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "untracked",
+  "ops": [
+    {
+      "op": "add_watermark",
+      "params": {
+        "text": "NOT FOR CONSTRUCTION",
+        "replace": true
+      }
+    }
+  ]
+}

@@ -790,6 +790,7 @@ def bundle_root(folder: Path) -> Path:
 def _bundled(p: Path, root: Path) -> bool:
     rel = p.relative_to(root)
     return (p.suffix.lower() not in DOCUMENT_SUFFIXES and not (set(rel.parts[:-1]) & DOCUMENT_DIRS)
+            and not any(part.startswith("input-snapshot-") for part in rel.parts[:-1])
             and not p.name.startswith("~$"))
 
 

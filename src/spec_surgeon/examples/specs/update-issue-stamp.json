@@ -1,0 +1,22 @@
+{
+  "request": "Change the issue stamp ISSUED FOR PERMIT (any date) to ISSUED FOR CONSTRUCTION 2026-11-02 wherever it is",
+  "summary": "Every ISSUED FOR PERMIT stamp — on the cover, in a header or in a footer — becomes ISSUED FOR CONSTRUCTION 2026-11-02, tracked.",
+  "assumptions": [
+    "the stamp reads ISSUED FOR PERMIT followed by a date (YYYY-MM-DD) or nothing",
+    "a file without the stamp is set aside"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "content",
+  "ops": [
+    {
+      "op": "set_issue_stamp",
+      "params": {
+        "pattern": "ISSUED FOR PERMIT(?:\\s+\\d{4}-\\d{2}-\\d{2})?",
+        "text": "ISSUED FOR CONSTRUCTION 2026-11-02"
+      }
+    }
+  ]
+}

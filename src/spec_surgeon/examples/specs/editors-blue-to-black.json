@@ -1,0 +1,22 @@
+{
+  "request": "Change the editor's blue text to black",
+  "summary": "Every run whose colour is the editor's blue (0000FF, set directly or by its style) becomes Word's Automatic colour, as plain formatting; every other colour — hyperlinks, red text — stays as it is.",
+  "assumptions": [
+    "the editor's blue is the colour 0000FF as the profiles show it; text coloured by a style counts as well as text coloured directly",
+    "black means Word's Automatic colour (auto), what the body text already has; say 000000 for an explicit black",
+    "the body only; headers and footers keep their colours",
+    "a whole-document recolour is plain formatting (decision 14.1); no words change"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_properties",
+      "select": {"scope": ["document"], "paragraphs": "all", "runs": {"color_in": ["0000FF"]}},
+      "params": {"run": {"color": "auto"}},
+      "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}
+    }
+  ],
+  "review": {"sample_files": 2}
+}

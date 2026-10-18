@@ -30,12 +30,14 @@ process, and a file that kills that one too is recorded as ``worker-died`` with 
 """
 from __future__ import annotations
 
+import copy
 import glob
 import hashlib
 import json
 import multiprocessing
 import os
 import shutil
+import stat
 import time
 import traceback
 from concurrent.futures import ProcessPoolExecutor, as_completed
@@ -48,7 +50,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from . import __version__, guard
 from . import diagnostics as diag
 from .fingerprint import fingerprint
-from .editspec import (apply_spec, is_template_file, naming_op, plan_spec, spec_renames_outputs, spec_templates,
+from .editspec import (apply_spec, is_template_file, naming_op, plan_spec, spec_input_files, spec_renames_outputs, spec_templates,
                        validate_spec)
 from .ops import JobException
 from .jobs import get_job
@@ -107,6 +109,9 @@ class BatchResult:
     finished: str = ""
     log_path: Optional[Path] = None          # logs/run.log
     stopped: Optional[str] = None            # set when the batch itself failed: the stage and the error
+    goal_contract: Optional[Dict[str, Any]] = None
+    goal_bindings: Dict[str, Any] = field(default_factory=dict)
+    input_snapshots: List[Dict[str, Any]] = field(default_factory=list)
 
     def counts(self) -> Dict[str, int]:
         c = {"PASS": 0, "FAIL": 0, "EXCEPTION": 0, "PENDING": 0}
@@ -230,6 +235,50 @@ def check_inputs_outside(files: Sequence[Path], out_dir: Path) -> None:
         raise ValueError(f"{len(inside)} input file(s) lie inside the results folder {out_dir}: "
                          f"{[Path(x).name for x in inside[:6]]}{' …' if len(inside) > 6 else ''}. A run never writes "
                          f"where it reads — choose a results folder outside the input folders (nothing was written).")
+    # A destination can point back at a source even when its lexical ancestors do not.
+    # Reject existing directory aliases before logging, clearing or writing any result.
+    def linked(path):
+        if path.is_symlink() or (hasattr(path, "is_junction") and path.is_junction()):
+            return True
+        try:
+            # Path.is_junction arrived in 3.12; retain this guard on supported Windows 3.10/3.11 too.
+            return getattr(path.lstat(), "st_reparse_tag", None) == getattr(stat, "IO_REPARSE_TAG_MOUNT_POINT", 0xA0000003)
+        except OSError:
+            return False
+
+    destination = Path(out_dir)
+    if linked(destination):
+        raise ValueError(f"The results folder {out_dir} is a symbolic link or junction; choose a separate directory.")
+    if not destination.is_dir():
+        return
+    identities = set()
+    for source in files:
+        try:
+            st = Path(source).stat()
+            identities.add((st.st_dev, st.st_ino))
+        except OSError:
+            pass  # missing/unreadable inputs remain per-file failures in the ordinary pipeline
+    for folder, directories, names in os.walk(destination, followlinks=False):
+        file_names = set(names)
+        for name in [*directories, *names]:
+            path = Path(folder) / name
+            if linked(path):
+                raise ValueError(f"The results folder contains a symbolic link or junction ({path}); "
+                                 "choose a separate directory so result writes cannot reach an input.")
+            if name in file_names:
+                st = path.stat()
+                if (st.st_dev, st.st_ino) in identities:
+                    raise ValueError(f"A result path ({path}) is a hard link to an input file; choose a separate directory.")
+
+
+def clear_delivery_folders(out_dir: Path) -> None:
+    """Discard prior delivery artifacts only after every source and auxiliary input passed the overlap check."""
+    for name in ("outputs", "failed"):
+        folder = Path(out_dir) / name
+        if folder.is_symlink():
+            folder.unlink()
+        elif folder.is_dir():
+            shutil.rmtree(folder)
 
 
 # ---- worker (runs in a subprocess) ------------------------------------------------------------------
@@ -326,6 +375,10 @@ def _process_one_impl(path: str, job_name: str, params: Dict[str, Any], out_dir:
         stage, t_stage = "open", time.perf_counter()
         tr.note("open", "…")
         data = src.read_bytes()
+        actual_md5 = hashlib.md5(data).hexdigest()
+        if actual_md5 != identity.md5:
+            raise JobException("the source changed between acquisition and reading; reacquire it and run again",
+                               "source-drift", {"expected_md5": identity.md5, "actual_md5": actual_md5})
         pkg = DocxPackage(data, name=str(src))
         main = pkg.main_part()
         tr.note("open", f"{len(pkg.source_names)} part(s) · main part {main} [{diag.ms(t_stage)}]")
@@ -480,6 +533,43 @@ def verified_bytes(fr: FileResult) -> bytes:
     return data
 
 
+def verify_delivery_goal(source: Path, identity: Optional[guard.Identity], data: bytes,
+                         contract: Dict[str, Any], binding=None) -> Dict[str, Any]:
+    """Check caller-approved effects against the same original bytes this run acquired."""
+    from .goals import validate_binding, verify_goal
+    try:
+        if identity is None:
+            raise guard.GuardError("the original source identity is missing")
+        drift = guard.drifted(identity)
+        if drift:
+            raise guard.GuardError(f"original source changed: {drift}")
+        original = source.read_bytes()
+        if hashlib.md5(original).hexdigest() != identity.md5:
+            raise guard.GuardError("original source changed while reading its verification baseline")
+        checked_binding = validate_binding(source, contract, binding)
+        return verify_goal(original, data, contract, checked_binding)
+    except Exception as exc:
+        return {"passed": False, "errors": [f"approved goal could not be verified: {exc}"], "checks": []}
+
+
+def _verify_delivery_goals(batch, contract, bindings, log):
+    for fr in batch.files:
+        if fr.record is None or not fr.record.passed or fr.output is None:
+            continue
+        try:
+            verdict = verify_delivery_goal(fr.source, fr.identity, verified_bytes(fr), contract,
+                                           bindings.get(str(fr.source.resolve())))
+        except (guard.GuardError, OSError) as exc:
+            verdict = {"passed": False, "errors": [str(exc)], "checks": []}
+        passed = verdict.get("passed", False)
+        summary = ("approved original-to-final effects independently verified" if passed else
+                   "; ".join(verdict.get("errors", [])) or "approved original-to-final effects failed")
+        fr.record.set(CheckResult("GOAL", "Approved original-to-final effects", "PASS" if passed else "FAIL",
+                                  summary, verdict))
+        if not passed:
+            log(f"  {fr.source.name}: GOAL FAIL — {summary}")
+
+
 def quarantine_failed_output(fr: FileResult, out_dir: Path) -> Path:
     """Move a failed output out of outputs/ into failed/ (diagnosis only); the record keeps pointing at the file."""
     dest_dir = Path(out_dir) / "failed"
@@ -558,11 +648,24 @@ def geometry_check(plan: Dict[str, Any], g: "geom.GeometryResult",
         # reference for those pages. The numbers are recorded, not asserted.
         return CheckResult("V7", "Geometry assertion", "NA",
                            f"N/A for a content edit (text reflows after the change). Informational: {info}", g.to_dict())
+    asserted = [p for p in g.pages if not p.expected_change]
+    missing = [p.page for p in asserted if p.words_only_in_ref or p.words_only_in_out]
+    evidence_problems = getattr(g, "evidence_problems", [])
+    ok = ok and not missing and not evidence_problems
+    expected_removed = sum(getattr(p, "expected_removed_words", 0) for p in g.pages)
+    reference = ("source render with an independent header/footer-removal baseline "
+                 f"({expected_removed} approved region word(s) removed)" if expected_removed else "source render")
+    if ok and not any(p.matched_words for p in asserted):
+        return CheckResult("V7", "Geometry assertion", "NA",
+                           "N/A — asserted pages contain no matching text anchors; no source layout claim was proved. "
+                           + info, g.to_dict())
     return CheckResult(
         "V7", "Geometry assertion", "PASS" if ok else "FAIL",
-        f"reference = source render; max |Δy| {g.worst_dy_asserted:.2f}pt, max |Δx| {g.worst_dx_asserted:.2f}pt on asserted pages "
+        f"reference = {reference}; max |Δy| {g.worst_dy_asserted:.2f}pt, max |Δx| {g.worst_dx_asserted:.2f}pt on asserted pages "
         f"(tol {GEOM_TOL_PT}pt); pages excluded as expected-to-change: {expected_pages or 'none'}"
-        + (f"; MOVED pages {moved}" if moved else "") + ("" if g.ref_pages == g.out_pages else "; PAGE COUNT CHANGED"),
+        + (f"; MOVED pages {moved}" if moved else "") + ("" if g.ref_pages == g.out_pages else "; PAGE COUNT CHANGED")
+        + (f"; rendered text missing or added on asserted pages {missing}" if missing else "")
+        + ("; " + "; ".join(evidence_problems) if evidence_problems else ""),
         g.to_dict())
 
 
@@ -603,19 +706,28 @@ def _file_messages(messages: Sequence[str], names: Sequence[str]) -> List[str]:
 
 def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_dir: Path,
               workers: int = 0, renderer: str = "auto", do_render: bool = True, in_place: bool = False,
-              progress=None, spec: Optional[Dict[str, Any]] = None) -> BatchResult:
+              progress=None, spec: Optional[Dict[str, Any]] = None, *, goal_contract=None, goal_bindings=None,
+              approved_inputs=None, _input_snapshots=None, _public_spec=None,
+              _source_identities=None, _source_refusals=None) -> BatchResult:
     """Run a batch with correlation, including validation failures before a results folder is safe to create."""
     with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), batch_id=diag.new_id()), \
             diag.span("batch", out_dir=str(out_dir), job=job_name, workers=workers,
                       renderer=renderer, do_render=do_render, in_place=in_place) as outcome:
-        result = _run_batch(inputs, job_name, params, out_dir, workers, renderer, do_render, in_place, progress, spec)
+        result = _run_batch(inputs, job_name, copy.deepcopy(params), out_dir, workers, renderer, do_render, in_place,
+                            progress, copy.deepcopy(spec),
+                            copy.deepcopy(goal_contract), copy.deepcopy(goal_bindings or {}),
+                            copy.deepcopy(_input_snapshots or []), copy.deepcopy(_public_spec),
+                            copy.deepcopy(approved_inputs), copy.deepcopy(_source_identities or {}),
+                            copy.deepcopy(_source_refusals or {}))
         outcome.update(counts=result.counts(), timings=result.timings)
         return result
 
 
 def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_dir: Path,
                workers: int, renderer: str, do_render: bool, in_place: bool,
-               progress, spec: Optional[Dict[str, Any]]) -> BatchResult:
+               progress, spec: Optional[Dict[str, Any]], goal_contract=None, goal_bindings=None,
+               inherited_inputs=(), public_spec=None, approved_inputs=None,
+               inherited_sources=None, inherited_refusals=None) -> BatchResult:
     """Run a named job (``job_name`` + ``params``) or an EditSpec (``spec``; then ``job_name`` is only a label).
 
     Everything the run does goes to ``<out>/logs/run.log`` (``progress`` gets the same progress lines), each file's
@@ -623,6 +735,16 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
     ``DIAGNOSTICS.md``. When the batch itself fails, run.log ends with the stage and the traceback (and DIAGNOSTICS.md
     says what was known) before the exception propagates."""
     out_dir = Path(out_dir)
+    reported_spec = spec if public_spec is None else public_spec
+    if approved_inputs is not None:
+        digest = hashlib.sha256(json.dumps(reported_spec, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+        if (not isinstance(approved_inputs, dict) or approved_inputs.get("spec") != digest
+                or not isinstance(approved_inputs.get("templates"), dict)):
+            raise ValueError("The recipe or approval evidence changed since the preview; preview again before running.")
+    goal_inputs = []
+    if goal_contract is not None:
+        from .goals import goal_templates
+        goal_inputs = goal_templates(goal_contract)  # validates the immutable outcome before any mutation
     if spec is not None:
         validate_spec(spec)          # fail early: questions, unsupported, unknown ops — before any file is read
         job_name = job_name or "edit-spec"
@@ -634,18 +756,30 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
                          "renamed files are delivered as copies only; run it without writing back in place (nothing "
                          "was written)")
     files = expand_inputs(inputs)
-    check_inputs_outside(files, out_dir)      # before anything is created: a run never writes where it reads
+    auxiliary = spec_input_files(spec) if spec is not None else []
+    check_inputs_outside([*files, *auxiliary, *goal_inputs], out_dir)  # includes every input delivery could destroy
+    skipped_templates = [f for f in files if spec is not None and is_template_file(f, spec_templates(spec))]
+    files = [f for f in files if f not in skipped_templates]
+    from .input_snapshots import capture_sources, same_source_identity
+    source_identities, source_refusals = capture_sources(files, approved_inputs)
+    source_refusals.update(inherited_refusals or {})
+    for path, identity in (inherited_sources or {}).items():
+        if path in source_identities and not same_source_identity(identity, source_identities[path]):
+            source_refusals[path] = {"code": "source-drift", "reason": "The original source changed after the chain started."}
+        source_identities[path] = identity
     with diag.scope(out_dir / diag.LOGS / "events.jsonl"), \
             diag.span("batch.execute", file_count=len(files), job=job_name, workers=workers,
                       renderer=renderer, do_render=do_render, in_place=in_place) as execution:
+        from .input_snapshots import snapshot_inputs
+        out_dir.mkdir(parents=True, exist_ok=True)
+        execution_spec, snapshots = snapshot_inputs(spec, out_dir,
+            approved_inputs["templates"] if approved_inputs is not None else None, extra_paths=goal_inputs)
+        clear_delivery_folders(out_dir)
         for sub in ("outputs", "records", "exceptions", "plans", "render", diag.LOGS):
             (out_dir / sub).mkdir(parents=True, exist_ok=True)
-        skipped_templates: List[Path] = []
-        if spec is not None:
-            tlist = spec_templates(spec)
-            skipped_templates = [f for f in files if is_template_file(f, tlist)]
-            files = [f for f in files if f not in skipped_templates]
-        batch = BatchResult(out_dir=out_dir, job=job_name, params=params, spec=spec)
+        batch = BatchResult(out_dir=out_dir, job=job_name, params=params, spec=reported_spec,
+                            goal_contract=goal_contract, goal_bindings=goal_bindings or {}, input_snapshots=snapshots)
+        batch.input_snapshots.extend(inherited_inputs)
         batch.skipped = [str(f) for f in skipped_templates]
         batch.environment = diag.environment()
         diag.event("batch.environment", environment=batch.environment, skipped=batch.skipped)
@@ -656,16 +790,19 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
         t_start = time.perf_counter()
         try:
             with diag.span("batch.transform_verify", file_count=len(files)):
-                _transform_and_verify(batch, files, job_name, params, out_dir, workers, spec, log)
+                _transform_and_verify(batch, files, job_name, params, out_dir, workers, execution_spec, log,
+                                      source_identities, source_refusals)
             stage = "render+geometry"
             with diag.span("batch.render"):
                 _render_and_compare(batch, renderer, do_render, workers, log)
             stage = "deliver"
             with diag.span("batch.delivery"):
+                if goal_contract is not None:
+                    _verify_delivery_goals(batch, goal_contract, goal_bindings or {}, log)
                 _deliver(batch, in_place, log)
             stage = "records"
             with diag.span("batch.records"):
-                _write_records(batch, job_name, params, spec, log)
+                _write_records(batch, job_name, params, reported_spec, log)
             batch.timings["total"] = time.perf_counter() - t_start
             stage = "reports"
             batch.finished = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -710,7 +847,8 @@ def _file_done(f: Path, r: Dict[str, Any], log: "diag.RunLog") -> None:
 
 
 def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, params: Dict[str, Any],
-                          out_dir: Path, workers: int, spec: Optional[Dict[str, Any]], log: "diag.RunLog") -> None:
+                          out_dir: Path, workers: int, spec: Optional[Dict[str, Any]], log: "diag.RunLog",
+                          source_identities=None, source_refusals=None) -> None:
     """1-2. acquire, fingerprint, plan, apply, verify — in parallel; a worker that dies costs only its own file."""
     t_start = time.perf_counter()
     workers = workers or max(1, min(os.cpu_count() or 2, len(files), 8))
@@ -718,6 +856,8 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
     log(f"{len(files)} file(s); transform+verify with {workers} worker(s)"
         + (f"; skipped the spec's template file(s) {[Path(x).name for x in batch.skipped]}" if batch.skipped else ""))
     named, refused = planned_names(files, spec)      # the spec's own output names, when it gives them
+    refused.update({str(f): source_refusals[str(f.resolve())] for f in files
+                    if str(f.resolve()) in (source_refusals or {})})
     if named or refused:
         log(f"output names from the spec: {len(named)} file(s) renamed, {len(refused)} refused (two files one name)")
     out_names = output_names(files, named)            # unique across the batch, whatever the inputs are called
@@ -770,6 +910,20 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
             fr.record = VerificationRecord.from_dict(r["record"])
         fr.trace_path = Path(r["trace_path"]) if r.get("trace_path") else None
         fr.trace = list(r.get("trace") or [])
+        expected = (source_identities or {}).get(str(f.resolve()))
+        if expected is not None:
+            from .input_snapshots import same_source_identity
+            mismatched = fr.identity is not None and not same_source_identity(expected, fr.identity)
+            missing_on_success = fr.identity is None and fr.exception is None and fr.record is not None and fr.record.passed
+            if mismatched or missing_on_success:
+                reason = "The source changed between run entry and worker acquisition; these new bytes were not approved."
+                details = {"expected_identity": expected.to_dict(),
+                           "worker_identity": fr.identity.to_dict() if fr.identity else None,
+                           "worker_error": fr.exception}
+                fr.exception = diag.exception_record(JobException(reason, "source-drift", details), "acquire")
+                if fr.record is not None:
+                    fr.record.set(CheckResult("SOURCE", "Run-entry source identity", "FAIL", reason, details))
+            fr.identity = expected
         if fr.exception is not None and fr.trace_path is not None:
             fr.exception["trace"] = f"{diag.LOGS}/{fr.trace_path.name}"
         batch.files.append(fr)
@@ -847,13 +1001,36 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
                                                detail=log.detail).items():
                 if k in copies:
                     out_hf[copies[k][0]] = (v, copies[k][1])
+        removed_hf_required, removed_hf_inputs = set(), {}
+        for fr in renderable:
+            plan = fr.plan or {}
+            if plan.get("geometry_reference", "source") != "source" or (plan.get("mode") in ("content", "untracked")
+                                                                       and plan.get("diffs")):
+                continue
+            try:
+                reference = geom.hf_removal_copy(fr.source, out_dir / "render" / "removed-hf-reference" /
+                                                 (fr.out_name or fr.source.name), plan)
+                if reference is not None:
+                    removed_hf_required.add(fr.source)
+                    removed_hf_inputs[reference] = fr.source
+            except Exception as exc:
+                removed_hf_required.add(fr.source)
+                rlog(f"{fr.source.name}: the independent header/footer-removal reference could not be made "
+                     f"({type(exc).__name__}: {exc})")
+                log.block(traceback.format_exc())
+        removed_hf_pdfs = {}
+        if removed_hf_inputs:
+            log(f"rendering {len(removed_hf_inputs)} independent header/footer-removal reference(s) with {backend}")
+            references = render_mod.render_pdfs(list(removed_hf_inputs), out_dir / "render" / "removed-hf-reference-pdf",
+                                               backend, workers, log=rlog, detail=log.detail)
+            removed_hf_pdfs = {removed_hf_inputs[path]: pdf for path, pdf in references.items() if path in removed_hf_inputs}
         pages_dir = out_dir / "render" / "pages"
         for fr in renderable:
             fr.render_messages = _file_messages(messages, [fr.source.name, fr.out_name])
             sp, op = src_pdfs.get(fr.source), out_pdfs.get(fr.output)
             if not sp or not op:
                 said = fr.render_messages
-                fr.record.set(CheckResult("V6", "Render and look", "FAIL",
+                fr.record.set(CheckResult("V6", "Automated render comparison", "FAIL",
                                           f"render failed ({backend})" + (f": {said[-1]}" if said else
                                                                           ": no PDF came back and the renderer said "
                                                                           "nothing about this file (see logs/run.log)"),
@@ -865,11 +1042,14 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
             try:
                 with diag.span("render.compare", source=str(fr.source), source_pdf=str(sp), output_pdf=str(op)):
                     expected_pages = (fr.plan or {}).get("geometry_pages_expected_to_change", [])
-                    g = geom.compare_pdfs(sp, op, expected_pages)
+                    removed_reference = removed_hf_pdfs.get(fr.source)
+                    removal = ({"removed_hf_pdf": removed_reference, "removed_hf_source": fr.source}
+                               if removed_reference else {})
+                    g = geom.compare_pdfs(sp, op, expected_pages, **removal)
                     look_pages = sorted({1} | {p.page for p in g.pages if p.max_dy > GEOM_TOL_PT or p.words_only_in_out or p.words_only_in_ref})
                     pngs = geom.rasterize(op, pages_dir, look_pages[:6])
                     fr.record.set(CheckResult(
-                        "V6", "Render and look", "PASS",
+                        "V6", "Automated render comparison", "PASS",
                         f"renderer {backend}; pages {g.ref_pages}→{g.out_pages}; rasterized pages {look_pages[:6]} → "
                         f"{pages_dir.name}/; page-count delta is not evidence of body change (XML checks are character truth)",
                         {"renderer": backend, "source_pdf": str(sp), "output_pdf": str(op), "pages": [str(p) for p in pngs]}))
@@ -882,10 +1062,15 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
                         tg = geom.compare_template_bands(tpl_pdfs[str(Path(tref))], hf_pdf,
                                                          geom.template_section_map(top["template_sections"], n_sections),
                                                          top.get("kinds", ["header", "footer"]), GEOM_TOL_PT)
-                    fr.record.set(geometry_check(fr.plan or {}, g, tg))
+                    if fr.source in removed_hf_required and not removed_reference:
+                        fr.record.set(CheckResult("V7", "Geometry assertion", "FAIL",
+                                                  "The independent header/footer-removal reference could not be rendered; "
+                                                  "refusing a source-layout claim without that evidence.", g.to_dict()))
+                    else:
+                        fr.record.set(geometry_check(fr.plan or {}, g, tg))
             except Exception as e:  # noqa: BLE001 — a comparison that cannot run is this file's failure, not a skip
                 tb = traceback.format_exc()
-                fr.record.set(CheckResult("V6", "Render and look", "FAIL",
+                fr.record.set(CheckResult("V6", "Automated render comparison", "FAIL",
                                           f"the rendered pages could not be compared ({type(e).__name__}: {e}); the "
                                           f"traceback is in the file's trace", {"renderer": backend, "traceback": tb}))
                 fr.record.set(CheckResult("V7", "Geometry assertion", "NA", "no comparison (V6 failed)"))
@@ -907,7 +1092,7 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
         why = ("rendering disabled" if not do_render else
                "no renderer available (install Word+pywin32 or LibreOffice)")
         for fr in renderable:
-            fr.record.set(CheckResult("V6", "Render and look", "NA", why))
+            fr.record.set(CheckResult("V6", "Automated render comparison", "NA", why))
             fr.record.set(CheckResult("V7", "Geometry assertion", "NA", why))
             _trace(fr, "render", f"V6/V7 NA — {why}")
     batch.timings["render+geometry"] = time.perf_counter() - t_r
@@ -916,6 +1101,7 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
 def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog") -> None:
     """5. deliver (guarded, V9)."""
     out_dir = batch.out_dir
+    from .input_snapshots import changed_inputs
     t_d = time.perf_counter()
     for fr in batch.files:
         if fr.record is None or fr.output is None:
@@ -930,9 +1116,12 @@ def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog") -> None:
             fr.record.set(CheckResult("V9", "Overwrite guard", "NA",
                                       f"not delivered: verification failed; the output was moved out of outputs/ to "
                                       f"{moved.parent.name}/{moved.name} (diagnosis only)"))
-        elif fr.noop:
-            fr.record.set(CheckResult("V9", "Overwrite guard", "NA", "no-op: output identical to source; nothing written back"))
-        elif in_place:
+        elif (changed := changed_inputs(batch.input_snapshots)):
+            moved = quarantine_failed_output(fr, out_dir)
+            fr.record.set(CheckResult("V9", "Overwrite guard", "FAIL",
+                                      "Auxiliary input changed since acquisition: " + ", ".join(changed)
+                                      + f"; not delivered; output moved to {moved.parent.name}/{moved.name}"))
+        elif in_place and not fr.noop:
             try:
                 new_id = guard.write_back(fr.identity, verified_bytes(fr))
                 fr.delivered_to = new_id.path
@@ -950,15 +1139,20 @@ def _deliver(batch: BatchResult, in_place: bool, log: "diag.RunLog") -> None:
                                           f"{moved.parent.name}/{moved.name} (diagnosis only; run again once the source is "
                                           f"closed and unchanged)"))
         else:
-            d = guard.drifted(fr.identity)
+            d = None
             try:
+                d = guard.drifted(fr.identity)
                 verified_bytes(fr)                 # the copy in outputs/ is the one the suite verified
             except (guard.GuardError, OSError) as e:
                 d = d or str(e)
             if not d:
-                fr.delivered_to = str(fr.output)
-                fr.record.set(CheckResult("V9", "Overwrite guard", "PASS",
-                                          "source unchanged since acquisition; output written to " + str(fr.output)))
+                if fr.noop:
+                    fr.record.set(CheckResult("V9", "Overwrite guard", "NA",
+                                              "no-op: verified output identical to unchanged source; nothing written back"))
+                else:
+                    fr.delivered_to = str(fr.output)
+                    fr.record.set(CheckResult("V9", "Overwrite guard", "PASS",
+                                              "source unchanged since acquisition; output written to " + str(fr.output)))
             else:
                 moved = quarantine_failed_output(fr, out_dir)
                 fr.record.set(CheckResult("V9", "Overwrite guard", "FAIL",

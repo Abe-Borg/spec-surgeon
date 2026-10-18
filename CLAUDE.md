@@ -2,6 +2,36 @@
 
 Working notes for any Claude session touching this repository. Read before editing.
 
+## Reliability and request authority
+
+Ordinary natural-language edits use `ordinary_outcomes.py` to propose a contract from the original request and
+original document inventories, independently of the editing recipe. The complete review and per-file targets need
+explicit digest-bound approval; `--yes` alone never approves unseen outcomes. `batch.py` and `chain.py` accept
+`goal_contract`/`goal_bindings` and gate delivery through independent original-to-final verification. Contract-bearing
+in-place chains stage on copies and write back only after final outcome checks. Reports and set-aside manifests
+retain the contract and bindings; retries must preserve them and refuse missing or changed authority. Manual recipes
+without a contract remain recipe-only. Unsupported semantic coverage must pause, not silently downgrade.
+
+Preview identities pin content as well as metadata before planning. The exact bytes read for planning and sampling
+must match those pins; a detected change permanently invalidates that preview even if the source is restored.
+All source/template/table/picture inputs must be outside output trees, including aliases. Never reuse successful
+output artifacts after a new failure. The app refuses to close during active work.
+
+Text-changing blocks are exempt from the residual only after an independent item-level proof, such as raw-rule
+`literal_replacement` or analytical `paragraph_edits`; a BlockDiff alone grants no formatting/structure exemption.
+Tracked deletion must preserve interleaved bookmark and proofing boundaries. Verification records name performed
+and N/A checks and never equate automated rendering with human acceptance. V7 requires real matching word evidence.
+
+Generated transforms use configurable process ceilings in `process_limits.py`; these do not reduce the ample model
+allowances in `resources.py`. Stream completion requires terminal message/block events and valid final tool JSON
+before completed usage replaces reserved usage. Missing terminal evidence is a failed call.
+
+The installed package must contain the same worked examples and compiler prompt as the source checkout. Release
+installers must match the release tag's exact commit and existing assets must not be replaced from another master
+commit under the same version. See `docs/RELIABILITY.md` for the supported user flow and remaining evidence limits.
+When changing public `examples/specs`, update `src/spec_surgeon/examples/specs` too; packaging tests enforce exact
+inventory and byte parity so the source, wheel and frozen app receive the same compiler examples.
+
 ## What this is
 
 **Adaptive workspaces (source, 2026-10-17):** `inventory.py` and `campaign.py` add persistent,
@@ -98,7 +128,7 @@ See `docs/TEXT_HYGIENE_AND_SPEC_QA.md` for interfaces and limits.
    module after a stdlib module (`inspect.py`, `types.py`, …) — a script in the working dir shadows
    stdlib imports inside third-party libraries.
 8. **Everything an op changes is predicted or asserted.** V10 runs on every plan: after stripping what the
-   `property_assertions` cover and the blocks with predicted text changes, the changed text parts and
+   independently checked `property_assertions` cover (including item-level proof for text-changing blocks), the changed text parts and
    `styles.xml` must be identical. A new property family needs a new V10 assertion kind written in
    `verify/props.py` first (selection re-resolved independently, target count checked, "exactly this change and
    nothing else" on each target). Never add a kind that strips without checking. Spec-level `assertions` in an

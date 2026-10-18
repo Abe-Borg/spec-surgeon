@@ -1,8 +1,8 @@
 """Background jobs for the window.
 
-A job is ``fn(log) -> result`` run on a daemon ``threading.Thread`` (as the Tk window did: closing the window
-abandons a preview, and a run that started still finishes its files — ``concurrent.futures`` joins its pool at
-exit). Its log lines, result or error come back through a ``Bridge``'s signals. The Bridge is created on the GUI
+A job is ``fn(log) -> result`` run on a non-daemon ``threading.Thread``. The window stays open while work is active,
+and process shutdown never abandons rendering, delivery or reports after the transform workers finish.
+Its log lines, result or error come back through a ``Bridge``'s signals. The Bridge is created on the GUI
 thread, and its signals are connected only to ``@Slot`` methods of QObjects that live on the GUI thread, so Qt
 queues every delivery onto the GUI thread. Never connect a worker signal to a lambda (a lambda has no thread, so
 where it runs is not guaranteed), and never touch a widget from ``fn``: read every value before the job starts.
@@ -39,6 +39,6 @@ def start_job(bridge: Bridge, fn: Callable[[Callable[[str], None]], Any], name: 
             bridge.failed.emit(f"{type(e).__name__}: {e}", traceback.format_exc())
         else:
             bridge.done.emit(result)
-    t = threading.Thread(target=context.run, args=(target,), daemon=True, name=name)
+    t = threading.Thread(target=context.run, args=(target,), daemon=False, name=name)
     t.start()
     return t

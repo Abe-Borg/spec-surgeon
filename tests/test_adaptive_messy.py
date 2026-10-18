@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import io
 import json
 import zipfile
@@ -28,7 +29,7 @@ from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.package import DocxPackage, W, serialize_xml
 from spec_surgeon.profile import profile
 from spec_surgeon.verify import run_suite
-from test_compiler import FakeClient, resp, tool
+from test_compiler import FakeClient, resp, tool, outcome_cli_flags
 
 AUTHOR = "Abraham Borg"
 
@@ -212,8 +213,14 @@ def test_chunk2_set_aside_manifest_and_cli_retry_loop(tmp_path, monkeypatch, cap
     monkeypatch.setattr(compiler_module, "_client", lambda: fake_client)
 
     out2 = tmp_path / "pass2"
+    contract = {"kind": "document_effects", "effects": [{"id": "template", "type": "header_footer_template",
+        "template": str(tpl), "template_sha256": hashlib.sha256(tpl.read_bytes()).hexdigest(),
+        "params": {k: v for k, v in pass2_spec["ops"][0]["params"].items() if k != "template"}}]}
+    approval = outcome_cli_flags(tmp_path / "retry-outcomes.json",
+        pass1_spec["request"] + "\n\nUSER DECISIONS:\nISSUED FOR CONSTRUCTION  2026-02-15",
+        [d / "21 13 13 – MESSY.docx"], contract=contract, template=tpl)
     rc = cli_main(["retry", str(out1), "--out", str(out2), "--no-render", "--yes",
-                   "--answer", "ISSUED FOR CONSTRUCTION  2026-02-15"])
+                   "--answer", "ISSUED FOR CONSTRUCTION  2026-02-15", "--template", str(tpl), *approval])
     assert rc == 0, capsys.readouterr()
     # Verify prior_failures diagnostics were passed to the compiler in Pass 2
     msg_content = fake_client.requests[0]["messages"][0]["content"]
@@ -239,8 +246,12 @@ def test_chunk2_gui_session_set_aside_loop(tmp_path):
         "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
                  "params": {"find": "COMMON WORK RESULTS", "replace": "FIRE PROTECTION", "author": AUTHOR}}],
     }
-    s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec1}))))
-    s.compile("replace COMMON WORK RESULTS or WET-PIPE SPRINKLERS with FIRE PROTECTION", lambda m: None)
+    # An explicit saved recipe starts the sieve; the next natural-language pass
+    # gets its own independent, source-bound authority over the remaining file.
+    spec1_path = tmp_path / "first-pass.json"
+    spec1_path.write_text(json.dumps(spec1), encoding="utf-8")
+    s = Session(folder=d, out_root=tmp_path / "out")
+    s.load_spec(spec1_path)
     s.make_preview(render=False, log=lambda m: None)
     run_msg = s.run(in_place=False, render=False, log=lambda m: None)
     assert "PASS 1" in run_msg and "EXCEPTION 1" in run_msg and "Load set-aside files" in run_msg
@@ -257,9 +268,14 @@ def test_chunk2_gui_session_set_aside_loop(tmp_path):
         "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
                  "params": {"find": "WET-PIPE SPRINKLERS", "replace": "FIRE PROTECTION", "author": AUTHOR}}],
     }
-    s.client = FakeClient(resp(tool("submit_editspec", {"spec": spec2})))
-    s.compile("replace COMMON WORK RESULTS or WET-PIPE SPRINKLERS with FIRE PROTECTION", lambda m: None)
+    contract = {"kind": "document_effects", "effects": [{"id": "title", "type": "replace_text",
+        "target": {"scope": ["document"], "all": True}, "find": "WET-PIPE SPRINKLERS",
+        "replace": "FIRE PROTECTION", "expected_matches": 1, "tracked": True, "author": AUTHOR}]}
+    s.client = FakeClient(resp(tool("submit_editspec", {"spec": spec2})),
+        resp(tool("propose_plan", {"contract": contract, "rationale": "Replace the remaining document's original title wording."})))
+    s.compile("replace WET-PIPE SPRINKLERS with FIRE PROTECTION", lambda m: None)
     s.make_preview(render=False, log=lambda m: None)
+    s.approve_outcomes(s.outcome_review["digest"])
     run_msg2 = s.run(in_place=False, render=False, log=lambda m: None)
     assert "1 file(s): PASS 1  FAIL 0  EXCEPTION 0" in run_msg2
     assert "0 set-aside files remaining" in s.load_set_aside()

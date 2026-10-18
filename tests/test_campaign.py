@@ -47,6 +47,13 @@ def goal():
             "ops": [{"op": "set_page_setup", "params": {"margins": {"left": 1440}}}]}
 
 
+def goal_needing_repair():
+    """A saved recipe's mistaken count needs repair without changing its approved effect."""
+    spec = goal()
+    spec["ops"][0]["expect"] = {"text_diffs": 1}
+    return spec
+
+
 def submit():
     return resp(tool("submit_repair", {"candidate": {"kind": "spec", "spec": goal()}}))
 
@@ -93,7 +100,7 @@ def test_project_assignment_and_scoped_answers_survive_reload(tmp_path):
 def test_real_project_trials_keep_context_and_word_sources_separate_then_export_after_restart(tmp_path):
     campaign = make(tmp_path)
     for pid in campaign.projects:
-        campaign.set_goal(pid, goal()["request"], spec=goal())
+        campaign.set_goal(pid, goal()["request"], spec=goal_needing_repair())
     client = FakeClient(submit(), submit())
     campaign.run(options=opts(), client=client)
     assert all(d["status"] == "READY" for d in campaign.documents.values()), campaign.to_text()
@@ -131,7 +138,7 @@ def test_same_stat_source_drift_blocks_only_that_project(tmp_path):
 def test_ready_project_is_retained_while_another_waits_for_answer(tmp_path):
     campaign = make(tmp_path)
     for pid in campaign.projects:
-        campaign.set_goal(pid, goal()["request"], spec=goal())
+        campaign.set_goal(pid, goal()["request"], spec=goal_needing_repair())
     campaign.run(options=opts(), client=FakeClient(submit(), resp(tool("need_user", {"question": "Same margin here?"}))))
     north, south = campaign.projects
     assert campaign.projects[north]["status"] == "READY"
@@ -189,7 +196,7 @@ def test_question_answer_defaults_to_only_the_files_the_question_names(tmp_path)
     second.write_bytes(build("21 13 13", "SPRINKLER SYSTEMS", single_section=True))
     campaign = create_campaign([str(folder)], tmp_path / "workspace")
     pid = next(iter(campaign.projects))
-    campaign.set_goal(pid, goal()["request"], spec=goal())
+    campaign.set_goal(pid, goal()["request"], spec=goal_needing_repair())
     campaign.run(options=opts(), client=FakeClient(resp(tool("need_user", {"question": "One inch for this layout?"})), submit()))
     project = campaign.projects[pid]
     question = project["questions"][0]
@@ -383,7 +390,7 @@ def test_campaign_resume_reuses_saved_resource_policy_and_validates_before_savin
     source = doc(tmp_path / "source")
     campaign = create_campaign([str(source)], tmp_path / "workspace")
     pid = next(iter(campaign.projects))
-    campaign.set_goal(pid, goal()["request"], spec=goal())
+    campaign.set_goal(pid, goal()["request"], spec=goal_needing_repair())
     # Leave room for the full operation catalog; the one-call limit is what
     # intentionally pauses this test before the successful continuation.
     policy = RecoveryOptions(max_attempts=2, max_calls=1, max_cost_usd=12.5, max_output_tokens=8000,

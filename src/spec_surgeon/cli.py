@@ -159,6 +159,9 @@ def cmd_workflows(args):
 
 def cmd_run_spec(args):
     from .editspec import SpecError, load_spec, validate_spec
+    if getattr(args, "outcome_approval", None) and not getattr(args, "outcome_review", None):
+        print("Outcome approval requires its --outcome-review file; nothing was run.", file=sys.stderr)
+        return 2
     try:
         spec = load_spec(args.spec)
         validate_spec(spec)
@@ -175,11 +178,23 @@ def cmd_run_spec(args):
     print(f"EditSpec: {spec['request']!r} — {spec['summary']}")
     for a in spec.get("assumptions", []):
         print(f"  assumption: {a}")
+    if getattr(args, "outcome_review", None):
+        from .editspec import is_template_file, spec_templates
+        files = [f for f in expand_inputs(args.files) if not is_template_file(f, spec_templates(spec))]
+        if _ensure_outcome_review(args, files, Path(args.out or Path(args.spec).parent), request=None) is None:
+            return 2
+    else:
+        print("Recipe verification only; request satisfaction is not independently checked.")
     if getattr(args, "approval", None):
         from .editspec import is_template_file, spec_templates
-        from .preview import approval_inputs, approval_token, explain_approval_change
+        from .preview import approval_inputs, _approval_token_from_inputs, explain_approval_change
         files = [f for f in expand_inputs(args.files) if not is_template_file(f, spec_templates(spec))]
-        if approval_token(spec, files) != args.approval:
+        captured_inputs = approval_inputs(spec, files)
+        try:
+            captured_token = _approval_token_from_inputs(spec, captured_inputs)
+        except OSError:
+            captured_token = ""
+        if captured_token != args.approval:
             diag.event("cli.approval.refused", level="warning", gate="approval_digest",
                        reason="preview_inputs_changed")
             print("approval token does not match: the spec or a file changed since the preview (or the file set "
@@ -190,9 +205,10 @@ def cmd_run_spec(args):
             except (OSError, ValueError, AttributeError):
                 before = None
             if isinstance(before, dict):
-                for w in explain_approval_change(before, approval_inputs(spec, files)):
+                for w in explain_approval_change(before, captured_inputs):
                     print(f"  • {w}", file=sys.stderr)
             return 2
+        args._approved_inputs = captured_inputs
     args.job = "edit-spec"
     args.params = None
     return cmd_run(args, spec=spec)
@@ -364,7 +380,9 @@ def cmd_run(args, spec=None):
         print(msg, file=sys.stderr, flush=True)
     try:
         batch = run_batch(args.files, args.job, params, out_dir, workers=args.workers, renderer=args.renderer,
-                          do_render=not args.no_render, in_place=args.in_place, progress=progress, spec=spec)
+                          do_render=not args.no_render, in_place=args.in_place, progress=progress, spec=spec,
+                          approved_inputs=getattr(args, "_approved_inputs", None),
+                          **getattr(args, "_approved_outcome_kwargs", {}))
     except ValueError as e:          # refused before anything was written (an input inside the results folder)
         diag.event("cli.run.refused", level="warning", reason=str(e), out_dir=str(out_dir))
         print(f"refused: {e}", file=sys.stderr)
@@ -397,7 +415,7 @@ def cmd_run(args, spec=None):
 
 
 def _conversation_token_limits(args):
-    return {name: getattr(args, name) for name in ("max_context_tokens", "max_output_tokens")
+    return {name: getattr(args, name) for name in ("max_context_tokens", "max_output_tokens", "effort")
             if getattr(args, name, None) is not None}
 
 
@@ -407,6 +425,9 @@ def cmd_do(args):
     from .compiler import compile_request
     from .diagnostics import write_json
     from .editspec import is_template_file
+    answers = getattr(args, "answer", None) or []
+    args._ordinary_outcome_request = args.request + ("\n\nUSER DECISIONS:\n" + "\n".join(answers) if answers else "")
+    args._ordinary_approved_words = [args.request, *answers]
     out_dir = Path(args.out) if args.out else Path.cwd() / "SpecSurgeon_out" / datetime.now().strftime("%Y%m%d-%H%M%S")
     prior_failures = getattr(args, "prior_failures", None)
     input_files = list(getattr(args, "files", None) or [])
@@ -419,6 +440,8 @@ def cmd_do(args):
         if not manifest.get("files"):
             print("All files already passed in that run — 0 set-aside files remaining.")
             return 0
+        if manifest.get("goal_contract") is not None:
+            return _resume_reviewed_run(args, args.from_set_aside)
         input_files = [item["source"] for item in manifest["files"]]
         prior_failures = manifest["files"]
         if not args.template and manifest.get("template"):
@@ -447,14 +470,19 @@ def cmd_do(args):
     template = templates[0] if templates else None
     log = lambda m: print(m, file=sys.stderr)  # noqa: E731
     conv = None
+    picked_recipe = False
     if _interactive():
         outcome, value, conv = _chat(args, files, template, out_dir, prior_failures, log)
+        from .ordinary_outcomes import user_request
+        args._ordinary_outcome_request = user_request(conv) if conv is not None else args.request
+        args._ordinary_approved_words = list(conv.sources) if conv is not None else args._ordinary_approved_words
         if outcome == "stop":
             return value
         if outcome == "codegen":
             return _do_codegen(args, value, files, out_dir, brief=conv.brief())
         if outcome == "operation":                # one of your operations, passed its trials in the conversation
             return _run_saved_operation(args, value, files, out_dir, brief=conv.brief())
+        picked_recipe = outcome == "recipe"
         spec = value                              # Claude's spec, or one of your recipes as saved
     else:
         print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
@@ -497,10 +525,14 @@ def cmd_do(args):
             print("Compile failed: " + "; ".join(res.errors), file=sys.stderr)
             return 2
         spec = res.spec
-    return _preview_and_run(args, spec, files, out_dir, brief=conv.brief() if conv is not None else None)
+    from .ordinary_outcomes import user_request
+    outcome_request = user_request(conv) if conv is not None else args.request + (
+        "\n\nUSER DECISIONS:\n" + "\n".join(args.answer) if args.answer else "")
+    return _preview_and_run(args, spec, files, out_dir, brief=conv.brief() if conv is not None else None,
+                            outcome_request=None if picked_recipe else outcome_request, outcome_template=template)
 
 
-def _preview_and_run(args, spec, files, out_dir, brief=None):
+def _preview_and_run(args, spec, files, out_dir, brief=None, *, outcome_request=None, outcome_template=None):
     """The tail a spec takes, compiled by Claude (``cmd_do``) or one of your recipes (``library use``): --save-as
     checked, the preview, Claude's visual check (with a key, rendering on and no --no-review), --save-as saved, the y/N
     question (a blocking finding needs a look; --yes), the approval token checked again, then the verified batch."""
@@ -516,6 +548,12 @@ def _preview_and_run(args, spec, files, out_dir, brief=None):
         _visual_check(pv, spec, out_dir / "preview", args, brief=brief)
     print(pv.to_text())
     print(f"\npreview: {out_dir / 'preview'}")
+    if outcome_request is not None:
+        if _ensure_outcome_review(args, files, out_dir, request=outcome_request, template=outcome_template) is None:
+            print("The recipe preview remains available; no requested-outcome approval or delivery occurred.")
+            return 2
+    else:
+        print("Recipe verification only; request satisfaction is not independently checked.")
     if getattr(args, "save_as", None):
         from .library import LibraryError, save_recipe
         try:
@@ -540,9 +578,12 @@ def _preview_and_run(args, spec, files, out_dir, brief=None):
     diag.event("cli.approval.decision", approved=bool(approved), source="flag" if args.yes else "prompt",
                blocking_count=len(blocking), review_acknowledged=bool(getattr(args, "ack_review", False)))
     if not approved:
+        outcome_flags = (f' --outcome-review "{args._approved_outcome_review_path}"'
+                         f' --outcome-approval {args._approved_outcome_review_digest}'
+                         if getattr(args, "_approved_outcome_review_path", None) else "")
         print(f"\nNot run. To run exactly this:\n  spec-surgeon run-spec \"{out_dir / 'preview' / 'spec.json'}\" "
               + " ".join(f'"{f}"' for f in files) + f" --approval {pv.token}"
-              + (" --in-place" if args.in_place else ""))
+              + outcome_flags + (" --in-place" if args.in_place else ""))
         if blocking:
             print("(running that command means you have looked at Claude's visual-check findings above)")
         return 0
@@ -560,6 +601,7 @@ def _preview_and_run(args, spec, files, out_dir, brief=None):
     args.files = [str(f) for f in files]          # exactly the previewed files (an unreferenced --template excluded)
     args.job = "edit-spec"
     args.params = None
+    args._approved_inputs = pv.token_inputs
     return cmd_run(args, spec=spec)
 
 
@@ -584,6 +626,7 @@ def _preview_and_run_chain(args, chain, files, out_dir):
         vision.save_review(pv.review, out_dir / "preview")
         write_preview_files(pv)
     print(pv.to_text())
+    print("Recipe verification only; request satisfaction is not independently checked.")
     print(f"\npreview: {out_dir / 'preview'}")
     if getattr(args, "save_as", None):
         from .library import LibraryError, save_chain
@@ -626,7 +669,8 @@ def _preview_and_run_chain(args, chain, files, out_dir):
         print(msg, file=sys.stderr, flush=True)
     try:
         result = run_chain([str(f) for f in files], chain, out, workers=args.workers, renderer=args.renderer,
-                           do_render=not args.no_render, in_place=args.in_place, progress=progress)
+                           do_render=not args.no_render, in_place=args.in_place, progress=progress,
+                           approved_inputs=pv.token_inputs)
     except ValueError as e:          # refused before anything was written (an input inside the results folder)
         print(f"refused: {e}", file=sys.stderr)
         return 2
@@ -730,7 +774,50 @@ def _review(intent, samples, folder, args):
         return vision.VisualReview(skipped=NO_KEY_REVIEW)
     return vision.review_samples(intent, samples, folder, compiler._client,
                                  model=getattr(args, "model", None) or compiler.DEFAULT_MODEL,
+                                 max_output_tokens=getattr(args, "max_output_tokens", None),
+                                 effort=getattr(args, "effort", None),
                                  log=lambda m: print(m, file=sys.stderr))
+
+
+def _ensure_outcome_review(args, files, folder, *, request=None, template=None):
+    """Separate intent proposal and explicit approval; --yes never approves an unseen contract."""
+    from . import compiler, ordinary_outcomes
+    from .recovery import RecoveryOptions
+    try:
+        review_path = getattr(args, "outcome_review", None)
+        if review_path:
+            review = json.loads(Path(review_path).read_text(encoding="utf-8"))
+        elif request is not None:
+            values = {k: v for k, v in (("model", getattr(args, "model", None)),
+                      ("max_output_tokens", getattr(args, "max_output_tokens", None)),
+                      ("max_context_tokens", getattr(args, "max_context_tokens", None)),
+                      ("effort", getattr(args, "effort", None))) if v is not None}
+            review = ordinary_outcomes.propose(request, files, template=template,
+                client=compiler._client(),
+                options=RecoveryOptions(render=False, renderer="none", **values), folder=folder,
+                log=lambda msg: print(msg, file=sys.stderr))
+            review_path = Path(folder) / "outcome-review.json"
+            ordinary_outcomes.save(review, review_path)
+        else:
+            raise ValueError("Supply an independently proposed --outcome-review file.")
+        print(ordinary_outcomes.text(review))
+        if review.get("status") != "PROPOSED":
+            raise ValueError("Requested outcomes need clarification or independent coverage before delivery.")
+        digest = getattr(args, "outcome_approval", None)
+        if not digest and _interactive() and _confirm("Approve these outcomes and every document's targets? [y/N] "):
+            digest = review["digest"]
+        if not digest:
+            print(f"Not run. Review {review_path}; approve this exact review with "
+                  f"--outcome-review \"{review_path}\" --outcome-approval {review['digest']}.")
+            return None
+        contract, bindings = ordinary_outcomes.validate(review, files, request=request, approval=digest)
+        args._approved_outcome_kwargs = {"goal_contract": contract, "goal_bindings": bindings}
+        args._approved_outcome_review_path = str(review_path)
+        args._approved_outcome_review_digest = digest
+        return review
+    except (OSError, ValueError, KeyError, TypeError) as exc:
+        print(f"Outcome review refused: {exc}", file=sys.stderr)
+        return None
 
 
 def _interactive() -> bool:
@@ -897,7 +984,7 @@ def _try_saved_operation(conv, name, files, out_dir):
     passing one returns (g, key, token, inputs) for ``_run_saved_operation``."""
     from .codegen import pick_samples, trial
     from .library import LibraryError, load_operation
-    from .preview import approval_inputs, approval_token, generated_key
+    from .preview import approval_inputs, _approval_token_from_inputs, generated_key
     try:
         g = load_operation(name)
     except LibraryError as e:
@@ -908,7 +995,8 @@ def _try_saved_operation(conv, name, files, out_dir):
     samples = pick_samples(files)
     print(f"Trying your operation {name!r} on {[s.name for s in samples]} …", file=sys.stderr)
     key = generated_key(g)
-    token, inputs = approval_token(key, files), approval_inputs(key, files)
+    inputs = approval_inputs(key, files)
+    token = _approval_token_from_inputs(key, inputs)
     n = 1
     while (out_dir / "library-trial" / f"try-{n}").exists():
         n += 1
@@ -956,6 +1044,8 @@ def cmd_retry(args):
     if not manifest.get("files"):
         print("All files already passed in that run — 0 set-aside files remaining.")
         return 0
+    if manifest.get("goal_contract") is not None:
+        return _resume_reviewed_run(args, args.out_dir)
     req = getattr(args, "request", None) or manifest.get("request")
     if not req:
         print("set_aside.json has no request; pass --request \"...\"", file=sys.stderr)
@@ -964,6 +1054,22 @@ def cmd_retry(args):
     args.from_set_aside = args.out_dir
     args.files = []
     return cmd_do(args)
+
+
+def _resume_reviewed_run(args, run_dir):
+    if args.in_place:
+        print("Retained outcomes resume through recovery on edited copies; omit --in-place.", file=sys.stderr)
+        return 2
+    if getattr(args, "template", None) or getattr(args, "save_as", None):
+        print("Retained outcomes keep their approved template and scope. New templates or saved recipes need a new review.",
+              file=sys.stderr)
+        return 2
+    answers = getattr(args, "answer", None) or []
+    if answers:
+        args.request = "\n".join([getattr(args, "request", None) or "", *answers]).strip()
+    args.run_dir = run_dir
+    print("Resuming the previously approved outcomes and exact original target choices; clarification cannot expand them.")
+    return cmd_resolve(args)
 
 
 def cmd_resolve(args):
@@ -1034,12 +1140,18 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     """Tier B: generate an op for an unsupported request, prove it on one sample per pattern, run it after
     approval. Outputs only — never in place (a generated op becomes permanent only after human review)."""
     from .codegen import generate_op, pick_samples, run_generated
-    from .preview import approval_inputs, approval_token, changed_since_preview, generated_key
+    from .goals import approved_goal_words
+    from .preview import approval_inputs, _approval_token_from_inputs, changed_since_preview, generated_key
     if getattr(args, "save_as", None):
         why = _save_as_refusal(args.save_as, "operation", getattr(args, "replace", False))
         if why:
             print(f"--save-as: {why}", file=sys.stderr)
             return 2
+    review = _ensure_outcome_review(args, files, out_dir,
+        request=getattr(args, "_ordinary_outcome_request", args.request), template=getattr(args, "template", None))
+    if review is None:
+        return 2
+    args._ordinary_review = review
     samples = pick_samples(files)
     # the files as they are BEFORE the transform is written and tried on them (several calls to Claude): the approval
     # taken after it must be of these very files, or the preview would pair a source edited meanwhile with a trial
@@ -1048,6 +1160,9 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     print(f"Tier B: generating a transform, tested on {[s.name for s in samples]} …", file=sys.stderr)
     g = generate_op(args.request, spec.get("proposal") or spec.get("unsupported") or "", samples, out_dir / "codegen",
                     model=args.model, log=lambda m: print(m, file=sys.stderr), brief=brief,
+                    **args._approved_outcome_kwargs,
+                    approved_words=[*getattr(args, "_ordinary_approved_words", [args.request]),
+                                    *approved_goal_words(args._approved_outcome_kwargs["goal_contract"])],
                     **_conversation_token_limits(args))
     for a in g.attempts:
         print(f"  attempt {a['attempt']}: " + ("PASS" if not a["problems"] else f"{len(a['problems'])} problem(s): "
@@ -1064,11 +1179,11 @@ def _do_codegen(args, spec, files, out_dir, brief=None):
     # made, and the token re-checked before the run — a file edited while the transform was written, the preview, the
     # visual check or the question waited refuses
     key = generated_key(g)
+    inputs = approval_inputs(key, files)
     try:
-        token = approval_token(key, files)
+        token = _approval_token_from_inputs(key, inputs)
     except OSError:
         token = ""                                # a file vanished while the transform was written: Run refuses
-    inputs = approval_inputs(key, files)
     from .preview import preview_generated
     gp = preview_generated(g, out_dir / "codegen" / "preview", renderer=args.renderer, do_render=not args.no_render)
     drift = _changed_while_writing(before_writing, inputs, approval_inputs({}, files))
@@ -1096,6 +1211,8 @@ def _approve_and_run_generated(args, g, gp, files, out_dir, key, token, inputs, 
         vision.save_review(gp.review, gp.out_dir)
         write_preview_files(gp)
     print(gp.to_text())
+    print("Approved outcome checks will be included for every delivered file." if g.goal_contract is not None else
+          "Recipe verification only; request satisfaction is not independently checked.")
     print(f"\npreview: {gp.out_dir}")
     if getattr(args, "save_as", None):
         from .library import LibraryError, save_operation
@@ -1131,7 +1248,15 @@ def _approve_and_run_generated(args, g, gp, files, out_dir, key, token, inputs, 
         print(f"Not run: {changed_msg} — run the command again."
               + "".join(f"\n  • {w}" for w in changed), file=sys.stderr)
         return 2
-    results = run_generated(g, [str(f) for f in files], out_dir / "run", log=lambda m: print(m, file=sys.stderr))
+    if getattr(args, "_ordinary_review", None) is not None:
+        from .ordinary_outcomes import validate
+        try:
+            validate(args._ordinary_review, files, approval=args._ordinary_review["digest"])
+        except (OSError, ValueError) as exc:
+            print(f"Outcome review refused before delivery: {exc}", file=sys.stderr)
+            return 2
+    results = run_generated(g, [str(f) for f in files], out_dir / "run", log=lambda m: print(m, file=sys.stderr),
+                            approved_inputs=inputs)
     ok = sum(1 for r in results if r.passed)
     print(f"{ok} of {len(results)} file(s) PASS; outputs in {out_dir / 'run' / 'outputs'}")
     for r in results:
@@ -1412,6 +1537,15 @@ def _add_conversation_token_arguments(parser):
     parser.add_argument("--max-output-tokens", type=positive, default=None,
                         help=f"maximum output tokens per conversation/custom-transform call (default {DEFAULT_MAX_OUTPUT_TOKENS}); "
                              "must fit the selected model's output limit")
+    parser.add_argument("--effort", choices=["low", "medium", "high", "max"], default=None,
+                        help="model reasoning effort for compilation, independent outcome planning, and visual review")
+
+
+def _add_outcome_arguments(parser):
+    parser.add_argument("--outcome-review", default=None, metavar="FILE",
+                        help="independently proposed outcome-review.json with every original document's targets")
+    parser.add_argument("--outcome-approval", default=None, metavar="DIGEST",
+                        help="approve the exact reviewed outcomes and per-file targets (separate from --yes)")
 
 
 def main(argv=None) -> int:
@@ -1487,6 +1621,7 @@ def main(argv=None) -> int:
     p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
     p.add_argument("--no-render", action="store_true", help="skip rendering (V6/V7 recorded as N/A)")
     p.add_argument("--approval", default=None, help="token from a preview: refuse if the spec or a file changed since")
+    _add_outcome_arguments(p)
     p.set_defaults(fn=cmd_run_spec)
 
     p = sub.add_parser("do", help="natural-language request → EditSpec (Claude) → preview → approve → verified run")
@@ -1507,6 +1642,7 @@ def main(argv=None) -> int:
     p.add_argument("--no-review", action="store_true",
                    help="skip Claude's visual check of the rendered sample pages (--no-render skips it too)")
     _add_conversation_token_arguments(p)
+    _add_outcome_arguments(p)
     p.add_argument("--ack-review", action="store_true",
                    help="run even when Claude's visual check flagged a blocking problem (you have looked at it)")
     p.add_argument("--save-as", default=None, metavar="NAME",
@@ -1535,6 +1671,7 @@ def main(argv=None) -> int:
     p.add_argument("--model", default=None)
     p.add_argument("--no-review", action="store_true", help="skip Claude's visual check of the sample pages")
     _add_conversation_token_arguments(p)
+    _add_outcome_arguments(p)
     p.add_argument("--ack-review", action="store_true", help="run even when Claude's visual check flagged a problem")
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)

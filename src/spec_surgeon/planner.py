@@ -10,6 +10,7 @@ This is what ``spec-surgeon plan-spec`` prints and what the preview (Phase 4) sh
 """
 from __future__ import annotations
 
+import hashlib
 import time
 from collections import Counter
 from dataclasses import dataclass, field
@@ -91,10 +92,12 @@ class FilePlan:
     plan: Optional[Dict[str, Any]] = None
     exception: Optional[Dict[str, Any]] = None
     ms: float = 0.0
+    source_md5: Optional[str] = None             # exact bytes read for this plan, independently of later disk state
 
     def to_dict(self):
         result = {"source": str(self.source), "pattern_id": self.pattern_id, "status": self.status,
-                "summary": self.summary, "exception": self.exception, "ms": round(self.ms, 1)}
+                "summary": self.summary, "exception": self.exception, "ms": round(self.ms, 1),
+                "source_md5": self.source_md5}
         if self.plan and any(a.get("kind") == "character_hygiene" for a in self.plan.get("property_assertions", [])):
             result["character_changes"] = [c for a in self.plan["property_assertions"]
                                            if a.get("kind") == "character_hygiene" for c in a["changes"]]
@@ -179,6 +182,7 @@ def plan_file(path: Path, spec: Dict[str, Any]) -> FilePlan:
         fp = FilePlan(Path(path), pid, "planned", summarize_plan(plan), plan.to_dict())
     except Exception as e:  # noqa: BLE001 — a refusal, unreadable or unexpected: recorded, not raised
         fp = FilePlan(Path(path), pid, "exception", exception=exception_record(e, stage, data, op))
+    fp.source_md5 = hashlib.md5(data).hexdigest() if data is not None else None
     fp.ms = (time.perf_counter() - t0) * 1000
     return fp
 

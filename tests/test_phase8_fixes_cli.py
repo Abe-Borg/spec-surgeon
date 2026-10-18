@@ -22,6 +22,8 @@ import io
 import json
 import os
 import zipfile
+
+from test_compiler import outcome_cli_flags
 from pathlib import Path
 
 import pytest
@@ -88,16 +90,18 @@ def test_do_codegen_refuses_a_file_edited_while_the_transform_was_written(folder
         return g
     # control: nothing edited — the same command runs (the check compares like with like)
     monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("submit_editspec", OFFER)), WRITER))
+    approval = outcome_cli_flags(tmp_path / "approved-outcomes.json", "header 0.625in from the top",
+                                 sorted(folder.glob("*.docx")), header=True)
     intents = record_reviews(monkeypatch)
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(tmp_path / "ok"),
-                     "--renderer", "none", "--allow-codegen", "--yes"]) == 0
+                     "--renderer", "none", "--allow-codegen", "--yes", *approval]) == 0
     assert "2 of 2 file(s) PASS" in capsys.readouterr().out and (tmp_path / "ok" / "run").is_dir()
     assert len(intents) == 1
 
     monkeypatch.setattr(codegen, "generate_op", writing)
     out = tmp_path / "o"
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(out), "--renderer", "none",
-                     "--allow-codegen", "--yes"]) == 2
+                     "--allow-codegen", "--yes", *approval]) == 2
     printed = capsys.readouterr()
     assert "passed on the samples" in printed.out
     assert "Not run: a file changed while the custom transform was being written and tested" in printed.err

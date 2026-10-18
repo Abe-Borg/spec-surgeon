@@ -1,0 +1,25 @@
+{
+  "request": "Swap the old ACME logo in every header for C:\\Projects\\Logos\\contoso-logo.png, same space",
+  "summary": "Every header picture that is the old logo (matched by its file) shows the new logo instead, as large as fits in the old picture's box with its own proportions; the old picture goes when nothing else uses it.",
+  "assumptions": [
+    "the old logo is the picture file C:\\Projects\\Logos\\acme-logo.png (matched by its bytes)",
+    "the new logo keeps its proportions inside the old box (top-left); its alt text stays as it was"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "swap_image",
+      "params": {
+        "image": "C:\\Projects\\Logos\\contoso-logo.png",
+        "match": {
+          "image": "C:\\Projects\\Logos\\acme-logo.png"
+        },
+        "fit": "contain"
+      }
+    }
+  ]
+}

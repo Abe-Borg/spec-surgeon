@@ -31,16 +31,39 @@ jobs:
         with:
           name: windows-installer
           path: dist/
-      - name: Add the installer to the existing release
+      - name: Check the installer matches its published tag
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APP_VERSION: ${{ needs.build.outputs.version }}
+          BUILD_REVISION: ${{ needs.build.outputs.revision }}
+        run: |
+          tag="v$APP_VERSION"
+          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
+            echo "::notice::No release $tag yet; the tag's release workflow publishes this installer."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          installer="SpecSurgeon-$APP_VERSION-Setup-x64.exe"
+          if gh release view "$tag" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[].name' | grep -Fxq "$installer"; then
+            echo "::notice::The installer for $tag is already published; release assets are not replaced."
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git fetch --no-tags origin "refs/tags/$tag:refs/tags/$tag"
+          tag_revision="$(git rev-parse "refs/tags/$tag^{commit}")"
+          if [ "$BUILD_REVISION" != "$tag_revision" ]; then
+            echo "::error::The installer was built from a different commit than $tag. Bump the version and publish a new release."
+            exit 1
+          fi
+          echo "publish=true" >> "$GITHUB_OUTPUT"
+      - name: Add a missing installer from the exact tagged revision
+        if: steps.release.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
           APP_VERSION: ${{ needs.build.outputs.version }}
         run: |
           tag="v$APP_VERSION"
-          if ! gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null 2>&1; then
-            echo "::notice::No release $tag yet; the tag's release workflow publishes this installer."
-            exit 0
-          fi
           mkdir existing-checksums
           gh release download "$tag" --repo "$GITHUB_REPOSITORY" --pattern SHA256SUMS --dir existing-checksums
           installer="SpecSurgeon-$APP_VERSION-Setup-x64.exe"
@@ -55,5 +78,6 @@ jobs:
           digest = hashlib.sha256(Path("dist", name).read_bytes()).hexdigest()
           Path("dist/SHA256SUMS").write_text("\n".join(lines + [f"{digest}  {name}"]) + "\n")
           PY
-          gh release upload "$tag" "dist/$installer" dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
-          gh release edit "$tag" --repo "$GITHUB_REPOSITORY" --notes-file "docs/releases/$tag.md"
+          # Never replace a published installer, including if another job uploaded it after our check.
+          gh release upload "$tag" "dist/$installer" --repo "$GITHUB_REPOSITORY"
+          gh release upload "$tag" dist/SHA256SUMS --repo "$GITHUB_REPOSITORY" --clobber
