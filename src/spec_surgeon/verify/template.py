@@ -442,18 +442,28 @@ class Eff:
 
     def _levels(self, p, rpr=None, run=False) -> List[Any]:
         """Style elements, lowest priority first: table chain, paragraph chain, [character chain]."""
+        def chain(sid):
+            active = []
+            for style in self.styles.chain(sid):
+                # Word discards these definitions' children, including basedOn.
+                # MS-OI29500 §2.1.242(a); do not turn them into formatting pins.
+                if style.get(W + "styleId") in ("NoList", "TableNormal", "DefaultParagraphFont"):
+                    break
+                active.insert(0, style)
+            return active
+
         out = []
         q = p.getparent()
         while q is not None and q.tag != W + "tbl":
             q = q.getparent()
         if q is not None:
             ts = q.find(f"{W}tblPr/{W}tblStyle")
-            out += list(reversed(self.styles.chain(ts.get(W + "val") if ts is not None else self.styles.default.get("table"))))
+            out += chain(ts.get(W + "val") if ts is not None else self.styles.default.get("table"))
         ps = p.find(f"{W}pPr/{W}pStyle")
-        out += list(reversed(self.styles.chain(ps.get(W + "val") if ps is not None else self.styles.default.get("paragraph"))))
+        out += chain(ps.get(W + "val") if ps is not None else self.styles.default.get("paragraph"))
         if run:
             rs = rpr.find(W + "rStyle") if rpr is not None else None
-            out += list(reversed(self.styles.chain(rs.get(W + "val") if rs is not None else self.styles.default.get("character"))))
+            out += chain(rs.get(W + "val") if rs is not None else self.styles.default.get("character"))
         return out
 
     def para(self, p, with_direct=True) -> Dict[str, Any]:

@@ -34,6 +34,10 @@ def _inherited_formatting(definitions, key, full):
     while key:
         if key in seen or key not in definitions:
             return None
+        # Word's special IDs contribute neither properties nor inheritance
+        # (MS-OI29500 §2.1.242(a)), including when used as a base style.
+        if key in ("DefaultParagraphFont", "TableNormal", "NoList"):
+            break
         seen.add(key)
         definition = definitions[key]
         layer = []
@@ -186,7 +190,8 @@ def style_plan(source, template, parts, allow_import, strip):
                 # A dependency of a style used without pins must also be compatible in full.
                 while full and sid and sid not in full_styles:
                     full_styles.add(sid)
-                    sid = value(definitions[sid], "basedOn") if sid in definitions else None
+                    sid = (value(definitions[sid], "basedOn") if sid in definitions and
+                           sid not in ("DefaultParagraphFont", "TableNormal", "NoList") else None)
     mapping, copied = {}, {}
 
     def resolve(sid):
@@ -219,6 +224,8 @@ def style_plan(source, template, parts, allow_import, strip):
         mapping[sid] = new_id
         taken.add(new_id)
         expected = strip(definition)
+        if sid in ("DefaultParagraphFont", "TableNormal", "NoList"):
+            expected[:] = [child for child in expected if child.tag == W + "name"]
         expected.set(W + "styleId", new_id)
         if default(expected):
             del expected.attrib[W + "default"]
@@ -232,7 +239,7 @@ def style_plan(source, template, parts, allow_import, strip):
             labels.add(identity(expected)[1])
         copied[sid] = expected
         for dependency in ("basedOn", "link", "next"):
-            link = value(definition, dependency)
+            link = value(expected, dependency)
             if link:
                 resolve(link)
 

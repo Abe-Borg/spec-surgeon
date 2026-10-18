@@ -21,6 +21,9 @@ REFS = {W + tag for tag in ("pStyle", "rStyle", "tblStyle", "basedOn", "link", "
                             "numStyleLink", "styleLink")}
 TRUE = {"1", "true", "on"}
 FORMAT_CONTAINERS = {W + key for key in ("pPr", "rPr", "tblPr", "trPr", "tcPr", "tblStylePr")}
+# MS-OI29500 §2.1.242(a): Word ignores every child of these definitions.
+# Moving their children under a new ID would activate previously inert formatting.
+INERT_STYLE_IDS = {"NoList", "DefaultParagraphFont", "TableNormal"}
 
 
 def _formatting_signature(styles, sid, pinnable):
@@ -37,6 +40,8 @@ def _formatting_signature(styles, sid, pinnable):
     while sid:
         if sid in seen or sid not in styles:
             return None  # A broken destination chain is not a reusable equivalent.
+        if sid in INERT_STYLE_IDS:
+            break
         seen.add(sid)
         style = styles[sid]
         layer = []
@@ -86,6 +91,8 @@ def _strict_dependencies(uses, styles):
     while pending:
         sid = pending.pop()
         style = styles.get(sid)
+        if sid in INERT_STYLE_IDS:
+            continue
         base = style.find(W + "basedOn") if style is not None else None
         parent = base.get(W + "val") if base is not None else None
         if parent and parent not in strict:
@@ -208,6 +215,10 @@ def reconcile_styles(pkg, template, parts, import_missing, strip):
         allocated.add(dest)
         mapping[sid] = dest                    # assign before walking cycles
         clone = strip(style, f"template style {sid}")
+        if sid in INERT_STYLE_IDS:
+            for child in list(clone):
+                if child.tag != W + "name":
+                    clone.remove(child)
         clone.set(W + "styleId", dest)
         if clone.get(W + "default") in TRUE:
             clone.attrib.pop(W + "default")   # never introduce a document-wide default
@@ -220,7 +231,7 @@ def reconcile_styles(pkg, template, parts, import_missing, strip):
             used_names.add(name(clone))
         imports[sid] = clone
         for tag in ("basedOn", "link", "next"):
-            link = style.find(W + tag)
+            link = clone.find(W + tag)
             if link is not None and link.get(W + "val"):
                 visit(link.get(W + "val"))
 

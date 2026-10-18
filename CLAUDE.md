@@ -8,6 +8,8 @@ Working notes for any Claude session touching this repository. Read before editi
 default role, type/name and reciprocal links before importing dependencies. Reuse also requires compatible
 inherited formatting outside pinned properties; tables and nested paragraphs require full compatibility.
 An imported default stays nondefault, with explicit bindings added only to copied content that used it implicitly.
+Word ignores children of `DefaultParagraphFont`, `TableNormal`, and `NoList` (MS-OI29500 §2.1.242(a));
+the template resolvers stop at those IDs, and private copies must not activate their inactive children.
 Unrelated collisions and dangling
 destination references reserve their IDs. `ops/template_styles.py` and independent `verify/template_styles.py`
 derive mappings separately; `verify/goal_templates.py` checks them against the actual selected template graph.

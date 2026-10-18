@@ -28,6 +28,13 @@ usable template. Turning style import off could not resolve the references eithe
    Copied paragraphs, runs, paragraph marks and tables that used an imported default implicitly
    receive explicit references to its private copy. The destination's own defaults stay unchanged.
 
+Word ignores the children of `DefaultParagraphFont`, `TableNormal`, and `NoList`
+([MS-OI29500 §2.1.242(a)](https://learn.microsoft.com/en-us/openspecs/office_standards/ms-oi29500/bb6afca9-88a7-4b34-911f-7110e8062bb1)).
+Both compatibility checks and effective-property resolvers honor that rule, including ignored
+`basedOn` links. A private copy of one of these special definitions retains its name but drops
+the inactive children: renaming those children into an ordinary style would activate formatting
+that the template never displayed. Custom default IDs still retain their actual formatting.
+
 The operation rewrites references in copied parts and imported definitions, then calculates
 formatting pins against the mapped destination styles. It records the mapping in the plan.
 Existing destination definitions and the template file are not rewritten. Setting
@@ -97,3 +104,6 @@ underline, table/conditional formatting and nested-paragraph properties. A delib
 transform that skips compatibility or omits explicit private-default bindings is rejected by
 both the ordinary suite and the independent final-outcome verifier. CI portability fixes retain
 the original fixture ZIP bytes for the unchanged-template test and read source/JSON as UTF-8.
+A rendered regression compares the result pixel for pixel with a synthetic template carrying
+different inherited header borders/shading and inactive character/table default properties.
+This catches accidental activation of ignored built-in formatting as well as lost visible formatting.
