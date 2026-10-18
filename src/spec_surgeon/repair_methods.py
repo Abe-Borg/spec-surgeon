@@ -43,7 +43,9 @@ def remember(generated, contract):
     encoded = base64.b64encode(zlib.compress(raw)).decode("ascii")
     return {"kind": "method", "protocol": PROTOCOL, "engine": __version__,
             "source_sha256": hashlib.sha256(raw).hexdigest(),
-            "source_zlib": [encoded[i:i + 12000] for i in range(0, len(encoded), 12000)],
+            # A base64 chunk can start with '/'. Tag it so memory's absolute-path
+            # redactor never mistakes encoded source for a local filename.
+            "source_zlib": ["base64:" + encoded[i:i + 12000] for i in range(0, len(encoded), 12000)],
             "signature": signature(contract), "select": generated.select, "params": generated.params,
             "portable": not generated.select and not generated.params,
             "assumptions": ["Use the current pkg.goal, pkg.binding and pinned pkg.inputs.",
@@ -55,9 +57,9 @@ def source(method):
         raise ValueError("unsupported reusable method format")
     chunks = method.get("source_zlib")
     if (not isinstance(chunks, list) or not chunks or len(chunks) > 8 or
-            any(not isinstance(c, str) or len(c) > 12000 for c in chunks)):
+            any(not isinstance(c, str) or len(c) > 12007 for c in chunks)):
         raise ValueError("invalid reusable method source")
-    data = base64.b64decode("".join(chunks), validate=True)
+    data = base64.b64decode("".join(c[7:] if c.startswith("base64:") else c for c in chunks), validate=True)
     decoder = zlib.decompressobj()
     raw = decoder.decompress(data, MAX_SOURCE + 1)
     if len(raw) > MAX_SOURCE or not decoder.eof or decoder.unused_data or decoder.unconsumed_tail:

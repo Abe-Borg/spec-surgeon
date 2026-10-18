@@ -385,10 +385,9 @@ class Conversation:
 
     def investigate_failure(self, evidence) -> Turn:
         """A failed preview/method continues the same request under a reviewed outcome."""
-        from .continuous_recovery import propose
         self.prior_failures.append(copy.deepcopy(evidence))
         self.recovery_active = True
-        return self._finish(propose(self))
+        return self._advance()
 
     def take_library_choice(self, choice_id: str):
         """The user picked one of their library items Claude offered (a ``recipe`` / ``operation`` choice); the app

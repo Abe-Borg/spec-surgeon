@@ -197,3 +197,18 @@ def test_noninteractive_cli_continues_with_yes_and_preserves_model_settings(tmp_
     import json
     journal = json.loads((out / "conversation.json").read_text())
     assert journal["calls"] == 2 and journal["resource_policy"]["max_context_tokens"] == 800000
+
+
+def test_compile_handoff_retains_time_and_does_not_guess_fallback_pricing(tmp_path):
+    from spec_surgeon.compiler import CompileResult
+    from spec_surgeon.continuous_recovery import after_compile
+    source = write_document(tmp_path / "source.docx")
+    prior = CompileResult(status="unsupported", seconds=10.0,
+        usage={"input_tokens": 1000, "output_tokens": 200, "cache_read_input_tokens": 0,
+               "cache_creation_input_tokens": 0}, served_models=["claude-sonnet-5-5"],
+        transcript=[{"turn": 1, "role": "assistant", "fell_back": True}])
+    c = after_compile("Make the title bold", [source], None, prior, client=FakeClient(proposal()),
+                      work_dir=tmp_path / "chat")
+    assert c.seconds > 10.0 and c.calls == 2 and c.usage.calls == 2
+    assert c.usage.as_dict()["input_tokens"] == 1100
+    assert c.usage.cost_usd() is None  # aggregate usage cannot price each fallback attempt

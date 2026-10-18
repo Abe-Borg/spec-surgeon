@@ -150,6 +150,22 @@ def test_bounded_source_integrity_and_parameterized_methods_are_not_auto_reused(
     assert repair_methods.evidence([case], goal("TITLE"))[0]["source"] == BOUND_METHOD
 
 
+def test_large_encoded_method_survives_memory_path_redaction(tmp_path):
+    import random
+    raw = "#" + random.Random(0).randbytes(30000).hex()
+    method = repair_methods.remember(GeneratedOp(source=raw), goal("TITLE"))
+    assert all(chunk.startswith("base64:") for chunk in method["source_zlib"])
+    # Exercise a slash-leading chunk without depending on one zlib version's
+    # particular compressed bytes at the writer's usual chunk boundary.
+    encoded = "".join(chunk.removeprefix("base64:") for chunk in method["source_zlib"])
+    cut = encoded.index("/")
+    method["source_zlib"] = ["base64:" + encoded[:cut]] + [
+        "base64:" + encoded[i:i + 12000] for i in range(cut, len(encoded), 12000)]
+    store = CaseStore()
+    ident = store.record({"candidate": method, "status": "success", "structural_verified": True})
+    assert repair_methods.source(store.get(ident)["candidate"]) == raw
+
+
 def test_reused_content_method_reads_current_wording_and_cannot_mutate_authority(tmp_path):
     from test_governed_codegen import CONTENT_OP, contract as content_goal
     from spec_surgeon.codegen import trial

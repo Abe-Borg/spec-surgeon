@@ -1276,7 +1276,9 @@ def _review_outputs(ctx, good, folder):
                                    lambda: ctx["client"] or compiler._client(),
                                    model=options.model, log=ctx["log"])
     elif options.render:
-        rv = vision.VisualReview(skipped="The preview was rendered; model visual review was not requested.")
+        rv = vision.VisualReview(skipped=(
+            "Deterministic preparation rendered the preview; model review has not been requested."
+            if ctx.get("suppress_model_review") else "The preview was rendered; model visual review was not requested."))
     else:
         rv = vision.VisualReview(skipped="Rendering is off; visual outcome was not reviewed.")
     for f in good:
