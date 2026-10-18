@@ -529,7 +529,7 @@ def test_batch_public_recipe_remains_the_one_executed_after_caller_mutation(tmp_
                        progress=mutate_caller_recipe)
     assert result.counts()["PASS"] == 1
     assert result.spec == approved
-    assert json.loads((result.out_dir / "batch.json").read_text())["spec"] == approved
+    assert json.loads((result.out_dir / "batch.json").read_text(encoding="utf-8"))["spec"] == approved
 
 
 @pytest.mark.parametrize("surface", ["batch", "chain"])

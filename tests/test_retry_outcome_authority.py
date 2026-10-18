@@ -54,17 +54,17 @@ def test_retry_retains_outcome_and_delivers_only_a_corrected_candidate(tmp_path,
     assert Document(destination / source.name).sections[0].left_margin.twips == 2880
     assert source.read_bytes() == original
     if chain:
-        saved = json.loads((result.out_dir / "chain.json").read_text())
+        saved = json.loads((result.out_dir / "chain.json").read_text(encoding="utf-8"))
         assert saved["atomic_final_delivery"] is in_place
         if in_place:
-            assert "only after final outcome verification" in (result.out_dir / "CHAIN_REPORT.md").read_text()
+            assert "only after final outcome verification" in (result.out_dir / "CHAIN_REPORT.md").read_text(encoding="utf-8")
 
 
 @pytest.mark.parametrize("damage", ["missing_map", "missing_file", "missing_effects", "missing_authority", "stale_source", "wrong_digest"])
 def test_retry_cannot_fall_back_to_recipe_authority_when_binding_is_invalid(tmp_path, damage):
     source, result, _, _ = failed_run(tmp_path)
     path = result.out_dir / "set_aside.json"
-    value = json.loads(path.read_text())
+    value = json.loads(path.read_text(encoding="utf-8"))
     if damage == "missing_map":
         del value["goal_bindings"]
     elif damage == "missing_file":
@@ -122,7 +122,7 @@ def test_retry_preserves_the_specific_choice_among_duplicate_titles(tmp_path, mo
 def test_old_partial_in_place_chain_cannot_claim_safe_retry_without_retained_outcome(tmp_path):
     source, result, _, _ = failed_run(tmp_path, chain=True)
     metadata = result.out_dir / "chain.json"
-    data = json.loads(metadata.read_text())
+    data = json.loads(metadata.read_text(encoding="utf-8"))
     data.update(in_place=True, atomic_final_delivery=False)
     metadata.write_text(json.dumps(data))
     with pytest.raises(ValueError, match="partial stages"):

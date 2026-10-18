@@ -36,8 +36,8 @@ def test_reused_generated_delivery_folder_cannot_retain_an_earlier_success(sourc
     assert (folder / "outputs" / source.name).exists()
     failed = codegen.run_generated(header_method(source, 800), [str(source)], folder)[0]
     assert not failed.passed and not list((folder / "outputs").glob("*.docx"))
-    saved = json.loads((folder / "set_aside.json").read_text())
-    companion = json.loads((folder / "generated.json").read_text())
+    saved = json.loads((folder / "set_aside.json").read_text(encoding="utf-8"))
+    companion = json.loads((folder / "generated.json").read_text(encoding="utf-8"))
     assert saved["files"][0]["source"] == str(source.resolve())
     assert saved["goal_contract"] == companion["goal_contract"] == header_method(source).goal_contract
     assert saved["goal_bindings"] == companion["goal_bindings"] == header_method(source).goal_bindings
@@ -155,7 +155,7 @@ def test_relative_sample_and_run_paths_preserve_the_approved_ambiguous_choice(so
     assert method.passed and method.goal_bindings[str(source)] == binding
     result = codegen.run_generated(method, [source.name], tmp_path / "delivery")[0]
     assert result.passed, result.problems
-    saved = json.loads((tmp_path / "delivery" / "set_aside.json").read_text())
+    saved = json.loads((tmp_path / "delivery" / "set_aside.json").read_text(encoding="utf-8"))
     assert saved["goal_bindings"][str(source)] == binding
 
 

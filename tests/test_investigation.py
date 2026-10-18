@@ -3,6 +3,7 @@ import hashlib
 import json
 import subprocess
 import sys
+from pathlib import Path
 
 import pytest
 
@@ -42,6 +43,20 @@ def test_real_analyzer_can_inspect_ooxml_without_changing_sources(batch):
     assert result["snapshots"][0]["sha256"] == hashlib.sha256(before).hexdigest()
     assert next(iter(batch.files.values())).read_bytes() == before
     assert "never approved wording" in result["authority"]
+
+
+def test_non_ascii_analysis_results_are_read_as_utf8_on_windows(batch, monkeypatch):
+    original_read_text = Path.read_text
+
+    def windows_read_text(path, encoding=None, errors=None):
+        return original_read_text(path, encoding="cp1252" if encoding is None else encoding, errors=errors)
+
+    monkeypatch.setattr(Path, "read_text", windows_read_text)
+    expected = "“Façade” — 東京"
+    source = f"def analyze(documents, inputs):\n    return {expected!r}"
+    result = json.loads(batch.run_analysis(source)["result_json"])
+    assert result["ok"]
+    assert result["result"] == expected
 
 
 def test_result_pages_survive_new_batch_instance_and_reject_source_drift(batch):

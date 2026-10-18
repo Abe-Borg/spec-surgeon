@@ -134,7 +134,7 @@ def test_cli_yes_does_not_approve_unseen_outcomes_and_explicit_review_enforces_t
     assert main(args) == 2
     assert "--outcome-approval" in capsys.readouterr().out
     review_path = result_dir / "outcome-review.json"
-    review = json.loads(review_path.read_text())
+    review = json.loads(review_path.read_text(encoding="utf-8"))
     assert not (result_dir / "run" / "outputs").exists()
     spec_path = result_dir / "preview" / "spec.json"
     assert main(["run-spec", str(spec_path), str(source), "--out", str(tmp_path / "unapproved"),
@@ -200,7 +200,7 @@ def test_retained_contract_retry_never_reproposes_its_outcomes(tmp_path, monkeyp
     session.approve_outcomes(session.outcome_review["digest"])
     session.run(False, False, lambda _: None)
     original_run = session.last_run_dir
-    manifest = json.loads((original_run / "set_aside.json").read_text())
+    manifest = json.loads((original_run / "set_aside.json").read_text(encoding="utf-8"))
     assert manifest["goal_contract"] == CONTRACT
     session.load_set_aside(original_run)
     assert session.pending_recovery_run == original_run
@@ -303,6 +303,6 @@ def test_noninteractive_custom_outcome_planner_receives_user_answers(tmp_path, m
     monkeypatch.setattr("spec_surgeon.cli._interactive", lambda: False)
     assert main(["do", "Replace FIRE using my answer", str(source), "--answer", "WATER", "--allow-codegen",
                  "--yes", "--no-render", "--out", str(tmp_path / "result")]) == 2
-    reviewed_request = json.loads((tmp_path / "result" / "outcome-review.json").read_text())["request"]
+    reviewed_request = json.loads((tmp_path / "result" / "outcome-review.json").read_text(encoding="utf-8"))["request"]
     assert reviewed_request == "Replace FIRE using my answer\n\nUSER DECISIONS:\nWATER"
     assert "USER DECISIONS" in json.dumps(fake.requests[1]["messages"])
