@@ -12,6 +12,10 @@ stale outputs, chain delivery after source saves, and text-edit preservation che
 checks from N/A and automated rendering from human visual acceptance. Retries retain approved outcome contracts
 and exact target choices. [Review flow, command examples and assurance limits](docs/RELIABILITY.md).
 
+Continuous recovery preserves this outcome review before custom generation. A verified custom-method failure can
+continue into investigation, and terminal answers to recovery or critic questions resume the existing evidence and
+candidates. See [continuous recovery and reusable repairs](docs/CONTINUOUS_RECOVERY.md).
+
 **Source checkout: automatic template style reconciliation.** Header/footer templates now work across Word
 languages without a manual rebuild. The importer matches default roles, style names and linked character styles,
 remaps copied references, and isolates unrelated ID collisions. Agents can inspect the mapping before submitting
@@ -35,6 +39,12 @@ the defaults remain 900,000 estimated input tokens and 64,000 output tokens.
 **Measure changes on your own batches.** The [paired evaluation workflow](docs/WORKFLOW_EVALUATION.md) compares
 baseline and current runs with pinned reports and input identities, explicit human acceptance, elapsed time,
 interventions and model spending. Scripted runs remain separate from live-provider measurements.
+
+Ordinary chat now continues into reviewed outcome recovery when its usual methods stop, and
+verified generated methods can be reused on related jobs with fresh targets and verification.
+Paragraph borders and shading join the supported outcomes. See
+[continuous recovery and repair reuse](docs/CONTINUOUS_RECOVERY.md) for the flow, scripted
+cold/warm comparisons and current limits.
 
 Paired evaluations count human review only when a nonblank reviewer name accompanies the completed judgments and
 visual check. Anonymous judgments remain recorded, but do not count as accepted results or a completed review.

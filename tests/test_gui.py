@@ -79,9 +79,11 @@ def test_questions_and_unsupported(folder, tmp_path):
     assert "reply in the chat" in msg and s.questions == ["Which sections?"] and s.spec is None
     assert (s.chat_dir / "conversation.json").is_file() and (s.chat_dir / "compile.json").is_file()
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
-    s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported})))
+    s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported})),
+                          resp(tool("need_user", {"question": "What outcome should the header have?"})))
     msg = s.compile("x", lambda m: None)
-    assert "No built-in operation" in msg and s.turn.choices == []        # Claude did not judge it possible: no offer
+    assert "reply in the chat" in msg and s.questions == ["What outcome should the header have?"]
+    assert s.conversation.recovery_active  # broader planning happens in this same conversation
     s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})))
     msg = s.compile("Set every section's header distance to 900 twips.", lambda m: None)
     assert "custom transform" in msg and [c.kind for c in s.turn.choices] == ["custom_transform"]
@@ -760,6 +762,34 @@ def test_the_window_runs_the_custom_transform_offered_in_the_chat(qt, folder, tm
     assert ui["buttons"]["run"].isEnabled()
     assert not w.run_page.inplace_rb.isEnabled()                            # custom transforms write copies only
     before = {f: f.read_bytes() for f in folder.glob("*.docx")}
+    ui["buttons"]["run"].click()
+    ui["wait"]()
+    assert ui["results_model"].badges() == ["pass", "pass"]
+    assert {f: f.read_bytes() for f in folder.glob("*.docx")} == before
+
+
+def test_the_window_continues_into_recovery_and_exports_its_verified_preview(qt, folder, tmp_path):
+    goal = {"kind": "document_effects", "effects": [
+        {"id": "distance", "type": "page_setup", "sections": "all", "margins": {"header": 900}}]}
+    refusal = {"request": "r", "summary": "Set header distance", "unsupported": "No usable method",
+               "proposal": "Check the requested page setup"}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": refusal, "custom_transform": "outside_limits"})),
+        resp(tool("propose_plan", {"contract": goal, "rationale": "Set header distance to 0.625 in."})))
+    s = Session(out_root=tmp_path / "out", client=fake)
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    ui["request"].set("put the header 0.625 in from the top")
+    before = {f: f.read_bytes() for f in folder.glob("*.docx")}
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert s.turn.choices[0].kind == "recovery_plan"
+    ((_, button),) = ui["choices"]()
+    button.click()
+    ui["wait"]()
+    assert s.recovery.ready and s.conversation is not None
+    assert w.stack.currentWidget() is w.preview_page
+    assert ui["buttons"]["run"].isEnabled()
     ui["buttons"]["run"].click()
     ui["wait"]()
     assert ui["results_model"].badges() == ["pass", "pass"]

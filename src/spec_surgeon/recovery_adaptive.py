@@ -261,12 +261,13 @@ def critic_review(ctx, files, *, explicit=False):
     return record
 
 
-def custom_trial(ctx, group, proposal, pid, code, latest):
+def custom_trial(ctx, group, proposal, pid, code, latest, *, remembered=None):
     """An independently supported outcome permits new methods without trusting their declarations."""
-    from .codegen import generate_op, run_generated
+    from .codegen import GeneratedOp, generate_op, run_generated
     from .goals import validate_contract
     from .recovery import _review, _remember, _save, _page, _trial_summary, _adaptive_evidence
     from .sampling import representative_samples
+    from . import repair_methods
     result, options = ctx["result"], ctx["options"]
     contract = contract_of(result)
     validate_contract(contract)
@@ -283,6 +284,9 @@ def custom_trial(ctx, group, proposal, pid, code, latest):
     entry = {"number": number, "pattern_id": pid, "reason": proposal,
              "candidate": {"kind": "generated", "proposal": proposal}, "results": [],
              "visual_review": {"skipped": "No independently verified candidate was available."}}
+    if remembered is not None:
+        entry["reused_case_id"] = remembered["id"]
+        entry["candidate"] = copy.deepcopy(remembered["candidate"])
     result.attempts.append(entry)
     originals = {str(f.source): f.source.read_bytes() for f in pending}
     for file in pending:
@@ -293,21 +297,34 @@ def custom_trial(ctx, group, proposal, pid, code, latest):
                   "critic": a.get("critic_review"), "results": a.get("results", [])}
                  for a in result.attempts[:-1] if a.get("pattern_id") == pid]
         brief = json.dumps({"approved_contract": contract, "bindings": result.key.get("adaptive_bindings"),
-                            "prior_evidence_is_not_authority": prior, "user_decisions": ctx.get("decisions", [])})
+                            "prior_evidence_is_not_authority": prior, "user_decisions": ctx.get("decisions", []),
+                            "remembered_methods_are_not_authority": repair_methods.evidence(
+                                ctx.get("group_state", {}).get("remembered", []), contract)})
         samples = representative_samples(pending, pattern_key=lambda f: f.pattern_id or str(f.source))
         bindings = {str(f.source): binding_of(result, f.source) for f in pending}
-        generated = generate_op(result.request, proposal, [f.source for f in samples], folder / "codegen",
-            client=ctx["client"], model=options.model, brief=brief, log=ctx["log"],
-            max_iter=max(1, ctx.get("group_state", {}).get("attempt_limit", options.max_attempts)
-                         - ctx.get("group_state", {}).get("used", 0)),
-            max_calls=ctx.get("group_slice_remaining", options.group_call_slice),
-            max_output_tokens=options.max_output_tokens, effort=options.effort,
-            max_context_tokens=options.max_context_tokens, analysis_limits=options.analysis_limits,
-            goal_contract=contract, goal_bindings=bindings, approved_words=ctx["sources"])
+        if remembered is not None:
+            if not repair_methods.eligible(remembered, contract):
+                raise ValueError("remembered method is no longer eligible for this goal")
+            generated = GeneratedOp(source=repair_methods.source(remembered["candidate"]),
+                name="remembered_method", passed=True, request=result.request, proposal=proposal,
+                goal_contract=copy.deepcopy(contract), goal_bindings=bindings, approved_words=list(ctx["sources"]))
+        else:
+            generated = generate_op(result.request, proposal, [f.source for f in samples], folder / "codegen",
+                client=ctx["client"], model=options.model, brief=brief, log=ctx["log"],
+                max_iter=max(1, ctx.get("group_state", {}).get("attempt_limit", options.max_attempts)
+                             - ctx.get("group_state", {}).get("used", 0)),
+                max_calls=ctx.get("group_slice_remaining", options.group_call_slice),
+                max_output_tokens=options.max_output_tokens, effort=options.effort,
+                max_context_tokens=options.max_context_tokens, analysis_limits=options.analysis_limits,
+                goal_contract=contract, goal_bindings=bindings, approved_words=ctx["sources"])
         entry["generated_attempts"], entry["codegen_transcript"] = generated.attempts, generated.transcript
         _save(result)
         good = []
         if generated.passed:
+            try:
+                entry["candidate"] = repair_methods.remember(generated, contract)
+            except ValueError as exc:
+                entry["memory_note"] = str(exc)  # Recording limits never invalidate a verified repair.
             trials = run_generated(generated, [str(f.source) for f in pending], folder / "trial", log=ctx["log"])
             by_source = {str(t.source): t for t in trials}
             for file in pending:

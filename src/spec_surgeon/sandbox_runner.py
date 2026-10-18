@@ -134,11 +134,18 @@ def main(argv=None) -> int:
             for name in item.get("aliases", [item["path"]]):
                 inputs[name] = content
         pkg.inputs = MappingProxyType(inputs)
+        # These are fresh job data, never a remembered method's authority. Keep
+        # separate copies for each phase; the parent verifies against its originals.
+        import copy
+        pkg.goal = copy.deepcopy(req.get("goal_contract"))
+        pkg.binding = copy.deepcopy(req.get("goal_binding"))
         frag = op.plan(pkg, req.get("select") or {}, req.get("params") or {})
         frag.op = frag.op or getattr(cls, "name", "generated")
         plan = merge_fragments([frag], job=f"generated:{getattr(cls, 'name', 'op')}", params=req.get("params") or {})
         work = pkg.copy()
         work.inputs = pkg.inputs
+        work.goal = copy.deepcopy(req.get("goal_contract"))
+        work.binding = copy.deepcopy(req.get("goal_binding"))
         op.apply(work, frag)
         output = work.output_bytes()
         if len(output) > limits["output_bytes"]:

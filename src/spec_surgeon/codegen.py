@@ -238,7 +238,8 @@ def _tail(text: str, n: int = 15) -> str:
 
 
 def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict[str, Any], workdir: Path,
-                   timeout: int = SANDBOX_TIMEOUT, *, goal_contract=None, memory_mb: int = DEFAULT_MEMORY_MB,
+                   timeout: int = SANDBOX_TIMEOUT, *, goal_contract=None, goal_binding=None,
+                   memory_mb: int = DEFAULT_MEMORY_MB,
                    output_bytes: int = DEFAULT_OUTPUT_BYTES, log_bytes: int = DEFAULT_LOG_BYTES,
                    source_bytes: Optional[bytes] = None) -> SandboxResult:
     """plan + apply of the generated op on a COPY of ``docx`` in a separate isolated process."""
@@ -249,12 +250,14 @@ def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict
         raise TypeError("source_bytes must be immutable bytes")
     with diag.scope(sandbox_id=diag.new_id()), \
             diag.span("codegen.sandbox", source=str(docx), workdir=str(workdir), timeout_seconds=timeout) as record:
-        result = _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract, limits, source_bytes)
+        result = _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract, limits, source_bytes,
+                                 goal_binding)
         record.update(ok=result.ok, code=result.code, output=str(result.output) if result.output else None)
         return result
 
 
-def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract, limits, source_bytes):
+def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract, limits, source_bytes,
+                    goal_binding=None):
     t0 = time.perf_counter()
     workdir = Path(workdir).resolve()          # the sandbox runs with cwd=workdir: every path it gets is absolute
     if Path(docx).resolve() in {workdir / name for name in ("source.docx", "result.json", "plan.json", "out.docx")}:
@@ -290,7 +293,8 @@ def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contrac
             return SandboxResult(False, error=str(exc), code="stale-template", seconds=time.perf_counter() - t0)
     req = workdir / "request.json"
     req.write_text(json.dumps({"source": source, "docx": str(copy_path), "select": select, "params": params,
-                              "goal_contract": goal_contract, "inputs": inputs, "limits": limits}),
+                              "goal_contract": goal_contract, "goal_binding": goal_binding,
+                              "inputs": inputs, "limits": limits}),
                    encoding="utf-8")
     diag.event("codegen.sandbox.prepared", source_copy=str(copy_path), request_path=str(req))
     env = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONIOENCODING")}
@@ -461,7 +465,8 @@ def _trial(source, f, select, params, workdir, goal_contract, goal_binding):
                 raise guard.GuardError("source changed while checking its approved binding")
         except Exception as error:
             return failed([f"approved goal binding refused: {error}"])
-    sb = run_in_sandbox(source, f, select, params, workdir, goal_contract=goal_contract, source_bytes=original)
+    sb = run_in_sandbox(source, f, select, params, workdir, goal_contract=goal_contract,
+                        goal_binding=goal_binding, source_bytes=original)
     if not sb.ok:
         where = _tail(sb.traceback, 12)
         return failed([f"[{sb.code or 'error'}] {sb.error}"
@@ -652,6 +657,11 @@ def system_prompt(goal_contract=None) -> str:
             "from each approved absolute template path to its pinned bytes. Use DocxPackage(pkg.inputs[path]) "
             "to inspect or copy their XML/media. Do not open a path or mutate an input. The host rechecks input "
             "hashes; all template-dependent assertions still name the original approved template path.\n"
+            "- Write reusable governed methods: read this job's contract from pkg.goal and this file's validated "
+            "targets from pkg.binding in plan and apply. These are fresh job-local copies, not authority you can "
+            "change. Prefer empty select/params and derive all wording, target indices, template paths and values "
+            "from those current inputs. Successful parameter-free methods can be tried on related new jobs; "
+            "hardcoded project wording or indices will fail that job's independent checks.\n"
         ) + prompt[end:]
         prompt += "\nAPPROVED IMMUTABLE GOAL:\n" + json.dumps(goal_contract, ensure_ascii=False, sort_keys=True)
         helper = Path(__file__).resolve().parent / "ops" / "textedit.py"

@@ -480,6 +480,8 @@ def cmd_do(args):
             return value
         if outcome == "codegen":
             return _do_codegen(args, value, files, out_dir, brief=conv.brief())
+        if outcome == "recovery":
+            return _do_continuous_recovery(args, conv, value, out_dir)
         if outcome == "operation":                # one of your operations, passed its trials in the conversation
             return _run_saved_operation(args, value, files, out_dir, brief=conv.brief())
         picked_recipe = outcome == "recipe"
@@ -500,21 +502,28 @@ def cmd_do(args):
                   'command in a terminal to talk it through with Claude.')
             return 2
         if res.status == "unsupported":
+            if res.custom_transform != "possible":
+                from .continuous_recovery import after_compile, approve
+                conv = after_compile(args.request, files, template, res, answers=args.answer or [],
+                    work_dir=out_dir / "chat", model=args.model, log=log, **_conversation_token_limits(args))
+                _print_turn(conv.turn)
+                conv.save(out_dir / "conversation.json")
+                choices = conv.turn.choices
+                if not choices:
+                    return 2
+                choice = choices[0]
+                # --yes authorizes execution, never wording the user has not supplied.
+                from .compiler import _norm
+                unapproved = [w for w in choice.words if not any(_norm(w) in _norm(s) for s in conv.sources)]
+                if not args.yes or unapproved:
+                    print("Outcome plan saved for review in conversation.json. Continue in a terminal to review "
+                          "the scope and any proposed wording, or use --yes with all exact wording in your request.")
+                    return 2
+                snapshot = approve(conv, choice.id)
+                return _do_continuous_recovery(args, conv, snapshot, out_dir)
             print(f"No operation can do this: {res.spec.get('unsupported')}")
             if res.spec.get("proposal"):
                 print(f"Proposal: {res.spec['proposal']}")
-            if res.custom_transform == "outside_limits":
-                print("A one-off custom transform cannot do this safely yet"
-                      + (f" ({res.custom_transform_reason})" if res.custom_transform_reason else "")
-                      + " — it needs a new built-in operation.")
-                return 2
-            if res.custom_transform != "possible":
-                # only Claude's "possible" is an offer (rule 13): --allow-codegen accepts an offer, never makes one
-                print("No custom transform is offered: Claude did not judge whether a one-off custom transform could "
-                      "do this safely" + (" (--allow-codegen accepts only an offer Claude made)"
-                                          if args.allow_codegen else "")
-                      + ". Run the command in a terminal to talk it through with Claude, or run it again.")
-                return 2
             if not args.allow_codegen:
                 print("(No custom transform was written: run the command in a terminal and pick Claude's custom-"
                       "transform choice, or re-run with --allow-codegen to accept the offer — it is sandboxed, "
@@ -529,10 +538,12 @@ def cmd_do(args):
     outcome_request = user_request(conv) if conv is not None else args.request + (
         "\n\nUSER DECISIONS:\n" + "\n".join(args.answer) if args.answer else "")
     return _preview_and_run(args, spec, files, out_dir, brief=conv.brief() if conv is not None else None,
-                            outcome_request=None if picked_recipe else outcome_request, outcome_template=template)
+                            outcome_request=None if picked_recipe else outcome_request, outcome_template=template,
+                            conversation=conv)
 
 
-def _preview_and_run(args, spec, files, out_dir, brief=None, *, outcome_request=None, outcome_template=None):
+def _preview_and_run(args, spec, files, out_dir, brief=None, *, outcome_request=None, outcome_template=None,
+                     conversation=None):
     """The tail a spec takes, compiled by Claude (``cmd_do``) or one of your recipes (``library use``): --save-as
     checked, the preview, Claude's visual check (with a key, rendering on and no --no-review), --save-as saved, the y/N
     question (a blocking finding needs a look; --yes), the approval token checked again, then the verified batch."""
@@ -548,6 +559,14 @@ def _preview_and_run(args, spec, files, out_dir, brief=None, *, outcome_request=
         _visual_check(pv, spec, out_dir / "preview", args, brief=brief)
     print(pv.to_text())
     print(f"\npreview: {out_dir / 'preview'}")
+    if conversation is not None and conversation.continuous_recovery and (
+            any(f.status == "exception" for f in pv.batch_plan.files) or any(not s.passed for s in pv.samples)):
+        turn = conversation.investigate_failure({"reason": pv.to_text(), "candidate": spec})
+        outcome, value, conv = _talk(conversation, lambda turn=None: conversation.save(out_dir / "conversation.json"),
+                                     out_dir, files, initial_turn=turn)
+        if outcome == "recovery":
+            return _do_continuous_recovery(args, conv, value, out_dir)
+        return value if outcome == "stop" else 2
     if outcome_request is not None:
         if _ensure_outcome_review(args, files, out_dir, request=outcome_request, template=outcome_template) is None:
             print("The recipe preview remains available; no requested-outcome approval or delivery occurred.")
@@ -893,6 +912,7 @@ def _chat(args, files, template, out_dir, prior_failures, log):
     print(f"talking {args.request!r} through with Claude ({args.model}) over {len(files)} file(s) …", file=sys.stderr)
     conv = Conversation(args.request, files, template=template, model=args.model, prior_failures=prior_failures,
                         answers=args.answer or [], work_dir=out_dir / "chat", log=log,
+                        continuous_recovery=True,
                         **_conversation_token_limits(args))
 
     def save(turn=None):
@@ -912,12 +932,13 @@ def _chat(args, files, template, out_dir, prior_failures, log):
         raise
 
 
-def _talk(conv, save, out_dir, files):
+def _talk(conv, save, out_dir, files, *, initial_turn=None, recovery_answers=False):
     """_chat's loop: one turn of Claude's, then the user's reply or choice, until a spec, a custom transform, one of
     your recipes ("recipe": its spec as saved, with this request) or operations ("operation": passed its trials here —
-    one that fails returns to the prompt, the refusal noted to Claude) or stop."""
+    one that fails returns to the prompt, the refusal noted to Claude) or stop.
+    With ``recovery_answers``, free text returns to the active recovery instead of replanning."""
     from .conversation import LIBRARY_CHOICE_KINDS, LibraryChanged
-    turn = conv.start()
+    turn = conv.start() if initial_turn is None else initial_turn
     told = False
     while True:
         if save(turn) and not told:
@@ -934,6 +955,8 @@ def _talk(conv, save, out_dir, files):
             return "stop", 2, conv
         m = re.fullmatch(r"#(\d+)", line)
         if m is None:
+            if recovery_answers:
+                return "recovery_answer", line, conv
             turn = conv.reply(line)
             continue
         i = int(m.group(1))
@@ -949,6 +972,13 @@ def _talk(conv, save, out_dir, files):
                 return "stop", 2, conv
             if not ok:                            # a typed no: the words are not approved; the conversation goes on
                 continue
+        if choice.kind == "recovery_target":
+            return "recovery_target", choice.id, conv
+        if choice.kind == "recovery_plan":
+            from .continuous_recovery import approve
+            snapshot = approve(conv, choice.id)
+            save()
+            return "recovery", snapshot, conv
         if choice.kind == "custom_transform":
             conv.take_app_choice(choice.id)
             save()
@@ -1054,6 +1084,46 @@ def cmd_retry(args):
     args.from_set_aside = args.out_dir
     args.files = []
     return cmd_do(args)
+
+
+def _do_continuous_recovery(args, conv, snapshot, out_dir):
+    from .continuous_recovery import execute, options_for, result_turn, resume_choice
+    from .recovery import deliver_recovery, resume_recovery
+    options = options_for(conv, render=not args.no_render)
+    options.renderer = args.renderer
+    options.visual_review = not getattr(args, "no_review", False)
+    result = execute(conv, snapshot, out_dir / "recovery", options=options)
+    turn = result_turn(conv, result)
+    while turn is not None and _interactive():
+        # Target ambiguity needs an explicit bound choice or a newly reviewed plan;
+        # other investigation/critic questions resume the evidence already gathered.
+        recovery_answers = any(f.status != "READY" for f in result.files) and not any(
+            q.get("kind") == "goal_binding" and q.get("status") == "open" for q in result.question_records)
+        outcome, value, _ = _talk(conv, lambda turn=None: conv.save(out_dir / "conversation.json"),
+            out_dir, conv.files, initial_turn=turn, recovery_answers=recovery_answers)
+        if outcome == "recovery_target":
+            result = resume_choice(conv, value, options=options)
+        elif outcome == "recovery_answer":
+            result = resume_recovery(result.out_dir, request=value, options=options,
+                client=conv._client_now(), log=conv.log)
+            conv.sources.append(value)
+        elif outcome == "recovery":
+            result = execute(conv, value, out_dir / f"recovery-{conv._choice_n}", options=options)
+        else:
+            return value if outcome == "stop" else 2
+        turn = result_turn(conv, result)
+    conv.save(out_dir / "conversation.json")
+    print(result.to_text())
+    if not result.ready:
+        return 2
+    if result.review is not None:
+        print(result.review.to_text())
+    if result.review and result.review.blocking() and not args.ack_review:
+        print("Inspect the blocking visual findings before acknowledging export with --ack-review.")
+        return 2
+    if args.yes or (_interactive() and _confirm("Export the verified recovery copies? [y/N] ")):
+        print(f"Recovery copies exported: {deliver_recovery(result, acknowledge_review=args.ack_review)}")
+    return 0 if len(result.ready) == len(result.files) else 2
 
 
 def _resume_reviewed_run(args, run_dir):

@@ -32,6 +32,7 @@ def effect(kind, params, select=None, count="all", **extra):
 
 
 @pytest.mark.parametrize("kind,params,select", [
+    ("paragraph_borders", {"shading": {"fill": "FFFF00"}}, {"paragraphs": {"text_regex": "^REQUIREMENT"}}),
     ("paragraph_style", {"style": "Heading 1", "tracked": False}, {"paragraphs": {"text_regex": "^REQUIREMENT"}}),
     ("style_mapping", {"map": [{"from": "Normal", "to": "Body Text"}]}, {"scope": ["document"]}),
     ("proofing_language", {"language": "en-US"}, {}),
