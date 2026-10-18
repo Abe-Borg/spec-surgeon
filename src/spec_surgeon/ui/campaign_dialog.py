@@ -364,7 +364,7 @@ class CampaignDialog(QDialog):
                 cell.setToolTip(str(doc["source"]) + "\n" + str(doc.get("reason") or doc.get("unresolved") or ""))
                 self.documents.setItem(row, column, cell)
         self.documents.resizeColumnsToContents()
-        draft_ids = draft.get("document_ids") or proposed.get("document_ids") or ids
+        draft_ids = draft.get("document_ids") or proposed.get("document_ids") or project.get("goal_scope") or ids
         selected_scope = set(draft_ids) != set(ids)
         self.scope.setCurrentIndex(1 if selected_scope else 0)
         self.documents.clearSelection()
@@ -549,19 +549,22 @@ class CampaignDialog(QDialog):
             spec = self._pending_spec if contract is None else None
             chain = self._pending_chain if contract is None else None
             project = self.campaign.projects[self._selected_project]
+            scope = self._scope_documents()
+            scope_ids = project["document_ids"] if scope is None else scope
             if context != (project.get("context") or {}):
                 self.campaign.set_project_context(self._selected_project, context)
             if contract is None and spec is None and chain is None:
                 if request:
                     self.campaign.save_plan_draft(self._selected_project, request,
-                                                  doc_ids=self._scope_documents(), template=template)
+                                                  doc_ids=scope, template=template)
             elif (request != goal.get("request", "") or template != str(goal.get("template") or "")
                     or spec != goal.get("spec") or chain != goal.get("chain")
-                    or contract != goal.get("adaptive_contract")):
+                    or contract != goal.get("adaptive_contract")
+                    or set(scope_ids) != set(project.get("goal_scope", project["document_ids"]))):
                 self.campaign.set_goal(self._selected_project, request, spec=spec,
                                        chain=chain, template=Path(template) if template else None,
                                        approved_words=goal.get("approved_words") or (),
-                                       adaptive_contract=contract)
+                                       adaptive_contract=contract, doc_ids=scope)
             self._shown_goal = dict(self.campaign.projects[self._selected_project].get("goal") or {})
             self._dirty = False
             self.status.setText("Instructions saved. Generate and review a proposed plan for a described outcome.")
@@ -751,10 +754,11 @@ class CampaignDialog(QDialog):
             return
         options = self._options()
         campaign, client = self.campaign, self.session.client
+        allow_model = self.session.claude_ready()
         self.review_ack.setChecked(False)
         self.tabs.setCurrentWidget(self.evidence)
         self._work("Investigating; ready copies remain saved…",
-                   lambda log: campaign.run(options=options, client=client, log=log))
+                   lambda log: campaign.run(options=options, client=client, log=log, allow_model=allow_model))
 
     @Slot()
     def export_workspace(self):

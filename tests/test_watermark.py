@@ -7,7 +7,6 @@ from __future__ import annotations
 
 import io
 import math
-import shutil
 from pathlib import Path
 from typing import Any, Dict, List
 
@@ -728,17 +727,49 @@ def _grey(pdf_path: Path) -> List[int]:
     return out
 
 
-@pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
 def test_the_watermark_is_drawn_behind_every_page(tmp_path):
     from spec_surgeon.render import libreoffice
+    if libreoffice.find_soffice() is None:
+        pytest.skip("LibreOffice not installed")
     src = document(second="inherit", body=60)
     _, out, rec = run(src, text="DRAFT")
     assert not failed(rec)
     (tmp_path / "src.docx").write_bytes(src)
     (tmp_path / "out.docx").write_bytes(out)
-    pdfs = libreoffice.render_pdfs([tmp_path / "src.docx", tmp_path / "out.docx"], tmp_path / "pdf", workers=1)
-    if len(pdfs) != 2:
-        pytest.skip("LibreOffice did not render here")
+    files = [tmp_path / "src.docx", tmp_path / "out.docx"]
+    messages = []
+    pdfs = libreoffice.render_pdfs(files, tmp_path / "pdf", workers=1,
+                                  log=messages.append, detail=messages.append)
+    missing = [f.name for f in files if f not in pdfs or not pdfs[f].is_file()]
+    assert not missing, (f"LibreOffice did not produce PDFs for {', '.join(missing)}.\n"
+                         + ("\n".join(messages) or "No renderer diagnostics were recorded."))
     before, after = _grey(pdfs[tmp_path / "src.docx"]), _grey(pdfs[tmp_path / "out.docx"])
     assert len(before) == len(after) >= 3
     assert all(a > b + 1000 for a, b in zip(after, before)), (before, after)
+
+
+@pytest.mark.parametrize("missing", ["src.docx", "out.docx"])
+@pytest.mark.parametrize("listed", [False, True], ids=["missing-result", "missing-file"])
+def test_the_watermark_visual_gate_fails_when_a_pdf_is_missing(tmp_path, monkeypatch, missing, listed):
+    """A renderer failure must fail the visual proof, including a path whose PDF does not exist."""
+    from spec_surgeon.render import libreoffice
+
+    def incomplete_render(files, out_dir, *, workers, log, detail):
+        out_dir.mkdir()
+        result = {}
+        for source in files:
+            pdf = out_dir / (source.stem + ".pdf")
+            if source.name != missing:
+                pdf.write_bytes(b"placeholder: the missing-PDF gate must fail before rasterization")
+            if source.name != missing or listed:
+                result[source] = pdf
+        log(f"{missing}: no PDF came out of LibreOffice; it printed: document could not be loaded")
+        detail("LibreOffice conversion attempted for both documents")
+        return result
+
+    monkeypatch.setattr(libreoffice, "find_soffice", lambda: "test-soffice")
+    monkeypatch.setattr(libreoffice, "render_pdfs", incomplete_render)
+    with pytest.raises(AssertionError, match=f"LibreOffice did not produce PDFs for {missing}") as exc:
+        test_the_watermark_is_drawn_behind_every_page(tmp_path)
+    assert "document could not be loaded" in str(exc.value)
+    assert "conversion attempted for both documents" in str(exc.value)

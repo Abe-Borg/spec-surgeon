@@ -14,7 +14,8 @@ import pytest
 from make_fixtures import build
 from spec_surgeon.gui import Session
 from test_codegen import GOOD_OP
-from test_compiler import FakeClient, resp, tool
+from test_compiler import (FakeClient, resp, tool, remove_outcome_proposal, header_outcome_proposal,
+                           generate_reviewed_custom)
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
@@ -34,13 +35,16 @@ def log_to(lines):
 
 
 def test_request_preview_run(folder, tmp_path):
-    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
+    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(
+        resp(tool("submit_editspec", {"spec": REMOVE})), remove_outcome_proposal()))
     lines = []
     with pytest.raises(ValueError, match="Preview first"):
         s.run(False, False, log_to(lines))
     assert s.compile("remove all headers and footers", log_to(lines)) == "Compiled."
     text = s.make_preview(render=False, log=log_to(lines))
     assert "2 plan cleanly" in text and s.preview.token in text
+    assert s.run_blocked_reason()
+    s.approve_outcomes(s.outcome_review["digest"])
     before = {f: f.read_bytes() for f in folder.glob("*.docx")}
     out = s.run(in_place=False, render=False, log=log_to(lines))
     assert "PASS 2" in out and "your files were not changed" in out
@@ -81,11 +85,14 @@ def test_questions_and_unsupported(folder, tmp_path):
     assert "reply in the chat" in msg and s.questions == ["What outcome should the header have?"]
     assert s.conversation.recovery_active  # broader planning happens in this same conversation
     s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})))
-    msg = s.compile("x", lambda m: None)
+    msg = s.compile("Set every section's header distance to 900 twips.", lambda m: None)
     assert "custom transform" in msg and [c.kind for c in s.turn.choices] == ["custom_transform"]
-    s.client = FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
-    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
-    assert "set_header_distance" in s.conversation.notes[-1]               # Claude hears what happened
+    s.client = FakeClient(header_outcome_proposal(),
+                          resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    assert "passed verification" in generate_reviewed_custom(s)
+    assert "passed its sample trials" in s.conversation.notes[-1]         # Claude hears what happened
+    s.make_preview(render=False, log=lambda m: None)
+    s.approve_outcomes(s.outcome_review["digest"])
     out = s.run(False, False, lambda m: None)
     assert "2 of 2 file(s) PASS" in out
 
@@ -96,14 +103,16 @@ def test_a_reply_replaces_the_custom_transform_and_voids_old_previews(folder, tm
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
     s = Session(folder=folder, out_root=tmp_path / "out",
                 client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                                  header_outcome_proposal(),
                                   resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})),
                                   resp(tool("submit_editspec", {"spec": REMOVE}, "s2")),
+                                  remove_outcome_proposal(),
                                   resp(tool("ask_user", {"questions": ["Really?"]}, "a3"))))
-    s.compile(REMOVE["request"], lambda m: None)          # the spec the app gets carries the user's request
-    s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
+    s.compile("Set every section's header distance to 900 twips.", lambda m: None)
+    generate_reviewed_custom(s)
     assert s.generated is not None
     assert s.reply("actually, just remove all headers and footers") == "Compiled."
-    assert s.generated is None and s.spec == REMOVE
+    assert s.generated is None and s.spec == dict(REMOVE, request="Set every section's header distance to 900 twips.")
     assert "2 plan cleanly" in s.make_preview(render=False, log=lambda m: None)
     assert "THE PREVIEW OF YOUR SPEC" in s.conversation.notes[-1]
     s.reply("hmm")
@@ -232,12 +241,14 @@ def test_the_window_chat_choice_reply_preview_and_start_over(qt, folder, tmp_pat
                                                          {"label": "Stamp instead", "kind": "alternative",
                                                           "wording": "ISSUED FOR PERMIT"}]})),
                       resp(tool("submit_editspec", {"spec": REMOVE}, "s2")),
-                      resp(tool("submit_editspec", {"spec": REMOVE}, "s3")))
+                      remove_outcome_proposal(),
+                      resp(tool("submit_editspec", {"spec": REMOVE}, "s3")),
+                      remove_outcome_proposal())
     s = Session(out_root=tmp_path / "out", client=fake)
     w, ui = window(qt, s)
     ui["vars"]["folder"].set(str(folder))
     ui["vars"]["render"].set(False)
-    ui["request"].set("remove the headers")
+    ui["request"].set("remove all headers and footers")
     w.resize(1100, 640)                                       # short enough that the chat starts below the fold
     w.show()
     ui["buttons"]["preview"].click()
@@ -251,17 +262,21 @@ def test_the_window_chat_choice_reply_preview_and_start_over(qt, folder, tmp_pat
     assert any("Exact words: «ISSUED FOR PERMIT»" in t and "approves these exact words" in t for t in labels)
     choices[0][1].click()                                     # "Every section"
     ui["wait"]()
-    assert w.stack.currentWidget() is w.preview_page and ui["buttons"]["run"].isEnabled()
+    assert w.stack.currentWidget() is w.preview_page and not ui["buttons"]["run"].isEnabled()
+    w.preview_page.outcome_approve_btn.click()
+    assert ui["buttons"]["run"].isEnabled()
     assert fake.requests[1]["messages"][-1]["content"][0]["content"].startswith("The user chose: «Every section»")
     assert ui["choices"]() == [] and not ui["preview_chat"].isHidden()
     key_before = w.preview_key
-    ui["preview_chat"].reply.setPlainText("keep the cover footer")
+    ui["preview_chat"].reply.setPlainText("remove every section's header and footer")
     ui["preview_chat"].send_btn.click()
     ui["wait"]()
-    last = fake.requests[2]["messages"][-1]["content"]
+    last = fake.requests[3]["messages"][-1]["content"]
     assert last[0]["tool_use_id"] == "s2" and "THE PREVIEW OF YOUR SPEC" in last[1]["text"]
-    assert last[-1]["text"] == "The user replied: keep the cover footer"
-    assert w.preview_key != key_before and ui["buttons"]["run"].isEnabled()
+    assert last[-1]["text"] == "The user replied: remove every section's header and footer"
+    assert w.preview_key != key_before and not ui["buttons"]["run"].isEnabled()
+    w.preview_page.outcome_approve_btn.click()
+    assert ui["buttons"]["run"].isEnabled()
     assert ui["preview_chat"].reply.toPlainText() == ""
     assert w.preview_page.save_btn.parentWidget() is not w.preview_page.continue_btn.parentWidget()
     ui["buttons"]["start_over"].click()
@@ -325,9 +340,12 @@ def test_generated_run_refuses_unpreviewed_files(folder, tmp_path):
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
     s = Session(folder=folder, out_root=tmp_path / "out",
                 client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                                  header_outcome_proposal(),
                                   resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}))))
-    s.compile("x", lambda m: None)
-    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
+    s.compile("Set every section's header distance to 900 twips.", lambda m: None)
+    assert "passed verification" in generate_reviewed_custom(s)
+    s.make_preview(render=False, log=lambda m: None)
+    s.approve_outcomes(s.outcome_review["digest"])
     (folder / "21 99 00 – NEW.docx").write_bytes(build("21 99 00", "NEW"))
     with pytest.raises(ValueError, match="since the AI-written transform was tested"):
         s.run(False, False, lambda m: None)
@@ -513,7 +531,7 @@ def test_the_window_remembers_folders_but_not_the_risky_switches_or_the_key(qt, 
     assert ui2["vars"]["in_place"].get() is False
 
 
-def test_closing_during_a_job_asks_first(qt, tmp_path):
+def test_closing_during_a_job_keeps_the_window_open(qt, tmp_path):
     import threading
     from spec_surgeon.ui.app import RecordingPrompts
     gate = threading.Event()
@@ -522,7 +540,7 @@ def test_closing_during_a_job_asks_first(qt, tmp_path):
     w.show()
     w._work("Something long", lambda log: gate.wait(30) and "finished")
     w.close()
-    assert w.isVisible() and prompts_.shown[-1][0] == "ask"
+    assert w.isVisible() and not prompts_.shown
     gate.set()
     ui["wait"]()
 
@@ -721,6 +739,7 @@ def test_the_window_runs_the_custom_transform_offered_in_the_chat(qt, folder, tm
     unsupported = {"request": "r", "summary": "Set the header distance.", "unsupported": "no op sets it alone",
                    "proposal": "set_header_distance"}
     fake = FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                      header_outcome_proposal(),
                       resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
     s = Session(out_root=tmp_path / "out", client=fake)
     w, ui = window(qt, s)
@@ -735,8 +754,12 @@ def test_the_window_runs_the_custom_transform_offered_in_the_chat(qt, folder, tm
     button.click()
     ui["wait"]()
     p = w.preview_page
-    assert w.stack.currentWidget() is p and not p.generated_card.isHidden() and not p.samples_card.isHidden()
-    assert p.samples.count() == 2 and ui["buttons"]["run"].isEnabled()                # both files fit the automatic allowance
+    assert w.stack.currentWidget() is p and s.generated is None and not ui["buttons"]["run"].isEnabled()
+    p.outcome_approve_btn.click()
+    ui["wait"]()
+    assert not p.generated_card.isHidden() and not p.samples_card.isHidden()
+    assert p.samples.count() == 2                                              # both files fit the sample allowance
+    assert ui["buttons"]["run"].isEnabled()
     assert not w.run_page.inplace_rb.isEnabled()                            # custom transforms write copies only
     before = {f: f.read_bytes() for f in folder.glob("*.docx")}
     ui["buttons"]["run"].click()

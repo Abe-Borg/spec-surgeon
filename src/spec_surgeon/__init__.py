@@ -1,4 +1,4 @@
-"""Spec Surgeon — fast, provably lossless surgical edits to .docx files.
+"""Spec Surgeon — surgical edits to .docx files with independent verification records.
 
 Architecture (see README):
   Tier 1  deterministic engine (this package): fingerprint → plan → apply → verify → render → guard

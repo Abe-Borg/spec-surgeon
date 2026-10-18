@@ -68,6 +68,23 @@ def test_pinned_template_is_available_in_both_sandbox_phases(case, tmp_path):
     assert result.output.read_bytes() == source.read_bytes()
 
 
+def test_template_inputs_preserve_source_snapshot_and_custom_process_limits(case, tmp_path):
+    source, template, contract, arguments = case
+    approved = source.read_bytes()
+    original_template = template.read_bytes()
+    live = build("23 05 00", "SOURCE SAVED AFTER APPROVAL")
+    source.write_bytes(live)
+    result = run_in_sandbox(READ_TEMPLATE, source, {}, arguments, tmp_path / "snapshot",
+                            goal_contract=contract, source_bytes=approved, output_bytes=len(approved) + 8192)
+    assert result.ok, (result.error, result.stderr)
+    assert result.output.read_bytes() == approved
+    limited = run_in_sandbox(READ_TEMPLATE, source, {}, arguments, tmp_path / "limited",
+                             goal_contract=contract, source_bytes=approved, output_bytes=len(approved) - 1)
+    assert not limited.ok and limited.code == "resource-limit"
+    assert not (tmp_path / "limited" / "out.docx").exists()
+    assert source.read_bytes() == live and template.read_bytes() == original_template
+
+
 def test_template_access_does_not_let_a_noop_claim_goal_completion(case, tmp_path):
     source, _, contract, arguments = case
     result = trial(READ_TEMPLATE, source, {}, arguments, tmp_path / "trial", goal_contract=contract,

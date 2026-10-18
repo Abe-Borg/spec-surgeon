@@ -152,7 +152,8 @@ def _v_tab_ok(it: Item, text: str, tabs: bool) -> bool:
 
 
 def v_check_edits(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str, bool]], tracked: bool,
-                  in_field: Set[Any], tabs: bool = False) -> List[Tuple[int, int, str, bool]]:
+                  in_field: Set[Any], tabs: bool = False,
+                  allow_tracked_format_split: bool = False) -> List[Tuple[int, int, str, bool]]:
     """The edits sorted, after the rules; a ValueError says the plan should have refused. ``tabs``: a pure deletion may
     cover w:tab items."""
     by_pos = {it.pos: k for k, it in enumerate(items) if it.pos is not None}
@@ -187,7 +188,7 @@ def v_check_edits(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str,
                                                                        and parent.getparent() is p)):
                     raise ValueError(f"edit ({start}, {end}) is tracked across or inside a "
                                      f"{r.getparent().tag.split('}')[-1]} other than one pending insertion")
-                if r.find(W + "rPr/" + W + "rPrChange") is not None:
+                if r.find(W + "rPr/" + W + "rPrChange") is not None and not allow_tracked_format_split:
                     raise ValueError(f"edit ({start}, {end}) is tracked in a run carrying w:rPrChange")
         if drop:
             for r in runs:
@@ -364,7 +365,8 @@ def check_deleted_paragraph(src_p, out_p, author: Optional[str], old_ids: Set[st
 
 def check_edited_paragraph(src_p, out_p, edits: Sequence[Tuple[int, int, str, bool]], tracked: bool,
                            author: Optional[str], in_field: Set[Any], old_ids: Set[str], where: str,
-                           errs: List[str], tabs: bool = False, ppr: bool = True, base=None) -> None:
+                           errs: List[str], tabs: bool = False, ppr: bool = True, base=None,
+                           allow_tracked_format_split: bool = False) -> None:
     """``out_p`` must be ``src_p`` with exactly ``edits`` (the verifier's own derivation), item for item.
     ``tabs``: pure deletions may cover w:tab items (built-in batch 5). ``ppr=False``: the caller checks the paragraph's
     ``w:pPr`` itself (an op that also restyles it). ``base``: a copy of ``src_p`` the caller changed in the run
@@ -372,7 +374,8 @@ def check_edited_paragraph(src_p, out_p, edits: Sequence[Tuple[int, int, str, bo
     judged on ``src_p``."""
     items = v_items(src_p)
     try:
-        edits = v_check_edits(src_p, items, edits, tracked, in_field, tabs=tabs)
+        edits = v_check_edits(src_p, items, edits, tracked, in_field, tabs=tabs,
+                              allow_tracked_format_split=allow_tracked_format_split)
     except ValueError as e:
         errs.append(f"{where}: {e} — the op must refuse this paragraph")
         return

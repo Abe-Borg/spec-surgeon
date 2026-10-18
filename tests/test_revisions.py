@@ -261,8 +261,9 @@ def test_marks_that_stay_whole_are_fine(kind, action):
 
 
 def test_a_refused_kind_nobody_chose_is_left_alone():
-    plan, out, rec = run(awkward("row"), {"action": "accept", "authors": ["Jack"]})          # Jeremy's row stays
-    assert rec.passed and out == awkward("row")
+    source = awkward("row")
+    plan, out, rec = run(source, {"action": "accept", "authors": ["Jack"]})          # Jeremy's row stays
+    assert rec.passed and out == source
 
 
 @pytest.mark.parametrize("params", [{}, {"action": "keep"}, {"action": "accept", "authors": []},

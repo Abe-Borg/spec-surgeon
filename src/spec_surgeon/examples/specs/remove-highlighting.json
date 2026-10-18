@@ -1,0 +1,24 @@
+{
+  "request": "Remove the yellow highlighting everywhere; leave other colours",
+  "summary": "Yellow highlighting comes off the body, headers, footers and notes (plain formatting change); other highlight colours, the text and all other formatting stay.",
+  "assumptions": [
+    "highlighting is Word's highlighter (Home → Text Highlight Color), not paragraph or text shading",
+    "a style that highlights its text is left as it is (flagged)",
+    "a file without yellow highlighting is left as it is"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "remove_highlight",
+      "params": {
+        "colors": [
+          "yellow"
+        ]
+      }
+    }
+  ]
+}

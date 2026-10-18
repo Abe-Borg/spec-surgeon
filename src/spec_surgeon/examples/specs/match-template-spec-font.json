@@ -1,0 +1,101 @@
+{
+  "request": "match the font of the template spec",
+  "summary": "Set the text in the template spec's font and size — Arial 10 pt — where it is now in the batch's body size, 9 pt: runs that name their own font or set their own 9 pt size, every style that names a font or sets 9 pt, and the document defaults — body, headers, footers, footnotes and endnotes. Symbol fonts, the East Asian font slot and text in other sizes (8 pt headers and footers, larger notes and titles) are left alone.",
+  "assumptions": [
+    "the template spec's body text is Arial 10 pt; the batch's body text is 9 pt",
+    "only 9 pt text becomes 10 pt: text in any other size (8 pt headers and footers, 12 pt notes, titles) keeps it",
+    "Symbol/Wingdings runs and styles (bullets, special characters) are left alone",
+    "a run gets the new font or size only where it sets its own; otherwise it follows its style, which changes",
+    "the eastAsia font slot and the complex-script size are unchanged",
+    "whole-document formatting is applied plain, not as tracked formatting changes (decision §14.1)"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_font",
+      "select": {
+        "scope": [
+          "document",
+          "headers",
+          "footers",
+          "footnotes",
+          "endnotes"
+        ],
+        "runs": "all"
+      },
+      "params": {
+        "font": "Arial",
+        "size": 10,
+        "size_from": [
+          9
+        ],
+        "only_where_defined": true
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    },
+    {
+      "op": "set_style_font",
+      "select": {
+        "styles": "all"
+      },
+      "params": {
+        "font": "Arial",
+        "size": 10,
+        "size_from": [
+          9
+        ]
+      },
+      "expect": {
+        "text_diffs": 0
+      }
+    },
+    {
+      "op": "set_doc_defaults_font",
+      "params": {
+        "font": "Arial",
+        "size": 10,
+        "size_from": [
+          9
+        ]
+      },
+      "expect": {
+        "text_diffs": 0
+      }
+    }
+  ],
+  "assertions": [
+    {
+      "kind": "effective_font",
+      "value": "Arial",
+      "slots": [
+        "ascii",
+        "hAnsi",
+        "cs"
+      ],
+      "size": 10,
+      "size_from": [
+        9
+      ],
+      "scope": [
+        "document",
+        "headers",
+        "footers",
+        "footnotes",
+        "endnotes"
+      ],
+      "include_paragraph_marks": true
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

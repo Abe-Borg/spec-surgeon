@@ -10,7 +10,10 @@ The app shows the complete proposed outcomes, target scope, counts and exact new
 wording. Choosing that plan approves that snapshot. Changed input bytes or altered
 plans require a fresh review. Recovery first tries deterministic implementations,
 then investigates unresolved files with inspection, analysis and generated methods.
-Single-target ambiguities become source-bound choices in the same chat. A revision
+Single-target ambiguities become source-bound choices in the same chat.
+Free-text answers to investigation and critic questions resume the existing recovery
+in both the terminal and desktop, retaining its evidence and ready files. Target
+ambiguity still requires a bound choice or a freshly reviewed plan. A revision
 after completion creates a new reviewed outcome and a separate recovery folder.
 Verified copies use the existing review/export path; originals remain unchanged.
 

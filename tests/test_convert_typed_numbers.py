@@ -233,7 +233,7 @@ def test_a_list_that_already_numbers_paragraphs_refuses_when_they_would_move():
     plan, out, rec = converting(src, tracked=False)
     assert rec.passed, rec.to_markdown()
     assert numbers(out)["Second paragraph under part 2."] == "B."
-    assert len(plan.property_assertions) == 1                      # nothing imported
+    assert not any(a["kind"] == "styles_imported" for a in plan.property_assertions)  # nothing imported
 
 
 def _patched_template(tmp_path, fn) -> str:

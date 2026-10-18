@@ -26,6 +26,17 @@ def _check_schemas(folder, expected):
     return len(actual)
 
 
+def _check_worked_examples(expected):
+    from spec_surgeon import catalog
+
+    actual = {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+              for p in catalog.EXAMPLES_DIR.glob("*.json")}
+    assert expected and actual == expected, "Packaged worked examples differ from the source inventory"
+    assert catalog.worked_examples() == [json.loads(p.read_text(encoding="utf-8"))
+                                         for p in sorted(catalog.EXAMPLES_DIR.glob("*.json"))]
+    return len(actual)
+
+
 def _gui(request, result):
     import anthropic
     import pymupdf
@@ -41,6 +52,7 @@ def _gui(request, result):
 
     assert getattr(sys, "frozen", False), "Test must run from the installed executable"
     schema_count = _check_schemas(SCHEMA_DIR, request["schemas"])
+    example_count = _check_worked_examples(request["worked_examples"])
     assert (SKILL_DIR / "SKILL.md").is_file()
     assert "set_page_setup.py" in _examples()
     examples = catalog.worked_examples()
@@ -98,7 +110,8 @@ def _gui(request, result):
     _updater_offline(updater)
     result.update({"ok": True, "version": __version__, "gui_preview_run": "PASS 2",
                    "process_pool": "PASS", "isolated_generated_op": "PASS",
-                   "schemas": schema_count, "sources_unchanged": True, "qt_style": app.style().name(),
+                   "schemas": schema_count, "worked_examples": example_count,
+                   "sources_unchanged": True, "qt_style": app.style().name(),
                    "updater_offline": "PASS", "credential_manager": "PASS",
                    "anthropic": anthropic.__version__, "pymupdf": pymupdf.VersionBind, "word_modules": True})
 

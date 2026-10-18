@@ -47,7 +47,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from . import __version__
 from . import diagnostics as diag
-from .editspec import SpecError, is_template_file, spec_templates, validate_spec
+from .editspec import SpecError, is_template_file, spec_input_files, spec_templates, validate_spec
 
 CHAIN_KEYS = {"name", "description", "stages", "assertions"}
 STAGE_KEYS = {"name", "recipe", "spec"}
@@ -240,6 +240,9 @@ class ChainResult:
     finished: str = ""
     log_path: Optional[Path] = None               # logs/chain.log
     stopped: Optional[str] = None                 # the chain itself failed: the stage and the error
+    goal_contract: Optional[Dict[str, Any]] = None
+    goal_bindings: Dict[str, Any] = field(default_factory=dict)
+    input_snapshots: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
     def name(self) -> str:
@@ -285,17 +288,20 @@ def _stop(cf: ChainFile, stage: int, status: str, code: str, reason: str, detail
 
 
 def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, workers: int = 0, renderer: str = "auto",
-              do_render: bool = True, in_place: bool = False, progress=None) -> ChainResult:
+              do_render: bool = True, in_place: bool = False, progress=None, *,
+              goal_contract=None, goal_bindings=None, approved_inputs=None) -> ChainResult:
     with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), chain_id=diag.new_id()), \
             diag.span("chain", out_dir=str(out_dir), workers=workers, renderer=renderer,
                       do_render=do_render, in_place=in_place) as outcome:
-        result = _run_chain(inputs, chain, out_dir, workers, renderer, do_render, in_place, progress)
+        result = _run_chain(inputs, chain, out_dir, workers, renderer, do_render, in_place, progress,
+                            copy.deepcopy(goal_contract), copy.deepcopy(goal_bindings or {}), copy.deepcopy(approved_inputs))
         outcome.update(counts=result.counts(), timings=result.timings)
         return result
 
 
 def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, workers: int, renderer: str,
-               do_render: bool, in_place: bool, progress) -> ChainResult:
+               do_render: bool, in_place: bool, progress, goal_contract=None, goal_bindings=None,
+               approved_inputs=None) -> ChainResult:
     """Run every stage of ``chain`` in order, each a ``run_batch`` in ``<out>/stage-NN/`` on the files the stage
     before it verified (the pin above); then the chain's own report. Raises ``ChainError`` for an unusable chain and
     ``ValueError`` for inputs inside the results folder — both before anything is created. A stage's own failure (the
@@ -306,7 +312,17 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
     from . import guard
     chain = copy.deepcopy(chain)                 # callers cannot weaken requirements during a stage callback
     validate_chain(chain)
-    if in_place and chain.get("assertions"):
+    if approved_inputs is not None:
+        digest = hashlib.sha256(json.dumps(chain_key(chain), sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+        if (not isinstance(approved_inputs, dict) or approved_inputs.get("spec") != digest
+                or not isinstance(approved_inputs.get("templates"), dict)):
+            raise ValueError("The chain or approval evidence changed since the preview; preview again before running.")
+    stage_in_place = in_place and goal_contract is None
+    goal_inputs = []
+    if goal_contract is not None:
+        from .goals import goal_templates
+        goal_inputs = goal_templates(goal_contract)
+    if stage_in_place and chain.get("assertions"):
         raise ChainError("chains with final assertions require copies mode: stage-by-stage write-back cannot "
                          "withhold a file that fails a final requirement")
     renaming = [stage_name(st, i) for i, st in enumerate(chain["stages"], 1) if spec_renames_outputs(st["spec"])]
@@ -315,14 +331,22 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                          f"only — run it without in-place")
     out_dir = Path(out_dir)
     files = expand_inputs(inputs)
-    check_inputs_outside(files, out_dir)          # before anything is created: a run never writes where it reads
+    auxiliary = [path for stage in chain["stages"] for path in spec_input_files(stage["spec"])]
+    check_inputs_outside([*files, *auxiliary, *goal_inputs], out_dir)  # includes inputs old results could destroy
+    templates = chain_templates(chain)
+    skipped = [f for f in files if is_template_file(f, templates)]
+    files = [f for f in files if f not in skipped]
+    from .input_snapshots import capture_sources
+    source_identities, source_refusals = capture_sources(files, approved_inputs)
     with diag.scope(out_dir / diag.LOGS / "events.jsonl"), \
             diag.span("chain.execute", file_count=len(files), stage_count=len(chain["stages"]), workers=workers,
                       renderer=renderer, do_render=do_render, in_place=in_place) as execution:
-        templates = chain_templates(chain)
-        skipped = [f for f in files if is_template_file(f, templates)]
-        files = [f for f in files if f not in skipped]
-        result = ChainResult(out_dir=out_dir, chain=chain, in_place=in_place, skipped=[str(f) for f in skipped])
+        result = ChainResult(out_dir=out_dir, chain=chain, in_place=in_place, skipped=[str(f) for f in skipped],
+                             goal_contract=goal_contract, goal_bindings=goal_bindings or {})
+        from .input_snapshots import snapshot_inputs
+        out_dir.mkdir(parents=True, exist_ok=True)
+        execution_chain, result.input_snapshots = snapshot_inputs(chain, out_dir,
+            approved_inputs["templates"] if approved_inputs is not None else None, extra_paths=goal_inputs)
         result.stages = [StageRun(index=i, name=stage_name(st, i), spec=st["spec"], out_dir=out_dir / STAGE_DIR.format(i))
                          for i, st in enumerate(chain["stages"], 1)]
         result.environment = diag.environment()
@@ -342,6 +366,7 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                 _empty(sr.out_dir / "outputs")         # the stage's own copies are this run's only (its inputs lie in
                 _empty(sr.out_dir / "failed")          # the stage before it, never here)
                 alive = [cf for cf in result.files if cf.stopped_at is None]
+                stage_sources = source_identities if sr.index == 1 else {}
                 # the pin: stage N+1 reads only the bytes stage N verified
                 if sr.index > 1:
                     for cf in alive:
@@ -360,6 +385,17 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                             cf.stage_status.append("DRIFTED")
                             cf.results.append(None)
                             log(f"  {cf.source.name}: {cf.reason}")
+                        else:
+                            try:
+                                identity = guard.acquire(path)
+                                if identity.md5 != prev.output_md5:
+                                    raise guard.GuardError("the prior stage's verified bytes changed during acquisition")
+                                stage_sources[str(path.resolve())] = identity
+                            except (guard.GuardError, OSError) as exc:
+                                _stop(cf, sr.index, "EXCEPTION", DRIFT_CODE, str(exc))
+                                cf.stage_status.append("DRIFTED")
+                                cf.results.append(None)
+                                log(f"  {cf.source.name}: {cf.reason}")
                     alive = [cf for cf in result.files if cf.stopped_at is None]
                 sr.inputs = [current[str(cf.source)] for cf in alive]
                 log(f"stage {sr.index} of {len(result.stages)} — {sr.name}: {len(sr.inputs)} file(s)"
@@ -373,8 +409,11 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                 with diag.scope(chain_stage=sr.index, chain_stage_name=sr.name), \
                         diag.span("chain.stage", input_count=len(sr.inputs)) as outcome:
                     sr.batch = run_batch([str(p) for p in sr.inputs], "edit-spec", {}, sr.out_dir, workers=workers,
-                                         renderer=renderer, do_render=do_render, in_place=in_place, progress=log,
-                                         spec=sr.spec)
+                                         renderer=renderer, do_render=do_render, in_place=stage_in_place, progress=log,
+                                         spec=execution_chain["stages"][sr.index - 1]["spec"],
+                                         _input_snapshots=result.input_snapshots, _public_spec=sr.spec,
+                                         _source_identities=stage_sources,
+                                         _source_refusals=source_refusals if sr.index == 1 else None)
                     outcome["counts"] = sr.batch.counts()
                 result.renderer = result.renderer or sr.batch.renderer
                 by_input = {str(Path(fr.source).resolve()): fr for fr in sr.batch.files}
@@ -401,7 +440,7 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                                         f"({' / '.join(earlier)}) added from its template — the template's part is not "
                                         f"what the file shows now")
                     if fr.status == "PASS":
-                        if not in_place:
+                        if not stage_in_place:
                             current[str(cf.source)] = Path(fr.output)
                             cf.out_name = fr.out_name or cf.out_name     # a stage that names files (name_output): the
                         cf.output = Path(fr.output) if fr.output else cf.output   # chain's copy keeps the new name
@@ -415,14 +454,14 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                         e = fr.exception or {}
                         _stop(cf, sr.index, "EXCEPTION", e.get("code", "exception"),
                               f"stage {sr.index} ({sr.name}): {e.get('reason', '')}", dict(e.get("details") or {}))
-                    if in_place and sr.index > 1:
+                    if stage_in_place and sr.index > 1:
                         cf.reason += (f" — stages 1…{sr.index - 1} were written back over the file; stage {sr.index} "
                                       f"and later were not applied")
-                    elif in_place:
+                    elif stage_in_place:
                         cf.reason += " — the file was left untouched"
             stage_label = "deliver"
             with diag.span("chain.delivery"):
-                _deliver(result, current, in_place, verified_bytes, guard, log)
+                _deliver(result, current, in_place, verified_bytes, guard, log, goal_contract, goal_bindings or {})
             result.timings["total"] = time.perf_counter() - t_start
             stage_label = "reports"
             result.finished = datetime.now().astimezone().isoformat(timespec="seconds")
@@ -458,10 +497,12 @@ def _empty(folder: Path) -> None:
         shutil.rmtree(folder)
 
 
-def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, verified_bytes, guard, log) -> None:
+def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, verified_bytes, guard, log,
+             goal_contract=None, goal_bindings=None) -> None:
     """The chain's own delivery: in copies mode, every file that passed every stage is copied — re-hashed against the
     last stage's verified bytes — into ``<out>/outputs/``; in place the last stage already wrote it back."""
     t0 = time.perf_counter()
+    from .input_snapshots import changed_inputs
     n = len(result.stages)
     for cf in result.files:
         if cf.stopped_at is not None:
@@ -476,7 +517,13 @@ def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, veri
             continue
         cf.noop = all(bool(fr.noop) for fr in cf.results)
         last = cf.results[-1]
-        if in_place:
+        if in_place and goal_contract is None:
+            if (changed := changed_inputs(result.input_snapshots)):
+                _stop(cf, n, "EXCEPTION", DRIFT_CODE,
+                      "auxiliary input changed during the chain: " + ", ".join(changed)
+                      + "; earlier verified stages may already have been written back")
+                log(f"  {cf.source.name}: {cf.reason}")
+                continue
             written = [fr.delivered_to for fr in cf.results if fr.delivered_to]
             cf.status = "PASS"
             cf.delivered_to = written[-1] if written else None
@@ -504,8 +551,60 @@ def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, veri
                                  "requirements. Revise the operations or their order and rerun on the original files."
                 log(f"  {cf.source.name}: not delivered — {cf.reason}")
                 continue
+        try:
+            original = cf.results[0].identity
+            drift = guard.drifted(original) if original is not None else "the original source identity is missing"
+        except OSError as exc:
+            drift = str(exc)
+        if drift:
+            _stop(cf, n, "EXCEPTION", DRIFT_CODE,
+                  f"original source changed during the chain: {drift}; the stale copy was not delivered")
+            log(f"  {cf.source.name}: not delivered — {cf.reason}")
+            continue
+        if goal_contract is not None:
+            from .batch import verify_delivery_goal
+            verdict = verify_delivery_goal(cf.source, original, data, goal_contract,
+                                           (goal_bindings or {}).get(str(cf.source.resolve())))
+            errors = verdict.get("errors", [])
+            cf.outcomes.append({"index": len(cf.outcomes) + 1, "kind": "approved_goal",
+                                "status": "PASS" if verdict.get("passed") else "FAIL",
+                                "summary": "approved original-to-final effects independently verified"
+                                if verdict.get("passed") else "; ".join(errors), "errors": errors, "details": verdict})
+            if not verdict.get("passed"):
+                _stop(cf, n, "FAIL", OUTCOME_CODE, "approved original-to-final effects failed: " + "; ".join(errors),
+                      {"outcomes": cf.outcomes, "phase": "final requirements"})
+                cf.category = "Final Requirements Not Satisfied"
+                cf.explanation = "Revise the implementation to satisfy the approved outcome and rerun on the original files."
+                log(f"  {cf.source.name}: not delivered — {cf.reason}")
+                continue
+        if (changed := changed_inputs(result.input_snapshots)):
+            _stop(cf, n, "EXCEPTION", DRIFT_CODE,
+                  "auxiliary input changed during the chain: " + ", ".join(changed) + "; not delivered")
+            log(f"  {cf.source.name}: not delivered — {cf.reason}")
+            continue
+        if in_place:
+            try:
+                delivered = guard.write_back(original, data)
+            except (guard.GuardError, OSError) as exc:
+                _stop(cf, n, "FAIL", DELIVER_CODE, str(exc))
+                log(f"  {cf.source.name}: not delivered — {cf.reason}")
+                continue
+            cf.status, cf.delivered_to = "PASS", delivered.path
+            diag.event("chain.delivered", source=str(cf.source), in_place=True, delivered_to=cf.delivered_to)
+            continue
         dest = result.out_dir / "outputs" / cf.out_name
         dest.parent.mkdir(parents=True, exist_ok=True)
+        # Final goal verification may take time. Recheck after it and directory I/O,
+        # immediately before publishing the copy, as write_back does for originals.
+        try:
+            drift = guard.drifted(original)
+        except OSError as exc:
+            drift = str(exc)
+        if drift:
+            _stop(cf, n, "EXCEPTION", DRIFT_CODE,
+                  f"original source changed before delivery: {drift}; the stale copy was not delivered")
+            log(f"  {cf.source.name}: not delivered — {cf.reason}")
+            continue
         dest.write_bytes(data)
         cf.status, cf.delivered_to, cf.output = "PASS", str(dest), dest
         diag.event("chain.delivered", source=str(cf.source), in_place=False, delivered_to=cf.delivered_to,

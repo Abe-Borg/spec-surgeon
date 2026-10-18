@@ -192,7 +192,7 @@ def run_analysis(batch, source: str, files=None, inputs=None):
             elif result_path.stat().st_size > limits.output_bytes + 4096:
                 result = {"ok": False, "error": "analysis output exceeded its configured allowance"}
             else:
-                result = json.loads(result_path.read_text())
+                result = json.loads(result_path.read_text(encoding="utf-8"))
         except subprocess.TimeoutExpired:
             result = {"ok": False, "error": f"analysis timed out after {limits.seconds} seconds"}
     manifest = {"version": 1, "source": source, "source_sha256": _sha(source.encode()), "snapshots": snapshots,

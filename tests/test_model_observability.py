@@ -119,6 +119,7 @@ def test_budget_refusal_is_visible_without_opening_another_request(tmp_path):
 def test_bad_diagnostic_response_metadata_cannot_discard_success(tmp_path):
     class UnreadableUsage:
         model = llm.DEFAULT_MODEL
+        stop_reason = "end_turn"
 
         @property
         def usage(self):

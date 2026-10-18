@@ -117,9 +117,14 @@ class DeleteParagraphs(Op):
                                            f"(bookmarks and proofing markers are fine; hyperlinks, fields, content "
                                            f"controls and comment anchors are not)",
                                            "structure", {"part": part, "paragraph": bi})
-                    runs = p.findall(W + "r")
-                    if runs:
-                        d_del += 1
+                    # Each uninterrupted run group needs its own revision. A
+                    # bookmark or proofing mark between groups must stay at the
+                    # same character boundary when the deletion is rejected.
+                    previous_run = False
+                    for child in p:
+                        is_run = child.tag == W + "r"
+                        d_del += int(is_run and not previous_run)
+                        previous_run = is_run
                     d_del_mark += 1
                     frag.accepted_views.append({"part": part, "block_index": bi, "accepted_view": ""})
                     frag.touches.append((part, str(bi), "text"))
@@ -203,20 +208,22 @@ class DeleteParagraphs(Op):
                 if not tracked:
                     p.getparent().remove(p)
                     continue
-                # Tracked: mark the paragraph mark deleted, and wrap the runs in one w:del with w:delText; inert
-                # children (bookmark anchors, proofing markers) stay where they are, after the wrapper.
+                # Keep inline anchors between the same run groups. Grouping all
+                # runs into one wrapper would collapse bookmarks on reject-all.
                 mrpr = mark_rpr(p, create=True)
                 del_mark = etree.Element(W + "del")
                 stamp.apply(del_mark, next_id[0]); next_id[0] += 1
                 insert_in_order(mrpr, del_mark, RPR_ORDER)
-                runs = [c for c in list(p) if c.tag == W + "r"]
-                if runs:
-                    first_pos = list(p).index(runs[0])
-                    del_wrap = etree.Element(W + "del")
-                    stamp.apply(del_wrap, next_id[0]); next_id[0] += 1
-                    for r in runs:
-                        p.remove(r)
-                        to_del_text(r)
-                        del_wrap.append(r)
-                    p.insert(first_pos, del_wrap)
+                del_wrap = None
+                for child in list(p):
+                    if child.tag != W + "r":
+                        del_wrap = None
+                        continue
+                    if del_wrap is None:
+                        del_wrap = etree.Element(W + "del")
+                        stamp.apply(del_wrap, next_id[0]); next_id[0] += 1
+                        p.insert(p.index(child), del_wrap)
+                    p.remove(child)
+                    to_del_text(child)
+                    del_wrap.append(child)
             pkg.write_xml(part, root)

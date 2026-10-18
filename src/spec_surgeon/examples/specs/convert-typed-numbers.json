@@ -1,0 +1,39 @@
+{
+  "request": "The paragraph numbers in these specs are typed by hand; make them real automatic numbers in our scheme",
+  "summary": "Every unnumbered paragraph that starts with a typed number of the scheme ('PART 1 -', '1.1', 'A.', '1.', 'a.') gets the matching level style of the example file (imported with its list) and loses the typed number and the space or tab after it, so the list shows the same number; a file is converted only when every paragraph then reads exactly as before.",
+  "assumptions": [
+    "the scheme's levels are the example file NUMBERING SCHEME.docx's numbered styles PRT, ART, PR1, PR2, PR3 (level 0 first); a style this file lacks is imported with its list",
+    "typed numbers in table cells stay as typed; paragraphs already numbered are never touched",
+    "a typo in the typed numbers (two 'B.'s, a skipped letter) sets the file aside instead of renumbering it",
+    "the typed numbers are removed outright (untracked, clean copies), as asked; the paragraphs' own formatting stays"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "untracked",
+  "ops": [
+    {
+      "op": "convert_typed_numbers",
+      "params": {
+        "template": "../templates/NUMBERING SCHEME.docx",
+        "levels": [
+          "PRT",
+          "ART",
+          "PR1",
+          "PR2",
+          "PR3"
+        ],
+        "tracked": false
+      },
+      "expect": {
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

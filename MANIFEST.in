@@ -4,4 +4,7 @@ recursive-include examples *.json *.docx *.md *.png
 recursive-include tests *.py *.json
 recursive-include packaging/windows *.py *.spec *.iss *.ps1 *.ico
 recursive-include src/spec_surgeon/ui/resources *.svg *.png
+recursive-include src/spec_surgeon/examples/specs *.json
 include packaging/gui_screenshot.py
+include packaging/installed_wheel_smoke.py
+include packaging/check_wheel_install.py

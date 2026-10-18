@@ -28,6 +28,7 @@ from spec_surgeon import library, vision
 from spec_surgeon.codegen import generate_op
 from spec_surgeon.gui import Session, TransformFailed
 from test_codegen import GOOD_OP
+from test_compiler import header_outcome_proposal, remove_outcome_proposal
 
 ROOT = Path(__file__).resolve().parent.parent
 SPECS = ROOT / "examples" / "specs"
@@ -93,10 +94,17 @@ def revise(f: Path) -> None:
 
 
 def offered(folder, tmp_path, *more) -> Session:
-    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(OFFER_TURN, *more))
+    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(OFFER_TURN, header_outcome_proposal(), *more))
     s.compile("put the header 0.625 in from the top", quiet)
     assert [c.kind for c in s.turn.choices] == ["custom_transform"]
     return s
+
+
+def create_approved_custom(s, *, choice_id=None, render=False):
+    s.reply(choice_id=choice_id or s.turn.choices[0].id, log=quiet, render=render)
+    assert s.pending_custom_transform is not None and s.generated is None
+    s.approve_outcomes(s.outcome_review["digest"])
+    return s.continue_custom_transform(quiet, render=render)
 
 
 def saved_entries(s) -> list:
@@ -146,7 +154,8 @@ def test_a_new_request_after_a_spec_that_names_a_folder_template_keeps_its_conve
 
 
 def test_a_new_request_over_a_folder_that_cannot_be_read_changes_nothing(folder, tmp_path):
-    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
+    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})),
+                                                                       remove_outcome_proposal()))
     assert s.compile("remove all headers and footers", quiet) == "Compiled."
     s.make_preview(render=False, log=quiet)
     conversation, preview = s.conversation, s.preview
@@ -169,25 +178,24 @@ def test_an_internal_error_while_making_the_transform_tells_claude_so_never_the_
         raise OSError("disk full")
     monkeypatch.setattr(pv, "preview_generated", broken)
     with pytest.raises(OSError, match="disk full") as e:
-        s.reply(choice_id=chosen.id, log=quiet)
+        create_approved_custom(s, choice_id=chosen.id)
     assert not isinstance(e.value, TransformFailed)                 # a defect propagates as itself
     notes = s.conversation.notes
-    assert notes == [f"The user chose: «{chosen.label}». The app could not finish the custom transform: it stopped "
-                     f"with an internal error (OSError) before any result — nothing was applied."]
+    assert any("internal error (OSError) before any result — nothing was applied" in note for note in notes)
     assert not any("outcome follows" in n or "passed verification" in n or "disk full" in n for n in notes)
     entries = saved_entries(s)                                      # the transcript is what the user saw: the choice
-    assert entries[-1]["role"] == "user" and entries[-1]["text"].startswith("Chose: ")
+    assert [entry for entry in entries if entry["role"] == "user"][-1]["text"].startswith("Chose: ")
     monkeypatch.setattr(pv, "preview_generated", real)
     s.reply("so did it work?")
     sent = sent_texts(s.client)                                     # the next message Claude gets
-    assert "[note from the app] " + notes[0] in sent
+    assert all("[note from the app] " + note in sent for note in notes)
     assert not any("outcome follows" in (t or "") for t in sent)
 
 
-def test_a_transform_that_comes_out_still_says_the_outcome_follows_and_what_it_was(folder, tmp_path):
+def test_a_transform_that_comes_out_records_its_actual_result_after_outcome_approval(folder, tmp_path):
     s = offered(folder, tmp_path, WRITER)
-    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=quiet)
-    assert "outcome follows" in s.conversation.notes[0] and "passed verification" in s.conversation.notes[1]
+    assert "passed verification" in create_approved_custom(s)
+    assert any("passed its sample trials against the approved outcome contract" in n for n in s.conversation.notes)
 
 
 # ---- a sample edited while the transform is being written -----------------------------------------------------------
@@ -205,7 +213,7 @@ def test_a_sample_edited_while_the_transform_is_written_is_never_approved_with_i
         return g
     monkeypatch.setattr(cg, "generate_op", written_while_edited)
     s = offered(folder, tmp_path, WRITER)
-    said = s.reply(choice_id=s.turn.choices[0].id, log=quiet)
+    said = create_approved_custom(s)
     assert "passed verification" in said and "press Preview to try it again" in said
     assert edited and s.generated is not None
     assert s.generated_token == ""                                  # its token: none until it is tried again
@@ -217,9 +225,13 @@ def test_a_sample_edited_while_the_transform_is_written_is_never_approved_with_i
     with pytest.raises(ValueError, match="preview again"):
         s.save_operation("Header distance")                         # nor saved
     lines = []
-    assert "AI-written transform ready" in s.make_preview(render=False, log=lines.append)
-    assert any("trying it again" in m for m in lines)              # Preview tries it on the file as it is now
-    assert (s.out_dir / "retrial").is_dir()
+    assert "Status: PROPOSED" in s.make_preview(render=False, log=lines.append)
+    assert s.pending_custom_transform is not None and s.outcome_approval == ""
+    with pytest.raises(ValueError, match="approve|approval"):
+        s.run(False, False, quiet)
+    s.approve_outcomes(s.outcome_review["digest"])
+    assert "checked again" in s.continue_custom_transform(lines.append, render=False)
+    assert all((s.out_dir / "retrial-01" / f"{i:02d}" / "result.json").is_file() for i in range(2))
     assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
 
 
@@ -239,7 +251,8 @@ def test_a_sample_edited_while_your_operation_is_tried_is_never_approved_with_it
     monkeypatch.setattr(cg, "trial", real)
     with pytest.raises(ValueError, match="press Preview again"):
         s.run(False, False, quiet)
-    assert "ready" in s.make_preview(render=False, log=quiet)
+    s.make_preview(render=False, log=quiet)
+    assert s.generated_token and s.run_blocked_reason() == ""
     assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
 
 
@@ -313,7 +326,8 @@ def test_an_operation_that_does_not_pass_keeps_the_typed_request_and_its_convers
 # ---- review-16 / review-12: Save to library ---------------------------------------------------------------------------
 
 def _previewed_spec(qt, folder, tmp_path, prompts):
-    s = Session(out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
+    s = Session(out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})),
+                                                          remove_outcome_proposal()))
     w, ui = window(qt, s, prompts=prompts)
     ui["vars"]["folder"].set(str(folder))
     ui["vars"]["render"].set(False)
@@ -387,7 +401,7 @@ def test_a_custom_transform_s_blocking_finding_acknowledged_then_runs_edited_cop
             {"severity": "block", "file": "21 00 00 – SPEC 0.docx", "page": 1, "text": "the header moved off the page"}])
     monkeypatch.setattr(vision, "review_samples", review)
     s = offered(folder, tmp_path, WRITER)
-    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=quiet, render=True)
+    assert "passed verification" in create_approved_custom(s, render=True)
     assert len(intents) == 1 and intents[0].startswith("A ONE-OFF CUSTOM TRANSFORM (set_header_distance)")
     assert s.generated_preview.review.blocking() and s.generated_token
     assert "visual check flagged 1 problem" in s.run_blocked_reason()
@@ -422,8 +436,8 @@ def test_your_operation_after_a_spec_that_names_a_folder_template_is_approved_fo
     assert "3 of 3 file(s) PASS" in s.run(False, False, quiet)      # approved for the batch it runs
 
 
-def test_the_window_tries_again_at_once_a_transform_whose_sample_was_edited_while_it_was_written(qt, folder, tmp_path,
-                                                                                                  monkeypatch):
+def test_the_window_requires_fresh_outcome_approval_before_retrying_a_transform_edited_while_written(qt, folder, tmp_path,
+                                                                                                    monkeypatch):
     import spec_surgeon.codegen as cg
     real = cg.generate_op
 
@@ -432,7 +446,7 @@ def test_the_window_tries_again_at_once_a_transform_whose_sample_was_edited_whil
         revise(samples[0])
         return g
     monkeypatch.setattr(cg, "generate_op", written_while_edited)
-    fake = FakeClient(OFFER_TURN, WRITER)                            # no third call: trying again needs no Claude
+    fake = FakeClient(OFFER_TURN, header_outcome_proposal(), WRITER)  # planning is separate from generation
     s = Session(out_root=tmp_path / "out", client=fake)
     w, ui = window(qt, s)
     ui["vars"]["folder"].set(str(folder))
@@ -442,9 +456,19 @@ def test_the_window_tries_again_at_once_a_transform_whose_sample_was_edited_whil
     ui["wait"]()
     (cid, button), = ui["choices"]()
     button.click()
+    ui["wait"]()
+    w.preview_page.outcome_approve_btn.click()
     log = ui["wait"]()
-    assert "changed while the custom transform was being written" in log and "trying it again" in log
-    assert (s.out_dir / "retrial").is_dir() and len(fake.requests) == 2
+    assert "changed while the custom transform was being written" in log and "press Preview" in log
+    assert not ui["buttons"]["run"].isEnabled()
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert s.pending_custom_transform is not None and s.outcome_approval == ""
+    assert not ui["buttons"]["run"].isEnabled()
+    w.preview_page.outcome_approve_btn.click()
+    ui["wait"]()
+    assert all((s.out_dir / "retrial-01" / f"{i:02d}" / "result.json").is_file() for i in range(2))
+    assert len(fake.requests) == 3
     assert ui["buttons"]["run"].isEnabled(), w.run_page.run_hint.text()
     ui["buttons"]["run"].click()
     ui["wait"]()
@@ -461,7 +485,7 @@ def test_turning_render_pages_on_makes_the_custom_transforms_preview_again_with_
     monkeypatch.setattr(vision, "review_samples",
                         lambda intent, samples, *a, **k: reviews.append(intent) or vision.VisualReview(summary="ok"))
     s = offered(folder, tmp_path, WRITER)
-    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=quiet, render=False)
+    assert "passed verification" in create_approved_custom(s, render=False)
     first, token = s.generated_preview, s.generated_token
     assert first.rendered is False and first.review is None and reviews == [] and token
     s.make_preview(render=True, log=quiet)

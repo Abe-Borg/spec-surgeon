@@ -1,0 +1,23 @@
+{
+  "request": "Remove the web links from the specs but keep the words",
+  "summary": "Every external hyperlink (web addresses, e-mail) in the body, headers, footers and notes is removed; the linked words stay and lose the blue underlined link style; an address no link uses any more leaves the file. Links to a place in the document stay.",
+  "assumptions": [
+    "external links only — links to a bookmark or a table of contents entry stay",
+    "the linked words lose the Hyperlink style and look like the text around them; words with their own blue or underline keep it (flagged)",
+    "a picture's click link stays",
+    "a file with no web link is left as it is"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "remove_hyperlinks",
+      "params": {
+        "which": "external"
+      }
+    }
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "request": "Turn off track changes and mark the files as final",
+  "summary": "Each file opens with Track Changes off and marked as final (Word's Mark as Final: read-only with a 'Marked as Final' bar). Nothing in the document's text changes; pending tracked changes stay as they are.",
+  "assumptions": [
+    "a file whose tracking is locked with a password is set aside (unlock it in Word first)",
+    "pending tracked changes are not accepted or rejected (that is resolve_tracked_changes, only when asked)",
+    "Mark as Final sets the custom property _MarkAsFinal and the Status property Final, as Word does; a file without custom properties gets them"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "formatting",
+  "ops": [
+    {"op": "set_document_state", "params": {"track_changes": "off", "final": true}}
+  ],
+  "review": {"sample_files": 1}
+}

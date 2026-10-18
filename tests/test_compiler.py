@@ -24,6 +24,42 @@ REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encodi
 from fake_claude import FakeClient, resp, text, tool  # noqa: F401 — re-exported for the other test modules
 
 
+def remove_outcome_proposal(*, kinds=None):
+    """Script the independent planner, separately from the editing recipe."""
+    effect = {"id": "headers-footers", "type": "remove_header_footer"}
+    if kinds is not None:
+        effect["kinds"] = kinds
+    description = " and ".join(kind + "s" for kind in (kinds or ["header", "footer"]))
+    return resp(tool("propose_plan", {"contract": {"kind": "document_effects", "effects": [effect]},
+        "rationale": f"Remove {description} from every original section."}))
+
+
+def header_outcome_proposal():
+    return resp(tool("propose_plan", {"contract": {"kind": "document_effects", "effects": [
+        {"id": "header-distance", "type": "page_setup", "sections": "all", "margins": {"header": 900}}]},
+        "rationale": "Place every section's header 900 twips from the top."}))
+
+
+def outcome_cli_flags(path, request, sources, *, header=False, contract=None, template=None):
+    """A separately declared, source-bound user approval for tests of other CLI gates."""
+    from spec_surgeon.ordinary_outcomes import build_review, save
+    if contract is None:
+        proposal = header_outcome_proposal() if header else remove_outcome_proposal()
+        contract = proposal.content[0].input["contract"]
+    review = build_review(request, sources, contract, template=template)
+    save(review, path)
+    return ["--outcome-review", str(path), "--outcome-approval", review["digest"]]
+
+
+def generate_reviewed_custom(session, *, choice_id=None, log=lambda _: None, render=False):
+    """Choose the custom method, review the separate proposal, then authorize generation."""
+    choice_id = choice_id or session.turn.choices[0].id
+    session.reply(choice_id=choice_id, log=log, render=render)
+    assert session.generated is None and session.pending_custom_transform is not None
+    session.approve_outcomes(session.outcome_review["digest"])
+    return session.continue_custom_transform(log, render=render)
+
+
 @pytest.fixture
 def folder(tmp_path) -> Path:
     d = tmp_path / "specs"
@@ -186,20 +222,24 @@ def test_preview_renders_side_by_side_images(folder, tmp_path):
 
 def test_do_end_to_end_with_approval(folder, tmp_path, monkeypatch, capsys):
     script = lambda: FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})))
-    monkeypatch.setattr(compiler_module, "_client", script)
+    clients = iter([script(), FakeClient(remove_outcome_proposal()), script()])
+    monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
     out = tmp_path / "out"
-    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--no-render"]) == 0
+    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--no-render"]) == 2
     printed = capsys.readouterr().out
     assert "PREVIEW" in printed and "Not run." in printed and not (out / "run").exists()
-    token = printed.split("--approval ")[1].split()[0]
+    token = printed.split("approval token: ")[1].split()[0]
     spec_path = out / "preview" / "spec.json"
+    review_path = out / "outcome-review.json"
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    approved = ["--outcome-review", str(review_path), "--outcome-approval", review["digest"]]
     assert cli_main(["run-spec", str(spec_path), str(folder), "--out", str(tmp_path / "r1"), "--no-render",
-                     "--approval", "0" * 16]) == 2                                   # wrong token: refused
+                     "--approval", "0" * 16, *approved]) == 2                       # wrong recipe token: refused
     assert cli_main(["run-spec", str(spec_path), str(folder), "--out", str(tmp_path / "r2"), "--no-render",
-                     "--approval", token]) == 0
+                     "--approval", token, *approved]) == 0
     capsys.readouterr()
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(tmp_path / "o2"), "--no-render",
-                     "--yes"]) == 0
+                     "--yes", *approved]) == 0
     assert "PASS 3" in capsys.readouterr().out
     monkeypatch.setattr(compiler_module, "_client",
                         lambda: FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]}))))
@@ -217,9 +257,10 @@ def test_do_talks_it_through_at_the_terminal(folder, tmp_path, monkeypatch, caps
                                                           "wording": "ISSUED FOR PERMIT"}]})),
                       resp(tool("ask_user", {"questions": ["And the cover?"]}, "a2")),
                       resp(tool("submit_editspec", {"spec": REMOVE}, "s3")))
-    monkeypatch.setattr(compiler_module, "_client", lambda: fake)
+    clients = iter([fake, FakeClient(remove_outcome_proposal())])
+    monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    answers = iter(["#2", "n", "#1", "yes, the cover too", "n"])
+    answers = iter(["#2", "n", "#1", "yes, the cover too", "y", "n"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     out_dir = tmp_path / "o"
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out_dir), "--no-render"]) == 0

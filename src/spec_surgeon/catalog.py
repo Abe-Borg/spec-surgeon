@@ -8,13 +8,16 @@ checks things a JSON schema cannot: mode vs ops, expect vs plan, geometry refere
 from __future__ import annotations
 
 import json
+from importlib.resources import files
 from pathlib import Path
 from typing import Any, Dict, List
 
 from .editspec import EXPECT_CHECKS, MODES, SPEC_ASSERTION_KINDS
 from .ops import OPS
 
-EXAMPLES_DIR = Path(__file__).resolve().parent.parent.parent / "examples" / "specs"
+# The GUI needs a concrete directory; wheels and frozen builds both extract these
+# package resources beside this module. The compiler reads the same resources below.
+EXAMPLES_DIR = Path(__file__).resolve().parent / "examples" / "specs"
 
 # What a compiled spec usually has to state about each op (the user sees these in the preview and can veto them).
 # The method's three request-only operations (built-in batch 2, design §0): accepting/rejecting tracked changes, editing
@@ -601,14 +604,15 @@ def editspec_json_schema() -> Dict[str, Any]:
 
 
 def worked_examples() -> List[Dict[str, Any]]:
-    out = []
-    if EXAMPLES_DIR.is_dir():
-        for f in sorted(EXAMPLES_DIR.glob("*.json")):
-            try:
-                out.append(json.loads(f.read_text(encoding="utf-8")))
-            except ValueError:
-                pass
-    return out
+    """The same complete examples in a checkout, installed wheel and frozen app.
+
+    Missing or corrupt package data is a packaging error, never a smaller prompt.
+    """
+    folder = files("spec_surgeon").joinpath("examples", "specs")
+    examples = sorted((f for f in folder.iterdir() if f.name.endswith(".json")), key=lambda f: f.name)
+    if not examples:
+        raise FileNotFoundError("The packaged worked examples are missing; reinstall Spec Surgeon.")
+    return [json.loads(f.read_text(encoding="utf-8")) for f in examples]
 
 
 def op_catalog(examples: bool = True) -> Dict[str, Any]:

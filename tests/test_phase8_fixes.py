@@ -163,6 +163,8 @@ from spec_surgeon.editspec import SpecError, load_spec, validate_spec
 from spec_surgeon.gui import Session, TransformFailed
 from spec_surgeon.library import LibraryError
 from spec_surgeon.preview import SampleView
+from test_compiler import (remove_outcome_proposal, header_outcome_proposal, outcome_cli_flags,
+                           generate_reviewed_custom)
 from spec_surgeon.vision import review_samples
 from test_codegen import GOOD_OP
 
@@ -889,8 +891,8 @@ def test_the_windows_preview_with_a_vanished_folder_reports_on_the_page(qt, fold
 # ---- review-3 / review-27 / merge-verify-4: what Claude is told when a custom transform does not come out -----------
 
 def _offered(folder, tmp_path, *writer):
-    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(OFFER_TURN, *writer))
-    s.compile("x", quiet)
+    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(OFFER_TURN, header_outcome_proposal(), *writer))
+    s.compile("put the header 0.625 in from the top", quiet)
     assert [c.kind for c in s.turn.choices] == ["custom_transform"]
     return s
 
@@ -903,7 +905,7 @@ def test_no_passing_attempt_is_told_to_claude_once_and_saved(folder, tmp_path):
     bad = [resp(tool("submit_op", {"source": "x = 1"}, f"o{i}")) for i in range(3)]
     s = _offered(folder, tmp_path, *bad,
         resp(tool("need_user", {"question": "Which outcome should the replacement method preserve?"})))
-    s.reply(choice_id=s.turn.choices[0].id, log=quiet)
+    generate_reviewed_custom(s, log=quiet)
     expected = ("No custom transform passed verification: no passing op after 3 attempt(s): "
                 "investigation stalled; equivalent rejected transforms repeated without new evidence")
     assert s.conversation.notes[-1] == expected
@@ -920,7 +922,7 @@ def test_no_passing_attempt_is_told_to_claude_once_and_saved(folder, tmp_path):
 def test_an_api_error_while_writing_is_a_recorded_failure_told_to_claude(folder, tmp_path):
     s = _offered(folder, tmp_path, raise_on_enter(api_error("Overloaded", 529, "req_7")))
     with pytest.raises(TransformFailed, match="the call to the model failed"):
-        s.reply(choice_id=s.turn.choices[0].id, log=quiet)
+        generate_reviewed_custom(s, log=quiet)
     note = s.conversation.notes[-1]
     assert note.startswith(TransformFailed.PREFIX) and "No AI-written" not in note and "529" in note
     assert _saved(s)["entries"][-1]["text"] == note
@@ -929,26 +931,36 @@ def test_an_api_error_while_writing_is_a_recorded_failure_told_to_claude(folder,
 def test_a_defect_while_writing_is_never_told_to_claude_as_a_verification_result(folder, tmp_path):
     s = _offered(folder, tmp_path, raise_on_enter(RuntimeError("a defect in the writer")))
     with pytest.raises(RuntimeError, match="a defect in the writer") as e:
-        s.reply(choice_id=s.turn.choices[0].id, log=quiet)
+        generate_reviewed_custom(s, log=quiet)
     assert not isinstance(e.value, TransformFailed)
     assert not any("passed verification" in n or "defect" in n for n in s.conversation.notes)
     entries = _saved(s)["entries"]                                   # what was said is kept for the diagnosis
-    assert entries[-1]["role"] == "user" and entries[-1]["text"].startswith("Chose: ")
+    assert [e for e in entries if e["role"] == "user"][-1]["text"].startswith("Chose: ")
+    assert entries[-1]["role"] == "app"                    # The independent approval review is now recorded too.
+    assert "internal error (RuntimeError) before any result" in s.conversation.notes[-1]
 
 
 # ---- review-8: Preview tries a stale custom transform again ---------------------------------------------------------
 
 def test_preview_tries_a_stale_custom_transform_again_and_run_then_runs(folder, tmp_path):
     s = _offered(folder, tmp_path, WRITER)
-    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=quiet)
+    assert "passed verification" in generate_reviewed_custom(s, log=quiet)
+    s.make_preview(render=False, log=quiet)
+    s.approve_outcomes(s.outcome_review["digest"])
     first = s.out_dir
     touch(sorted(folder.glob("*.docx"))[0])
     with pytest.raises(ValueError, match="press Preview again"):
         s.run(False, False, quiet)
     lines = []
     text = s.make_preview(render=False, log=lines.append)
-    assert "AI-written transform ready" in text and any("trying it again" in m for m in lines)
-    assert s.out_dir != first and (s.out_dir / "retrial").is_dir() and (s.out_dir / "preview").is_dir()
+    assert "Review requested outcomes" in text and s.pending_custom_transform is not None
+    assert s.outcome_approval == ""                         # Changed source evidence needs a fresh user approval.
+    s.approve_outcomes(s.outcome_review["digest"])
+    text = s.make_preview(render=False, log=lines.append)
+    assert "checked again against the approved outcomes" in text
+    retrials = list(s.out_dir.glob("retrial-*"))
+    assert s.out_dir != first and len(retrials) == 1 and (s.out_dir / "preview").is_dir()
+    assert all(t.output.is_relative_to(retrials[0]) for t in s.generated.trials)
     assert s.chat_dir == s.out_dir and (s.out_dir / "conversation.json").is_file()   # the records follow the preview
     assert (first / "preview").is_dir() and (first / "codegen" / "history.json").is_file()   # the old one is kept
     assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
@@ -956,14 +968,14 @@ def test_preview_tries_a_stale_custom_transform_again_and_run_then_runs(folder, 
 
 def test_a_current_custom_transform_is_not_tried_again(folder, tmp_path, monkeypatch):
     s = _offered(folder, tmp_path, WRITER)
-    s.reply(choice_id=s.turn.choices[0].id, log=quiet)
+    generate_reviewed_custom(s, log=quiet)
     token, gp, out = s.generated_token, s.generated_preview, s.out_dir
     import spec_surgeon.codegen as cg
 
     def no_trial(*a, **k):
         raise AssertionError("a current transform must not be tried again")
     monkeypatch.setattr(cg, "trial", no_trial)
-    assert "AI-written transform ready" in s.make_preview(render=False, log=quiet)
+    assert "AI-written transform previewed" in s.make_preview(render=False, log=quiet)
     assert (s.generated_token, s.generated_preview, s.out_dir) == (token, gp, out)
 
 
@@ -982,7 +994,7 @@ def test_a_saved_operation_whose_files_changed_is_tried_again_or_refused(folder,
         assert s.generated is not None and (s.generated_token, s.generated_preview, s.out_dir) == (token, gp, out)
         with pytest.raises(ValueError, match="press Preview again"):
             s.run(False, False, quiet)                               # still refused: nothing was approved
-    assert "ready" in s.make_preview(render=False, log=quiet)        # it passes again: a current token
+    assert "AI-written transform previewed" in s.make_preview(render=False, log=quiet)  # a current token
     assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
 
 
@@ -990,13 +1002,16 @@ def test_trying_again_with_rendering_runs_the_visual_check_again(folder, tmp_pat
     import spec_surgeon.preview as pv
     monkeypatch.setattr(pv, "render_samples", lambda *a, **k: None)  # no renderer in this test
     s = _offered(folder, tmp_path, WRITER)
-    s.reply(choice_id=s.turn.choices[0].id, log=quiet)
+    generate_reviewed_custom(s, log=quiet)
     checks = []
     monkeypatch.setattr(Session, "_visual_check", lambda self, p, intent, where, log: checks.append((p, intent)))
     touch(sorted(folder.glob("*.docx"))[0])
     s.make_preview(render=True, log=quiet)
+    assert checks == [] and s.pending_custom_transform is not None
+    s.approve_outcomes(s.outcome_review["digest"])
+    s.make_preview(render=True, log=quiet)
     assert len(checks) == 1 and checks[0][0] is s.generated_preview
-    assert checks[0][1].startswith("A ONE-OFF CUSTOM TRANSFORM (set_header_distance) for: x")
+    assert checks[0][1].startswith("A ONE-OFF CUSTOM TRANSFORM (set_header_distance) for: put the header 0.625 in from the top")
 
 
 def test_a_preview_that_stops_leaves_the_transform_unrunnable_until_previewed(folder, tmp_path, monkeypatch):
@@ -1014,7 +1029,7 @@ def test_a_preview_that_stops_leaves_the_transform_unrunnable_until_previewed(fo
     with pytest.raises(ValueError, match="press Preview again"):
         s.run(False, False, quiet)                                   # never runs without its preview
     monkeypatch.setattr(pv, "preview_generated", real)
-    assert "ready" in s.make_preview(render=False, log=quiet)
+    assert "AI-written transform previewed" in s.make_preview(render=False, log=quiet)
     assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
 
 
@@ -1023,9 +1038,10 @@ def test_a_preview_that_stops_leaves_the_transform_unrunnable_until_previewed(fo
 def test_a_saved_operation_that_fails_leaves_the_conversation_and_its_preview(folder, tmp_path, monkeypatch):
     saved_operation(folder, tmp_path)
     s = Session(folder=folder, out_root=tmp_path / "out",
-                client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
+                client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})), remove_outcome_proposal()))
     assert s.compile("remove all headers and footers", quiet) == "Compiled."
     s.make_preview(render=False, log=quiet)
+    s.approve_outcomes(s.outcome_review["digest"])
     conversation, preview, out = s.conversation, s.preview, s.out_dir
     failing_trials(monkeypatch)
     with pytest.raises(RuntimeError, match="does not pass on these files"):
@@ -1112,15 +1128,17 @@ def test_do_refuses_a_file_edited_while_the_question_waits(folder, tmp_path, mon
     before = f.read_bytes()
     script_input(monkeypatch, lambda prompt: (touch_edit(f), "y")[1])          # saved in Word, then "y"
     out = tmp_path / "o"
-    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--no-render"]) == 2
+    approval = outcome_cli_flags(tmp_path / "review.json", "remove all headers and footers", docx(folder))
+    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--no-render", *approval]) == 2
     err = capsys.readouterr().err
     assert "changed since the preview" in err and f"{f.name}: modified since the preview" in err
     assert not (out / "run").exists()
     assert f.read_bytes() == before + b"\0"                                # the edit is the user's; nothing ran
     # the same with nothing edited runs: the refusal above is the edit's
     script_input(monkeypatch, "y")
+    approval = outcome_cli_flags(tmp_path / "review-current.json", "remove all headers and footers", docx(folder))
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(tmp_path / "o2"),
-                     "--no-render"]) == 0
+                     "--no-render", *approval]) == 0
     assert "PASS 2" in capsys.readouterr().out and (tmp_path / "o2" / "run").is_dir()
 
 
@@ -1132,14 +1150,21 @@ def test_do_yes_refuses_a_template_edited_during_the_visual_check(folder, tmp_pa
     tpl.write_bytes(build_template())
     spec = json.loads((SPECS / "apply-header-footer-template.json").read_text(encoding="utf-8"))
     spec["ops"][0]["params"]["template"] = str(tpl)
+    import hashlib
+    contract = {"kind": "document_effects", "effects": [{"id": "template", "type": "header_footer_template",
+        "template": str(tpl), "template_sha256": hashlib.sha256(tpl.read_bytes()).hexdigest(),
+        "params": {k: v for k, v in spec["ops"][0]["params"].items() if k != "template"}}]}
+    request = "make the header/footer look like this template"
+    approval = outcome_cli_flags(tmp_path / "review.json", request + "\n\nUSER DECISIONS:\n" + STAMP,
+                                 docx(folder), contract=contract, template=tpl)
     monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
     intents = fake_review(monkeypatch, on_call=lambda: touch_edit(tpl))
     out = tmp_path / "o"
     assert cli_main(["do", "make the header/footer look like this template", str(folder), "--template", str(tpl),
-                     "--answer", STAMP, "--out", str(out), "--renderer", "none", "--yes"]) == 2
+                     "--answer", STAMP, "--out", str(out), "--renderer", "none", "--yes", *approval]) == 2
     assert len(intents) == 1
     err = capsys.readouterr().err
-    assert "changed since the preview" in err and f"template {tpl.name}: changed since the preview" in err
+    assert "attached template changed since outcome review" in err and tpl.name in err
     assert not (out / "run").exists()
 
 
@@ -1149,8 +1174,9 @@ def test_do_codegen_refuses_a_file_edited_after_the_transform_was_previewed(fold
     monkeypatch.setattr(compiler_module, "_client", lambda: fake)
     fake_review(monkeypatch, on_call=lambda: touch_edit(f))
     out = tmp_path / "o"
+    approval = outcome_cli_flags(tmp_path / "review.json", "header 0.625in from the top", docx(folder), header=True)
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(out), "--renderer", "none",
-                     "--allow-codegen", "--yes"]) == 2
+                     "--allow-codegen", "--yes", *approval]) == 2
     printed = capsys.readouterr()
     assert "passed on the samples" in printed.out
     assert "changed since the custom transform was tested" in printed.err and f.name in printed.err
@@ -1195,8 +1221,9 @@ def test_save_as_with_replace_never_takes_the_other_kinds_name(folder, tmp_path,
     fake = FakeClient(resp(tool("submit_editspec", OFFER)), WRITER)
     monkeypatch.setattr(compiler_module, "_client", lambda: fake)
     out = tmp_path / "o"
+    approval = outcome_cli_flags(tmp_path / "review.json", "header 0.625in from the top", docx(folder), header=True)
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(out), "--no-render",
-                     "--allow-codegen", "--yes", "--save-as", "Header distance", "--replace"]) == 2
+                     "--allow-codegen", "--yes", "--save-as", "Header distance", "--replace", *approval]) == 2
     err = capsys.readouterr().err
     assert "'Recipe: Header distance'" in err and "--replace replaces only an item of the same kind" in err
     assert len(fake.requests) == 1 and not (out / "codegen").exists()     # refused before the writer ran
@@ -1242,7 +1269,8 @@ def test_end_of_input_at_the_run_question_is_a_no(folder, tmp_path, monkeypatch,
     monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
     prompts = script_input(monkeypatch, EOFError)
     out = tmp_path / "o"
-    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--no-render"]) == 0
+    approval = outcome_cli_flags(tmp_path / "review.json", "remove all headers and footers", docx(folder))
+    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--no-render", *approval]) == 0
     assert "Not run. To run exactly this" in capsys.readouterr().out and "Run this on 2 file(s)?" in prompts[0]
     assert not (out / "run").exists()
 
@@ -1251,13 +1279,14 @@ def test_end_of_input_at_the_custom_transform_run_question_is_a_no(folder, tmp_p
     """The terminal's custom-transform path: '#1' picks Claude's offer, the transform passes, and Ctrl-D at 'Run it on
     N file(s)?' is a no."""
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    fake = FakeClient(resp(tool("submit_editspec", OFFER)), WRITER)
+    fake = FakeClient(resp(tool("submit_editspec", OFFER)), header_outcome_proposal(), WRITER)
     monkeypatch.setattr(compiler_module, "_client", lambda: fake)
-    prompts = script_input(monkeypatch, "#1", EOFError)
+    prompts = script_input(monkeypatch, "#1", "y", EOFError)
     out = tmp_path / "o"
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(out), "--no-render"]) == 0
     assert "Not run. Review the generated module" in capsys.readouterr().out
-    assert "Run it on 2 file(s)" in prompts[1] and not (out / "run").exists()
+    assert "Approve these outcomes" in prompts[1]
+    assert "Run it on 2 file(s)" in prompts[2] and not (out / "run").exists()
 
 
 def test_end_of_input_at_the_library_delete_question_keeps_the_item(monkeypatch):
@@ -1277,21 +1306,22 @@ def test_end_of_input_at_the_library_delete_question_keeps_the_item(monkeypatch)
 def test_the_visual_check_gets_the_terminal_conversation(folder, tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_interactive", lambda: True)
     fake = FakeClient(resp(tool("ask_user", {"questions": ["Every section, or only some?"]})),
-                      resp(tool("submit_editspec", {"spec": REMOVE}, "s2")))
+                      resp(tool("submit_editspec", {"spec": REMOVE}, "s2")), remove_outcome_proposal())
     monkeypatch.setattr(compiler_module, "_client", lambda: fake)
     intents = fake_review(monkeypatch)
-    script_input(monkeypatch, "only the body sections, not the cover", "n")
+    script_input(monkeypatch, "all sections, including the cover", "y", "n")
     assert cli_main(["do", "remove the headers and footers", str(folder), "--out", str(tmp_path / "o"),
                      "--renderer", "none"]) == 0
     assert len(intents) == 1
     assert intents[0].startswith("REQUEST: ")
     assert "\nTHE CONVERSATION:\nREQUEST: remove the headers and footers" in intents[0]
-    assert "USER: only the body sections, not the cover" in intents[0]
+    assert "USER: all sections, including the cover" in intents[0]
     # a spec that did not come from a conversation (no terminal): no conversation section
     monkeypatch.setattr(cli, "_interactive", lambda: False)
-    monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
+    clients = iter([FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))), FakeClient(remove_outcome_proposal())])
+    monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
     assert cli_main(["do", "remove the headers and footers", str(folder), "--out", str(tmp_path / "o2"),
-                     "--renderer", "none"]) == 0
+                     "--renderer", "none"]) == 2  # The fresh noninteractive outcome review remains unapproved.
     assert len(intents) == 2 and "THE CONVERSATION" not in intents[1]
 
 
@@ -1300,21 +1330,22 @@ def test_the_visual_check_gets_the_terminal_conversation(folder, tmp_path, monke
 def test_the_command_line_gate_on_a_blocking_finding_for_a_spec(folder, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
     intents = fake_review(monkeypatch, block=True)
+    approval = outcome_cli_flags(tmp_path / "review.json", "remove all headers and footers", docx(folder))
     out = tmp_path / "o"
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--renderer", "none",
-                     "--yes"]) == 2
+                     "--yes", *approval]) == 2
     printed = capsys.readouterr().out
     assert "flagged 1 problem(s) it rates as blocking" in printed and "re-run with --ack-review" in printed
     assert "the cover lost its title" in printed and not (out / "run").exists() and len(intents) == 1
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(tmp_path / "o2"),
-                     "--renderer", "none", "--yes", "--ack-review"]) == 0
+                     "--renderer", "none", "--yes", "--ack-review", *approval]) == 0
     assert "PASS 2" in capsys.readouterr().out and (tmp_path / "o2" / "run").is_dir() and len(intents) == 2
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(tmp_path / "o3"),
-                     "--renderer", "none", "--yes", "--no-review"]) == 0
+                     "--renderer", "none", "--yes", "--no-review", *approval]) == 0
     assert len(intents) == 2 and (tmp_path / "o3" / "run").is_dir()      # --no-review: never asked
     # without --yes and without a terminal: not run, and the printed command says what running it means
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(tmp_path / "o4"),
-                     "--renderer", "none"]) == 0
+                     "--renderer", "none", *approval]) == 0
     assert "you have looked at Claude's visual-check findings" in capsys.readouterr().out
     assert not (tmp_path / "o4" / "run").exists()
 
@@ -1324,20 +1355,21 @@ def test_the_command_line_gate_on_a_blocking_finding_for_a_custom_transform(fold
         fake = FakeClient(resp(tool("submit_editspec", OFFER)), WRITER)
         monkeypatch.setattr(compiler_module, "_client", lambda: fake)
     intents = fake_review(monkeypatch, block=True)
+    approval = outcome_cli_flags(tmp_path / "review.json", "header 0.625in from the top", docx(folder), header=True)
     script()
     out = tmp_path / "o"
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(out), "--renderer", "none",
-                     "--allow-codegen", "--yes"]) == 2
+                     "--allow-codegen", "--yes", *approval]) == 2
     printed = capsys.readouterr().out
     assert "Not run: Claude's visual check flagged 1 blocking problem(s)" in printed and "--ack-review" in printed
     assert not (out / "run").exists() and len(intents) == 1 and intents[0].startswith("A ONE-OFF CUSTOM TRANSFORM")
     script()
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(tmp_path / "o2"), "--renderer",
-                     "none", "--allow-codegen", "--yes", "--ack-review"]) == 0
+                     "none", "--allow-codegen", "--yes", "--ack-review", *approval]) == 0
     assert "2 of 2 file(s) PASS" in capsys.readouterr().out and len(intents) == 2
     script()
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(tmp_path / "o3"), "--renderer",
-                     "none", "--allow-codegen", "--yes", "--no-review"]) == 0
+                     "none", "--allow-codegen", "--yes", "--no-review", *approval]) == 0
     assert "2 of 2 file(s) PASS" in capsys.readouterr().out and len(intents) == 2
 
 
@@ -1455,7 +1487,8 @@ def test_an_operation_picked_after_a_loaded_spec_can_run_and_preview_again(qt, f
 
 
 def test_a_typed_request_that_replaces_a_loaded_spec_takes_the_saved_spec_bar_away(qt, folder, tmp_path):
-    s = Session(out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
+    s = Session(out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})),
+                                                           remove_outcome_proposal()))
     s.load_spec(SPECS / "remove-all-headers-footers.json")
     w, ui = window(qt, s)
     ui["vars"]["folder"].set(str(folder))
@@ -1464,6 +1497,8 @@ def test_a_typed_request_that_replaces_a_loaded_spec_takes_the_saved_spec_bar_aw
     ui["request"].set("remove all headers and footers")
     ui["buttons"]["preview"].click()
     ui["wait"]()
+    assert not ui["buttons"]["run"].isEnabled()
+    w.preview_page.outcome_approve_btn.click()
     assert s.spec_source == "compiled" and ui["buttons"]["run"].isEnabled()
     assert w.request_page.spec_bar.isHidden()
 
@@ -1527,6 +1562,7 @@ def test_a_reply_after_the_folder_changed_ends_the_chat_instead_of_failing(qt, f
 def test_save_and_acknowledge_are_live_only_while_the_preview_is_current(qt, folder, tmp_path):
     from spec_surgeon.vision import VisualReview
     fake = FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})),
+                      remove_outcome_proposal(),
                       resp(tool("ask_user", {"questions": ["Which sections?"]}, "a2")))
     s = Session(out_root=tmp_path / "out", client=fake)
     w, ui = window(qt, s)
@@ -1536,6 +1572,7 @@ def test_save_and_acknowledge_are_live_only_while_the_preview_is_current(qt, fol
     ui["buttons"]["preview"].click()
     ui["wait"]()
     p, save, ack = w.preview_page, ui["buttons"]["save_to_library"], ui["buttons"]["review_ack"]
+    p.outcome_approve_btn.click()
     assert ui["buttons"]["run"].isEnabled() and save.isEnabled()
     s.preview.review = VisualReview(summary="Looked.", findings=[{"severity": "block", "text": "Logo squashed."}])
     w._fill_preview()
@@ -1609,10 +1646,12 @@ def test_make_bundle_mirrors_more_folders_beside_the_run_never_a_document_or_a_f
 def test_the_window_bundle_after_a_run_and_a_reply_holds_both(qt, folder, tmp_path):
     from spec_surgeon.ui.app import RecordingPrompts
     fake = FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})),
+                      remove_outcome_proposal(),
                       resp(tool("ask_user", {"questions": ["What about the cover?"]}, "a2")))
     s = Session(folder=folder, out_root=tmp_path / "out", client=fake)
     s.compile("remove all headers and footers", lambda m: None)
     s.make_preview(render=False, log=lambda m: None)
+    s.approve_outcomes(s.outcome_review["digest"])
     s.run(False, False, lambda m: None)
     first = s.out_dir
     s.reply("hmm, what about the cover?")
@@ -1662,6 +1701,7 @@ def test_the_window_bundle_after_a_new_request_failed_holds_its_conversation_and
 def test_the_window_bundle_before_any_run_is_the_preview_with_the_conversation_s_newer_folder(qt, folder, tmp_path):
     from spec_surgeon.ui.app import RecordingPrompts
     fake = FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})),
+                      remove_outcome_proposal(),
                       resp(tool("ask_user", {"questions": ["Which?"]}, "a2")))
     s = Session(folder=folder, out_root=tmp_path / "out", client=fake)
     s.compile("remove all headers and footers", lambda m: None)

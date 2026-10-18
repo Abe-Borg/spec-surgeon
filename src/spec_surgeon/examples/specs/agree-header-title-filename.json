@@ -1,0 +1,39 @@
+{
+  "request": "The SECTION title line is right: make the footer's section number and the file name agree with it",
+  "summary": "The title line's number is the truth; a footer number or file-name number that differs (beyond spacing) is replaced by it as written there (tracked); a file name that disagrees gives the copy the corrected name.",
+  "assumptions": [
+    "'211319' and '21 13 19' agree and are left as they are",
+    "a file whose title line shows two different numbers is set aside"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "content",
+  "ops": [
+    {
+      "op": "make_values_agree",
+      "params": {
+        "places": {
+          "title_line": {
+            "in": "document",
+            "pattern": "^SECTION\\s+(?P<number>\\d{2}\\s?\\d{2}\\s?\\d{2})\\b",
+            "required": true
+          },
+          "footer": {
+            "in": "footers",
+            "pattern": "^(?P<number>\\d{2}\\s?\\d{2}\\s?\\d{2})\\b"
+          },
+          "file_name": {
+            "in": "filename",
+            "pattern": "^(?P<number>\\d{2}\\s?\\d{2}\\s?\\d{2})\\b"
+          }
+        },
+        "truth": "title_line",
+        "values": [
+          "number"
+        ]
+      }
+    }
+  ]
+}

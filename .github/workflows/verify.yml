@@ -49,9 +49,14 @@ jobs:
         run: |
           python -m build
           python -m twine check dist/*
+          python packaging/check_wheel_install.py dist
       - name: Save test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: test-results-${{ matrix.os }}
           path: test-results.xml
+
+  windows-installer:
+    name: Installed Windows app
+    uses: ./.github/workflows/windows-build.yml

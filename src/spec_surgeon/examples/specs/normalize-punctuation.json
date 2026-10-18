@@ -1,0 +1,6 @@
+{
+  "request": "Use curly quotes, change double hyphens to em dashes, and use hyphens in section numbers",
+  "summary": "Character changes only; possible numeric inch and foot marks stay for review.",
+  "mode": "content",
+  "ops": [{"op": "normalize_punctuation", "params": {"quotes": "curly", "dash": "em", "section_separator": "hyphen"}}]
+}

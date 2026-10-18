@@ -190,6 +190,14 @@ def offer(name="Hydrant flow test", tid="a1", **extra):
                choices=[{"kind": "snippet", "name": name, **extra}])
 
 
+def snippet_outcome_proposal():
+    return resp(tool("propose_plan", {"contract": {"kind": "document_effects", "effects": [
+        {"id": "flow-test", "type": "insert_paragraph", "target": {"locators": [
+            {"contains_text": "Schedule 40 per NFPA 13"}]}, "text": TEXT, "position": "after",
+         "tracked": True, "author": "x"}]},
+        "rationale": "Insert the approved saved flow-test paragraph after each original pipe-schedule paragraph."}))
+
+
 def test_claude_offers_a_snippet_and_the_pick_approves_its_words(folder, snippet):
     fake = FakeClient(offer(wording="something else"), submit(insert_spec(), "s1"))
     c = Conversation(REQUEST, files(folder), client=fake)
@@ -254,15 +262,16 @@ def test_read_library_item_shows_a_snippets_text_under_the_rule(folder, snippet)
 def test_the_terminal_snippet_choice_asks_for_the_words_then_claude_writes_the_spec(folder, snippet, tmp_path,
                                                                                    monkeypatch, capsys):
     from spec_surgeon import cli
-    fake = FakeClient(offer(), submit(insert_spec(), "s1"))
+    fake = FakeClient(offer(), submit(insert_spec(), "s1"), snippet_outcome_proposal())
     monkeypatch.setattr(compiler_module, "_client", lambda: fake)
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    answers = iter(["#1", "y", "y"])
+    answers = iter(["#1", "y", "y", "y"])
     asked = []
     monkeypatch.setattr("builtins.input", lambda prompt="": (asked.append(prompt), next(answers))[1])
     out_dir = tmp_path / "o"
     assert cli_main(["do", REQUEST, str(folder), "--out", str(out_dir), "--no-render"]) == 0
     assert asked[1] == f"Approve these exact words for your documents: «{TEXT}»? [y/N] "
+    assert asked[2] == "Approve these outcomes and every document's targets? [y/N] "
     saved = json.loads((out_dir / "conversation.json").read_text(encoding="utf-8"))
     assert saved["approved_words"] == [REQUEST, TEXT]
     outs = sorted((out_dir / "run" / "outputs").glob("*.docx"))
@@ -295,7 +304,7 @@ def test_the_window_adds_a_snippet_and_uses_it(qt, folder, tmp_path):
 
 
 def test_the_window_shows_a_snippet_choice_as_insert_it_and_claude_writes_the_spec(qt, folder, snippet, tmp_path):
-    fake = FakeClient(offer(), submit(insert_spec(), "s1"))
+    fake = FakeClient(offer(), submit(insert_spec(), "s1"), snippet_outcome_proposal())
     s = Session(out_root=tmp_path / "out", client=fake)
     w, ui = window(qt, s)
     ui["vars"]["folder"].set(str(folder))
@@ -311,3 +320,6 @@ def test_the_window_shows_a_snippet_choice_as_insert_it_and_claude_writes_the_sp
     ui["wait"]()
     assert s.spec is not None and s.spec["ops"][0]["params"]["text"] == TEXT and TEXT in s.conversation.sources
     assert s.preview is not None
+    assert s.outcome_review["status"] == "PROPOSED" and not ui["buttons"]["run"].isEnabled()
+    w.preview_page.outcome_approve_btn.click()
+    assert s.outcome_approval == s.outcome_review["digest"] and ui["buttons"]["run"].isEnabled()

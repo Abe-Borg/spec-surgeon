@@ -1,0 +1,40 @@
+{
+  "request": "Every paragraph typed in bold capitals should be Heading 1, and look exactly like it",
+  "summary": "The paragraphs whose words are bold and all capitals get the Heading 1 paragraph style and lose their own direct formatting, so they look exactly like the style; a paragraph already in Heading 1 with nothing to clear is left alone.",
+  "assumptions": [
+    "a paragraph qualifies when it has bold text and all its letters are capitals (typed or by the caps setting)",
+    "their own fonts, sizes, bold and spacing are cleared so the style applies; hidden text, list numbers, highlights and symbol fonts stay",
+    "targeted formatting is tracked (decision 14.1): Word shows 'Formatted: Heading 1'"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "apply_style",
+      "select": {
+        "scope": [
+          "document"
+        ],
+        "paragraphs": {
+          "has_bold": true,
+          "is_all_caps": true
+        }
+      },
+      "params": {
+        "style": "Heading 1",
+        "direct_formatting": "clear"
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

@@ -63,17 +63,20 @@ def test_invalid_cli_token_limits_are_argument_errors(tmp_path, capsys, command,
 
 def test_cli_keeps_model_token_limits_when_handing_off_to_custom_transform(tmp_path, monkeypatch):
     from test_codegen import GOOD_OP
+    from test_compiler import header_outcome_proposal
 
     source = tmp_path / "source.docx"
     source.write_bytes(build("21 13 13", "FIRE SUPPRESSION"))
-    fake = FakeClient(
-        resp(tool("submit_editspec", {"spec": {
+    unsupported = resp(tool("submit_editspec", {"spec": {
             "request": "header 0.625in from the top", "summary": "Change header distance",
             "unsupported": "no op sets the header distance alone", "proposal": "set_header_distance"
-        }, "custom_transform": "possible"})),
+        }, "custom_transform": "possible"}))
+    fake = FakeClient(
+        unsupported, header_outcome_proposal(), unsupported,
         resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "writer")),
     )
     monkeypatch.setattr(compiler, "_client", lambda: fake)
+    monkeypatch.setattr(cli, "_interactive", lambda: False)
     limits = []
     original = contexts.manage_context
 
@@ -82,10 +85,15 @@ def test_cli_keeps_model_token_limits_when_handing_off_to_custom_transform(tmp_p
         return original(messages, **kwargs)
 
     monkeypatch.setattr(contexts, "manage_context", manage_context)
-    assert cli.main(["do", "header 0.625in from the top", str(source),
+    args = ["do", "header 0.625in from the top", str(source),
                      "--out", str(tmp_path / "output"), "--no-render", "--allow-codegen",
-                     "--model", "smaller-model", "--max-context-tokens", "131072",
-                     "--max-output-tokens", "8192"]) == 0
-    assert limits == [131072, 131072]
-    assert len(fake.requests) == 2
-    assert all(call["model"] == "smaller-model" and call["max_tokens"] == 8192 for call in fake.requests)
+                     "--model", "claude-sonnet-5-5", "--max-context-tokens", "131072",
+                     "--max-output-tokens", "8192"]
+    assert cli.main(args) == 2  # The separate outcome proposal needs an explicit approval.
+    assert len(fake.requests) == 2 and not (tmp_path / "output" / "codegen").exists()
+    review_path = tmp_path / "output" / "outcome-review.json"
+    review = json.loads(review_path.read_text(encoding="utf-8"))
+    assert cli.main([*args, "--outcome-review", str(review_path), "--outcome-approval", review["digest"]]) == 0
+    assert limits == [131072] * 4
+    assert len(fake.requests) == 4
+    assert all(call["model"] == "claude-sonnet-5-5" and call["max_tokens"] == 8192 for call in fake.requests)

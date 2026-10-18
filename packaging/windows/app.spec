@@ -32,7 +32,7 @@ version_file.write_text(f'''VSVersionInfo(
 )''', encoding="utf-8")
 
 datas = collect_data_files("spec_surgeon", include_py_files=True,
-                           includes=["schemas/**/*.xsd", "skill/**/*.md", "ops/*.py", "ui/resources/*"])
+                           includes=["schemas/**/*.xsd", "skill/**/*.md", "ops/*.py", "ui/resources/*", "examples/specs/*.json"])
 datas += copy_metadata("anthropic", recursive=True)
 pdf_datas, pdf_binaries, pdf_imports = collect_all("pymupdf")
 datas += pdf_datas

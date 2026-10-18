@@ -1,0 +1,21 @@
+{
+  "request": "remove all headers and footers",
+  "summary": "Remove every header and footer reference from every section of each document, and every header/footer part (with its relationships, content-type override and any media nothing else uses); leave page setup, body text and all tracked changes in the body untouched.",
+  "assumptions": [
+    "'all' means every section, including first-page and even-page variants",
+    "section page margins are left as they are (the header/footer space collapses)",
+    "titlePg (different first page) and evenAndOddHeaders settings are left as they are",
+    "pending tracked changes inside headers/footers are discarded with them and flagged by name"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "formatting",
+  "ops": [
+    {"op": "remove_header_footer",
+     "select": {"sections": "all", "kinds": ["header", "footer"], "types": ["default", "first", "even"]},
+     "params": {},
+     "expect": {"text_diffs_outside_removed_parts": 0, "members_added": 0,
+                "members_removed": "header/footer parts and their rels/media not referenced elsewhere"}}
+  ],
+  "review": {"sample_files": 2, "geometry_reference": "source"}
+}
