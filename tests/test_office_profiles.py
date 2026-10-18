@@ -15,7 +15,7 @@ from spec_surgeon.office_profiles import (ProfileError, create_profile, execute_
     validate_review)
 
 
-def setup_profile(tmp_path, *, text=None, mapping=None, policies=(), direct_formatting="keep"):
+def setup_profile(tmp_path, *, text=None, mapping=None, policies=(), direct_formatting="keep", tracked=False):
     source, template = tmp_path / "source.docx", tmp_path / "template.docx"
     doc = Document()
     for line in text or ["PART 1 - GENERAL", "1.1 SUMMARY", "A. Scope"]:
@@ -28,7 +28,7 @@ def setup_profile(tmp_path, *, text=None, mapping=None, policies=(), direct_form
     tpl.save(template)
     profile = create_profile(tmp_path / "profile", template, "Office standard", mapping or {
         "part": "Office Part", "article": "Office Article", "paragraph": "Office Paragraph"},
-        policies=policies, direct_formatting=direct_formatting)
+        policies=policies, direct_formatting=direct_formatting, tracked=tracked)
     return source, template, profile
 
 
@@ -270,3 +270,43 @@ def test_policy_only_profile_does_not_require_unrelated_semantic_roles(tmp_path)
     assert review["documents"][0]["unresolved"] == []
     previews = preview_review(review, tmp_path / "language-preview", renderer="none", do_render=False)
     assert previews[str(source)].samples[0].passed
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_consecutive_targets_share_stages_without_crossing_excluded_or_unmapped_gaps(tmp_path, tracked):
+    text = ["PART 1 - GENERAL", "1.1 SUMMARY", "A. First clause", "B. Second clause",
+            "C. Explicitly excluded clause", "D. Fourth clause", "E. Fifth clause", "F. Sixth clause",
+            "1.2 UNMAPPED ARTICLE", "A. Last clause"]
+    source, template, profile = setup_profile(tmp_path, text=text, mapping={"paragraph": "Office Paragraph"},
+                                              direct_formatting="replace_style_owned", tracked=tracked)
+    doc = Document(source)
+    for paragraph in doc.paragraphs:
+        paragraph.runs[0].font.name = "Courier New"
+        paragraph.runs[0].italic = True
+    doc.save(source)
+    original, reference = source.read_bytes(), template.read_bytes()
+    review = prepare_review(profile, [source], choices={str(source): {4: "exclude"}})
+    row = review["documents"][0]
+    assert review["status"] == "PROPOSED", row["reason"]
+    assert [target["paragraph"] for target in row["targets"]] == [2, 3, 5, 6, 7, 9]
+    assert [effect["select"]["paragraphs"]["index_range"] for effect in row["contract"]["effects"]] == [[2, 4], [5, 8], [9, 10]]
+    assert [effect["expected_count"] for effect in row["contract"]["effects"]] == [2, 3, 1]
+    assert len(row["chain"]["stages"]) == 3
+    assert "explicitly excluded" in review_text(review)
+    previews = preview_review(review, tmp_path / "preview", renderer="none", do_render=False)
+    sample = previews[str(source)].samples[0]
+    assert sample.passed and sample.checks["OFFICE_OUTCOMES"] == "PASS", sample.outcomes
+    results = execute_review(review, tmp_path / "run", approval=review["digest"], previews=previews,
+        preview_approvals={key: value.token for key, value in previews.items()}, workers=1,
+        renderer="none", do_render=False)
+    result = results[0].files[0]
+    assert result.status == "PASS", result.reason
+    assert result.outcomes[-1]["status"] == "PASS"
+    output = Document(result.delivered_to)
+    assert [paragraph.text for paragraph in output.paragraphs] == text
+    for index, paragraph in enumerate(output.paragraphs):
+        selected = index in {2, 3, 5, 6, 7, 9}
+        assert paragraph.style.name == ("Office Paragraph" if selected else "Normal")
+        assert paragraph.runs[0].font.name == (None if selected else "Courier New")
+        assert paragraph.runs[0].italic is True
+    assert source.read_bytes() == original and template.read_bytes() == reference

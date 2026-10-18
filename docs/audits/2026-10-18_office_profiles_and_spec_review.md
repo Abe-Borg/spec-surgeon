@@ -14,6 +14,9 @@ appearance or live-model performance.
 | Saved-recipe campaign over one corpus document | READY; child recovery retained; source hash matches | No live model or Word review |
 | Focused and integration regression suite | 177 tests passed in 59.72 seconds | Completed before the final evaluation-hardening edits |
 | Final project-evidence, desktop-editor and workflow-evaluation tests | 36 tests passed in 3.13 seconds after environment reconnection | Covers the final hardening changes; consolidated repository qualification is recorded separately |
+| Profile, desktop, comment, schema and selective-formatting integration checks | 202 tests passed in 27.68 seconds | Includes adversarial preservation and exact approval checks; no native Word automation |
+| Adjacent paragraph grouping | 69 profile, CLI and settings tests passed in 19.99 seconds | Tracked and untracked executions retain exact targets across excluded and unmapped gaps |
+| Distribution packaging | Source archive and wheel build PASS; twine checks PASS; fresh core-only wheel installation PASS with packaged example/prompt parity | Native Windows installer qualification runs in pull-request CI |
 | Mixed valid/damaged document batch, two independent runs | One PASS and one EXCEPTION in each run; both sources stay in evaluation; the incomplete batch cannot count as accepted | Deliberately invalid synthetic DOCX input, no live provider |
 | In-place delivery evidence | PASS; report retains the original acquired SHA-256 although delivered source bytes changed | Synthetic one-document margin edit |
 | Office-profile LibreOffice render smoke | PASS across three stages and independent original-to-final approved-goal verification; source/template hashes unchanged; direct font/size removed while italic preserved; eight one-page PDFs | V6 PASS during execution, V7 N/A for expected reflow, V8 N/A for no revisions; preview summaries still record V6 N/A despite available render artifacts; no Microsoft Word or human acceptance |
@@ -51,8 +54,8 @@ separately rather than being presented as a rerun of the final source state.
 
 Qualification on representative held-out client files still requires human review
 in Microsoft Word and actual baseline/current revisions. Live-provider performance
-requires recorded provider runs. Packaging validation and the consolidated full-suite
-result should be appended separately when completed.
+requires recorded provider runs. Complete repository test results and native Windows
+installer checks are retained by the pull-request CI jobs.
 
 See [whole-workflow evaluation](../WORKFLOW_EVALUATION_V3.md) for artifact pinning,
 cost accounting and comparison rules, and [project evidence](../PROJECT_EVIDENCE.md)

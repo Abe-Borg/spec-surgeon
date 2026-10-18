@@ -137,9 +137,13 @@ profiles with an empty role map do not require unrelated structural choices.
 
 The classifier proposes meaning. It does not authorize a change and is never
 called by the independent outcome verifier. Each selected original paragraph
-becomes an exact half-open `index_range: [index, index + 1]` selection with an exact
-target count. Contracts are bound to source SHA256 and requested effects. Existing
-goal compilation builds separate ordinary operation stages, avoiding overlapping
+becomes an exact original paragraph selection. Consecutive paragraphs requesting
+identical style parameters and the same template share one half-open
+`index_range: [first, last + 1]` effect and chain stage, with an exact target count.
+Excluded, unsupported or unmapped paragraphs always break a group. The review
+still displays every individual paragraph and its disposition. Contracts are
+bound to source SHA256 and requested effects. Existing goal compilation builds
+separate ordinary operation stages for those ranges, avoiding overlapping
 operations or assumptions about how intermediate styles change selection.
 
 ## Preview, approve and execute

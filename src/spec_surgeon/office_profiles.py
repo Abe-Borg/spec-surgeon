@@ -412,6 +412,32 @@ def _identity(path):
     return data, {"size": after.st_size, "mtime_ns": after.st_mtime_ns, "sha256": _sha(data)}
 
 
+def _group_style_effects(effects):
+    """Combine identical edits only across consecutive original paragraphs.
+
+    The review retains its individual targets. Gaps from excluded, unsupported
+    or unmapped paragraphs never enter an approved interval, and every interval
+    keeps its exact original target count for independent verification.
+    """
+    grouped = []
+    for effect in effects:
+        current = copy.deepcopy(effect)
+        previous = grouped[-1] if grouped else None
+        if (previous is not None and previous["type"] == current["type"] == "paragraph_style"
+                and all(previous.get(key) == current.get(key)
+                        for key in ("params", "template", "template_sha256"))
+                and previous["select"].get("scope") == current["select"].get("scope")
+                and set(previous["select"]["paragraphs"]) == set(current["select"]["paragraphs"]) == {"index_range"}
+                and previous["select"]["paragraphs"]["index_range"][1] == current["select"]["paragraphs"]["index_range"][0]):
+            interval = previous["select"]["paragraphs"]["index_range"]
+            interval[1] = current["select"]["paragraphs"]["index_range"][1]
+            previous["expected_count"] += current["expected_count"]
+            previous["id"] = f"paragraphs-{interval[0]}-{interval[1]}"
+        else:
+            grouped.append(current)
+    return grouped
+
+
 def prepare_review(profile, files, *, choices=None):
     """Propose complete paragraph dispositions and exact per-file effects.
 
@@ -482,6 +508,7 @@ def prepare_review(profile, files, *, choices=None):
                            "tracked": profile.manifest["tracked"]}, "expected_count": 1,
                 "template": str(profile.template),
                 "template_sha256": profile.manifest["assets"][profile.manifest["template_asset"]]["sha256"]})
+        effects = _group_style_effects(effects)
         effects.extend(_policy_effect(profile, policy, i) for i, policy in enumerate(profile.manifest["policies"]))
         contract = {"kind": "document_effects", "request": f"Apply reviewed office profile {profile.name}", "effects": effects}
         row["contract"] = contract

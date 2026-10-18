@@ -114,8 +114,14 @@ parent execution ledger **or** unique child totals, then adds planning ledgers.
 It never sums both representations. Missing costs propagate as unknown. These are
 estimated costs, not provider invoices.
 
+Archived recoveries remain in the cost and artifact history. Their old failed checks
+are labelled historical so they cannot be mistaken for the current candidate's
+checks. A missing child report leaves child-summed costs unknown; a recorded parent
+execution ledger can still establish cost, but cannot substitute for missing final
+outcome evidence.
+
 Readiness and human acceptance are separate. Acceptance requires all files ready,
-no recorded failed checks, explicit positive request/content/visual judgments and
+supported recorded final-outcome evidence, no current failed checks, explicit positive request/content/visual judgments and
 a nonblank reviewer. Missing review is unknown. A human can record rejection even
 when automated checks passed. Acceptance rates stay unknown until every run in a
 group has complete review. Failed and unreviewed work stays in cost/time totals.
