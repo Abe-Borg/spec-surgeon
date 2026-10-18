@@ -76,6 +76,8 @@ recovery records. Three holdouts vary the title, paragraph position and structur
 ordinary paragraphs, a table cell and a styled heading. The fixture forces a
 built-in planning failure, learns a generated method on the development document,
 then compares the same untouched holdout with memory disabled and enabled.
+Each comparison uses an isolated memory store and records the two author calls
+used to learn the method separately from holdout execution.
 
 Both runs must complete and pass fresh goal checks. Cold runs use two scripted
 author calls; warm runs use zero. The harness records elapsed engine time and zero

@@ -745,6 +745,34 @@ def test_the_window_runs_the_custom_transform_offered_in_the_chat(qt, folder, tm
     assert {f: f.read_bytes() for f in folder.glob("*.docx")} == before
 
 
+def test_the_window_continues_into_recovery_and_exports_its_verified_preview(qt, folder, tmp_path):
+    goal = {"kind": "document_effects", "effects": [
+        {"id": "distance", "type": "page_setup", "sections": "all", "margins": {"header": 900}}]}
+    refusal = {"request": "r", "summary": "Set header distance", "unsupported": "No usable method",
+               "proposal": "Check the requested page setup"}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": refusal, "custom_transform": "outside_limits"})),
+        resp(tool("propose_plan", {"contract": goal, "rationale": "Set header distance to 0.625 in."})))
+    s = Session(out_root=tmp_path / "out", client=fake)
+    w, ui = window(qt, s)
+    ui["vars"]["folder"].set(str(folder))
+    ui["vars"]["render"].set(False)
+    ui["request"].set("put the header 0.625 in from the top")
+    before = {f: f.read_bytes() for f in folder.glob("*.docx")}
+    ui["buttons"]["preview"].click()
+    ui["wait"]()
+    assert s.turn.choices[0].kind == "recovery_plan"
+    ((_, button),) = ui["choices"]()
+    button.click()
+    ui["wait"]()
+    assert s.recovery.ready and s.conversation is not None
+    assert w.stack.currentWidget() is w.preview_page
+    assert ui["buttons"]["run"].isEnabled()
+    ui["buttons"]["run"].click()
+    ui["wait"]()
+    assert ui["results_model"].badges() == ["pass", "pass"]
+    assert {f: f.read_bytes() for f in folder.glob("*.docx")} == before
+
+
 def test_generated_approval_identity_includes_approved_goal_and_bound_targets(tmp_path):
     from types import SimpleNamespace
     from spec_surgeon.preview import approval_token, generated_key

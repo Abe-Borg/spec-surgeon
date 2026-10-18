@@ -93,6 +93,7 @@ def test_related_holdout_reuses_method_and_measures_cold_vs_warm(tmp_path, monke
     assert holdout.read_bytes() == original
     report = {"execution": "scripted", "layout": layout,
         "scope": "recovery engine; renderer and model critic disabled; forced built-in failure",
+        "learning": {"completed": bool(trained.ready), "author_calls": trained.budget["calls"]},
         "cold": {"completed": True, "author_calls": len(cold_client.requests), "seconds": cold_seconds},
         "warm": {"completed": True, "author_calls": len(warm_client.requests), "seconds": warm_seconds},
         "human_interventions": 0, "human_accepted": None, "provider_cost_usd": None,
