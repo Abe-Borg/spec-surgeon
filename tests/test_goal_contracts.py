@@ -253,6 +253,25 @@ def test_template_style_import_cannot_redefine_an_unresolved_original_body_refer
     _, fragments = plan_spec(package, method)
     output = apply_spec(package, fragments).output_bytes()
     verdict = verify_goal(source, output, goal, binding)
+    assert verdict["passed"], verdict
+    safe = DocxPackage(output)
+    style_root = safe.xml("word/styles.xml")
+    assert not any(s.get(W + "styleId") == "ImportedHeader" for s in style_root)
+    imported = next(s for s in style_root if s.get(W + "styleId") == "TemplateImportedHeader")
+    original_body = list(package.xml(package.main_part()).iter(W + "p"))[-1]
+    final_body = list(safe.xml(safe.main_part()).iter(W + "p"))[-1]
+    assert etree.tostring(original_body) == etree.tostring(final_body)
+    # A faulty method can still recreate the old bug. Independent verification
+    # must reject that output even though the correct method can now recover.
+    imported.set(W + "styleId", "ImportedHeader")
+    safe.write_xml("word/styles.xml", style_root)
+    for part in safe.parts_by_kind()["headers"]:
+        root = safe.xml(part)
+        for ref in root.iter(W + "pStyle"):
+            if ref.get(W + "val") == "TemplateImportedHeader":
+                ref.set(W + "val", "ImportedHeader")
+        safe.write_xml(part, root)
+    verdict = verify_goal(source, safe.output_bytes(), goal, binding)
     assert not verdict["passed"]
     assert any("original" in error and "style" in error for error in verdict["errors"]), verdict
 

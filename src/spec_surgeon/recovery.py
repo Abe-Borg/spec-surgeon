@@ -186,6 +186,11 @@ operation composition, stage order or use custom_transform when permitted, but e
 pass independent original-to-final effect and preservation checks for the unchanged approved contract.
 Only a user can choose ambiguous source targets. Request a scoped decision with need_user.
 Use read-only run_analysis for novel investigation; its findings never authorize edits or wording.
+The catalog's legacy formatting-only custom_transform_limits do not apply to this governed path.
+A built-in refusal is a failed method, not proof the approved outcome is unsupported: inspect, replan,
+then use custom_transform when its existing independent assertions cover the approved effects. Pinned
+template inputs are available to generated methods. For localized header/footer styles, use
+inspect_template_styles; the built-in importer reconciles identities automatically.
 A separate critic can withhold candidates and request revision or user input. Use its evidence to inspect,
 replan and try again. review_candidate can revisit a retained verified candidate after incomplete review.
 Each listed file must be verified; READY documents are outside subsequent trials. Paginate complete evidence.
@@ -220,7 +225,7 @@ def _tool(name, description, properties, required=()):
         "type": "object", "properties": properties, "required": list(required)}}
 
 
-READ_TOOLS = ("inspect_profile", "list_styles", "sample_paragraphs", "show_part_text", "read_template",
+READ_TOOLS = ("inspect_profile", "list_styles", "sample_paragraphs", "show_part_text", "read_template", "inspect_template_styles",
               "read_input_file", "list_parts", "read_paragraphs", "read_xml_page", "run_analysis", "read_analysis_result", "read_context_archive")
 TOOLS = [t for t in compiler.TOOLS if t["name"] in READ_TOOLS and t["name"] != "read_template"] + [
     compiler.VIEW_PAGES_TOOL,

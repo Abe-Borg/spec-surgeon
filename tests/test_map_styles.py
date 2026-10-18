@@ -491,7 +491,12 @@ def test_restyling_beside_the_header_footer_templating_op_conflicts(tpl):
     hf = copy.deepcopy(load_spec(HF_SPEC)["ops"][0])
     importing = {"op": "map_styles", "params": {"map": [{"from": "Normal", "to": "CMT"}], "template": tpl},
                  "select": {"scope": ["document"]}}
-    assert "styles.xml" in _conflict(data, hf, importing)                    # it plans from styles.xml as a whole
+    frag = get_op(hf["op"]).plan(DocxPackage(data), hf.get("select", {}), hf["params"])
+    assert (STYLES, "*", "verify") in frag.touches             # it still reads styles.xml as a whole
+    # Reconciliation also reads body style references to reserve dangling IDs;
+    # that conflict may be reported before the style-definition conflict.
+    message = _conflict(data, hf, importing)
+    assert "styles.xml" in message or "document.xml" in message
     everywhere = {"op": "map_styles", "params": {"map": [{"from": "Normal", "to": "Heading 2"}]}}
     _conflict(data, everywhere, hf)                                         # it removes the header parts mapped over
 

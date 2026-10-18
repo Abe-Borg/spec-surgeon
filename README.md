@@ -1,5 +1,12 @@
 # Spec Surgeon
 
+**Source checkout: automatic template style reconciliation.** Header/footer templates now work across Word
+languages without a manual rebuild. The importer matches default roles, style names and linked character styles,
+remaps copied references, and isolates unrelated ID collisions. Agents can inspect the mapping before submitting
+a job. Governed generated repairs also receive their approved template files as pinned in-memory inputs; their
+instructions describe the broader independently verified capabilities instead of the legacy formatting-only limit.
+See [template compatibility and recovery](docs/TEMPLATE_STYLE_RECOVERY.md). These changes are not a published installer.
+
 **New in 1.0: built-in workflows and broader workspace outcomes.** Choose **Built-in workflows…** in the desktop
 or run `spec-surgeon workflows list` to configure repeatable style, numbering, table and proofing-language work without
 an API key. Every configured workflow goes through the existing preview, approval and verified execution path and can

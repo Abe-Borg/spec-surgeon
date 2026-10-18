@@ -885,8 +885,10 @@ class Conversation:
                                       detail=str(spec.get("proposal") or "")))
             msg = str(spec.get("unsupported"))
             if verdict == "outside_limits":
-                msg += ("\nA custom transform can't do this safely yet" + (f": {reason}" if reason else ".") +
-                        " It needs a new built-in capability.")
+                msg += ("\nThis chat's formatting-only custom fallback cannot cover that change"
+                        + (f": {reason}" if reason else ".")
+                        + " Project recovery can use broader custom methods for approved outcomes with independent "
+                          "verification; this fallback limit alone does not establish that a new built-in is needed.")
             return Turn("unsupported", message=msg, understanding=summary, choices=choices, spec=spec,
                         errors=list(rejections), images=images, custom_transform=verdict,
                         custom_transform_reason=reason)

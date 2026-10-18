@@ -4,6 +4,15 @@ Working notes for any Claude session touching this repository. Read before editi
 
 ## What this is
 
+**Template style reconciliation (source, 2026-10-18):** header/footer imports reconcile localized IDs by
+default role, type/name and reciprocal links before importing dependencies. Unrelated collisions and dangling
+destination references reserve their IDs. `ops/template_styles.py` and independent `verify/template_styles.py`
+derive mappings separately; `verify/goal_templates.py` checks them against the actual selected template graph.
+Never import a second default or trust the transform's mapping as authority. `inspect_template_styles` gives
+agents current compatibility evidence. Governed codegen receives contract-pinned template snapshots through
+immutable `pkg.inputs` in both phases; its prompt must not inherit the legacy formatting-only limit. See
+`docs/TEMPLATE_STYLE_RECOVERY.md` and the localized-style / generated-input regression tests.
+
 **Adaptive workspaces (source, 2026-10-17):** `inventory.py` and `campaign.py` add persistent,
 project-scoped tasks above the existing engine. `recovery.py` persists resumable investigation
 state separately from compact diagnostic transcripts; READY candidates survive further passes.

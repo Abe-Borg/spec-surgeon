@@ -56,7 +56,7 @@ PLAN_TOOLS = [
           "Returns source count and selection evidence without editing or approving anything; expected_count may be omitted here.", {
         "document_id": {"type": "string"}, "effect": {"type": "object"}}, ("document_id", "effect")),
 ]
-READ_NAMES = {"inspect_profile", "list_styles", "sample_paragraphs", "show_part_text", "read_template",
+READ_NAMES = {"inspect_profile", "list_styles", "sample_paragraphs", "show_part_text", "read_template", "inspect_template_styles",
               "list_parts", "read_paragraphs", "read_xml_page", "run_analysis", "read_analysis_result", "read_context_archive"}
 
 
