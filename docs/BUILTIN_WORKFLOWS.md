@@ -1,5 +1,7 @@
 # Built-in workflows
 
+Available starting in Spec Surgeon 1.0 (v1.0.0).
+
 Built-in workflows turn common combinations of operations into named starting points. They ship with the installed
 package and work without an API key or a previously populated personal library. Each produces an ordinary chain:
 preview every stage, inspect the proposed changes, approve execution, and receive independently verified copies.

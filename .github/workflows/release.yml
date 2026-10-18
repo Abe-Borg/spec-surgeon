@@ -105,5 +105,5 @@ jobs:
           (cd dist && sha256sum *.whl *.tar.gz *.exe > SHA256SUMS)
           gh release create "$GITHUB_REF_NAME" dist/* \
             --repo "$GITHUB_REPOSITORY" --verify-tag --latest \
-            --title "Spec Surgeon $GITHUB_REF_NAME" \
+            --title "$(sed -n '1s/^# //p' "docs/releases/$GITHUB_REF_NAME.md")" \
             --notes-file "docs/releases/$GITHUB_REF_NAME.md"
