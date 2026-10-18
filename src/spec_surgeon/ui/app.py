@@ -475,6 +475,7 @@ class MainWindow(QMainWindow):
         self.act_library = QAction("Your library…", self, shortcut=QKeySequence("Ctrl+L"))
         self.act_chain = QAction("Chain recipes…", self)
         self.act_workflows = QAction("Built-in workflows…", self)
+        self.act_office_profiles = QAction("Office profiles…", self)
         self.act_operations = QAction("Built-in operations…", self)
         self.act_library_folder = QAction("Open library folder", self)
         self.act_memory = QAction("Repair memory…", self)
@@ -484,7 +485,7 @@ class MainWindow(QMainWindow):
         self.act_open = QAction("Open results folder", self)
         self.act_settings = QAction("Settings…", self, shortcut=QKeySequence("Ctrl+,"))
         self.act_exit = QAction("Exit", self, shortcut=QKeySequence("Ctrl+Q"))
-        for a in (self.act_campaign, self.act_recovery, self.act_audit, self.act_operations, self.act_workflows, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
+        for a in (self.act_campaign, self.act_recovery, self.act_audit, self.act_office_profiles, self.act_operations, self.act_workflows, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
                   self.act_settings):
             m.addAction(a)
         m.addSeparator()
@@ -577,6 +578,7 @@ class MainWindow(QMainWindow):
         r.chain_btn.clicked.connect(self.do_chain)
         r.workflows_btn.clicked.connect(self.do_workflow)
         self.act_workflows.triggered.connect(self.do_workflow)
+        self.act_office_profiles.triggered.connect(self.do_office_profiles)
         self.act_operations.triggered.connect(self.do_operations)
         self.act_chain.triggered.connect(self.do_chain)
         p.save_btn.clicked.connect(self.do_save_to_library)
@@ -599,7 +601,7 @@ class MainWindow(QMainWindow):
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn, run.resolve_btn,
                             p.review_ack_btn, p.outcome_approve_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
-                            self.act_chain, self.act_workflows, r.workflows_btn, self.act_memory, self.act_campaign, self.act_recovery, self.act_audit,
+                            self.act_chain, self.act_workflows, self.act_office_profiles, r.workflows_btn, self.act_memory, self.act_campaign, self.act_recovery, self.act_audit,
                             run.load_recovery_btn]
 
     # ---- values ---------------------------------------------------------------------------------------
@@ -2166,6 +2168,20 @@ class MainWindow(QMainWindow):
         return Path(res["path"])
 
     @Slot()
+    def do_office_profiles(self):
+        if self.busy or self.updating:
+            return False
+        from .office_profiles_dialog import OfficeProfilesDialog
+        self.sync()
+        dialog = getattr(self, "office_profiles_dialog", None)
+        if dialog is None:
+            dialog = self.office_profiles_dialog = OfficeProfilesDialog(self.session, self.prompts, self)
+        dialog.setWindowModality(Qt.WindowModality.WindowModal)
+        dialog.show()
+        dialog.raise_()
+        return True
+
+    @Slot()
     def do_campaign(self):
         if self.busy or self.updating:
             return False
@@ -2183,8 +2199,16 @@ class MainWindow(QMainWindow):
     def do_audit(self):
         return self._start_audit()
 
-    def _start_audit(self, identity=None):
+    def _start_audit(self, identity=None, *, project_context=None, context_label=None):
         if self.busy or self.updating:
+            return False
+        from ..project_evidence import validate_context
+        try:
+            # The worker receives an isolated snapshot. Editing a caller's
+            # context or the imported file cannot change a running audit.
+            context = validate_context(project_context) if project_context is not None else None
+        except ValueError as exc:
+            self.prompts.warn("Spec QA audits", str(exc))
             return False
 
         def audit(log):
@@ -2193,11 +2217,12 @@ class MainWindow(QMainWindow):
             if not files:
                 raise ValueError("Choose a folder containing DOCX specification files first.")
             log(f"Auditing {len(files)} file(s); source files are read only.")
-            return audit_batch(files, identity=identity)
+            return audit_batch(files, identity=identity, project_context=context)
 
         def done(report):
             from .qa_dialog import AuditReportDialog
-            self.audit_dialog = AuditReportDialog(report, self.prompts, self, rerun=self._start_audit)
+            self.audit_dialog = AuditReportDialog(report, self.prompts, self, rerun=self._start_audit,
+                                                 project_context=context, context_label=context_label)
             self.audit_dialog.show()
 
         return self._work("Spec QA audits", audit, on_done=done, page=self.files_page)

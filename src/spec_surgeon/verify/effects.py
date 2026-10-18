@@ -175,6 +175,24 @@ def _template_schema(effect):
         raise ValueError("template replacement is untracked")
 
 
+def _v_disjoint_style_intervals(a, b):
+    if any(effect["type"] != "paragraph_style" for effect in (a, b)):
+        return False
+    intervals, scopes = [], []
+    for effect in (a, b):
+        select = effect.get("select", {})
+        predicate = select.get("paragraphs")
+        if not isinstance(predicate, dict) or list(predicate) != ["index_range"]:
+            return False
+        intervals.append(predicate["index_range"])
+        scope = select.get("scope", ["document"])
+        scopes.append([scope] if isinstance(scope, str) else scope)
+    share_part_scope = any(scope in scopes[1] for scope in scopes[0])
+    if not share_part_scope:
+        return True
+    return max(intervals[0][0], intervals[1][0]) >= min(intervals[0][1], intervals[1][1])
+
+
 def _validate(contract):
     _keys(contract, {"kind", "effects", "request", "author"}, "contract")
     if contract.get("kind") != "document_effects":
@@ -296,6 +314,8 @@ def _validate(contract):
             if kind == "remove_header_footer":
                 for key, allowed in (("kinds", {"header", "footer"}), ("types", {"default", "first", "even"})):
                     _enum_values(effect.get(key, list(allowed)), allowed, "header/footer " + key)
+    if any(effect["type"] == "review_comments" for effect in effects) and len(effects) != 1:
+        raise ValueError("review comments require a standalone approved contract with whole-part preservation proof")
     if any(effect["type"] in OPERATION_EFFECTS for effect in effects) and any(
             effect["type"] in {"insert_paragraph", "delete_paragraphs", "replace_text", "header_footer_template",
                                "remove_header_footer"} for effect in effects):
@@ -309,9 +329,11 @@ def _validate(contract):
             or (effect["type"] == "format" and (effect.get("font") or effect.get("run"))) for effect in effects):
         raise ValueError("proofing language and run/style formatting need separate approved goals because their independent proofs inspect complete property containers")
     for effect in effects:
-        if effect["type"] in OPERATION_EFFECTS and effect["params"].get("direct_formatting") == "clear" and any(
-                other is not effect and other["type"] != "page_setup" for other in effects):
-            raise ValueError("clearing direct formatting needs a separate approved goal; only page setup may compose")
+        if effect["type"] in OPERATION_EFFECTS and effect["params"].get("direct_formatting") in {"clear", "replace_style_owned"} and any(
+                other is not effect and other["type"] != "page_setup" and not _v_disjoint_style_intervals(effect, other)
+                for other in effects):
+            raise ValueError("clearing direct formatting needs a separate approved goal; only page setup or paragraph "
+                             "styles selected by provably disjoint exact index_range intervals may compose")
     graph = [effect for effect in effects if effect["type"] in {"header_footer_template", "remove_header_footer"}]
     if len(graph) > 1:
         raise ValueError("only one approved header/footer graph effect may be composed")
@@ -1023,6 +1045,16 @@ def verify_effects(original: bytes | Path, candidate: bytes | Path, contract: di
             operation_context = verify_operations(source, output, operation_effects,
                                                   contract.get("author", "Abraham Borg"), errors, binding)
             allowed_changed.update(operation_context.verified_members)
+            if operation_effects[0]["type"] == "review_comments":
+                # Only the standalone comment proof can account for added text
+                # parts. It checked their entire expected trees against the
+                # original source and approved literal wording above.
+                allowed_added.update(operation_context.review_comment_additions)
+                for part in operation_context.verified_parts:
+                    if part in source_roots:
+                        output_roots[part] = copy.deepcopy(source_roots[part])
+                    else:
+                        output_roots.pop(part, None)
             if operation_context.styles_part:
                 allowed_changed.add(operation_context.styles_part)
         used_ids = _revision_ids(source)
@@ -1056,7 +1088,7 @@ def verify_effects(original: bytes | Path, candidate: bytes | Path, contract: di
                 continue
             _normalize_format(*pairs[key], fmt, source_styles, output_styles, output_theme,
                               used_ids, f"{key[0]} original paragraph {key[1]}", errors)
-        if operation_context is not None:
+        if operation_context is not None and operation_effects[0]["type"] != "review_comments":
             normalize_operations(operation_context, source_roots, output_roots)
         _normalize_pages(source_roots[main], output_roots[main], page_permissions, errors)
         for mask in masks:

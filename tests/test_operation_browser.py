@@ -19,7 +19,7 @@ def test_catalog_search_exposes_operations_and_their_limits_without_a_model(brow
     def no_model(*args, **kwargs):
         raise AssertionError("Browsing operations is offline")
     monkeypatch.setattr(llm, "client", no_model)
-    assert browser.operations.count() == len(op_catalog(False)["ops"]) == 50
+    assert browser.operations.count() == len(op_catalog(False)["ops"]) == 51
     browser.search.setText("add_watermark")
     assert browser.operations.count() == 1
     detail = browser.details.toPlainText()

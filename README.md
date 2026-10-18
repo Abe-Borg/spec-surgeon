@@ -1,5 +1,27 @@
 # Spec Surgeon
 
+**Office standards and specification review.** Open **File → Office profiles…** to create or import a portable
+standard, map specification roles to office styles, review every original paragraph, preview every document, and
+produce independently verified copies. Profiles bundle their reference assets and require fresh approvals for each
+batch. The new `replace_style_owned` option removes only eligible direct formatting supplied by the destination
+style or its ancestors. [Office profiles and command examples](docs/OFFICE_PROFILES.md) explain the supported
+combinations and conservative limits on numbered styles.
+
+Read-only structure analysis (`spec-surgeon structure`) now supplies paragraph locations and explicit unresolved
+coverage. Spec QA includes duplicate-provision checks with numeric safeguards and internal-reference checks.
+Project workspaces have a **Project facts and standards…** editor with scoped evidence, confirmation, supersession
+history and an approved standards register. See [specification QA](docs/TEXT_HYGIENE_AND_SPEC_QA.md) and
+[project evidence](docs/PROJECT_EVIDENCE.md).
+
+`add_review_comments` is the 51st built-in operation: it adds only explicitly supplied comment wording and source
+text to exact paragraph targets, preserving existing comments and document text. Its independent outcome check
+uses a separate approved stage. [Comment usage and limits](docs/EDIT_REASON_COMMENTS.md).
+
+The [workflow evaluation adapters](docs/WORKFLOW_EVALUATION_V3.md) compare actual batch, chain, campaign and recovery
+reports while keeping automated checks, live-provider measurements and human acceptance separate.
+[Runtime reliability](docs/RUNTIME_RELIABILITY.md) covers bounded ZIP intake, metadata preservation, explicit worker
+startup and isolated Word rendering with timeouts. These features use independently implemented code in Spec Surgeon.
+
 **New in v1.1.0: reliability and approved outcomes.** **File → Built-in operations…** now exposes all 50 deterministic operations,
 with searchable inputs, behavior, limits and verification details. The four guided workflows remain available without
 an API key. Ordinary natural-language editing now adds an independently proposed **outcome review**: inspect every

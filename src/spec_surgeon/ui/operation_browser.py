@@ -25,7 +25,7 @@ _GROUPS = {
     "Numbering": {"audit_numbering", "convert_numbering", "convert_typed_numbers", "set_list_level"},
     "Tables and pictures": {"apply_table_style", "set_table_props", "replace_table", "swap_image"},
     "Document review and metadata": {
-        "resolve_tracked_changes", "remove_comments", "remove_notes", "remove_hidden_text",
+        "resolve_tracked_changes", "remove_comments", "add_review_comments", "remove_notes", "remove_hidden_text",
         "remove_hyperlinks", "unlink_fields", "set_document_properties", "set_document_state", "name_output",
     },
 }

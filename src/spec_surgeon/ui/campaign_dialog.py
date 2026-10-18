@@ -159,7 +159,8 @@ class CampaignDialog(QDialog):
         self._button("Load spec / chain…", self.pick_spec, spec_row)
         self._button("Clear", self.clear_spec, spec_row)
         form.addLayout(spec_row)
-        form.addWidget(QLabel("Project context (JSON object; approved project facts and wording)", editor))
+        self.project_evidence_btn = self._button("Project facts and standards…", self.edit_project_evidence, form)
+        form.addWidget(QLabel("Project context (advanced JSON)", editor))
         self.context = QPlainTextEdit(editor)
         self.context.setAccessibleName("Project context JSON")
         self.context.setMaximumHeight(100)
@@ -294,7 +295,7 @@ class CampaignDialog(QDialog):
         self._select_project(self.projects.currentRow())
         self._update_allowance()
         for widget in (self.run_btn, self.export_btn, self.folder_btn, self.save_btn, self.assign_btn,
-                       self.plan_btn, self.refresh_sources_btn):
+                       self.plan_btn, self.refresh_sources_btn, self.project_evidence_btn):
             widget.setEnabled(campaign is not None)
 
     @Slot()
@@ -572,6 +573,20 @@ class CampaignDialog(QDialog):
         except (ValueError, OSError) as exc:
             self.status.setText(str(exc))
             return False
+
+    @Slot()
+    def edit_project_evidence(self):
+        if self.busy or not self.campaign or not self._selected_project or not self.save_project():
+            return
+        from .project_evidence_dialog import ProjectEvidenceDialog
+        dialog = ProjectEvidenceDialog(self.campaign, self._selected_project, self.prompts, self)
+        try:
+            dialog.exec()
+            if dialog.changed:
+                self.refresh()
+                self.status.setText("Project evidence saved. Review a fresh proposal before running affected work.")
+        finally:
+            dialog.deleteLater()
 
     @Slot()
     def pick_template(self):

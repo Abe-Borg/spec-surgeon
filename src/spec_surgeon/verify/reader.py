@@ -65,6 +65,45 @@ class VPackage:
     def read(self, name: str) -> bytes:
         return self.zip.read(name)
 
+    def metadata_changes(self, output: "VPackage", removed=()) -> List[str]:
+        """Independently check safe ZIP metadata on every retained member occurrence.
+
+        Compression records, CRC/sizes, descriptor flags and offsets are regenerated.
+        ZIP64 extra records describe those offsets/sizes and are excluded explicitly.
+        No document operation is allowed to discard comments or the other metadata.
+        """
+        def extra_metadata(extra):
+            result = bytearray()
+            offset = 0
+            while offset + 4 <= len(extra):
+                tag = int.from_bytes(extra[offset:offset + 2], "little")
+                length = int.from_bytes(extra[offset + 2:offset + 4], "little")
+                stop = offset + 4 + length
+                if stop > len(extra):
+                    raise ValueError("invalid ZIP extra record")
+                if tag != 1:
+                    result.extend(extra[offset:stop])
+                offset = stop
+            result.extend(extra[offset:])
+            return bytes(result)
+
+        changes = []
+        if self.zip.comment != output.zip.comment:
+            changes.append("archive comment")
+        remaining = [item for item in self.infos if item.filename not in set(removed)]
+        fields = ("date_time", "compress_type", "comment", "create_system", "create_version",
+                  "extract_version", "internal_attr", "external_attr")
+        # V1 separately checks exact order and membership; match retained occurrences in order.
+        for before, after in zip(remaining, output.infos):
+            if before.filename != after.filename:
+                continue
+            differences = [field for field in fields if getattr(before, field) != getattr(after, field)]
+            if extra_metadata(before.extra) != extra_metadata(after.extra):
+                differences.append("extra")
+            if differences:
+                changes.append(f"{before.filename}: {', '.join(differences)}")
+        return changes
+
     def xml(self, name: str) -> etree._Element:
         parser = etree.XMLParser(remove_blank_text=False, resolve_entities=False, huge_tree=True)
         return etree.fromstring(self.read(name), parser)

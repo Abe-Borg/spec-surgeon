@@ -17,6 +17,7 @@ from .ops.selectors import (SCOPE_KINDS, StyleSheet, check_paragraph_selector,
 
 
 OPERATIONS = {
+    "review_comments": "add_review_comments",
     "paragraph_borders": "set_borders_shading",
     "paragraph_style": "apply_style",
     "style_mapping": "map_styles",
@@ -29,6 +30,7 @@ OPERATIONS = {
 TEMPLATED = {"paragraph_style", "style_mapping", "table_style", "numbering", "typed_numbering"}
 AUTHORED = {"paragraph_style", "style_mapping", "numbering", "typed_numbering", "paragraph_borders"}
 COUNTS = {
+    "review_comments": "selected original document paragraphs receiving literal approved comments",
     "paragraph_borders": "selected original paragraphs, including paragraphs already as requested",
     "paragraph_style": "selected original paragraphs, including paragraphs already in the requested style",
     "style_mapping": "original style usages changed: paragraphs, runs, paragraph marks and tables",
@@ -55,6 +57,8 @@ def operation_params(effect, author="Abraham Borg"):
 def operation_spec(effect, request, author="Abraham Borg"):
     params = operation_params(effect, author)
     mode = "formatting"
+    if effect["type"] == "review_comments":
+        mode = "untracked"
     if effect["type"] == "typed_numbering":
         mode = "content" if params.get("tracked", True) else "untracked"
     return {"request": request, "summary": f"Approved effect {effect['id']}: {effect['type']}",
@@ -101,7 +105,10 @@ def validate_operation_effect(effect):
         if "author" in params and (not isinstance(params["author"], str) or not params["author"].strip()):
             raise GoalError("params.author must be non-empty literal text")
         kind = effect["type"]
-        if kind == "paragraph_borders":
+        if kind == "review_comments":
+            from .ops.add_comments import clean_request
+            clean_request(select, params)
+        elif kind == "paragraph_borders":
             from .ops.set_borders_shading import clean_params
             if set(select) - {"scope", "paragraphs"}:
                 raise GoalError("paragraph_borders selects paragraphs, not style definitions")
@@ -140,6 +147,9 @@ Planning is used only to establish source-side selection evidence for complex
 mapping/list families. The independent verifier derives its own evidence.
 """
     kind, select = effect["type"], effect.get("select", {})
+    if kind == "review_comments":
+        from .ops.add_comments import derive
+        return len(derive(pkg, select, operation_params(effect, author))["entries"])
     if kind == "proofing_language":
         return 1
     if kind in {"paragraph_style", "paragraph_borders"}:

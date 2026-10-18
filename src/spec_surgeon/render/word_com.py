@@ -75,7 +75,12 @@ def com_error_text(e: BaseException) -> Optional[str]:
 
 
 class WordSession:
-    """Context manager around one private Word instance."""
+    """Low-level COM adapter; production callers use the bounded worker below."""
+
+    def __init__(self, scratch: Optional[Path] = None, on_started=None):
+        self._scratch = scratch
+        self._on_started = on_started
+        self.stage = "word_start"
 
     def __enter__(self):
         import pythoncom
@@ -83,23 +88,40 @@ class WordSession:
         from .. import diagnostics as diag
         diag.event("render.word_start.started")
         pythoncom.CoInitialize()
-        with diag.span("render.word_dispatch"):
-            self.app = win32com.client.DispatchEx("Word.Application")
-        self.app.Visible = False
-        self.app.DisplayAlerts = 0
-        self.tmp = Path(tempfile.mkdtemp(prefix="specsurgeon-word-"))
+        self.app = None
+        self.tmp = self._scratch or Path(tempfile.mkdtemp(prefix="specsurgeon-word-"))
+        try:
+            with diag.span("render.word_dispatch"):
+                self.app = win32com.client.DispatchEx("Word.Application")
+            if self._on_started is not None:
+                self._on_started(self.app)
+            self.app.Visible = False
+            self.app.DisplayAlerts = 0
+            # Disable document macros in the private instance, including .docx files misnamed by a caller.
+            self.app.AutomationSecurity = 3
+        except BaseException:
+            try:
+                if self.app is not None:
+                    self.app.Quit(SaveChanges=0)
+            finally:
+                pythoncom.CoUninitialize()
+                if self._scratch is None:
+                    shutil.rmtree(self.tmp, ignore_errors=True)
+            raise
         diag.event("render.word_start.succeeded", temporary=str(self.tmp))
         return self
 
     def __exit__(self, *exc):
         from .. import diagnostics as diag
         try:
+            self.stage = "word_quit" if not exc or exc[0] is None else self.stage
             with diag.span("render.word_quit"):
                 self.app.Quit(SaveChanges=0)
         finally:
             import pythoncom
             pythoncom.CoUninitialize()
-            shutil.rmtree(self.tmp, ignore_errors=True)
+            if self._scratch is None:
+                shutil.rmtree(self.tmp, ignore_errors=True)
 
     def _copy(self, path: Path) -> Path:
         dst = self.tmp / path.name
@@ -108,14 +130,21 @@ class WordSession:
 
     def render_pdf(self, docx: Path, pdf: Path) -> Path:
         from .. import diagnostics as diag
+        self.stage = "word_copy"
         with diag.span("render.word_copy", source=str(docx)):
             src = self._copy(Path(docx))
+        self.stage = "word_open"
         with diag.span("render.word_open", source=str(docx), temporary=str(src)):
             doc = self.app.Documents.Open(str(src), ReadOnly=True, AddToRecentFiles=False, Visible=False)
         try:
+            self.stage = "word_export"
             with diag.span("render.word_export", source=str(docx), output=str(pdf)):
                 doc.ExportAsFixedFormat(str(pdf), WD_FORMAT_PDF)
+        except BaseException:
+            self.failure_stage = self.stage
+            raise
         finally:
+            self.stage = "word_close"
             with diag.span("render.word_close", source=str(docx)):
                 doc.Close(SaveChanges=0)
         return pdf
@@ -125,50 +154,65 @@ class WordSession:
         out = []
         for which in ("accept", "reject"):
             src = self._copy(Path(docx))
+            self.stage = "word_open"
             doc = self.app.Documents.Open(str(src), ReadOnly=False, AddToRecentFiles=False, Visible=False)
             try:
+                self.stage = "word_" + which
                 doc.TrackRevisions = False
                 if which == "accept":
                     doc.Revisions.AcceptAll()
                 else:
                     doc.Revisions.RejectAll()
                 out.append(doc.Content.Text)
+            except BaseException:
+                self.failure_stage = self.stage
+                raise
             finally:
+                self.stage = "word_close"
                 doc.Close(SaveChanges=0)
         return out[0], out[1]
 
 
 def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[str], None]] = None,
-                detail: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
+                detail: Optional[Callable[[str], None]] = None, timeout: Optional[float] = None) -> Dict[Path, Path]:
     """{docx: pdf} for the files Word rendered. A file Word cannot open or export is reported on ``log`` — with the
-    COM error's code and Word's own description — and left out; the others still render. Word failing to start
-    propagates (the caller reports it and renders nothing). ``detail`` gets Word's version and each file's time."""
-    from ..diagnostics import com_quiet
+    COM error's code and Word's own description — and left out; the others still render.
+    Each file has a fresh spawned worker and deadline, including startup/close/quit.
+    ``detail`` gets Word's version and each file's time. Existing PDFs are never reused."""
     from .. import diagnostics as diag
+    from .word_worker import run_word
     import time
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
     out_dir.mkdir(parents=True, exist_ok=True)
     result = {}
-    with com_quiet(), WordSession() as ws:
+    for f in files:
+        f = Path(f)
+        pdf = out_dir / (f.stem + ".pdf")
+        t = time.perf_counter()
         try:
-            detail(f"Word {ws.app.Version} (build {ws.app.Build}) started for {len(files)} file(s)")
-        except Exception:  # noqa: BLE001 — the version is a nicety
-            pass
-        for f in files:
-            f = Path(f)
-            pdf = out_dir / (f.stem + ".pdf")
-            t = time.perf_counter()
-            try:
-                with diag.span("render.word_file", source=str(f), output=str(pdf)):
-                    ws.render_pdf(f, pdf)
-            except Exception as e:  # noqa: BLE001 — this file's render failed; the others go on
-                log(f"{f.name}: Word could not render it: {com_error_text(e) or f'{type(e).__name__}: {e}'}")
-                continue
-            if pdf.exists():
-                result[f] = pdf
-                detail(f"Word: {f.name} → {pdf.name} in {time.perf_counter() - t:.1f}s")
-            else:
-                diag.event("render.file_missing", level="warning", backend="word", source=str(f), output=str(pdf))
-                log(f"{f.name}: Word reported no error but wrote no PDF")
+            pdf.unlink(missing_ok=True)
+            with diag.span("render.word_file", source=str(f), output=str(pdf)):
+                outcome = run_word("render", f, pdf=pdf, timeout=timeout)
+            detail(f"Word {outcome.get('version', '(version unavailable)')}: "
+                   f"{f.name} → {pdf.name} in {time.perf_counter() - t:.1f}s")
+        except Exception as e:  # noqa: BLE001 — isolated failure; continue with a fresh private instance
+            diag.event("render.word_worker_failed", level="error", source=str(f), output=str(pdf),
+                       code=getattr(e, "code", "word-render"), details=getattr(e, "details", {}))
+            if getattr(e, "details", {}).get("stage") == "word_start":
+                raise  # backend unavailable: the renderer-selection wrapper reports it once
+            log(f"{f.name}: Word could not render it: {com_error_text(e) or f'{type(e).__name__}: {e}'}")
+            continue
+        if pdf.is_file():
+            result[f] = pdf
+        else:
+            diag.event("render.file_missing", level="warning", backend="word", source=str(f), output=str(pdf))
+            log(f"{f.name}: Word reported no error but wrote no PDF")
     return result
+
+
+def accept_reject_text(docx: Path, timeout: Optional[float] = None) -> Tuple[str, str]:
+    """Word's accept/reject oracle on scratch copies, with the same process deadline as rendering."""
+    from .word_worker import run_word
+    result = run_word("accept_reject", Path(docx), timeout=timeout)
+    return result["accept"], result["reject"]

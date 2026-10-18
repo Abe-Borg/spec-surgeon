@@ -74,6 +74,7 @@ class FileResult:
     noop: bool = False
     out_name: str = ""                       # the output's file name, unique across the batch (``output_names``)
     output_md5: Optional[str] = None         # md5 of the bytes the suite verified; delivery re-checks the file
+    source_sha256: Optional[str] = None     # durable evaluation pin of acquired, identity-checked original bytes
     trace_path: Optional[Path] = None        # logs/<name>.trace.log: this file's path through the pipeline
     trace: List[str] = field(default_factory=list)       # its lines (also in run.log and DIAGNOSTICS.md)
     render_messages: List[str] = field(default_factory=list)   # what the renderer said about this file
@@ -287,6 +288,15 @@ def _in_pool_worker() -> bool:
     return multiprocessing.parent_process() is not None
 
 
+def _process_pool(workers: int) -> ProcessPoolExecutor:
+    """Spawn on every platform: pools can start from the desktop's background thread.
+
+    The Windows frozen launcher calls freeze_support before opening UI. Using an
+    explicit context also keeps retries from inheriting a threaded Qt/native state.
+    """
+    return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
+
+
 def _when(mtime_ns: int) -> str:
     return datetime.fromtimestamp(mtime_ns / 1e9).strftime("%Y-%m-%d %H:%M:%S")
 
@@ -379,6 +389,7 @@ def _process_one_impl(path: str, job_name: str, params: Dict[str, Any], out_dir:
         if actual_md5 != identity.md5:
             raise JobException("the source changed between acquisition and reading; reacquire it and run again",
                                "source-drift", {"expected_md5": identity.md5, "actual_md5": actual_md5})
+        res["source_sha256"] = hashlib.sha256(data).hexdigest()
         pkg = DocxPackage(data, name=str(src))
         main = pkg.main_part()
         tr.note("open", f"{len(pkg.source_names)} part(s) · main part {main} [{diag.ms(t_stage)}]")
@@ -508,7 +519,7 @@ def _run_alone(path: Path, job_name: str, params: Dict[str, Any], out_dir: Path,
     diag.event("worker.retry", level="warning", source=str(path), attempt=2,
                reason="the original process pool stopped abruptly; isolate the file in a fresh process")
     try:
-        with ProcessPoolExecutor(max_workers=1) as ex:
+        with _process_pool(1) as ex:
             return ex.submit(_process_one, str(path), job_name, params, str(out_dir), out_name, spec, 2,
                              refuse, diag.context()).result()
     except BrokenProcessPool as e:
@@ -871,7 +882,7 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
             _file_done(f, results[str(f)], log)
     else:
         broken: List[Path] = []
-        with ProcessPoolExecutor(max_workers=workers) as ex:
+        with _process_pool(workers) as ex:
             futs = {ex.submit(_process_one, str(f), job_name, params, str(out_dir), out_names[str(f)], spec, 1,
                               refused.get(str(f)), diag.context()): f for f in files}
             for fut in as_completed(futs):
@@ -898,7 +909,8 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
     for f in files:
         r = results[str(f)]
         fr = FileResult(source=f, timings=r.get("timings", {}), noop=r.get("noop", False),
-                        out_name=out_names[str(f)], output_md5=r.get("output_md5"))
+                        out_name=out_names[str(f)], output_md5=r.get("output_md5"),
+                        source_sha256=r.get("source_sha256"))
         if r.get("identity"):
             fr.identity = guard.Identity(**r["identity"])
         fr.fingerprint = r.get("fingerprint", {})

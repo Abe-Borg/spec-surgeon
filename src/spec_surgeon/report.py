@@ -651,7 +651,8 @@ def write_batch_report(batch: "BatchResult") -> Path:
         "set_aside_count": manifest["set_aside_count"],
         "started": getattr(batch, "started", ""), "finished": getattr(batch, "finished", ""),
         "environment": getattr(batch, "environment", {}), "log": f"{LOGS}/run.log",
-        "files": [{"source": str(f.source), "status": f.status, "pattern_id": f.fingerprint.get("pattern_id"),
+        "files": [{"source": str(f.source), "source_sha256": getattr(f, "source_sha256", None),
+                   "status": f.status, "pattern_id": f.fingerprint.get("pattern_id"),
                    "output": str(f.output) if f.output else None, "delivered_to": f.delivered_to,
                    "exception": f.exception, "timings": f.timings,
                    "trace": f"{LOGS}/{Path(f.trace_path).name}" if getattr(f, "trace_path", None) else None}
@@ -1029,7 +1030,9 @@ def write_chain_report(result: "Any") -> Path:
         "set_aside_count": manifest["set_aside_count"], "skipped": result.skipped,
         "started": result.started, "finished": result.finished, "environment": result.environment,
         "log": f"{LOGS}/chain.log", "stopped": result.stopped,
-        "stages": [s.to_dict() for s in result.stages], "files": [f.to_dict() for f in result.files],
+        "stages": [s.to_dict() for s in result.stages], "files": [{**f.to_dict(),
+            "source_sha256": getattr(f.results[0], "source_sha256", None) if f.results else None}
+            for f in result.files],
     }, indent=2, default=str), encoding="utf-8")
     return out / "CHAIN_REPORT.md"
 

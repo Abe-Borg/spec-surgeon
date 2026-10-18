@@ -13,10 +13,13 @@ import hashlib
 import io
 import posixpath
 import zipfile
+from copy import copy
 from dataclasses import dataclass, field
 from typing import Dict, Iterable, List, Optional, Sequence, Tuple
 
 from lxml import etree
+
+from .package_limits import ArchiveLimits, check_archive, check_container
 
 NS = {
     "w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
@@ -103,10 +106,17 @@ class DocxPackage:
     ``data`` and ``members`` always describe the source; ``output_bytes()`` repacks source + overlay by member
     substitution."""
 
-    def __init__(self, data: bytes, name: str = "document.docx"):
+    def __init__(self, data: bytes, name: str = "document.docx", *, limits: Optional[ArchiveLimits] = None):
         self.name = name
         self.data = data
+        self.limits = limits or ArchiveLimits.from_environment()
+        check_container(data, self.limits)
         self._zip = zipfile.ZipFile(io.BytesIO(data))
+        try:
+            check_archive(self._zip, self.limits)
+        except BaseException:
+            self._zip.close()
+            raise
         self.members: List[zipfile.ZipInfo] = self._zip.infolist()     # SOURCE members, in source order
         self.source_names: List[str] = [m.filename for m in self.members]
         self._source_set = set(self.source_names)
@@ -117,14 +127,16 @@ class DocxPackage:
         self._names: Optional[List[str]] = None
 
     @classmethod
-    def from_path(cls, path) -> "DocxPackage":
+    def from_path(cls, path, *, limits: Optional[ArchiveLimits] = None) -> "DocxPackage":
+        limits = limits or ArchiveLimits.from_environment()
         with open(path, "rb") as fh:
-            return cls(fh.read(), name=str(path))
+            return cls(fh.read(limits.max_archive_bytes + 1), name=str(path), limits=limits)
 
     def copy(self) -> "DocxPackage":
         """A working copy: same source, a snapshot of this package's overlay."""
         new = DocxPackage.__new__(DocxPackage)
         new.name, new.data, new._zip, new.members = self.name, self.data, self._zip, self.members
+        new.limits = self.limits
         new.source_names, new._source_set, new._cache = self.source_names, self._source_set, self._cache
         new._subs, new._added, new._removed = dict(self._subs), dict(self._added), list(self._removed)
         new._names = None
@@ -466,9 +478,10 @@ class DocxPackage:
 
     def repack(self, substitutions: Optional[Dict[str, bytes]] = None, removed: Iterable[str] = (),
                added: Optional[Dict[str, bytes]] = None) -> bytes:
-        """Write a new package from the SOURCE: identical member order, identical compression, identical bytes
-        for every member not in ``substitutions``. Substituted members keep their original ZipInfo
-        (compression type, external attributes); only the data changes. ``removed`` members are left out;
+        """Write from SOURCE, preserving order, compression method, metadata and uncompressed member bytes.
+        Compressed records are regenerated; no-op repacks return the original archive bytes.
+        Substituted members keep safe ZipInfo metadata; sizes/CRC/ZIP64 offsets are regenerated.
+        ``removed`` members are left out;
         ``added`` members are appended in order (deflated, dated like the first source member)."""
         substitutions = substitutions or {}
         removed = set(removed)
@@ -479,20 +492,24 @@ class DocxPackage:
         clash = set(added) & (self._source_set - removed)
         if clash:
             raise ValueError(f"added members already exist: {sorted(clash)}")
+        if not removed and not added and all(
+                info.filename not in substitutions or substitutions[info.filename] == self._zip.read(info)
+                for info in self.members):
+            return self.data
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as out:
+            out.comment = self._zip.comment
             for info in self.members:
                 if info.filename in removed:
                     continue
                 data = substitutions.get(info.filename, None)
                 if data is None:
-                    data = self._zip.read(info.filename)
-                zi = zipfile.ZipInfo(info.filename, date_time=info.date_time)
-                zi.compress_type = info.compress_type
-                zi.external_attr = info.external_attr
-                zi.create_system = info.create_system
-                zi.flag_bits = info.flag_bits & ~0x8  # no data-descriptor; sizes known up front
+                    data = self._zip.read(info)  # retain distinct occurrences of duplicate inert names
+                zi = copy(info)
+                zi.extra = _safe_zip_extra(info.extra)
                 out.writestr(zi, data)
+                # zipfile supplies default permissions when this is zero; zero was intentional too.
+                zi.external_attr = info.external_attr
             stamp = self.members[0].date_time if self.members else (1980, 1, 1, 0, 0, 0)
             for name, data in added.items():
                 zi = zipfile.ZipInfo(name, date_time=stamp)
@@ -502,3 +519,21 @@ class DocxPackage:
 
     def close(self):
         self._zip.close()
+
+
+def _safe_zip_extra(extra: bytes) -> bytes:
+    """Keep opaque metadata except ZIP64's stale sizes/offsets (zipfile regenerates it)."""
+    kept = bytearray()
+    pos = 0
+    while pos + 4 <= len(extra):
+        kind = int.from_bytes(extra[pos:pos + 2], "little")
+        size = int.from_bytes(extra[pos + 2:pos + 4], "little")
+        end = pos + 4 + size
+        if end > len(extra):
+            # zipfile already rejects malformed complete records at intake.
+            raise ValueError("truncated ZIP extra metadata")
+        if kind != 0x0001:
+            kept.extend(extra[pos:end])
+        pos = end
+    kept.extend(extra[pos:])  # preserve an inert short trailing field, as zipfile does
+    return bytes(kept)

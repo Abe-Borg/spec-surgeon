@@ -194,6 +194,24 @@ def _target(target):
                 raise GoalError(f"invalid approved text_regex: {exc}") from exc
 
 
+def _disjoint_style_ranges(first, second):
+    """A narrow composition proof: distinct original paragraph intervals only."""
+    if first["type"] != "paragraph_style" or second["type"] != "paragraph_style":
+        return False
+    selections = [effect.get("select", {}) for effect in (first, second)]
+    predicates = [selection.get("paragraphs") for selection in selections]
+    if any(not isinstance(pred, dict) or set(pred) != {"index_range"} for pred in predicates):
+        return False
+    scopes = []
+    for selection in selections:
+        scope = selection.get("scope", ["document"])
+        scopes.append({scope} if isinstance(scope, str) else set(scope))
+    if not scopes[0] & scopes[1]:
+        return True
+    left, right = [pred["index_range"] for pred in predicates]
+    return left[1] <= right[0] or right[1] <= left[0]
+
+
 def validate_contract(contract):
     _object(contract, {"kind", "effects", "request", "author"}, "goal")
     if contract.get("kind") != KIND:
@@ -293,6 +311,8 @@ def validate_contract(contract):
             _sections(effect.get("sections", "all"))
             _enum_list(effect.get("kinds", ["header", "footer"]), {"header", "footer"}, "kinds")
             _enum_list(effect.get("types", ["default", "first", "even"]), {"default", "first", "even"}, "types")
+    if any(e["type"] == "review_comments" for e in effects) and len(effects) != 1:
+        raise GoalError("review comments require their own approved contract after other edits; their independent proof compares whole document/comment parts")
     if any(e["type"] in OPERATIONS for e in effects) and any(e["type"] in {
             "replace_text", "insert_paragraph", "delete_paragraphs", "header_footer_template", "remove_header_footer"
             } for e in effects):
@@ -309,10 +329,12 @@ def validate_contract(contract):
         raise GoalError("proofing language and run/font formatting or style changes require separate approved goals; "
                         "the independent language proof compares each original run/style property container whole")
     for effect in effects:
-        if effect["type"] in OPERATIONS and effect["params"].get("direct_formatting") == "clear" and any(
-                other["id"] != effect["id"] and other["type"] != "page_setup" for other in effects):
+        if effect["type"] in OPERATIONS and effect["params"].get("direct_formatting") in {"clear", "replace_style_owned"} and any(
+                other["id"] != effect["id"] and other["type"] != "page_setup"
+                and not _disjoint_style_ranges(effect, other) for other in effects):
             raise GoalError("clearing direct formatting and other formatting/style/language/numbering effects require "
-                            "separate approved goals; the cleared-property proof permits page setup alongside it")
+                            "separate approved goals; only page setup and paragraph styles with provably disjoint "
+                            "exact index_range selections may compose")
     hf = [e for e in effects if e["type"] in {"header_footer_template", "remove_header_footer"}]
     if len(hf) > 1:
         raise GoalError("use one header/footer graph effect per approved contract")
@@ -640,6 +662,8 @@ def approved_goal_words(contract):
             for effect in contract["effects"] if effect["type"] in {"replace_text", "insert_paragraph"}
             and (effect.get("replace") if effect["type"] == "replace_text" else effect.get("text"))]
     for effect in contract["effects"]:
+        if effect["type"] == "review_comments":
+            result.extend(effect["params"][key] for key in ("text", "source") if key in effect["params"])
         if effect["type"] == "header_footer_template":
             result.extend(_literal_fills(effect["params"]))
     return result
@@ -701,6 +725,6 @@ def goal_catalog():
                    "alternatives": "locators are an approved union; extra matches require a deliberate choice",
                    "style_hint": "evidence only, never an implicit restriction",
                    "section_title": "title following a SECTION six-digit marker, or the inline marker/title paragraph"},
-        "wording": "Only replace_text.replace, insert_paragraph.text and literal template fill.value are approved new wording; preserve exact text",
+        "wording": "Only replace_text.replace, insert_paragraph.text, review_comments.params.text/source and literal template fill.value are approved new wording; preserve exact text",
         "example": {"kind": KIND, "effects": [{"id": "titles", "type": "format",
                     "target": {"locators": [{"role": "section_title"}], "cardinality": "all"}, "run": {"b": True}}]}}
