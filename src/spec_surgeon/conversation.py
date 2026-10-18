@@ -59,7 +59,7 @@ from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTE
 
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from Claude's own label and wording
 LIBRARY_CHOICE_KINDS = ("recipe", "operation")                       # named by Claude, built from the library (rule 13)
-APP_CHOICE_KINDS = ("custom_transform",) + LIBRARY_CHOICE_KINDS      # carried out by the app, never sent as a reply
+APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target") + LIBRARY_CHOICE_KINDS
 SNIPPET_CHOICE_KIND = "snippet"                                      # named by Claude, built from the library, picked
 NAMED_LIBRARY_KINDS = LIBRARY_CHOICE_KINDS + (SNIPPET_CHOICE_KIND,)  # as a REPLY: Claude writes the insert_paragraph
 MAX_CALLS_PER_TURN = compiler.MAX_TURNS
@@ -243,7 +243,8 @@ class Conversation:
                  max_calls: Optional[int] = None, max_attempts: int = DEFAULT_MAX_ATTEMPTS,
                  max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS, effort: str = DEFAULT_EFFORT,
                  stall_repetitions: int = DEFAULT_STALL_REPETITIONS, max_image_tokens: Optional[int] = None,
-                 max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None):
+                 max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
+                 continuous_recovery: bool = False):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -300,6 +301,10 @@ class Conversation:
         self.exchange: List[Dict[str, Any]] = []
         self.seconds = 0.0
         self.calls = 0
+        self.continuous_recovery = continuous_recovery
+        self.recovery_active = False
+        self.recovery_planning = None
+        self.recovery_budgets = []
 
     # ---- public ----
     def start(self) -> Turn:
@@ -377,6 +382,13 @@ class Conversation:
         self.entries.append(Entry("user", f"Chose: {chosen.label}"))
         self.notes.append(f"The user chose: «{chosen.label}». The app carried it out; the outcome follows.")
         return chosen
+
+    def investigate_failure(self, evidence) -> Turn:
+        """A failed preview/method continues the same request under a reviewed outcome."""
+        from .continuous_recovery import propose
+        self.prior_failures.append(copy.deepcopy(evidence))
+        self.recovery_active = True
+        return self._finish(propose(self))
 
     def take_library_choice(self, choice_id: str):
         """The user picked one of their library items Claude offered (a ``recipe`` / ``operation`` choice); the app
@@ -464,6 +476,8 @@ class Conversation:
                                     "max_context_tokens": self.max_context_tokens,
                                     "max_image_tokens": self.batch.max_image_tokens},
                 "context": self.context_state,
+                "recovery_planning": self.recovery_planning,
+                "recovery_budgets": self.recovery_budgets,
                 "calls": self.calls, "seconds": round(self.seconds, 2), "exchange": self.exchange}
 
     def save(self, path: Path) -> Path:
@@ -558,7 +572,16 @@ class Conversation:
             path = self.work_dir / "logs" / "events.jsonl" if self.work_dir else None
             with diag.scope(path, conversation_id=self.id, user_turn=self.user_turns()):
                 with diag.span("conversation.turn", mode=self.mode, file_count=len(self.files)) as record:
-                    turn = self._advance_calls()
+                    if self.recovery_active:
+                        from .continuous_recovery import propose
+                        turn = self._finish(propose(self))
+                    else:
+                        turn = self._advance_calls()
+                        if (self.continuous_recovery and turn.status == "unsupported"
+                                and turn.custom_transform != "possible"):
+                            from .continuous_recovery import propose
+                            self.log("The built-in route stopped; investigating the requested outcomes.")
+                            turn = self._finish(propose(self))
                     record.update(status=turn.status, model_calls=self.calls)
                     return turn
         finally:

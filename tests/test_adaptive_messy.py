@@ -241,6 +241,9 @@ def test_chunk2_gui_session_set_aside_loop(tmp_path):
     }
     s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec1}))))
     s.compile("replace COMMON WORK RESULTS or WET-PIPE SPRINKLERS with FIRE PROTECTION", lambda m: None)
+    # Exercise the manual partial-run/set-aside path. An active ordinary chat now
+    # investigates failed previews automatically (test_continuous_recovery).
+    s.end_conversation()
     s.make_preview(render=False, log=lambda m: None)
     run_msg = s.run(in_place=False, render=False, log=lambda m: None)
     assert "PASS 1" in run_msg and "EXCEPTION 1" in run_msg and "Load set-aside files" in run_msg

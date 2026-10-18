@@ -13,6 +13,7 @@ lazily and explain how to install Qt when it is missing (``pip install "spec-sur
 """
 from __future__ import annotations
 
+import copy
 import os
 import subprocess
 import sys
@@ -46,8 +47,9 @@ class TransformFailed(RuntimeError):
     a verification result."""
     PREFIX = "No custom transform passed verification: "
 
-    def __init__(self, details: str):
+    def __init__(self, details: str, *, recoverable: bool = False):
         self.details = details
+        self.recoverable = recoverable
         super().__init__(self.PREFIX + details)
 
 
@@ -329,7 +331,8 @@ class Session:
         self.chat_dir = self._compiled_dir = out        # then preview/, codegen/ and run/ beside them (bundle_root)
         log(f"Talking the request through with Claude over {len(files)} file(s)…")
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
-                                         prior_failures=self.prior_failures or None, work_dir=out / "chat", log=log)
+                                         prior_failures=self.prior_failures or None, work_dir=out / "chat", log=log,
+                                         continuous_recovery=True)
         try:
             turn = self.conversation.start()
         except Exception:
@@ -352,11 +355,40 @@ class Session:
         if not self.conversation_matches(c.request):
             raise ValueError("the files or the template changed since this conversation started — press Start over")
         chosen = c.choice(choice_id) if choice_id else None
+        if chosen is not None and chosen.kind == "recovery_target":
+            from .continuous_recovery import resume_choice, result_turn
+            result = resume_choice(c, chosen.id)
+            self._adopt_recovery(result, keep_conversation=True)
+            self.turn = result_turn(c, result)
+            self._save_chat()
+            return result.to_text()
+        if (self.recovery is not None and c.recovery_active and text and chosen is None
+                and any(f.status != "READY" for f in self.recovery.files)
+                and not any(q.get("kind") == "goal_binding" and q.get("status") == "open"
+                            for q in self.recovery.question_records)):
+            from .recovery import resume_recovery
+            from .continuous_recovery import result_turn
+            result = resume_recovery(self.recovery.out_dir, request=text, client=self.client, log=log)
+            c.sources.append(text)
+            self._adopt_recovery(result, keep_conversation=True)
+            self.turn = result_turn(c, result)
+            self._save_chat()
+            return result.to_text()
         if self._compiled_dir is None:            # a preview or custom transform used the folder: its records stay
             self.chat_dir = self._compiled_dir = self._next_session_dir()   # as they were; this reply's go here
             log(f"The conversation continues in {self.chat_dir} (conversation.json, compile.json)")
         self._set_outcome()                       # whatever was previewed before this reply is void now
         from .conversation import LIBRARY_CHOICE_KINDS
+        if chosen is not None and chosen.kind == "recovery_plan":
+            from .continuous_recovery import approve, execute, result_turn, options_for
+            snapshot = approve(c, chosen.id)
+            options = options_for(c, render=render)
+            options.visual_review = self.visual_check
+            result = execute(c, snapshot, self.chat_dir / f"recovery-{chosen.id}", options=options)
+            self._adopt_recovery(result, keep_conversation=True)
+            self.turn = result_turn(c, result)
+            self._save_chat()
+            return result.to_text()
         if chosen is not None and chosen.kind in LIBRARY_CHOICE_KINDS:
             return self._take_library_choice(c, chosen, log, render)
         if chosen is not None and chosen.kind == "custom_transform":
@@ -371,6 +403,9 @@ class Session:
                        display=f"Custom transform {self.generated.name!r} passed verification on the sample files.")
             except TransformFailed as e:          # the recorded outcome (no attempt passed, or the call failed)
                 c.note(str(e))
+                if c.continuous_recovery and e.recoverable:
+                    self._set_outcome()
+                    return self._after_turn(c.investigate_failure({"reason": str(e), "proposal": proposal}))
                 self._save_chat()
                 raise
             except Exception as e:                # a defect propagates, never told to Claude as a verification result;
@@ -522,7 +557,8 @@ class Session:
         g = generate_op(request, proposal or "", samples, out / "codegen", client=self.client, log=log, brief=brief)
         if not g.passed:
             raise TransformFailed("; ".join(g.errors or [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}"
-                                                         for a in g.attempts[-1:]]) or "no transform was submitted")
+                for a in g.attempts[-1:]]) or "no transform was submitted",
+                recoverable=bool(g.attempts) and not any("error" in e for e in g.transcript))
         intent = "\n".join([f"A ONE-OFF CUSTOM TRANSFORM ({g.name}) for: {request}", f"WHAT IT SHOULD DO: {proposal}"]
                            + ([f"THE CONVERSATION:\n{brief}"] if brief else []))
         key = self._generated_key(g)
@@ -768,6 +804,13 @@ class Session:
         if render and self.visual_check:
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
+        c = self.conversation
+        if c is not None and c.continuous_recovery and (
+                any(f.status == "exception" for f in self.preview.batch_plan.files)
+                or any(not s.passed for s in self.preview.samples)):
+            evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec or self.chain)}
+            self._set_outcome()
+            return self._after_turn(c.investigate_failure(evidence))
         return self.preview.to_text()
 
     # ---- Claude's visual check: advisory, can stop a run, never passes one ----
@@ -977,9 +1020,12 @@ class Session:
             self.folder = self.selected_files[0].parent
         return result.to_text()
 
-    def _adopt_recovery(self, result) -> None:
+    def _adopt_recovery(self, result, *, keep_conversation=False) -> None:
         self._set_outcome()
-        self.end_conversation()
+        if not keep_conversation:
+            self.end_conversation()
+        else:
+            self.turn = None
         self.recovery = result
         self.out_dir = result.out_dir
         self.questions = list(result.questions)

@@ -49,6 +49,7 @@ class RecoveryOptions:
     use_memory: bool = True
     group_call_slice: int = 4
     critic_review: bool = True
+    visual_review: bool = True
     max_context_tokens: int = DEFAULT_CONTEXT_TOKENS
     analysis_limits: Optional[Dict[str, Any]] = None
 
@@ -76,7 +77,7 @@ class RecoveryOptions:
                 raise ValueError(f"Unknown analysis limit: {exc}") from exc
         if self.allow_codegen is not None and type(self.allow_codegen) is not bool:
             raise ValueError("allow_codegen must be a boolean or None for contract-based automatic choice")
-        for name in ("render", "use_memory", "critic_review"):
+        for name in ("render", "use_memory", "critic_review", "visual_review"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be a boolean")
 
@@ -798,12 +799,16 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
     remembered = state.setdefault("remembered", [])
     if store is not None and not state.get("initialized"):
         try:
+            from .repair_methods import signature
+            contract = adaptive.contract_of(result)
             with diag.span("recovery.memory.search") as record:
                 remembered = store.search(request=result.request, pattern_id=pid, failure_code=code,
-                                          template_hashes=sorted(ctx["templates"]), limit=5)
+                                          template_hashes=sorted(ctx["templates"]), limit=5,
+                                          **({"method_signature": signature(contract)} if contract else {}))
                 record["matches"] = len(remembered)
         except Exception as e:
             result.notes.append(f"Could not read repair memory: {e}")
+    state["remembered"] = remembered
     attempted = set(state.get("attempted", []))
     # Matching recorded failures prevent a repeated paid proposal. Broader similar cases remain context only.
     for case in remembered:
@@ -837,6 +842,21 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
             state["used"], state["attempted"] = used, sorted(attempted)
             diag.event("recovery.memory.reusing", case_id=case.get("id"))
             _trial(ctx, group, candidate, pid, code, "Reusing a matching repair case", latest)
+    if adaptive.contract_of(result) and options.allow_codegen and not state.get("initialized"):
+        from .repair_methods import eligible
+        for case in remembered:
+            if used >= attempt_limit or all(f.status != "UNRESOLVED" for f in group):
+                break
+            candidate = case.get("candidate", {})
+            identity = _strategy_id(candidate)
+            if identity in attempted or not eligible(case, adaptive.contract_of(result)):
+                continue
+            attempted.add(identity)
+            used += 1
+            state["used"], state["attempted"] = used, sorted(attempted)
+            diag.event("recovery.memory.reusing_method", case_id=case.get("id"))
+            adaptive.custom_trial(ctx, group, "Try a remembered method against the current approved goal",
+                                  pid, code, latest, remembered=case)
     if all(f.status == "READY" for f in group) or used >= attempt_limit:
         state["status"] = "complete" if all(f.status == "READY" for f in group) else "paused"
         return
@@ -1251,12 +1271,12 @@ def _review_outputs(ctx, good, folder):
     result.renderer = render_samples(samples, folder / "preview", options.renderer, options.render, result.notes)
     updated = {str(s.source) for s in samples}
     result.samples = [s for s in result.samples if str(s.source) not in updated] + samples
-    if options.render and not ctx.get("suppress_model_review"):
+    if options.render and options.visual_review and not ctx.get("suppress_model_review"):
         rv = vision.review_samples(result.request, samples, folder / "preview",
                                    lambda: ctx["client"] or compiler._client(),
                                    model=options.model, log=ctx["log"])
     elif options.render:
-        rv = vision.VisualReview(skipped="Deterministic preparation rendered the preview; model review has not been requested.")
+        rv = vision.VisualReview(skipped="The preview was rendered; model visual review was not requested.")
     else:
         rv = vision.VisualReview(skipped="Rendering is off; visual outcome was not reviewed.")
     for f in good:
@@ -1777,13 +1797,14 @@ def resume_recovery(run_dir: Path, *, request=None, options=None, client=None, l
 
 def prepare_recovery(files, request, out_dir, *, spec=None, chain=None, options=None, template=None,
                      approved_words=(), project_context=None, input_files=None,
-                     adaptive_contract=None, adaptive_binding=None):
+                     adaptive_contract=None, adaptive_binding=None, prior_failures=(), log=None):
     """Prepare a deterministic baseline or unresolved source-bound goal session without model calls."""
     if spec is None and chain is None and adaptive_contract is None:
         raise ValueError("Preparation requires a spec, chain, or approved adaptive outcome contract")
     return recover(files, request, out_dir, spec=spec, chain=chain, options=options, template=template,
                    approved_words=approved_words, project_context=project_context, input_files=input_files,
                    adaptive_contract=adaptive_contract, adaptive_binding=adaptive_binding,
+                   prior_failures=prior_failures, log=log,
                    _prepare_only=True)
 
 

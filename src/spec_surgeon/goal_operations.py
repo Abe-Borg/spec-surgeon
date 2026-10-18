@@ -17,6 +17,7 @@ from .ops.selectors import (SCOPE_KINDS, StyleSheet, check_paragraph_selector,
 
 
 OPERATIONS = {
+    "paragraph_borders": "set_borders_shading",
     "paragraph_style": "apply_style",
     "style_mapping": "map_styles",
     "proofing_language": "set_language",
@@ -26,8 +27,9 @@ OPERATIONS = {
     "typed_numbering": "convert_typed_numbers",
 }
 TEMPLATED = {"paragraph_style", "style_mapping", "table_style", "numbering", "typed_numbering"}
-AUTHORED = {"paragraph_style", "style_mapping", "numbering", "typed_numbering"}
+AUTHORED = {"paragraph_style", "style_mapping", "numbering", "typed_numbering", "paragraph_borders"}
 COUNTS = {
+    "paragraph_borders": "selected original paragraphs, including paragraphs already as requested",
     "paragraph_style": "selected original paragraphs, including paragraphs already in the requested style",
     "style_mapping": "original style usages changed: paragraphs, runs, paragraph marks and tables",
     "proofing_language": "one whole document, including its styles and all text parts",
@@ -44,6 +46,9 @@ def operation_params(effect, author="Abraham Borg"):
         params["template"] = effect["template"]
     if effect["type"] in AUTHORED:
         params.setdefault("author", author)
+    if effect["type"] == "paragraph_borders":
+        # Stable approval semantics independent of selector shape.
+        params.setdefault("tracked", False)
     return params
 
 
@@ -96,7 +101,12 @@ def validate_operation_effect(effect):
         if "author" in params and (not isinstance(params["author"], str) or not params["author"].strip()):
             raise GoalError("params.author must be non-empty literal text")
         kind = effect["type"]
-        if kind == "proofing_language":
+        if kind == "paragraph_borders":
+            from .ops.set_borders_shading import clean_params
+            if set(select) - {"scope", "paragraphs"}:
+                raise GoalError("paragraph_borders selects paragraphs, not style definitions")
+            clean_params(params)
+        elif kind == "proofing_language":
             from .ops.set_language import clean_params
             clean_params(params)
         elif kind == "table_format":
@@ -132,7 +142,7 @@ mapping/list families. The independent verifier derives its own evidence.
     kind, select = effect["type"], effect.get("select", {})
     if kind == "proofing_language":
         return 1
-    if kind == "paragraph_style":
+    if kind in {"paragraph_style", "paragraph_borders"}:
         sheet, count = StyleSheet(pkg), 0
         for part in scope_parts(pkg, select.get("scope", ["document"])):
             pars = paragraphs(pkg.xml(part))

@@ -24,6 +24,12 @@ the defaults remain 900,000 estimated input tokens and 64,000 output tokens.
 baseline and current runs with pinned reports and input identities, explicit human acceptance, elapsed time,
 interventions and model spending. Scripted runs remain separate from live-provider measurements.
 
+Ordinary chat now continues into reviewed outcome recovery when its usual methods stop, and
+verified generated methods can be reused on related jobs with fresh targets and verification.
+Paragraph borders and shading join the supported outcomes. See
+[continuous recovery and repair reuse](docs/CONTINUOUS_RECOVERY.md) for the flow, scripted
+cold/warm comparisons and current limits.
+
 Paired evaluations count human review only when a nonblank reviewer name accompanies the completed judgments and
 visual check. Anonymous judgments remain recorded, but do not count as accepted results or a completed review.
 

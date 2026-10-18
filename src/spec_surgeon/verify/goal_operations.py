@@ -19,9 +19,10 @@ from .styleimport import NUMBERING_REL, v_type, v_derive_import, v_used_ids
 from .tableselect import VTables, v_parse_select, v_rows, v_cells, v_table_style, v_in_text_box, v_style_chain
 from . import tableprops, applytablestyle, language
 
-TYPES = {"paragraph_style", "style_mapping", "proofing_language", "table_format", "table_style",
+TYPES = {"paragraph_borders", "paragraph_style", "style_mapping", "proofing_language", "table_format", "table_style",
          "numbering", "typed_numbering"}
 PARAMS = {
+    "paragraph_borders": {"borders", "shading", "tracked", "author"},
     "paragraph_style": {"style", "direct_formatting", "existing", "tracked", "author"},
     "style_mapping": {"map", "existing", "allow_missing", "tracked", "author"},
     "proofing_language": {"language", "east_asian", "complex_script", "replace_only", "tracked"},
@@ -30,7 +31,7 @@ PARAMS = {
     "numbering": {"levels", "from", "level_map", "existing", "direct_formatting", "tracked", "author", "allow_missing"},
     "typed_numbering": {"levels", "existing", "direct_formatting", "tracked", "author", "allow_missing"},
 }
-SELECT = {"paragraph_style": {"scope", "paragraphs"}, "style_mapping": {"scope"},
+SELECT = {"paragraph_borders": {"scope", "paragraphs"}, "paragraph_style": {"scope", "paragraphs"}, "style_mapping": {"scope"},
           "proofing_language": set(), "table_format": {"scope", "tables"}, "table_style": {"scope", "tables"},
           "numbering": set(), "typed_numbering": {"paragraphs", "include_tables"}}
 SCOPES = {"document", "headers", "footers", "footnotes", "endnotes", "comments"}
@@ -107,6 +108,9 @@ def validate(effect):
         language._v_asked(params)
     if kind == "table_format":
         tableprops._v_asked(params)
+    if kind == "paragraph_borders":
+        from .borders import _v_asked
+        _v_asked(params)
     if kind in {"table_format", "table_style"}:
         v_parse_select(sel)
         if params.get("tracked", False):
@@ -120,7 +124,7 @@ def validate(effect):
     if ("template" in effect) != ("template_sha256" in effect):
         raise ValueError("template path and SHA256 must be approved together")
     if "template" in effect:
-        if kind in {"table_format", "proofing_language"}:
+        if kind in {"paragraph_borders", "table_format", "proofing_language"}:
             raise ValueError("this outcome does not use a template")
         if not isinstance(effect["template"], str) or not Path(effect["template"]).is_absolute():
             raise ValueError("template path must be absolute")
@@ -192,6 +196,27 @@ def _style(ctx, a, kind):
     if sid is None or v_type(styles.by_id[sid]) != kind:
         raise ValueError("requested style is missing or has the wrong type")
     return sid, imported
+
+
+def _paragraph_borders(ctx, a):
+    from .borders import _v_asked, _v_gets, _v_below_paragraph
+    params = a["params"]
+    params.setdefault("tracked", False)
+    params.setdefault("author", a["author"])
+    borders, shading = _v_asked(params)
+    parts, changed, count = _parts(ctx, a), {}, 0
+    for part in parts:
+        sv = ctx.view(part)[0]
+        for i, p in enumerate(sv.pars):
+            if not para_matches(a["select"].get("paragraphs", "all"), p, i, sv, ctx.src_styles):
+                continue
+            count += 1
+            gets = _v_gets(p.find(W + "pPr"), _v_below_paragraph(p, ctx.src_styles), borders, shading)
+            if gets:
+                changed.setdefault(part, []).append([i, sorted(gets)])
+    a.update(kind="borders_shading", target="direct", parts=parts, changed=changed,
+             expected_paragraphs=sum(len(v) for v in changed.values()))
+    return [a], count
 
 
 def _paragraph_style(ctx, a):
@@ -360,7 +385,8 @@ def verify_operations(source, output, effects, author, errors, binding):
             from .goal_numbering import derive
             derived, count = derive(source_context, {**effect, "_assertion": a})
         else:
-            derived, count = {"paragraph_style": _paragraph_style, "style_mapping": _mapping,
+            derived, count = {"paragraph_borders": _paragraph_borders,
+                              "paragraph_style": _paragraph_style, "style_mapping": _mapping,
                               "proofing_language": _language, "table_format": _table_format,
                               "table_style": _table_style}[kind](source_context, a)
         if count != binding["effects"][effect["id"]]["source_count"]:

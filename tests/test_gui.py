@@ -75,9 +75,11 @@ def test_questions_and_unsupported(folder, tmp_path):
     assert "reply in the chat" in msg and s.questions == ["Which sections?"] and s.spec is None
     assert (s.chat_dir / "conversation.json").is_file() and (s.chat_dir / "compile.json").is_file()
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
-    s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported})))
+    s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported})),
+                          resp(tool("need_user", {"question": "What outcome should the header have?"})))
     msg = s.compile("x", lambda m: None)
-    assert "No built-in operation" in msg and s.turn.choices == []        # Claude did not judge it possible: no offer
+    assert "reply in the chat" in msg and s.questions == ["What outcome should the header have?"]
+    assert s.conversation.recovery_active  # broader planning happens in this same conversation
     s.client = FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})))
     msg = s.compile("x", lambda m: None)
     assert "custom transform" in msg and [c.kind for c in s.turn.choices] == ["custom_transform"]

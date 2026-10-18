@@ -50,6 +50,10 @@ def mutate(data, fn, part="word/document.xml"):
 
 
 @pytest.mark.parametrize("kind,op,select,params,count", [
+    ("paragraph_borders", "set_borders_shading", {"paragraphs": {"text_regex": "^FIRE"}},
+     {"shading": {"fill": "FFFF00"}, "tracked": False}, 1),
+    ("paragraph_borders", "set_borders_shading", {"paragraphs": {"text_regex": "^FIRE"}},
+     {"borders": {"bottom": {"style": "single", "color": "FF0000"}}, "tracked": True, "author": "Abraham Borg"}, 1),
     ("paragraph_style", "apply_style", {"paragraphs": {"text_regex": "^FIRE"}},
      {"style": "Heading 1", "tracked": False}, 1),
     ("paragraph_style", "apply_style", {"paragraphs": {"text_regex": "^FIRE"}},
@@ -82,6 +86,37 @@ def test_all_count_is_pinned_to_source_and_selector_cannot_expand():
     assert verify_effects(source, out, c, b)["passed"]
     expanded = apply(source, "apply_style", {}, params)
     assert not verify_effects(source, expanded, c, b)["passed"]
+
+
+def test_border_outcome_overrides_inheritance_without_allowing_other_paragraph_changes():
+    source = source_bytes()
+    def shade_style(root):
+        style = next(s for s in root if s.get(W + "styleId") == "Normal")
+        ppr = etree.SubElement(style, W + "pPr")
+        etree.SubElement(ppr, W + "shd", {W + "val": "clear", W + "fill": "FFFF00"})
+    source = mutate(source, shade_style, "word/styles.xml")
+    sel, params = {"paragraphs": {"text_regex": "^FIRE"}}, {"shading": "none", "tracked": False}
+    c, b = goal({"type": "paragraph_borders", "select": sel, "params": params,
+                 "expected_count": "all"}, source, 1)
+    output = apply(source, "set_borders_shading", sel, params)
+    assert verify_effects(source, output, c, b)["passed"]
+    # An unchanged source would inherit the forbidden highlight.
+    assert not verify_effects(source, source, c, b)["passed"]
+    expanded = apply(source, "set_borders_shading", {}, params)
+    assert not verify_effects(source, expanded, c, b)["passed"]
+    corrupted = mutate(output, lambda root: etree.SubElement(
+        next(root.iter(W + "pPr")), W + "keepNext"))
+    assert not verify_effects(source, corrupted, c, b)["passed"]
+
+
+def test_border_scope_cannot_add_style_definitions_or_change_style_properties():
+    source = source_bytes()
+    sel, params = {"paragraphs": {"text_regex": "^FIRE"}}, {"shading": {"fill": "CCCCCC"}, "tracked": False}
+    c, b = goal({"type": "paragraph_borders", "select": sel, "params": params, "expected_count": 1}, source, 1)
+    output = apply(source, "set_borders_shading", sel, params)
+    corrupted = mutate(output, lambda root: etree.SubElement(root, W + "style",
+        {W + "styleId": "Extra", W + "type": "paragraph"}), "word/styles.xml")
+    assert not verify_effects(source, corrupted, c, b)["passed"]
 
 
 def test_proofing_language_cannot_change_other_style_properties():

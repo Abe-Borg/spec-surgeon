@@ -901,20 +901,20 @@ def _saved(s):
 
 def test_no_passing_attempt_is_told_to_claude_once_and_saved(folder, tmp_path):
     bad = [resp(tool("submit_op", {"source": "x = 1"}, f"o{i}")) for i in range(3)]
-    s = _offered(folder, tmp_path, *bad)
-    with pytest.raises(TransformFailed) as e:
-        s.reply(choice_id=s.turn.choices[0].id, log=quiet)
-    assert isinstance(e.value, RuntimeError)                         # the window's job error, as before
-    assert str(e.value) == ("No custom transform passed verification: no passing op after 3 attempt(s): "
-                            "investigation stalled; equivalent rejected transforms repeated without new evidence")
-    assert s.conversation.notes[-1] == str(e.value)                  # the prefix once, never doubled
+    s = _offered(folder, tmp_path, *bad,
+        resp(tool("need_user", {"question": "Which outcome should the replacement method preserve?"})))
+    s.reply(choice_id=s.turn.choices[0].id, log=quiet)
+    expected = ("No custom transform passed verification: no passing op after 3 attempt(s): "
+                "investigation stalled; equivalent rejected transforms repeated without new evidence")
+    assert s.conversation.notes[-1] == expected
     assert sum("passed verification" in n for n in s.conversation.notes) == 1
-    assert _saved(s)["entries"][-1] == {**_saved(s)["entries"][-1], "role": "app", "text": str(e.value)}
+    assert any(e["role"] == "app" and e["text"] == expected for e in _saved(s)["entries"])
     assert s.generated is None
-    s.client.responses.append(resp(tool("ask_user", {"questions": ["Shall I try another way?"]}, "a9")))
+    assert s.conversation.recovery_active and s.turn.status == "questions"
+    assert expected in str(s.client.requests[-1]["messages"])
+    s.client.responses.append(resp(tool("need_user", {"question": "Which outcome?"}, "a9")))
     s.reply("so did it work?")
-    sent = [b.get("text") for b in s.client.requests[-1]["messages"][-1]["content"] if b.get("type") == "text"]
-    assert "[note from the app] " + str(e.value) in sent
+    assert "so did it work?" in str(s.client.requests[-1]["messages"])
 
 
 def test_an_api_error_while_writing_is_a_recorded_failure_told_to_claude(folder, tmp_path):
@@ -1159,18 +1159,17 @@ def test_do_codegen_refuses_a_file_edited_after_the_transform_was_previewed(fold
 
 # ---- review-11 / review-20 / codex-1: --allow-codegen accepts an offer, never makes one ----
 
-def test_do_allow_codegen_needs_claudes_possible_verdict(folder, tmp_path, monkeypatch, capsys):
+def test_do_without_a_possible_verdict_continues_read_only_outcome_planning(folder, tmp_path, monkeypatch, capsys):
     for i, extra in enumerate([{}, {"custom_transform": "maybe"}]):
-        # (a second, verdict-less submission in case a stricter compiler sends "maybe" back to be fixed)
         fake = FakeClient(resp(tool("submit_editspec", {"spec": UNSUPPORTED, **extra})),
-                          resp(tool("submit_editspec", {"spec": UNSUPPORTED}, "t2")), WRITER)
+                          resp(tool("need_user", {"question": "Which header outcome should be checked?"})))
         monkeypatch.setattr(compiler_module, "_client", lambda: fake)
         out_dir = tmp_path / f"o{i}"
         assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(out_dir), "--no-render",
                          "--allow-codegen", "--yes"]) == 2
         printed = capsys.readouterr().out
-        assert "Claude did not judge whether a one-off custom transform could do this safely" in printed
-        assert "--allow-codegen accepts only an offer Claude made" in printed
+        assert "Which header outcome should be checked?" in printed
+        assert any("propose_plan" in json.dumps(r.get("tools", [])) for r in fake.requests)
         assert not any("submit_op" in json.dumps(r.get("tools", []), default=str) for r in fake.requests)
         assert not (out_dir / "codegen").exists() and not (out_dir / "run").exists()
 

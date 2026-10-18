@@ -1,6 +1,7 @@
 """Local, bounded repair history. Remembered results are evidence, never authority.
 
-The store contains JSON descriptors, never loads them as code, and needs no document bytes. A retrieved
+The store contains JSON descriptors (including bounded generated source as data), never executes them,
+and needs no document bytes. Source can retain literal project wording; memory is not anonymization. A retrieved
 candidate still needs current wording checks, template binding, planning and independent
 verification on every file. ``applicable`` only determines whether trying a candidate
 automatically is eligible; it does not approve wording or establish correctness.
@@ -202,6 +203,11 @@ def _case(value: Mapping[str, Any]) -> Dict[str, Any]:
 
 def _repair_identity(case: Mapping[str, Any]) -> str:
     """One repair under one exact goal/context; feedback follows all its occurrences."""
+    method = case.get("candidate", {})
+    if method.get("kind") == "method":
+        # A rejected implementation stays rejected across projects and wording.
+        return hashlib.sha256(_json({k: method.get(k) for k in (
+            "kind", "protocol", "engine", "source_sha256", "select", "params")}).encode("utf-8")).hexdigest()
     identity = {k: case[k] for k in ("pattern_id", "goal_fingerprint", "template_hashes", "app_version", "candidate")}
     identity["request"] = normalized_request(case["request"])
     return hashlib.sha256(_json(identity).encode("utf-8")).hexdigest()
@@ -389,7 +395,8 @@ class CaseStore:
             return result
 
     def search(self, request: str = "", pattern_id: str = "", failure_code: str = "",
-               template_hashes: Optional[Sequence[str]] = None, limit: int = 5) -> List[Dict[str, Any]]:
+               template_hashes: Optional[Sequence[str]] = None, limit: int = 5,
+               method_signature: str = "") -> List[Dict[str, Any]]:
         """Return relevant cases including failures/corrections; similarity confers no trust."""
         limit = self._limit(limit)
         want = normalized_request(_text(request, "request"))
@@ -410,6 +417,7 @@ class CaseStore:
                 score += 8 if pattern_id and case["pattern_id"] == pattern_id else 0
                 score += 6 if failure_code and case["failure_code"] == failure_code else 0
                 score += 4 * len(templates.intersection(case["template_hashes"]))
+                score += 16 if method_signature and case["candidate"].get("signature") == method_signature else 0
                 score += len(tokens & other) / max(1, len(tokens | other))
                 if score or not (want or pattern_id or failure_code or templates):
                     hits.append((score, case))

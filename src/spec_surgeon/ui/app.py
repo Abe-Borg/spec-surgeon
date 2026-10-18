@@ -1313,7 +1313,7 @@ class MainWindow(QMainWindow):
             self.go(1)
             QTimer.singleShot(0, self._show_chat_reply)     # after the new bubbles are laid out
             return
-        if s.preview is None and s.generated is None:
+        if s.preview is None and s.generated is None and s.recovery is None:
             r.info.show_message("warn", "Nothing to preview", (text or "").strip())
             self.go(1)
             return
