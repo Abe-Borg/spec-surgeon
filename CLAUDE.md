@@ -5,7 +5,10 @@ Working notes for any Claude session touching this repository. Read before editi
 ## What this is
 
 **Template style reconciliation (source, 2026-10-18):** header/footer imports reconcile localized IDs by
-default role, type/name and reciprocal links before importing dependencies. Unrelated collisions and dangling
+default role, type/name and reciprocal links before importing dependencies. Reuse also requires compatible
+inherited formatting outside pinned properties; tables and nested paragraphs require full compatibility.
+An imported default stays nondefault, with explicit bindings added only to copied content that used it implicitly.
+Unrelated collisions and dangling
 destination references reserve their IDs. `ops/template_styles.py` and independent `verify/template_styles.py`
 derive mappings separately; `verify/goal_templates.py` checks them against the actual selected template graph.
 Never import a second default or trust the transform's mapping as authority. `inspect_template_styles` gives

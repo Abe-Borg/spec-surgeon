@@ -8,19 +8,114 @@ The independent implementation is verify/template_styles.py.
 """
 from __future__ import annotations
 
+from copy import deepcopy
+
+from lxml import etree
+
 from ..package import W, REL_TYPE_BASE
+from ..ooxml import paragraph_ppr, run_rpr, mark_rpr
 from .base import JobException
 from .selectors import StyleSheet
 
 REFS = {W + tag for tag in ("pStyle", "rStyle", "tblStyle", "basedOn", "link", "next",
                             "numStyleLink", "styleLink")}
 TRUE = {"1", "true", "on"}
+FORMAT_CONTAINERS = {W + key for key in ("pPr", "rPr", "tblPr", "trPr", "tcPr", "tblStylePr")}
 
 
-def remap_references(root, mapping):
+def _formatting_signature(styles, sid, pinnable):
+    """Conservative compatibility: preserve every inherited property not pinned by the op.
+
+    Keep inheritance layers rather than flattening unfamiliar OOXML properties or
+    toggle semantics. Tables and nested paragraphs cannot rely on the regular pins.
+    """
+    def signature(node):
+        return (node.tag, tuple(sorted(node.attrib.items())), (node.text or "").strip(),
+                tuple(signature(child) for child in node))
+
+    chain, seen = [], set()
+    while sid:
+        if sid in seen or sid not in styles:
+            return None  # A broken destination chain is not a reusable equivalent.
+        seen.add(sid)
+        style = styles[sid]
+        layer = []
+        for prop in style:
+            if prop.tag not in FORMAT_CONTAINERS:
+                continue
+            prop = deepcopy(prop)
+            if pinnable and prop.tag in (W + "pPr", W + "rPr"):
+                ignored = ({"jc", "tabs"} if prop.tag == W + "pPr" else
+                           {"sz", "color", "b", "i", "caps", "smallCaps"})
+                attributes = ({"spacing": ("before", "after", "line", "lineRule"),
+                               "ind": ("left", "right", "start", "end", "firstLine", "hanging")}
+                              if prop.tag == W + "pPr" else
+                              {"rFonts": ("ascii", "hAnsi", "asciiTheme", "hAnsiTheme")})
+                for child in list(prop):
+                    if child.tag in {W + key for key in ignored}:
+                        prop.remove(child)
+                    elif child.tag in {W + key for key in attributes}:
+                        for key in attributes[child.tag[len(W):]]:
+                            child.attrib.pop(W + key, None)
+                        if not child.attrib and len(child) == 0 and not child.text:
+                            prop.remove(child)
+            if prop.attrib or len(prop) or (prop.text or "").strip():
+                layer.append(signature(prop))
+        if layer:
+            chain.append(tuple(layer))
+        base = style.find(W + "basedOn")
+        sid = base.get(W + "val") if base is not None else None
+    return tuple(reversed(chain))
+
+
+def _style_uses(root, defaults):
+    for node in root.iter():
+        nested = len(list(node.iterancestors(W + "p")))
+        if node.tag in {W + "pStyle", W + "rStyle", W + "tblStyle"} and node.get(W + "val"):
+            yield node.get(W + "val"), node.tag == W + "tblStyle" or nested > 1
+        for tag, path, kind in (("p", "pPr/pStyle", "paragraph"), ("p", "pPr/rPr/rStyle", "character"),
+                                ("r", "rPr/rStyle", "character"), ("tbl", "tblPr/tblStyle", "table")):
+            if (node.tag == W + tag and kind in defaults and
+                    node.find("/".join(W + part for part in path.split("/"))) is None):
+                yield defaults[kind], tag == "tbl" or nested > (0 if tag == "p" else 1)
+
+
+def _strict_dependencies(uses, styles):
+    strict = {sid for sid, full in uses if full}
+    pending = list(strict)
+    while pending:
+        sid = pending.pop()
+        style = styles.get(sid)
+        base = style.find(W + "basedOn") if style is not None else None
+        parent = base.get(W + "val") if base is not None else None
+        if parent and parent not in strict:
+            strict.add(parent)
+            pending.append(parent)
+    return strict
+
+
+def remap_references(root, mapping, implicit_defaults=None):
     for el in root.iter():
         if el.tag in REFS and el.get(W + "val") in mapping:
             el.set(W + "val", mapping[el.get(W + "val")])
+    # Imported defaults are intentionally nondefault: explicitly bind copied
+    # content that formerly used them implicitly, without changing the body.
+    defaults = implicit_defaults or {}
+    for p in root.iter(W + "p"):
+        if "paragraph" in defaults and p.find(f"{W}pPr/{W}pStyle") is None:
+            paragraph_ppr(p).insert(0, etree.Element(W + "pStyle", {W + "val": defaults["paragraph"]}))
+        if "character" in defaults and p.find(f"{W}pPr/{W}rPr/{W}rStyle") is None:
+            mark_rpr(p).insert(0, etree.Element(W + "rStyle", {W + "val": defaults["character"]}))
+    for r in root.iter(W + "r"):
+        if "character" in defaults and r.find(f"{W}rPr/{W}rStyle") is None:
+            run_rpr(r).insert(0, etree.Element(W + "rStyle", {W + "val": defaults["character"]}))
+    for table in root.iter(W + "tbl"):
+        if "table" in defaults and table.find(f"{W}tblPr/{W}tblStyle") is None:
+            properties = table.find(W + "tblPr")
+            if properties is None:
+                properties = etree.Element(W + "tblPr")
+                table.insert(0, properties)
+            properties.insert(0, etree.Element(W + "tblStyle", {W + "val": defaults["table"]}))
 
 
 def reference_parts(pkg, sheet):
@@ -72,8 +167,9 @@ def reconcile_styles(pkg, template, parts, import_missing, strip):
                 and back.get(W + "val") == partner):
             identities[sid] = candidate
 
-    roots = {el.get(W + "val") for part in parts for el in template.xml(part).iter()
-             if el.tag in {W + "pStyle", W + "rStyle", W + "tblStyle"} and el.get(W + "val")}
+    uses = [use for part in parts for use in _style_uses(template.xml(part), source.defaults)]
+    roots = {sid for sid, _ in uses}
+    strict = _strict_dependencies(uses, source.styles)
     reserved = set(target.styles)
     for part in reference_parts(pkg, target):
         reserved.update(el.get(W + "val") for el in pkg.xml(part).iter() if el.tag in REFS)
@@ -89,7 +185,10 @@ def reconcile_styles(pkg, template, parts, import_missing, strip):
             raise JobException(f"template references undefined style {sid!r}", "missing-style")
         if style.get(W + "default") in TRUE and len(defaults.get(kind(style), [])) > 1:
             raise JobException(f"destination has multiple default {kind(style)} styles", "structure")
-        if sid in identities:
+        if (sid in identities and
+                (expected_format := _formatting_signature(source.styles, sid, sid not in strict)) is not None and
+                expected_format ==
+                _formatting_signature(target.styles, identities[sid], sid not in strict)):
             mapping[sid] = identities[sid]
             return
         if not import_missing:

@@ -365,6 +365,8 @@ class ApplyHeaderFooterTemplate(Op):
         tsheet, sheet = StyleSheet(tpkg), StyleSheet(pkg)
         style_parts = sorted({c["template_part"] for c in copies})
         style_map, imported = reconcile_styles(pkg, tpkg, style_parts, import_missing, strip_foreign)
+        implicit_defaults = {kind: style_map[sid] for kind, sid in tsheet.defaults.items()
+                             if style_map.get(sid) in imported}
 
         # ---- pins (template-effective vs target-effective) ----
         tres = Resolver(tsheet, theme_fonts(tpkg))
@@ -373,7 +375,7 @@ class ApplyHeaderFooterTemplate(Op):
         for c in copies:
             troot = tpkg.xml(c["template_part"])
             mapped = etree.fromstring(etree.tostring(troot))
-            remap_references(mapped, style_map)
+            remap_references(mapped, style_map, implicit_defaults)
             mapped_pars = dict(_top_level(mapped))
             pins: Dict[str, Any] = {}
             try:
@@ -557,7 +559,8 @@ class ApplyHeaderFooterTemplate(Op):
                          for i, kd in new_refs.items()},
             "fills": fills, "title_changes": {str(i): v for i, v in title_changes.items()},
             "dist_changes": {str(i): d for i, d in dist_changes.items()},
-            "style_map": style_map, "styles_part": styles_part, "imported": {sid: etree.tostring(el).decode() for sid, el in imported.items()},
+            "style_map": style_map, "implicit_defaults": implicit_defaults, "styles_part": styles_part,
+            "imported": {sid: etree.tostring(el).decode() for sid, el in imported.items()},
             "removal": {"rids": rp.gone_rids, "members": rp.members, "media": rp.media},
             "media_ct": {m: (t_overrides.get(m) or t_defaults.get(posixpath.splitext(m)[1].lstrip(".").lower()))
                          for m in media_map},
@@ -601,7 +604,7 @@ class ApplyHeaderFooterTemplate(Op):
         payload: Dict[str, Tuple[bytes, Optional[str]]] = {}
         for c in td["copies"]:
             troot = tpkg.xml(c["template_part"])
-            remap_references(troot, td.get("style_map", {}))
+            remap_references(troot, td.get("style_map", {}), td.get("implicit_defaults", {}))
             pars = paragraphs(troot)
             for bi, entry in c["pins"].items():
                 p = pars[int(bi)]

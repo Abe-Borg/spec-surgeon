@@ -136,7 +136,7 @@ def test_governed_method_can_complete_template_graph_with_independent_verificati
     # This is an integration check of the sandbox/contract boundary, not a model eval.
     source, template, contract, _ = case
     reference = Path(__file__).parents[1] / "src/spec_surgeon/ops/apply_header_footer_template.py"
-    method = reference.read_text()
+    method = reference.read_text(encoding="utf-8")
     method = method.replace("import hashlib", "from hashlib import md5")
     method = method.replace("import posixpath", "from posixpath import basename, dirname, relpath, splitext")
     method = method.replace("from pathlib import Path\n", "")
@@ -154,5 +154,5 @@ def test_governed_method_can_complete_template_graph_with_independent_verificati
     assert result.passed, result.record.to_markdown() if result.record else result.problems
     assert result.record.get("GOAL").status == "PASS"
     assert result.record.get("V10").status == "PASS"
-    plan = json.loads((tmp_path / "graph" / "plan.json").read_text())
+    plan = json.loads((tmp_path / "graph" / "plan.json").read_text(encoding="utf-8"))
     assert plan["members_added"] and plan["members_removed"]

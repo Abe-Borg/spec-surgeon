@@ -9,9 +9,15 @@ usable template. Turning style import off could not resolve the references eithe
 `apply_header_footer_template` now reconciles style identities automatically:
 
 1. A default style maps to the destination's unique default of the same type.
-2. Other styles reuse an exact ID with matching type/name, or a unique matching type/name.
+2. Other styles identify a candidate by exact ID with matching type/name, or a unique matching type/name.
    Names are compared with normalized whitespace and case.
 3. Reciprocal links identify localized character styles through their matched paragraph style.
+   Candidates are reused only when their inherited formatting outside the properties the operation
+   pins is compatible. Borders, shading, underline and other unpinned properties must match.
+   Table styles (including conditional formatting) and styles used in nested paragraphs require
+   complete formatting compatibility because ordinary paragraph/run pins do not cover them fully.
+   Incompatible candidates are imported under private IDs instead. The comparison retains inheritance
+   layers conservatively rather than flattening properties whose inheritance semantics are not modeled.
 4. Dependencies of a reused destination style stay with that destination definition. Only
    dependencies needed by imported definitions are copied.
 5. Unrelated ID collisions and dangling destination references reserve their IDs. Imported
@@ -19,6 +25,8 @@ usable template. Turning style import off could not resolve the references eithe
    Filling a dangling body reference must never change the body as a side effect.
 6. If the destination has no matching default, a required template definition may be copied
    as a nondefault style. An import never introduces a document-wide default.
+   Copied paragraphs, runs, paragraph marks and tables that used an imported default implicitly
+   receive explicit references to its private copy. The destination's own defaults stay unchanged.
 
 The operation rewrites references in copied parts and imported definitions, then calculates
 formatting pins against the mapped destination styles. It records the mapping in the plan.
@@ -83,3 +91,9 @@ unchanged on 12 synthetic specifications with different fonts, margins, section 
 destination style identities and old header/footer logos. A one-page LibreOffice rendering
 matched the manually normalized template control pixel for pixel. These were generated test
 specifications, not the user's original batch of 12 specifications.
+
+PR review additionally covers same-name styles with different inherited borders, shading,
+underline, table/conditional formatting and nested-paragraph properties. A deliberately faulty
+transform that skips compatibility or omits explicit private-default bindings is rejected by
+both the ordinary suite and the independent final-outcome verifier. CI portability fixes retain
+the original fixture ZIP bytes for the unchanged-template test and read source/JSON as UTF-8.

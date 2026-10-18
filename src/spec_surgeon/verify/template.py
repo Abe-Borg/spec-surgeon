@@ -41,7 +41,7 @@ from lxml import etree
 from .reader import VPackage, W, R, STYLES_REL, THEME_REL
 from .textcheck import blocks
 from .props import Styles, Theme, sig, sect_prs, first_difference
-from .template_styles import style_plan, mapped_tree
+from .template_styles import style_plan, mapped_tree, private_defaults
 
 WP_NS = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing"
 DOCPR = "{%s}docPr" % WP_NS
@@ -777,14 +777,14 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     + "; ".join(f"{want_text[k]!r}≠{got_text[k]!r}" for k in bad))
     # Derive style identities from the two inputs, never from the claimed mapping.
     try:
-        mapping, _ = style_plan(ctx.src, tpl, _style_parts(ctx, a),
+        mapping, imported = style_plan(ctx.src, tpl, _style_parts(ctx, a),
                                 a.get("import_missing_styles", True), strip_extensions)
     except ValueError as exc:
         errs.append(f"{tag}: {exc}")
         return tag
     if "style_map" in a and a["style_map"] != mapping:
         errs.append(f"{tag}: claimed style mapping differs from the input-derived mapping")
-    mapped = mapped_tree(troot, mapping)
+    mapped = mapped_tree(troot, mapping, private_defaults(tpl, mapping, imported))
     m_pars = list(mapped.iter(W + "p"))
     # skeleton
     d = first_difference(_skeleton(mapped), _skeleton(oroot))
