@@ -1,6 +1,6 @@
 # Spec Surgeon
 
-**Office standards and specification review.** Open **File → Office profiles…** to create or import a portable
+**New in v1.2.0: office standards and specification review.** Open **File → Office profiles…** to create or import a portable
 standard, map specification roles to office styles, review every original paragraph, preview every document, and
 produce independently verified copies. Profiles bundle their reference assets and require fresh approvals for each
 batch. The new `replace_style_owned` option removes only eligible direct formatting supplied by the destination
@@ -94,7 +94,7 @@ model spend**. These are configurable ceilings, not spending targets. Each proje
 allowance; a workspace containing several projects can spend more than one allowance. No model call or charge is
 needed to inventory files, review saved progress, or execute an unambiguous approved goal using built-in operations.
 
-**Latest: Spec Surgeon 1.1 (v1.1.0) — approved outcomes, continuous recovery and automatic template compatibility.** Includes all v1.0.0 capabilities and the latest merged reliability and recovery improvements. [1.1 release notes](docs/releases/v1.1.0.md) include installation and update instructions. Earlier: [v1.0.0 release notes](docs/releases/v1.0.0.md), [v0.8.0 release notes](docs/releases/v0.8.0.md) and [v0.7.1 release notes](docs/releases/v0.7.1.md).
+**Latest: Spec Surgeon 1.2 (v1.2.0) — reviewed office profiles, specification review and project evidence.** Includes all v1.1.0 capabilities plus the latest merged runtime reliability improvements. [1.2 release notes](docs/releases/v1.2.0.md) include installation and update instructions. Earlier: [v1.1.0 release notes](docs/releases/v1.1.0.md), [v1.0.0 release notes](docs/releases/v1.0.0.md), [v0.8.0 release notes](docs/releases/v0.8.0.md) and [v0.7.1 release notes](docs/releases/v0.7.1.md).
 
 **New in v0.7.1: bounded recovery and local repair memory.** Investigate failed requests, previews and batches within an explicit model budget, try verified repairs or sequences on copies, review the final result, and remember useful cases for future investigations. See [Recovery and local repair memory](docs/RECOVERY.md) for desktop and CLI usage, limits and privacy details, and the [real-batch evaluation protocol](docs/RECOVERY_EVALUATION.md) for validation still to be done.
 
