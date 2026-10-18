@@ -57,7 +57,7 @@ def test_wrong_target_recipe_is_withheld_after_separate_outcome_approval(tmp_pat
     session.compile(REQUEST, lambda _: None)
     preview = session.make_preview(False, lambda _: None)
     assert "FIRE SUPPRESSION" in session.outcome_review_text()
-    assert "paragraph 1" in session.outcome_review_text()
+    assert "paragraph 2" in session.outcome_review_text()
     assert session.outcome_review["status"] == "PROPOSED"
     assert "approve" in session.run_blocked_reason()
     with pytest.raises(ValueError, match="approve"):
@@ -87,7 +87,7 @@ def test_per_file_outcomes_reject_style_generalization_and_zero_matches(tmp_path
     session.make_preview(False, lambda _: None)
     review_text = session.outcome_review_text()
     assert str(first) in review_text and str(second) in review_text
-    assert review_text.count("paragraph 1: 'FIRE SUPPRESSION'") == 2
+    assert review_text.count("paragraph 2: 'FIRE SUPPRESSION'") == 2
     session.approve_outcomes(session.outcome_review["digest"])
     session.run(False, False, lambda _: None)
     assert session.last_batch.counts()["PASS"] == 1
