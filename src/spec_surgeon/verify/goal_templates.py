@@ -14,6 +14,7 @@ from types import SimpleNamespace
 from lxml import etree
 
 from .props import Styles, sect_prs, sig
+from .template_styles import REFERENCE_TAGS, style_plan
 from .reader import CT, R, REL, STYLES_REL, VPackage, W
 from .template import (_refs_shown, _title_pg, check_template_part, fill_value,
                        reference_values_of, slots_of, strip_extensions, _v_field_runs)
@@ -218,12 +219,15 @@ def _check_template(src, out, tpl, data, effect, result):
                 root.remove(rel)
     if sig(smain_rels) != sig(omain_rels):
         errors.append("unapproved document relationship changes")
-    added, expected_types, used_styles = set(copies), {}, set()
+    added, expected_types = set(copies), {}
     fills = params["slot_fills"]
     expected_fills = {name: fill_value(src, name, rule) for name, rule in fills.items()}
     markers = params.get("slot_markers", ["highlight", "braces"])
     reference_values = reference_values_of(tpl, fills) if markers == ["reference"] else None
     used_slots = set()
+    style_parts = sorted({c["template_part"] for c in copies.values()})
+    style_map, imported_styles = style_plan(src, tpl, style_parts,
+                                            params.get("import_missing_styles", True), strip_extensions)
     ctx = SimpleNamespace(src=src, out=out, out_tp=out.text_parts())
     for part, descriptor in copies.items():
         tpart = descriptor["template_part"]
@@ -232,7 +236,9 @@ def _check_template(src, out, tpl, data, effect, result):
                          expected_fills=expected_fills,
                          rescale_tabs=params.get("rescale_tabs", True),
                          slot_markers=params.get("slot_markers", ["highlight", "braces"]),
-                         highlight_colors=params.get("highlight_colors", ["yellow"]))
+                         highlight_colors=params.get("highlight_colors", ["yellow"]),
+                         style_parts=style_parts, style_map=style_map,
+                         import_missing_styles=params.get("import_missing_styles", True))
         if assertion["slot_markers"] == ["reference"]:
             assertion["template_values"] = reference_values_of(tpl, fills)
         check_template_part(ctx, assertion, errors)
@@ -242,9 +248,6 @@ def _check_template(src, out, tpl, data, effect, result):
         for paragraph in troot.iter(W + "p"):
             used_slots.update(slot["name"] for slot in slots_of(paragraph, markers,
                 params.get("highlight_colors", ["yellow"]), reference_values, field_runs))
-        for el in troot.iter():
-            if el.tag in {W + "pStyle", W + "rStyle", W + "tblStyle"}:
-                used_styles.add(el.get(W + "val"))
         trroot, tr = _relationships(tpl, tpart)
         orrroot, orr = _relationships(out, part)
         if set(tr) != set(orr):
@@ -281,42 +284,18 @@ def _check_template(src, out, tpl, data, effect, result):
         errors.append("template fill names differ from selected slots: unused=" + str(sorted(set(fills) - used_slots))
                       + ", missing=" + str(sorted(used_slots - set(fills))))
     # Import only the missing style closure used by these template parts.
-    sstyle, ostyle, tstyle = (pkg.related(STYLES_REL) for pkg in (src, out, tpl))
+    sstyle, ostyle = (pkg.related(STYLES_REL) for pkg in (src, out))
     if sstyle != ostyle:
         raise ValueError("styles relationship changed")
     ss = Styles(src.xml(sstyle) if sstyle else None)
-    ts = Styles(tpl.xml(tstyle) if tstyle else None)
-    pending = list(used_styles)
-    while pending:
-        sid = pending.pop()
-        el = ts.by_id.get(sid)
-        if el is None:
-            continue
-        for tag in ("basedOn", "link", "next"):
-            link = el.find(W + tag)
-            value = link.get(W + "val") if link is not None else None
-            if value and value not in used_styles:
-                used_styles.add(value)
-                pending.append(value)
-    missing = used_styles - set(ss.by_id) if params.get("import_missing_styles", True) else set()
-    if missing and not sstyle:
-        raise ValueError("template requires an absent source styles part")
-    # Filling a formerly dangling style reference can change the original body
-    # even when its XML is untouched. Such an effect needs a separate authority.
-    style_refs = {W + key for key in ("pStyle", "rStyle", "tblStyle", "basedOn", "link", "next",
-                                     "numStyleLink", "styleLink")}
+    missing = set(imported_styles)
+    # Diagnose an output that fills a previously dangling source reference,
+    # even when its claimed import set differs from our independently derived one.
+    actual_new = set(Styles(out.xml(ostyle) if ostyle else None).by_id) - set(ss.by_id)
     numbering = src.related(BASE + "numbering")
-    original_parts = src.text_parts() + [part for part in (sstyle, numbering) if part]
-    for part in set(original_parts) - removed:
-        for el in src.xml(part).iter():
-            if el.tag in style_refs and el.get(W + "val") in missing:
-                errors.append("imported style changes an original style reference: " + part)
-    for sid in missing:
-        definition = ts.by_id.get(sid)
-        if definition is not None and (definition.get(W + "default") not in (None, "0", "false", "off")
-                                       or definition.get(W + "type") == "numbering"
-                                       or next(definition.iter(W + "numPr"), None) is not None):
-            errors.append("imported style changes defaults or depends on unapproved numbering: " + sid)
+    for part in set(src.text_parts() + [p for p in (sstyle, numbering) if p]) - removed:
+        if any(el.tag in REFERENCE_TAGS and el.get(W + "val") in actual_new for el in src.xml(part).iter()):
+            errors.append("imported style changes an original style reference: " + part)
     if sstyle:
         before, after = src.xml(sstyle), out.xml(ostyle)
         os = Styles(after)
@@ -326,7 +305,7 @@ def _check_template(src, out, tpl, data, effect, result):
         if set(os.by_id) != set(ss.by_id) | missing:
             errors.append("imported style set differs from approved template closure")
         for sid in missing:
-            if sid not in ts.by_id or sig(os.by_id.get(sid)) != sig(strip_extensions(ts.by_id[sid])):
+            if sig(os.by_id.get(sid)) != sig(imported_styles[sid]):
                 errors.append("imported style differs: " + str(sid))
         for el in list(after.findall(W + "style")):
             if el.get(W + "styleId") in missing:

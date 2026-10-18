@@ -117,10 +117,21 @@ def main(argv=None) -> int:
         cls = load_op_class(req["source"], req.get("goal_contract"))
         op = cls()
         pkg = DocxPackage(Path(req["docx"]).read_bytes(), name=Path(req["docx"]).name)
+        from types import MappingProxyType
+        import hashlib
+        inputs = {}
+        for item in req.get("inputs", []):
+            content = Path(item["snapshot"]).read_bytes()
+            if hashlib.sha256(content).hexdigest() != item["sha256"]:
+                raise ValueError("sandbox input snapshot changed: " + item["path"])
+            for name in item.get("aliases", [item["path"]]):
+                inputs[name] = content
+        pkg.inputs = MappingProxyType(inputs)
         frag = op.plan(pkg, req.get("select") or {}, req.get("params") or {})
         frag.op = frag.op or getattr(cls, "name", "generated")
         plan = merge_fragments([frag], job=f"generated:{getattr(cls, 'name', 'op')}", params=req.get("params") or {})
         work = pkg.copy()
+        work.inputs = pkg.inputs
         op.apply(work, frag)
         (out_dir / "out.docx").write_bytes(work.output_bytes())
         d = plan.to_dict()

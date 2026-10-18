@@ -392,10 +392,11 @@ def test_a_template_changed_after_planning_is_refused_and_fails_v10(src, tpl):
 
 
 def test_a_template_read_without_an_import_is_still_pinned(src, tpl):
+    original = Path(tpl).read_bytes()
     frag = get_op("apply_table_style").plan(DocxPackage(src), T1, {"style": "TableGrid", "template": tpl})
-    Path(tpl).write_bytes(build_style_template() + b"")                      # the same bytes: fine
+    Path(tpl).write_bytes(original)   # Rebuilding the ZIP can change its timestamps.
     get_op("apply_table_style").apply(DocxPackage(src).copy(), frag)
-    Path(tpl).write_bytes(mutate(build_style_template(), STYLES, lambda r: r.append(el("latentStyles"))))
+    Path(tpl).write_bytes(mutate(original, STYLES, lambda r: r.append(el("latentStyles"))))
     with pytest.raises(JobException) as e:
         get_op("apply_table_style").apply(DocxPackage(src).copy(), frag)
     assert e.value.code == "internal"
