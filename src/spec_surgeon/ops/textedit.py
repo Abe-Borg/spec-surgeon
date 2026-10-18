@@ -473,9 +473,11 @@ def apply_tracked(p, edits: Sequence[Edit], stamp: RevisionStamp, next_id: List[
 # ---- what an op does with it ------------------------------------------------------------------------
 
 def plan_paragraph(frag: PlanFragment, part: str, bi: int, p, edits: Sequence[Edit], tracked: bool,
-                   in_field: Set[Any], where: str, note: str = "", tabs: bool = False) -> List[Edit]:
+                   in_field: Set[Any], where: str, note: str = "", tabs: bool = False,
+                   author: Optional[str] = None) -> List[Edit]:
     """Check the paragraph's edits and put their predictions in the fragment: the block's text diff (V2) and, tracked,
-    its accepted view (V8), the revision delta (V4), the touch, the intended part. Returns the checked edits.
+    its accepted view (V8), the revision delta (V4), the touch, the intended part and an independent item-preservation
+    assertion (V10). Custom tracked methods supply ``author`` explicitly. Returns the checked edits.
     ``tabs``: pure deletions may cover ``w:tab`` run children; untracked, the tabs they remove are declared as the
     block's ``struct_after`` (V3)."""
     rt = RunText(p)
@@ -501,6 +503,11 @@ def plan_paragraph(frag: PlanFragment, part: str, bi: int, p, edits: Sequence[Ed
     frag.touches.append((part, str(bi), "text"))
     if part not in frag.intended_parts:
         frag.intended_parts.append(part)
+    frag.property_assertions.append({
+        "kind": "paragraph_edits", "part": part, "block_index": bi,
+        "edits": [[e.start, e.end, e.text, e.drop_highlight] for e in edits],
+        "tracked": tracked, "tabs": tabs, "author": author or frag.params.get("author"),
+    })
     return edits
 
 

@@ -75,6 +75,16 @@ def test_the_visual_check_sends_labelled_before_and_after_pages_and_validates_fi
     assert "advisory" in rv.to_text() and "PASS" not in rv.to_text()
 
 
+def test_visual_review_preserves_the_selected_model_response_policy(tmp_path):
+    fake = FakeClient(resp(tool("submit_review", {"summary": "Reviewed.", "findings": []})))
+    review = review_samples("format", [sample(tmp_path)], tmp_path / "review", lambda: fake,
+                            model="smaller-model", max_output_tokens=8192, effort="high")
+    assert not review.skipped
+    assert fake.requests[0]["model"] == "smaller-model"
+    assert fake.requests[0]["max_tokens"] == 8192
+    assert fake.requests[0]["output_config"] == {"effort": "high"}
+
+
 @pytest.mark.parametrize("client, why", [
     (lambda: (_ for _ in ()).throw(llm.ClaudeUnavailable("no key")), "Claude is not available: no key"),
     (lambda: (_ for _ in ()).throw(RuntimeError("no key")), "Claude could not be set up: RuntimeError: no key"),

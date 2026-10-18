@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import List, Tuple
 
 APP_NAME = "Spec Surgeon"
-TAGLINE = "Provably lossless surgical edits to Word specifications."
+TAGLINE = "Surgical edits to Word specifications with independent verification records."
 
 AUTHOR = "Abraham Borg"
 EMAIL = "abrahamborg@gmail.com"

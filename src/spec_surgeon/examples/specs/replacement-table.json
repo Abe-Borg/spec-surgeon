@@ -1,0 +1,35 @@
+{
+  "request": "Replace ACME Data Centers with Contoso Cloud, Owner's Representative with Owner's Project Manager, and project number 2024-118 with 2026-031, tracked",
+  "summary": "Three find → replace pairs in one pass over the body, headers and footers, as tracked changes; whole words and exact case.",
+  "assumptions": [
+    "whole words and exact case; all three pairs are found at once in the original text",
+    "text inside fields and text boxes is never changed; a file with none of the words is set aside"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "content",
+  "ops": [
+    {
+      "op": "replace_table",
+      "params": {
+        "pairs": [
+          {
+            "find": "ACME Data Centers",
+            "replace": "Contoso Cloud"
+          },
+          {
+            "find": "Owner's Representative",
+            "replace": "Owner's Project Manager",
+            "flexible_whitespace": true
+          },
+          {
+            "find": "2024-118",
+            "replace": "2026-031"
+          }
+        ]
+      }
+    }
+  ]
+}

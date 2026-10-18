@@ -1,0 +1,23 @@
+{
+  "request": "In the footers, put the page number tab at the right margin and the centre tab in the middle",
+  "summary": "Every footer paragraph gets exactly two tab stops — centred at the middle of the text and right-aligned at the right margin, measured on each file's own margins — and loses any other stop; a footer that already has them is left alone.",
+  "assumptions": [
+    "the right margin and the middle are measured on each section's own text width (page width less the side margins), so files with different margins each get their own positions",
+    "every other tab stop of a footer paragraph (its own or its style's) is cleared",
+    "a footer shown by sections with different margins sets that file aside (one tab position cannot fit both)",
+    "a whole-part change is plain formatting (decision 14.1); no words change"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_tab_stops",
+      "select": {"scope": ["footers"], "paragraphs": "all"},
+      "params": {"set": [{"pos": "center", "align": "center"}, {"pos": "right_margin", "align": "right"}],
+                 "clear_others": true},
+      "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}
+    }
+  ],
+  "review": {"sample_files": 2, "geometry_reference": "none"}
+}

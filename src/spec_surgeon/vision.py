@@ -275,7 +275,8 @@ def _read_answer(rv: VisualReview, resp: Any, model: str, sent: Dict[str, List[i
 
 
 def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_factory: Callable[[], Any],
-                   model: Optional[str] = None, log: Optional[Callable[[str], None]] = None) -> VisualReview:
+                   model: Optional[str] = None, log: Optional[Callable[[str], None]] = None, *,
+                   max_output_tokens: Optional[int] = None, effort: Optional[str] = None) -> VisualReview:
     """One call: every sample's look pages, BEFORE and AFTER (labelled by ``compiler.file_labels``: the file's name, or
     with the folders that tell two same-named samples apart; findings are validated against those labels), plus the
     request. Never raises (rule 15): a problem at any stage — preparing the pages, making the client, the call, reading
@@ -327,7 +328,8 @@ def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_f
     t = time.perf_counter()
     try:
         resp = llm.call(client, model=model, system=REVIEW_SYSTEM, tools=REVIEW_TOOLS,
-                        messages=[{"role": "user", "content": content}])
+                        messages=[{"role": "user", "content": content}],
+                        max_output_tokens=max_output_tokens, effort=effort)
     except Exception as e:  # noqa: BLE001 — advisory: never raises (rule 15); a defect keeps its traceback
         rv.seconds = time.perf_counter() - t
         _skip_for(rv, e, 1, "the request to Claude failed", rv.seconds)

@@ -1,0 +1,61 @@
+{
+  "request": "Give every table a top and bottom rule with lines between the rows, comfortable cell margins, full width, and repeat the first row on each page; rows should not break across pages",
+  "summary": "Every table of the body gets a ½ pt top border, bottom border and lines between rows (no side or column lines — a side its table style shows is cancelled), left and right cell margins of 0.08 in, a width of 100 % of the text width, its first row repeated at the top of each page and every row kept on one page; a table already like that is left alone.",
+  "assumptions": [
+    "every table of the body, nested ones included; tables in headers and footers are left alone",
+    "the borders are the table's whole border set: top, bottom and between rows single ½ pt (size 4); left, right and between columns get no line, even where the table style draws one",
+    "cell margins left and right 115 twips (0.08 in); top and bottom margins stay as they are",
+    "only the first row repeats; a row that repeated before and is not the first stops repeating",
+    "cells with their own borders or margins keep them (flagged); never tracked"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_table_props",
+      "select": {
+        "scope": [
+          "document"
+        ],
+        "tables": "all"
+      },
+      "params": {
+        "borders": {
+          "top": {
+            "style": "single",
+            "size": 4
+          },
+          "bottom": {
+            "style": "single",
+            "size": 4
+          },
+          "insideH": {
+            "style": "single",
+            "size": 4
+          }
+        },
+        "cell_margins": {
+          "left": 115,
+          "right": 115
+        },
+        "width": {
+          "pct": 100
+        },
+        "repeat_header_rows": 1,
+        "cant_split": true
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

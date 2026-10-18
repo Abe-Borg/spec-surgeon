@@ -1,0 +1,32 @@
+{
+  "request": "Restart the article numbers at every PART",
+  "summary": "The article level of the outline list restarts after any higher level — after each PART heading of the same list — so PART 2's first article is 2.01 again; a list that already restarts is left alone. Where the PART headings are typed or in another list the restart changes nothing, and the plan flags it.",
+  "assumptions": [
+    "the articles are numbered by the list level of the 'Arch Article' style and the PART headings by a higher level of the same list",
+    "the change is the level's restart rule in the list definition (no w:lvlRestart: restart after any higher level); nothing else changes",
+    "PART headings that are typed or numbered by another list cannot restart the articles: convert the numbering first (flagged); never tracked"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "set_list_level",
+      "params": {
+        "style": "Arch Article",
+        "restart": "after_higher"
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

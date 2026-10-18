@@ -388,14 +388,17 @@ def test_a_refused_run_says_what_changed_since_the_preview(tmp_path):
 def test_a_refused_custom_transform_run_says_what_changed(tmp_path):
     from spec_surgeon.gui import Session
     from test_codegen import GOOD_OP
-    from test_compiler import FakeClient, resp, tool
+    from test_compiler import FakeClient, resp, tool, header_outcome_proposal, generate_reviewed_custom
     d = _folder(tmp_path, ["A", "B"])
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
     s = Session(folder=d, out_root=tmp_path / "out",
                 client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                                  header_outcome_proposal(),
                                   resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}))))
-    s.compile("x", lambda m: None)
-    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
+    s.compile("Set every section's header distance to 900 twips.", lambda m: None)
+    assert "passed verification" in generate_reviewed_custom(s)
+    s.make_preview(render=False, log=lambda m: None)
+    s.approve_outcomes(s.outcome_review["digest"])
     a = d / "21 00 00 – A.docx"
     a.write_bytes(a.read_bytes() + b"\0")
     with pytest.raises(ValueError, match="since the AI-written transform was tested — press Preview again") as e:
@@ -539,7 +542,8 @@ def test_every_preview_of_a_conversation_has_the_records_that_led_to_it(tmp_path
     from spec_surgeon import gui
     from spec_surgeon.gui import Session
     from test_codegen import GOOD_OP
-    from test_compiler import FakeClient, resp, tool
+    from test_compiler import (FakeClient, resp, tool, remove_outcome_proposal, header_outcome_proposal,
+                               generate_reviewed_custom)
 
     class Clock:                                  # every folder a second apart (no same-second reuse in a fast test)
         t = 0
@@ -555,9 +559,12 @@ def test_every_preview_of_a_conversation_has_the_records_that_led_to_it(tmp_path
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
     s = Session(folder=d, out_root=tmp_path / "out",
                 client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
+                                  header_outcome_proposal(),
                                   resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})),
                                   resp(tool("submit_editspec", {"spec": spec}, "s2")),
-                                  resp(tool("submit_editspec", {"spec": again}, "s3"))))
+                                  remove_outcome_proposal(),
+                                  resp(tool("submit_editspec", {"spec": again}, "s3")),
+                                  remove_outcome_proposal()))
 
     def records(folder):
         return (json.loads((folder / "compile.json").read_text(encoding="utf-8")),
@@ -566,10 +573,10 @@ def test_every_preview_of_a_conversation_has_the_records_that_led_to_it(tmp_path
     def users(conversation):
         return sum(e["role"] == "user" for e in conversation["entries"])
 
-    s.compile(spec["request"], lambda m: None)            # the spec the app gets carries the user's request
+    s.compile("Set every section's header distance to 900 twips.", lambda m: None)
     f1 = s.out_dir
     assert s.chat_dir == f1 and records(f1)[0]["status"] == "unsupported"
-    assert "passed verification" in s.reply(choice_id=s.turn.choices[0].id, log=lambda m: None)
+    assert "passed verification" in generate_reviewed_custom(s)
     assert s.out_dir == f1 and (f1 / "codegen" / "history.json").is_file() and (f1 / "preview").is_dir()
     assert s.reply("actually, just remove all headers and footers") == "Compiled."
     f2 = s.chat_dir
@@ -583,7 +590,8 @@ def test_every_preview_of_a_conversation_has_the_records_that_led_to_it(tmp_path
     assert s.out_dir == f3 and len({f1, f2, f3}) == 3
     for folder, which in ((f2, spec), (f3, again)):        # each folder: the spec its preview used, and only that
         compiled, _ = records(folder)
-        assert compiled["spec"] == which == json.loads((folder / "preview" / "spec.json").read_text(encoding="utf-8"))
+        assert compiled["spec"] == dict(which, request="Set every section's header distance to 900 twips.")
+        assert compiled["spec"] == json.loads((folder / "preview" / "spec.json").read_text(encoding="utf-8"))
     assert users(records(f2)[1]) < users(records(f3)[1])
     s.load_spec(SPECS / "remove-all-headers-footers.json")
     s.make_preview(render=False, log=lambda m: None)
@@ -627,12 +635,14 @@ def test_a_sessions_bundle_holds_its_compile_and_preview_beside_the_run(tmp_path
     codegen/ — the bundle of that run folder is the whole session's."""
     from spec_surgeon.cli import main as cli_main
     from spec_surgeon.gui import Session
-    from test_compiler import FakeClient, resp, tool
+    from test_compiler import FakeClient, resp, tool, remove_outcome_proposal
     d = _folder(tmp_path, ["A"])
     spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
-    s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
+    s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec})),
+                                                                   remove_outcome_proposal()))
     s.compile("remove all headers and footers", lambda m: None)
     s.make_preview(render=False, log=lambda m: None)
+    s.approve_outcomes(s.outcome_review["digest"])
     s.run(False, False, lambda m: None)
     assert s.last_run_dir.name == "run" and diag.bundle_root(s.last_run_dir) == s.out_dir.resolve()
     res = diag.make_bundle(tmp_path / "session.zip", s.last_run_dir)

@@ -59,8 +59,12 @@ def test_sandbox_start_is_durable_before_timeout_without_code_or_environment(sou
 
 def test_abrupt_sandbox_exit_keeps_returncode_and_missing_result(source, tmp_path, monkeypatch):
     path = tmp_path / "events.jsonl"
-    monkeypatch.setattr(codegen.subprocess, "run", lambda cmd, **kw:
-                        subprocess.CompletedProcess(cmd, 97, b"private-stdout", b"private-stderr"))
+    def abrupt_exit(cmd, **kwargs):
+        kwargs["stdout"].write(b"private-stdout")
+        kwargs["stderr"].write(b"private-stderr")
+        return subprocess.CompletedProcess(cmd, 97)
+
+    monkeypatch.setattr(codegen.subprocess, "run", abrupt_exit)
     with diag.scope(path):
         result = codegen.run_in_sandbox(GOOD_OP, source, {}, {"twips": 900}, tmp_path / "sandbox")
     assert not result.ok and result.code == "crash" and result.returncode == 97

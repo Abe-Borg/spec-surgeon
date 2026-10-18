@@ -1,0 +1,27 @@
+{
+  "request": "Make sure every file ends with END OF SECTION and its own number",
+  "summary": "Each file's last line reads END OF SECTION <its number>, the number taken from its SECTION title line; a wrong last line is replaced, a missing one added (tracked).",
+  "assumptions": [
+    "the number is read from the title line 'SECTION 21 13 19 - …'",
+    "an END OF SECTION line followed by more text sets the file aside"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "content",
+  "ops": [
+    {
+      "op": "ensure_end_of_section",
+      "params": {
+        "number": {
+          "rule": "regex",
+          "pattern": "^SECTION\\s+(\\d{2}\\s?\\d{2}\\s?\\d{2})\\b"
+        },
+        "text": "END OF SECTION {number}",
+        "formatting": "copy",
+        "copy_from_regex": "^SECTION\\s+\\d{2}\\s?\\d{2}\\s?\\d{2}\\b"
+      }
+    }
+  ]
+}

@@ -24,7 +24,7 @@ from typing import Any, Callable, List, Optional, Tuple
 
 from PySide6.QtCore import QByteArray, QModelIndex, QSize, Qt, QTimer, QUrl, Signal, Slot
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
+from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
                                QPushButton, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
 
@@ -41,7 +41,7 @@ from .rows import (ProgressTracker, chain_rows, generated_rows, preview_counts, 
                    result_counts, result_rows, written_back)
 from .settings_dialog import SettingsDialog
 from .update_ui import UpdateController
-from .widgets import (STEP_STATE_ROLE, STEP_STATUS_ROLE, ImageViewer, MarkdownDialog, StepDelegate, Thumb, label,
+from .widgets import (STEP_STATE_ROLE, STEP_STATUS_ROLE, Card, ImageViewer, MarkdownDialog, StepDelegate, Thumb, label,
                       repolish, set_pill)
 from .worker import Bridge, start_job
 
@@ -332,6 +332,37 @@ class MainWindow(QMainWindow):
         self.files_page = FilesPage(self.browse_dir, self.browse_template)
         self.request_page = RequestPage()
         self.preview_page = PreviewPage()
+        self.preview_page.outcome_card = Card("Requested outcomes and document targets",
+                                             "Review the requested effects and every document's targets before approving the run.")
+        self.preview_page.outcome_text = QPlainTextEdit(self.preview_page.outcome_card)
+        self.preview_page.outcome_text.setReadOnly(True)
+        self.preview_page.outcome_text.setAccessibleName("Independent outcome review and per-file targets")
+        self.preview_page.outcome_text.setMinimumHeight(180)
+        self.preview_page.outcome_card.add(self.preview_page.outcome_text)
+        self.preview_page.outcome_target_picker = QWidget(self.preview_page.outcome_card)
+        targets = QVBoxLayout(self.preview_page.outcome_target_picker)
+        targets.setContentsMargins(0, 0, 0, 0)
+        self.preview_page.outcome_target_scope = QComboBox(self.preview_page.outcome_target_picker)
+        self.preview_page.outcome_target_scope.setAccessibleName("Document and outcome needing a target choice")
+        self.preview_page.outcome_target_scope.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+        self.preview_page.outcome_target_scope.setMinimumContentsLength(30)
+        targets.addWidget(self.preview_page.outcome_target_scope)
+        self.preview_page.outcome_target_hint = label("", "Muted")
+        targets.addWidget(self.preview_page.outcome_target_hint)
+        self.preview_page.outcome_candidates = QListWidget(self.preview_page.outcome_target_picker)
+        self.preview_page.outcome_candidates.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.preview_page.outcome_candidates.setAccessibleName("Select the intended source targets")
+        self.preview_page.outcome_candidates.setMaximumHeight(160)
+        targets.addWidget(self.preview_page.outcome_candidates)
+        self.preview_page.outcome_choose_btn = QPushButton("Use these selected targets", self.preview_page.outcome_target_picker)
+        targets.addWidget(self.preview_page.outcome_choose_btn)
+        self.preview_page.outcome_target_picker.hide()
+        self.preview_page.outcome_card.add(self.preview_page.outcome_target_picker)
+        self.preview_page.outcome_approve_btn = QPushButton("Approve these outcomes and per-file targets",
+                                                           self.preview_page.outcome_card)
+        self.preview_page.outcome_card.add(self.preview_page.outcome_approve_btn)
+        self.preview_page.outcome_card.hide()
+        self.preview_page.body.layout().insertWidget(2, self.preview_page.outcome_card)
         self.run_page = RunPage()
         for p in (self.files_page, self.request_page, self.preview_page, self.run_page):
             self.stack.addWidget(p)
@@ -444,6 +475,7 @@ class MainWindow(QMainWindow):
         self.act_library = QAction("Your library…", self, shortcut=QKeySequence("Ctrl+L"))
         self.act_chain = QAction("Chain recipes…", self)
         self.act_workflows = QAction("Built-in workflows…", self)
+        self.act_operations = QAction("Built-in operations…", self)
         self.act_library_folder = QAction("Open library folder", self)
         self.act_memory = QAction("Repair memory…", self)
         self.act_campaign = QAction("Multi-project workspace…", self)
@@ -452,7 +484,7 @@ class MainWindow(QMainWindow):
         self.act_open = QAction("Open results folder", self)
         self.act_settings = QAction("Settings…", self, shortcut=QKeySequence("Ctrl+,"))
         self.act_exit = QAction("Exit", self, shortcut=QKeySequence("Ctrl+Q"))
-        for a in (self.act_campaign, self.act_recovery, self.act_audit, self.act_workflows, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
+        for a in (self.act_campaign, self.act_recovery, self.act_audit, self.act_operations, self.act_workflows, self.act_load, self.act_library, self.act_chain, self.act_library_folder, self.act_memory, self.act_open,
                   self.act_settings):
             m.addAction(a)
         m.addSeparator()
@@ -514,6 +546,9 @@ class MainWindow(QMainWindow):
         r.render_cb.toggled.connect(self._inputs_changed)
         p.open_btn.clicked.connect(self._open_preview_folder)
         p.review_ack_btn.clicked.connect(self.do_ack_review)
+        p.outcome_approve_btn.clicked.connect(self.do_approve_outcomes)
+        p.outcome_target_scope.currentIndexChanged.connect(self._outcome_target_scope_changed)
+        p.outcome_choose_btn.clicked.connect(self.do_choose_outcome_targets)
         p.empty.button.clicked.connect(self._go_request)
         p.only_problems.toggled.connect(p.proxy.set_only_problems)
         run.run_btn.clicked.connect(self.do_run)
@@ -542,6 +577,7 @@ class MainWindow(QMainWindow):
         r.chain_btn.clicked.connect(self.do_chain)
         r.workflows_btn.clicked.connect(self.do_workflow)
         self.act_workflows.triggered.connect(self.do_workflow)
+        self.act_operations.triggered.connect(self.do_operations)
         self.act_chain.triggered.connect(self.do_chain)
         p.save_btn.clicked.connect(self.do_save_to_library)
         self.act_open.triggered.connect(self.do_open)
@@ -562,7 +598,7 @@ class MainWindow(QMainWindow):
         resize_columns(p.table, 3, [260, 90, 120, 300])
         resize_columns(run.table, 2, [260, 120, 300, 220])
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn, run.resolve_btn,
-                            p.review_ack_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
+                            p.review_ack_btn, p.outcome_approve_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
                             self.act_chain, self.act_workflows, r.workflows_btn, self.act_memory, self.act_campaign, self.act_recovery, self.act_audit,
                             run.load_recovery_btn]
 
@@ -762,7 +798,8 @@ class MainWindow(QMainWindow):
 
     def _preview_current(self) -> bool:
         s = self.session
-        has = (s.recovery is not None or s.generated is not None
+        has = (s.recovery is not None or (s.generated is not None and bool(s.generated_token))
+               or getattr(s, "pending_custom_transform", None) is not None
                or (s.preview is not None and (s.spec is not None or s.chain is not None)))
         return has and self.preview_key == self._inputs_key()
 
@@ -772,10 +809,11 @@ class MainWindow(QMainWindow):
         request = " ".join(self.typed_request().split())
         loaded = (s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled") or s.chain is not None
         current = self._preview_current()
-        has_preview = (s.recovery is not None or s.generated is not None
+        pending_custom = getattr(s, "pending_custom_transform", None) is not None
+        has_preview = (s.recovery is not None or s.generated is not None or pending_custom
                        or (s.preview is not None and (s.spec is not None or s.chain is not None)))
         ran = s.last_batch is not None or s.last_trials is not None or s.last_chain is not None or s.last_recovery is not None
-        done = [bool(self._files_ok), bool(request or loaded or s.generated is not None), current, ran]
+        done = [bool(self._files_ok), bool(request or loaded or s.generated is not None or pending_custom), current, ran]
         if self._files_ok:
             n = self._files_count
             files = f"{n} Word file{'s' if n != 1 else ''} ready"
@@ -796,7 +834,9 @@ class MainWindow(QMainWindow):
             describe = f"Saved spec: {loaded_name(s.spec_source)}"
         else:
             describe = STEP_HINTS[1] if self.claude_ok else KEYLESS_HINT
-        if current and s.recovery is not None:
+        if current and pending_custom:
+            preview = "Review requested outcomes before creating the custom transform"
+        elif current and s.recovery is not None:
             preview = f"{len(s.recovery.ready)} ready copies · inspect the recovered results"
         elif current and s.generated is not None:
             preview = "AI-written transform, verified on samples"
@@ -808,7 +848,7 @@ class MainWindow(QMainWindow):
         else:
             preview = STEP_HINTS[2]
         if current and s.run_blocked_reason():
-            preview = "Look at Claude's findings before Run"
+            preview = "Review requested outcomes before Run" if self._outcomes_pending() else "Look at Claude's findings before Run"
         if ran:
             c = self._result_counts
             problems = c["FAIL"] + c["EXCEPTION"]
@@ -827,16 +867,20 @@ class MainWindow(QMainWindow):
         run, p, r, s = self.run_page, self.preview_page, self.request_page, self.session
         current = self._preview_current()
         blocked = self.session.run_blocked_reason() if current else ""
-        ready = s.recovery is None or bool(s.recovery.ready)
+        pending_custom = getattr(s, "pending_custom_transform", None) is not None
+        ready = not pending_custom and (s.recovery is None or bool(s.recovery.ready))
         run.run_btn.setEnabled(current and ready and not blocked and not self.busy and not self.updating)
         run.run_btn.setText("Export recovery copies" if s.recovery is not None else "Run")
         can_resolve = (s.last_run_dir is not None or s.preview is not None or s.recovery is not None
+                       or getattr(s, "pending_recovery_run", None) is not None
                        or (self._files_ok and bool(self.typed_request())))
         run.resolve_btn.setEnabled(can_resolve and self.claude_ok and not self.busy and not self.updating)
         run.resolve_btn.setToolTip("Investigate remaining files on copies" if self.claude_ok else
                                   "Recovery needs an Anthropic API key; set one in Settings.")
         if self.busy:
             hint = ""
+        elif pending_custom:
+            hint = "Approve requested outcomes on Preview before creating the custom transform."
         elif s.recovery is not None and not ready:
             hint = "No recovery copies are ready; inspect the questions and unresolved files."
         elif not (s.preview or s.generated or s.recovery):
@@ -845,22 +889,28 @@ class MainWindow(QMainWindow):
             hint = "Something changed since the preview — press Preview again."
         elif blocked:
             # the action bar holds one short line; the full reason is the tooltip and do_run's message
-            hint = "Claude's visual check flagged problems — see the Preview step"
+            hint = ("Review requested outcomes and targets on the Preview step" if self._outcomes_pending() else
+                    "Claude's visual check flagged problems — see the Preview step")
         else:
             hint = ""
         run.run_hint.setText(hint)
         run.run_hint.setToolTip(blocked)
         p.continue_hint.setText("Preview first" if not (s.preview or s.generated or s.recovery) else
                                 ("Something changed — press Preview again" if not current else
-                                 ("Look at Claude's findings above first" if blocked else "")))
+                                 (("Review requested outcomes above first" if self._outcomes_pending() else
+                                   "Look at Claude's findings above first") if blocked else "")))
         generated = s.generated is not None or s.recovery is not None
         run.inplace_rb.setEnabled(not generated)
         if generated:
             run.copies_rb.setChecked(True)
-        p.continue_btn.setEnabled(current)
+        p.continue_btn.setEnabled(current and not pending_custom)
         live = current and not self.busy and not self.updating     # both refuse anything but the current preview:
-        p.save_btn.setEnabled(live and s.recovery is None)
+        p.save_btn.setEnabled(live and s.recovery is None and not pending_custom)
         p.review_ack_btn.setEnabled(live)
+        review = getattr(s, "outcome_review", None)
+        p.outcome_approve_btn.setEnabled(bool(live and review and review.get("status") == "PROPOSED"
+                                             and getattr(s, "outcome_approval", "") != review.get("digest")))
+        p.outcome_target_picker.setEnabled(live)
         request = self.typed_request()
         loaded = (s.spec is not None and bool(s.spec_source) and s.spec_source != "compiled") or s.chain is not None
         if not self._files_ok:
@@ -895,7 +945,8 @@ class MainWindow(QMainWindow):
         over, a saved operation or a failed preview voids the outcome (``Session._set_outcome``). A preview that is
         merely out of date stays on show, with the "Changed since the preview" hints."""
         s, p = self.session, self.preview_page
-        if s.preview is None and s.generated is None and s.recovery is None:
+        if (s.preview is None and s.generated is None and s.recovery is None
+                and getattr(s, "pending_custom_transform", None) is None):
             p.body.hide()
             p.empty.show()
 
@@ -1194,7 +1245,14 @@ class MainWindow(QMainWindow):
         if self.busy or self.updating:
             return False
         self.sync()
+        if getattr(s, "pending_recovery_run", None) is not None:
+            if req and not self.run_page.recovery_request.toPlainText().strip():
+                self.run_page.recovery_request.setPlainText(req)
+            return self.do_resolve()
         wkey = self._widget_key()          # what this preview is of; Run is enabled only while it still holds
+        if getattr(s, "pending_custom_transform", None) is not None:
+            return self._work("Review custom outcomes", lambda log: s.make_preview(render, log),
+                              on_done=lambda text: self._after_preview(text, wkey), page=self.request_page)
         loaded = bool(((s.spec_source and s.spec_source != "compiled" and s.spec is not None) or s.chain is not None)
                       and not req)
         # a custom transform or one of your operations with no request typed: preview it again (make_preview tries it
@@ -1302,7 +1360,8 @@ class MainWindow(QMainWindow):
         s, r = self.session, self.request_page
         self.write(text or "")
         self._refresh_chat()
-        if waiting_for_user(s):
+        pending_custom = getattr(s, "pending_custom_transform", None) is not None
+        if waiting_for_user(s) and not pending_custom:
             turn = s.turn
             title = {"failed": "That didn't work", "unsupported": "No built-in operation does this"}.get(
                 turn.status, "Claude needs your reply")
@@ -1313,7 +1372,7 @@ class MainWindow(QMainWindow):
             self.go(1)
             QTimer.singleShot(0, self._show_chat_reply)     # after the new bubbles are laid out
             return
-        if s.preview is None and s.generated is None:
+        if s.preview is None and s.generated is None and s.recovery is None and not pending_custom:
             r.info.show_message("warn", "Nothing to preview", (text or "").strip())
             self.go(1)
             return
@@ -1332,6 +1391,15 @@ class MainWindow(QMainWindow):
         p.body.show()
         p.clear_samples()
         p.info.hide()
+        self._fill_outcome_review()
+        if getattr(s, "pending_custom_transform", None) is not None:
+            p.request_lbl.setText("Review the requested custom change")
+            p.summary_lbl.setText("Approve the independent outcomes and original document targets before Claude writes a custom transform.")
+            for widget in (p.generated_card, p.tiles, p.table_card, p.samples_card, p.notes):
+                widget.hide()
+            p.token_lbl.setText("No custom transform has been generated. Only the approved outcomes and target choices authorize generation.")
+            self._fill_review()
+            return
         if s.recovery is not None:
             result = s.recovery
             questions = self.run_page.recovery_question
@@ -1422,6 +1490,99 @@ class MainWindow(QMainWindow):
         p.token_lbl.setText(f"Approval token {pv.token} — Run refuses if any file or the spec changes before it "
                             "runs.")
         self._fill_review()
+
+    def _outcomes_pending(self) -> bool:
+        review = getattr(self.session, "outcome_review", None)
+        return bool(review and (review.get("status") != "PROPOSED"
+                                or getattr(self.session, "outcome_approval", "") != review.get("digest")))
+
+    def _fill_outcome_review(self) -> None:
+        s, p = self.session, self.preview_page
+        visible = s.recovery is None and bool(s.preview is not None or s.generated_preview is not None
+                                             or getattr(s, "pending_custom_transform", None) is not None)
+        p.outcome_card.setVisible(visible)
+        if not visible:
+            return
+        review = getattr(s, "outcome_review", None)
+        p.outcome_text.setPlainText(s.outcome_review_text())
+        p.outcome_approve_btn.setVisible(review is not None)
+        approved = bool(review and getattr(s, "outcome_approval", "") == review.get("digest"))
+        p.outcome_card.helper.setText("These outcomes and document targets are approved for this preview." if approved else
+                                     "Review the requested effects and every document's targets before approving the run." if review else
+                                     "Recipe verification only; request satisfaction is not independently checked.")
+        choices = p.outcome_target_scope
+        choices.blockSignals(True)
+        choices.clear()
+        for row in (review or {}).get("documents", []):
+            resolution = row["resolution"]
+            binding = row.get("binding") or resolution.get("proposed_binding") or {}
+            effects = resolution.get("effects", {None: resolution})
+            for effect_id, effect in effects.items():
+                bound = binding.get("effects", {}).get(effect_id) if effect_id is not None else row.get("binding")
+                if bound or effect.get("status") == "resolved" or not effect.get("candidates"):
+                    continue
+                choices.addItem(f"{row['source']} — {effect_id or 'title'}",
+                                {"source": row["source"], "effect_id": effect_id,
+                                 "expected": effect.get("expected", 1), "candidates": effect["candidates"]})
+        choices.blockSignals(False)
+        p.outcome_target_picker.setVisible(choices.count() > 0)
+        self._outcome_target_scope_changed()
+
+    @Slot()
+    def _outcome_target_scope_changed(self) -> None:
+        p = self.preview_page
+        p.outcome_candidates.clear()
+        choice = p.outcome_target_scope.currentData()
+        if not choice:
+            return
+        p.outcome_target_hint.setText(f"Choose exactly {choice['expected']} intended target(s), then use the selected targets.")
+        for candidate in choice["candidates"]:
+            item = QListWidgetItem(f"{candidate['text']!r} — {candidate['part']}, "
+                                   f"paragraph {candidate['paragraph_index'] + 1}", p.outcome_candidates)
+            item.setData(Qt.ItemDataRole.UserRole, candidate["candidate_id"])
+
+    @Slot()
+    def do_choose_outcome_targets(self) -> bool:
+        if self.busy or self.updating or not self._preview_current():
+            return False
+        p = self.preview_page
+        choice = p.outcome_target_scope.currentData()
+        if not choice:
+            return False
+        selected = [item.data(Qt.ItemDataRole.UserRole) for item in p.outcome_candidates.selectedItems()]
+        try:
+            self.session.choose_outcome_targets(choice["source"], selected, effect_id=choice["effect_id"])
+        except (ValueError, OSError) as exc:
+            p.info.show_message("warn", "Targets were not selected", str(exc))
+            return False
+        self._fill_outcome_review()
+        self._refresh_nav()
+        self._refresh_run_state()
+        return True
+
+    @Slot()
+    def do_approve_outcomes(self) -> bool:
+        if self.busy or self.updating or not self._preview_current():
+            return False
+        review = getattr(self.session, "outcome_review", None)
+        if not review or review.get("status") != "PROPOSED":
+            return False
+        try:
+            self.session.approve_outcomes(review["digest"])
+        except (ValueError, OSError) as exc:
+            self.preview_page.info.show_message("warn", "Outcomes were not approved", str(exc))
+            self._refresh_run_state()
+            return False
+        if getattr(self.session, "pending_custom_transform", None) is not None:
+            wkey = self._widget_key()
+            render = self.request_page.render_cb.isChecked()
+            return self._work("Create approved custom transform",
+                              lambda log: self.session.continue_custom_transform(log, render=render),
+                              on_done=lambda text: self._after_preview(text, wkey), page=self.preview_page)
+        self._fill_outcome_review()
+        self._refresh_nav()
+        self._refresh_run_state()
+        return True
 
     def _sample_widget(self, sample) -> QWidget:
         w = QWidget()
@@ -1525,7 +1686,8 @@ class MainWindow(QMainWindow):
             return False
         blocked = self.session.run_blocked_reason()
         if blocked:
-            self.run_page.info.show_message("warn", "Look at Claude's findings first", blocked)
+            self.run_page.info.show_message("warn", "Review before running" if self._outcomes_pending() else
+                                           "Look at Claude's findings first", blocked)
             return False
         in_place = self.run_page.inplace_rb.isChecked()
         render = self.request_page.render_cb.isChecked()
@@ -1736,6 +1898,17 @@ class MainWindow(QMainWindow):
         return True
 
     @Slot()
+    def do_operations(self) -> bool:
+        from .operation_browser import OperationBrowserDialog
+        if not hasattr(self, "operation_browser"):
+            self.operation_browser = OperationBrowserDialog(self)
+            self.operation_browser.workflow_requested.connect(self.do_operation_workflow)
+            self._viewers.append(self.operation_browser)
+        self.operation_browser.show()
+        self.operation_browser.raise_()
+        return True
+
+    @Slot()
     def do_workflow(self) -> bool:
         """Choose a packaged workflow and its explicit inputs; ordinary Preview and Run follow."""
         from ..workflows import workflow_catalog
@@ -1747,6 +1920,18 @@ class MainWindow(QMainWindow):
         if picked not in labels:
             return False
         workflow = workflows[labels.index(picked)]
+        return self._configure_workflow(workflow["id"])
+
+    @Slot(str)
+    def do_operation_workflow(self, workflow_id: str) -> bool:
+        if self.busy or self.updating:
+            return False
+        self.operation_browser.hide()
+        return self._configure_workflow(workflow_id)
+
+    def _configure_workflow(self, workflow_id: str) -> bool:
+        from ..workflows import get_workflow
+        workflow = get_workflow(workflow_id)
         inputs = self.prompts.workflow_inputs(workflow["id"])
         if inputs is None:
             return False
@@ -1814,7 +1999,8 @@ class MainWindow(QMainWindow):
     def do_save_to_library(self) -> bool:
         from ..library import LibraryError, list_items, other_kind_holding, slug
         s = self.session
-        if self.busy or self.updating or not self._preview_current():
+        if (self.busy or self.updating or not self._preview_current()
+                or getattr(s, "pending_custom_transform", None) is not None):
             return False
         if s.generated is not None:
             kind, default = "operation", s.generated.name.replace("_", " ")
@@ -2227,10 +2413,11 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(0, app.quit)
 
     def closeEvent(self, event):
-        if self.busy and not self.force_close and not self.prompts.ask(
-                "Spec Surgeon", "A Preview or Run is in progress. Close anyway?\n\nA run that started still finishes "
-                "its files before the program exits."):
+        if self.busy:
             event.ignore()
+            message = "Work is still running. Keep this window open until verification, delivery and reports finish."
+            self.set_status(message)
+            self.stack.currentWidget().info.show_message("info", "Please wait before closing", message)
             diag.event("ui.window.close_cancelled", session_id=self.session.diagnostic_id, busy=self.busy)
             return
         diag.event("ui.window.closing", session_id=self.session.diagnostic_id, busy=self.busy,

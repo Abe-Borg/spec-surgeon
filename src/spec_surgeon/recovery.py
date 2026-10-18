@@ -109,6 +109,7 @@ class RecoveryResult:
     review: Any = None
     review_ack: str = ""                       # never serialized; acknowledgement is preview-specific
     token: str = ""
+    approval_version: int = 2                # source-content preview pins; v1 checkpoints migrate on their next save
     token_inputs: Dict[str, Any] = field(default_factory=dict)
     questions: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
@@ -143,7 +144,8 @@ class RecoveryResult:
         return {"recovery_id": self.recovery_id, "request": self.request, "files": [f.to_dict() for f in self.files],
                 "attempts": self.attempts, "questions": self.questions, "notes": self.notes,
                 "budget": self.budget, "seconds": round(self.seconds, 2),
-                "token": self.token, "token_inputs": self.token_inputs, "key": self.key,
+                "token": self.token, "approval_version": self.approval_version,
+                "token_inputs": self.token_inputs, "key": self.key,
                 "samples": [s.to_dict() for s in self.samples],
                 "visual_review": self.review.to_dict() if self.review is not None else None,
                 "transcript": self.transcript, "session_version": 1,
@@ -301,6 +303,29 @@ def _recovery_token(key, files):
     except OSError as exc:
         diag.event("recovery.identity.unavailable", level="warning", **diag.error_fields(exc))
         return ""
+
+
+def _checkpoint_token_matches(result):
+    """Old recovery tokens already bound source SHA256; retain that exact proof until the next checkpoint.
+
+    Ordinary old preview tokens are never accepted here: recovery's outer digest also
+    pinned source bytes, the approved key, and the verified candidates. New checkpoints
+    use only the content-pinned preview digest and cannot fall back to the old format.
+    """
+    if not result.token:
+        return False
+    sources = [f.source for f in result.files]
+    if result.approval_version == 2:
+        return _recovery_token(result.key, sources) == result.token
+    if result.approval_version != 1:
+        return False
+    from .preview import _legacy_approval_token
+    try:
+        token = _hash({"preview": _legacy_approval_token(result.key, sources),
+                       "contents": {str(p): _sha(p) for p in sources}})
+    except OSError:
+        return False
+    return token == result.token
 
 
 def _prepared(files):
@@ -488,6 +513,7 @@ def _save_records(result):
     result.out_dir.mkdir(parents=True, exist_ok=True)
     # Every checkpoint is independently reloadable, including a process exit between trials.
     # Original pins never move forward merely because a source changed during investigation.
+    result.approval_version = 2
     if result.input_pins:
         changed = _changed_pins(result)
         if changed:
@@ -512,6 +538,10 @@ def _save_records(result):
                            "pattern_id": f.pattern_id, "category": "Needs investigation", "reason": f.reason,
                            "status": "SET_ASIDE"} for f in unresolved],
                 "set_aside_count": len(unresolved), "passed_count": len(result.ready), "total_batch_files": len(result.files)}
+    if adaptive.contract_of(result) is not None:
+        manifest["goal_contract"] = copy.deepcopy(adaptive.contract_of(result))
+        manifest["goal_bindings"] = {str(f.source): copy.deepcopy(adaptive.binding_of(result, f.source))
+                                     for f in result.files}
     atomic_json(result.out_dir / "set_aside.json", manifest)
 
 
@@ -669,7 +699,7 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
         if _prepare_only:
             for state in result.session_state.get("groups", {}).values():
                 group = [f for f in result.files if str(f.source) in state["files"]]
-                local = {**context, "suppress_model_review": True, "group_state": state}
+                local = {**context, "suppress_model_review": True, "preserve_applicability": True, "group_state": state}
                 if not goal and adaptive_contract is not None:
                     # Try every easy document before asking a model to investigate hard ones.
                     for file in group:
@@ -1178,6 +1208,17 @@ def _trial(ctx, group, candidate, pid, code, reason, latest):
         with diag.scope(recovery_attempt=n), diag.span("recovery.trial", file_count=len(pending)) as record:
             chain = _candidate(candidate, ctx["goal"], result.request, ctx["sources"], ctx["templates"], ctx["assertions"], ctx["aliases"],
                                input_files=ctx.get("input_files", ()), adaptive_contract=adaptive.contract_of(result))
+            if ctx.get("preserve_applicability"):
+                # Initial preparation tries the approved recipe as supplied. Repair
+                # candidates may revisit applicability, but this baseline cannot
+                # silently discard the saved recipe's source-pattern preconditions.
+                original = candidate["spec"] if candidate["kind"] == "spec" else candidate["chain"]
+                originals = _specs(original)
+                if len(originals) != len(chain["stages"]):
+                    raise ValueError("The deterministic recipe's stage count changed during validation.")
+                for stage, spec in zip(chain["stages"], originals):
+                    if "applies_to" in spec:
+                        stage["spec"]["applies_to"] = copy.deepcopy(spec["applies_to"])
             renames = any(spec_renames_outputs(s) for s in _specs(chain))
             folder = result.out_dir / "attempts" / f"{n:03d}"
             ctx["log"](f"Trying repair {n} on {len(pending)} file(s)…")
@@ -1532,6 +1573,9 @@ def load_recovery(run_dir: Path) -> RecoveryResult:
     if not isinstance(value, dict) or value.get("session_version", 1) != 1:
         raise ValueError("Unsupported recovery checkpoint format")
     result = RecoveryResult(folder, value["request"])
+    result.approval_version = value.get("approval_version", 1)
+    if type(result.approval_version) is not int or result.approval_version not in (1, 2):
+        raise ValueError("Unsupported recovery approval format")
     for name in ("recovery_id", "questions", "notes", "attempts", "transcript", "budget", "key", "token", "token_inputs",
                  "seconds", "session_state", "question_records", "decisions", "resource_history",
                  "options_snapshot", "input_pins", "paused_reason", "rendered", "renderer"):
@@ -1561,7 +1605,7 @@ def load_recovery(run_dir: Path) -> RecoveryResult:
         result.samples.append(SampleView(**row))
     if (_changed_pins(result) or not result.token or result.request != result.key.get("request")
             or result.decisions != result.key.get("decisions", [])
-            or _recovery_token(result.key, [f.source for f in result.files]) != result.token
+            or not _checkpoint_token_matches(result)
             or result.key.get("prepared", []) != _prepared(result.files)):
         raise ValueError("A source, attachment, requirement, or saved candidate changed; start a fresh recovery investigation.")
     for f in result.ready:
@@ -1791,13 +1835,47 @@ def recover_from_run(run_dir: Path, out_dir: Path, *, request=None, options=None
     if (Path(run_dir) / "recovery.json").is_file():
         return resume_recovery(run_dir, request=request, options=options, client=client, log=log)
     manifest = load_set_aside(run_dir)
+    root = Path(run_dir)
+    if root.is_file():
+        folder = root.parent
+    else:
+        folder = root if (root / "set_aside.json").is_file() else root / "run"
+    for name in ("batch.json", "chain.json", "generated.json"):
+        metadata = folder / name
+        if not metadata.is_file():
+            continue
+        prior = json.loads(metadata.read_text(encoding="utf-8"))
+        if prior.get("goal_contract") is not None:
+            if any(manifest.get(key) != prior.get(key) for key in ("goal_contract", "goal_bindings")):
+                raise ValueError("The saved outcome authority disagrees with the run record; review the outcome again.")
     # In-place chains may already have changed originals through earlier stages. Replaying them would repeat edits.
-    for p in (Path(run_dir) / "chain.json", Path(run_dir) / "run" / "chain.json"):
-        if p.is_file() and json.loads(p.read_text(encoding="utf-8")).get("in_place"):
+    chain_record = folder / "chain.json"
+    if chain_record.is_file():
+        prior = json.loads(chain_record.read_text(encoding="utf-8"))
+        if prior.get("in_place") and not (prior.get("atomic_final_delivery") is True
+                                          and manifest.get("goal_contract") is not None):
             raise ValueError("This chain wrote partial stages in place. Start recovery from original copies and the complete request.")
     files = [Path(f["source"]) for f in manifest.get("files", [])]
     if not files:
         raise ValueError("There are no remaining files in this run.")
+    authority = {}
+    if manifest.get("goal_contract") is not None or manifest.get("goal_bindings") is not None:
+        from .goals import validate_contract, validate_binding
+        contract, bindings = manifest.get("goal_contract"), manifest.get("goal_bindings")
+        validate_contract(contract)
+        if not isinstance(bindings, dict):
+            raise ValueError("The run's approved outcome bindings are missing; review the outcome again.")
+        retained = {}
+        for source in files:
+            name = str(source.resolve())
+            if not isinstance(bindings.get(name), dict):
+                raise ValueError(f"The approved source binding for {source.name} is missing; review the outcome again.")
+            retained[name] = validate_binding(source, contract, bindings[name])
+            # Planning may fill uniquely resolvable gaps; a persisted approval must
+            # retain its complete reviewed choices, without reselecting anything.
+            if retained[name] != bindings[name]:
+                raise ValueError(f"The saved outcome binding for {source.name} is incomplete; review the outcome again.")
+        authority = {"adaptive_contract": copy.deepcopy(contract), "adaptive_binding": retained}
     original_request = manifest.get("request", "")
     clarified = original_request
     if request and request.strip() != original_request.strip():
@@ -1805,7 +1883,7 @@ def recover_from_run(run_dir: Path, out_dir: Path, *, request=None, options=None
     return recover(files, clarified, out_dir,
                    spec=manifest.get("spec"), chain=manifest.get("chain"), prior_failures=manifest.get("files", []),
                    template=manifest.get("template"), approved_words=manifest.get("approved_words", []),
-                   options=options, client=client, log=log)
+                   options=options, client=client, log=log, **authority)
 
 
 @exclusive_session("result")
@@ -1825,7 +1903,7 @@ def _deliver_recovery(result, out_dir, acknowledge_review):
     checkpoint = result.out_dir / "recovery.json"
     if checkpoint.is_file() and json.loads(checkpoint.read_text(encoding="utf-8")).get("token") != result.token:
         raise ValueError("The recovery session changed after this preview; reload it before delivery.")
-    if (not result.token or _recovery_token(result.key, [f.source for f in result.files]) != result.token
+    if (not _checkpoint_token_matches(result)
             or result.key.get("prepared") != _prepared(result.files)):
         raise ValueError("A source, template, or recovery requirement changed; investigate again before delivery.")
     if result.review is not None and result.review.blocking() and not acknowledge_review:
@@ -1847,9 +1925,15 @@ def _deliver_recovery(result, out_dir, acknowledge_review):
             raise ValueError(f"The verified copy of {f.source.name} changed; it cannot be delivered.")
         _assert_adaptive(result, f, content)
         data.append((f, content))
+    # Outcome verification can take time. Approval must still describe the
+    # originals after that work, immediately before the first delivery.
+    if not _checkpoint_token_matches(result) or result.key.get("prepared") != _prepared(result.files):
+        raise ValueError("A source, template, or recovery requirement changed during final verification; investigate again before delivery.")
     # All checks precede the first delivery. The bytes read and hashed above are the bytes written.
     dest.mkdir(parents=True, exist_ok=True)
     for f, content in data:
+        if _sha(f.source) != result.input_pins.get(str(f.source)):
+            raise ValueError(f"The original source {f.source.name} changed before delivery; investigate again.")
         path = dest / names[str(f.source)]
         with diag.span("recovery.delivery.write", source=str(f.source), output=str(path),
                        output_md5=f.output_md5, bytes=len(content)):

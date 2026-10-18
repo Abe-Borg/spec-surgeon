@@ -1,0 +1,39 @@
+{
+  "request": "make the header/footer look like this template — the batch mixes clean specs with messy ones",
+  "summary": "Give every section the template's headers and footers (cover section ← template cover, body sections ← template body). The section number comes from each spec's current footer. The section title is extracted by a fallback chain so one spec serves the whole batch: first the paragraph after a standalone 'SECTION nn nn nn' line (clean specs), else the text after the dash on an inline 'SECTION nn nn nn – TITLE' line (messy specs, including ones with non-breaking spaces). The issue stamp is the approved wording. Files that match neither layout are set aside for the next pass, never edited.",
+  "assumptions": [
+    "template slots are the yellow-highlighted placeholders and the {{NAME}} placeholders (decision §14.2)",
+    "the section number is the 'nn nn nn' at the start of the document's current footer",
+    "the section title is the first non-empty paragraph after a standalone 'SECTION nn nn nn' paragraph, or — when there is none — the text after the dash of an inline 'SECTION nn nn nn – TITLE' paragraph",
+    "runs of spaces, tabs and non-breaking spaces in the section line are matched as one space; the extracted title keeps the document's own characters",
+    "header/footer distances and titlePg follow the template; page margins stay as they are",
+    "pending tracked changes inside the old headers/footers are discarded with them and flagged by name"
+  ],
+  "questions": [],
+  "applies_to": {"or": "all"},
+  "mode": "untracked",
+  "ops": [
+    {"op": "apply_header_footer_template",
+     "select": {"sections": "all"},
+     "params": {
+       "template": "../templates/00_00_00_TEMPLATE.docx",
+       "template_sections": {"cover": 0, "body": 1},
+       "slot_fills": {
+         "XX XX XX": {"rule": "regex", "source": "footer.default", "pattern": "^(\\d{2} \\d{2} \\d{2})"},
+         "SECTION_NUMBER": {"rule": "regex", "source": "footer.default", "pattern": "^(\\d{2} \\d{2} \\d{2})"},
+         "SECTION_TITLE": {
+           "rule": "first_match",
+           "rules": [
+             {"rule": "paragraph_after", "source": "document", "anchor_regex": "^SECTION \\d{2} \\d{2} \\d{2}$"},
+             {"rule": "regex", "source": "document", "pattern": "^SECTION\\s+\\d{2}\\s+\\d{2}\\s+\\d{2}\\s*[-–—:]\\s*(.+)$"}
+           ]
+         },
+         "ISSUED FOR PERMIT": {"rule": "literal", "value": "ISSUED FOR CONSTRUCTION  2026-02-15"}
+       }
+     },
+     "expect": {"text_diffs_in_kept_parts": 0,
+                "members_added": {"min": 1},
+                "members_removed": "the old header/footer parts the template replaces (count differs per file)"}}
+  ],
+  "review": {"sample_files": 2, "geometry_reference": "template"}
+}

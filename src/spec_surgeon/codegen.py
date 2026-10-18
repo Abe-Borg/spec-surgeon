@@ -47,9 +47,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
-from . import diagnostics as diag
+from . import diagnostics as diag, guard
 from .llm import Usage
 from .compiler import INSPECTION_TOOLS
+from .process_limits import DEFAULT_LOG_BYTES, DEFAULT_MEMORY_MB, DEFAULT_OUTPUT_BYTES, MAX_RESULT_BYTES
 from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_CALLS, DEFAULT_MAX_OUTPUT_TOKENS,
                         DEFAULT_STALL_REPETITIONS, InvestigationProgress, positive_integer)
 
@@ -237,21 +238,36 @@ def _tail(text: str, n: int = 15) -> str:
 
 
 def run_in_sandbox(source: str, docx: Path, select: Dict[str, Any], params: Dict[str, Any], workdir: Path,
-                   timeout: int = SANDBOX_TIMEOUT, *, goal_contract=None) -> SandboxResult:
+                   timeout: int = SANDBOX_TIMEOUT, *, goal_contract=None, memory_mb: int = DEFAULT_MEMORY_MB,
+                   output_bytes: int = DEFAULT_OUTPUT_BYTES, log_bytes: int = DEFAULT_LOG_BYTES,
+                   source_bytes: Optional[bytes] = None) -> SandboxResult:
     """plan + apply of the generated op on a COPY of ``docx`` in a separate isolated process."""
+    limits = {"seconds": timeout, "memory_mb": memory_mb, "output_bytes": output_bytes, "log_bytes": log_bytes}
+    for name, value in limits.items():
+        positive_integer(name, value)
+    if source_bytes is not None and not isinstance(source_bytes, bytes):
+        raise TypeError("source_bytes must be immutable bytes")
     with diag.scope(sandbox_id=diag.new_id()), \
             diag.span("codegen.sandbox", source=str(docx), workdir=str(workdir), timeout_seconds=timeout) as record:
-        result = _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract)
+        result = _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract, limits, source_bytes)
         record.update(ok=result.ok, code=result.code, output=str(result.output) if result.output else None)
         return result
 
 
-def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract):
+def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contract, limits, source_bytes):
     t0 = time.perf_counter()
     workdir = Path(workdir).resolve()          # the sandbox runs with cwd=workdir: every path it gets is absolute
+    if Path(docx).resolve() in {workdir / name for name in ("source.docx", "result.json", "plan.json", "out.docx")}:
+        raise ValueError("the source document collides with sandbox output artifacts")
     workdir.mkdir(parents=True, exist_ok=True)
+    # A killed process must never inherit a prior invocation's successful result.
+    for name in ("result.json", "plan.json", "out.docx"):
+        (workdir / name).unlink(missing_ok=True)
     copy_path = workdir / "source.docx"
-    shutil.copyfile(Path(docx).resolve(), copy_path)
+    if source_bytes is None:
+        shutil.copyfile(Path(docx).resolve(), copy_path)
+    else:
+        copy_path.write_bytes(source_bytes)
     # Give generated methods the approved supporting files as immutable bytes,
     # rather than forcing filesystem access or pretending the template is absent.
     inputs = []
@@ -274,38 +290,69 @@ def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contrac
             return SandboxResult(False, error=str(exc), code="stale-template", seconds=time.perf_counter() - t0)
     req = workdir / "request.json"
     req.write_text(json.dumps({"source": source, "docx": str(copy_path), "select": select, "params": params,
-                              "goal_contract": goal_contract, "inputs": inputs}),
+                              "goal_contract": goal_contract, "inputs": inputs, "limits": limits}),
                    encoding="utf-8")
     diag.event("codegen.sandbox.prepared", source_copy=str(copy_path), request_path=str(req))
     env = {k: v for k, v in os.environ.items() if k.upper() in ("PATH", "SYSTEMROOT", "TEMP", "TMP", "PYTHONIOENCODING")}
+    stdout_path, stderr_path = workdir / "sandbox-stdout.txt", workdir / "sandbox-stderr.txt"
+
+    def read_log(path):
+        # The runner bounds normal Python diagnostics. Files avoid unbounded parent
+        # RAM buffering even if a native library writes directly to its descriptors.
+        try:
+            with path.open("rb") as stream:
+                stream.seek(max(0, path.stat().st_size - limits["log_bytes"]))
+                return stream.read(limits["log_bytes"]).decode("utf-8", "replace")
+        except OSError:
+            return "sandbox diagnostics could not be read"
+
     try:
         with diag.span("codegen.sandbox.process", executable=sys.executable, timeout_seconds=timeout) as record:
-            proc = subprocess.run([sys.executable, "-I", "-m", "spec_surgeon.sandbox_runner", str(req)], cwd=str(workdir),
-                                  env=env, timeout=timeout, capture_output=True, check=False)
+            with stdout_path.open("wb") as stdout, stderr_path.open("wb") as stderr:
+                proc = subprocess.run([sys.executable, "-I", "-m", "spec_surgeon.sandbox_runner", str(req)], cwd=str(workdir),
+                                      env=env, timeout=timeout, stdout=stdout, stderr=stderr, check=False)
             record["returncode"] = proc.returncode
     except subprocess.TimeoutExpired as e:
         diag.event("codegen.sandbox.timeout", level="warning", timeout_seconds=timeout)
-        err = (e.stderr or b"").decode("utf-8", "replace") if isinstance(e.stderr, bytes) else str(e.stderr or "")
+        err = read_log(stderr_path) or ((e.stderr or b"").decode("utf-8", "replace")
+                                      if isinstance(e.stderr, bytes) else str(e.stderr or ""))
         return SandboxResult(False, error=f"timed out after {timeout}s", code="timeout",
                              seconds=time.perf_counter() - t0, stderr=_tail(err))
-    stderr = (proc.stderr or b"").decode("utf-8", "replace") if isinstance(proc.stderr, bytes) else str(proc.stderr or "")
-    (workdir / "sandbox-stderr.txt").write_text(stderr, encoding="utf-8")
+    stderr = read_log(stderr_path)
     res_path = workdir / "result.json"
     diag.event("codegen.sandbox.exited", returncode=proc.returncode, result_present=res_path.is_file(),
                stderr_characters=len(stderr), stderr_path=str(workdir / "sandbox-stderr.txt"))
-    if not res_path.is_file():
-        diag.event("codegen.sandbox.result_missing", level="error", returncode=proc.returncode)
-        return SandboxResult(False, error=f"the sandbox process died without a result (exit code {proc.returncode})"
-                             + (f"; it printed: {_tail(stderr, 6)}" if stderr.strip() else ""), code="crash",
-                             seconds=time.perf_counter() - t0, stderr=_tail(stderr, 40), returncode=proc.returncode)
-    res = json.loads(res_path.read_text(encoding="utf-8"))
-    if not res.get("ok"):
-        return SandboxResult(False, error=res.get("error"), code=res.get("code"), seconds=time.perf_counter() - t0,
-                             traceback=res.get("traceback") or "", stderr=_tail(stderr, 40),
+    try:
+        if any(path.stat().st_size > limits["log_bytes"] for path in (stdout_path, stderr_path)):
+            return SandboxResult(False, error="generated-transform diagnostics exceeded their configured output allowance",
+                                 code="resource-limit", seconds=time.perf_counter() - t0, stderr=_tail(stderr, 40),
+                                 returncode=proc.returncode)
+        if not res_path.is_file():
+            diag.event("codegen.sandbox.result_missing", level="error", returncode=proc.returncode)
+            raise ValueError(f"sandbox process died without a result (exit code {proc.returncode})")
+        for path, ceiling in ((res_path, MAX_RESULT_BYTES), (workdir / "out.docx", limits["output_bytes"]),
+                              (workdir / "plan.json", min(limits["output_bytes"], 16 * 1024 * 1024))):
+            if path.exists() and path.stat().st_size > ceiling:
+                return SandboxResult(False, error=f"generated-transform {path.name} exceeded its output allowance",
+                                     code="resource-limit", seconds=time.perf_counter() - t0)
+        res = json.loads(res_path.read_text(encoding="utf-8"))
+        if not isinstance(res, dict) or type(res.get("ok")) is not bool:
+            raise ValueError("sandbox result has an invalid shape")
+        if not res["ok"]:
+            return SandboxResult(False, error=res.get("error"), code=res.get("code"), seconds=time.perf_counter() - t0,
+                                 traceback=res.get("traceback") or "", stderr=_tail(stderr, 40),
+                                 returncode=proc.returncode)
+        output, plan_path = workdir / "out.docx", workdir / "plan.json"
+        if not output.is_file():
+            raise ValueError("sandbox reported success without an output document")
+        plan = json.loads(plan_path.read_text(encoding="utf-8"))
+        if not isinstance(plan, dict):
+            raise ValueError("sandbox plan has an invalid shape")
+        return SandboxResult(True, output=output, plan=plan, seconds=time.perf_counter() - t0)
+    except (OSError, ValueError, TypeError, RecursionError) as error:
+        return SandboxResult(False, error=f"sandbox returned missing or malformed artifacts ({type(error).__name__}: {str(error)[:300]})",
+                             code="crash", seconds=time.perf_counter() - t0, stderr=_tail(stderr, 40),
                              returncode=proc.returncode)
-    return SandboxResult(True, output=workdir / "out.docx",
-                         plan=json.loads((workdir / "plan.json").read_text(encoding="utf-8")),
-                         seconds=time.perf_counter() - t0)
 
 
 def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = None, *, goal_contract=None) -> List[str]:
@@ -345,11 +392,11 @@ def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = N
     return probs
 
 
-def allowed_parts_of(docx: Path) -> List[str]:
+def allowed_parts_of(docx: Path, *, source_bytes=None) -> List[str]:
     """The parts a generated op may change in this file: its text parts and its styles part."""
     from .ops.selectors import StyleSheet
     from .package import DocxPackage
-    pkg = DocxPackage.from_path(docx)
+    pkg = DocxPackage.from_path(docx) if source_bytes is None else DocxPackage(source_bytes, name=str(docx))
     parts = list(pkg.text_parts())
     try:
         sp = StyleSheet(pkg).part
@@ -368,10 +415,14 @@ class FileTrial:
     output: Optional[Path] = None
     record: Optional[Any] = None
     output_md5: str = ""                          # the bytes the suite verified (re-checked before any copy)
+    identity: Optional[Any] = None
+    goal_binding: Optional[Dict[str, Any]] = None
 
     def to_dict(self):
         return {"source": str(self.source), "passed": self.passed, "problems": self.problems,
-                "output": str(self.output) if self.output else None, "output_md5": self.output_md5}
+                "output": str(self.output) if self.output else None, "output_md5": self.output_md5,
+                "identity": self.identity.to_dict() if self.identity is not None else None,
+                "goal_binding": self.goal_binding}
 
 
 def trial(source: str, f: Path, select, params, workdir: Path, *, goal_contract=None, goal_binding=None) -> FileTrial:
@@ -386,47 +437,69 @@ def trial(source: str, f: Path, select, params, workdir: Path, *, goal_contract=
 
 def _trial(source, f, select, params, workdir, goal_contract, goal_binding):
     from .verify import CheckResult, run_suite
+    f = Path(f).resolve()
+    try:
+        identity = guard.acquire(f)
+        original = f.read_bytes()
+        if hashlib.md5(original).hexdigest() != identity.md5 or guard.drifted(identity):
+            raise guard.GuardError("source changed while acquiring the generated trial's original bytes")
+    except (OSError, guard.GuardError) as error:
+        return FileTrial(f, False, [f"source acquisition refused: {error}"])
+
+    def failed(problems, output=None):
+        return FileTrial(f, False, problems, output, identity=identity, goal_binding=goal_binding)
+
     if goal_contract is not None:
         from .goals import validate_contract, validate_binding
         try:
             validate_contract(goal_contract)
-            goal_binding = validate_binding(f, goal_contract, goal_binding)
+            checked = validate_binding(f, goal_contract, goal_binding)
+            if goal_binding is not None and checked != goal_binding:
+                raise ValueError("the saved approved binding is incomplete; review its targets again")
+            goal_binding = checked
+            if hashlib.sha256(original).hexdigest() != goal_binding["source_sha256"]:
+                raise guard.GuardError("source changed while checking its approved binding")
         except Exception as error:
-            return FileTrial(f, False, [f"approved goal binding refused: {error}"])
-    sb = run_in_sandbox(source, f, select, params, workdir, goal_contract=goal_contract)
+            return failed([f"approved goal binding refused: {error}"])
+    sb = run_in_sandbox(source, f, select, params, workdir, goal_contract=goal_contract, source_bytes=original)
     if not sb.ok:
         where = _tail(sb.traceback, 12)
-        return FileTrial(f, False, [f"[{sb.code or 'error'}] {sb.error}"
-                                    + (f"\n(traceback, last lines:)\n{where}" if where else "")])
+        return failed([f"[{sb.code or 'error'}] {sb.error}"
+                       + (f"\n(traceback, last lines:)\n{where}" if where else "")])
     try:
         with diag.span("codegen.trial.limits") as record:
-            limits = hard_limits(sb.plan, allowed_parts_of(f), goal_contract=goal_contract)
+            limits = hard_limits(sb.plan, allowed_parts_of(f, source_bytes=original), goal_contract=goal_contract)
             record.update(accepted=not bool(limits), problem_count=len(limits))
     except Exception as e:  # noqa: BLE001 — a plan the engine cannot even read is a failed trial, with the reason
-        return FileTrial(f, False, [f"the generated op's plan is malformed ({type(e).__name__}: {e})"], sb.output)
+        return failed([f"the generated op's plan is malformed ({type(e).__name__}: {e})"], sb.output)
     if limits:
-        return FileTrial(f, False, limits, sb.output)
-    out_bytes = sb.output.read_bytes()
+        return failed(limits, sb.output)
     try:
+        out_bytes = sb.output.read_bytes()
         with diag.span("codegen.trial.verify") as outcome:
-            rec = run_suite(Path(f).read_bytes(), out_bytes, sb.plan, str(f), str(sb.output))
+            rec = run_suite(original, out_bytes, sb.plan, str(f), str(sb.output))
             outcome.update(passed=rec.passed, checks={c.id: c.status for c in rec.checks})
     except Exception as e:  # noqa: BLE001 — an output the suite cannot read (a part removed, a broken zip): FAIL
-        return FileTrial(f, False, [f"the verifier could not check the output at all ({type(e).__name__}: {e}); "
-                                    f"the generated op produced a package the suite cannot read — a removed or "
-                                    f"broken part?"], sb.output)
+        return failed([f"the verifier could not check the output at all ({type(e).__name__}: {e}); "
+                       "the generated op produced a package the suite cannot read — a removed or broken part?"], sb.output)
     if goal_contract is not None:
         from .goals import verify_goal
         try:
-            goal_result = verify_goal(Path(f).read_bytes(), out_bytes, goal_contract, goal_binding)
+            goal_result = verify_goal(original, out_bytes, goal_contract, goal_binding)
         except Exception as error:
             goal_result = {"passed": False, "errors": [f"goal verifier could not check output: {error}"]}
         rec.checks.append(CheckResult("GOAL", "Approved original-to-final effects",
                                       "PASS" if goal_result.get("passed") else "FAIL",
                                       "approved effects independently verified" if goal_result.get("passed")
                                       else "; ".join(goal_result.get("errors", [])), goal_result))
+    try:
+        drift = guard.drifted(identity)
+    except OSError as error:
+        drift = str(error)
+    if drift:
+        rec.set(CheckResult("V9", "Source identity", "FAIL", f"source changed during generated trial: {drift}"))
     fails = [f"{c.id} FAIL: {c.summary[:600]}" for c in rec.checks if c.status == "FAIL"]
-    return FileTrial(f, rec.passed, fails, sb.output, rec, hashlib.md5(out_bytes).hexdigest())
+    return FileTrial(f, rec.passed, fails, sb.output, rec, hashlib.md5(out_bytes).hexdigest(), identity, goal_binding)
 
 
 @dataclass
@@ -451,6 +524,18 @@ class GeneratedOp:
     goal_contract: Optional[Dict[str, Any]] = None
     goal_bindings: Dict[str, Any] = field(default_factory=dict)
     approved_words: List[str] = field(default_factory=list)
+
+
+def _canonical_bindings(bindings):
+    """Path spelling must not discard a source-bound choice from an approved review."""
+    import copy
+    result = {}
+    for path, binding in (bindings or {}).items():
+        name = str(Path(path).resolve())
+        if name in result and result[name] != binding:
+            raise ValueError("conflicting approved bindings name the same source document")
+        result[name] = copy.deepcopy(binding)
+    return result
 
 
 CODEGEN_SYSTEM = """You write ONE Python module: an operation (an `Op` subclass) for a deterministic .docx editing \
@@ -538,7 +623,10 @@ def system_prompt(goal_contract=None) -> str:
             "Your own plan cannot expand the contract's scope. Do not write or propose your own verifier. "
             "Use mode = 'content' for tracked wording changes and 'untracked' only when the contract explicitly "
             "requests untracked wording changes. Tracked helpers and pure textedit helpers listed in "
-            "the import whitelist are available on this path. Predict all text/revision/member changes first.\n"
+            "the import whitelist are available on this path. For wording edits, call plan_paragraph(..., "
+            "author=approved_author), preserve its paragraph_edits assertions, and use the same approved author "
+            "when applying tracked changes. BlockDiff predictions alone do not prove preservation of other "
+            "paragraph items. Predict all text/revision/member changes first.\n"
         ) + prompt[end:]
         prompt = prompt.replace('name, mode = "formatting", description', 'name, mode, description')
         start = prompt.index("- apply() mutates")
@@ -610,6 +698,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
     # Contract wording is checked against explicit caller-owned sources before the
     # model or sandbox runs. Neither proposal, generated source nor brief grants it.
     checked_bindings = {}
+    supplied_bindings = _canonical_bindings(goal_bindings) if goal_contract is not None else {}
     if goal_contract is not None:
         from .goals import approved_goal_words, validate_binding, validate_contract
         validate_contract(goal_contract)
@@ -619,8 +708,8 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
         if missing:
             raise ValueError(f"goal contains wording without user approval: {missing}")
         for sample in samples:
-            checked_bindings[str(sample)] = validate_binding(sample, goal_contract,
-                                                            (goal_bindings or {}).get(str(sample)))
+            checked_bindings[str(Path(sample).resolve())] = validate_binding(sample, goal_contract,
+                                                                           supplied_bindings.get(str(Path(sample).resolve())))
     import copy
     goal_contract = copy.deepcopy(goal_contract)
     system = system_prompt(goal_contract)
@@ -646,7 +735,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
         + json.dumps(profiles, ensure_ascii=False)}]
     # Full-batch bindings can include deliberate user choices on non-sample files.
     # Keep them, then validate each one afresh when that file actually runs.
-    retained_bindings = copy.deepcopy(goal_bindings or {}) if goal_contract is not None else {}
+    retained_bindings = copy.deepcopy(supplied_bindings)
     retained_bindings.update(checked_bindings)
     g = GeneratedOp(model=model, request=request, proposal=proposal or "", brief=brief or "",
                     goal_contract=goal_contract, goal_bindings=retained_bindings, approved_words=list(approved_words))
@@ -730,7 +819,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
                     if not problems:
                         for i, f in enumerate(samples):
                             t = trial(src, Path(f), select, params, out_dir / "sandbox" / f"attempt{attempt}" / f"{i:02d}",
-                                      goal_contract=goal_contract, goal_binding=checked_bindings.get(str(f)))
+                                      goal_contract=goal_contract, goal_binding=checked_bindings.get(str(Path(f).resolve())))
                             trials.append(t)
                             problems += [f"{Path(f).name}: {p}" for p in t.problems]
                     record.update(passed=not bool(problems), problem_count=len(problems), trial_count=len(trials))
@@ -833,46 +922,123 @@ def save_generated(g: GeneratedOp, out_dir: Path) -> Path:
     return p
 
 
-def run_generated(g: GeneratedOp, inputs: Sequence[str], out_dir: Path, log=None) -> List[FileTrial]:
+def run_generated(g: GeneratedOp, inputs: Sequence[str], out_dir: Path, log=None, *,
+                  approved_inputs=None) -> List[FileTrial]:
     """Apply a passing generated op to every input (sandbox per file, verifier per file). Verified outputs are copied
     to ``out_dir/outputs`` under names unique across the batch, and only when their bytes are the ones the suite
     verified; records to ``out_dir/records``. Never in place: an input inside the results folder is refused before
     anything is written (the same rules as a batch run)."""
-    from .batch import check_inputs_outside, expand_inputs, output_names
+    import copy
+    from .batch import check_inputs_outside, clear_delivery_folders, expand_inputs, output_names
+    g = copy.copy(g)
+    for key in ("select", "params", "goal_contract", "goal_bindings", "approved_words"):
+        setattr(g, key, copy.deepcopy(getattr(g, key)))
+    approved_inputs = copy.deepcopy(approved_inputs)
+    if approved_inputs is not None:
+        from .preview import generated_key
+        digest = hashlib.sha256(json.dumps(generated_key(g), sort_keys=True,
+                                           ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
+        if not isinstance(approved_inputs, dict) or approved_inputs.get("spec") != digest:
+            raise ValueError("the generated transform changed since approval; preview again")
+    g.goal_bindings = _canonical_bindings(g.goal_bindings)
     log = log or (lambda m: None)
     out_dir = Path(out_dir)
     files = expand_inputs(inputs)
-    check_inputs_outside(files, out_dir)
+    from .goals import goal_templates
+    auxiliary = goal_templates(g.goal_contract) if g.goal_contract is not None else []
+    check_inputs_outside([*files, *auxiliary], out_dir)
+    source_pins, acquisition_errors = _generated_source_pins(files, approved_inputs)
     with diag.scope(out_dir / diag.LOGS / "events.jsonl", generated_run_id=diag.new_id()), \
             diag.span("codegen.run", file_count=len(files)) as record:
-        result = _run_generated_files(g, files, out_dir, log, output_names)
+        clear_delivery_folders(out_dir)
+        result = _run_generated_files(g, files, out_dir, log, output_names, source_pins, acquisition_errors)
         record.update(passed=sum(t.passed for t in result), failed=sum(not t.passed for t in result))
         return result
 
 
-def _run_generated_files(g, files, out_dir, log, output_names):
+def _generated_source_pins(files, approved_inputs):
+    """Pin every queued original before work; a preview pin cannot silently become a new acquisition."""
+    expected = None
+    if approved_inputs is not None:
+        if not isinstance(approved_inputs, dict) or not isinstance(approved_inputs.get("files"), dict):
+            raise ValueError("approved generated inputs have no source identity pins; preview again")
+        expected = {}
+        for path, value in approved_inputs["files"].items():
+            if (not isinstance(path, str) or not isinstance(value, list) or len(value) != 3
+                    or isinstance(value[0], bool) or not isinstance(value[0], int) or value[0] < 0
+                    or isinstance(value[1], bool) or not isinstance(value[1], int)
+                    or not isinstance(value[2], str) or len(value[2]) != 32
+                    or any(character not in "0123456789abcdef" for character in value[2])):
+                raise ValueError("approved generated source identity pins are malformed; preview again")
+            key = str(Path(path).resolve())
+            if key in expected and expected[key] != value:
+                raise ValueError("approved generated inputs contain conflicting source identities")
+            expected[key] = value
+        if set(expected) != {str(file.resolve()) for file in files}:
+            raise ValueError("generated source files changed since approval; preview again")
+    pins, errors = {}, {}
+    for file in files:
+        key = str(file.resolve())
+        try:
+            identity = guard.acquire(key)
+            drift = guard.drifted(identity)
+            if drift:
+                raise guard.GuardError(drift)
+        except (OSError, guard.GuardError) as error:
+            if expected is not None:
+                raise ValueError(f"approved generated source {file.name} changed or is unavailable: {error}") from error
+            errors[key] = str(error)
+            continue
+        if expected is not None and expected[key] != [identity.size, identity.mtime_ns, identity.md5]:
+            raise ValueError(f"generated source {file.name} changed since approval; preview again")
+        pins[key] = identity
+    return pins, errors
+
+
+def _run_generated_files(g, files, out_dir, log, output_names, source_pins, acquisition_errors):
     names = output_names(files)
     results = []
+    _save_generated_run(g, files, results, out_dir)
     with tempfile.TemporaryDirectory() as tmp:
         for i, f in enumerate(files):
             with diag.scope(source=str(f)), diag.span("codegen.file") as outcome:
-                t = trial(g.source, f, g.select, g.params, Path(tmp) / f"{i:04d}",
-                          goal_contract=g.goal_contract, goal_binding=g.goal_bindings.get(str(f)))
+                key = str(f.resolve())
+                identity = source_pins.get(key)
+                try:
+                    if identity is None:
+                        raise guard.GuardError(acquisition_errors.get(key, "original identity is missing"))
+                    drift = guard.drifted(identity)
+                    if drift:
+                        raise guard.GuardError(f"source changed after generated run acquisition: {drift}")
+                except (OSError, guard.GuardError) as error:
+                    t = FileTrial(f.resolve(), False, [f"source acquisition refused: {error}"], identity=identity)
+                else:
+                    t = trial(g.source, f, g.select, g.params, Path(tmp) / f"{i:04d}",
+                              goal_contract=g.goal_contract, goal_binding=g.goal_bindings.get(key))
+                if t.goal_binding is not None:
+                    g.goal_bindings[key] = t.goal_binding
                 name = names[str(f)]
                 if t.passed:
-                    data = t.output.read_bytes()
-                    actual_md5 = hashlib.md5(data).hexdigest()
-                    diag.event("codegen.delivery.identity", expected_md5=t.output_md5, actual_md5=actual_md5,
-                               matches=actual_md5 == t.output_md5)
-                    if actual_md5 != t.output_md5:
-                        t.passed, t.output = False, None
-                        t.problems.append("the output is not the one the suite verified; not delivered")
-                    else:
+                    try:
+                        if t.identity is None or t.identity.to_dict() != identity.to_dict():
+                            raise guard.GuardError("source changed between generated run acquisition and trial; not delivered")
+                        data = t.output.read_bytes()
+                        actual_md5 = hashlib.md5(data).hexdigest()
+                        diag.event("codegen.delivery.identity", expected_md5=t.output_md5, actual_md5=actual_md5,
+                                   matches=actual_md5 == t.output_md5)
+                        if actual_md5 != t.output_md5:
+                            raise guard.GuardError("the output is not the one the suite verified; not delivered")
                         dest = out_dir / "outputs" / name
                         with diag.span("codegen.delivery.write", output=str(dest), size=len(data)):
                             dest.parent.mkdir(parents=True, exist_ok=True)
-                            dest.write_bytes(data)
+                            _publish_generated(dest, data, identity)
                             t.output = dest
+                    except (guard.GuardError, OSError) as error:
+                        from .verify import CheckResult
+                        t.passed, t.output = False, None
+                        t.problems.append(str(error))
+                        if t.record is not None:
+                            t.record.set(CheckResult("V9", "Generated output delivery", "FAIL", str(error)))
                 else:
                     t.output = None
                 if t.record is not None:
@@ -881,7 +1047,48 @@ def _run_generated_files(g, files, out_dir, log, output_names):
                         rd.mkdir(parents=True, exist_ok=True)
                         (rd / f"{Path(name).stem}.record.md").write_text(t.record.to_markdown(), encoding="utf-8")
                 results.append(t)
+                _save_generated_run(g, files, results, out_dir)
                 log(f"{'PASS' if t.passed else 'FAIL'} {f.name}")
                 outcome.update(passed=t.passed, problem_count=len(t.problems),
                                output=str(t.output) if t.output else None, output_md5=t.output_md5)
     return results
+
+
+def _publish_generated(destination, data, identity):
+    """Publish complete verified bytes only after the last source check, with no partial final file."""
+    descriptor, temporary = tempfile.mkstemp(prefix=".generated-", suffix=".tmp", dir=destination.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as stream:
+            stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
+        drift = guard.drifted(identity) if identity is not None else "original identity is missing"
+        if drift:
+            raise guard.GuardError(f"source changed before generated delivery: {drift}")
+        os.replace(temporary, destination)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def _save_generated_run(g, files, results, out_dir):
+    """Durable retry scope and approved authority, including source-specific choices."""
+    import copy
+    from .recovery_state import atomic_json
+    completed = {str(result.source.resolve()): result for result in results}
+    pending = []
+    for file in files:
+        result = completed.get(str(file.resolve()))
+        if result is not None and result.passed:
+            continue
+        pending.append({"source": str(file.resolve()), "name": file.name, "status": "SET_ASIDE",
+                        "code": "generated-failed" if result is not None else "generated-pending",
+                        "reason": "; ".join(result.problems) if result is not None else "generated trial did not complete"})
+    metadata = {"job": "generated", "request": g.request, "spec": None, "chain": None,
+                "approved_words": list(g.approved_words), "files": pending, "set_aside_count": len(pending),
+                "passed_count": sum(result.passed for result in results), "total_batch_files": len(files),
+                "generated": {"source": g.source, "select": g.select, "params": g.params, "name": g.name}}
+    if g.goal_contract is not None:
+        metadata.update(goal_contract=copy.deepcopy(g.goal_contract), goal_bindings=copy.deepcopy(g.goal_bindings))
+    # The companion prevents a damaged set-aside manifest from dropping outcome authority.
+    atomic_json(out_dir / "generated.json", {**metadata, "results": [result.to_dict() for result in results]})
+    atomic_json(out_dir / "set_aside.json", metadata)

@@ -11,9 +11,8 @@ whitelist): from then on this process may write, remove or rename only inside it
 start a process, open a socket or load native code. lxml's C-level file access is not audited — the whitelist
 (``codegen.FORBIDDEN_ATTRS``, ``MODULE_ATTRS``) is what keeps generated code away from those writers.
 
-This is a prototype sandbox: it keeps an honest model inside the engine's API; it is not a security boundary
-against hostile code (the process boundary, the copy-only inputs, the timeout, the whitelist and the audit hook are
-the limits — none of them is an OS-level jail).
+OS memory limits, a parent wall timeout, and bounded outputs also contain accidental
+resource exhaustion. This is still not a complete security boundary against hostile code.
 """
 from __future__ import annotations
 
@@ -111,8 +110,16 @@ def main(argv=None) -> int:
     out_dir = req_path.parent
     result = {"ok": False}
     try:
+        from .process_limits import (BoundedText, DEFAULT_LOG_BYTES, DEFAULT_MEMORY_MB, DEFAULT_OUTPUT_BYTES,
+                                     SandboxLimitError, install_limits)
         from .ops.base import merge_fragments
         from .package import DocxPackage
+        limits = req.get("limits") or {"memory_mb": DEFAULT_MEMORY_MB, "seconds": 60,
+                                       "output_bytes": DEFAULT_OUTPUT_BYTES, "log_bytes": DEFAULT_LOG_BYTES}
+        isolation = install_limits(memory_mb=limits["memory_mb"], seconds=limits["seconds"],
+                                   output_bytes=limits["output_bytes"])
+        sys.stdout = BoundedText(sys.stdout, limits["log_bytes"])
+        sys.stderr = BoundedText(sys.stderr, limits["log_bytes"])
         install_guard(out_dir)                  # before a single line of the generated code runs
         cls = load_op_class(req["source"], req.get("goal_contract"))
         op = cls()
@@ -133,16 +140,39 @@ def main(argv=None) -> int:
         work = pkg.copy()
         work.inputs = pkg.inputs
         op.apply(work, frag)
-        (out_dir / "out.docx").write_bytes(work.output_bytes())
+        output = work.output_bytes()
+        if len(output) > limits["output_bytes"]:
+            raise SandboxLimitError("generated document exceeded its configured output allowance")
+        (out_dir / "out.docx").write_bytes(output)
         d = plan.to_dict()
         d.pop("transform_data", None)
-        (out_dir / "plan.json").write_text(json.dumps(d, default=str), encoding="utf-8")
-        result = {"ok": True, "op_name": getattr(cls, "name", None), "mode": plan.mode}
+        plan_json = json.dumps(d, default=str).encode("utf-8")
+        if len(plan_json) > min(limits["output_bytes"], 16 * 1024 * 1024):
+            raise SandboxLimitError("generated plan exceeded its configured output allowance")
+        (out_dir / "plan.json").write_bytes(plan_json)
+        result = {"ok": True, "op_name": getattr(cls, "name", None), "mode": plan.mode, "isolation": isolation}
     except Exception as e:  # everything is reported, nothing is raised past the process boundary
-        code = getattr(e, "code", None)
-        result = {"ok": False, "error": f"{type(e).__name__}: {e}", "code": code,
-                  "traceback": traceback.format_exc()[-4000:]}
-    (out_dir / "result.json").write_text(json.dumps(result), encoding="utf-8")
+        code = "resource-limit" if isinstance(e, MemoryError) else getattr(e, "code", None)
+        try:
+            detail = str(e)[:2000]
+        except Exception:
+            detail = "exception text could not be read"
+        try:
+            trace = traceback.format_exc()[-4000:]
+        except Exception:
+            trace = "traceback could not be recorded"
+        result = {"ok": False, "error": f"{type(e).__name__}: {detail}",
+                  "code": code if isinstance(code, str) else None, "traceback": trace}
+    from .process_limits import MAX_RESULT_BYTES
+    try:
+        encoded = json.dumps(result, ensure_ascii=False).encode("utf-8")
+        if len(encoded) > MAX_RESULT_BYTES:
+            raise ValueError("sandbox diagnostic result exceeded its allowance")
+    except Exception:
+        encoded = b'{"ok":false,"code":"resource-limit","error":"sandbox result could not be serialized within its allowance"}'
+    temporary = out_dir / "result.tmp"
+    temporary.write_bytes(encoded)
+    temporary.replace(out_dir / "result.json")
     return 0
 
 

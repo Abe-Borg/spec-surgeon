@@ -215,7 +215,7 @@ class Campaign:
         return self
 
     def set_goal(self, project_id, request: str, *, spec=None, chain=None, template=None,
-                 approved_words=(), adaptive_contract=None):
+                 approved_words=(), adaptive_contract=None, doc_ids=None):
         from .chain import validate_chain
         from .editspec import validate_spec
         if not isinstance(request, str) or not request.strip():
@@ -237,15 +237,38 @@ class Campaign:
             if not Path(template).is_file():
                 raise FileNotFoundError(template)
         project = self._project(project_id)
+        ids = self._scope(project, doc_ids)
         goal = {"request": request.strip(), "spec": copy.deepcopy(spec), "chain": copy.deepcopy(chain),
                 "template": template, "approved_words": words, "adaptive_contract": copy.deepcopy(adaptive_contract)}
         _json(goal)
+        old = copy.deepcopy(project.get("goal") or {})
         project["goal"] = goal
-        for field in ("document_goals", "planning_draft", "proposed_plan", "review_required_docs"):
+        project["goal_scope"] = ids
+        for field in ("planning_draft", "proposed_plan"):
             project.pop(field, None)
-        project["decisions"] = []
-        self._invalidate(project, "The project goal changed.")
-        self._save("set_goal", {"project_id": project_id})
+        if doc_ids is None:
+            project.pop("document_goals", None)
+            project.pop("review_required_docs", None)
+            project["decisions"] = []
+            self._invalidate(project, "The project goal changed.")
+        else:
+            scoped = project.setdefault("document_goals", {d: copy.deepcopy(old) for d in project["document_ids"]})
+            for doc_id in ids:
+                scoped[doc_id] = copy.deepcopy(goal)
+            wanted = set(ids)
+            decisions = []
+            for decision in project["decisions"]:
+                retained = [d for d in decision["document_ids"] if d not in wanted]
+                if retained:
+                    decision = copy.deepcopy(decision)
+                    decision["document_ids"] = retained
+                    if "applied_documents" in decision:
+                        decision["applied_documents"] = [d for d in decision["applied_documents"] if d in retained]
+                    decisions.append(decision)
+            project["decisions"] = decisions
+            project["review_required_docs"] = [d for d in project.get("review_required_docs", []) if d not in wanted]
+            self._invalidate_documents(project, ids, "The approved goal changed for these documents.")
+        self._save("set_goal", {"project_id": project_id, "document_ids": ids})
         return self
 
     def _scope(self, project, doc_ids=None):
@@ -562,14 +585,16 @@ class Campaign:
                 files.append(source)
         return files
 
-    def run(self, *, options=None, client=None, log=None):
-        from . import recovery
+    def run(self, *, options=None, client=None, log=None, allow_model=None):
+        from . import llm, recovery
         options = options or recovery.RecoveryOptions(**self._state.get("resource_options", {}))
         options.validate()
         notify = log or (lambda message: None)
+        model_allowed = allow_model is not False and (client is not None or llm.credentials_found())
         with self._lock():
             self._preparation_failures = set()
             self._slice_results = {}
+            preparation_failed = set()
             self._state["resource_options"] = asdict(options)
             self._save("run_started")
             # Complete safe built-in plans throughout the workspace before opening
@@ -578,8 +603,31 @@ class Campaign:
             for project in self.projects.values():
                 if not project["document_ids"] or not project.get("goal"):
                     continue
-                if not ("document_goals" in project or project.get("review_required_docs")
-                        or project["goal"].get("adaptive_contract")):
+                per_document = bool("document_goals" in project or project.get("review_required_docs")
+                                    or project["goal"].get("adaptive_contract"))
+                if not per_document:
+                    goal = project["goal"]
+                    if not (goal.get("spec") or goal.get("chain")):
+                        continue
+                    failures = self._check_sources(project)
+                    if failures:
+                        project["status"], project["error"] = "DRIFTED", "\n".join(failures)
+                        preparation_failed.add(project["id"])
+                        self._save("project_drifted", {"project_id": project["id"]})
+                        continue
+                    if project["runs"] and (self._artifact_path(project["runs"][-1]["path"]) / "recovery.json").is_file():
+                        continue
+                    try:
+                        files = self._execution_files(project)
+                        if files:
+                            result = self._prepare_saved_project(project, files, options, notify)
+                            self._result(project, result)
+                            project["runs"][-1]["status"] = project["status"]
+                            self._save("project_prepared", {"project_id": project["id"]})
+                    except Exception as exc:
+                        project["status"], project["error"] = "ERROR", f"{type(exc).__name__}: {exc}"
+                        preparation_failed.add(project["id"])
+                        self._save("project_preparation_paused", {"project_id": project["id"]})
                     continue
                 try:
                     failures = self._check_sources(project, [])
@@ -592,6 +640,8 @@ class Campaign:
                     self._save("project_preparation_paused", {"project_id": project["id"]})
             for project in self.projects.values():
                 if not project["document_ids"] or not project.get("goal"):
+                    continue
+                if project["id"] in preparation_failed:
                     continue
                 per_document = bool("document_goals" in project or project.get("review_required_docs")
                                     or (project.get("goal") or {}).get("adaptive_contract"))
@@ -606,44 +656,56 @@ class Campaign:
                 try:
                     files = self._execution_files(project)
                     if per_document:
-                        self._run_adaptive(project, options, notify, client=client)
+                        if model_allowed:
+                            self._run_adaptive(project, options, notify, client=client)
+                        else:
+                            self._pause_without_model(project, notify)
                         self._save("project_finished", {"project_id": project["id"]})
                         continue
                     if project["runs"] and (self._artifact_path(project["runs"][-1]["path"]) / "recovery.json").is_file():
                         run_dir = self._artifact_path(project["runs"][-1]["path"])
                         result = recovery.load_recovery(run_dir)
-                        if pending:
+                        if pending and model_allowed:
                             for decision in pending:
                                 answer = self._decision_request(project, decision)
                                 result = recovery.resume_recovery(run_dir, request=answer, options=options,
                                                                   client=client, log=notify)
                                 decision["applied"] = True
                                 self._save("decision_applied", {"project_id": project["id"], "decision_id": decision["id"]})
-                        elif len(result.ready) < len(result.files) and not result.questions:
+                        elif model_allowed and len(result.ready) < len(result.files) and not result.questions:
                             result = recovery.resume_recovery(run_dir, options=options, client=client, log=notify)
                     else:
                         if not files:
                             project["status"] = "UNRESOLVED"
                             self._save("project_unreadable", {"project_id": project["id"]})
                             continue
-                        run_dir = self.out_dir / "projects" / stable_id("group", project["id"]) / uuid.uuid4().hex
-                        run = {"path": str(run_dir), "created_at": _now(), "status": "RUNNING"}
-                        project["runs"].append(run)
-                        self._save("project_started", {"project_id": project["id"], "path": str(run_dir)})
-                        words = list(goal["approved_words"])
-                        if project["context"]:
-                            words.append(_json(project["context"]))
-                        result = recovery.recover(files, goal["request"], run_dir, spec=goal["spec"], chain=goal["chain"],
-                                                  template=goal["template"], approved_words=words, options=options,
-                                                  client=client, log=notify, project_context=project["context"],
-                                                  input_files=[])
-                        for decision in pending:
+                        if not model_allowed and not (goal.get("spec") or goal.get("chain")):
+                            self._pause_without_model(project, notify)
+                            continue
+                        if goal.get("spec") or goal.get("chain"):
+                            result = self._prepare_saved_project(project, files, options, notify)
+                            run_dir = result.out_dir
+                            if model_allowed and len(result.ready) < len(result.files) and not result.questions:
+                                result = recovery.resume_recovery(run_dir, options=options, client=client, log=notify)
+                        else:
+                            run_dir = self.out_dir / "projects" / stable_id("group", project["id"]) / uuid.uuid4().hex
+                            project["runs"].append({"path": str(run_dir), "created_at": _now(), "status": "RUNNING"})
+                            self._save("project_started", {"project_id": project["id"], "path": str(run_dir)})
+                            words = list(goal["approved_words"])
+                            if project["context"]:
+                                words.append(_json(project["context"]))
+                            result = recovery.recover(files, goal["request"], run_dir,
+                                template=goal["template"], approved_words=words, options=options, client=client,
+                                log=notify, project_context=project["context"], input_files=[])
+                        for decision in pending if model_allowed else []:
                             answer = self._decision_request(project, decision)
                             result = recovery.resume_recovery(run_dir, request=answer,
                                 options=options, client=client, log=notify)
                             decision["applied"] = True
                             self._save("decision_applied", {"project_id": project["id"], "decision_id": decision["id"]})
                     self._result(project, result)
+                    if not model_allowed:
+                        self._pause_without_model(project, notify)
                     project["runs"][-1]["status"] = project["status"]
                 except Exception as exc:
                     project["status"] = "ERROR"
@@ -652,6 +714,38 @@ class Campaign:
                 self._save("project_finished", {"project_id": project["id"], "status": project["status"]})
             self._save("run_finished")
         return self
+
+    def _prepare_saved_project(self, project, files, options, log):
+        from . import recovery
+        goal = project["goal"]
+        run_dir = self.out_dir / "projects" / stable_id("group", project["id"]) / uuid.uuid4().hex
+        project["runs"].append({"path": str(run_dir), "created_at": _now(), "status": "RUNNING"})
+        self._save("project_started", {"project_id": project["id"], "path": str(run_dir)})
+        words = list(goal["approved_words"])
+        if project["context"]:
+            words.append(_json(project["context"]))
+        log(f"Project {project['label']}: trying the approved saved work without model calls.")
+        return recovery.prepare_recovery(files, goal["request"], run_dir, spec=goal.get("spec"), chain=goal.get("chain"),
+            template=goal["template"], approved_words=words, options=options, project_context=project["context"], input_files=[])
+
+    def _pause_without_model(self, project, log):
+        awaiting_answers = {doc_id for decision in project["decisions"] if not decision["applied"]
+                            for doc_id in decision["document_ids"]}
+        unresolved = [self.documents[d] for d in project["document_ids"]
+                      if self._goal_for(project, d) and (self.documents[d]["status"] in ("PENDING", "UNRESOLVED", "ERROR")
+                          or (d in awaiting_answers and self.documents[d]["status"] == "NEEDS_INPUT"))]
+        if unresolved:
+            message = ("Further investigation needs an Anthropic API key in Settings. "
+                       "Verified copies are retained; review the remaining failures or supply a revised saved spec.")
+            for doc in unresolved:
+                if doc["status"] != "NEEDS_INPUT":
+                    doc["status"] = "UNRESOLVED"
+                reason = doc.get("reason") or ""
+                if message not in reason:
+                    doc["reason"] = reason + ("\n" if reason else "") + message
+            project["error"] = message
+            log(message)
+        self._refresh_status(project)
 
     def _run_adaptive(self, project, options, log, client=None):
         from . import llm
@@ -765,7 +859,7 @@ class Campaign:
         doc_id, source = doc["id"], Path(doc["source"])
         goal = self._goal_for(project, doc_id)
         contract = goal.get("adaptive_contract")
-        general = bool(project.get("document_goals")) or contract is None or contract.get("kind") != "format_section_title"
+        general = bool(goal.get("plan_id")) or contract is None or contract.get("kind") != "format_section_title"
         previous = next((r for r in reversed(project["runs"]) if r.get("document_id") == doc_id), None)
         if previous and (self._artifact_path(previous["path"]) / "recovery.json").is_file():
             result = recovery.load_recovery(self._artifact_path(previous["path"]))
@@ -883,7 +977,7 @@ class Campaign:
         selected = candidate_ids if candidate_ids is not None else [candidate_id]
         if not selected or not isinstance(selected, (list, tuple)) or not all(isinstance(x, str) for x in selected):
             raise ValueError("Select one or more current candidate IDs.")
-        if contract.get("kind") == "document_effects" or project.get("document_goals"):
+        if contract.get("kind") == "document_effects" or self._goal_for(project, doc_id).get("plan_id"):
             # Validate the actual source choice before recording it; only recovery may
             # install it into a checkpoint's signed approved-goal evidence.
             choose_goal(Path(doc["source"]), contract, list(selected), effect_id=effect_id, binding=doc.get("binding"))
@@ -989,7 +1083,7 @@ class Campaign:
             if doc is None or not doc.get("binding"):
                 raise ValueError("An adaptive output has no source-bound target evidence.")
             binding = doc["binding"]
-            if contract.get("kind") == "format_section_title" and not project.get("document_goals") and binding.get("choice") == "user" and not any(
+            if contract.get("kind") == "format_section_title" and not goal.get("plan_id") and binding.get("choice") == "user" and not any(
                     d.get("kind") == "target_binding" and d.get("binding") == binding
                     and doc["id"] in d["document_ids"] for d in project["decisions"]):
                 raise ValueError("The ambiguous adaptive target has no recorded user selection.")

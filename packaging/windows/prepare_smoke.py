@@ -36,4 +36,6 @@ if __name__ == "__main__":
         "config_dir": str(work / "config"),
         "schemas": sorted(p.relative_to(root / "src/spec_surgeon/schemas").as_posix()
                           for p in (root / "src/spec_surgeon/schemas").rglob("*.xsd")),
+        "worked_examples": {p.name: hashlib.sha256(p.read_bytes()).hexdigest()
+                            for p in sorted((root / "examples/specs").glob("*.json"))},
     }), encoding="utf-8")

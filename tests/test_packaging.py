@@ -5,7 +5,13 @@ from __future__ import annotations
 import re
 import sys
 import tomllib
+import json
+import os
+import subprocess
+import textwrap
 from pathlib import Path
+
+import pytest
 
 from spec_surgeon import __version__, updater, winapp
 
@@ -70,6 +76,122 @@ def test_version_and_package_data():
     assert (ROOT / "docs" / "releases" / f"v{__version__}.md").is_file()
 
 
+def test_packaged_worked_examples_match_the_documented_examples_exactly():
+    from spec_surgeon import catalog
+
+    expected = {p.name: p.read_bytes() for p in (ROOT / "examples/specs").glob("*.json")}
+    actual = {p.name: p.read_bytes() for p in catalog.EXAMPLES_DIR.glob("*.json")}
+    assert expected and actual == expected
+    assert catalog.worked_examples() == [json.loads(expected[name]) for name in sorted(expected)]
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "examples/specs/*.json" in pyproject["tool"]["setuptools"]["package-data"]["spec_surgeon"]
+    assert '"examples/specs/*.json"' in SPEC
+    release = (ROOT / ".github/workflows/release.yml").read_text()
+    assert '/tmp/spec-surgeon-release-smoke/bin/python "$GITHUB_WORKSPACE/packaging/installed_wheel_smoke.py"' in release
+    verify = (ROOT / ".github/workflows/verify.yml").read_text()
+    assert "python packaging/check_wheel_install.py dist" in verify
+    assert "uses: ./.github/workflows/windows-build.yml" in verify
+
+
+def test_missing_or_corrupt_worked_examples_cannot_silently_shrink_the_prompt(tmp_path, monkeypatch):
+    from spec_surgeon import catalog
+
+    folder = tmp_path / "examples/specs"
+    folder.mkdir(parents=True)
+    monkeypatch.setattr(catalog, "files", lambda _: tmp_path)
+    with pytest.raises(FileNotFoundError, match="packaged worked examples are missing"):
+        catalog.worked_examples()
+    (folder / "broken.json").write_text("{bad json")
+    with pytest.raises(ValueError):
+        catalog.worked_examples()
+
+
+def _workflow_script(filename, step):
+    workflow = (ROOT / ".github/workflows" / filename).read_text()
+    block = workflow.split(f"      - name: {step}\n", 1)[1].split("\n      - ", 1)[0]
+    return textwrap.dedent(block.split("        run: |\n", 1)[1])
+
+
+def _tagged_checkout(tmp_path):
+    repo = tmp_path / "checkout"
+    repo.mkdir()
+    env = {**os.environ, "GIT_AUTHOR_NAME": "Release test", "GIT_AUTHOR_EMAIL": "release@example.invalid",
+           "GIT_COMMITTER_NAME": "Release test", "GIT_COMMITTER_EMAIL": "release@example.invalid"}
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=repo, env=env, check=True, capture_output=True, text=True).stdout.strip()
+
+    git("init", "--initial-branch=master")
+    (repo / "source").write_text("tagged source")
+    git("add", "source")
+    git("commit", "-m", "Tagged source")
+    revision = git("rev-parse", "HEAD")
+    git("tag", "-a", "v1.0.0", "-m", "Release")  # The guard must peel annotated tags too.
+    git("remote", "add", "origin", str(repo))
+    return repo, git, revision
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Publication gates execute in Ubuntu bash")
+@pytest.mark.parametrize("new_commit,published,release_exists", [
+    (False, False, True), (False, True, True), (True, False, True), (True, True, True),
+    (False, False, False),
+])
+def test_installer_publication_only_adds_a_missing_asset_from_the_tagged_commit(
+        tmp_path, new_commit, published, release_exists):
+    repo, git, revision = _tagged_checkout(tmp_path)
+    if new_commit:
+        (repo / "source").write_text("a fix needs a new release version")
+        git("add", "source")
+        git("commit", "-m", "Different source, same package version")
+        revision = git("rev-parse", "HEAD")
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    gh = tools / "gh"
+    gh.write_text('#!/bin/sh\n[ "$RELEASE_EXISTS" = "true" ] || exit 1\n'
+                  'case " $* " in *" --json assets "*) printf "%s\\n" "$PUBLISHED_INSTALLER";; esac\n')
+    gh.chmod(0o755)
+    output = tmp_path / "github-output"
+    env = {**os.environ, "PATH": str(tools) + os.pathsep + os.environ["PATH"],
+           "GITHUB_REPOSITORY": "example/repository", "GITHUB_OUTPUT": str(output),
+           "APP_VERSION": "1.0.0", "BUILD_REVISION": revision,
+           "RELEASE_EXISTS": str(release_exists).lower(),
+           "PUBLISHED_INSTALLER": "SpecSurgeon-1.0.0-Setup-x64.exe" if published else ""}
+    run = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", _workflow_script(
+        "windows-installer.yml", "Check the installer matches its published tag")],
+        cwd=repo, env=env, text=True, capture_output=True)
+    if new_commit and not published:
+        assert run.returncode != 0
+        assert "Bump the version" in run.stdout
+        assert not output.exists()
+    else:
+        assert run.returncode == 0, run.stderr
+        assert dict(line.split("=", 1) for line in output.read_text().splitlines()) == {
+            "publish": str(release_exists and not published).lower(), "repair": str(release_exists).lower()}
+    publishing = _workflow_script("windows-installer.yml",
+        "Verify or repair installer checksums without replacing published assets")
+    assert "packaging/windows/publish_installer.py" in publishing
+    assert "--allow-installer-upload" in publishing and '"$ALLOW_INSTALLER_UPLOAD" = "true"' in publishing
+    assert "--clobber" not in publishing
+    assert "gh release edit" not in publishing
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="Publication gates execute in Ubuntu bash")
+@pytest.mark.parametrize("wrong_installer_revision,changed_source", [(False, False), (True, False), (False, True)])
+def test_release_publication_requires_the_installer_and_source_to_match_the_tag(
+        tmp_path, wrong_installer_revision, changed_source):
+    repo, git, revision = _tagged_checkout(tmp_path)
+    if changed_source:
+        (repo / "source").write_text("different source from the release tag")
+        git("add", "source")
+        git("commit", "-m", "Changed publication checkout")
+    env = {**os.environ, "GITHUB_REF_NAME": "v1.0.0",
+           "WINDOWS_BUILD_REVISION": "0" * 40 if wrong_installer_revision else revision}
+    run = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", _workflow_script(
+        "release.yml", "Check the source and installer still match the release tag")],
+        cwd=repo, env=env, text=True, capture_output=True)
+    assert (run.returncode != 0) is (wrong_installer_revision or changed_source), run.stderr
+
+
 def test_installer_schema_check_uses_source_inventory_and_rejects_substitutions(tmp_path):
     import importlib.util
     import json
@@ -89,6 +211,12 @@ def test_installer_schema_check_uses_source_inventory_and_rejects_substitutions(
     smoke = importlib.util.module_from_spec(module_spec)
     module_spec.loader.exec_module(smoke)
     assert smoke._check_schemas(source, request["schemas"]) == len(expected)
+    from spec_surgeon import catalog
+    assert smoke._check_worked_examples(request["worked_examples"]) == len(catalog.worked_examples())
+    missing_example = dict(request["worked_examples"])
+    missing_example.pop(next(iter(missing_example)))
+    with pytest.raises(AssertionError, match="Packaged worked examples differ"):
+        smoke._check_worked_examples(missing_example)
 
     installed = tmp_path / "schemas"
     installed.mkdir()

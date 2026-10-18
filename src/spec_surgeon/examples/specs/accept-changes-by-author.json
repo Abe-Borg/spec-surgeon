@@ -1,0 +1,17 @@
+{
+  "request": "Accept all of Jeremy's tracked changes; leave everyone else's for review",
+  "summary": "Accept the tracked changes Jeremy made (body, headers, footers, notes, comments); others stay pending",
+  "assumptions": [
+    "'Jeremy' is matched to the author name Word shows on each tracked change (case and spacing ignored)",
+    "only Jeremy's insertions, deletions, moves and formatting changes are accepted; every other tracked change stays as it is",
+    "a file with no change by Jeremy is left as it is",
+    "an accept that would join two paragraphs, or a tracked table row change, sets the file aside for Word"
+  ],
+  "mode": "untracked",
+  "ops": [
+    {
+      "op": "resolve_tracked_changes",
+      "params": {"action": "accept", "authors": ["Jeremy"]}
+    }
+  ]
+}

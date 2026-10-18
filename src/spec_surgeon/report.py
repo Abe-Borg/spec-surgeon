@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import copy
 from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
@@ -440,6 +441,28 @@ def explain_failure(code: str, reason: str) -> Tuple[str, str]:
     return cat, f"{expl} (Engine diagnosis: {reason})"
 
 
+def _approved_outcome_fields(result) -> Dict[str, Any]:
+    """Retries retain the reviewed authority, including choices among ambiguous targets."""
+    contract = getattr(result, "goal_contract", None)
+    if contract is None:
+        return {}
+    return {"goal_contract": copy.deepcopy(contract),
+            "goal_bindings": copy.deepcopy(getattr(result, "goal_bindings", None))}
+
+
+def _snapshot_fields(result) -> Dict[str, Any]:
+    snapshots = getattr(result, "input_snapshots", None)
+    return {"input_snapshots": copy.deepcopy(snapshots)} if snapshots else {}
+
+
+def _outcome_scope(result) -> str:
+    if getattr(result, "goal_contract", None) is not None:
+        return ("Outcome verification: the independently approved outcome and source-bound targets are checked "
+                "from original to final, in addition to recipe checks. The contract and bindings are saved for retries.")
+    return ("Verification scope: recipe checks. This run has no independently approved outcome contract. "
+            "PASS does not establish that the recipe expresses an unstated natural-language intention.")
+
+
 def build_set_aside_manifest(batch: "BatchResult") -> Dict[str, Any]:
     """Structured manifest of every file that did not PASS (untouched exceptions and verification failures),
     ready for human review or the next iterative pass (`spec-surgeon retry`)."""
@@ -487,6 +510,8 @@ def build_set_aside_manifest(batch: "BatchResult") -> Dict[str, Any]:
         from .editspec import spec_templates
         templates = [str(t) for t in spec_templates(batch.spec)]
     return {
+        **_approved_outcome_fields(batch),
+        **_snapshot_fields(batch),
         "job": batch.job,
         "request": (batch.spec or {}).get("request") or batch.params.get("request") or "",
         "spec": batch.spec,
@@ -514,7 +539,9 @@ def write_batch_report(batch: "BatchResult") -> Path:
              f"Files: {len(batch.files)}  —  PASS {c['PASS']}, FAIL {c['FAIL']}, EXCEPTION {c['EXCEPTION']} "
              f"(Set aside untouched: {manifest['set_aside_count']})",
              f"Renderer: {batch.renderer or 'none'}    Timings: " + ", ".join(f"{k} {v:.1f}s" for k, v in batch.timings.items()),
-             ""]
+             "", _outcome_scope(batch), "",
+             "Rendering is automated backend comparison; human visual acceptance is not recorded. "
+             "Each file's verification record lists performed and unavailable checks.", ""]
     if batch.spec is not None:
         lines.append("## EditSpec")
         lines.append(f"- Summary: {batch.spec.get('summary')}")
@@ -617,6 +644,8 @@ def write_batch_report(batch: "BatchResult") -> Path:
         lines.append("- Copies that FAILED verification (diagnosis only, never delivered): `failed/`")
     (out / "BATCH_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
     (out / "batch.json").write_text(json.dumps({
+        **_approved_outcome_fields(batch),
+        **_snapshot_fields(batch),
         "job": batch.job, "params": batch.params, "spec": batch.spec, "renderer": batch.renderer, "timings": batch.timings,
         "counts": c,
         "set_aside_count": manifest["set_aside_count"],
@@ -877,6 +906,8 @@ def build_chain_set_aside_manifest(result: "Any") -> Dict[str, Any]:
         })
     templates = [str(t) for t in chain_templates(result.chain)]
     return {
+        **_approved_outcome_fields(result),
+        **_snapshot_fields(result),
         "job": "chain", "request": chain_name(result.chain), "spec": None, "chain": result.chain,
         "template": templates[0] if templates else None,
         "total_batch_files": len(result.files),
@@ -898,15 +929,22 @@ def write_chain_report(result: "Any") -> Path:
     manifest = build_chain_set_aside_manifest(result)
     (out / "set_aside.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     n = len(result.stages)
+    atomic_final = bool(result.in_place and getattr(result, "goal_contract", None) is not None)
+    mode = ("written back in place only after final outcome verification" if atomic_final else
+            "written back in place, stage by stage (guarded)" if result.in_place else
+            "copies — the sources were not changed")
     lines = ["# Spec Surgeon — chain report", "",
              f"Chain: “{chain_name(result.chain)}” — {n} stage(s), run one after another on each file; every stage is "
              f"a full verified run (plan → apply → verify V1–V10 → render → deliver) on the files the stage before it "
              f"verified.",
              f"Files: {len(result.files)}  —  PASS {c['PASS']} (every stage), FAIL {c['FAIL']}, EXCEPTION "
              f"{c['EXCEPTION']} (set aside: {manifest['set_aside_count']})",
-             f"Mode: {'written back in place, stage by stage (guarded)' if result.in_place else 'copies — the sources were not changed'}"
+             f"Mode: {mode}"
              f"    Renderer: {result.renderer or 'none'}    Timings: "
-             + ", ".join(f"{k} {v:.1f}s" for k, v in (result.timings or {}).items()), ""]
+             + ", ".join(f"{k} {v:.1f}s" for k, v in (result.timings or {}).items()), "",
+             _outcome_scope(result), "",
+             "Rendering is automated backend comparison; human visual acceptance is not recorded. "
+             "Each stage's verification records list performed and unavailable checks.", ""]
     if result.chain.get("description"):
         lines += [f"> {result.chain['description']}", ""]
     if result.chain.get("assertions"):
@@ -945,8 +983,10 @@ def write_chain_report(result: "Any") -> Path:
         lines.append("")
     if manifest["files"]:
         lines.append("## Set-Aside Files (did not get through every stage)")
-        lines.append(f"{manifest['set_aside_count']} file(s) stopped at a stage. In copies mode their sources are "
-                     f"untouched; in place, the stages before the one that stopped were written back (said per file). "
+        source_state = ("Failed files' sources are untouched; delivery follows final outcome verification. "
+                        if atomic_final else
+                        "In copies mode their sources are untouched; in place, earlier passing stages were written back (said per file). ")
+        lines.append(f"{manifest['set_aside_count']} file(s) stopped before delivery. {source_state}"
                      f"Run `spec-surgeon retry \"{out}\"` (or **Load set-aside files** in the window) for a pass on "
                      f"only these files.")
         lines.append("")
@@ -975,12 +1015,16 @@ def write_chain_report(result: "Any") -> Path:
     if not result.in_place:
         lines.append("- Files that passed every stage: `outputs/` (each stage's own copies are in `stage-NN/outputs/`)")
     else:
-        lines.append("- Files that passed every stage were written back over the originals, stage by stage")
+        lines.append("- Files that passed every stage were written back over the originals "
+                     + ("only after final outcome verification" if atomic_final else "stage by stage"))
     if manifest["files"]:
         lines.append("- Set-aside manifest for the next pass: `set_aside.json`")
     (out / "CHAIN_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
     (out / "chain.json").write_text(json.dumps({
+        **_approved_outcome_fields(result),
+        **_snapshot_fields(result),
         "chain": result.chain, "name": chain_name(result.chain), "in_place": result.in_place,
+        "atomic_final_delivery": atomic_final,
         "renderer": result.renderer, "timings": result.timings, "counts": c,
         "set_aside_count": manifest["set_aside_count"], "skipped": result.skipped,
         "started": result.started, "finished": result.finished, "environment": result.environment,

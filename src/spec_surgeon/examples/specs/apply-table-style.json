@@ -1,0 +1,40 @@
+{
+  "request": "Use our table style for every table and drop the tables' own borders and shading so it shows",
+  "summary": "Every table of the body gets the office table style TblMine (imported from the office styles template when the file lacks it), and the tables' and their cells' own borders, shading and cell margins are removed so the style shows; a table already in TblMine with nothing to clear is left alone.",
+  "assumptions": [
+    "the office table style comes from the attached template OFFICE STYLES.docx; a file that already has TblMine keeps its own definition (existing keep)",
+    "every table of the body, nested ones included; tables in headers and footers are left alone",
+    "the tables' and cells' own borders, shading and cell margins are cleared; which conditional parts of the style show (first row, banding) stays as each table has it",
+    "never tracked"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "formatting",
+  "ops": [
+    {
+      "op": "apply_table_style",
+      "select": {
+        "scope": [
+          "document"
+        ],
+        "tables": "all"
+      },
+      "params": {
+        "style": "TblMine",
+        "template": "../templates/OFFICE STYLES.docx",
+        "direct_formatting": "clear"
+      },
+      "expect": {
+        "text_diffs": 0,
+        "members_added": 0,
+        "members_removed": 0
+      }
+    }
+  ],
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "none"
+  }
+}

@@ -30,6 +30,7 @@ content).
 from __future__ import annotations
 
 import copy
+import json
 import math
 import os
 from contextlib import contextmanager
@@ -60,6 +61,70 @@ _CALL_BUDGETS: ContextVar[tuple] = ContextVar("spec_surgeon_call_budgets", defau
 class ClaudeUnavailable(RuntimeError):
     """The Claude layer is not installed (no ``anthropic`` package): the user's setup, not a defect — an API error for
     ``is_api_error``, so the turn fails with what to install instead of a traceback."""
+
+
+class IncompleteResponse(RuntimeError):
+    """The provider did not finish a usable response; no partial tools may be acted on."""
+
+
+def _stream_events(stream):
+    try:
+        yield from stream
+    except (ValueError, IndexError) as error:
+        # JSON decoding and invalid SSE block indices can fail in the SDK before
+        # it yields an event. These are unusable provider responses, not tools.
+        raise IncompleteResponse("the model response stream contained malformed content") from error
+
+
+def _finished_message(stream):
+    """Check actual SSE completion rather than trusting the SDK's partial snapshot.
+
+    The SDK deliberately parses incomplete JSON while streaming and returns its latest
+    snapshot even on clean EOF. Keep the original tool JSON until the stream finishes,
+    so an unfinished object cannot become a valid-looking tool argument dictionary.
+    Non-iterable adapters still have to supply a completed response stop reason.
+    """
+    if callable(getattr(stream, "__iter__", None)):
+        started, stopped, opened, tool_json = False, False, set(), {}
+        for event in _stream_events(stream):
+            kind = getattr(event, "type", None)
+            if kind == "message_start":
+                started = True
+            elif kind == "content_block_start":
+                index = event.index
+                opened.add(index)
+                block = event.content_block
+                if block_type(block) == "fallback":
+                    # Abandoned tool calls before the last fallback are never acted on.
+                    tool_json.clear()
+                elif block_type(block) in ("tool_use", "server_tool_use", "mcp_tool_use"):
+                    tool_json[index] = ""
+            elif kind == "content_block_delta" and getattr(event.delta, "type", None) == "input_json_delta":
+                if event.index in tool_json:
+                    tool_json[event.index] += event.delta.partial_json
+            elif kind == "content_block_stop":
+                opened.discard(event.index)
+            elif kind == "message_stop":
+                stopped = True
+        if not started or not stopped or opened:
+            raise IncompleteResponse("the model response stream ended before its final message and content blocks completed")
+        for payload in tool_json.values():
+            if payload:
+                try:
+                    def reject_constant(value):
+                        raise ValueError(f"invalid JSON constant {value}")
+                    value = json.loads(payload, parse_constant=reject_constant)
+                    if not isinstance(value, dict):
+                        raise ValueError()
+                except (ValueError, TypeError) as error:
+                    raise IncompleteResponse("the model response contained incomplete or invalid tool JSON") from error
+    response = stream.get_final_message()
+    stop = getattr(response, "stop_reason", None)
+    if stop == "model_context_window_exceeded":
+        raise IncompleteResponse("the model's answer was cut off (model_context_window_exceeded); no tools were accepted")
+    if stop not in ("end_turn", "tool_use", "stop_sequence", "max_tokens", "pause_turn", "refusal"):
+        raise IncompleteResponse("the model response did not include a recognized final stop reason")
+    return response
 
 
 def client():
@@ -189,7 +254,7 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
         with client.beta.messages.stream(**kw) as stream:
             record["phase"] = "stream.receive"
             diag.event("model.stream.opened")
-            resp = stream.get_final_message()
+            resp = _finished_message(stream)
     except BaseException:
         for budget in budgets:
             budget.failed_calls += 1
@@ -223,7 +288,7 @@ def is_api_error(e: BaseException) -> bool:
     HTTP stack's, the network's (``OSError``/``TimeoutError``/``ConnectionError``), the SDK's missing-credentials
     ``TypeError`` or ``ClaudeUnavailable`` (the user's setup) — as opposed to a defect in the caller (a wrong argument,
     a test's script running out), which propagates."""
-    if isinstance(e, (ClaudeUnavailable, OSError, TimeoutError, ConnectionError)):
+    if isinstance(e, (ClaudeUnavailable, IncompleteResponse, OSError, TimeoutError, ConnectionError)):
         return True
     root = (type(e).__module__ or "").split(".")[0]
     if root in API_ERROR_ROOTS:
@@ -398,14 +463,20 @@ def stop_problem(resp) -> Optional[str]:
     """Why a response cannot be used, or None. ``pause_turn`` cannot be continued (that would send a trailing
     assistant message — a prefill, refused by the model), so it is a failure like the others."""
     stop = getattr(resp, "stop_reason", None)
+    if stop is None:
+        return "the model response ended without a final stop reason"
     if stop == "refusal":
         det = getattr(resp, "stop_details", None)
         return (f"the model declined the request ({getattr(det, 'category', None)}: "
                 f"{getattr(det, 'explanation', '') or ''})")
     if stop == "max_tokens":
         return "the model's answer was cut off (max_tokens)"
+    if stop == "model_context_window_exceeded":
+        return "the model's answer was cut off (model_context_window_exceeded)"
     if stop == "pause_turn":
         return "the model paused its turn (pause_turn) — nothing was applied; try again"
+    if stop not in ("end_turn", "tool_use", "stop_sequence"):
+        return "the model response has an unrecognized final stop reason"
     return None
 
 

@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "spec-surgeon"
 version = "1.0.0"
-description = "Fast, provably lossless surgical edits to Word (.docx) specifications — a few files or dozens — with a mandatory verification record per file."
+description = "Surgical edits to Word (.docx) specifications with independent verification records."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
@@ -37,7 +37,7 @@ spec-surgeon-gui = "spec_surgeon.gui:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "ui/resources/*"]
+spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "ui/resources/*", "examples/specs/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

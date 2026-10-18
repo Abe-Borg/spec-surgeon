@@ -1,5 +1,10 @@
 # Recovery and local repair memory
 
+Contract-bearing batch, chain and generated runs retain their approved outcomes and exact source bindings in
+set-aside artifacts. `retry` and desktop imports resume recovery under that same authority, refusing missing or
+inconsistent approvals. An ordinary natural-language review must be explicitly approved before delivery; a recipe
+alone proves its declared edits. See [Reliability and approved outcomes](RELIABILITY.md).
+
 Spec Surgeon v0.7.1 adds a bounded investigation workflow for requests that fail during
 compilation, preview, or a batch/chain run. Recovery can inspect document structure and XML,
 template data, diagnostics and rendered pages; try a repair on copies; read the verification

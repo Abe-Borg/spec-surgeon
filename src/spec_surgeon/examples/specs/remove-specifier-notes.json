@@ -1,0 +1,28 @@
+{
+  "request": "Strip the specifier notes (the blue Retain/Delete paragraphs in the CMT style) and the blue inline notes, clean copies",
+  "summary": "Paragraphs in the CMT style, and paragraphs that start with Retain/Delete/Revise/Coordinate and are all blue, are deleted; blue inline notes in other paragraphs are removed; untracked, every removed note listed in the preview.",
+  "assumptions": [
+    "a note paragraph is one in the CMT style, or one that starts with Retain, Delete, Revise or Coordinate and whose words are all blue (0000FF)",
+    "inline notes are blue runs inside other paragraphs; hyperlink text and pictures are never taken, even when blue",
+    "a note that is the only paragraph of a table cell leaves the cell empty rather than removing it",
+    "clean copies (untracked) as asked; a file with no notes is left as it is"
+  ],
+  "questions": [],
+  "applies_to": {
+    "or": "all"
+  },
+  "mode": "untracked",
+  "ops": [
+    {
+      "op": "remove_notes",
+      "params": {
+        "rules": [
+          {"style_in": ["CMT"]},
+          {"text_regex": "^(Retain|Delete|Revise|Coordinate)\\b", "color_in": ["0000FF"]}
+        ],
+        "runs": {"color_in": ["0000FF"]},
+        "tracked": false
+      }
+    }
+  ]
+}
