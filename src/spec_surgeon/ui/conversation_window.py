@@ -1,4 +1,4 @@
-"""The default desktop experience: documents, an optional template, and one conversation."""
+"""The desktop: documents, an optional template, and one conversation."""
 from __future__ import annotations
 
 import os
@@ -20,6 +20,9 @@ from . import theme
 from .update_ui import UpdateController
 from .widgets import Card, ImageViewer, Thumb, label, primary_button
 from .worker import Bridge, start_job
+
+PROGRESS = {"Preparing and checking the preview…", "Creating and checking your edited copies…",
+            "Checking the files that still need work…"}
 
 
 def plain(text, name=""):
@@ -76,6 +79,7 @@ class ConversationWindow(QMainWindow):
         self._cancel = threading.Event()
         self._job_started = 0.0
         self._status_text = ""
+        self._choice_buttons = []
         self._ticker = QTimer(self)
         self._ticker.setInterval(1000)
         self._ticker.timeout.connect(self._tick)
@@ -114,6 +118,7 @@ class ConversationWindow(QMainWindow):
         if restored_error:
             self._notice(restored_error)
 
+    # ---- layout ----
     def _build(self):
         root = DocumentDrop(self)
         root.setObjectName("Content")
@@ -135,7 +140,7 @@ class ConversationWindow(QMainWindow):
         body = QHBoxLayout()
         body.setSpacing(24)
         self.attachments = QWidget()
-        self.attachments.setFixedWidth(238)
+        self.attachments.setFixedWidth(250)
         left = QVBoxLayout(self.attachments)
         left.setContentsMargins(0, 0, 0, 0)
         left.setSpacing(12)
@@ -217,93 +222,148 @@ class ConversationWindow(QMainWindow):
             action.triggered.connect(callback)
             help_menu.addAction(action)
 
-    def _attachment(self, path, *, template=False):
+    def _attachment(self, entry):
+        """One attached file: its name, what triage found, and a way to remove it."""
+        path = Path(entry["path"])
         box = QWidget()
-        row = QHBoxLayout(box)
-        row.setContentsMargins(0, 4, 0, 4)
-        text = plain(("Template\n" if template else "") + path.name)
+        column = QVBoxLayout(box)
+        column.setContentsMargins(0, 4, 0, 4)
+        column.setSpacing(2)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        text = plain(("Template\n" if entry["template"] else "") + path.name, "Muted" if entry["state"] == "refused" else "")
         text.setToolTip(str(path))
         row.addWidget(text, 1)
         remove = QToolButton()
         remove.setText("×")
         remove.setAccessibleName(f"Remove {path.name}")
-        remove.clicked.connect(lambda: self.remove_document(path, template=template))
+        remove.clicked.connect(lambda: self.remove_document(path, template=entry["template"]))
         row.addWidget(remove)
+        column.addLayout(row)
+        if entry["state"] == "refused":
+            why = plain(entry["reason"], "Hint")
+            why.setAccessibleName(f"Why {path.name} was left out")
+            column.addWidget(why)
+        for note in entry["notes"]:
+            column.addWidget(plain(note, "Muted"))
         return box
+
+    # ---- rendering ----
+    def _card(self, title, helper=""):
+        card = Card(title, helper)
+        self.conversation.addWidget(card)
+        self._focus_widget = card
+        return card
+
+    def _changes_card(self, group, several):
+        """What will change for one layout: one sentence per change, the assumptions beneath, every setting on
+        request."""
+        if several:
+            count = group["count"]
+            title = f"{group['label']} · {count} document{'s' if count != 1 else ''}"
+        else:
+            title = "Here’s what will change"
+        card = self._card(title)
+        for change in group["changes"]:
+            card.add(plain("• " + change["summary"]))
+        for assumption in group["assumptions"]:
+            card.add(plain("Assuming: " + assumption, "Muted"))
+        if several and group["files"]:
+            card.add(plain(", ".join(group["files"]), "Muted"))
+        details = QTreeWidget()
+        details.setHeaderHidden(True)
+        details.setWordWrap(True)
+        details.setMinimumHeight(140)
+        details.setMaximumHeight(320)
+        details.setAccessibleName("Every setting of these changes")
+        for change in group["changes"]:
+            node = QTreeWidgetItem([change["title"]])
+            for line in change["details"]:
+                node.addChild(QTreeWidgetItem([line]))
+            details.addTopLevelItem(node)
+        toggle = QToolButton()
+        toggle.setText("See every setting")
+        toggle.setCheckable(True)
+        toggle.toggled.connect(details.setVisible)
+        card.add(toggle)
+        card.add(details)
+        details.hide()
+        return card
 
     def _render(self):
         view = self.task.view()
         self._action_token = view["token"]
-        count = len(self.session.documents)
-        self.attachment_heading.setText(f"Your documents · {count}" if count else "Your documents")
+        accepted = [a for a in view["attachments"] if not a["template"] and a["state"] != "refused"]
+        self.attachment_heading.setText(f"Your documents · {len(accepted)}" if accepted else "Your documents")
         clear(self.file_rows)
-        for path in self.session.documents:
-            self.file_rows.addWidget(self._attachment(path))
+        documents = [a for a in view["attachments"] if not a["template"]]
+        for entry in documents:
+            self.file_rows.addWidget(self._attachment(entry))
         self.file_rows.addStretch(1)
-        self.attachment_scroll.setVisible(bool(self.session.documents))
-        self.attachment_scroll.setMaximumHeight(min(340, max(56, len(self.session.documents) * 58)))
+        self.attachment_scroll.setVisible(bool(documents))
+        self.attachment_scroll.setMaximumHeight(min(360, max(56, sum(58 + 18 * (len(a["notes"]) + bool(a["reason"]))
+                                                                     for a in documents))))
         clear(self.template_rows)
-        if self.session.template:
-            self.template_rows.addWidget(self._attachment(self.session.template, template=True))
-        self.template_btn.setVisible(self.session.template is None)
+        template = next((a for a in view["attachments"] if a["template"]), None)
+        if template:
+            self.template_rows.addWidget(self._attachment(template))
+        self.template_btn.setVisible(template is None)
         clear(self.conversation)
+        self._choice_buttons = []
         self._focus_widget = None
         if not view["messages"]:
-            welcome = Card("Less document work. More done.", parent=self)
+            welcome = self._card("Less document work. More done.")
             welcome.add(plain("Add your Word files and tell me what you want to change. "
                               "I’ll check the documents, work out a plan, and show you what will happen."))
-            welcome.add(plain('For example: “Match the headers and fonts to this template. Keep our wording.”', "Muted"))
-            self.conversation.addWidget(welcome)
+            welcome.add(plain("For example: “Match the headers and fonts to this template. Keep our wording.”", "Muted"))
         for entry in view["messages"]:
-            card = Card("You" if entry["role"] == "user" else "Spec Surgeon")
+            card = self._card("You" if entry["role"] == "user" else "Spec Surgeon")
             card.add(plain(entry["text"]))
-            self.conversation.addWidget(card)
-            self._focus_widget = card
-        if view["effects"] and view["stage"] in {"plan", "preview", "ready", "question"}:
-            card = Card("Here’s what will change")
-            for effect in view["effects"]:
-                card.add(plain("• " + effect["summary"]))
-            card.add(plain(f"Applies to {view['document_count']} document(s). "
-                           "You can describe a correction below.", "Muted"))
-            details = QTreeWidget()
-            details.setHeaderHidden(True)
-            details.setWordWrap(True)
-            details.setMinimumHeight(180)
-            details.setMaximumHeight(340)
-            details.setAccessibleName("Exact changes and document passages")
-            for effect in view["effects"]:
-                node = QTreeWidgetItem([effect["title"]])
-                for line in effect["details"]:
-                    node.addChild(QTreeWidgetItem([line]))
-                details.addTopLevelItem(node)
+        several = len(view["groups"]) > 1
+        if several:
+            self._card("Your documents use " + str(len(view["groups"])) + " layouts",
+                       "Each layout gets its own plan; one decision covers them all.")
+        for group in view["groups"]:
+            self._changes_card(group, several)
+        if view["targets"] and view["groups"]:
+            card = self._card("Where exactly", "The passages each document contributes.")
+            tree = QTreeWidget()
+            tree.setHeaderHidden(True)
+            tree.setWordWrap(True)
+            tree.setMaximumHeight(240)
+            tree.setAccessibleName("Document passages")
             for target in view["targets"]:
                 node = QTreeWidgetItem([target["title"]])
                 node.setToolTip(0, target["source"])
                 for line in target["details"]:
                     node.addChild(QTreeWidgetItem([line]))
-                details.addTopLevelItem(node)
-            toggle = QToolButton()
-            toggle.setText("See the exact changes and passages")
-            toggle.setCheckable(True)
-            toggle.toggled.connect(details.setVisible)
-            card.add(toggle)
-            card.add(details)
-            details.hide()
-            self.conversation.addWidget(card)
-            self._focus_widget = card
-        if view["questions"]:
-            card = Card("One thing to clarify")
+                tree.addTopLevelItem(node)
+            card.add(tree)
+        if view["set_aside"]:
+            card = self._card("Left untouched")
+            for item in view["set_aside"]:
+                card.add(plain(f"{item['name']}: {item['reason']}"))
+        if view["questions"] or view["choices"]:
+            card = self._card("One thing to clarify")
             for question in view["questions"]:
                 card.add(plain(question))
-            self.conversation.addWidget(card)
-            self._focus_widget = card
+            for choice in view["choices"]:
+                button = QPushButton(choice["label"])
+                button.setProperty("choice_id", choice["id"])
+                button.setAccessibleName(choice["label"])
+                if choice["words"]:
+                    button.setToolTip("Exact wording: " + " | ".join(choice["words"]))
+                button.clicked.connect(self._choice_clicked)
+                card.add(button)
+                self._choice_buttons.append(button)
+                for word in choice["words"]:
+                    card.add(plain("Exact wording: " + word, "Muted"))
+            card.add(plain("Pick an answer, or describe what you want in your own words below.", "Muted"))
         if view["budget_paused"]:
-            card = Card("Work paused; your progress is saved")
+            card = self._card("Work paused; your progress is saved")
             card.add(plain("This conversation reached its investigation allowance, or stopped before usage could be "
                            "confirmed. Continuing allows up to another estimated $10 of model work. "
                            "Provider charges can differ from this estimate."))
-            self.conversation.addWidget(card)
-            self._focus_widget = card
         for sample in view["samples"]:
             if sample.images or sample.pages_before is not None or sample.pages_after is not None:
                 card = Card("Preview · " + Path(sample.source).name)
@@ -353,22 +413,27 @@ class ConversationWindow(QMainWindow):
     def _refresh_controls(self):
         active = not self.busy and not self.updating
         ready = self.session.claude_ready()
+        has_documents = bool(self.session.documents)
         self.attachments.setEnabled(active)
         self.new_btn.setEnabled(active)
         self.settings_btn.setEnabled(active)
         self.composer.setEnabled(active)
-        self.send.setEnabled(active and ready and bool(self.session.documents) and bool(self.composer.toPlainText().strip()))
-        self.primary.setEnabled(active and ready and bool(self.session.documents) and not self.composer.toPlainText().strip())
+        typed = bool(self.composer.toPlainText().strip())
+        self.send.setEnabled(active and ready and has_documents and typed)
+        self.primary.setEnabled(active and ready and has_documents and not typed)
+        for button in self._choice_buttons:
+            button.setEnabled(active and ready and has_documents)
         if self.busy:
             self.primary.show()
             self.primary.setText("Stopping after this step…" if self._cancel.is_set() else "Stop after current step")
             self.primary.setEnabled(not self._cancel.is_set())
         self.connection.setText("Ctrl+Enter to send" if ready else "Connect your Anthropic API key in Settings to start.")
-        if self.composer.toPlainText().strip() and self.primary.isVisible():
+        if typed and self.primary.isVisible():
             self.primary.setToolTip("Send your new message before approving a plan.")
         else:
             self.primary.setToolTip("")
 
+    # ---- attachments ----
     @Slot(list)
     def add_documents(self, paths):
         if self.busy or self.updating:
@@ -400,6 +465,7 @@ class ConversationWindow(QMainWindow):
             self.task.remove(path, template=template)
             self._render()
 
+    # ---- actions ----
     @Slot()
     def do_send(self):
         if not self.send.isEnabled():
@@ -407,6 +473,15 @@ class ConversationWindow(QMainWindow):
         text = self.composer.toPlainText().strip()
         self.composer.clear()
         self._work("send", text=text)
+
+    @Slot()
+    def _choice_clicked(self):
+        self.do_choose(self.sender().property("choice_id"))
+
+    def do_choose(self, choice_id):
+        if self.busy or self.updating or not choice_id:
+            return
+        self._work("choose", choice_id=str(choice_id))
 
     @Slot()
     def do_primary(self):
@@ -436,8 +511,7 @@ class ConversationWindow(QMainWindow):
     @Slot(str)
     def _progress(self, text):
         self.write(text)
-        if text in {"Preparing and checking the preview…", "Creating and checking your edited copies…",
-                    "Checking the files that still need work…"}:
+        if text in PROGRESS:
             self.set_status(text)
 
     @Slot(object)
