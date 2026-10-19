@@ -1123,6 +1123,18 @@ def cmd_resolve(args):
     from .workspace_cli import recovery_options
     out = _run_output(args, recovery=True)
     try:
+        from .layouts import is_layout_run, layouts_needing_work
+        if is_layout_run(Path(args.run_dir)):
+            # one batch per layout, each with its own spec and manifest: recovery takes one layout folder at a time
+            folders = layouts_needing_work(Path(args.run_dir))
+            if not folders:
+                print("Nothing to resolve: every document that had a plan passed; a document no layout covered "
+                      "stays as it was (see LAYOUT_REPORT.md).")
+                return 0
+            print("This is a layout run; resolve one layout folder at a time:", file=sys.stderr)
+            for folder in folders:
+                print(f"  spec-surgeon resolve {folder}", file=sys.stderr)
+            return 2
         saved = load_recovery(Path(args.run_dir)).options_snapshot if (Path(args.run_dir) / "recovery.json").is_file() else None
         options = recovery_options(args, saved)
         result = recover_from_run(Path(args.run_dir), out, request=args.request, options=options,
@@ -1711,7 +1723,7 @@ def main(argv=None) -> int:
     p.set_defaults(fn=cmd_retry)
 
     p = sub.add_parser("resolve", help="investigate remaining files on copies within a budget, review, then export")
-    p.add_argument("run_dir", help="previous batch or chain output folder containing set_aside.json")
+    p.add_argument("run_dir", help="previous batch or chain output folder containing set_aside.json (for a layout run, one of its layout-ID folders)")
     p.add_argument("--request", default=None, help="append a clarification or answer to the original request")
     p.add_argument("--out", default=None)
     from .workspace_cli import add_resource_arguments, add_workspace_parser

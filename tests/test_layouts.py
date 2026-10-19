@@ -136,3 +136,28 @@ def test_run_delivers_each_layout_and_refuses_moved_inputs(batch, tmp_path):
         layouts.run_layouts([str(typed), str(styled), str(other)], plan, tmp_path / "run2", do_render=False,
                             approved_inputs=pv.token_inputs)
     assert not (tmp_path / "run2" / "layout-A").exists()
+
+
+def test_recovery_takes_the_layout_folders_whose_files_still_need_work(batch, tmp_path):
+    """A layout run has one batch per layout, each with its own spec and set-aside manifest; recovery takes those
+    folders one at a time, in plan order. A document no layout covered has no plan to recover against."""
+    typed, styled, other = batch
+    plan = plan_for(typed, styled)
+    plan["layouts"][1]["spec"]["ops"][0]["expect"] = {"text_diffs": 5}      # a formatting op never changes text
+    files = [str(typed), str(styled), str(other)]
+    pv = layouts.make_layout_preview(plan, files, tmp_path / "preview", do_render=False)
+    assert [Path(f.source).name for f in pv.batch_plan.files if f.status == "exception"] == [styled.name, other.name]
+    result = layouts.run_layouts(files, plan, tmp_path / "run", do_render=False, approved_inputs=pv.token_inputs)
+    assert result.counts()["PASS"] == 1 and result.counts()["EXCEPTION"] == 2
+    assert layouts.is_layout_run(tmp_path / "run") and not layouts.is_layout_run(tmp_path / "run" / "layout-A")
+    assert layouts.layouts_needing_work(tmp_path / "run") == [tmp_path / "run" / "layout-B"]
+    good = plan_for(typed, styled)
+    pv = layouts.make_layout_preview(good, files, tmp_path / "preview2", do_render=False)
+    layouts.run_layouts(files, good, tmp_path / "run2", do_render=False, approved_inputs=pv.token_inputs)
+    assert layouts.layouts_needing_work(tmp_path / "run2") == []     # the uncovered document is not recoverable
+    both = plan_for(typed, styled)
+    for layout in both["layouts"]:
+        layout["spec"]["ops"][0]["expect"] = {"text_diffs": 5}
+    pv = layouts.make_layout_preview(both, files, tmp_path / "preview3", do_render=False)
+    layouts.run_layouts(files, both, tmp_path / "run3", do_render=False, approved_inputs=pv.token_inputs)
+    assert layouts.layouts_needing_work(tmp_path / "run3") == [tmp_path / "run3" / "layout-A", tmp_path / "run3" / "layout-B"]

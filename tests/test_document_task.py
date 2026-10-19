@@ -570,3 +570,65 @@ def test_a_mixed_batch_gets_one_plan_per_layout_and_one_decision(tmp_path):
     assert task.stage == "done" and len(task.results) == 3
     assert [p.read_bytes() for p in (typed, styled, other)] == before
     assert len(fake.requests) == 1
+
+
+def _layout_submission(tmp_path):
+    from make_fixtures import build, build_rich, build_styles
+    from spec_surgeon.fingerprint import fingerprint
+    from spec_surgeon.package import DocxPackage
+    typed, styled, other = tmp_path / "a" / "21 13 13.docx", tmp_path / "b" / "21 13 16.docx", tmp_path / "c" / "21 13 19.docx"
+    for path, data in ((typed, build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")),
+                       (styled, build_styles("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS")),
+                       (other, build_rich("21 13 19", "PREACTION SPRINKLER SYSTEMS"))):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    pid = lambda p: fingerprint(DocxPackage.from_path(p))["pattern_id"]  # noqa: E731
+    bold = {"run": {"b": True}, "tracked": False}
+    submission = {"summary": "Bold body paragraphs in two layouts", "layouts": [
+        {"id": "A", "label": "typed numbers", "pattern_ids": [pid(typed)],
+         "spec": {"summary": "by text", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": r"^[A-E]\.\t"}}, "params": bold}]}},
+        {"id": "B", "label": "styled body", "pattern_ids": [pid(styled)],
+         "spec": {"summary": "by style", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"style_in": ["ArchPara"]}}, "params": bold}]}}]}
+    return submission, [typed, styled, other]
+
+
+def test_after_one_layouts_recovery_is_saved_the_next_layouts_documents_are_checked(tmp_path, monkeypatch):
+    """Both layouts set their document aside at run time: recovery takes layout A first; once its copies are saved
+    the coordinator moves on to layout B by itself, and the queue survives a reopened conversation. (The compiler
+    refuses a plan that fails on its own documents, so the plan is set as the outcome directly.)"""
+    from spec_surgeon import recovery
+    submission, docs = _layout_submission(tmp_path)
+    plan = {"kind": "layouts", "request": "Make the body paragraphs bold.", "summary": submission["summary"],
+            "layouts": submission["layouts"]}
+    for layout in plan["layouts"]:
+        layout["spec"]["request"] = plan["request"]
+        layout["spec"]["ops"][0]["expect"] = {"text_diffs": 5}
+    calls = []
+
+    def fake_recover(run_dir, out_dir, *, request=None, options=None, client=None, log=None):
+        calls.append(Path(run_dir).name)
+        out = Path(out_dir)
+        (out / "outputs").mkdir(parents=True, exist_ok=True)   # a delivery is not part of this test
+        return recovery.RecoveryResult(out_dir=out, request=str(request or ""))
+    monkeypatch.setattr(recovery, "recover_from_run", fake_recover)
+    journal = tmp_path / "journal.json"
+    task = task_for(tmp_path, journal=journal)
+    task.attach(docs[:2])
+    task.session._set_outcome(spec=plan, source="test")
+    task._settle(lambda m: None)
+    assert task.stage == "preview"
+    view = task.view()
+    assert [item["name"] for item in view["set_aside"]] == ["21 13 13.docx", "21 13 16.docx"]
+    view = task.perform("primary", token=view["token"])
+    run = task.session.last_run_dir
+    assert calls == ["layout-A"] and task.session.pending_layout_recovery == [run / "layout-B"]
+    assert view["stage"] == "preview"                                # layout A's recovery awaits its review
+    assert json.loads(journal.read_text(encoding="utf-8"))["pending_layouts"] == [str(run / "layout-B")]
+    reopened = task_for(tmp_path, journal=journal)                   # a reopened conversation keeps the queue
+    assert reopened.restore() and reopened._resume_layouts == [str(run / "layout-B")]
+    # the empty stub recovery has nothing to export; the coordinator's own step to the next layout is the subject
+    task.session.last_recovery, task.session.recovery = task.session.recovery, None
+    task.session.resolve_next_layout(lambda m: None)
+    assert calls == ["layout-A", "layout-B"] and task.session.pending_layout_recovery == []

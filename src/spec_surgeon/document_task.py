@@ -74,6 +74,7 @@ class DocumentTask:
         self._conversation_id = None
         self._revision = 0
         self._resume_recovery = None
+        self._resume_layouts = []           # layout batch folders still to recover, from the journal
         self._budget = self._new_budget()
         # Documents a caller handed the session (tests, the installed smoke test) become attachments.
         given: List[Path] = []
@@ -374,13 +375,15 @@ class DocumentTask:
             log("Checking the files that still need work…")
             conversation = s.conversation
             s.resolve_remaining(log, options=self._recovery_options())
-            if conversation is not None:
-                from .continuous_recovery import result_turn
-                conversation.recovery_active = True
-                s.conversation = conversation
-                s.turn = result_turn(conversation, s.recovery)
-            self._settle(log)
-            return
+            if s.recovery is not None:
+                if conversation is not None:
+                    from .continuous_recovery import result_turn
+                    conversation.recovery_active = True
+                    s.conversation = conversation
+                    s.turn = result_turn(conversation, s.recovery)
+                self._settle(log)
+                return
+            # nothing a plan can recover: a document no layout covered stays as it was, named under "Left untouched"
         if s.last_trials is not None and any(not f.passed for f in s.last_trials):
             log("Checking the files that still need work…")
             s.resolve_remaining(log, options=self._recovery_options())
@@ -390,6 +393,12 @@ class DocumentTask:
             self.stage = "question"
             self._revision += 1
             self.say("The ready copies are saved. The remaining documents still need attention.")
+            return
+        if s.pending_layout_recovery:
+            # a plan per layout: the previous layout's copies are saved; the next layout's documents are checked now
+            log("Checking the next layout's documents that still need work…")
+            s.resolve_next_layout(log, options=self._recovery_options())
+            self._settle(log)
             return
         self.stage = "done"
         self._revision += 1
@@ -407,6 +416,8 @@ class DocumentTask:
             # missing/changed one) by recompiling the request.
             s.load_recovery(checkpoint)
             self._resume_recovery = None
+            s.pending_layout_recovery = [Path(x) for x in self._resume_layouts]
+            self._resume_layouts = []
             groups = s.recovery.session_state.get("groups", {}).values()
             if any(group.get("status") in {"active", "paused"} for group in groups):
                 s.resolve_remaining(log, options=self._recovery_options())
@@ -531,6 +542,7 @@ class DocumentTask:
             "results": self.results,
             "recovery": str(self.session.recovery.out_dir) if self.session.recovery else
                         str(self.session.recovery_checkpoint) if self.session.recovery_checkpoint else self._resume_recovery,
+            "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
             "budget": self._budget.to_dict(), "in_progress": in_progress})
 
     def restore(self):
@@ -580,6 +592,10 @@ class DocumentTask:
             raise ValueError("The saved wording approvals could not be read.")
         self.results = data.get("results", {})
         self._resume_recovery = data.get("recovery")
+        layouts = data.get("pending_layouts", [])
+        if not isinstance(layouts, list) or not all(isinstance(x, str) for x in layouts):
+            raise ValueError("The saved conversation could not be read.")
+        self._resume_layouts = list(layouts)
         budget = data.get("budget", {})
         self._budget = llm.CallBudget(max_cost_usd=budget.get("max_cost_usd", ALLOWANCE_USD),
                                       max_calls=budget.get("max_calls", 48),

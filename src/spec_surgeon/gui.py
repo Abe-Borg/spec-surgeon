@@ -147,6 +147,8 @@ class Session:
     pending_custom_transform: Optional[Dict[str, Any]] = None
     replay_word_sources: Optional[List[str]] = None
     recovery_checkpoint: Optional[Path] = None  # current durable investigation, including in-flight work
+    pending_layout_recovery: List[Path] = field(default_factory=list)   # layout batch folders still to recover,
+                                                  # in plan order (a plan per layout recovers one layout at a time)
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
 
     def _diagnostic_state(self) -> Dict[str, Any]:
@@ -236,6 +238,7 @@ class Session:
         self.spec, self.generated = spec, generated
         self.recovery = None
         self.recovery_checkpoint = None
+        self.pending_layout_recovery = []
         self.preview, self.generated_token, self.generated_preview = None, "", None
         self.generated_inputs, self.generated_intent = {}, ""
         self.pending_custom_transform = None
@@ -936,8 +939,19 @@ class Session:
         if ((self.preview is not None or self.conversation is not None)
                 and self.out_dir is not None and self.last_run_dir != self.out_dir / "run"):
             source_run = None  # the current conversation/preview has not run; an older batch is unrelated
+        pending: List[Path] = []
         if source_run is not None:
             from .batch import load_set_aside
+            from .layouts import is_layout_run, layouts_needing_work
+            if is_layout_run(Path(source_run)):
+                # A plan per layout ran one batch per layout; recovery takes them one at a time, each against its
+                # own spec (the rest wait in pending_layout_recovery). A document no layout covered has no plan to
+                # recover against: it stays as it was, named in the report.
+                queue = layouts_needing_work(Path(source_run))
+                if not queue:
+                    return ("Nothing to resolve: every document that had a plan passed. A document no layout "
+                            "covered stays as it was (see LAYOUT_REPORT.md).")
+                source_run, pending = queue[0], queue[1:]
             if (Path(source_run) / "set_aside.json").is_file() and not load_set_aside(source_run).get("files"):
                 return "Nothing to resolve: 0 failed or set-aside files in the previous run."
             result = recover_from_run(source_run, out, request=request, options=options,
@@ -962,6 +976,23 @@ class Session:
             result = recover(files, clarified, out, spec=self.spec, template=self.template,
                              approved_words=approved, options=options, client=self.client, log=log)
         self._adopt_recovery(result)
+        self.pending_layout_recovery = pending
+        return result.to_text()
+
+    @_session_action
+    def resolve_next_layout(self, log: Log, options=None) -> str:
+        """After one layout's recovery was exported, investigate the next layout whose files still need work
+        (``pending_layout_recovery``, in plan order). Each layout is recovered against its own EditSpec; the exported
+        copies of the previous layout stay where they are."""
+        from .recovery import recover_from_run
+        queue = list(self.pending_layout_recovery)
+        if not queue:
+            raise ValueError("No other layout has documents that still need work.")
+        out = Path(self.out_root) / datetime.now().strftime("%Y%m%d-%H%M%S-%f-recovery")
+        self.recovery_checkpoint = out
+        result = recover_from_run(queue[0], out, options=options, client=self.client, log=log)
+        self._adopt_recovery(result)
+        self.pending_layout_recovery = queue[1:]
         return result.to_text()
 
 

@@ -395,6 +395,32 @@ def run_layouts(inputs: Sequence[str], plan: Dict[str, Any], out_dir: Path, *, r
         return result
 
 
+def is_layout_run(run_dir: Path) -> bool:
+    """The folder ``run_layouts`` wrote: ``layouts.json`` at its root and no batch manifest of its own — every
+    set-aside manifest is inside a ``layout-<id>`` batch folder."""
+    run_dir = Path(run_dir)
+    return (run_dir / "layouts.json").is_file() and not (run_dir / "set_aside.json").is_file()
+
+
+def layouts_needing_work(run_dir: Path) -> List[Path]:
+    """The layout batch folders whose set-aside manifest still lists files, in plan order: what recovery can take,
+    one layout at a time, each against its own EditSpec. A document no layout covered is not among them — there is
+    no plan to recover it against; it stays as it was and the report names it."""
+    from .batch import load_set_aside
+    run_dir = Path(run_dir)
+    data = json.loads((run_dir / "layouts.json").read_text(encoding="utf-8"))
+    out: List[Path] = []
+    for entry in data.get("layouts", []):
+        folder = run_dir / f"layout-{entry['id']}"
+        try:
+            manifest = load_set_aside(folder)
+        except (OSError, ValueError):
+            continue
+        if manifest.get("files"):
+            out.append(folder)
+    return out
+
+
 def _write_report(result: LayoutResult) -> None:
     lines = [f"# Layout run — {result.plan.get('request')!r}", ""]
     for layout, batch in result.batches:

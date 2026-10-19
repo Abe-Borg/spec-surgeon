@@ -372,3 +372,78 @@ def test_pyside6_is_imported_only_by_the_ui_package():
                     not (rel.startswith("ui/") and rel != "ui/__init__.py"):
                 offenders.append(rel)
     assert offenders == []
+
+
+# ---- a plan per layout: recovery one layout at a time ----------------------------------------------------------
+
+def quiet(_message: str) -> None:
+    pass
+
+
+def _layout_plan(tmp_path):
+    from make_fixtures import build_rich, build_styles
+    from spec_surgeon.fingerprint import fingerprint
+    from spec_surgeon.package import DocxPackage
+    typed, styled, other = tmp_path / "a" / "21 13 13.docx", tmp_path / "b" / "21 13 16.docx", tmp_path / "c" / "21 13 19.docx"
+    for path, data in ((typed, build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")),
+                       (styled, build_styles("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS")),
+                       (other, build_rich("21 13 19", "PREACTION SPRINKLER SYSTEMS"))):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    pid = lambda p: fingerprint(DocxPackage.from_path(p))["pattern_id"]  # noqa: E731
+    bold = {"run": {"b": True}, "tracked": False}
+    plan = {"kind": "layouts", "request": "Make the body paragraphs bold.", "summary": "two layouts", "layouts": [
+        {"id": "A", "label": "typed numbers", "pattern_ids": [pid(typed)],
+         "spec": {"summary": "by text", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": r"^[A-E]\.\t"}}, "params": bold}]}},
+        {"id": "B", "label": "styled", "pattern_ids": [pid(styled)],
+         "spec": {"summary": "by style", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"style_in": ["ArchPara"]}}, "params": bold}]}}]}
+    return plan, [typed, styled, other]
+
+
+def _stub_recovery(monkeypatch, calls):
+    """Recovery itself is the model's investigation (its own tests); here only the folder it is pointed at matters."""
+    from spec_surgeon import recovery
+
+    def fake(run_dir, out_dir, *, request=None, options=None, client=None, log=None):
+        calls.append(Path(run_dir))
+        Path(out_dir).mkdir(parents=True, exist_ok=True)
+        return recovery.RecoveryResult(out_dir=Path(out_dir), request=str(request or ""))
+    monkeypatch.setattr(recovery, "recover_from_run", fake)
+
+
+def test_a_layout_run_recovers_one_layout_at_a_time_in_plan_order(tmp_path, monkeypatch):
+    plan, docs = _layout_plan(tmp_path)
+    for layout in plan["layouts"]:
+        layout["spec"]["ops"][0]["expect"] = {"text_diffs": 5}       # every layout's document is set aside
+    s = Session(documents=docs, out_root=tmp_path / "out", visual_check=False)
+    s._set_outcome(spec=plan, source="test")
+    s.make_preview(False, quiet)
+    s.run(False, False, quiet)
+    run = s.last_run_dir
+    assert s.last_batch.counts()["EXCEPTION"] == 3
+    calls = []
+    _stub_recovery(monkeypatch, calls)
+    s.resolve_remaining(quiet)
+    assert calls == [run / "layout-A"] and s.pending_layout_recovery == [run / "layout-B"]
+    assert s.recovery is not None and s.outcome().kind == "preview"
+    s.resolve_next_layout(quiet)
+    assert calls == [run / "layout-A", run / "layout-B"] and s.pending_layout_recovery == []
+    with pytest.raises(ValueError, match="No other layout"):
+        s.resolve_next_layout(quiet)
+    s._set_outcome(spec=plan, source="test")                         # a new outcome forgets the queue
+    assert s.pending_layout_recovery == []
+
+
+def test_a_layout_run_whose_only_set_aside_document_had_no_layout_has_nothing_to_resolve(tmp_path, monkeypatch):
+    plan, docs = _layout_plan(tmp_path)
+    s = Session(documents=docs, out_root=tmp_path / "out", visual_check=False)
+    s._set_outcome(spec=plan, source="test")
+    s.make_preview(False, quiet)
+    s.run(False, False, quiet)
+    assert s.last_batch.counts() == {"PASS": 2, "FAIL": 0, "EXCEPTION": 1, "PENDING": 0}
+    calls = []
+    _stub_recovery(monkeypatch, calls)
+    assert s.resolve_remaining(quiet).startswith("Nothing to resolve")
+    assert calls == [] and s.recovery is None and s.pending_layout_recovery == []

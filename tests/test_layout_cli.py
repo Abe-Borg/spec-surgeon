@@ -40,3 +40,23 @@ def test_plan_spec_and_run_spec_accept_a_layout_plan(tmp_path, capsys):
     assert "PASS 2" in out and (out_dir / "LAYOUT_REPORT.md").is_file() and (out_dir / "plan.json").is_file()
     assert (out_dir / "layout-A" / "outputs" / "21 13 13.docx").is_file()
     assert (out_dir / "layout-B" / "outputs" / "21 13 16.docx").is_file()
+
+
+def test_resolve_points_at_one_layout_folder_at_a_time(tmp_path, capsys):
+    plan, typed, styled = _plan(tmp_path)
+    out_dir = tmp_path / "out"
+    assert main(["run-spec", str(plan), str(typed), str(styled), "--out", str(out_dir), "--no-render"]) == 0
+    capsys.readouterr()
+    assert main(["resolve", str(out_dir), "--out", str(tmp_path / "rec")]) == 0
+    assert capsys.readouterr().out.startswith("Nothing to resolve")
+    failing = json.loads(plan.read_text())
+    for layout in failing["layouts"]:
+        layout["spec"]["ops"][0]["expect"] = {"text_diffs": 5}       # a formatting op never changes text
+    plan.write_text(json.dumps(failing))
+    out2 = tmp_path / "out2"
+    main(["run-spec", str(plan), str(typed), str(styled), "--out", str(out2), "--no-render"])
+    capsys.readouterr()
+    assert main(["resolve", str(out2), "--out", str(tmp_path / "rec2")]) == 2
+    err = capsys.readouterr().err
+    assert "one layout folder at a time" in err and str(out2 / "layout-A") in err and str(out2 / "layout-B") in err
+    assert not (tmp_path / "rec2").exists() or not any((tmp_path / "rec2").iterdir())
