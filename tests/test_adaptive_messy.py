@@ -1,13 +1,12 @@
 """Comprehensive tests for Chunks 1–4:
 1. Chunk 1: Body-aware fingerprinting, whitespace-preserving profiles, min/max expect ranges, mixed-batch compilation gate.
-2. Chunk 2: Set-aside manifest (set_aside.json + SET_ASIDE_REPORT.md), CLI `retry` / `--from-set-aside`, GUI `load_set_aside` loop.
+2. Chunk 2: Set-aside manifest (set_aside.json + SET_ASIDE_REPORT.md), CLI `retry` / `--from-set-aside` loop.
 3. Chunk 3: Flexible whitespace/dash/NBSP matching, noise-tolerant run coalescing (lang/noProof/proofErr), rPrChange split handling, and template slot fallback rule chains (`first_match`) + multi-anchor consensus.
 4. Chunk 4: Messy-doc selectors (`between_paragraphs`, `after_heading_regex`, `has_bold`, `is_all_caps`) + `delete_paragraphs` and `insert_paragraph` (tracked & untracked) with planted-defect verification tests.
 """
 from __future__ import annotations
 
 import copy
-import hashlib
 import io
 import json
 import zipfile
@@ -24,12 +23,11 @@ from spec_surgeon.cli import main as cli_main
 from spec_surgeon.compiler import compile_request
 from spec_surgeon.editspec import SpecError, plan_spec, validate_spec
 from spec_surgeon.fingerprint import fingerprint
-from spec_surgeon.gui import Session
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.package import DocxPackage, W, serialize_xml
 from spec_surgeon.profile import profile
 from spec_surgeon.verify import run_suite
-from test_compiler import FakeClient, resp, tool, outcome_cli_flags
+from test_compiler import FakeClient, resp, tool
 
 AUTHOR = "Abraham Borg"
 
@@ -213,14 +211,8 @@ def test_chunk2_set_aside_manifest_and_cli_retry_loop(tmp_path, monkeypatch, cap
     monkeypatch.setattr(compiler_module, "_client", lambda: fake_client)
 
     out2 = tmp_path / "pass2"
-    contract = {"kind": "document_effects", "effects": [{"id": "template", "type": "header_footer_template",
-        "template": str(tpl), "template_sha256": hashlib.sha256(tpl.read_bytes()).hexdigest(),
-        "params": {k: v for k, v in pass2_spec["ops"][0]["params"].items() if k != "template"}}]}
-    approval = outcome_cli_flags(tmp_path / "retry-outcomes.json",
-        pass1_spec["request"] + "\n\nUSER DECISIONS:\nISSUED FOR CONSTRUCTION  2026-02-15",
-        [d / "21 13 13 – MESSY.docx"], contract=contract, template=tpl)
     rc = cli_main(["retry", str(out1), "--out", str(out2), "--no-render", "--yes",
-                   "--answer", "ISSUED FOR CONSTRUCTION  2026-02-15", "--template", str(tpl), *approval])
+                   "--answer", "ISSUED FOR CONSTRUCTION  2026-02-15", "--template", str(tpl)])
     assert rc == 0, capsys.readouterr()
     # Verify prior_failures diagnostics were passed to the compiler in Pass 2
     msg_content = fake_client.requests[0]["messages"][0]["content"]
@@ -230,54 +222,6 @@ def test_chunk2_set_aside_manifest_and_cli_retry_loop(tmp_path, monkeypatch, cap
     assert manifest2["passed_count"] == 1 and manifest2["set_aside_count"] == 0
     # Retrying when 0 set-aside files remain exits 0 immediately
     assert cli_main(["retry", str(out2), "--no-render"]) == 0
-
-
-def test_chunk2_gui_session_set_aside_loop(tmp_path):
-    d = tmp_path / "specs"
-    d.mkdir()
-    (d / "21 05 00 – CLEAN.docx").write_bytes(build("21 05 00", "COMMON WORK RESULTS"))
-    (d / "21 13 13 – MESSY.docx").write_bytes(_build_messy_inline_spec("21 13 13", "WET-PIPE SPRINKLERS"))
-
-    # Pass 1 spec looks for a phrase only in CLEAN
-    spec1 = {
-        "request": "replace COMMON WORK RESULTS with FIRE PROTECTION",
-        "summary": "s",
-        "mode": "content",
-        "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
-                 "params": {"find": "COMMON WORK RESULTS", "replace": "FIRE PROTECTION", "author": AUTHOR}}],
-    }
-    # An explicit saved recipe starts the sieve; the next natural-language pass
-    # uses its approved preview over the remaining file.
-    spec1_path = tmp_path / "first-pass.json"
-    spec1_path.write_text(json.dumps(spec1), encoding="utf-8")
-    s = Session(folder=d, out_root=tmp_path / "out")
-    s.load_spec(spec1_path)
-    s.make_preview(render=False, log=lambda m: None)
-    run_msg = s.run(in_place=False, render=False, log=lambda m: None)
-    assert "PASS 1" in run_msg and "EXCEPTION 1" in run_msg and "Load set-aside files" in run_msg
-
-    # Load set-aside files into the GUI session for Pass 2
-    sa_msg = s.load_set_aside()
-    assert "Loaded 1 set-aside file(s)" in sa_msg and "21 13 13 – MESSY.docx" in sa_msg
-    assert [f.name for f in s.files()] == ["21 13 13 – MESSY.docx"]
-
-    spec2 = {
-        "request": "replace COMMON WORK RESULTS or WET-PIPE SPRINKLERS with FIRE PROTECTION",
-        "summary": "s",
-        "mode": "content",
-        "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
-                 "params": {"find": "WET-PIPE SPRINKLERS", "replace": "FIRE PROTECTION", "author": AUTHOR}}],
-    }
-    contract = {"kind": "document_effects", "effects": [{"id": "title", "type": "replace_text",
-        "target": {"scope": ["document"], "all": True}, "find": "WET-PIPE SPRINKLERS",
-        "replace": "FIRE PROTECTION", "expected_matches": 1, "tracked": True, "author": AUTHOR}]}
-    s.client = FakeClient(resp(tool("submit_editspec", {"spec": spec2})),
-        resp(tool("propose_plan", {"contract": contract, "rationale": "Replace the remaining document's original title wording."})))
-    s.compile("replace WET-PIPE SPRINKLERS with FIRE PROTECTION", lambda m: None)
-    s.make_preview(render=False, log=lambda m: None)
-    run_msg2 = s.run(in_place=False, render=False, log=lambda m: None)
-    assert "1 file(s): PASS 1  FAIL 0  EXCEPTION 0" in run_msg2
-    assert "0 set-aside files remaining" in s.load_set_aside()
 
 
 # ---- Chunk 3: Garbage-Tolerant Matching, Run Coalescing & Fallback Chains ---------------------------

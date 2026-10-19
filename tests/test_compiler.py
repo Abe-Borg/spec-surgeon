@@ -1,5 +1,5 @@
 """Phase 4: the compiler loop (scripted fake client — no API calls), the submission checks (validation, traceable
-words, dry plan), project memory, the preview and the approval token, and the `do` command end to end."""
+words, dry plan), the preview and the approval token, and the `do` command end to end."""
 from __future__ import annotations
 
 import copy
@@ -10,7 +10,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from make_fixtures import build, build_template, TEMPLATE_FILLS
+from make_fixtures import build
 from spec_surgeon import compiler as compiler_module
 from spec_surgeon.cli import main as cli_main
 from spec_surgeon.compiler import compile_request, untraceable
@@ -38,17 +38,6 @@ def header_outcome_proposal():
     return resp(tool("propose_plan", {"contract": {"kind": "document_effects", "effects": [
         {"id": "header-distance", "type": "page_setup", "sections": "all", "margins": {"header": 900}}]},
         "rationale": "Place every section's header 900 twips from the top."}))
-
-
-def outcome_cli_flags(path, request, sources, *, header=False, contract=None, template=None):
-    """A separately declared, source-bound user approval for tests of other CLI gates."""
-    from spec_surgeon.ordinary_outcomes import build_review, save
-    if contract is None:
-        proposal = header_outcome_proposal() if header else remove_outcome_proposal()
-        contract = proposal.content[0].input["contract"]
-    review = build_review(request, sources, contract, template=template)
-    save(review, path)
-    return ["--outcome-review", str(path), "--outcome-approval", review["digest"]]
 
 
 def generate_reviewed_custom(session, *, choice_id=None, log=lambda _: None, render=False):
@@ -88,12 +77,10 @@ def test_compile_inspects_then_submits(folder):
     assert res.served_models == ["claude-opus-5-5"] and res.to_dict()["served_models"] == ["claude-opus-5-5"]
 
 
-def test_traceable_words_come_from_one_source_each_and_never_from_the_memory_path():
+def test_traceable_words_come_from_one_source_each():
     spec = {"ops": [{"op": "replace_text", "params": {"find": "a", "replace": "ISSUED FOR PERMIT"}}]}
     assert untraceable(spec, ["ISSUED FOR", "PERMIT"]) == ["ISSUED FOR PERMIT"]      # not stitched across sources
     assert untraceable(spec, ["the stamp: ISSUED FOR  PERMIT"]) == []                  # whitespace-normalised
-    mem = {"stamp": "ISSUED", "_path": "C:/ISSUED FOR PERMIT/PROJECT.json"}
-    assert "ISSUED FOR PERMIT" not in compiler_module.memory_source(mem)
 
 
 def test_the_legacy_ask_and_agent_commands_are_retired(capsys):
@@ -179,23 +166,6 @@ def test_tools_read_the_batch_and_bad_tool_input_is_an_error_result(folder):
     assert "21 00 00 - 1" in results[2]["content"] and results[3]["is_error"]
 
 
-def test_template_request_with_project_memory(folder, tmp_path):
-    tpl = tmp_path / "00 00 00 TEMPLATE.docx"
-    tpl.write_bytes(build_template())
-    (folder / "PROJECT.json").write_text(json.dumps({"stamp": "ISSUED FOR CONSTRUCTION  2026-02-15"}), encoding="utf-8")
-    spec = load_spec(SPECS / "apply-header-footer-template.json")
-    spec["ops"][0]["params"]["template"] = str(tpl)
-    fake = FakeClient(resp(tool("read_template", {})), resp(tool("submit_editspec", {"spec": spec}, "t2")))
-    res = compile_request("make the header/footer look like this template", files(folder), template=tpl, client=fake)
-    assert res.status == "ok", res.errors                                          # the stamp is traceable via memory
-    assert "PROJECT MEMORY" in fake.requests[0]["messages"][0]["content"]
-    assert "ISSUED FOR PERMIT" in fake.requests[1]["messages"][-1]["content"][0]["content"]   # the template's slots
-    (folder / "PROJECT.json").unlink()
-    fake = FakeClient(resp(tool("submit_editspec", {"spec": spec})), resp(tool("ask_user", {"questions": ["Stamp?"]}, "t2")))
-    assert compile_request("make the header/footer look like this template", files(folder), template=tpl,
-                           client=fake).status == "questions"
-
-
 def test_preview_and_approval_token(folder, tmp_path):
     spec = load_spec(SPECS / "remove-all-headers-footers.json")
     pv = make_preview(spec, [str(folder)], tmp_path / "pv", do_render=False)
@@ -230,7 +200,6 @@ def test_do_end_to_end_with_approval(folder, tmp_path, monkeypatch, capsys):
     assert "PREVIEW" in printed and "Not run." in printed and not (out / "run").exists()
     token = printed.split("approval token: ")[1].split()[0]
     spec_path = out / "preview" / "spec.json"
-    assert not (out / "outcome-review.json").exists()
     assert cli_main(["run-spec", str(spec_path), str(folder), "--out", str(tmp_path / "r1"), "--no-render",
                      "--approval", "0" * 16]) == 2                       # wrong recipe token: refused
     assert cli_main(["run-spec", str(spec_path), str(folder), "--out", str(tmp_path / "r2"), "--no-render",

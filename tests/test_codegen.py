@@ -176,13 +176,7 @@ def test_generate_gives_up_after_three_attempts(folder, tmp_path):
 
 
 def test_do_allow_codegen_end_to_end(folder, tmp_path, monkeypatch, capsys):
-    from spec_surgeon.ordinary_outcomes import build_review, save
     request = "Set the header distance to 900 twips"
-    review = build_review(request, sorted(folder.glob("*.docx")), {"kind": "document_effects", "effects": [
-        {"id": "header-distance", "type": "page_setup", "sections": "all", "margins": {"header": 900}}]})
-    review_path = tmp_path / "outcome-review.json"
-    save(review, review_path)
-    approval_args = ["--outcome-review", str(review_path), "--outcome-approval", review["digest"]]
     unsupported = {"request": request, "summary": "Set header distance", "unsupported": "no op sets the header distance alone",
                    "proposal": "set_header_distance"}
     offer = {"spec": unsupported, "custom_transform": "possible"}          # Claude judged it within the limits
@@ -191,10 +185,10 @@ def test_do_allow_codegen_end_to_end(folder, tmp_path, monkeypatch, capsys):
                     FakeClient(resp(tool("submit_editspec", offer)))])
     monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
     assert cli_main(["do", request, str(folder), "--out", str(tmp_path / "o"), "--no-render",
-                     "--allow-codegen", "--yes", *approval_args]) == 0
+                     "--allow-codegen", "--yes"]) == 0
     out = capsys.readouterr().out
     assert "passed on the samples" in out and "2 of 2 file(s) PASS" in out
-    assert cli_main(["do", request, str(folder), "--out", str(tmp_path / "o2"), "--no-render", *approval_args]) == 2
+    assert cli_main(["do", request, str(folder), "--out", str(tmp_path / "o2"), "--no-render"]) == 2
     assert "No custom transform was written" in capsys.readouterr().out
 
 

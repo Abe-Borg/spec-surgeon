@@ -108,7 +108,11 @@ def allowed_imports(goal_contract=None):
 EXCLUDED_FROM_EXAMPLES: Dict[str, set] = {
     "spec_surgeon.ooxml": {"RevisionStamp", "property_change", "max_revision_id", "file_uses_date_utc"},
     "spec_surgeon.ops.replace_text": {"default_author"},
-    "spec_surgeon.ops": {"register"},
+    # ``register`` enters the op library; ``prose`` and set_font's phrase helpers write the sentence a built-in op
+    # shows in the plan (``describe``). A generated one-off transform is neither registered nor described — the window
+    # shows its brief instead.
+    "spec_surgeon.ops": {"register", "prose"},
+    "spec_surgeon.ops.set_font": {"style_definitions", "tracked_phrase"},
     # set_page_setup's built-in batch 5 notes and reads (what a first page shows through inheritance, what a content
     # selection of sections reads): a generated op neither selects sections by content nor flags their headers
     "spec_surgeon.ops.hf_common": {"effective_refs", "refs"},
@@ -561,7 +565,8 @@ Rules:
 imports, no file or network access, no open/exec/eval/getattr, no dunder names or attributes except __init__. A plainly imported module (and etree) is used ONLY as `module.name` with these names: {module_attrs} — never passed, assigned or returned as an object. No attributes starting with f_, gi_, cr_, ag_, tb_, co_ (frames, generators).
 - Define exactly one class deriving from Op with: name, mode = "formatting", description, params_schema, \
 select_schema, plan(self, pkg, select, params) -> PlanFragment, apply(self, pkg, frag) -> None. No decorators \
-from the engine (no @register).
+from the engine (no @register) and no describe() — the examples import `prose` and phrase helpers for the sentence \
+a built-in op shows in the plan; a one-off transform shows the user's brief instead, so leave those imports out.
 - plan() must PREDICT everything from the source package analytically, before apply() runs: intended_parts \
 (every part whose bytes change), property_assertions (one per changed property family; V10 compares everything \
 else in changed parts and styles.xml for identity, so an unasserted change FAILS), touches, notes, \

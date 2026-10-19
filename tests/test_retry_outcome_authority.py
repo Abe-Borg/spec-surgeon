@@ -1,5 +1,4 @@
 """A failed recipe may change on retry; the user's reviewed outcome may not disappear."""
-import copy
 import json
 
 import pytest
@@ -88,35 +87,6 @@ def test_retry_cannot_fall_back_to_recipe_authority_when_binding_is_invalid(tmp_
     with pytest.raises(ValueError):
         recovery.recover_from_run(result.out_dir, tmp_path / "retry", client=FakeClient())
     assert not (tmp_path / "retry").exists()
-
-
-def test_retry_preserves_the_specific_choice_among_duplicate_titles(tmp_path, monkeypatch):
-    from spec_surgeon import ordinary_outcomes
-    source = tmp_path / "source.docx"
-    doc = Document()
-    doc.add_paragraph("TITLE")
-    doc.add_paragraph("TITLE")
-    doc.save(source)
-    contract = {"kind": "document_effects", "effects": [{"id": "title", "type": "format",
-        "target": {"locators": [{"exact_text": "TITLE"}], "cardinality": 1}, "run": {"b": True}}]}
-    review = ordinary_outcomes.build_review("Bold the second TITLE", [source], contract)
-    candidates = review["documents"][0]["resolution"]["effects"]["title"]["candidates"]
-    review = ordinary_outcomes.choose_targets(review, source, [candidates[1]["candidate_id"]], effect_id="title")
-    _, bindings = ordinary_outcomes.validate(review, [source])
-    run = tmp_path / "run"
-    run.mkdir()
-    (run / "set_aside.json").write_text(json.dumps({"request": review["request"], "spec": margin(1440),
-        "goal_contract": contract, "goal_bindings": bindings, "files": [{"source": str(source)}]}))
-    captured = {}
-
-    def record(*args, **kwargs):
-        captured.update(copy.deepcopy(kwargs))
-        return captured
-
-    monkeypatch.setattr(recovery, "recover", record)
-    recovery.recover_from_run(run, tmp_path / "retry")
-    assert captured["adaptive_binding"] == bindings
-    assert captured["adaptive_contract"] == contract
 
 
 def test_old_partial_in_place_chain_cannot_claim_safe_retry_without_retained_outcome(tmp_path):
