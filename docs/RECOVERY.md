@@ -47,7 +47,13 @@ From a prior batch, chain or recovery folder containing `set_aside.json`:
 ```text
 spec-surgeon resolve "previous-run" --out "recovery-01"
 spec-surgeon resolve "recovery-01" --request "Use the title shown in the table"
+spec-surgeon resolve "layout-run/layout-B" --out "recovery-02"
 ```
+
+A layout run (`run-spec` with a layout plan, or the window's plan per layout) writes one batch folder per layout,
+`layout-<id>`, each with its own specification and `set_aside.json`, and no manifest at its root. `resolve` on the
+run folder refuses and names the layout folders whose documents still need work; recovery takes them one at a
+time. A document that no layout covered has no specification to recover against and is not among them.
 
 In a terminal, the command shows the investigation and visual findings, then asks before
 exporting. Without an interactive terminal or `--yes`, it writes the investigation for review

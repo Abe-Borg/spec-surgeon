@@ -133,6 +133,11 @@ a question in the chat (for example "Which passage(s) in Spec.docx should change
 numbers separated by commas.") or the same button. While a question is open, the copies that are already
 verified can be saved. The independent checks and the source-change guards are the same as for a first run.
 
+With a plan per layout, recovery takes one layout at a time, each against that layout's own specification: the
+first layout whose documents did not pass is investigated at once, the others wait and are checked by themselves
+after the first layout's copies are saved (the queue is kept in the saved conversation). A document that no layout
+covered has no specification to recover against; it stays as it was and is named under **Left untouched**.
+
 When no built-in operation fits a request, Spec Surgeon may prepare a custom method internally, prove it on
 the sample documents, and show its result as a preview like any other. You never choose a method; you see what
 will change and decide once. Custom methods write edited copies only and run under the same verification.

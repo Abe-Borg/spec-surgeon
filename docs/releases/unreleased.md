@@ -18,7 +18,9 @@ describes its plan in plain sentences, and a mixed batch gets one plan per layou
   layout ("Layout label · N documents"), each validated and previewed on its own documents, one approval. A
   document no layout covers is listed under **Left untouched** with the reason, before anything runs.
 - Clarifications are buttons; typing a number or your own words also works. Recovery of files that failed a
-  check and custom methods run internally and end in the same single action, **Create edited copies**.
+  check and custom methods run internally and end in the same single action, **Create edited copies**. After a
+  plan per layout, recovery takes one layout at a time, each against its own specification; the other layouts
+  wait and follow once the first layout's copies are saved.
 - Progress, elapsed time, estimated spend, **Stop after current step**, the $10 allowance with an explicit
   **Allow another estimated $10**, and the saved conversation (`conversation.json` in the configuration
   folder) remain as before; attachments are checked again when a conversation is reopened.
