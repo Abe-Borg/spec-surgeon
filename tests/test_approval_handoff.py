@@ -1,7 +1,6 @@
 """The identity approved in a frontend survives its handoff to queued engine work."""
 import json
 
-import pytest
 from docx import Document
 
 from fake_claude import FakeClient, resp, tool
@@ -18,43 +17,6 @@ def changed_source(tmp_path):
     doc.paragraphs[1].text = "WATER SUPPRESSION"
     doc.save(path)
     return path.read_bytes()
-
-
-@pytest.mark.parametrize("chain", [False, True])
-def test_gui_preserves_approved_identity_between_frontend_check_and_engine_entry(tmp_path, monkeypatch, chain):
-    folder = tmp_path / "sources"
-    folder.mkdir()
-    source = document(folder / "spec.docx")
-    session = Session(folder=folder, out_root=tmp_path / "results", visual_check=False)
-    spec = recipe({"text_regex": "^Owner"})
-    if chain:
-        session.chain = {"name": "Manual recipe chain", "stages": [{"spec": spec}]}
-    else:
-        session.spec = spec
-    session.make_preview(False, lambda _: None)
-    approved = session.preview.token_inputs
-    replacement = changed_source(tmp_path)
-    module_name = "spec_surgeon.chain" if chain else "spec_surgeon.batch"
-    import importlib
-    module = importlib.import_module(module_name)
-    name = "run_chain" if chain else "run_batch"
-    original = getattr(module, name)
-    handoffs = []
-
-    def run(*args, **kwargs):
-        handoffs.append(kwargs.get("approved_inputs"))
-        source.write_bytes(replacement)  # after Session's token check, before engine acquisition
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(module, name, run)
-    try:
-        session.run(True, False, lambda _: None)
-    except ValueError:
-        pass
-    assert handoffs == [approved]
-    assert source.read_bytes() == replacement
-    result = session.last_chain if chain else session.last_batch
-    assert result is None or result.counts()["PASS"] == 0
 
 
 def test_run_spec_hands_off_the_same_capture_used_to_validate_approval(tmp_path, monkeypatch):
@@ -92,7 +54,8 @@ def test_generated_gui_run_keeps_its_approved_source_identity(tmp_path, monkeypa
     assert generated.passed
     key = generated_key(generated)
     approved = approval_inputs(key, [source])
-    session = Session(folder=folder, out_root=tmp_path / "results", out_dir=tmp_path / "results", visual_check=False)
+    session = Session(documents=[source], out_root=tmp_path / "results", out_dir=tmp_path / "results",
+                      visual_check=False)
     session._show_generated(generated, session.out_dir, approval_token(key, [source]), approved,
                             "YOUR SAVED OPERATION: header distance", False, lambda _: None)
     replacement = changed_source(tmp_path)

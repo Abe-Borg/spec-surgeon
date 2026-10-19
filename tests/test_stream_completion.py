@@ -53,7 +53,7 @@ def test_incomplete_stream_never_accepts_tools_or_releases_usage_reservation(tmp
     budget = llm.CallBudget(max_calls=1)
     with client_for(events(**arguments)) as client:
         conversation = Conversation("remove all headers and footers", [source], client=client,
-                                    memory={}, work_dir=tmp_path / "chat")
+                                    work_dir=tmp_path / "chat")
         with llm.budget_scope(budget):
             result = conversation.start()
     assert result.status == "failed" and result.spec is None
@@ -70,7 +70,7 @@ def test_complete_sdk_stream_keeps_tools_and_accounts_final_usage(tmp_path):
     budget = llm.CallBudget(max_calls=1)
     with client_for(events()) as client, llm.budget_scope(budget):
         conversation = Conversation("remove all headers and footers", [source], client=client,
-                                    memory={}, work_dir=tmp_path / "chat")
+                                    work_dir=tmp_path / "chat")
         result = conversation.start()
     assert result.status == "ok" and result.spec == REMOVE
     assert budget.calls == budget.usage.calls == 1 and budget.failed_calls == 0
@@ -83,7 +83,7 @@ def test_invalid_json_rejected_by_sdk_is_a_recorded_provider_failure(tmp_path):
     stream = events()
     stream[2]["delta"]["partial_json"] = '{"spec": !'
     with client_for(stream) as client:
-        conversation = Conversation("remove headers", [source], client=client, memory={}, work_dir=tmp_path / "chat")
+        conversation = Conversation("remove headers", [source], client=client, work_dir=tmp_path / "chat")
         result = conversation.start()
     assert result.status == "failed" and "malformed" in result.message
     assert conversation.tool_calls == []
