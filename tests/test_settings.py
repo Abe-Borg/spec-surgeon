@@ -5,6 +5,8 @@ from __future__ import annotations
 import dataclasses
 import json
 
+import pytest
+
 from spec_surgeon import settings as st
 from spec_surgeon.settings import Settings, load_settings, save_settings
 
@@ -76,6 +78,31 @@ def test_default_runs_use_local_app_data_on_windows(monkeypatch):
     monkeypatch.setattr(st.sys, "platform", "win32")
     monkeypatch.setenv("LOCALAPPDATA", "C:/Users/Owner/AppData/Local")
     assert st.default_run_root() == Path("C:/Users/Owner/AppData/Local/Spec Surgeon/runs")
+
+
+@pytest.mark.parametrize("xdg_data", [None, "persistent-data"])
+def test_unix_deliverables_use_persistent_data_independently_of_cache(tmp_path, monkeypatch, xdg_data):
+    monkeypatch.delenv(st.CONFIG_ENV, raising=False)
+    monkeypatch.setattr(st.sys, "platform", "linux")
+    monkeypatch.setattr(st.Path, "home", lambda: tmp_path / "home")
+    cache = tmp_path / "disposable-cache"
+    monkeypatch.setenv("XDG_CACHE_HOME", str(cache))
+    if xdg_data:
+        persistent = tmp_path / xdg_data
+        monkeypatch.setenv("XDG_DATA_HOME", str(persistent))
+    else:
+        monkeypatch.delenv("XDG_DATA_HOME", raising=False)
+        persistent = tmp_path / "home" / ".local" / "share"
+    assert st.default_run_root() == persistent / "spec-surgeon" / "runs"
+    assert st.logs_dir().is_relative_to(cache)
+
+
+def test_mac_deliverables_use_application_support(tmp_path, monkeypatch):
+    monkeypatch.delenv(st.CONFIG_ENV, raising=False)
+    monkeypatch.setattr(st.sys, "platform", "darwin")
+    monkeypatch.setattr(st.Path, "home", lambda: tmp_path / "home")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path / "disposable-cache"))
+    assert st.default_run_root() == tmp_path / "home" / "Library" / "Application Support" / "Spec Surgeon" / "runs"
 
 
 def test_synced_and_deep_output_roots_have_actionable_single_line_warnings(monkeypatch):

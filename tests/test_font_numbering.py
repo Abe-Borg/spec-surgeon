@@ -1,11 +1,13 @@
 """Live-run regressions: label fonts, symbol glyphs, slot consistency, and an independent whole-member proof."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 from lxml import etree
 
 from make_fixtures import build_numbering
-from spec_surgeon.editspec import SpecError, apply_spec, plan_spec, validate_spec
+from spec_surgeon.editspec import SpecError, apply_spec, load_spec, plan_spec, validate_spec
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import font_numbering, selectors
 from spec_surgeon.package import DocxPackage, W
@@ -137,6 +139,26 @@ def test_composed_font_recipe_has_one_shared_numbering_owner(numbered, reverse):
     assert record.passed, record.to_markdown()
     assert sum(a["kind"] == "numbering_fonts" for a in plan.property_assertions) == 1
     assert "label(s)" in record.get("V10").summary
+
+
+@pytest.mark.parametrize("directory", ["examples/specs", "src/spec_surgeon/examples/specs"])
+def test_shipped_arial_recipe_preserves_its_promised_numbering_fonts(numbered, directory):
+    recipe = load_spec(Path(__file__).parents[1] / directory / "change-all-font-arial.json")
+    def courier_labels(root):
+        for lvl in root.iter(W + "lvl"):
+            fonts = lvl.find(W + "rPr/" + W + "rFonts")
+            if fonts is not None and fonts.get(W + "ascii") != "Wingdings":
+                fonts.attrib.pop(W + "asciiTheme", None)
+                for slot in ("ascii", "hAnsi", "cs"):
+                    fonts.set(W + slot, "Courier New")
+    original = mutate(numbered, NUMBERING, courier_labels)
+    source = DocxPackage(original)
+    plan, fragments = plan_spec(source, recipe)
+    output = apply_spec(source, fragments).output_bytes()
+    assert DocxPackage(output).read(NUMBERING) == source.read(NUMBERING)
+    assert NUMBERING not in plan.intended_parts
+    record = run_suite(original, output, plan.to_dict(), "source.docx", "arial.docx")
+    assert record.passed, record.to_markdown()
 
 
 def test_different_label_fonts_and_target_sets_are_plan_time_conflicts(numbered):

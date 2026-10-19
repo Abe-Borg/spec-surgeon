@@ -15,15 +15,15 @@
   "ops": [
     {"op": "set_font",
      "select": {"scope": ["document", "headers", "footers", "footnotes", "endnotes"], "runs": {"has_direct_font": true}},
-     "params": {"font": "Arial", "clear_theme_fonts": true},
+     "params": {"font": "Arial", "clear_theme_fonts": true, "numbering_levels": false},
      "expect": {"text_diffs": 0, "members_added": 0, "members_removed": 0}},
-    {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": "Arial"},
+    {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": "Arial", "numbering_levels": false},
      "expect": {"text_diffs": 0}},
     {"op": "set_doc_defaults_font", "params": {"font": "Arial"},
      "expect": {"text_diffs": 0}}
   ],
   "assertions": [
-    {"kind": "effective_font", "value": "Arial", "slots": ["ascii", "hAnsi", "cs"],
+    {"kind": "effective_font", "value": "Arial", "slots": ["ascii", "hAnsi", "cs"], "numbering_levels": false,
      "scope": ["document", "headers", "footers", "footnotes", "endnotes"], "include_paragraph_marks": true}
   ],
   "review": {"sample_files": 2, "geometry_reference": "none"}

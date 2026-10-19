@@ -1226,7 +1226,7 @@ def _write_records(batch: BatchResult, job_name: str, params: Dict[str, Any], sp
                 **({"spec": spec} if spec is not None else {}),
                 "fingerprint": fr.fingerprint, "exception": fr.exception}, indent=2), encoding="utf-8")
         if fr.record is not None:
-            (out_dir / "records" / f"{stem}.record.md").write_text(fr.record.to_markdown(), encoding="utf-8")
+            (out_dir / "records" / f"{stem}.record.md").write_bytes(fr.record.to_markdown().encode("utf-8"))
             (out_dir / "records" / f"{stem}.record.json").write_text(json.dumps(fr.record.to_dict(), indent=2), encoding="utf-8")
         line = _result_line(fr)
         diag.event("file.result", source=str(fr.source), status=fr.status, summary=line,

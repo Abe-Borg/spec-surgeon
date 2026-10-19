@@ -28,7 +28,8 @@ def bounded(text: str, limit: int, reference: str) -> str:
 
 
 def write_report(path: Path, text: str, reference: str) -> None:
-    Path(path).write_text(bounded(text, REPORT_BYTES, reference), encoding="utf-8")
+    # Count and write the same bytes; Windows text-mode CRLF expansion can exceed the cap.
+    Path(path).write_bytes(bounded(text, REPORT_BYTES, reference).encode("utf-8"))
 
 
 # Only location numbers are normalised. Font names, slot names, expected values and failures stay distinct.

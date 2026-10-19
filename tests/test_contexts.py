@@ -1,6 +1,9 @@
 import copy
 import hashlib
 import json
+import shutil
+import zipfile
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -157,7 +160,7 @@ def test_conversations_share_catalog_by_digest_without_rewriting_signed_history(
     states = [{}, {}]
     for index, state in enumerate(states):
         checkpoint_history(history(), system=catalog, tools=tools, folder=tmp_path / f"conversation{index}",
-                           state=state, authority={})
+                           state=state, authority={}, catalog_folder=tmp_path / "context-catalog")
     assert len(list((tmp_path / "context-catalog").glob("*.json"))) == 1
     for index in range(2):
         active = tmp_path / f"conversation{index}" / "context" / "active-0.json"
@@ -188,6 +191,30 @@ def test_legacy_inline_checkpoint_and_full_length_archive_still_read(tmp_path):
     assert json.loads(read_context_archive(batch, identity)["archive_json"]) == manifest
 
 
+def test_absolute_v2_catalog_reference_loads_and_upgrades_without_changing_history(tmp_path):
+    from spec_surgeon.storage import canonical_json, write_artifact
+    catalog = canonical_json({"system": "original", "tools": [{"name": "old_tool"}]})
+    identity = hashlib.sha256(catalog).hexdigest()
+    shared = tmp_path / "legacy-shared"
+    write_artifact(shared, identity, catalog)
+    folder = tmp_path / "session"
+    context = folder / "context"
+    context.mkdir(parents=True)
+    messages = [{"role": "user", "content": "unchanged request"}]
+    manifest = {"version": 2, "epoch": 0,
+                "catalog": {"artifact_id": identity, "folder": str(shared.resolve())},
+                "messages": messages, "authority": {}, "source_pins": []}
+    active = context / "active-0.json"
+    active.write_bytes(canonical_json(manifest))
+    restored = load_context_manifest(active)
+    assert restored["messages"] == messages and restored["system"] == "original"
+    checkpoint_history(messages, system=restored["system"], tools=restored["tools"],
+                       folder=folder, state={}, authority={})
+    shared.rename(tmp_path / "legacy-no-longer-at-original-path")
+    upgraded = load_context_manifest(active)
+    assert upgraded["messages"] == messages and upgraded["tools"] == restored["tools"]
+
+
 def test_catalog_evidence_is_paged_and_checked_against_its_digest(tmp_path):
     state = {}
     checkpoint_history([], system="catalog", tools=[], folder=tmp_path, state=state, authority={})
@@ -196,12 +223,57 @@ def test_catalog_evidence_is_paged_and_checked_against_its_digest(tmp_path):
     from spec_surgeon.contexts import read_context_archive
     result = read_context_archive(batch, identity)
     assert json.loads(result["archive_json"]) == {"system": "catalog", "tools": []}
-    path = artifact_path(state["catalogs"][identity]["folder"], identity)
+    path = artifact_path(tmp_path / "context" / state["catalogs"][identity]["folder"], identity)
     value = json.loads(path.read_bytes())
     value["payload"]["system"] = "changed"
     path.write_text(json.dumps(value))
     with pytest.raises(ValueError, match="changed"):
         read_context_archive(batch, identity)
+
+
+@pytest.mark.parametrize("transport", ["copy", "bundle"])
+@pytest.mark.parametrize("shared", [False, True])
+def test_session_context_evidence_survives_relocation_without_original_catalog(tmp_path, transport, shared):
+    from spec_surgeon.contexts import read_context_archive
+    from spec_surgeon.diagnostics import make_bundle
+    original = tmp_path / "original"
+    session = original / "session"
+    (session / "run").mkdir(parents=True)
+    (session / "conversation.json").write_text("{}")
+    folder = session / "conversations" / ("a" * 16) if shared else session
+    catalogs = session / "context-catalog" if shared else None
+    state = {}
+    manage_context(history(), system="original catalog", tools=[{"name": "read_xml_page"}],
+                   folder=folder, state=state, authority={"request": "approved"}, max_tokens=4000,
+                   catalog_folder=catalogs)
+    archived_id = state["archives"][0]["artifact_id"]
+    archived_path = artifact_path(folder / "context", archived_id)
+    sealed = archived_path.read_bytes()
+    relocated = tmp_path / "relocated"
+    if transport == "copy":
+        shutil.copytree(session, relocated)
+    else:
+        bundle = tmp_path / "diagnostics.zip"
+        make_bundle(bundle, session / "run")
+        with zipfile.ZipFile(bundle) as archive:
+            archive.extractall(relocated)
+        relocated /= "results"
+    shutil.rmtree(original)
+    moved_context = relocated / folder.relative_to(session)
+    active_path = moved_context / "context" / "active-1.json"
+    assert not Path(json.loads(active_path.read_bytes())["catalog"]["folder"]).is_absolute()
+    active = load_context_manifest(active_path)
+    assert active["system"] == "original catalog" and active["tools"] == [{"name": "read_xml_page"}]
+    restored = load_context_manifest(artifact_path(moved_context / "context", archived_id))
+    assert restored["messages"][1]["content"][0]["signature"] == "original-signature"
+    assert artifact_path(moved_context / "context", archived_id).read_bytes() == sealed
+    batch = SimpleNamespace(context_dir=moved_context, context_state=state, files={}, inputs=[], template=None)
+    catalog_id = next(iter(state["catalogs"]))
+    assert json.loads(read_context_archive(batch, catalog_id)["archive_json"])["system"] == "original catalog"
+    checkpoint_history(active["messages"], system=active["system"], tools=active["tools"], folder=moved_context,
+                       state=state, authority={"request": "approved"},
+                       catalog_folder=relocated / "context-catalog" if shared else None)
+    assert artifact_path(moved_context / "context", archived_id).read_bytes() == sealed
 
 
 def test_the_default_allowance_leaves_a_conversation_room_for_two_page_images(tmp_path, monkeypatch):

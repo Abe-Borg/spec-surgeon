@@ -81,13 +81,21 @@ def test_failed_report_opens_with_failed_check_and_copy_usability(tmp_path):
     assert saved["files"][0]["details"]["failed_checks"] == ["V10"]
 
 
-def test_oversized_report_keeps_machine_evidence_and_names_its_reference(tmp_path):
+def test_oversized_report_keeps_machine_evidence_and_names_its_reference(tmp_path, monkeypatch):
+    # Exercise the Windows conversion path on every platform. Byte-bounded human
+    # output must not grow when a text stream would turn LF into CRLF.
+    original_open = Path.open
+    def windows_text(path, mode="r", *args, **kwargs):
+        if mode == "w" and kwargs.get("newline") is None:
+            kwargs["newline"] = "\r\n"
+        return original_open(path, mode, *args, **kwargs)
+    monkeypatch.setattr(Path, "open", windows_text)
     batch = BatchResult(out_dir=tmp_path, job="legacy", params={"request": "漢" * 200_000})
     write_batch_report(batch)
-    text = (tmp_path / "BATCH_REPORT.md").read_text()
+    text = (tmp_path / "BATCH_REPORT.md").read_text(encoding="utf-8")
     assert (tmp_path / "BATCH_REPORT.md").stat().st_size < REPORT_BYTES
     assert "Truncated" in text and "batch.json" in text
-    assert json.loads((tmp_path / "batch.json").read_text())["params"] == batch.params
+    assert json.loads((tmp_path / "batch.json").read_text(encoding="utf-8"))["params"] == batch.params
 
 
 def test_preview_cap_keeps_exact_approval_token_and_machine_data(tmp_path):

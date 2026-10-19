@@ -936,7 +936,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
                 if system != desired_system or tools != desired_tools:
                     messages = start_epoch(messages, system=system, tools=tools, folder=batch.context_dir,
                         state=batch.context_state, authority=authority, max_tokens=options.max_context_tokens,
-                        source_pins=scoped_pins,
+                        source_pins=scoped_pins, catalog_folder=result.out_dir / "context-catalog",
                         next_system=desired_system, next_tools=desired_tools)
                     system, tools = desired_system, desired_tools
                     state["system"], state["tools"] = system, tools
@@ -944,7 +944,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
                 messages = manage_context(messages, system=system, tools=tools, folder=batch.context_dir,
                                           state=batch.context_state, authority=authority,
                                           max_tokens=options.max_context_tokens,
-                                          source_pins=scoped_pins)
+                                          source_pins=scoped_pins, catalog_folder=result.out_dir / "context-catalog")
                 state["messages"] = messages
                 _save(result)
                 if ctx["client"] is None:
@@ -1143,7 +1143,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
         from .contexts import checkpoint_history
         checkpoint_history(messages, system=system, tools=tools, folder=batch.context_dir,
                            state=batch.context_state, authority=authority,
-                           source_pins=scoped_pins)
+                           source_pins=scoped_pins, catalog_folder=result.out_dir / "context-catalog")
         if unsupported_files and unsupported_files != set(state["files"]):
             # Split only after every tool call has its result and the signed history
             # is checkpointed. The remaining files keep their own runnable scope.
@@ -1534,7 +1534,7 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
                         record_path = folder / "approved-records" / (Path(names[str(f.source)]).stem + ".json")
                         record_path.parent.mkdir(parents=True, exist_ok=True)
                         record_path.write_text(json.dumps(record.to_dict(), indent=2), encoding="utf-8")
-                        record_path.with_suffix(".md").write_text(record.to_markdown(), encoding="utf-8")
+                        record_path.with_suffix(".md").write_bytes(record.to_markdown().encode("utf-8"))
                         entry["approved_checks"].append({"source": str(f.source), "passed": record.passed,
                                                          "record": str(record_path)})
                         if not record.passed:

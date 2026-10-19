@@ -54,8 +54,12 @@ def logs_dir() -> Path:
 
 
 def default_run_root() -> Path:
-    """Keep transient run evidence on the local disk rather than beside source specs."""
-    return data_dir() / "runs"
+    """Persist delivered copies locally; run results must never use a disposable cache."""
+    if os.environ.get(CONFIG_ENV) or sys.platform.startswith("win"):
+        return data_dir() / "runs"
+    if sys.platform == "darwin":
+        return Path.home() / "Library" / "Application Support" / APP_DIR_NAME / "runs"
+    return Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local" / "share") / "spec-surgeon" / "runs"
 
 
 def output_root_warnings(root) -> list[str]:

@@ -1060,7 +1060,7 @@ def _run_generated_files(g, files, out_dir, log, output_names, source_pins, acqu
                         evidence = f"{Path(name).stem}.record.json"
                         (rd / evidence).write_text(json.dumps(t.record.to_dict(), indent=2, ensure_ascii=False),
                                                    encoding="utf-8")
-                        (rd / f"{Path(name).stem}.record.md").write_text(t.record.to_markdown(evidence), encoding="utf-8")
+                        (rd / f"{Path(name).stem}.record.md").write_bytes(t.record.to_markdown(evidence).encode("utf-8"))
                 results.append(t)
                 _save_generated_run(g, files, results, out_dir)
                 log(f"{'PASS' if t.passed else 'FAIL'} {f.name}")
