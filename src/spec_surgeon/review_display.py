@@ -147,6 +147,23 @@ def effects(contract):
             lines.append("Page dimensions and margins are in twips (1,440 = 1 inch).")
         title = EFFECT_NAMES.get(kind, readable(kind).capitalize())
         summary = title
+        if "params" in effect:
+            # An effect that is an operation (page setup, headers and footers, tables, numbering, proofing
+            # language…): the operation's own sentence, never a field dump.
+            try:
+                from .goal_operations import OPERATIONS, operation_spec
+                if kind in OPERATIONS:
+                    op = operation_spec(effect, contract.get("request", ""))["ops"][0]
+                else:
+                    name = {"page_setup": "set_page_setup", "header_footer_template": "apply_header_footer_template",
+                            "remove_header_footer": "remove_header_footer"}[kind]
+                    params = dict(effect["params"])
+                    if effect.get("template"):
+                        params.setdefault("template", effect["template"])
+                    op = {"op": name, "select": dict(effect.get("select") or {}), "params": params}
+                summary = change_sentence(op)
+            except Exception:  # noqa: BLE001 — the field view below still shows every setting
+                pass
         if kind == "format":
             changes = []
             for group in ("run", "paragraph"):
