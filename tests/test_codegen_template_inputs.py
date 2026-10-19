@@ -157,7 +157,9 @@ def test_template_display_segments_helper_remains_governed_only(case):
 
 def test_governed_method_can_complete_template_graph_with_independent_verification(case, tmp_path):
     # Adapt the implementation reference just as a writer would: package inputs
-    # replace external file reads, and imports obey the governed whitelist.
+    # replace external file reads, imports obey the governed whitelist, and the
+    # description layer (the prose import, describe() and the helpers that only
+    # serve it) is left out: a one-off transform shows the user's brief instead.
     # This is an integration check of the sandbox/contract boundary, not a model eval.
     source, template, contract, _ = case
     reference = Path(__file__).parents[1] / "src/spec_surgeon/ops/apply_header_footer_template.py"
@@ -165,7 +167,9 @@ def test_governed_method_can_complete_template_graph_with_independent_verificati
     method = method.replace("import hashlib", "from hashlib import md5")
     method = method.replace("import posixpath", "from posixpath import basename, dirname, relpath, splitext")
     method = method.replace("from pathlib import Path\n", "")
-    method = method.replace("from . import register\n", "").replace("@register\n", "")
+    method = re.sub(r"from \. import [\w, ]+\n", "", method).replace("@register\n", "")
+    method = re.sub(r"_SOURCE_TYPE_WORDS = .*?(?=class ApplyHeaderFooterTemplate)", "", method, flags=re.S)
+    method = re.sub(r"\n    def describe\(.*?(?=\n    def plan\()", "", method, flags=re.S)
     method = method.replace("from ..", "from spec_surgeon.")
     method = re.sub(r"from \.(\w+)", r"from spec_surgeon.ops.\1", method)
     method = method.replace("hashlib.md5", "md5").replace("posixpath.", "")
