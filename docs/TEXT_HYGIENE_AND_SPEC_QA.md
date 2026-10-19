@@ -18,9 +18,12 @@ Available starting in v0.8.0.
 
 ## Character edits
 
-Load `examples/specs/normalize-whitespace.json`, `normalize-punctuation.json` or
-`nonbreaking-spaces.json` in the desktop window, or use `plan-spec` and `run-spec`.
-Typed requests also compile to these operations. Saved specs work without an API key.
+Run `examples/specs/normalize-whitespace.json`, `normalize-punctuation.json` or
+`nonbreaking-spaces.json` with `plan-spec` and `run-spec`; saved specs need no API key.
+In the conversation window, a typed request compiles to these operations. The app never
+normalizes a file on its own: whitespace, punctuation, typed numbers, direct formatting and
+pending revisions change only when the request asks for it, as a change shown in the plan
+before approval.
 
 The default scope is body, headers and footers; `select.scope` can also name footnotes,
 endnotes and comments. `select.paragraphs` narrows the scope. Tabs, structural line breaks,
@@ -38,10 +41,11 @@ Straight quotes after digits stay as possible inch/foot marks, explicitly noted 
 Dash conversion affects `--`, not longer hyphen sequences. Section numbers keep their digits
 and optional `.NN` suffix. Unit matching is case-sensitive; pass the exact symbols in `units`.
 
-Ask Claude to review capitalization of terms such as Owner and Work. Its `propose_defined_terms`
-tool returns paged candidates with exact before/after text and context. Claude offers a separate
-**Approve this change** choice for each desired occurrence. The app builds the choice from the
-inspected document. A broad request, an unpicked proposal, or approval of the same word elsewhere
+Ask for a review of capitalization of terms such as Owner and Work, in the conversation window
+or in interactive `do`. The model's `propose_defined_terms` tool returns paged candidates with
+exact before/after text and context, and offers a separate choice for each occurrence; in the
+window each is a button. The app builds the choice from the inspected document, never from the
+model's words. A broad request, an unpicked proposal, or approval of the same word elsewhere
 grants no approval. Source changes invalidate the proposal. Executing the approved spec needs no model call.
 Only letters whose case changes are edited, preserving formatting on the other letters of a split word.
 Put capitalization first in a chain. Later stages read new output paths and bytes, so they require
@@ -53,18 +57,15 @@ The existing package, text, structure, revision and residual checks still run.
 
 ## Report-only audits
 
-Choose **File → Spec QA audits…**. No API key is required. The viewer shows all seven reports
-and exports Markdown or JSON. It never writes an edited DOCX.
-Optional project name, number and issue-date fields let you rerun with expected values
-to find similar unlabeled header or cover variants.
+Audits run from the command line: `spec-surgeon audit`. No API key is required. It writes
+all seven reports as Markdown or JSON and never writes an edited DOCX. The conversation
+window does not run audits. `--identity` supplies the expected project name, number and
+issue date, so a rerun finds similar unlabeled header or cover variants.
 
-**Use project context JSON…** imports one explicitly selected project's approved
-standards register, either a context object containing `project_evidence` or the
-evidence object exported by `spec-surgeon evidence … inspect`. The viewer displays
-the selected source and register-entry count. Identity reruns retain that exact
-snapshot; **Clear project context** removes it from the next report. Workspace
-projects are never merged implicitly, and importing a register does not edit a
-source document or change a saved project's facts.
+`--project-context` compares observed standards against one explicitly chosen project's
+approved register: a JSON object with a `project_evidence` member, the project's context
+from its workspace. Workspace projects are never merged implicitly, and reading a register
+does not edit a source document or change a saved project's facts.
 
 ```sh
 spec-surgeon audit Specs --out SPEC_QA.md

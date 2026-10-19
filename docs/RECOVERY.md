@@ -1,9 +1,9 @@
 # Recovery and local repair memory
 
 Contract-bearing batch, chain and generated runs retain their approved outcomes and exact source bindings in
-set-aside artifacts. `retry` and desktop imports resume recovery under that same authority, refusing missing or
-inconsistent approvals. An ordinary natural-language review must be explicitly approved before delivery; a recipe
-alone proves its declared edits. See [Reliability and approved outcomes](RELIABILITY.md).
+set-aside artifacts. `retry` and the conversation window's saved checkpoint resume recovery under that same
+authority, refusing missing or inconsistent approvals. Ordinary delivery is governed by the preview the user
+approved and the independent verifier; see [Reliability and approved outcomes](RELIABILITY.md).
 
 Spec Surgeon v0.7.1 adds a bounded investigation workflow for requests that fail during
 compilation, preview, or a batch/chain run. Recovery can inspect document structure and XML,
@@ -12,26 +12,33 @@ results; and revise its approach.
 It stops when supported repairs succeed, a limit is reached, a user decision is needed, or the
 required capability is unavailable.
 
-## In the desktop application
+## In the conversation window
 
-1. After a failed compile or preview, follow **Investigate with recovery…** or **Resolve
-   remaining files…**. After a run, use **Run & results → Resolve remaining files**.
-2. Set the estimated spending budget, candidate-attempt limit and model-call limit. An optional
-   clarification box lets you answer a question or clarify the request. Custom formatting
-   transforms require a separate checkbox; local repair memory can be disabled for this run.
-3. Start the investigation. Its results appear on **Preview**, with ready copies, unresolved
-   files, questions, notes and available before/after pages. Inspect whether the result satisfies
-   the complete request. A structural verification result is not a judgment of user intent.
-4. A blocking visual finding requires the existing **I've looked — allow Run** acknowledgement
-   for this preview. **Export recovery copies** then rechecks the inputs and verified output
-   bytes before exporting. Recovery never writes over the originals.
+Recovery runs inside the conversation and needs no setup. When **Create edited copies** leaves a
+file that did not pass, or a sample fails during the preview, the app investigates those files on
+copies in the same conversation. It uses the conversation's own allowance (the shared estimated
+$10 ledger, 48 calls, 16,000 output tokens per call), up to eight candidate attempts per problem
+group and high reasoning effort. The window has no budget, attempt or model controls; Settings
+holds only the API key.
 
-Ready copies remain in the recovery workspace while unresolved files are investigated. Reopen
-the saved investigation to continue with its attempts, evidence and pending decisions intact.
-A new failed conversation or preview uses
-its current files, rather than silently retrying an unrelated older run. A chain that already
-wrote stages in place cannot be replayed automatically: start from original copies to avoid
-performing successful earlier edits twice.
+A question from the investigation appears in the chat once, as buttons or a text box. The result
+appears as the ordinary plan view: the ready copies, the documents that still need attention with
+their reason, notes and available before/after pages. A blocking visual finding is listed under
+**Please check**. The one action, **Create edited copies**, exports the ready copies and records
+that you looked at the findings shown with them. Ready copies can be exported while other documents
+are still being investigated; each export goes to a new folder. Recovery never writes over the
+originals. A structural verification result is not a judgment of user intent: inspect whether the
+result satisfies the complete request.
+
+Custom methods are prepared and tested on sample copies internally, only under an independently
+checked outcome contract, and end in the same action. Local repair memory is read and recorded in
+the window; it can be switched off only on the command line.
+
+The saved conversation keeps the location of the current investigation. Reopening restores its
+attempts, evidence and pending decisions; a changed source invalidates the dependent candidates.
+A new failed conversation or preview uses its current files, rather than silently retrying an
+unrelated older run. A chain that already wrote stages in place cannot be replayed automatically:
+start from original copies to avoid performing successful earlier edits twice.
 
 ## At the terminal
 
@@ -68,8 +75,8 @@ The same budget covers investigation, generated-transform calls and visual-revie
 conservative reservation is checked before each call; calls with missing usage retain their
 reservation. Unknown pricing prevents further calls under a USD budget. These are listed-price
 estimates and application limits, not a provider billing guarantee. The report retains usage,
-reservations and stop reasons. Output and total-token allowances are exposed in the CLI and
-desktop resource controls. Default reasoning effort is `max`. Independent problem groups take
+reservations and stop reasons. Output and total-token allowances are command-line options.
+Default reasoning effort is `max`. Independent problem groups take
 turns investigating, so a long first group does not monopolize the initial model calls.
 Reopening restores the saved resource settings. Explicit CLI flags override individual values;
 `--render`, `--memory`, and `--no-codegen` reverse saved choices. Each continuation receives a fresh
@@ -84,8 +91,9 @@ folder. Reusing a nonempty delivery folder is refused.
 
 Recovery preserves filenames assigned by naming operations. If separate problem groups would
 produce the same explicit filename, those files remain unresolved instead of overwriting each
-other. Tables and images listed beside the documents, or named by the approved goal, are
-inspectable inputs whose contents are pinned before investigation and rechecked at export.
+other. Tables and images named by the specification or the approved goal are inspectable inputs
+whose contents are pinned before investigation and rechecked at export; nothing beside the
+documents is discovered.
 
 ## What a repair may change
 
@@ -113,7 +121,7 @@ EditSpec size assertions still exempt runs containing symbols, so recovery canno
 those into universal final-size checks even with an empty preservation list. Recovery cannot
 remove preservation rules from the original request to make a candidate pass.
 
-For legacy EditSpecs without an adaptive outcome contract, custom recovery remains opt-in and
+For EditSpecs without an adaptive outcome contract, custom recovery remains opt-in and
 restricted to page-setup goals. Approved adaptive contracts provide a broader independent boundary:
 agents can choose another built-in sequence or a sandboxed custom method, including supported
 exact-wording edits. Automatic custom methods are enabled for these contracts unless explicitly
@@ -134,8 +142,9 @@ not attributed to a new repair case. An attempt without verified output is recor
 
 Freeform requests, notes and feedback are retained locally; the store is not an anonymizer.
 When memory is enabled, relevant previous cases can be included in a recovery model request.
-There is no model-weight training or shared cloud pool of repairs. Disable memory for a run
-with the checkbox or `--no-memory`. Existing entries remain until forgotten.
+There is no model-weight training or shared cloud pool of repairs. Disable memory for a
+command-line run with `--no-memory`; the conversation window keeps it on. Existing entries remain
+until forgotten.
 
 Similarity only helps find evidence. Automatic reuse requires the current goal, request,
 document pattern, template identities and application version to match the applicability checks.
@@ -143,8 +152,7 @@ Each reuse must still satisfy current wording rules and fresh verification on ev
 Past project wording never becomes current approved wording merely because it was remembered.
 Failed cases remain useful evidence of approaches to avoid.
 
-Use **File → Repair memory…** to inspect a case, accept or reject its result, or forget it. The
-equivalent commands are:
+Use the `memory` command to inspect a case, accept or reject its result, or forget it:
 
 ```text
 spec-surgeon memory list

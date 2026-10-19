@@ -1,4 +1,4 @@
-"""Planner — an EditSpec over a whole batch, dry (docs/NL_SURGICAL_EDITOR_PLAN.md §2, §7.1; Phase 3).
+"""Planner — an EditSpec over a whole batch, dry (docs/history/NL_SURGICAL_EDITOR_PLAN.md §2, §7.1; Phase 3).
 
 ``plan_batch(inputs, spec)`` fingerprints every file, groups the batch by structure pattern, and plans the spec
 on every file (predict first; nothing is applied, nothing written). Each file gets either a plan with a short

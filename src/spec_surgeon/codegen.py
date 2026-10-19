@@ -1,8 +1,10 @@
-"""Tier B — a generated transform for a request no op can express (docs/NL_SURGICAL_EDITOR_PLAN.md §8; Phase 5).
+"""Tier B — a generated transform for a request no op can express (docs/history/NL_SURGICAL_EDITOR_PLAN.md §8; Phase 5).
 
 Offered when it is needed (decided 2026-10-15): when the conversation ends with ``unsupported`` and Claude judged the
-request within the catalog's ``custom_transform_limits``, the user picks "Have Claude write a one-off custom transform"
-(in the window or at the terminal; ``do --allow-codegen`` accepts the offer without a terminal). ``generate_op`` gives
+request within the catalog's ``custom_transform_limits``, the conversation offers a one-off custom transform. The
+window takes that offer itself (``document_task.DocumentTask`` acting on ``Session.outcome``): the user sees the
+result as a plan, a preview and the one action, never the offer. At the terminal the user picks the choice, or
+``do --allow-codegen`` accepts it without a terminal. ``generate_op`` gives
 Claude the whole conversation as its brief, read-only tools to look at the sample files' XML (``show_xml``,
 ``find_paragraphs``, ``list_styles``, ``show_part_text``), and asks for ONE op module against a restricted API (the
 ``Op`` interface, ``DocxPackage``, ``ooxml`` helpers, selectors, lxml); it tests it:
@@ -100,7 +102,7 @@ def allowed_imports(goal_contract=None):
         for name, values in GOAL_FROM.items():
             allowed.setdefault(name, set()).update(values)
     return allowed
-# What legacy formatting methods may not import: tracked-formatting helpers and the engine's registration hook.
+# What plain (ungoverned) formatting methods may not import: tracked-formatting helpers and the engine's registration hook.
 # Governed methods have the additional GOAL_FROM helpers. tests/test_codegen.py pins that every name
 # the examples import is either allowed above or listed here.
 EXCLUDED_FROM_EXAMPLES: Dict[str, set] = {
@@ -111,7 +113,7 @@ EXCLUDED_FROM_EXAMPLES: Dict[str, set] = {
     # selection of sections reads): a generated op neither selects sections by content nor flags their headers
     "spec_surgeon.ops.hf_common": {"effective_refs", "refs"},
     "spec_surgeon.ops.selectors": {"section_reads"},
-    # Numbering fonts require a whole-member built-in proof; legacy generated formatting covers runs only.
+    # Numbering fonts require a whole-member built-in proof; plain generated formatting covers runs only.
     "spec_surgeon.ops.font_numbering": {"NUMBERING_PARAM", "apply_numbering", "numbering_enabled", "plan_numbering"},
 }
 EXAMPLE_OPS = ("set_page_setup.py", "set_paragraph_props.py", "set_font.py")
@@ -363,7 +365,7 @@ def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contrac
 
 def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = None, *, goal_contract=None) -> List[str]:
     """Check a generated plan before the suite runs; governed methods also face the independent final-goal check.
-    Legacy ``allowed_parts``: the source's
+    Plain formatting (``allowed_parts``): the source's
     text parts and its styles part — the parts V10's residual identity covers; any other part (numbering.xml, docProps,
     a chart…) could carry a change no verified assertion checks, so it is refused outright."""
     probs = []
@@ -643,7 +645,7 @@ def system_prompt(goal_contract=None) -> str:
             "pkg.add_member / pkg.remove_member / pkg.edit_rels for approved package graph changes. "
             "All member, relationship, content-type and text changes must be predicted in plan first.\n"
         ) + prompt[end:]
-        # The legacy formatting allowlist is not the capability boundary of an
+        # The plain-formatting allowlist is not the capability boundary of an
         # approved, independently verified outcome. Leaving it here told writers
         # to refuse header/footer graphs even on the governed path.
         start = prompt.index("- Only these property families")

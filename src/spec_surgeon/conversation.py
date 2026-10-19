@@ -16,20 +16,15 @@ What makes it safe:
   (``check_pairing`` runs before every request). Results the app cannot give yet — the answer to ``ask_user``, what
   the preview of an accepted spec showed — wait in ``pending`` and go out first in the next user message.
 * **Approved words only.** ``sources`` — the words a spec may place in the documents — are the request, the user's
-  ``--answer`` lines and replies, ``PROJECT.json``, and the exact ``wording`` of a choice the user picked. Never
-  Claude's own text: its understanding, messages, choice labels, notes or the custom-transform brief. A wording with a
-  character the user cannot see (``invisible``) is never offered. conversation.json records the sources as
-  ``approved_words`` (beside ``answers``; never an empty one — without a PROJECT.json, or with an empty one, there is
-  no memory source), and the spec the app gets carries the user's ``request``, never the text
-  Claude wrote there (the advisor and the next pass count the spec's request as approved words).
-* **Choices are built by code.** Claude may offer ``clarify``/``alternative``/``rephrase`` choices; only the app adds
-  the ``custom_transform`` choice, and only when Claude declared the request within ``CUSTOM_TRANSFORM_LIMITS``.
-  Claude may also NAME one of the user's library items (``recipe`` / ``operation``, chat mode only): the app builds
-  that choice from the library alone (``_library_choice``) — the words a recipe places are shown on it and become
-  approved only when the user picks it (``take_library_choice``), each its own source; Claude's label and wording never
-  reach it; the item is pinned by its content hash, and a pick refuses one that changed (``LibraryChanged``). A
-  ``snippet`` (a saved paragraph) is named and built the same way, but picking it is a reply: its words are approved
-  (the hash checked first) and Claude writes the ``insert_paragraph`` spec that places them.
+  ``--answer`` lines and replies, and the exact ``wording`` of a choice the user picked. Never Claude's own text: its
+  understanding, messages, choice labels, notes or the custom-transform brief. A wording with a character the user
+  cannot see (``invisible``) is never offered. conversation.json records the sources as ``approved_words`` (beside
+  ``answers``), and the spec the app gets carries the user's ``request``, never the text Claude wrote there (the
+  advisor and the next pass count the spec's request as approved words).
+* **Choices are built by code.** Claude may offer ``clarify``/``alternative``/``rephrase`` choices about the
+  document result; only the app adds the ``custom_transform`` choice, and only when Claude declared the request within
+  ``CUSTOM_TRANSFORM_LIMITS``. Claude never offers a choice of implementation (a recipe, an operation, a snippet): the
+  engine picks the operations itself and the user is asked only about the outcome.
 
 ``mode="compile"`` is the one-shot behaviour ``compiler.compile_request`` keeps (a plain-text answer gets one nudge,
 then fails); ``mode="chat"`` (the window, the interactive command line) treats Claude's plain text as a message to the

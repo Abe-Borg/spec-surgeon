@@ -6,22 +6,19 @@ model instructions, credentials, absolute template paths or execution approvals.
 Reference documents and target documents remain unchanged; applications deliver
 verified copies.
 
-## Desktop and command line
+## Command line
 
-Select the target files in the main window, then open **File → Office profiles…**.
-Choose **Create profile…**, select a reference document, and map the roles to explicit
-office styles. The form also offers explicit margins for every section. **Open profile…**
-loads an existing bundle; **Import…** and **Export…** move it as a ZIP. Advanced policy
-settings use the CLI/API and can then be loaded in the desktop.
-
-Choose **Analyze and review**. Each row shows the original paragraph and proposed role;
-unresolved rows require a role or **Leave this paragraph unchanged**. After changing choices,
-analyze again. Approve the complete review, choose **Preview**, and inspect the records and
-rendered pages through **Open results / preview pages**. The second approval enables
-**Run verified copies**. Changing the scope, source, profile, output location or rendering
-settings requires the corresponding fresh review or preview. Every run uses a new folder.
-
-Equivalent commands (replace the two approval placeholders with the inspected digests):
+Office profiles are a command-line feature. The conversation window does not create,
+open or apply them; it works from a typed request and an optional attached template.
+`profiles create` bundles a reference document with explicit role-to-style mappings and
+optional policies. `profiles review` analyzes the target documents and writes every
+paragraph's proposed role and disposition; unresolved paragraphs need a role or `exclude`
+in `--choices`, then review again. `profiles preview` writes the records and rendered
+pages for inspection. `profiles run` delivers verified copies and requires the digests
+that `review` and `preview` printed. Changing the files, profile, output location or
+rendering settings requires a fresh review or preview. Every run uses a new folder.
+`spec-surgeon structure FILES` shows the analyzer's hierarchy and unresolved paragraphs
+without a profile. Replace the two approval placeholders below with the printed digests:
 
 ```sh
 spec-surgeon profiles create reference.docx --name "Office standard" --roles @roles.json --direct-formatting replace_style_owned --out profiles/office
@@ -164,8 +161,8 @@ results = execute_review(
 ```
 
 The assignment of approval values above illustrates API wiring, not permission to
-automatically approve. The CLI and desktop require separate outcome and preview
-approval. Saving or loading a review does not approve it.
+automatically approve. The command line requires separate review and preview
+approvals. Saving or loading a review does not approve it.
 
 Every source receives its own full-chain preview. In addition to stage V1–V10
 checks, the preview independently verifies the approved original-to-final effects

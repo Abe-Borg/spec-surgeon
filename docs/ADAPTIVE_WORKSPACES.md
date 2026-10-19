@@ -6,14 +6,16 @@ recovery methods are documented in [Template compatibility and recovery](TEMPLAT
 Workspaces retain project boundaries, requests, evidence, user decisions, candidate outputs,
 and remaining problems above the existing EditSpec, chain and recovery engine. Originals remain
 untouched; exporting verified copies is a separate action. Available starting in v0.8.0.
-The existing single-folder workflow remains available.
+Workspaces are a command-line feature (`spec-surgeon workspace`). The conversation window does not
+open them: it works on the documents you attach, with its own fixed allowance
+([the conversational desktop](CONVERSATIONAL_DESKTOP.md)).
 
 ## Start and inspect
 
-Open **File → Multi-project workspace** in the desktop application. Create a workspace from
-the project folders, inspect project/document assignments, and set each project's request and
-optional template. Investigations run in the background. Ready candidates remain available
-while other documents need more work. Reopen the same workspace to continue.
+Create a workspace from the project folders, inspect project/document assignments, and set each
+project's request and optional template. Investigations run until they finish, reach a limit or
+need an answer. Ready candidates remain available while other documents need more work. Reopen
+the same workspace to continue.
 
 ```text
 spec-surgeon workspace create "Projects/Job A" "Projects/Job B" --out "editing-workspace"
@@ -44,7 +46,7 @@ a goal invalidates affected candidates instead of treating old output as current
 
 ## Investigate, answer, and resume
 
-Use **Generate plan** in the desktop to investigate a request. The agent can inspect every document,
+Use `workspace plan` to investigate a request. The agent can inspect every document,
 page through XML and paragraphs, render available pages, and write isolated read-only analysis
 scripts. It proposes exact effects, source scope, literal wording, evidence, and risks. Review the
 complete proposal and approve its specific plan ID before running it. Drafting a different request
@@ -124,8 +126,8 @@ not a provider token count. When choosing a model with a smaller context window,
 settings; resume with `--max-context-tokens 900000` to increase an older investigation's allowance.
 
 Use `--budget`, `--max-attempts`, `--max-calls`, `--max-output-tokens`, `--max-total-tokens`,
-`--max-context-tokens`, `--model`, and `--effort` on `workspace plan`, `workspace run` or `resolve`. The desktop exposes budget, iteration,
-token, and effort controls and preserves a previously selected model.
+`--max-context-tokens`, `--model`, and `--effort` on `workspace plan`, `workspace run` or `resolve`. These flags exist only on
+the command line; the conversation window has no resource controls.
 The `do` and `retry` commands also accept `--max-context-tokens` and `--max-output-tokens` alongside `--model`;
 both chat and noninteractive compilation, plus an approved custom-transform handoff, honor those token limits.
 Choose a response limit supported by the model and leave additional room for token-estimation error.
@@ -225,7 +227,7 @@ spec-surgeon workspace bind "editing-workspace" --document DOCUMENT_ID --effect 
 
 Agents may replan built-in operations, build a sequence, or generate a sandboxed custom method.
 Custom methods are available automatically for independently supported contracts; `--no-codegen`
-disables them. Legacy tasks without that contract keep their stricter custom-method policy. A separate
+disables them. Tasks without that contract (an EditSpec or chain alone) keep their stricter custom-method policy. A separate
 critic reviews model-authored candidates and can request more work, but cannot certify an output
 that fails verification. Dynamic read-only analysis and persisted evidence are also available while
 diagnosing unsupported structures.
@@ -282,7 +284,7 @@ Independent final checks compare the original and candidate against the target c
 ordinary package, text, revision, and preservation verification remains in place. This goal
 does not use a language model and works without an API key.
 
-Legacy recovery still pins operation effects where no independent goal contract exists. Additional
+Recovery of an EditSpec or chain without an independent goal contract still pins its operation effects. Additional
 tokens cannot bypass independent verification or authorize invented document wording.
 
 ## Long investigations and evidence

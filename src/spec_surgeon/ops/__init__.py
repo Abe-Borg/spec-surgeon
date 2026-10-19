@@ -1,5 +1,6 @@
-"""Operation library (docs/NL_SURGICAL_EDITOR_PLAN.md §4). Add an op: write a module with an Op subclass,
-import it here, add it to OPS. jobs/ keeps thin aliases over these for the v0.1.0 CLI."""
+"""Operation library (docs/history/NL_SURGICAL_EDITOR_PLAN.md §4). Add an op: write a module with an Op subclass
+(``plan``, ``apply`` and ``describe`` — the sentence the plan shows for it, over ``prose.py``), decorate it with
+``register`` and import it here. jobs/ keeps thin aliases over these for the v0.1.0 CLI."""
 from __future__ import annotations
 
 from typing import Dict, Type

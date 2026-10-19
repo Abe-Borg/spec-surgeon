@@ -1,4 +1,4 @@
-"""The compiler — a plain-English request → an EditSpec, once per batch (docs/NL_SURGICAL_EDITOR_PLAN.md §6,
+"""The compiler — a plain-English request → an EditSpec, once per batch (docs/history/NL_SURGICAL_EDITOR_PLAN.md §6,
 Appendix B; Phase 4).
 
 Claude reads the request, the batch's per-pattern profiles (profile.py), the op catalog (catalog.py), the
@@ -8,6 +8,13 @@ ambiguous. It can look closer with read-only tools (``inspect_profile``, ``list_
 ``show_part_text``, ``read_template``). It never edits a file and never sees XML; the engine plans, applies and
 verifies the spec per file. Files are shown and addressed by label (``file_labels``): the file name, or — for files
 that share a name in different folders — the name with as many parent folders as tell them apart (``a/Spec.docx``).
+
+The batch is shown per structure pattern, each profile with its ``roles`` — how that layout marks the section title,
+the PART headings and the article titles (``structure.role_summary``) — so the selectors it writes are concrete, with
+required counts. When one spec cannot say the request for every pattern, the submission is a plan per layout
+(``layouts``: one complete EditSpec per layout, each validated and dry-planned on its own documents only; a pattern no
+layout covers is an error, ``_check_layouts``). Each submission comes with a message to the user in plain words; the
+window shows that message, not the spec.
 
 A submitted spec is checked before it is accepted:
 * ``validate_spec`` (unknown keys/ops/params, mode, assertions) — open ``questions`` or ``unsupported`` are

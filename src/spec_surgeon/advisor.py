@@ -1,4 +1,4 @@
-"""The advisor — what to do about a file the engine refused (docs/NL_SURGICAL_EDITOR_PLAN.md §2 "Advisor", Phase 6).
+"""The advisor — what to do about a file the engine refused (docs/history/NL_SURGICAL_EDITOR_PLAN.md §2 "Advisor", Phase 6).
 
 ``advise(exception_record)`` reads one ``exceptions/<name>.exception.json`` written by a batch (source path, spec,
 fingerprint, the structured diagnosis) and asks Claude, with the same read-only tools as the compiler over that one

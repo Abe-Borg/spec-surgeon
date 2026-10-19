@@ -1,15 +1,19 @@
-"""The logic behind the Spec Surgeon window (docs/NL_SURGICAL_EDITOR_PLAN.md Phase 7), and its entry point.
+"""The engine behind the Spec Surgeon window (docs/history/NL_SURGICAL_EDITOR_PLAN.md Phase 7), and its entry point.
 
     spec-surgeon-gui            (no console window on Windows; the installed app's SpecSurgeon.exe)
     spec-surgeon gui            (from a terminal)
 
-``Session`` holds everything the window does — files, the conversation with Claude (compile, replies, choices), preview,
-run (with the approval-token check), custom transforms, set-aside passes, advice — as plain calls into the engine;
-nothing is applied before Preview, and Run refuses when a file changed since the preview. It has no widgets and no Qt,
-so it is tested on its own and the command line never loads Qt.
+``Session`` is a toolbox of named steps over the attached documents (``documents=[...]``, from any folders) and one
+optional template: the conversation with Claude (``compile``, ``reply``), ``make_preview``, ``run`` (with the
+approval-token check), custom transforms and the recovery of set-aside files. Each step is a plain call into the
+engine with an explicit result, and ``Session.outcome`` is the one decision table that says what is needed next.
+Nothing is applied before a preview, and ``run`` refuses when a file changed since the preview. The stages the user
+sees belong to ``document_task.DocumentTask``, which also triages every attachment; the one window is
+``ui/conversation_window.py``. This module has no widgets and no Qt, so it is tested on its own and the command line
+never loads Qt.
 
-The window itself (PySide6 / Qt 6, v0.4.0) is the ``ui`` package: ``main()`` and ``build_window()`` below import it
-lazily and explain how to install Qt when it is missing (``pip install "spec-surgeon[gui]"``).
+The window itself (PySide6 / Qt 6) is the ``ui`` package: ``main()`` and ``build_window()`` below import it lazily
+and explain how to install Qt when it is missing (``pip install "spec-surgeon[gui]"``).
 """
 from __future__ import annotations
 
@@ -29,8 +33,9 @@ from .settings import default_run_root
 
 Log = Callable[[str], None]
 
-# Running without an API key (``Session.claude_ready`` False): what each Claude feature says instead of calling. Saved
-# specs, your library, Preview, Run and set-aside passes need no key and are unchanged.
+# Running without an API key (``Session.claude_ready`` False): what each Claude feature says instead of calling. The
+# window asks for the key in Settings before a conversation starts; the engine's own steps (plan, apply, verify) need
+# no key.
 NEEDS_KEY = "Connect your Anthropic API key in Settings to start the conversation."
 NEEDS_KEY_REPLY = "Connect your Anthropic API key in Settings to continue this conversation."
 NO_KEY_REVIEW = ("Claude's visual check needs an Anthropic API key (Settings) — look at the before/after pages "
@@ -166,13 +171,14 @@ class Session:
     def claude_ready(self) -> bool:
         """Claude can be called: a client was given (tests, scripted) or credentials are there
         (``llm.credentials_found``: the key from Settings, the environment or an ``ant auth login`` profile). False is keyless mode — the window
-        offers saved specs and Your library, and every Claude feature says it needs a key instead of failing."""
+        says "Connect your Anthropic API key in Settings" instead of sending, and every Claude feature says it needs a
+        key instead of failing."""
         from . import llm
         return self.client is not None or llm.credentials_found()
 
     def _templates(self, outcome: bool = True) -> List[Path]:
         """The files that are never part of the batch: the attached template and (``outcome``) every template the
-        current spec reads — a spec may name a file of the batch folder as its template."""
+        current spec reads — a spec may name one of the attached documents as its template."""
         from .editspec import spec_templates
         from .layouts import is_layout_plan, layout_spec
         own: List[Path] = []
@@ -232,15 +238,15 @@ class Session:
     @_session_action
     def end_conversation(self) -> None:
         self.conversation, self.turn, self.questions = None, None, []
-        self._compiled_dir = None                 # a loaded spec or saved operation never previews into its folder
+        self._compiled_dir = None                 # the next preview or custom transform opens a new folder
 
     # ---- the conversation ----
     def conversation_matches(self, request: str) -> bool:
         """The current conversation is about this request, these files and this template (so Preview continues it
         rather than starting over). Like is compared with like: the conversation's files go through the same template
-        filter as ``files()`` — a spec Claude accepted may name a file of the batch folder as its template, and that
-        file then leaves ``files()`` although nothing changed. A folder that cannot be read (renamed, a network share
-        that dropped) is no match, never an exception."""
+        filter as ``files()`` — a spec Claude accepted may name one of the attached documents as its template, and that
+        file then leaves ``files()`` although nothing changed. An attached document that cannot be read (moved, a
+        network share that dropped) is no match, never an exception."""
         from .editspec import is_template_file
         c = self.conversation
         if c is None or c.request.strip() != (request or "").strip():
@@ -266,9 +272,9 @@ class Session:
             raise ValueError("Type what you want done.")
         if not self.claude_ready():
             raise ValueError(NEEDS_KEY)           # before anything changes: the outcome and its preview stay
-        # The batch as it reads once the old outcome is void (just below), never through the outgoing spec: a file of
-        # the folder that spec reads as its template is a file of this conversation, as conversation_matches sees it
-        # from here on. Taken first, so a folder that cannot be read refuses before anything changes.
+        # The batch as it reads once the old outcome is void (just below), never through the outgoing spec: an attached
+        # document that spec reads as its template is a file of this conversation, as conversation_matches sees it
+        # from here on. Taken first, so a document that cannot be read refuses before anything changes.
         files = self.files(outcome=False)
         self._set_outcome()
         self.end_conversation()
@@ -408,7 +414,7 @@ class Session:
 
     def _session_dir(self) -> Path:
         """The folder the next preview or custom transform goes into: the conversation's folder while nothing has used
-        it yet, else a new one (a loaded spec or saved operation: a new results folder). The conversation's records
+        it yet, else a new one. The conversation's records
         follow it, so every session folder holds the exchange that led to its preview and run (diagnostics.bundle_root
         bundles them together); once used, a folder's records are frozen (``reply`` opens the next folder before
         anything more is said)."""
@@ -577,8 +583,7 @@ class Session:
         self._use_folder(out)
         self._show_generated(g, out, token, inputs, intent, render, log)
 
-    # ---- your library ----
-    # ---- chains: several recipes, one after another (chain.py) ----
+    # ---- the preview: a spec, a plan per layout (layouts.py) or a custom transform, tried on samples ----
     @_session_action
     def make_preview(self, render: bool, log: Log) -> str:
         from .preview import approval_token, make_preview
@@ -600,7 +605,7 @@ class Session:
         if self.spec is None:
             raise ValueError("nothing to preview — describe the change first")
         files = self.files()                      # the same filtered set Run checks and runs (no template files)
-        out = self._session_dir()                 # beside the conversation's records (a loaded spec: a new folder)
+        out = self._session_dir()                 # beside the conversation's records
         from .layouts import is_layout_plan, make_layout_preview
         if is_layout_plan(self.spec):
             n = len(self.spec["layouts"])

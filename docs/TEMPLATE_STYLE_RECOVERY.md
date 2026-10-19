@@ -53,8 +53,8 @@ rejects it.
 
 ## Resources available to agents
 
-`inspect_template_styles` is a read-only tool in compilation, recovery, project planning and
-code generation. It returns mappings, required imports and source/template hashes. It is a
+`inspect_template_styles` is a read-only tool in compilation, recovery, workspace planning and
+the governed method writer. It returns mappings, required imports and source/template hashes. It is a
 style preflight; the actual operation still validates selected sections, slots, fields and
 the entire package. Different style IDs alone do not justify asking for a rebuilt template.
 
@@ -66,11 +66,11 @@ added. Drift, an unapproved path, or changing the input mapping is rejected.
 
 Governed writer instructions include the independent assertion kind names and, for a
 header/footer goal, the template operation as implementation reference. Pure style, slot,
-formatting and package-graph helpers are available through its import whitelist. The old formatting-only
-instructions apply to legacy custom transforms without an outcome contract. A legacy fallback
-limit no longer produces the blanket statement that a new built-in is required. The legacy
-chat and project recovery remain separate entry points; this change does not silently approve
-or execute a new project goal from a rejected chat recipe.
+formatting and package-graph helpers are available through its import whitelist. The formatting-only
+instructions apply to custom transforms without an outcome contract (the conversation's one-off
+custom method). That fallback's limit no longer produces the blanket statement that a new built-in
+is required. The ordinary conversation and workspace recovery remain separate entry points; a
+specification the conversation rejected never becomes an approved workspace goal.
 
 This extends a supported class of recovery, not arbitrary self-modification of the verifier.
 An agent may adapt its method and use supplied resources, while the approved outcome and

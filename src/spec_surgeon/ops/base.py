@@ -1,4 +1,4 @@
-"""Operation interface — the composable unit of the natural-language editor (docs/NL_SURGICAL_EDITOR_PLAN.md §4).
+"""Operation interface — the composable unit of the natural-language editor (docs/history/NL_SURGICAL_EDITOR_PLAN.md §4).
 
 An op is two functions over a package:
 
@@ -13,6 +13,10 @@ Two ops that would touch the same thing are a conflict and raise ``JobException`
 engine never guesses an order for overlapping edits.
 
 A plan that cannot be made deterministically raises ``JobException`` (→ Tier 2), never guesses.
+
+``describe(select, params)`` is the sentence a person reads for the op in the plan: what changes and where, with
+every material parameter in words (``ops/prose.py``: inches and points, quoted exact text, no identifiers). Every
+registered op has one; ``tests/test_describe.py`` checks them all.
 """
 from __future__ import annotations
 

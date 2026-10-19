@@ -1,4 +1,4 @@
-"""Preview and approval — what the user sees before anything runs on the batch (docs/NL_SURGICAL_EDITOR_PLAN.md §7;
+"""Preview and approval — what the user sees before anything runs on the batch (docs/history/NL_SURGICAL_EDITOR_PLAN.md §7;
 Phase 4).
 
 ``make_preview(spec, inputs, out_dir)``:
@@ -18,6 +18,9 @@ Phase 4).
    ``explain_approval_change`` compares them with the files as they are now). ``do`` re-checks it after the y/N (or
    ``--yes``) and before the run (``changed_since_preview``) — for a custom transform with ``generated_key`` in place
    of the spec.
+
+A plan per layout (``layouts.make_layout_preview``) runs this once per layout, on that layout's files only, under
+``out_dir/layout-<id>``, and binds one token to every layout, its files and the routing.
 
 Diagnostics: ``logs/preview.log`` has every file's plan or refusal (with the stage, the op and the line of code), each
 sample's verification with the failing checks' specifics, and what the renderer said; a sample that fails in an

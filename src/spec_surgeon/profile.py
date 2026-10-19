@@ -1,5 +1,5 @@
 """Document profiles — what the compiler (and a human) needs to know about a batch, without a model and without
-reading every file in full (docs/NL_SURGICAL_EDITOR_PLAN.md §2, Phase 3).
+reading every file in full (docs/history/NL_SURGICAL_EDITOR_PLAN.md §2, Phase 3).
 
 ``profile(pkg)`` describes one file: section layout (page, margins, text width, titlePg, numbering) and what each
 section's headers/footers show (part names as resolved through the rels, their display text and fields, any
