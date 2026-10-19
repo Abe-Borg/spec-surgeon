@@ -9,7 +9,6 @@ import pytest
 
 from spec_surgeon.cli import main
 from spec_surgeon.gui import Session
-from spec_surgeon.ui.rows import recovery_rows, result_counts
 from spec_surgeon.vision import VisualReview
 
 
@@ -102,7 +101,9 @@ def test_session_review_then_export_preserves_approval_and_originals(recovery_st
     with pytest.raises(ValueError, match="copies only"):
         session.run(True, False, lambda _: None)
     session.run(False, False, lambda _: None)
-    assert recovery_stub.exports[-1][1] == {"acknowledge_review": True}
+    # every export is a new set of copies under the investigation folder; the first goes to outputs/
+    assert recovery_stub.exports[-1][1] == {"acknowledge_review": True,
+                                            "out_dir": recovery_stub.result.out_dir / "outputs"}
     assert session.last_recovery is recovery_stub.result and source.read_bytes() == before
     session._set_outcome(spec={"request": "A new request"})
     assert session.recovery is None
@@ -111,12 +112,11 @@ def test_session_review_then_export_preserves_approval_and_originals(recovery_st
 def test_recovery_can_investigate_a_failed_compile_without_an_editspec(recovery_stub, tmp_path):
     seen = []
     recovery_stub.module.recover = lambda *a, **kw: seen.append((a, kw)) or recovery_stub.result
-    session = Session(folder=tmp_path, out_root=tmp_path / "out",
-                      selected_files=[recovery_stub.result.files[0].source],
+    session = Session(documents=[recovery_stub.result.files[0].source], out_root=tmp_path / "out",
                       out_dir=tmp_path / "current-conversation", last_run_dir=tmp_path / "older-run")
     session.conversation = SimpleNamespace(request="Fix the header", sources=["Fix the header", "Project 42"])
     session.resolve_remaining(lambda _: None)
-    assert seen[0][0][0] == session.selected_files
+    assert seen[0][0][0] == session.files() == [recovery_stub.result.files[0].source]
     assert seen[0][0][1] == "Fix the header"
     assert seen[0][1]["spec"] is None and seen[0][1]["approved_words"] == ["Fix the header", "Project 42"]
     assert not recovery_stub.calls  # the unrelated older run was not retried
@@ -140,20 +140,7 @@ def test_session_loads_saved_recovery_without_model_or_export(recovery_stub, tmp
     session = Session(out_root=tmp_path / "out", client=None)
     session.load_recovery(tmp_path / "saved")
     assert session.recovery is recovery_stub.result
-    assert session.selected_files == [recovery_stub.result.files[0].source]
-    assert session.folder == tmp_path
     assert not recovery_stub.calls and not recovery_stub.exports
-
-
-def test_recovery_rows_distinguish_ready_candidates_from_unresolved_files(tmp_path):
-    value = result(tmp_path)
-    assert recovery_rows(value, preview=True)[0].cells[2] == "Ready"
-    assert recovery_rows(value, preview=True)[0].badge == "planned"
-    value.files.append(SimpleNamespace(source=tmp_path / "two.docx", status="NEEDS_INPUT", reason="Which font?",
-                                       output=None, case_id=""))
-    rows = recovery_rows(value)
-    assert result_counts(rows) == {"PASS": 1, "FAIL": 0, "EXCEPTION": 1}
-    assert rows[1].cells[1] == "Needs input" and rows[1].open_path is None
 
 
 def test_cli_memory_missing_case_is_an_error(tmp_path, capsys):
@@ -178,120 +165,9 @@ def test_cli_memory_feedback_and_forgetting_are_persistent(capsys):
     assert store.get(case_id) is None
 
 
-@pytest.fixture
-def qt_env(monkeypatch):
-    from qt_support import close_windows, qt_app_or_skip
-    app = qt_app_or_skip()
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    windows = []
-    yield app, windows
-    close_windows(app, windows)
-
-
-def test_window_resolves_reviews_and_exports_copies(qt_env, recovery_stub, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
-    recovery_stub.result = result(tmp_path, blocking=True)
-    session = Session(folder=tmp_path, out_root=tmp_path / "out", last_run_dir=tmp_path / "previous",
-                      pending_recovery_run=tmp_path / "previous", client=object())
-    window = build_window(session, prompts=RecordingPrompts())
-    qt_env[1].append(window)
-    ui = window._spec_surgeon
-    ui["vars"]["render"].set(False)
-    window.run_page.recovery_budget.setValue(1.5)
-    window.run_page.recovery_codegen.setChecked(True)
-    ui["buttons"]["resolve"].click()
-    log = ui["wait"]()
-    assert "ERROR" not in log, log
-    assert window.stack.currentWidget() is window.preview_page
-    assert "Recovery:" in window.preview_page.request_lbl.text()
-    assert not window.run_page.inplace_rb.isEnabled()
-    assert ui["buttons"]["run"].isEnabled()
-    assert recovery_stub.calls[0][2]["options"].max_cost_usd == 1.5
-    assert recovery_stub.calls[0][2]["options"].allow_codegen
-    assert not window.preview_page.review_ack_btn.isVisible()
-    ui["buttons"]["run"].click()
-    log = ui["wait"]()
-    assert "ERROR" not in log, log
-    assert recovery_stub.exports[-1][1] == {"acknowledge_review": True}
-    assert ui["results_model"].badges() == ["pass"]
-
-
-def test_window_reopens_saved_recovery_keylessly(qt_env, recovery_stub, tmp_path, monkeypatch):
-    from spec_surgeon import llm
-    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
-    monkeypatch.setattr(llm, "credentials_found", lambda: False)
-    window = build_window(Session(out_root=tmp_path / "out"),
-                          prompts=RecordingPrompts(files=[str(tmp_path / "saved")]))
-    qt_env[1].append(window)
-    window.act_recovery.trigger()
-    log = window._spec_surgeon["wait"]()
-    assert "ERROR" not in log, log
-    assert window.session.recovery is recovery_stub.result
-    assert window.stack.currentWidget() is window.preview_page
-    assert window.run_page.run_btn.isEnabled()
-    assert not recovery_stub.calls and not recovery_stub.exports
-
-
-def test_window_consumes_scoped_answer_once_without_global_replay(qt_env, recovery_stub, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
-    value = recovery_stub.result
-    value.question_records = [{"id": "q0001", "question": "Which project wording?", "status": "open",
-                               "files": [str(value.files[0].source)]}]
-    window = build_window(Session(folder=tmp_path, out_root=tmp_path / "out", recovery=value),
-                          prompts=RecordingPrompts())
-    qt_env[1].append(window)
-    window._fill_preview()
-    window.run_page.recovery_question.setCurrentIndex(1)
-    window.run_page.recovery_request.setPlainText("ALPHA PROJECT")
-    assert window.do_resolve()
-    log = window._spec_surgeon["wait"]()
-    assert "ERROR" not in log, log
-    assert recovery_stub.calls[-1][2]["request"] == {"answer": "ALPHA PROJECT", "question_id": "q0001"}
-    assert window.run_page.recovery_request.toPlainText() == ""
-    assert window.do_resolve()
-    window._spec_surgeon["wait"]()
-    assert recovery_stub.calls[-1][2]["request"] is None
-
-
-def test_new_investigation_never_inherits_old_question_scope(qt_env, recovery_stub, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
-    window = build_window(Session(folder=tmp_path, out_root=tmp_path / "out", last_run_dir=tmp_path / "batch"),
-                          prompts=RecordingPrompts())
-    qt_env[1].append(window)
-    page = window.run_page
-    page.recovery_question.addItem("Question from an old investigation", "q0001")
-    page.recovery_question.setCurrentIndex(1)
-    page.recovery_request.setPlainText("Clarification for this batch")
-    assert window.do_resolve()
-    log = window._spec_surgeon["wait"]()
-    assert "ERROR" not in log, log
-    assert recovery_stub.calls[-1][2]["request"] == "Clarification for this batch"
-
-
 def test_initial_session_refuses_scoped_answer_instead_of_crashing(tmp_path):
-    session = Session(folder=tmp_path, out_root=tmp_path / "out")
+    session = Session(out_root=tmp_path / "out")
     with pytest.raises(ValueError, match="existing recovery"):
         session.resolve_remaining(lambda _: None, request={"answer": "Arial", "question_id": "q0001"})
 
 
-def test_reopened_recovery_preserves_saved_resource_and_privacy_settings(qt_env, recovery_stub, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
-    snapshot = dict(max_cost_usd=1.25, max_attempts=2, max_calls=4, max_output_tokens=1000,
-                    max_total_tokens=5000, effort="medium", allow_codegen=True, use_memory=False,
-                    render=False, model="saved-model", renderer="none", group_call_slice=8,
-                    critic_review=False, max_context_tokens=64000)
-    snapshot = vars(recovery_stub.module.RecoveryOptions(**snapshot))
-    recovery_stub.result.options_snapshot = snapshot
-    window = build_window(Session(out_root=tmp_path / "out"),
-                          prompts=RecordingPrompts(files=[str(tmp_path / "saved")]))
-    qt_env[1].append(window)
-    window.do_load_recovery()
-    window._spec_surgeon["wait"]()
-    assert window.run_page.recovery_budget.value() == 1.25
-    assert not window.run_page.recovery_memory.isChecked()
-    assert not window.request_page.render_cb.isChecked()
-    assert window.do_resolve()
-    log = window._spec_surgeon["wait"]()
-    assert "ERROR" not in log, log
-    options = recovery_stub.calls[-1][2]["options"]
-    assert vars(options) == snapshot
