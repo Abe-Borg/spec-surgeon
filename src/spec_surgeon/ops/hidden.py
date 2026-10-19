@@ -111,7 +111,7 @@ def _note_paragraph_words(rule: Dict[str, Any]) -> str:
     if rule.get("text_regex"):
         tests.append("matches the pattern " + prose.quote(rule["text_regex"]))
     if isinstance(rule.get("color_in"), list) and rule["color_in"]:
-        tests.append("is all coloured " + prose.join((prose.quote(c) for c in rule["color_in"]), "or"))
+        tests.append("is all coloured " + prose.join((prose.colour(c) for c in rule["color_in"]), "or"))
     if rule.get("hidden") is True:
         tests.append("is all hidden")
     if tests:
@@ -126,7 +126,7 @@ def _inline_note_words(rule: Any) -> str:
     colours = rule.get("color_in") if isinstance(rule.get("color_in"), list) else []
     hidden = rule.get("hidden") is True
     if colours:
-        return ("hidden text" if hidden else "text") + " coloured " + prose.join((prose.quote(c) for c in colours), "or")
+        return ("hidden text" if hidden else "text") + " coloured " + prose.join((prose.colour(c) for c in colours), "or")
     return "hidden text" if hidden else ""
 
 

@@ -15,7 +15,7 @@ CASES = {
         ({"tables": {"first_row_regex": "^Item"}},
          {"cell_margins": {"left": 108, "right": 108}, "width": {"pct": 100}, "cant_split": True},
          ["Set the cell margins to 0.075 inch on the left and right, set the width to 100% of the text width, "
-          "and keep every row on one page in tables whose first row matches “^Item”."]),
+          "and keep every row on one page in tables whose first row matches the pattern “^Item”."]),
         # every border removed, no header rows, rows free to break, in the headers
         ({"scope": ["headers"]}, {"borders": "none", "repeat_header_rows": 0, "cant_split": False},
          ["Remove every border", "let no row repeat at the top of each page", "let rows break across pages",
@@ -25,7 +25,7 @@ CASES = {
          {"borders": {"top": {"style": "double", "size": 12, "color": "1F3864"},
                       "bottom": {"style": "double", "size": 12, "color": "1F3864"}},
           "width": {"twips": 7200}, "clear_cell_overrides": True},
-         ["a 1.5 pt double-line border at the top and bottom, coloured “1F3864” (none on the other sides)",
+         ["a 1.5 pt double-line border at the top and bottom, coloured dark blue (none on the other sides)",
           "the width to 5 inches", "in tables in the “TableGrid” style",
           "The cells' own borders are removed so the table's show"]),
         # width left to Word, margins all round, three header rows, a border kept away from the text
@@ -38,13 +38,13 @@ CASES = {
          {"borders": {"top": {"size": 8, "space": 4}, "left": {"size": 8, "space": 4},
                       "bottom": {"size": 8, "space": 4}, "right": {"size": 8, "space": 4}}},
          ["a 1 pt single-line border all around, 4 pt from the text (none between the cells)",
-          "in tables whose text matches “Sprinkler”"]),
+          "in tables whose text matches the pattern “Sprinkler”"]),
     ],
     "apply_table_style": [
         ({"tables": "all"}, {"style": "Grid Table 4"}, ["Give every table the “Grid Table 4” table style."]),
         # the style comes from a template when the document lacks it; the tables chosen by their first row
         ({"tables": {"first_row_regex": "^Item"}}, {"style": "SpecTable", "template": "C:/Projects/styles.dotx"},
-         ["Give tables whose first row matches “^Item” the “SpecTable” table style",
+         ["Give tables whose first row matches the pattern “^Item” the “SpecTable” table style",
           "imported from the template “C:/Projects/styles.dotx” when the document lacks it"]),
         # the template's definition wins, own formatting cleared, nested tables left out
         ({"scope": ["document"], "tables": {"nested": False}},

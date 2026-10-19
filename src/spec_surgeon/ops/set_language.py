@@ -187,20 +187,20 @@ class SetLanguage(Op):
         if not asked:
             what = "of all text"
         elif len(asked) == 1 and asked[0][0] == "language":
-            what = f"of all text to {prose.quote(asked[0][1])}"
+            what = f"of all text to {prose.language(asked[0][1])}"
         elif len(asked) == 1:
-            what = f"of {LANG_WORDS[asked[0][0]]} to {prose.quote(asked[0][1])}"
+            what = f"of {LANG_WORDS[asked[0][0]]} to {prose.language(asked[0][1])}"
         else:
-            what = "of all text to " + prose.join(f"{prose.quote(v)} for {LANG_WORDS[k]}" for k, v in asked)
+            what = "of all text to " + prose.join(f"{prose.language(v)} for {LANG_WORDS[k]}" for k, v in asked)
         listed = params.get("replace_only")
         if isinstance(listed, list) and listed:
             first = prose.sentence("set the proofing language", what + ", but only where it is now "
-                                   + prose.join((prose.quote(t) for t in listed), "or")
+                                   + prose.join((prose.language(t) for t in listed), "or")
                                    + ", leaving text in any other language as it is")
         else:
-            first = prose.sentence("set the proofing language", what + ": every style, run and paragraph mark that "
-                                   "names a language changes, and so does the document default, so text that names "
-                                   "none inherits it too")
+            first = prose.sentence("set the proofing language", what + ": every style and every piece of text that "
+                                   "names a language changes, and so does the document's default, so text that names "
+                                   "none follows it too")
         return first + " " + prose.sentence("spelling and grammar checks then follow that language; nothing is shown "
                                             "as a tracked change and no words change")
 

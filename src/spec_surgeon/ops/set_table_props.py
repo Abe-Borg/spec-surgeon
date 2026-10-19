@@ -533,7 +533,7 @@ def table_border_words(borders: Dict[str, Any]) -> str:
         if str(space) not in ("0", "0.0"):
             text += f", {prose.points(space)} from the text"
         if color != "AUTO":
-            text += f", coloured {prose.quote(color)}"
+            text += f", coloured {prose.colour(color)}"
         phrases.append(text)
     text = prose.join(phrases) if phrases else "no border"
     missing = [s for s in TABLE_SIDES if s not in borders]

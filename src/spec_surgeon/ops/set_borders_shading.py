@@ -322,7 +322,7 @@ def border_words(borders: Dict[str, Any]) -> str:
         if str(space) != "1":
             text += f", {prose.points(space)} from the text"
         if color != "AUTO":
-            text += f", coloured {prose.quote(color)}"
+            text += f", coloured {prose.colour(color)}"
         phrases.append(text)
     text = prose.join(phrases) if phrases else "no border"
     if any(x not in borders for x in ("top", "bottom", "left", "right")):
@@ -331,9 +331,9 @@ def border_words(borders: Dict[str, Any]) -> str:
 
 
 def shading_words(shading: Dict[str, Any]) -> str:
-    """``a fill of “D9D9D9”``, ``an automatic fill with a 10% pattern coloured “FF0000”``."""
+    """``a fill of light grey``, ``an automatic fill with a 10% pattern coloured red``."""
     fill = str(shading.get("fill", "auto"))
-    text = "an automatic fill" if fill.lower() == "auto" else f"a fill of {prose.quote(fill.upper())}"
+    text = "an automatic fill" if fill.lower() == "auto" else f"a fill of {prose.colour(fill)}"
     pattern = str(shading.get("pattern", "clear"))
     if pattern != "clear":
         words = PATTERN_WORDS.get(pattern) or (pattern[3:] + "%" if pattern.startswith("pct") and pattern[3:].isdigit()
@@ -341,7 +341,7 @@ def shading_words(shading: Dict[str, Any]) -> str:
         text += f" with a {words} pattern"
         color = str(shading.get("color", "auto"))
         if color.lower() != "auto":
-            text += f" coloured {prose.quote(color.upper())}"
+            text += f" coloured {prose.colour(color)}"
     return text
 
 

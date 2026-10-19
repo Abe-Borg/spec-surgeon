@@ -40,8 +40,8 @@ CASES = {
                         {"text_regex": "^(Retain|Delete|Revise|Coordinate)\\b", "color_in": ["0000FF"]}],
               "runs": {"color_in": ["0000FF"]}},
          ["Delete the note paragraphs", "those in the “SpecNote” style",
-          "whose text matches the pattern “^(Retain|Delete|Revise|Coordinate)\\b” and is all coloured “0000FF”",
-          "remove the inline notes (text coloured “0000FF”) from the other paragraphs in the document body",
+          "whose text matches the pattern “^(Retain|Delete|Revise|Coordinate)\\b” and is all coloured blue",
+          "remove the inline notes (text coloured blue) from the other paragraphs in the document body",
           "shown as tracked changes", "Hyperlink text and pictures are never taken as notes"]),
         # one rule with two tests, in the body and headers, plain, nothing-to-remove is an exception
         ({"scope": ["document", "headers"]},
@@ -50,7 +50,7 @@ CASES = {
           "without tracked changes", "a file with no such note is set aside"]),
         # inline notes only: hidden runs in two colours (a hex value and a theme colour), by a named author
         ({}, {"runs": {"color_in": ["FF0000", "accent2"], "hidden": True}, "author": "Spec Team"},
-         ["Remove the inline notes (hidden text coloured “FF0000” or “accent2”)",
+         ["Remove the inline notes (hidden text coloured red or the theme's accent 2 colour)",
           "shown as tracked changes by “Spec Team”"]),
     ],
     "remove_highlight": [

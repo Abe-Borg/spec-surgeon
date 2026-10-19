@@ -238,7 +238,7 @@ class SetProperties(Op):
         if color == "auto":
             clauses.append("reset the text colour to automatic")
         elif isinstance(color, str) and color:
-            clauses.append(f"colour the text {prose.quote(color)}")
+            clauses.append(f"colour the text {prose.colour(color)}")
         clauses += [PARA_WORDS[k][0 if v else 1] for k, v in para.items() if k in PARA_WORDS and isinstance(v, bool)]
         if not clauses:
             clauses.append("change the text and paragraph properties")

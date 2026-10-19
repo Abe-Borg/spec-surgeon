@@ -208,11 +208,11 @@ class MapStyles(Op):
         pairs = [m for m in (params.get("map") if isinstance(params.get("map"), list) else [])
                  if isinstance(m, dict) and isinstance(m.get("from"), str) and isinstance(m.get("to"), str)]
         if pairs:
-            moves = [("every paragraph, run and table in " if i == 0 else "those in ")
+            moves = [("everything in " if i == 0 else "everything in ")
                      + f"{prose.style(m['from'])} {prose.style(m['to'])}" for i, m in enumerate(pairs)]
             head = "Give " + prose.join(moves) + " instead"
         else:
-            head = "Give every paragraph, run and table in the old styles to be named their new styles instead"
+            head = "Give everything in the old styles the new styles instead"
         scope = select.get("scope")
         kinds = [scope] if isinstance(scope, str) else list(scope or [])
         if not kinds or set(kinds) >= set(SCOPE_KINDS):

@@ -494,7 +494,7 @@ class AddWatermark(Op):
             drawn.append(f"in the {prose.quote(font.strip())} font")
         color = params.get("color")
         if isinstance(color, str) and color.strip().lstrip("#").upper() != DEFAULTS["color"]:
-            drawn.append(f"coloured {prose.quote(color.strip().lstrip('#').upper())}")
+            drawn.append(f"coloured {prose.colour(color)}")
         opacity = params.get("opacity")
         if isinstance(opacity, (int, float)) and not isinstance(opacity, bool) and opacity != DEFAULTS["opacity"]:
             drawn.append(f"at {round(opacity * 100):g}% opacity")

@@ -19,7 +19,7 @@ CASES = {
           "margins stay as they are", "no section matches are left unchanged"]),
         # the first page back to the ordinary header and footer, sections chosen by a pattern
         ({"sections": {"containing": {"text_regex": "^PART 1"}}}, {"different_first_page": False},
-         ["ordinary header and footer on the first page", "sections containing “^PART 1”"]),
+         ["ordinary header and footer on the first page", "sections whose text matches the pattern “^PART 1”"]),
     ],
     "set_tab_stops": [
         # a table-of-contents style: a dot-leader right tab at the right margin, nothing else left
@@ -49,13 +49,13 @@ CASES = {
         ({"styles": {"ids": ["Caution"]}},
          {"borders": {side: {"size": 12, "color": "FF0000", "space": 4} for side in ("top", "left", "bottom", "right")},
           "shading": {"fill": "FFF2CC", "pattern": "pct10", "color": "FF0000"}},
-         ["1.5 pt single-line border all around", "4 pt from the text", "coloured “FF0000”", "fill of “FFF2CC”",
+         ["1.5 pt single-line border all around", "4 pt from the text", "coloured red", "fill of pale yellow",
           "10% pattern", "definition of the “Caution” style"]),
         # a double rule above and below plus a grey fill, on paragraphs of one style
         ({"paragraphs": {"style_in": ["Note"]}},
          {"borders": {"top": {"size": 8, "style": "double"}, "bottom": {"size": 8, "style": "double"}},
           "shading": {"fill": "D9D9D9"}},
-         ["1 pt double-line border above and below", "fill of “D9D9D9”", "“Note”"]),
+         ["1 pt double-line border above and below", "fill of light grey", "“Note”"]),
         # everything off inside tables, asked plain
         ({"paragraphs": {"in_table": True}}, {"borders": "none", "shading": "none", "tracked": False},
          ["Remove every border and the shading", "inside tables", "without tracked changes"]),
@@ -64,7 +64,7 @@ CASES = {
         ({}, {"text": "DRAFT"}, ["reading “DRAFT”", "diagonally", "every page", "every header"]),
         ({}, {"text": "NOT FOR CONSTRUCTION", "layout": "horizontal", "font": "Arial", "color": "#ff0000",
               "opacity": 0.3, "size": 72, "replace": True},
-         ["reading “NOT FOR CONSTRUCTION”", "horizontally", "“Arial” font", "coloured “FF0000”", "30% opacity",
+         ["reading “NOT FOR CONSTRUCTION”", "horizontally", "“Arial” font", "coloured red", "30% opacity",
           "72 pt", "replacing any watermark the file already has"]),
         ({}, {"text": "CONFIDENTIAL", "replace": True}, ["“CONFIDENTIAL”", "already has is replaced"]),
     ],

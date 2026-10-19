@@ -7,6 +7,7 @@ words are never paraphrased. ``tests/test_describe.py`` checks every op against 
 """
 from __future__ import annotations
 
+import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 TWIPS_PER_INCH = 1440
@@ -69,6 +70,42 @@ def points_from_eighths(eighths: Any) -> str:
         return points(float(eighths) / 8)
     except (TypeError, ValueError):
         return str(eighths)
+
+
+COLOUR_NAMES = {"000000": "black", "FFFFFF": "white", "FF0000": "red", "00FF00": "green", "0000FF": "blue",
+                "FFFF00": "yellow", "808080": "grey", "C00000": "dark red", "1F3864": "dark blue", "2F5496": "blue",
+                "ED7D31": "orange", "70AD47": "green", "FFC000": "amber", "7030A0": "purple", "D9D9D9": "light grey",
+                "F2F2F2": "very light grey", "FFF2CC": "pale yellow", "auto": "automatic"}
+THEME_COLOURS = {"accent": "accent", "text": "text", "background": "background", "dark": "dark", "light": "light",
+                 "hyperlink": "hyperlink", "followedhyperlink": "followed-hyperlink"}
+LANGUAGE_NAMES = {"en-US": "English (United States)", "en-GB": "English (United Kingdom)", "en-CA": "English (Canada)",
+                  "en-AU": "English (Australia)", "fr-FR": "French (France)", "fr-CA": "French (Canada)",
+                  "es-ES": "Spanish (Spain)", "es-MX": "Spanish (Mexico)", "de-DE": "German (Germany)",
+                  "it-IT": "Italian (Italy)", "pt-BR": "Portuguese (Brazil)", "nl-NL": "Dutch (Netherlands)",
+                  "ja-JP": "Japanese", "zh-CN": "Chinese (Simplified)", "ko-KR": "Korean", "ar-SA": "Arabic (Saudi Arabia)",
+                  "he-IL": "Hebrew", "ru-RU": "Russian", "pl-PL": "Polish", "sv-SE": "Swedish", "nb-NO": "Norwegian",
+                  "da-DK": "Danish", "fi-FI": "Finnish"}
+
+
+def colour(value: Any) -> str:
+    """A colour as a person names it: ``red``, ``dark blue``, ``the theme's accent 2 colour``, ``colour #A1B2C3``."""
+    text = str(value).strip()
+    bare = text.lstrip("#")
+    if bare.lower() == "auto":
+        return "automatic"
+    if re.fullmatch(r"[0-9A-Fa-f]{6}", bare):
+        return COLOUR_NAMES.get(bare.upper(), f"colour #{bare.upper()}")
+    match = re.fullmatch(r"([A-Za-z]+?)(\d)?", bare)
+    if match and match.group(1).lower() in THEME_COLOURS:
+        name = THEME_COLOURS[match.group(1).lower()]
+        return f"the theme's {name}{' ' + match.group(2) if match.group(2) else ''} colour"
+    return quote(text)
+
+
+def language(code: Any) -> str:
+    """A proofing language as Word lists it: ``English (United States)``; an unknown code is quoted as given."""
+    text = str(code).strip()
+    return LANGUAGE_NAMES.get(text, LANGUAGE_NAMES.get(text.replace("_", "-"), quote(text)))
 
 
 def style(style_id: Any) -> str:
@@ -156,7 +193,7 @@ def _run_words(pred: Any) -> str:
     if pred.get("font_in"):
         clauses.append("in the " + join(quote(f) for f in pred["font_in"]) + (" fonts" if len(pred["font_in"]) > 1 else " font"))
     if pred.get("color_in"):
-        clauses.append("coloured " + join(quote(c) for c in pred["color_in"]))
+        clauses.append("coloured " + join((colour(c) for c in pred["color_in"]), "or"))
     if pred.get("not_in_revisions") is True:
         clauses.append("outside tracked changes")
     return ("text " + " ".join(clauses)) if clauses else ""
@@ -172,7 +209,7 @@ def _section_words(sections: Any) -> str:
         if sections.get("containing"):
             inner = sections["containing"]
             pattern = inner.get("text_regex") if isinstance(inner, dict) else inner
-            return "the sections containing " + quote(pattern)
+            return "the sections whose text matches the pattern " + quote(pattern)
         if sections.get("with_tables"):
             return "the sections that contain tables"
         if sections.get("index_range"):
@@ -190,9 +227,9 @@ def _table_words(tables: Any) -> str:
     if tables.get("style_in"):
         clauses.append("in " + styles(tables["style_in"]))
     if tables.get("first_row_regex"):
-        clauses.append("whose first row matches " + quote(tables["first_row_regex"]))
+        clauses.append("whose first row matches the pattern " + quote(tables["first_row_regex"]))
     if tables.get("text_regex"):
-        clauses.append("whose text matches " + quote(tables["text_regex"]))
+        clauses.append("whose text matches the pattern " + quote(tables["text_regex"]))
     if tables.get("index_range"):
         a, b = tables["index_range"]
         clauses.append(f"numbered {a + 1} through {b}" if b - a > 1 else f"number {a + 1}")

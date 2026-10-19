@@ -25,8 +25,8 @@ CASES = {
     "map_styles": [
         # the architect's styles become the office's, everywhere, plain by default
         ({}, {"map": [{"from": "Arch Body", "to": "PR1"}, {"from": "Arch Heading 1", "to": "ART"}]},
-         ["Give every paragraph, run and table in the “Arch Body” style the “PR1” style",
-          "those in the “Arch Heading 1” style the “ART” style instead", "everywhere in the document",
+         ["Give everything in the “Arch Body” style the “PR1” style",
+          "everything in the “Arch Heading 1” style the “ART” style instead", "everywhere in the document",
           "The old style definitions stay in the file"]),
         # the template's definitions replace the file's, tracked, missing styles refused, body only
         ({"scope": ["document"]},

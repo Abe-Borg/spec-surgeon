@@ -40,14 +40,14 @@ CASES = {
     ],
     "set_language": [
         ({}, {"language": "en-US"},
-         ["Set the proofing language of all text to “en-US”", "every style, run and paragraph mark that names a language",
-          "document default", "nothing is shown as a tracked change"]),
+         ["Set the proofing language of all text to English (United States)", "every style and every piece of text that names a language",
+          "document's default", "nothing is shown as a tracked change"]),
         # all three scripts, only replacing the languages listed
         ({}, {"language": "en-GB", "east_asian": "ja-JP", "complex_script": "ar-SA", "replace_only": ["en-US", "en-AU"],
               "tracked": False},
-         ["“en-GB” for Latin text", "“ja-JP” for East Asian text", "“ar-SA” for complex-script text",
-          "only where it is now “en-US” or “en-AU”, leaving text in any other language as it is"]),
-        ({}, {"east_asian": "zh-CN"}, ["proofing language of East Asian text to “zh-CN”"]),
+         ["English (United Kingdom) for Latin text", "Japanese for East Asian text", "Arabic (Saudi Arabia) for complex-script text",
+          "only where it is now English (United States) or English (Australia), leaving text in any other language as it is"]),
+        ({}, {"east_asian": "zh-CN"}, ["proofing language of East Asian text to Chinese (Simplified)"]),
     ],
     "add_review_comments": [
         ({"paragraphs": {"text_regex": "^2\\.3\\s"}},
