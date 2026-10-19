@@ -347,8 +347,8 @@ class Conversation:
         return self._advance()
 
     def take_app_choice(self, choice_id: str) -> Choice:
-        """A choice the app carries out itself (the custom transform): recorded in the transcript and told to Claude
-        with the next message; no request is made now. A library choice goes through ``take_library_choice``."""
+        """A choice the app carries out itself (the custom transform, a recovery plan or target): recorded in the
+        transcript and told to Claude with the next message; no request is made now."""
         chosen = self.choice(choice_id)
         if chosen.kind not in APP_CHOICE_KINDS:
             raise ValueError("that choice is answered by Claude — send it as a reply")

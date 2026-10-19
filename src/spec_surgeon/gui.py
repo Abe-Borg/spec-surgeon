@@ -190,9 +190,15 @@ class Session:
     def files(self, outcome: bool = True) -> List[Path]:
         """The attached documents without the templates, in the order the user attached them. ``outcome=False``: the
         batch as it reads once the current outcome is void (what a new conversation starts over), so its files never
-        depend on the spec it replaces."""
+        depend on the spec it replaces.
+
+        A copy of the user's own attached template among the documents is refused: they attached the same file twice,
+        once to edit and once to copy from, and only they can say which they meant. A document the current spec reads
+        as its template is filtered, not refused — it is the spec's choice, nothing the user did, and ``compile`` and
+        ``conversation_matches`` compare like with like through this same filter."""
         from .editspec import is_template_file
-        templates = self._templates(outcome)
+        own = [self.template.resolve()] if self.template else []
+        spec_reads = [t for t in self._templates(outcome) if t not in own]
         files: List[Path] = []
         for value in self.documents:
             path = Path(value).resolve()
@@ -200,11 +206,14 @@ class Session:
                 raise ValueError(f"Attach a Word .docx document: {path.name}")
             if not path.is_file():
                 raise ValueError(f"An attached document is missing: {path}")
-            if path not in files:
-                if is_template_file(path, templates):
-                    raise ValueError(f"{path.name} is also a copy of the reference template. "
-                                     "Remove it from the documents to edit, or choose a different template.")
-                files.append(path)
+            if path in files:
+                continue
+            if own and is_template_file(path, own):
+                raise ValueError(f"{path.name} is also a copy of the reference template. "
+                                 "Remove it from the documents to edit, or choose a different template.")
+            if spec_reads and is_template_file(path, spec_reads):
+                continue
+            files.append(path)
         if not files:
             raise ValueError("Add the Word documents you want to edit.")
         return files
