@@ -1038,7 +1038,16 @@ class Session:
                 raise ValueError("Recovery exports edited copies only; original files cannot be overwritten.")
             from .recovery import deliver_recovery
             result = self.recovery
-            destination = deliver_recovery(result, acknowledge_review=True)
+            delivery = {}
+            if self.simple_conversation:
+                # Each partial export is a new set of copies. Earlier deliveries stay intact,
+                # including when the investigation was reopened from its saved checkpoint.
+                destination, sequence = result.out_dir / "outputs", 2
+                while destination.exists():
+                    destination = result.out_dir / f"outputs-{sequence}"
+                    sequence += 1
+                delivery["out_dir"] = destination
+            destination = deliver_recovery(result, acknowledge_review=True, **delivery)
             self.last_recovery = result
             self.last_run_dir = result.out_dir
             self.last_batch, self.last_chain, self.last_trials = None, None, None

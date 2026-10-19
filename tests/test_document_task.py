@@ -417,3 +417,131 @@ def test_only_attached_files_are_inspected_not_neighboring_project_data(tmp_path
     choices = next(t for t in tools if t["name"] == "ask_user")["input_schema"]["properties"]["choices"]["items"]
     assert "recipe" not in choices["properties"]["kind"]["enum"]
     assert "YOUR LIBRARY" not in task.session.client.requests[0]["system"]
+
+
+@pytest.mark.parametrize("change_source", [False, True])
+def test_more_budget_continues_pending_custom_preparation(tmp_path, change_source):
+    from test_codegen import GOOD_OP
+    from spec_surgeon.gui import TransformFailed
+    request = "Set the header distance to 900 twips."
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": {"request": request, "summary": "Move header",
+        "unsupported": "Use a custom method", "proposal": request},
+        "custom_transform": "possible", "custom_transform_reason": "Formatting only"})),
+        resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    task = task_for(tmp_path, fake)
+    source = document(tmp_path / "Spec.docx")
+    task.attach([source])
+    task._budget.max_calls = 1
+    with pytest.raises(TransformFailed):
+        task.perform("send", text=request)
+    assert task.stage == "budget" and task.session.pending_custom_transform
+    conversation = task.session.conversation
+    if change_source:
+        source.write_bytes(source.read_bytes() + b"changed")
+        with pytest.raises(ValueError, match="original files changed"):
+            task.perform("primary", token=task.action_token())
+        assert len(fake.requests) == 1 and not task.results
+        return
+    view = task.perform("primary", token=task.action_token())
+    assert view["stage"] == "preview" and not task.results
+    assert task.session.conversation is conversation
+    assert task.session.generated.passed and task.session.pending_custom_transform is None
+    assert len(fake.requests) == task._budget.calls == 2
+    task.perform("primary", token=view["token"])
+    assert Document(task.results[str(source)]).sections[0].header_distance.twips == 900
+
+
+@pytest.mark.parametrize("reopen", [False, True])
+def test_more_budget_resumes_unadopted_recovery_checkpoint(tmp_path, reopen, monkeypatch):
+    from spec_surgeon import llm, recovery
+    from test_recovery import candidate, margin, opts, spec, submit
+    source = document(tmp_path / "Spec.docx")
+    goal = spec([margin(), margin("right", 2880)])
+    chain = {"kind": "chain", "chain": {"stages": [{"spec": spec([op])} for op in goal["ops"]]}}
+    fake = FakeClient(submit(candidate(goal)), submit(chain))
+    task = task_for(tmp_path, fake, journal=tmp_path / "journal.json")
+    task.attach([source])
+    task.decisions = task.word_sources = [goal["request"]]
+    task._budget.max_calls = 1
+    # Model execution pauses after a failed candidate has been recorded. The coordinator
+    # has the checkpoint path, as it does when interrupted before adopting the result.
+    checkpoint = tmp_path / "recovery"
+    task.session.recovery_checkpoint = checkpoint
+    with llm.budget_scope(task._budget):
+        paused = recovery.recover([source], goal["request"], checkpoint, spec=goal,
+            options=opts(critic_review=False, visual_review=False, include_nearby_inputs=False), client=fake)
+    assert paused.paused_reason and len(paused.attempts) == 1
+    task.stage = "budget"
+    task.save()
+    old_cost = task._budget.estimated_cost_usd
+    if reopen:
+        task = task_for(tmp_path, fake, journal=task.journal)
+        task.restore()
+    monkeypatch.setattr(task, "_recovery_options", lambda:
+                        opts(critic_review=False, visual_review=False, include_nearby_inputs=False))
+    view = task.perform("primary", token=task.action_token())
+    assert view["stage"] == "ready" and not task.results
+    assert task.session.recovery.out_dir == checkpoint
+    assert len(task.session.recovery.attempts) == 2
+    assert len(fake.requests) == task._budget.calls == 2
+    assert task._budget.estimated_cost_usd >= old_cost
+    assert task.session.recovery.resource_history[0]["calls"] == 1
+    task.perform("primary", token=view["token"])
+    assert Path(task.results[str(source)]).is_file()
+
+
+def test_recovery_resume_refuses_changed_checkpoint_sources(tmp_path):
+    from spec_surgeon import recovery
+    from test_recovery import margin, opts, spec
+    source = document(tmp_path / "Spec.docx")
+    task = task_for(tmp_path, FakeClient())
+    task.attach([source])
+    goal = spec([margin()])
+    ready = recovery.prepare_recovery([source], goal["request"], tmp_path / "recovery", spec=goal, options=opts())
+    task.session.recovery_checkpoint = ready.out_dir
+    task.stage = "budget"
+    source.write_bytes(source.read_bytes() + b"changed")
+    with pytest.raises(ValueError, match="changed"):
+        task.perform("primary", token=task.action_token())
+    assert not task.session.client.requests and not task.results
+
+
+@pytest.mark.parametrize("reopen", [False, True])
+def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, monkeypatch):
+    from spec_surgeon import recovery
+    from test_recovery import candidate, margin, opts, spec, submit
+    from test_recovery_resume import distinct_failures
+    paths = [document(tmp_path / name) for name in ("First.docx", "Second.docx")]
+    original = [p.read_bytes() for p in paths]
+    goal = spec([margin()])
+    fake = FakeClient(submit(candidate(goal)),
+                      resp(tool("need_user", {"question": "Use these margins on the second document?"})),
+                      submit(candidate(goal)))
+    task = task_for(tmp_path, fake, journal=tmp_path / "journal.json")
+    task.attach(paths)
+    task.decisions = task.word_sources = [goal["request"]]
+    result = recovery.recover(paths, goal["request"], tmp_path / "recovery", spec=goal,
+                              options=opts(include_nearby_inputs=False),
+                              prior_failures=distinct_failures(paths), client=fake)
+    assert len(result.ready) == 1 and result.questions
+    task.session._adopt_recovery(result)
+    task._settle(lambda _: None, preview=False)
+    task.perform("primary", token=task.action_token())
+    first_output = Path(task.results[str(paths[0])])
+    first_bytes = first_output.read_bytes()
+    assert task.stage == "question" and len(task.results) == 1
+    if reopen:
+        task = task_for(tmp_path, fake, journal=task.journal)
+        task.restore()
+        task.perform("primary", token=task.action_token())
+    monkeypatch.setattr(task, "_recovery_options", lambda:
+                        opts(critic_review=False, visual_review=False, include_nearby_inputs=False))
+    view = task.perform("send", text="Yes, use those margins on the second document.")
+    assert view["stage"] == "ready" and len(task.results) == 1
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and len(task.results) == 2
+    assert first_output.read_bytes() == first_bytes
+    assert Path(task.results[str(paths[1])]).parent != first_output.parent
+    assert all(Path(output).is_file() for output in task.results.values())
+    assert [p.read_bytes() for p in paths] == original
+    assert len(fake.requests) == 3

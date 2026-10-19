@@ -195,7 +195,8 @@ class DocumentTask:
             self.save(in_progress=True)
             if self.session.conversation is not None and self.session.conversation_matches(self.session.conversation.request):
                 self.session.reply(text, render=self.render, log=log)
-            elif self.session.recovery is not None and self.stage == "question":
+            elif (self.session.recovery is not None
+                  and any(f.status != "READY" for f in self.session.recovery.files)):
                 self.session.resolve_remaining(log, request=text, options=self._recovery_options())
             else:
                 self._compile(log)
@@ -288,9 +289,19 @@ class DocumentTask:
             self._primary(self.action_token(), log)
             return
         if self.stage == "resume":
-            if self._resume_recovery and (Path(self._resume_recovery) / "recovery.json").is_file():
-                s.load_recovery(self._resume_recovery)
+            if s.pending_custom_transform is not None:
+                s.continue_custom_transform(log, self.render)
+                self._settle(log, preview=False)
+                return
+            checkpoint = self._resume_recovery or s.recovery_checkpoint
+            if checkpoint:
+                # Loading validates saved evidence and source pins. Never discard a pending
+                # checkpoint (including a missing/changed one) by recompiling the request.
+                s.load_recovery(checkpoint)
                 self._resume_recovery = None
+                groups = s.recovery.session_state.get("groups", {}).values()
+                if any(group.get("status") in {"active", "paused"} for group in groups):
+                    s.resolve_remaining(log, options=self._recovery_options())
                 self._settle(log, preview=False)
                 return
             self._resume_recovery = None
