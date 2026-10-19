@@ -99,8 +99,13 @@ spec-surgeon run-spec examples\specs\change-all-font-arial.json "C:\Projects\AVC
 spec-surgeon run-spec examples\specs\remove-all-headers-footers.json "C:\Specs\21*.docx" --in-place --no-render
 spec-surgeon do "change all fonts to Arial" "C:\Projects\AVC11\Specs" --out C:\Temp\ss-run   # compile, preview, y/N, run
 spec-surgeon chain --stage match-font.json --stage "recipe:Architect header" "C:\Specs" --out C:\Temp\ss-chain
-spec-surgeon library list | show NAME | use NAME FILES... | delete NAME
-spec-surgeon workflows list | show NAME | use NAME FILES...
+spec-surgeon library list                                    # your recipes, chains, operations and snippets
+spec-surgeon library show NAME
+spec-surgeon library use NAME "C:\Specs" --out C:\Temp\ss-recipe
+spec-surgeon library delete NAME
+spec-surgeon workflows list                                  # built-in workflows, no API key needed
+spec-surgeon workflows show NAME
+spec-surgeon workflows use NAME "C:\Specs" --inputs @inputs.json --out C:\Temp\ss-workflow
 spec-surgeon verify SOURCE.docx OUTPUT.docx --plan plan.json   # re-run the suite on any pair
 spec-surgeon diagnose OUT_DIR [--file NAME]                   # why a file did not pass
 spec-surgeon advise OUT_DIR                                   # Claude's recommendation per exception
