@@ -8,7 +8,9 @@ import pytest
 from fake_claude import FakeClient, resp, tool
 from make_fixtures import build
 from spec_surgeon.compiler import _Batch
-from spec_surgeon.contexts import ContextLimit, checkpoint_history, estimate_context_tokens, manage_context
+from spec_surgeon.contexts import (ContextLimit, checkpoint_history, estimate_context_tokens, manage_context,
+                                  load_context_manifest)
+from spec_surgeon.storage import artifact_path
 from spec_surgeon.conversation import Conversation, check_pairing
 from test_conversation import REMOVE
 
@@ -31,7 +33,7 @@ def test_rollover_preserves_signed_history_and_opens_a_paired_new_epoch(tmp_path
     assert messages == original and fresh is not messages
     check_pairing(fresh)
     assert len(fresh) == 1 and state["epoch"] == 1
-    archived = json.loads((tmp_path / "context" / f"{state['archives'][0]['artifact_id']}.json").read_text())
+    archived = load_context_manifest(artifact_path(tmp_path / "context", state["archives"][0]["artifact_id"]))
     thought = archived["messages"][1]["content"][0]
     assert thought["signature"] == "original-signature"
     assert thought["thinking"] == "signed original thought" * 2000
@@ -107,8 +109,8 @@ def test_tool_schema_upgrade_starts_a_separate_epoch(tmp_path):
     fresh = start_epoch(old, system="old", tools=[{"name": "old_tool"}], folder=tmp_path,
                         state=state, authority={"request": "request"},
                         next_system="new", next_tools=[{"name": "analyzer"}])
-    sealed = json.loads((tmp_path / "context" / f"{state['archives'][0]['artifact_id']}.json").read_text())
-    active = json.loads((tmp_path / "context" / "active-1.json").read_text())
+    sealed = load_context_manifest(artifact_path(tmp_path / "context", state["archives"][0]["artifact_id"]))
+    active = load_context_manifest(tmp_path / "context" / "active-1.json")
     assert sealed["system"] == "old" and sealed["tools"] == [{"name": "old_tool"}]
     assert active["system"] == "new" and active["tools"] == [{"name": "analyzer"}]
     assert old == [{"role": "user", "content": "request"}]
@@ -147,6 +149,59 @@ def test_default_keeps_substantial_investigation_evidence_in_active_context(tmp_
     assert state["epoch"] == 0 and state["archives"] == []
     active = json.loads((tmp_path / "context" / "active-0.json").read_text(encoding="utf-8"))
     assert active["messages"] == messages
+
+
+def test_conversations_share_catalog_by_digest_without_rewriting_signed_history(tmp_path):
+    catalog = "Operation catalog " * 50000
+    tools = [{"name": "analyze", "schema": {"description": "Read only"}}]
+    states = [{}, {}]
+    for index, state in enumerate(states):
+        checkpoint_history(history(), system=catalog, tools=tools, folder=tmp_path / f"conversation{index}",
+                           state=state, authority={})
+    assert len(list((tmp_path / "context-catalog").glob("*.json"))) == 1
+    for index in range(2):
+        active = tmp_path / f"conversation{index}" / "context" / "active-0.json"
+        raw = json.loads(active.read_bytes())
+        assert "system" not in raw and "tools" not in raw and len(active.read_bytes()) < 100000
+        restored = load_context_manifest(active)
+        assert restored["system"] == catalog and restored["tools"] == tools
+        assert restored["messages"][1]["content"][0]["signature"] == "original-signature"
+
+
+def test_legacy_inline_checkpoint_and_full_length_archive_still_read(tmp_path):
+    from spec_surgeon.storage import canonical_json
+    manifest = {"version": 1, "epoch": 0, "system": "original", "tools": [],
+                "messages": [{"role": "user", "content": "request"}], "authority": {}, "source_pins": []}
+    context = tmp_path / "context"
+    context.mkdir()
+    (context / "active-0.json").write_bytes(canonical_json(manifest))
+    state = {}
+    checkpoint_history(manifest["messages"], system="original", tools=[], folder=tmp_path, state=state, authority={})
+    with pytest.raises(ContextLimit, match="history changed"):
+        checkpoint_history(manifest["messages"], system="modified", tools=[], folder=tmp_path, state=state, authority={})
+    content = canonical_json(manifest)
+    identity = hashlib.sha256(content).hexdigest()
+    (context / f"{identity}.json").write_bytes(content)
+    batch = SimpleNamespace(context_dir=tmp_path, context_state={"archives": [{"artifact_id": identity}]},
+                            files={}, inputs=[], template=None)
+    from spec_surgeon.contexts import read_context_archive
+    assert json.loads(read_context_archive(batch, identity)["archive_json"]) == manifest
+
+
+def test_catalog_evidence_is_paged_and_checked_against_its_digest(tmp_path):
+    state = {}
+    checkpoint_history([], system="catalog", tools=[], folder=tmp_path, state=state, authority={})
+    identity = next(iter(state["catalogs"]))
+    batch = SimpleNamespace(context_dir=tmp_path, context_state=state, files={}, inputs=[], template=None)
+    from spec_surgeon.contexts import read_context_archive
+    result = read_context_archive(batch, identity)
+    assert json.loads(result["archive_json"]) == {"system": "catalog", "tools": []}
+    path = artifact_path(state["catalogs"][identity]["folder"], identity)
+    value = json.loads(path.read_bytes())
+    value["payload"]["system"] = "changed"
+    path.write_text(json.dumps(value))
+    with pytest.raises(ValueError, match="changed"):
+        read_context_archive(batch, identity)
 
 
 def test_the_default_allowance_leaves_a_conversation_room_for_two_page_images(tmp_path, monkeypatch):

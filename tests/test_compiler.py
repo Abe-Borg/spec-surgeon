@@ -52,12 +52,11 @@ def outcome_cli_flags(path, request, sources, *, header=False, contract=None, te
 
 
 def generate_reviewed_custom(session, *, choice_id=None, log=lambda _: None, render=False):
-    """Choose the custom method, review the separate proposal, then authorize generation."""
+    """Choosing a custom method prepares it immediately; its preview is the consent decision."""
     choice_id = choice_id or session.turn.choices[0].id
-    session.reply(choice_id=choice_id, log=log, render=render)
-    assert session.generated is None and session.pending_custom_transform is not None
-    session.approve_outcomes(session.outcome_review["digest"])
-    return session.continue_custom_transform(log, render=render)
+    message = session.reply(choice_id=choice_id, log=log, render=render)
+    assert session.generated is not None and session.pending_custom_transform is None
+    return message
 
 
 @pytest.fixture
@@ -222,24 +221,23 @@ def test_preview_renders_side_by_side_images(folder, tmp_path):
 
 def test_do_end_to_end_with_approval(folder, tmp_path, monkeypatch, capsys):
     script = lambda: FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})))
-    clients = iter([script(), FakeClient(remove_outcome_proposal()), script()])
+    clients = iter([script(), script()])
     monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
     out = tmp_path / "out"
-    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--no-render"]) == 2
+    monkeypatch.setattr("spec_surgeon.cli._interactive", lambda: False)
+    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--no-render"]) == 0
     printed = capsys.readouterr().out
     assert "PREVIEW" in printed and "Not run." in printed and not (out / "run").exists()
     token = printed.split("approval token: ")[1].split()[0]
     spec_path = out / "preview" / "spec.json"
-    review_path = out / "outcome-review.json"
-    review = json.loads(review_path.read_text(encoding="utf-8"))
-    approved = ["--outcome-review", str(review_path), "--outcome-approval", review["digest"]]
+    assert not (out / "outcome-review.json").exists()
     assert cli_main(["run-spec", str(spec_path), str(folder), "--out", str(tmp_path / "r1"), "--no-render",
-                     "--approval", "0" * 16, *approved]) == 2                       # wrong recipe token: refused
+                     "--approval", "0" * 16]) == 2                       # wrong recipe token: refused
     assert cli_main(["run-spec", str(spec_path), str(folder), "--out", str(tmp_path / "r2"), "--no-render",
-                     "--approval", token, *approved]) == 0
+                     "--approval", token]) == 0
     capsys.readouterr()
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(tmp_path / "o2"), "--no-render",
-                     "--yes", *approved]) == 0
+                     "--yes"]) == 0
     assert "PASS 3" in capsys.readouterr().out
     monkeypatch.setattr(compiler_module, "_client",
                         lambda: FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]}))))
@@ -257,10 +255,10 @@ def test_do_talks_it_through_at_the_terminal(folder, tmp_path, monkeypatch, caps
                                                           "wording": "ISSUED FOR PERMIT"}]})),
                       resp(tool("ask_user", {"questions": ["And the cover?"]}, "a2")),
                       resp(tool("submit_editspec", {"spec": REMOVE}, "s3")))
-    clients = iter([fake, FakeClient(remove_outcome_proposal())])
+    clients = iter([fake])
     monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    answers = iter(["#2", "n", "#1", "yes, the cover too", "y", "n"])
+    answers = iter(["#2", "n", "#1", "yes, the cover too", "n"])
     monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
     out_dir = tmp_path / "o"
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out_dir), "--no-render"]) == 0

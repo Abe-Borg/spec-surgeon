@@ -27,7 +27,7 @@ def failed_run(tmp_path, *, chain=False, in_place=False):
         {"id": "margin", "type": "page_setup", "margins": {"left": 2880}}]}
     bindings = {str(source): resolve_goal(source, contract)["binding"]}
     out = tmp_path / "run"
-    kwargs = dict(workers=1, do_render=False, in_place=in_place, goal_contract=contract, goal_bindings=bindings)
+    kwargs = dict(enforce_goals=True, workers=1, do_render=False, in_place=in_place, goal_contract=contract, goal_bindings=bindings)
     if chain:
         result = run_chain([str(source)], chain_from_specs([("wrong margin", margin(1440))]), out, **kwargs)
     else:
@@ -149,3 +149,36 @@ def test_recovery_export_rechecks_originals_after_final_outcome_proof(tmp_path, 
         recovery.deliver_recovery(recovered, destination)
     assert not destination.exists()
     assert Document(source).paragraphs[-1].text == "A new user save during verification."
+
+
+def test_recovery_does_not_revive_advisory_metadata_as_delivery_authority(tmp_path, monkeypatch):
+    source = tmp_path / "source.docx"
+    document = Document()
+    document.add_paragraph("Preserve every word")
+    document.save(source)
+    run = tmp_path / "ordinary-run"
+    run.mkdir()
+    # A stale legacy review may have no usable bindings. New ordinary reports mark it as reference data.
+    saved = {"request": "Set the left margin", "spec": margin(1440), "goal_contract": {"kind": "obsolete"},
+             "goal_bindings": {}, "enforce_goals": False, "files": [{"source": str(source)}]}
+    for filename in ("set_aside.json", "batch.json"):
+        (run / filename).write_text(json.dumps(saved), encoding="utf-8")
+    captured = {}
+    def recover(*args, **kwargs):
+        captured.update(kwargs)
+        return captured
+    monkeypatch.setattr(recovery, "recover", recover)
+    recovery.recover_from_run(run, tmp_path / "recovered")
+    assert "adaptive_contract" not in captured and "adaptive_binding" not in captured
+    assert captured["spec"] == saved["spec"]
+
+
+def test_retry_cannot_downgrade_explicit_enforcement_in_its_manifest(tmp_path):
+    source, result, _, _ = failed_run(tmp_path)
+    path = result.out_dir / "set_aside.json"
+    saved = json.loads(path.read_text(encoding="utf-8"))
+    assert saved["enforce_goals"] is True
+    saved["enforce_goals"] = False
+    path.write_text(json.dumps(saved), encoding="utf-8")
+    with pytest.raises(ValueError, match="enforcement changed"):
+        recovery.recover_from_run(result.out_dir, tmp_path / "retry", client=FakeClient())

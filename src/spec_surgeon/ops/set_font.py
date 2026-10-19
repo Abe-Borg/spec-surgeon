@@ -26,6 +26,7 @@ from ..ooxml import (RevisionStamp, THEME_FONT_ATTR, block_full_text, file_uses_
                      own_size, paragraphs, property_change, run_rpr, set_rfonts, set_size)
 from . import register
 from .base import JobException, Op, PlanFragment
+from .font_numbering import NUMBERING_PARAM, apply_numbering, numbering_enabled, plan_numbering
 from .replace_text import default_author
 from .selectors import (DEFAULT_PRESERVE_FONTS, FONT_PARAM_DOC, StyleSheet, check_paragraph_selector,
                         check_run_selector, font_values, has_direct_font, in_revision, is_symbol_rpr, is_targeted,
@@ -40,12 +41,14 @@ class SetFont(Op):
     name = "set_font"
     mode = "formatting"
     description = ("Set the font (w:rFonts) and/or size (w:sz, by default only where a run already sets one) of selected runs "
-                   "and their paragraph marks; symbol/dingbat runs are left alone. Compose with set_style_font + "
+                   "and their paragraph marks, including used list-label fonts for whole-document selections; "
+                   "symbol/dingbat glyphs are left alone. Compose with set_style_font + "
                    "set_doc_defaults_font for 'change all fonts'.")
     params_schema = {
         "type": "object",
         "properties": {
             **FONT_PARAM_DOC,
+            **NUMBERING_PARAM,
             "skip_sym_runs": {"type": "boolean", "default": True, "description": "leave runs holding a w:sym alone"},
             "in_revisions": {"type": "string", "enum": ["include", "exclude"], "default": "include",
                              "description": "runs inside pending w:ins/w:del: change them too, or leave them"},
@@ -69,7 +72,7 @@ class SetFont(Op):
     verification_profile = {
         "V2": "zero text diffs", "V4": "tracked: +1 w:rPrChange per run/mark changed",
         "V10": "run_fonts: selection re-resolved, count matched, only requested rFonts and w:sz changed, "
-               "theme attrs cleared; residual identical",
+               "theme attrs cleared; numbering_fonts compares the whole numbering member when included; residual identical",
         "V7": "none — a font change reflows the text",
     }
 
@@ -173,7 +176,8 @@ class SetFont(Op):
                                {"parts": sorted(set(theme_blocked))})
 
         frag.property_assertions.append({
-            "kind": "run_fonts", "scope": list(scope) if not isinstance(scope, str) else [scope], "parts": parts,
+            "kind": "run_fonts", "font_params": dict(params),
+            "scope": list(scope) if not isinstance(scope, str) else [scope], "parts": parts,
             "select": {"runs": runs_pred, "paragraphs": para_pred}, "preserve_fonts": preserve,
             "skip_sym_runs": skip_sym, "in_revisions": in_revs, "set": values, "clear_theme": clear,
             "include_paragraph_marks": marks_too, "tracked": tracked, "author": author,
@@ -182,12 +186,14 @@ class SetFont(Op):
         n = n_runs + n_marks
         frag.transform_data = {"targets": targets, "values": values, "clear_theme": clear, "tracked": tracked,
                                "author": author, "size": size}
+        plan_numbering(pkg, frag, sheet, values, preserve, clear,
+                       enabled=numbering_enabled(select, params), tracked=tracked)
         if tracked and n:
             frag.rev_delta["rPrChange"] = n
             frag.rev_ids_needed = n
             frag.rev_id_base = max_revision_id(pkg) + 1
             frag.transform_data["use_date_utc"] = file_uses_date_utc(pkg)
-        if n:
+        if n or frag.transform_data.get("numbering_fonts", {}).get("targets"):
             frag.geometry_reference, frag.geometry_reason = "none", FONT_REFLOW
         what = [str(values) + (" where a run sets its own font" if only else "")] if values else []
         if size:
@@ -230,3 +236,4 @@ class SetFont(Op):
                 if chg is not None:
                     rpr.append(chg)
             pkg.write_xml(part, root)
+        apply_numbering(pkg, frag)

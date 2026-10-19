@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, List, Optional, Tuple
 
-PREVIEW_COLUMNS = ["File", "Pattern", "Status", "What changes"]
+PREVIEW_COLUMNS = ["File", "Pattern", "Status", "What changes", "Pages before", "Pages after"]
 RESULT_COLUMNS = ["File", "Result", "Details", "Output"]
 
 
@@ -27,6 +27,7 @@ class Row:
 
 def preview_rows(preview: Any) -> List[Row]:
     rows = []
+    samples = {str(Path(s.source).resolve()): s for s in preview.samples}
     for f in preview.batch_plan.files:
         name = Path(f.source).name
         pattern = (f.pattern_id or "?")[:8]
@@ -41,6 +42,15 @@ def preview_rows(preview: Any) -> List[Row]:
             first = f.summary[0].strip() if f.summary else "planned"
             rows.append(Row([name, pattern, "Planned", first], "planned",
                             tooltip="\n".join(s.strip() for s in f.summary), open_path=Path(f.source)))
+        sample = samples.get(str(Path(f.source).resolve()))
+        before = getattr(sample, "pages_before", None)
+        after = getattr(sample, "pages_after", None)
+        rows[-1].cells.extend([str(before) if before is not None else "—",
+                               str(after) if after is not None else "—"])
+        if before is not None and after != before:
+            rows[-1].tooltip += f"\nPage count changed: {before} → {after}; inspect the rendered reflow."
+        elif before is None:
+            rows[-1].tooltip += "\nPage counts: Not rendered for this file."
     return rows
 
 
@@ -60,7 +70,7 @@ def recovery_rows(result: Any, *, preview: bool = False) -> List[Row]:
         if f.case_id:
             detail += f"\nRepair memory case: {f.case_id}"
         output = getattr(f, "delivered_to", None) or f.output
-        cells = ([Path(f.source).name, "Recovery", status, detail] if preview else
+        cells = ([Path(f.source).name, "Recovery", status, detail, "—", "—"] if preview else
                  [Path(f.source).name, "PASS" if ready else status, detail, str(output or "—")])
         rows.append(Row(cells, "planned" if preview and ready else "pass" if ready else "exception",
                         tooltip=detail, open_path=Path(output) if output else None,

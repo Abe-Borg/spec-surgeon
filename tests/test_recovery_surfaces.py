@@ -1,4 +1,4 @@
-"""Recovery surfaces preserve the investigation/export boundary and explicit visual acknowledgement."""
+"""Recovery surfaces preserve the investigation/export boundary and preview approval with advisory visual findings."""
 from __future__ import annotations
 
 import sys
@@ -52,6 +52,7 @@ def recovery_stub(monkeypatch, tmp_path):
                              resume_recovery=resume_recovery, load_recovery=lambda run: state.result)
     monkeypatch.setitem(sys.modules, "spec_surgeon.recovery", module)
     state.module = module
+    monkeypatch.setattr("spec_surgeon.batch.load_set_aside", lambda _: {"files": [{"source": str(state.result.files[0].source)}]})
     return state
 
 
@@ -66,14 +67,12 @@ def test_cli_investigates_without_export_and_forwards_limits(recovery_stub, tmp_
     assert "Not exported" in capsys.readouterr().out
 
 
-def test_cli_yes_never_acknowledges_a_blocking_review(recovery_stub, tmp_path, capsys):
+def test_cli_preview_approval_exports_with_visual_findings_as_advice(recovery_stub, tmp_path, capsys):
     recovery_stub.result = result(tmp_path, blocking=True)
     assert recovery_stub.result.review.blocking()
-    assert main(["resolve", str(tmp_path), "--yes"]) == 2
-    assert recovery_stub.exports == []
-    assert "--yes does not acknowledge" in capsys.readouterr().err
-    assert main(["resolve", str(tmp_path), "--yes", "--ack-review"]) == 0
+    assert main(["resolve", str(tmp_path), "--yes"]) == 0
     assert recovery_stub.exports[-1][1] == {"acknowledge_review": True}
+    assert "Check the header" in capsys.readouterr().out
 
 
 def test_cli_no_ready_files_never_exports(recovery_stub, tmp_path):
@@ -96,8 +95,7 @@ def test_session_review_then_export_preserves_approval_and_originals(recovery_st
     before = source.read_bytes()
     session.resolve_remaining(lambda _: None)
     assert session.spec is None and session.recovery is recovery_stub.result and not recovery_stub.exports
-    with pytest.raises(ValueError, match="visual check"):
-        session.run(False, False, lambda _: None)
+    assert session.run_blocked_reason() == ""
     with pytest.raises(ValueError, match="not the current"):
         session.acknowledge_review("old-token")
     session.acknowledge_review(session.recovery.token)
@@ -193,7 +191,8 @@ def qt_env(monkeypatch):
 def test_window_resolves_reviews_and_exports_copies(qt_env, recovery_stub, tmp_path):
     from spec_surgeon.ui.app import RecordingPrompts, build_window
     recovery_stub.result = result(tmp_path, blocking=True)
-    session = Session(folder=tmp_path, out_root=tmp_path / "out", last_run_dir=tmp_path / "previous")
+    session = Session(folder=tmp_path, out_root=tmp_path / "out", last_run_dir=tmp_path / "previous",
+                      pending_recovery_run=tmp_path / "previous", client=object())
     window = build_window(session, prompts=RecordingPrompts())
     qt_env[1].append(window)
     ui = window._spec_surgeon
@@ -206,11 +205,10 @@ def test_window_resolves_reviews_and_exports_copies(qt_env, recovery_stub, tmp_p
     assert window.stack.currentWidget() is window.preview_page
     assert "Recovery:" in window.preview_page.request_lbl.text()
     assert not window.run_page.inplace_rb.isEnabled()
-    assert not ui["buttons"]["run"].isEnabled()
+    assert ui["buttons"]["run"].isEnabled()
     assert recovery_stub.calls[0][2]["options"].max_cost_usd == 1.5
     assert recovery_stub.calls[0][2]["options"].allow_codegen
-    ui["buttons"]["review_ack"].click()
-    assert ui["buttons"]["run"].isEnabled()
+    assert not window.preview_page.review_ack_btn.isVisible()
     ui["buttons"]["run"].click()
     log = ui["wait"]()
     assert "ERROR" not in log, log

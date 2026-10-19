@@ -213,6 +213,8 @@ class SampleView:
     exception: Optional[Dict[str, Any]] = None
     source_pdf: Optional[Path] = None             # the renders (for Claude's visual check)
     output_pdf: Optional[Path] = None
+    pages_before: Optional[int] = None
+    pages_after: Optional[int] = None
     look_pages: List[int] = field(default_factory=list)   # page 1 and the first page whose words moved
     stages: List[Dict[str, Any]] = field(default_factory=list)   # a chain's sample: each stage's verdict, in order
     outcomes: List[Dict[str, Any]] = field(default_factory=list)  # a chain's independent final requirements
@@ -220,7 +222,8 @@ class SampleView:
     def to_dict(self):
         return {"source": str(self.source), "output": str(self.output) if self.output else None, "passed": self.passed,
                 "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception,
-                "look_pages": self.look_pages, **({"stages": self.stages} if self.stages else {}),
+                "look_pages": self.look_pages, "pages_before": self.pages_before, "pages_after": self.pages_after,
+                **({"stages": self.stages} if self.stages else {}),
                 **({"outcomes": self.outcomes} if self.outcomes else {})}
 
     def stages_text(self) -> str:
@@ -256,6 +259,11 @@ class Preview:
         out = [f"PREVIEW — {spec.get('request')!r}", f"summary: {spec.get('summary')}"]
         out += [f"assumption: {a}" for a in spec.get("assumptions", [])]
         out += [f"WARNING: {w}" for w in self.warnings]
+        for binding in spec.get("bindings", []):
+            out.append(f"FILLS — {Path(binding['file']).name}:")
+            for name, evidence in binding["slots"].items():
+                out.append(f"   {name}: {evidence['value']!r} ({evidence['part']}, "
+                           f"paragraph {evidence['paragraph'] + 1})")
         out.append("")
         out.append(self.batch_plan.to_text(per_file=False))
         out.append("\nSAMPLES (applied and verified in memory; sources untouched):")
@@ -267,12 +275,14 @@ class Preview:
                 continue
             failed = [k for k, v in s.checks.items() if v == "FAIL"]
             out.append(f"   {lab}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
+                       + (f"; pages: {s.pages_before} → {s.pages_after}" if s.pages_before is not None else "")
                        + (f"; images: {[i.name for i in s.images]}" if s.images else ""))
         if self.review is not None:
             out.append("")
             out.append(self.review.to_text())
-        out.append(f"\napproval token: {self.token}")
-        return "\n".join(out)
+        from .readable import REPORT_BYTES, bounded
+        return (bounded("\n".join(out), REPORT_BYTES - 200, "preview.json")
+                + f"\napproval token: {self.token}")
 
     def to_dict(self):
         return {"token": self.token, "renderer": self.renderer, "warnings": self.warnings,
@@ -397,6 +407,12 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
         s.source_pdf, s.output_pdf = Path(sp), Path(op)
         s.look_pages = [1]                     # page 1 at least, even when the comparison below cannot run
         try:
+            from .verify.geometry import fitz
+            with fitz.open(str(sp)) as before, fitz.open(str(op)) as after:
+                s.pages_before, s.pages_after = before.page_count, after.page_count
+            if s.pages_after != s.pages_before:
+                warn(f"{labels[str(Path(s.source))]}: pages {s.pages_before} → {s.pages_after} "
+                     "in the preview render; inspect the reflow before approving")
             g = geom.compare_pdfs(sp, op)
             moved = [p.page for p in g.pages if p.max_dy > 0.5 or p.words_only_in_out or p.words_only_in_ref]
             s.look_pages = sorted({1} | set(moved[:1]))
@@ -434,10 +450,12 @@ class GeneratedPreview:
         for s in self.samples:
             failed = [k for k, v in s.checks.items() if v == "FAIL"]
             out.append(f"   {labels[str(Path(s.source))]}: verification {'PASS' if s.passed else 'FAIL ' + str(failed)}"
+                       + (f"; pages: {s.pages_before} → {s.pages_after}" if s.pages_before is not None else "")
                        + (f"; images: {[i.name for i in s.images]}" if s.images else ""))
         if self.review is not None:
             out += ["", self.review.to_text()]
-        return "\n".join(out)
+        from .readable import REPORT_BYTES, bounded
+        return bounded("\n".join(out), REPORT_BYTES - 200, "preview.json")
 
     def to_dict(self):
         return {"name": self.name, "renderer": self.renderer, "warnings": self.warnings,
@@ -494,7 +512,8 @@ def write_preview_files(pv: Any) -> None:
     """PREVIEW.md and preview.json beside the samples (rewritten when Claude's visual check arrives — preview.json keeps
     the approval inputs, so a refused run can still say what changed)."""
     with diag.span("preview.records", out_dir=str(pv.out_dir)):
-        (pv.out_dir / "PREVIEW.md").write_text("```\n" + pv.to_text() + "\n```\n", encoding="utf-8")
+        from .readable import write_report
+        write_report(pv.out_dir / "PREVIEW.md", "```\n" + pv.to_text() + "\n```\n", "preview.json")
         (pv.out_dir / "preview.json").write_text(json.dumps(pv.to_dict(), indent=2, ensure_ascii=False, default=str),
                                                  encoding="utf-8")
 
@@ -649,14 +668,16 @@ class ChainPreview(Preview):
                 continue
             failed = [k for k, v in sv.checks.items() if v == "FAIL"]
             out.append(f"   {lab}: {sv.stages_text()} → verification {'PASS' if sv.passed else 'FAIL ' + str(failed)}"
+                       + (f"; pages: {sv.pages_before} → {sv.pages_after}" if sv.pages_before is not None else "")
                        + (f"; images: {[i.name for i in sv.images]}" if sv.images else ""))
             out += [f"     final requirement {entry['index']} {entry['status']}: {entry['summary']}"
                     for entry in sv.outcomes]
         if self.review is not None:
             out.append("")
             out.append(self.review.to_text())
-        out.append(f"\napproval token: {self.token}")
-        return "\n".join(out)
+        from .readable import REPORT_BYTES, bounded
+        return (bounded("\n".join(out), REPORT_BYTES - 200, "preview.json")
+                + f"\napproval token: {self.token}")
 
     def to_dict(self):
         d = super().to_dict()

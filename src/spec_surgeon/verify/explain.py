@@ -238,9 +238,14 @@ def failure_details(check_id: str, data: Optional[Dict[str, Any]], summary: str 
         lines = [f"(the details could not be read: {type(e).__name__}: {e})"]
     if not lines:
         lines = [summary] if summary else []
-    if len(lines) > limit:
-        lines = lines[:limit] + [f"… and {len(lines) - limit} more (all of them are in the record's JSON)"]
-    return lines
+    from ..readable import grouped_findings
+    result = grouped_findings(lines, limit)
+    saved = (data or {}).get("errors")
+    total = (data or {}).get("error_count")
+    if isinstance(saved, list) and isinstance(total, int) and total > len(saved):
+        result.insert(0, f"{total:,} problems in total; the saved check data samples the first {len(saved):,}. "
+                      "Occurrence counts below refer to that sample.")
+    return result
 
 
 def explain_record(checks: Sequence[Any], rec: Any = None) -> List[tuple]:

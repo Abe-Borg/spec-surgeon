@@ -68,3 +68,23 @@ def test_safety_switches_and_the_key_are_never_settings():
     names = {f.name for f in dataclasses.fields(Settings)}
     assert not names & {"in_place", "codegen", "allow_codegen", "api_key", "key", "anthropic_api_key",
                         "accept_custom_transform", "review_ack", "acknowledge_review", "conversation"}
+
+
+def test_default_runs_use_local_app_data_on_windows(monkeypatch):
+    from pathlib import Path
+    monkeypatch.delenv(st.CONFIG_ENV, raising=False)
+    monkeypatch.setattr(st.sys, "platform", "win32")
+    monkeypatch.setenv("LOCALAPPDATA", "C:/Users/Owner/AppData/Local")
+    assert st.default_run_root() == Path("C:/Users/Owner/AppData/Local/Spec Surgeon/runs")
+
+
+def test_synced_and_deep_output_roots_have_actionable_single_line_warnings(monkeypatch):
+    monkeypatch.setenv("OneDriveCommercial", "D:/Company Documents")
+    for root in ("C:/Users/Owner/OneDrive - Ehvert/Specs", "D:/Company Documents/Jobs", "/home/owner/Dropbox/Specs"):
+        warnings = st.output_root_warnings(root)
+        assert any("synced" in line and "local" in line for line in warnings)
+        assert all("\n" not in line for line in warnings)
+    assert not st.output_root_warnings("C:/runs")
+    assert any("path limit" in line for line in st.output_root_warnings("C:/" + "a" * 150))
+    assert any("path limit" in line for line in st.output_root_warnings("C:/" + "😀" * 80))
+    assert not st.output_root_warnings("C:/Users/Owner/OneDrive-backup")

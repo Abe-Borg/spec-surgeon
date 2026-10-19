@@ -21,6 +21,7 @@ from typing import Optional
 
 from .resources import (DEFAULT_ANALYSIS_INPUT_BYTES, DEFAULT_ANALYSIS_MEMORY_MB, DEFAULT_ANALYSIS_OUTPUT_BYTES,
                         DEFAULT_ANALYSIS_SECONDS, positive_integer)
+from .storage import read_artifact, write_artifact
 
 ANALYSIS_IMPORTS = frozenset(("re", "copy", "math", "itertools", "functools", "json"))
 ANALYSIS_FROM = {"lxml": {"etree"}, "collections": {"Counter", "OrderedDict", "defaultdict"},
@@ -200,8 +201,7 @@ def run_analysis(batch, source: str, files=None, inputs=None):
                 "authority": "Generated diagnostic evidence only; never approved wording or editing permission."}
     content = _json(manifest)
     identity = _sha(content)
-    path = root / f"{identity}.json"
-    path.write_bytes(content)
+    write_artifact(root, identity, content)
     return read_analysis_result(batch, identity)
 
 
@@ -210,9 +210,10 @@ def read_analysis_result(batch, artifact_id: str, offset: int = 0, chars: int = 
         raise ValueError("artifact_id must be a returned evidence identifier")
     if type(offset) is not int or offset < 0 or type(chars) is not int or not 1 <= chars <= 32000:
         raise ValueError("offset must be nonnegative and chars must be 1–32000")
-    content = (artifact_root(batch) / f"{artifact_id}.json").read_bytes()
-    if _sha(content) != artifact_id:
-        raise ValueError("analysis artifact changed since it was produced")
+    try:
+        content = read_artifact(artifact_root(batch), artifact_id)
+    except ValueError as exc:
+        raise ValueError("analysis artifact changed since it was produced") from exc
     manifest = json.loads(content)
     allowed = _allowed(batch)
     for snapshot in manifest["snapshots"]:

@@ -72,7 +72,7 @@ def test_cli_keeps_model_token_limits_when_handing_off_to_custom_transform(tmp_p
             "unsupported": "no op sets the header distance alone", "proposal": "set_header_distance"
         }, "custom_transform": "possible"}))
     fake = FakeClient(
-        unsupported, header_outcome_proposal(), unsupported,
+        unsupported,
         resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "writer")),
     )
     monkeypatch.setattr(compiler, "_client", lambda: fake)
@@ -89,11 +89,10 @@ def test_cli_keeps_model_token_limits_when_handing_off_to_custom_transform(tmp_p
                      "--out", str(tmp_path / "output"), "--no-render", "--allow-codegen",
                      "--model", "claude-sonnet-5-5", "--max-context-tokens", "131072",
                      "--max-output-tokens", "8192"]
-    assert cli.main(args) == 2  # The separate outcome proposal needs an explicit approval.
-    assert len(fake.requests) == 2 and not (tmp_path / "output" / "codegen").exists()
-    review_path = tmp_path / "output" / "outcome-review.json"
-    review = json.loads(review_path.read_text(encoding="utf-8"))
-    assert cli.main([*args, "--outcome-review", str(review_path), "--outcome-approval", review["digest"]]) == 0
-    assert limits == [131072] * 4
-    assert len(fake.requests) == 4
+    assert cli.main(args) == 0
+    assert not (tmp_path / "output" / "outcome-review.json").exists()
+    assert (tmp_path / "output" / "codegen").exists()
+    assert not (tmp_path / "output" / "run").exists()  # preview still needs the user's execution decision
+    assert limits == [131072] * 2
+    assert len(fake.requests) == 2
     assert all(call["model"] == "claude-sonnet-5-5" and call["max_tokens"] == 8192 for call in fake.requests)

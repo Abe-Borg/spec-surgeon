@@ -164,13 +164,13 @@ def test_explicit_goal_is_checked_before_copy_or_in_place_delivery(tmp_path, sur
     out = tmp_path / "run"
     if surface == "batch":
         result = run_batch([str(source)], "edit-spec", {}, out, spec=spec, workers=1, do_render=False,
-                           in_place=in_place, goal_contract=goal, goal_bindings=bindings)
+                           in_place=in_place, enforce_goals=True, goal_contract=goal, goal_bindings=bindings)
         assert result.files[0].record.get("GOAL").status == ("PASS" if satisfies_goal else "FAIL")
     else:
         # The first stage would modify the original even when the final goal fails if delivery happened stage by stage.
         chain = chain_from_specs([("first", margins(2160)), ("final", spec)])
         result = run_chain([str(source)], chain, out, workers=1, do_render=False,
-                           in_place=in_place, goal_contract=goal, goal_bindings=bindings)
+                           in_place=in_place, enforce_goals=True, goal_contract=goal, goal_bindings=bindings)
         assert result.files[0].outcomes[-1]["kind"] == "approved_goal"
     assert result.goal_contract == goal and result.goal_bindings == bindings
     assert result.counts()["PASS" if satisfies_goal else "FAIL"] == 1
@@ -233,7 +233,7 @@ def test_copy_chain_rechecks_source_after_expensive_final_goal_verification(tmp_
 
     monkeypatch.setattr(batch_module, "verify_delivery_goal", save_after_goal_proof)
     result = run_chain([str(source)], chain_from_specs([("margin", margins(2880))]), tmp_path / "run",
-                       workers=1, do_render=False, goal_contract=goal, goal_bindings={str(source): binding})
+                       workers=1, do_render=False, enforce_goals=True, goal_contract=goal, goal_bindings={str(source): binding})
     assert result.files[0].status == "EXCEPTION" and result.files[0].code == DRIFT_CODE
     assert result.files[0].delivered_to is None
     assert not (result.out_dir / "outputs" / source.name).exists()

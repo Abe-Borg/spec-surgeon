@@ -151,7 +151,9 @@ def test_resumed_legacy_planner_seals_old_signed_schema_before_upgrade(tmp_path,
     assert reopened.projects[pid]["proposed_plan"]["status"] == "PROPOSED", reopened.to_text()
     assert current["context"]["epoch"] == 1
     artifact = current["context"]["archives"][0]["artifact_id"]
-    sealed = json.loads((Path(current["context"]["folder"]) / f"{artifact}.json").read_text(encoding="utf-8"))
+    from spec_surgeon.contexts import load_context_manifest
+    from spec_surgeon.storage import artifact_path
+    sealed = load_context_manifest(artifact_path(Path(current["context"]["folder"]), artifact))
     assert sealed["system"] == old_system and sealed["tools"] == old_provider_tools
     assert sealed["messages"][:len(old_messages)] == old_messages
     assert "original-signed-planner-evidence" in json.dumps(sealed["messages"])

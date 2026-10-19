@@ -11,6 +11,7 @@ import copy
 import functools
 import hashlib
 import posixpath
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
@@ -74,8 +75,16 @@ LOCAL_IMPORTS = {
 XS = "{http://www.w3.org/2001/XMLSchema}"
 
 
-@functools.lru_cache(maxsize=16)
+_LOCAL = threading.local()
+
+
 def _schema(rel: str) -> etree.XMLSchema:
+    # XMLSchema.error_log belongs to the validator object, not its latest caller. Batch threads must never
+    # share that mutable log: a successful validation could otherwise erase another file's schema failures.
+    if not hasattr(_LOCAL, "schemas"):
+        _LOCAL.schemas = {}
+    if rel in _LOCAL.schemas:
+        return _LOCAL.schemas[rel]
     path = SCHEMA_DIR / rel
     with open(path, "rb") as fh:
         doc = etree.parse(fh, base_url=str(path))
@@ -83,7 +92,11 @@ def _schema(rel: str) -> etree.XMLSchema:
         local = LOCAL_IMPORTS.get(imp.get("schemaLocation") or "")
         if local:
             imp.set("schemaLocation", (SCHEMA_DIR / local).as_uri())
-    return etree.XMLSchema(doc)
+    schema = etree.XMLSchema(doc)
+    if len(_LOCAL.schemas) >= 16:
+        _LOCAL.schemas.clear()
+    _LOCAL.schemas[rel] = schema
+    return schema
 
 
 def schema_for(part: str, data: Optional[bytes] = None) -> Optional[str]:
@@ -135,21 +148,25 @@ def _clean(root: etree._Element) -> etree._Element:
     return etree.fromstring(etree.tostring(r))
 
 
-_RESULTS: Dict[Tuple[str, bool, str], Set[str]] = {}
+def _results() -> Dict[Tuple[str, bool, str], Set[str]]:
+    if not hasattr(_LOCAL, "results"):
+        _LOCAL.results = {}
+    return _LOCAL.results
 
 
 def validate_part(part: str, data: bytes, schema: Optional[str] = None) -> Optional[Set[str]]:
     """Set of error messages (line numbers stripped so before/after sets compare), or None if no schema.
-    Results are cached by (schema, content hash): a batch from one template validates its shared parts once."""
+    Results are cached per worker by (schema, content hash): repeated template parts need one validation per worker."""
     rel = schema or schema_for(part, data)
     if rel is None:
         return None
     key = (rel, rel == SCHEMA_FOR["word"], hashlib.sha1(data).hexdigest())
-    if key not in _RESULTS:
-        if len(_RESULTS) > 512:
-            _RESULTS.clear()
-        _RESULTS[key] = _validate(part, rel, data)
-    return set(_RESULTS[key])
+    results = _results()
+    if key not in results:
+        if len(results) > 512:
+            results.clear()
+        results[key] = _validate(part, rel, data)
+    return set(results[key])
 
 
 def _validate(part: str, rel: str, data: bytes) -> Set[str]:

@@ -84,7 +84,7 @@ GOAL_FROM = {
     "spec_surgeon.ops.hf_common": {"apply_removal", "plan_removal", "check_part_relationships", "effective_refs",
                                    "refs", "HEADER_CT", "FOOTER_CT", "KINDS", "TYPES"},
     "spec_surgeon.ops.slots": {"Slot", "apply_slot", "extract_fill", "find_slots", "field_runs", "fill_reads",
-                               "expected_block_text", "mark_slots", "nearest_p", "paragraph_runs", "reference_values",
+                               "display_segments", "expected_block_text", "mark_slots", "nearest_p", "paragraph_runs", "reference_values",
                                "rule_uses_literal"},
     "spec_surgeon.ooxml": {"RevisionStamp", "property_change", "max_revision_id", "file_uses_date_utc"},
     "spec_surgeon.ops.textedit": {"Edit", "RunText", "run_text", "plan_paragraph", "edits_to_data",
@@ -111,6 +111,8 @@ EXCLUDED_FROM_EXAMPLES: Dict[str, set] = {
     # selection of sections reads): a generated op neither selects sections by content nor flags their headers
     "spec_surgeon.ops.hf_common": {"effective_refs", "refs"},
     "spec_surgeon.ops.selectors": {"section_reads"},
+    # Numbering fonts require a whole-member built-in proof; legacy generated formatting covers runs only.
+    "spec_surgeon.ops.font_numbering": {"NUMBERING_PARAM", "apply_numbering", "numbering_enabled", "plan_numbering"},
 }
 EXAMPLE_OPS = ("set_page_setup.py", "set_paragraph_props.py", "set_font.py")
 MAX_CALLS = DEFAULT_MAX_CALLS
@@ -1055,7 +1057,10 @@ def _run_generated_files(g, files, out_dir, log, output_names, source_pins, acqu
                     rd = out_dir / "records"
                     with diag.span("codegen.file.records", out_dir=str(rd)):
                         rd.mkdir(parents=True, exist_ok=True)
-                        (rd / f"{Path(name).stem}.record.md").write_text(t.record.to_markdown(), encoding="utf-8")
+                        evidence = f"{Path(name).stem}.record.json"
+                        (rd / evidence).write_text(json.dumps(t.record.to_dict(), indent=2, ensure_ascii=False),
+                                                   encoding="utf-8")
+                        (rd / f"{Path(name).stem}.record.md").write_text(t.record.to_markdown(evidence), encoding="utf-8")
                 results.append(t)
                 _save_generated_run(g, files, results, out_dir)
                 log(f"{'PASS' if t.passed else 'FAIL'} {f.name}")
@@ -1098,7 +1103,8 @@ def _save_generated_run(g, files, results, out_dir):
                 "passed_count": sum(result.passed for result in results), "total_batch_files": len(files),
                 "generated": {"source": g.source, "select": g.select, "params": g.params, "name": g.name}}
     if g.goal_contract is not None:
-        metadata.update(goal_contract=copy.deepcopy(g.goal_contract), goal_bindings=copy.deepcopy(g.goal_bindings))
+        metadata.update(goal_contract=copy.deepcopy(g.goal_contract), goal_bindings=copy.deepcopy(g.goal_bindings),
+                        enforce_goals=True)
     # The companion prevents a damaged set-aside manifest from dropping outcome authority.
     atomic_json(out_dir / "generated.json", {**metadata, "results": [result.to_dict() for result in results]})
     atomic_json(out_dir / "set_aside.json", metadata)

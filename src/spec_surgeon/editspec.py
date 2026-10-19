@@ -25,7 +25,9 @@ the op catalog) grows out of this module.
 """
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -36,7 +38,7 @@ from .ops.selectors import DEFAULT_PRESERVE_FONTS, selection_reads, size_values
 from .package import DocxPackage
 
 SPEC_KEYS = {"request", "summary", "assumptions", "questions", "applies_to", "mode", "review", "ops",
-             "unsupported", "proposal", "assertions"}
+             "unsupported", "proposal", "assertions", "bindings"}
 REQUIRED = ("request", "summary", "ops", "mode")
 OP_KEYS = {"op", "select", "params", "expect", "tracked"}
 MODES = ("formatting", "content", "untracked")
@@ -171,6 +173,10 @@ def load_spec(source: Union[str, Path, Dict[str, Any]]) -> Dict[str, Any]:
         for d, k in input_slots(o):
             if not Path(d[k]).is_absolute():
                 d[k] = str((path.parent / d[k]).resolve())
+    for binding in spec.get("bindings", []) if isinstance(spec, dict) else []:
+        if isinstance(binding, dict) and isinstance(binding.get("file"), str):
+            if not Path(binding["file"]).is_absolute():
+                binding["file"] = str((path.parent / binding["file"]).resolve())
     return spec
 
 
@@ -236,6 +242,43 @@ def _check_shapes(spec: Dict[str, Any]) -> None:
         raise SpecError(f"'assertions' must be a list, got {spec['assertions']!r}", "spec")
 
 
+def _validate_bindings(bindings: Any) -> None:
+    if not isinstance(bindings, list):
+        raise SpecError("bindings must be a list of source-file bindings", "spec")
+    files = set()
+    for entry in bindings:
+        if not isinstance(entry, dict) or set(entry) != {"file", "md5", "slots"}:
+            raise SpecError("each binding needs exactly file, md5 and slots", "spec")
+        file, digest, slots = entry["file"], entry["md5"], entry["slots"]
+        if not isinstance(file, str) or not file.strip() or not Path(file).is_absolute():
+            raise SpecError("binding.file must be an absolute source path", "spec")
+        identity = str(Path(file).resolve())
+        if identity in files:
+            raise SpecError(f"duplicate binding for {file!r}", "spec")
+        files.add(identity)
+        if not isinstance(digest, str) or not re.fullmatch(r"[0-9a-f]{32}", digest):
+            raise SpecError("binding.md5 must be the source file's lowercase MD5", "spec")
+        if not isinstance(slots, dict) or not slots:
+            raise SpecError("binding.slots must be a non-empty slot-name mapping", "spec")
+        for name, slot in slots.items():
+            if not isinstance(name, str) or not name or not isinstance(slot, dict) or set(slot) != {"value", "part", "paragraph"}:
+                raise SpecError("each bound slot needs exactly value, part and paragraph", "spec")
+            if not isinstance(slot["value"], str) or not slot["value"] or not isinstance(slot["part"], str) or not slot["part"]:
+                raise SpecError("bound slot value and part must be non-empty text", "spec")
+            if type(slot["paragraph"]) is not int or slot["paragraph"] < 0:
+                raise SpecError("bound slot paragraph must be a non-negative integer", "spec")
+
+
+def _file_bindings(pkg: DocxPackage, spec: Dict[str, Any]) -> Dict[str, Any]:
+    path = str(Path(pkg.name).resolve())
+    entry = next((b for b in spec.get("bindings", []) if str(Path(b["file"]).resolve()) == path), None)
+    if entry is None:
+        return {}
+    if hashlib.md5(pkg.data).hexdigest() != entry["md5"]:
+        raise JobException(f"bound source changed since inspection: {entry['file']}", "binding-source")
+    return {name: {"rule": "binding", **slot, "source_md5": entry["md5"]} for name, slot in entry["slots"].items()}
+
+
 def validate_spec(spec: Dict[str, Any]) -> None:
     if not isinstance(spec, dict):
         raise SpecError("an EditSpec is a JSON object", "spec")
@@ -243,6 +286,7 @@ def validate_spec(spec: Dict[str, Any]) -> None:
     if unknown:
         raise SpecError(f"unknown EditSpec key(s) {sorted(unknown)}; known: {sorted(SPEC_KEYS)}", "spec")
     _check_shapes(spec)
+    _validate_bindings(spec.get("bindings", []))
     if spec.get("unsupported"):
         raise SpecError(f"the spec says the request is unsupported: {spec['unsupported']}"
                         + (f" — proposal: {spec['proposal']}" if spec.get("proposal") else ""), "unsupported")
@@ -257,6 +301,8 @@ def validate_spec(spec: Dict[str, Any]) -> None:
     ops = spec["ops"]
     if not isinstance(ops, list) or not ops:
         raise SpecError("ops must be a non-empty list", "spec")
+    if spec.get("bindings") and not any(isinstance(o, dict) and o.get("op") == "apply_header_footer_template" for o in ops):
+        raise SpecError("template slot bindings require apply_header_footer_template", "spec")
     for i, o in enumerate(ops, 1):
         if not isinstance(o, dict) or not isinstance(o.get("op"), str):
             raise SpecError(f"op #{i} must be an object with an 'op' name", "spec")
@@ -310,6 +356,12 @@ def validate_spec(spec: Dict[str, Any]) -> None:
         if not isinstance(a, dict) or a.get("kind") not in SPEC_ASSERTION_KINDS:
             raise SpecError(f"spec-level assertions are post-conditions only ({SPEC_ASSERTION_KINDS}); got {a!r}", "spec")
         if a["kind"] == "effective_font":
+            for flag in ("east_asia", "numbering_levels"):
+                if flag in a and not isinstance(a[flag], bool):
+                    raise SpecError(f"effective_font '{flag}' must be a boolean", "spec")
+            if "slots" in a and (not isinstance(a["slots"], list) or not a["slots"] or
+                                 any(s not in ("ascii", "hAnsi", "cs", "eastAsia") for s in a["slots"])):
+                raise SpecError("effective_font 'slots' must name ascii, hAnsi, cs or eastAsia", "spec")
             if a.get("value") is None and a.get("size") is None:
                 raise SpecError("an effective_font assertion needs 'value' (a font name) and/or 'size' (points)", "spec")
             if a.get("value") is not None and (not isinstance(a["value"], str) or not a["value"].strip()):
@@ -397,11 +449,15 @@ def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] 
                                f"{applies['pattern_ids']}", "pattern", {"pattern_id": pattern_id})
     frags: List[PlanFragment] = []
     expect_notes: List[str] = []
+    bound_slots = _file_bindings(pkg, spec)
     for i, o in enumerate(spec["ops"], 1):
         if trace:
             trace("plan", i, o["op"], "start")
         try:
-            frag = get_op(o["op"]).plan(pkg, o.get("select") or {}, _op_params(o))
+            params = _op_params(o)
+            if o["op"] == "apply_header_footer_template" and bound_slots:
+                params = {**params, "slot_bindings": bound_slots}
+            frag = get_op(o["op"]).plan(pkg, o.get("select") or {}, params)
         except JobException as e:
             raise JobException(f"op #{i} ({o['op']}): {e.reason}", e.code,
                                {**e.details, "op": o["op"], "op_number": i}) from e
@@ -428,7 +484,7 @@ def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] 
         a = dict(a)
         if a["kind"] == "effective_font":
             a.setdefault("preserve_fonts", DEFAULT_PRESERVE_FONTS)
-            a.setdefault("slots", ["ascii", "hAnsi", "cs"])
+            a.setdefault("slots", ["ascii", "hAnsi", "cs"] + (["eastAsia"] if a.get("east_asia") else []))
             a.setdefault("include_paragraph_marks", True)
             a.setdefault("scope", ["document"])
         plan.property_assertions.append({**a, "op": "spec"})

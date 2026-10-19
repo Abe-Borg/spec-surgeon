@@ -230,47 +230,38 @@ def test_close_during_real_run_keeps_window_and_worker_until_delivery_and_report
     assert not window.isVisible()
 
 
-def test_natural_language_preview_requires_explicit_outcome_and_target_approval(desktop, tmp_path):
+def test_natural_language_preview_is_the_only_approval_and_pins_current_options(desktop, tmp_path):
     from fake_claude import FakeClient, resp, tool
 
     campaign = project(tmp_path)
     inputs = Path(next(iter(campaign.documents.values()))["source"]).parent
     saved = margin_spec()
-    contract = {"kind": "document_effects", "effects": [
-        {"id": "margin", "type": "page_setup", "sections": "all", "margins": {"left": 1440}}]}
-    fake = FakeClient(resp(tool("submit_editspec", {"spec": saved})),
-                      resp(tool("propose_plan", {"contract": contract,
-                           "rationale": "Set the requested margin in each original document.",
-                           "evidence": ["The request specifies one inch."], "risks": ["Pagination may change."]})))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": saved})))
     session = Session(folder=inputs, out_root=tmp_path / "out", client=fake)
     window = desktop[1](session)
     window.request_page.request.setPlainText(saved["request"])
     window.request_page.render_cb.setChecked(False)
+    assert not window.do_run()
     window.do_preview()
     window._spec_surgeon["wait"]()
-    assert session.outcome_review["status"] == "PROPOSED", window.log.toPlainText()
-    assert not window.preview_page.outcome_card.isHidden()
-    review_text = window.preview_page.outcome_text.toPlainText()
-    assert "First.docx" in review_text and "Second.docx" in review_text
-    assert not window.run_page.run_btn.isEnabled()
-    assert window.preview_page.outcome_approve_btn.isEnabled()
-    assert not window.do_run()
-    window.request_page.render_cb.setChecked(True)
-    assert not window.preview_page.outcome_approve_btn.isEnabled()
-    window.request_page.render_cb.setChecked(False)
-    window.preview_page.outcome_approve_btn.click()
-    assert session.outcome_approval == session.outcome_review["digest"]
+    assert session.outcome_review is None, window.log.toPlainText()
+    assert window.preview_page.outcome_card.isHidden()
+    assert {Path(row.source).name for row in session.preview.batch_plan.files} == {"First.docx", "Second.docx"}
     assert window.run_page.run_btn.isEnabled()
-    assert not window.preview_page.outcome_approve_btn.isEnabled()
+    window.request_page.render_cb.setChecked(True)
+    assert not window.run_page.run_btn.isEnabled()  # changing preview options invalidates consent
+    assert not window.do_run()
+    window.request_page.render_cb.setChecked(False)
+    assert window.run_page.run_btn.isEnabled()
     window.do_run()
     window._spec_surgeon["wait"]()
     assert all(f.status == "PASS" for f in session.last_batch.files), window.log.toPlainText()
     assert all(Document(f.output).sections[0].left_margin.twips == 1440 for f in session.last_batch.files)
     assert all(Document(d["source"]).sections[0].left_margin.twips == 1800 for d in campaign.documents.values())
-    assert len(fake.requests) == 2
+    assert len(fake.requests) == 1  # compilation, with no second intent planner
 
 
-def test_ambiguous_outcome_requires_exact_user_target_choice_before_approval(desktop, tmp_path):
+def test_preview_exposes_the_recipe_target_without_a_second_target_selection(desktop, tmp_path):
     from fake_claude import FakeClient, resp, tool
 
     inputs = tmp_path / "ambiguous"
@@ -284,12 +275,7 @@ def test_ambiguous_outcome_requires_exact_user_target_choice_before_approval(des
     spec = {"request": request, "summary": "Bold the first title", "mode": "formatting",
             "ops": [{"op": "set_properties", "select": {"scope": ["document"], "paragraphs": {"index_range": [0, 1]}},
                      "params": {"run": {"b": True}, "tracked": False}}]}
-    contract = {"kind": "document_effects", "effects": [
-        {"id": "title", "type": "format", "target": {"scope": ["document"],
-         "locators": [{"exact_text": "ALPHA"}], "cardinality": 1}, "run": {"b": True}}]}
-    fake = FakeClient(resp(tool("submit_editspec", {"spec": spec})),
-                      resp(tool("propose_plan", {"contract": contract, "rationale": "Bold the intended exact title.",
-                           "evidence": ["The user names ALPHA."], "risks": []})))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": spec})))
     session = Session(folder=inputs, out_root=tmp_path / "out", client=fake)
     window = desktop[1](session)
     window.request_page.request.setPlainText(request)
@@ -297,23 +283,9 @@ def test_ambiguous_outcome_requires_exact_user_target_choice_before_approval(des
     window.do_preview()
     window._spec_surgeon["wait"]()
     page = window.preview_page
-    assert session.outcome_review["status"] == "NEEDS_INPUT", window.log.toPlainText()
-    assert page.outcome_candidates.count() == 2
-    assert not page.outcome_target_picker.isHidden()
-    assert "exactly 1" in page.outcome_target_hint.text()
-    assert not page.outcome_approve_btn.isEnabled()
-    for row in range(2):
-        page.outcome_candidates.item(row).setSelected(True)
-    assert not window.do_choose_outcome_targets()
-    assert session.outcome_review["status"] == "NEEDS_INPUT"
-    page.outcome_candidates.clearSelection()
-    page.outcome_candidates.item(0).setSelected(True)
-    assert window.do_choose_outcome_targets()
-    assert session.outcome_review["status"] == "PROPOSED"
-    assert page.outcome_target_picker.isHidden()
-    assert page.outcome_approve_btn.isEnabled()
-    assert not window.run_page.run_btn.isEnabled()
-    page.outcome_approve_btn.click()
+    assert session.outcome_review is None, window.log.toPlainText()
+    assert page.outcome_card.isHidden()
+    assert session.preview.samples[0].passed
     assert window.run_page.run_btn.isEnabled()
     window.do_run()
     window._spec_surgeon["wait"]()
@@ -322,6 +294,7 @@ def test_ambiguous_outcome_requires_exact_user_target_choice_before_approval(des
     assert output.paragraphs[0].runs[0].bold is True
     assert output.paragraphs[2].runs[0].bold is not True
     assert all(p.runs[0].bold is not True for p in Document(source).paragraphs)
+    assert len(fake.requests) == 1
 
 
 def test_preview_of_retained_retry_uses_current_recovery_options_and_keeps_approved_outcomes(desktop, tmp_path):
@@ -335,23 +308,24 @@ def test_preview_of_retained_retry_uses_current_recovery_options_and_keeps_appro
     wrong = margin_spec()
     wrong["ops"][0]["params"]["margins"]["left"] = 2880
     candidate = compile_goal_candidate(source, contract)
-    fake = FakeClient(resp(tool("submit_editspec", {"spec": wrong})),
-                      resp(tool("propose_plan", {"contract": contract, "rationale": "The requested margin is one inch.",
-                           "evidence": ["The request specifies one inch."], "risks": []})),
-                      resp(tool("submit_repair", {"candidate": candidate})),
+    # This separate, explicitly enforced workflow retains its contract across retry.
+    from spec_surgeon.batch import run_batch
+    from spec_surgeon.goals import resolve_goal
+    sources = [Path(document["source"]) for document in campaign.documents.values()]
+    bindings = {str(path): resolve_goal(path, contract)["binding"] for path in sources}
+    original_run = tmp_path / "enforced-run"
+    original = run_batch([str(path) for path in sources], "edit-spec", {}, original_run,
+                         spec=wrong, workers=1, do_render=False, goal_contract=contract,
+                         goal_bindings=bindings, enforce_goals=True)
+    assert all(file.status == "FAIL" for file in original.files)
+    fake = FakeClient(resp(tool("submit_repair", {"candidate": candidate})),
                       resp(tool("review_repair", {"verdict": "accept", "reason": "The verified margin matches the approved outcome."})))
     session = Session(folder=source.parent, out_root=tmp_path / "out", client=fake)
     window = desktop[1](session)
     window.request_page.request.setPlainText(margin_spec()["request"])
     window.request_page.render_cb.setChecked(False)
     window.run_page.recovery_memory.setChecked(False)
-    window.do_preview()
-    window._spec_surgeon["wait"]()
-    assert window.do_approve_outcomes()
-    window.do_run()
-    window._spec_surgeon["wait"]()
-    assert all(f.status == "FAIL" for f in session.last_batch.files)
-    original_run = session.last_run_dir
+    session.last_run_dir, session.last_batch = original_run, original
     window.do_set_aside()
     window._spec_surgeon["wait"]()
     assert session.pending_recovery_run == original_run
@@ -371,18 +345,17 @@ def test_preview_of_retained_retry_uses_current_recovery_options_and_keeps_appro
     window._spec_surgeon["wait"]()
     assert session.last_recovery is not None
     assert all(Document(f.delivered_to).sections[0].left_margin.twips == 1440 for f in session.last_recovery.ready)
-    assert len(fake.requests) == 4
+    assert len(fake.requests) == 2
 
 
-def test_custom_generation_waits_for_outcome_approval_then_previews_and_runs(desktop, tmp_path):
+def test_custom_generation_prepares_a_verified_preview_for_the_single_run_decision(desktop, tmp_path):
     from fake_claude import FakeClient
-    from test_compiler import header_outcome_proposal
     from test_phase8_fixes_window import OFFER_TURN, WRITER
 
     campaign = project(tmp_path)
     source = Path(next(iter(campaign.documents.values()))["source"])
     before = {Path(d["source"]): Path(d["source"]).read_bytes() for d in campaign.documents.values()}
-    fake = FakeClient(OFFER_TURN, header_outcome_proposal(), WRITER)
+    fake = FakeClient(OFFER_TURN, WRITER)
     session = Session(folder=source.parent, out_root=tmp_path / "out", client=fake)
     window = desktop[1](session)
     window.request_page.request.setPlainText("put the header 0.625 in from the top")
@@ -392,26 +365,20 @@ def test_custom_generation_waits_for_outcome_approval_then_previews_and_runs(des
     (_, choose), = window._spec_surgeon["choices"]()
     choose.click()
     window._spec_surgeon["wait"]()
-    assert session.pending_custom_transform is not None
-    assert session.generated is None
-    assert len(fake.requests) == 2
-    assert window.stack.currentWidget() is window.preview_page
-    assert window._preview_current()
-    assert window.preview_page.outcome_approve_btn.isEnabled()
-    assert not window.run_page.run_btn.isEnabled()
-    assert not window.preview_page.continue_btn.isEnabled()
-    assert not window.preview_page.save_btn.isEnabled()
-    window.preview_page.outcome_approve_btn.click()
-    window._spec_surgeon["wait"]()
     assert session.pending_custom_transform is None
     assert session.generated is not None, window.log.toPlainText()
+    assert session.outcome_review is None
+    assert window.preview_page.outcome_card.isHidden()
+    assert window.stack.currentWidget() is window.preview_page
     assert window._preview_current()
     assert window.run_page.run_btn.isEnabled(), window.run_page.run_hint.text()
-    assert len(fake.requests) == 3
+    assert window.preview_page.continue_btn.isEnabled()
+    assert window.preview_page.save_btn.isEnabled()
+    assert len(fake.requests) == 2
     assert all(path.read_bytes() == data for path, data in before.items())
     window.do_run()
     window._spec_surgeon["wait"]()
     assert all(trial.passed for trial in session.last_trials), window.log.toPlainText()
     assert all(Document(trial.output).sections[0].header_distance.twips == 900 for trial in session.last_trials)
     assert all(path.read_bytes() == data for path, data in before.items())
-    assert len(fake.requests) == 3
+    assert len(fake.requests) == 2

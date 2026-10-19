@@ -312,7 +312,7 @@ def test_a_saved_operation_is_tried_first_and_the_conversation_is_kept(folder, t
     assert c is not None and c.notes[-1].startswith("Your operation 'Header distance' passed verification on the sample files")
     assert c.entries[-1].role == "app" and "passed verification" in c.entries[-1].text
     assert (s.out_dir / "library-trial").is_dir() and s.generated_token
-    assert "AI-written transform previewed" in s.make_preview(False, quiet)
+    assert "AI-written transform verified" in s.make_preview(False, quiet)
     assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
     assert s.reply("no, remove the headers instead", log=quiet) == "Compiled." and s.generated is None
     sent = last_user_texts(fake, 1)
@@ -477,14 +477,14 @@ def test_the_terminal_declining_the_words_keeps_the_conversation(folder, recipe,
     from spec_surgeon import cli
     headers_only = copy.deepcopy(REMOVE)
     headers_only["ops"][0]["select"]["kinds"] = ["header"]
-    fake = FakeClient(offer("recipe", "Permit stamp"), submit(headers_only, "s2"),
-                      remove_outcome_proposal(kinds=["header"]))
+    fake = FakeClient(offer("recipe", "Permit stamp"), submit(headers_only, "s2"))
     monkeypatch.setattr(compiler_module, "_client", lambda: fake)
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    prompts = scripted_input(monkeypatch, ["#1", "n", "remove the headers instead", "y", "n"])
+    prompts = scripted_input(monkeypatch, ["#1", "n", "remove the headers instead", "n"])
     assert cli_main(["do", REQUEST, str(folder), "--out", str(tmp_path / "o"), "--no-render"]) == 0
     assert "Not run." in capsys.readouterr().out and prompts[1].startswith("Approve these exact words")
-    assert prompts[3] == "Approve these outcomes and every document's targets? [y/N] "
+    assert prompts[3] == "\nRun this on 2 file(s)? [y/N] "
+    assert len(prompts) == 4 and len(fake.requests) == 2
     assert last_user_texts(fake, 1) == ["The user replied: remove the headers instead"] and STAMP not in " ".join(
         json.loads((tmp_path / "o" / "conversation.json").read_text(encoding="utf-8"))["approved_words"])
 
@@ -501,16 +501,17 @@ def test_the_terminal_operation_choice_tries_first_and_a_failure_returns_to_the_
         t.passed, t.problems = False, ["V10 FAIL: not here"]
         return t
     monkeypatch.setattr(cg, "trial", failing)
-    fake = FakeClient(offer("operation", "Header distance"), submit(REMOVE, "s2"), remove_outcome_proposal())
+    fake = FakeClient(offer("operation", "Header distance"), submit(REMOVE, "s2"))
     monkeypatch.setattr(compiler_module, "_client", lambda: fake)
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    prompts = scripted_input(monkeypatch, ["#1", "strip them instead", "y", "n"])
+    prompts = scripted_input(monkeypatch, ["#1", "strip them instead", "n"])
     out_dir = tmp_path / "o"
     assert cli_main(["do", REQUEST, str(folder), "--out", str(out_dir), "--no-render"]) == 0
     printed = capsys.readouterr().out
     assert "Not used: your operation 'Header distance' does not pass on these files — " in printed and "Not run." in printed
     assert prompts[0] == prompts[1] == "Your reply ('#n' picks a choice; an empty line stops): "   # back to the loop
-    assert prompts[2] == "Approve these outcomes and every document's targets? [y/N] "
+    assert prompts[2] == "\nRun this on 2 file(s)? [y/N] "
+    assert len(prompts) == 3 and len(fake.requests) == 2
     sent = last_user_texts(fake, 1)
     assert sent[0] == "The user replied: strip them instead" and \
         sent[1].startswith("[note from the app] The user chose: «Try your operation") and \

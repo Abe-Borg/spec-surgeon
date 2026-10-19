@@ -3,7 +3,7 @@
     acquire → fingerprint → plan (predict first) → apply → verify (V1–V5, V8)
             → render (source + output) → V6/V7 → deliver (guarded, V9) → records + batch report + set_aside.json
 
-Transform+verify runs in a process pool; rendering runs through the chosen backend (Word is one
+Transform+verify runs in threads by default; rendering runs through the chosen backend (Word is one
 instance, LibreOffice is N parallel profiles). Exceptions never stop the batch; they are written to
 <out>/exceptions/ and summarized in <out>/set_aside.json with a structured diagnosis for the next pass.
 
@@ -38,9 +38,10 @@ import multiprocessing
 import os
 import shutil
 import stat
+import sys
 import time
 import traceback
-from concurrent.futures import ProcessPoolExecutor, as_completed
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor, as_completed
 from concurrent.futures.process import BrokenProcessPool
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -112,6 +113,7 @@ class BatchResult:
     stopped: Optional[str] = None            # set when the batch itself failed: the stage and the error
     goal_contract: Optional[Dict[str, Any]] = None
     goal_bindings: Dict[str, Any] = field(default_factory=dict)
+    enforce_goals: bool = False
     input_snapshots: List[Dict[str, Any]] = field(default_factory=list)
 
     def counts(self) -> Dict[str, int]:
@@ -719,8 +721,12 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
               workers: int = 0, renderer: str = "auto", do_render: bool = True, in_place: bool = False,
               progress=None, spec: Optional[Dict[str, Any]] = None, *, goal_contract=None, goal_bindings=None,
               approved_inputs=None, _input_snapshots=None, _public_spec=None,
-              _source_identities=None, _source_refusals=None) -> BatchResult:
-    """Run a batch with correlation, including validation failures before a results folder is safe to create."""
+              _source_identities=None, _source_refusals=None, enforce_goals: bool = False,
+              worker_mode: str = "thread") -> BatchResult:
+    """Run a batch with correlation, including validation before creating a results folder.
+
+    Outcome data is advisory unless an explicit profile or governed caller opts into ``enforce_goals``.
+    """
     with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), batch_id=diag.new_id()), \
             diag.span("batch", out_dir=str(out_dir), job=job_name, workers=workers,
                       renderer=renderer, do_render=do_render, in_place=in_place) as outcome:
@@ -729,7 +735,7 @@ def run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out_
                             copy.deepcopy(goal_contract), copy.deepcopy(goal_bindings or {}),
                             copy.deepcopy(_input_snapshots or []), copy.deepcopy(_public_spec),
                             copy.deepcopy(approved_inputs), copy.deepcopy(_source_identities or {}),
-                            copy.deepcopy(_source_refusals or {}))
+                            copy.deepcopy(_source_refusals or {}), enforce_goals, worker_mode)
         outcome.update(counts=result.counts(), timings=result.timings)
         return result
 
@@ -738,7 +744,8 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
                workers: int, renderer: str, do_render: bool, in_place: bool,
                progress, spec: Optional[Dict[str, Any]], goal_contract=None, goal_bindings=None,
                inherited_inputs=(), public_spec=None, approved_inputs=None,
-               inherited_sources=None, inherited_refusals=None) -> BatchResult:
+               inherited_sources=None, inherited_refusals=None, enforce_goals=False,
+               worker_mode="thread") -> BatchResult:
     """Run a named job (``job_name`` + ``params``) or an EditSpec (``spec``; then ``job_name`` is only a label).
 
     Everything the run does goes to ``<out>/logs/run.log`` (``progress`` gets the same progress lines), each file's
@@ -746,6 +753,8 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
     ``DIAGNOSTICS.md``. When the batch itself fails, run.log ends with the stage and the traceback (and DIAGNOSTICS.md
     says what was known) before the exception propagates."""
     out_dir = Path(out_dir)
+    if worker_mode not in {"thread", "serial", "process"}:
+        raise ValueError("worker_mode must be thread, serial or process")
     reported_spec = spec if public_spec is None else public_spec
     if approved_inputs is not None:
         digest = hashlib.sha256(json.dumps(reported_spec, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()[:16]
@@ -753,7 +762,7 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
                 or not isinstance(approved_inputs.get("templates"), dict)):
             raise ValueError("The recipe or approval evidence changed since the preview; preview again before running.")
     goal_inputs = []
-    if goal_contract is not None:
+    if enforce_goals and goal_contract is not None:
         from .goals import goal_templates
         goal_inputs = goal_templates(goal_contract)  # validates the immutable outcome before any mutation
     if spec is not None:
@@ -789,7 +798,8 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
         for sub in ("outputs", "records", "exceptions", "plans", "render", diag.LOGS):
             (out_dir / sub).mkdir(parents=True, exist_ok=True)
         batch = BatchResult(out_dir=out_dir, job=job_name, params=params, spec=reported_spec,
-                            goal_contract=goal_contract, goal_bindings=goal_bindings or {}, input_snapshots=snapshots)
+                            goal_contract=goal_contract, goal_bindings=goal_bindings or {}, input_snapshots=snapshots,
+                            enforce_goals=enforce_goals)
         batch.input_snapshots.extend(inherited_inputs)
         batch.skipped = [str(f) for f in skipped_templates]
         batch.environment = diag.environment()
@@ -802,13 +812,13 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
         try:
             with diag.span("batch.transform_verify", file_count=len(files)):
                 _transform_and_verify(batch, files, job_name, params, out_dir, workers, execution_spec, log,
-                                      source_identities, source_refusals)
+                                      source_identities, source_refusals, worker_mode=worker_mode)
             stage = "render+geometry"
             with diag.span("batch.render"):
                 _render_and_compare(batch, renderer, do_render, workers, log)
             stage = "deliver"
             with diag.span("batch.delivery"):
-                if goal_contract is not None:
+                if enforce_goals and goal_contract is not None:
                     _verify_delivery_goals(batch, goal_contract, goal_bindings or {}, log)
                 _deliver(batch, in_place, log)
             stage = "records"
@@ -859,12 +869,19 @@ def _file_done(f: Path, r: Dict[str, Any], log: "diag.RunLog") -> None:
 
 def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, params: Dict[str, Any],
                           out_dir: Path, workers: int, spec: Optional[Dict[str, Any]], log: "diag.RunLog",
-                          source_identities=None, source_refusals=None) -> None:
+                          source_identities=None, source_refusals=None, *, worker_mode="thread") -> None:
     """1-2. acquire, fingerprint, plan, apply, verify — in parallel; a worker that dies costs only its own file."""
     t_start = time.perf_counter()
     workers = workers or max(1, min(os.cpu_count() or 2, len(files), 8))
+    # Frozen Windows processes triggered access violations during spawn on live runs.
+    # Threads also avoid paying spawn costs for small batches; processes require an explicit choice.
+    if worker_mode == "process" and getattr(sys, "frozen", False):
+        worker_mode = "thread"
+        log("Process workers are unavailable in the packaged app; using threads.")
+    if worker_mode == "serial":
+        workers = 1
     results: Dict[str, Dict[str, Any]] = {}
-    log(f"{len(files)} file(s); transform+verify with {workers} worker(s)"
+    log(f"{len(files)} file(s); transform+verify with {workers} {worker_mode} worker(s)"
         + (f"; skipped the spec's template file(s) {[Path(x).name for x in batch.skipped]}" if batch.skipped else ""))
     named, refused = planned_names(files, spec)      # the spec's own output names, when it gives them
     refused.update({str(f): source_refusals[str(f.resolve())] for f in files
@@ -882,7 +899,7 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
             _file_done(f, results[str(f)], log)
     else:
         broken: List[Path] = []
-        with _process_pool(workers) as ex:
+        with (_process_pool(workers) if worker_mode == "process" else ThreadPoolExecutor(max_workers=workers)) as ex:
             futs = {ex.submit(_process_one, str(f), job_name, params, str(out_dir), out_names[str(f)], spec, 1,
                               refused.get(str(f)), diag.context()): f for f in files}
             for fut in as_completed(futs):

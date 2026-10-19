@@ -357,6 +357,25 @@ def _source_pars(src: VPackage, source: str, section: Optional[int]) -> List[Any
     return [p for part in parts for p in src.xml(part).iter(W + "p")]
 
 
+def _source_match(rx, original, flexible):
+    hit = rx.search(original)
+    if hit is not None:
+        return hit.group(1 if rx.groups else 0)
+    if not flexible:
+        return None
+    units = [(" " if m.group().isspace() else m.group(), m.start(), m.end())
+             for m in re.finditer(r"\s+|\S", original)]
+    while units and units[0][0] == " ":
+        units = units[1:]
+    while units and units[-1][0] == " ":
+        units = units[:-1]
+    hit = rx.search("".join(unit[0] for unit in units))
+    if hit is None:
+        return None
+    left, right = hit.span(1 if rx.groups else 0)
+    return original[units[left][1]:units[right - 1][2]] if left >= 0 and right > left else ""
+
+
 def fill_value(src: VPackage, name: str, rule: Dict[str, Any]) -> str:
     if rule.get("rule") == "first_match" or ("rules" in rule and rule.get("rule") in (None, "first_match")):
         sub = rule.get("rules") or []
@@ -371,23 +390,31 @@ def fill_value(src: VPackage, name: str, rule: Dict[str, Any]) -> str:
         raise ValueError(f"fill {name!r}: no rule in first_match succeeded ({last_err})")
 
     how = rule.get("rule")
+    for option in ("case_insensitive", "flexible_whitespace", "strip"):
+        if option in rule and type(rule[option]) is not bool:
+            raise ValueError(f"fill {name!r}: {option} must be a boolean")
     flex_ws = rule.get("flexible_whitespace", True)
     occ = rule.get("occurrence", "all")
+    if how == "binding":
+        if hashlib.md5(src.data).hexdigest() != rule.get("source_md5"):
+            raise ValueError(f"fill {name!r}: bound source identity changed")
+        part, ordinal, literal = rule.get("part"), rule.get("paragraph"), rule.get("value")
+        if part not in src.text_parts() or type(ordinal) is not int or ordinal < 0:
+            raise ValueError(f"fill {name!r}: invalid binding location")
+        paragraphs = list(src.xml(part).iter(W + "p"))
+        if not isinstance(literal, str) or not literal or ordinal >= len(paragraphs) or literal not in display_of(paragraphs[ordinal]):
+            raise ValueError(f"fill {name!r}: literal does not occur verbatim at bound source location")
+        return literal
     if how == "literal":
         v = rule["value"]
     elif how == "regex":
-        rx = re.compile(rule["pattern"])
+        rx = re.compile(rule["pattern"], re.I if rule.get("case_insensitive", False) else 0)
         pars = _source_pars(src, rule.get("source", "document"), rule.get("section"))
         found = []
         for p in pars:
-            m = rx.search(display_of(p))
-            if m is not None:
-                found.append(m.group(1) if rx.groups else m.group(0))
-        if not found and flex_ws:
-            for p in pars:
-                m = rx.search(_v_norm_ws(display_of(p)).strip())
-                if m is not None:
-                    found.append(m.group(1) if rx.groups else m.group(0))
+            value = _source_match(rx, display_of(p), flex_ws)
+            if value is not None:
+                found.append(value)
         if not found:
             raise ValueError(f"fill {name!r}: regex yields nothing")
         if occ == "first":
@@ -398,11 +425,9 @@ def fill_value(src: VPackage, name: str, rule: Dict[str, Any]) -> str:
                 raise ValueError(f"fill {name!r}: regex yields {sorted(set(found))}")
             v = found[0]
     elif how == "paragraph_after":
-        rx = re.compile(rule["anchor_regex"])
+        rx = re.compile(rule["anchor_regex"], re.I if rule.get("case_insensitive", False) else 0)
         texts = [display_of(p) for p in _source_pars(src, rule.get("source", "document"), rule.get("section"))]
-        hits = [k for k, t in enumerate(texts) if rx.search(t)]
-        if not hits and flex_ws:
-            hits = [k for k, t in enumerate(texts) if rx.search(_v_norm_ws(t).strip())]
+        hits = [k for k, t in enumerate(texts) if _source_match(rx, t, flex_ws) is not None]
         if not hits:
             raise ValueError(f"fill {name!r}: anchor matches 0 paragraph(s)")
         cands = []
@@ -679,6 +704,36 @@ def _run_model(p, slots, fills) -> List[Tuple[Any, Tuple[Tuple[str, Any], ...], 
     return model
 
 
+def _filled_run_properties(p, slot, slots, resolver):
+    """Derive clear-mode colour and decoration from original template runs, independently of planned pins."""
+    runs = _runs_of(p)
+    positions, cursor = [], 0
+    for run in runs:
+        text = _run_display(run, p)
+        positions.append((cursor, cursor + len(text), text))
+        cursor += len(text)
+    index = next(i for i, (left, right, _) in enumerate(positions) if left <= slot["start"] < right)
+    choices = []
+    for i, (left, right, text) in enumerate(positions):
+        ordinary = "".join(text[pos - left] for pos in range(left, right)
+                           if all(not (item["start"] <= pos < item["end"]) for item in slots))
+        if ordinary.strip():
+            choices.append(i)
+    donor = runs[min(choices, key=lambda i: (abs(i - index), i))] if choices else None
+    original = runs[index].find(W + "rPr")
+    clean = etree.fromstring(etree.tostring(original)) if original is not None else etree.Element(W + "rPr")
+    for kind in ("color", "highlight", "shd"):
+        for node in clean.findall(W + kind):
+            clean.remove(node)
+        replacement = donor.find(f"{W}rPr/{W}{kind}") if donor is not None else None
+        if replacement is not None:
+            clean.append(etree.fromstring(etree.tostring(replacement)))
+    effective = resolver.run(clean, p)
+    if donor is not None:
+        effective["color"] = resolver.run(donor.find(W + "rPr"), p)["color"]
+    return clean, effective
+
+
 # ---- the kinds ------------------------------------------------------------------------------------
 
 def check_hf_template_refs(ctx, a: Dict[str, Any], errs: List[str]) -> str:
@@ -758,7 +813,7 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
         if "reference" in markers:
             if markers != ["reference"]:
                 raise ValueError("'reference' slot markers must be used alone")
-            ref_values = reference_values_of(tpl, a.get("fills") or {})
+            ref_values = reference_values_of(tpl, a.get("template_fill_rules", a.get("fills")) or {})
             if ref_values != a.get("template_values"):
                 errs.append(f"{tag}: template values derived here {ref_values} differ from the plan's "
                             f"{a.get('template_values')}")
@@ -835,15 +890,26 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 if _run_display(orr, op_) != text:
                     errs.append(f"{rw}: text {_run_display(orr, op_)!r}, expected {text!r}")
                 trpr, orpr = tr.find(W + "rPr"), orr.find(W + "rPr")
-                if _rpr_rest(trpr, drop_highlight=bool(slot and slot["highlight"])) != _rpr_rest(orpr):
+                source_rpr = original_model[n][0].find(W + "rPr")
+                expected_rpr, expected_effective = trpr, teff.run(source_rpr, tp_)
+                if slot and a.get("slot_formatting", "clear") == "clear":
+                    expected_rpr, expected_effective = _filled_run_properties(tp_, slot, slots.get(k, []), teff)
+                    # Preserve reconciled style identity in the non-pinnable comparison.
+                    expected_rpr = etree.fromstring(etree.tostring(expected_rpr))
+                    mapped_style = trpr.find(W + "rStyle") if trpr is not None else None
+                    old_style = expected_rpr.find(W + "rStyle")
+                    if old_style is not None:
+                        expected_rpr.remove(old_style)
+                    if mapped_style is not None:
+                        expected_rpr.append(etree.fromstring(etree.tostring(mapped_style)))
+                if _rpr_rest(expected_rpr) != _rpr_rest(orpr):
                     errs.append(f"{rw}: run properties outside the pinnable set differ from the template's"
                                 + (" (slot highlight must go)" if slot and slot["highlight"] else ""))
                 if _items(orr) != items:
                     errs.append(f"{rw}: run content (text, tabs, fields, drawings… in order) differs from the "
                                 f"template's")
-                source_rpr = original_model[n][0].find(W + "rPr")
-                if teff.run(source_rpr, tp_) != oeff.run(orpr, op_):
-                    errs.append(f"{rw}: effective run properties {oeff.run(orpr, op_)} ≠ template's {teff.run(source_rpr, tp_)}")
+                if expected_effective != oeff.run(orpr, op_):
+                    errs.append(f"{rw}: effective run properties {oeff.run(orpr, op_)} ≠ template's {expected_effective}")
     except ValueError as e:
         errs.append(f"{tag}: {e}")
     # drawing ids unique in the whole output

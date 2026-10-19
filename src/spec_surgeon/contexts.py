@@ -12,6 +12,7 @@ import json
 from pathlib import Path
 
 from .resources import DEFAULT_CONTEXT_TOKENS, positive_integer
+from .storage import read_artifact, write_artifact
 
 
 class ContextLimit(ValueError):
@@ -68,22 +69,47 @@ def _write(path, content):
     temporary.replace(path)
 
 
+def _catalog_folder(folder):
+    # Sibling conversations share their immutable prompt/tool catalog instead
+    # of copying hundreds of KB into every active checkpoint and archive.
+    return Path(folder).parent / "context-catalog"
+
+
+def load_context_manifest(path):
+    """Load old inline checkpoints and new catalog-referencing checkpoints."""
+    value = json.loads(Path(path).read_bytes())
+    if set(value) == {"artifact_id", "payload"}:
+        value = json.loads(read_artifact(Path(path).parent, value["artifact_id"]))
+    if "catalog" in value:
+        reference = value["catalog"]
+        catalog = json.loads(read_artifact(reference["folder"], reference["artifact_id"]))
+        value = {**value, **catalog}
+    return value
+
+
 def checkpoint_history(messages, *, system, tools, folder, state, authority, source_pins=None):
     """Persist the active epoch. Existing blocks must remain an exact prefix."""
+    catalog_folder = _catalog_folder(folder)
+    catalog = {"system": plain(system), "tools": plain(tools)}
+    encoded_catalog = _encode(catalog)
+    catalog_id = _sha(encoded_catalog)
+    catalog_reference = {"artifact_id": catalog_id, "folder": str(catalog_folder.resolve())}
     folder = Path(folder) / "context"
     epoch = state.setdefault("epoch", 0)
     state.setdefault("archives", [])
-    manifest = {"version": 1, "epoch": epoch, "system": plain(system), "tools": plain(tools),
+    manifest = {"version": 2, "epoch": epoch, "catalog": catalog_reference,
                 "messages": plain(messages), "authority": plain(authority), "source_pins": source_pins or []}
     path = folder / f"active-{epoch}.json"
     if path.exists():
-        prior = json.loads(path.read_bytes())
+        prior = load_context_manifest(path)
         previous = prior["messages"]
         # User replies may extend authority; system/tools and old provider messages
         # cannot be rewritten, even if a caller accidentally mutates an SDK block.
-        if (manifest["messages"][:len(previous)] != previous or prior["system"] != manifest["system"]
-                or prior["tools"] != manifest["tools"]):
+        if (manifest["messages"][:len(previous)] != previous or prior["system"] != catalog["system"]
+                or prior["tools"] != catalog["tools"]):
             raise ContextLimit("provider history changed within a conversation epoch")
+    write_artifact(catalog_folder, catalog_id, encoded_catalog)
+    state.setdefault("catalogs", {})[catalog_id] = catalog_reference
     _write(path, _encode(manifest))
     state["folder"] = str(Path(folder).resolve())
     state["active"] = str(path.resolve())
@@ -132,13 +158,12 @@ def manage_context(messages, *, system, tools, folder, state, authority,
     new_tools = tools if next_tools is None else next_tools
     content = _encode(manifest)
     artifact_id = _sha(content)
-    archive = Path(folder) / "context" / f"{artifact_id}.json"
-    if archive.exists() and archive.read_bytes() != content:
-        raise ContextLimit("context archive identity collision")
-    if not archive.exists():
-        _write(archive, content)
+    try:
+        write_artifact(Path(folder) / "context", artifact_id, content)
+    except ValueError as exc:
+        raise ContextLimit("context archive identity collision") from exc
     reference = {"artifact_id": artifact_id, "epoch": state["epoch"], "messages": len(messages),
-                 "bytes": len(content)}
+                 "bytes": len(content), "catalog_id": manifest["catalog"]["artifact_id"]}
     # The new checkpoint does not claim to be a previous assistant/tool exchange.
     # Approval checks continue to use caller-owned authority, never this summary.
     checkpoint = {"notice": "NEW CONVERSATION EPOCH. Previous signed history is sealed intact. "
@@ -183,11 +208,15 @@ def read_context_archive(batch, artifact_id=None, offset=0, chars=16000):
     else:
         if (not isinstance(artifact_id, str) or len(artifact_id) != 64
                 or any(c not in "0123456789abcdef" for c in artifact_id)
-                or artifact_id not in {item["artifact_id"] for item in state.get("archives", [])}):
+                or artifact_id not in ({item["artifact_id"] for item in state.get("archives", [])}
+                                       | set(state.get("catalogs", {})))):
             raise ValueError("archive identifier is outside this investigation")
-        raw = (Path(folder) / "context" / f"{artifact_id}.json").read_bytes()
-        if _sha(raw) != artifact_id:
-            raise ValueError("context archive has changed")
+        root = (state["catalogs"][artifact_id]["folder"] if artifact_id in state.get("catalogs", {})
+                else Path(folder) / "context")
+        try:
+            raw = read_artifact(root, artifact_id)
+        except ValueError as exc:
+            raise ValueError("context archive has changed") from exc
         manifest = json.loads(raw)
         from .investigation import _allowed
         allowed = _allowed(batch)

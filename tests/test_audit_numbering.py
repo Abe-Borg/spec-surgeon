@@ -409,7 +409,12 @@ def test_the_fix_beside_ops_that_change_the_mark_or_the_section_break(clean):
     """Item 3: the kind checks exactly what the fix changes (numPr, its place, pPrChange) and leaves the mark's rPr and a
     sectPr to the residual — set_font over the marks, bold on the paragraphs, page setup on a section break plan and
     pass beside the fix (they used to plan and fail V10)."""
-    for other in ({"op": "set_font", "select": {"scope": ["document"], "runs": "all"}, "params": {"font": "Arial"}},
+    font = {"op": "set_font", "select": {"scope": ["document"], "runs": "all"}, "params": {"font": "Arial"}}
+    with pytest.raises(JobException) as exc:
+        run(clean, auditing(unnumber_empty=True), font)
+    assert exc.value.code == "conflict"  # The audit changes numPr that the label-font selection reads.
+    font["params"]["numbering_levels"] = False
+    for other in (font,
                   {"op": "set_properties", "select": {"scope": ["document"], "paragraphs": {"style_in": ["ArchPara"]}},
                    "params": {"run": {"b": True}, "tracked": False}}):
         plan, out, rec = run(clean, auditing(unnumber_empty=True), other)

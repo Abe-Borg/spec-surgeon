@@ -646,7 +646,7 @@ def execute_review(review, out_dir, *, approval, previews, preview_approvals, ac
         results.append(run_chain([row["source"]], row["chain"], Path(out_dir) / f"file-{index:04d}",
             workers=workers, renderer=renderer, do_render=do_render, in_place=False, progress=progress,
             goal_contract=row["contract"], goal_bindings={row["source"]: row["binding"]},
-            approved_inputs=previews[row["source"]].token_inputs))
+            approved_inputs=previews[row["source"]].token_inputs, enforce_goals=True))
     save_review(review, Path(out_dir) / "office-review.json")
     return results
 

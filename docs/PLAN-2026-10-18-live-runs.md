@@ -212,21 +212,23 @@ One row per item. Change Status only when the gate in that item's Acceptance has
 
 | Item | Status | Owner / branch | Last note |
 | --- | --- | --- | --- |
-| A — delivery gate off | not started | | |
-| B1 — long paths | not started | | |
-| B2 — output root local | not started | | |
-| B3 — worker spawn | not started | | |
-| C1 — placeholder styling | not started | | |
-| C2 — numbering-level fonts | not started | | |
-| C3 — one font-slot rule | not started | | |
-| C4 — page-count deltas | not started | | |
-| C5 — matching tolerance | not started | | |
-| D — readable records and caps | not started | | |
-| E — per-file bindings, tool aliases | not started | | |
-| F — op index, cheaper inspections | not started | | |
-| G — window states and errors | not started | | |
-| H1 — real-file corpus | not started | | |
-| H2 — docs diet | not started | | |
-| H3 — release checklist | not started | | |
+| A — delivery gate off | implemented; live replay pending | codex/live-runs-follow-through | 2026-10-19: Ordinary CLI/desktop/batch/chain use preview consent + engine checks; legacy goal metadata is advisory. Explicit profiles/governed recovery retain their own authority. |
+| B1 — long paths | implemented; Windows replay pending | codex/live-runs-follow-through | 2026-10-19: 16-character disk IDs preserve full hashes, immutable archives migrate/read legacy paths, frozen manifest is longPathAware; deep roots warn. |
+| B2 — output root local | implemented; Windows replay pending | codex/live-runs-follow-through | 2026-10-19: Default runs use local application data; synced/deep roots show warnings. Human output/bundle caps and shared catalog storage reduce amplification. |
+| B3 — worker spawn | implemented; Windows replay pending | codex/live-runs-follow-through | 2026-10-19: Threads default, serial/process modes explicit, frozen apps never spawn transform pools. Independent XSD caches isolated per worker. |
+| C1 — placeholder styling | implemented; live replay pending | codex/live-runs-follow-through | 2026-10-19: clear default removes slot-only color/highlight/shading before effective style pinning; keep explicit. Independent verifier and decorated shipped-template tamper tests. |
+| C2 — numbering-level fonts | implemented; Word replay pending | codex/live-runs-follow-through | 2026-10-19: Whole-document font changes include used body list definitions/overrides; symbols/pictures and sizes preserved; whole-member independent verification. |
+| C3 — one font-slot rule | implemented; live replay pending | codex/live-runs-follow-through | 2026-10-19: Font shorthand/postconditions use ascii/hAnsi/cs; eastAsia requires an explicit request. Font failures grouped with counts. |
+| C4 — page-count deltas | implemented for rendered samples; live replay pending | codex/live-runs-follow-through | 2026-10-19: Before/after PDF counts shown in preview rows and text; reflow warns. Unsampled files explicitly show unavailable counts. |
+| C5 — matching tolerance | implemented; live replay pending | codex/live-runs-follow-through | 2026-10-19: Explicit case-insensitive/flexible selector and fill matching; exact captured source characters preserved; CSI examples accept spaced/hyphenated/compact/four-level numbers. |
+| D — readable records and caps | implemented; live replay pending | codex/live-runs-follow-through | 2026-10-19: Human records <100 KB, reports/previews <500 KB, bundles <5 MB, counts + three examples; complete machine authority retained separately and referenced. |
+| E — per-file bindings, tool aliases | implemented; live replay pending | codex/live-runs-follow-through | 2026-10-19: Source-path/MD5/part/paragraph bound literal fills verified independently, editable preview table requires re-preview, every inspection tool accepts template alias. Later-stage bindings refuse early. |
+| F — op index, cheaper inspections | implemented in part; live timing pending | codex/live-runs-follow-through | 2026-10-19: Compact operation index + describe_op, shared catalog references, elapsed/calls/cost and cooperative cancel. Routine inspections remain deterministic tools; no additional model pass introduced. |
+| G — window states and errors | implemented; live walkthrough pending | codex/live-runs-follow-through | 2026-10-19: One preview decision, advisory visual findings, unavailable recovery disabled with reason, actionable expected errors, unexpected failures direct to diagnostics, progress/cancel visible. |
+| H1 — real-file corpus | harness ready; private corpus unavailable | codex/live-runs-follow-through | 2026-10-19: External pinned 12-file/two-recipe replay in tests/real; set SPEC_SURGEON_REAL_CORPUS and optionally SPEC_SURGEON_REAL_RENDERER=word. Missing private corpus skips explicitly. |
+| H2 — docs diet | user-managed | codex/live-runs-follow-through | 2026-10-19: README.md and CLAUDE.md left to the cleanup the user reported; this PR does not redo it. |
+| H3 — release checklist | checklist added; live evidence pending | codex/live-runs-follow-through | 2026-10-19: PR template requires corpus results and a live request on the release candidate with diagnostics attached; neither is claimed by fixture-only results. |
 
-Needs Abraham (cannot be done by an agent in a container): every real-file re-run named in an Acceptance; anything involving Word rendering or a live API key; approving the plan's one open decision (drop the outcome planner entirely, or keep it as a background risk list).
+2026-10-19: The ordinary outcome planner is removed from the request/delivery path, as authorized by the user's instruction to handle this plan. Independent engine verification and source-bound preview approval remain required. Explicit office-profile and governed custom recovery workflows retain their separately requested contracts. No new outcome planner was added.
+
+Still needed for real-file acceptance: the private 12 specifications, owner's template and saved recipes; native Windows/Word rendering and crash-log checks; a live model run measuring time and cost. These inputs and credentials are absent from this checkout. No workstream is certified against those live gates by the regression tests alone. Full machine JSON and immutable provider histories remain complete; byte caps apply to the human views and diagnostics bundles, with references to omitted evidence. The corpus harness is ready for those files, and the release checklist requires the resulting evidence.

@@ -49,12 +49,13 @@ Fill rules, evaluated on the TARGET (source package):
 * ``first_match`` (or ``{"rules": [...]}``) — tries each rule in ``rules`` in order and returns the first one that
   extracts a non-empty fill (syntax/bad-params errors in any sub-rule are raised immediately).
 
-When ``flexible_whitespace`` (default true) is active, regex/anchor matching falls back to a whitespace-normalized
-view (converting ``\\u00a0`` and tabs to spaces and collapsing multiple spaces) and normalizes whitespace in the
-extracted fill. Fills are stripped of surrounding whitespace (``strip``, default true) and must be non-empty.
+``case_insensitive`` (default false) controls regex and anchor matching. With ``flexible_whitespace`` (default true),
+matching can use a whitespace-normalized view, but captures map back to exact source spans: internal spaces, NBSPs
+and case are preserved. Fills are stripped only at their edges (``strip``, default true) and must be non-empty.
 """
 from __future__ import annotations
 
+import hashlib
 import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Tuple
@@ -116,6 +117,37 @@ def display_text(p) -> str:
 
 def _norm_ws(s: str) -> str:
     return re.sub(r"[\s\u00a0]+", " ", s or "")
+
+
+def _fill_match(rx, text: str, flexible: bool):
+    """Match a normalized view, but return only the exact original source span."""
+    match = rx.search(text)
+    if match is not None:
+        return match.group(1) if rx.groups else match.group(0)
+    if not flexible:
+        return None
+    chars, spans = [], []
+    for token in re.finditer(r"\s+|\S+", text):
+        if token.group().isspace():
+            chars.append(" ")
+            spans.append(token.span())
+        else:
+            for i in range(token.start(), token.end()):
+                chars.append(text[i])
+                spans.append((i, i + 1))
+    while chars and chars[0] == " ":
+        chars.pop(0)
+        spans.pop(0)
+    while chars and chars[-1] == " ":
+        chars.pop()
+        spans.pop()
+    match = rx.search("".join(chars))
+    if match is None:
+        return None
+    start, end = match.span(1 if rx.groups else 0)
+    if start < 0 or end <= start:
+        return ""
+    return text[spans[start][0]:spans[end - 1][1]]
 
 
 def _highlighted(run, colors) -> bool:
@@ -437,7 +469,7 @@ def carve(p, start: int, end: int) -> List[Any]:
     return inside
 
 
-def apply_slot(p, slot: Slot, fill: str, remove_highlight: bool) -> None:
+def apply_slot(p, slot: Slot, fill: str, remove_highlight: bool):
     """Replace the slot's text with ``fill`` in one run: the touched runs are carved (``carve``), the slot's runs
     collapse into the first one, whose highlight goes when the slot is a highlight slot."""
     runs = carve(p, slot.start, slot.end)
@@ -457,6 +489,7 @@ def apply_slot(p, slot: Slot, fill: str, remove_highlight: bool) -> None:
             hl.getparent().remove(hl)
     for r in runs[1:]:
         parent.remove(r)
+    return keep
 
 
 def expected_block_text(p, slots: Sequence[Slot], fills: Dict[str, str]) -> str:
@@ -531,17 +564,20 @@ def fill_reads(pkg: DocxPackage, rule: Dict[str, Any]) -> List[Tuple[str, int]]:
             out += [r for r in fill_reads(pkg, sub) if r not in out]
         return out
     kind = rule.get("rule")
+    if kind == "binding":
+        return [(rule["part"], rule["paragraph"])]
     if kind not in ("regex", "paragraph_after"):
         return []
     try:
-        rx = re.compile(rule["pattern"] if kind == "regex" else rule["anchor_regex"])
+        rx = re.compile(rule["pattern"] if kind == "regex" else rule["anchor_regex"],
+                        re.IGNORECASE if rule.get("case_insensitive", False) else 0)
         parts = _source_parts(pkg, rule.get("source", "document"), rule.get("section"))
     except (JobException, KeyError, re.error):
         return []
     out = []
     for part in parts:
         texts = [display_text(p) for p in paragraphs(pkg.xml(part))]
-        hits = [i for i, t in enumerate(texts) if rx.search(t) or rx.search(_norm_ws(t).strip())]
+        hits = [i for i, t in enumerate(texts) if _fill_match(rx, t, rule.get("flexible_whitespace", True)) is not None]
         for h in hits:
             out.append((part, h))
             if kind == "paragraph_after":
@@ -573,9 +609,17 @@ def _validate_rule_syntax(name: str, rule: Dict[str, Any]) -> None:
             _validate_rule_syntax(name, r)
         return
     kind = rule.get("rule")
+    for option in ("case_insensitive", "flexible_whitespace", "strip"):
+        if option in rule and type(rule[option]) is not bool:
+            raise JobException(f"slot {name!r}: {option} must be a boolean", "bad-params")
     if kind == "literal":
         if not isinstance(rule.get("value"), str):
             raise JobException(f"slot {name!r}: literal fill needs a string 'value'", "bad-params")
+    elif kind == "binding":
+        if (not isinstance(rule.get("value"), str) or not rule["value"] or not isinstance(rule.get("part"), str)
+                or type(rule.get("paragraph")) is not int or rule["paragraph"] < 0
+                or not isinstance(rule.get("source_md5"), str)):
+            raise JobException(f"slot {name!r}: binding requires exact value, part, paragraph and source_md5", "bad-params")
     elif kind == "regex":
         try:
             re.compile(rule["pattern"])
@@ -611,25 +655,33 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
     if occ not in ("all", "first"):
         raise JobException(f"slot {name!r}: occurrence must be 'all' or 'first', got {occ!r}", "bad-params")
 
+    if kind == "binding":
+        if hashlib.md5(pkg.data).hexdigest() != rule["source_md5"]:
+            raise JobException(f"slot {name!r}: bound source identity changed", "binding-source")
+        part = rule["part"]
+        if part not in pkg.text_parts():
+            raise JobException(f"slot {name!r}: bound part {part!r} is not a source text part", "binding-source")
+        pars = paragraphs(pkg.xml(part))
+        ordinal = rule["paragraph"]
+        if ordinal >= len(pars) or rule["value"] not in display_text(pars[ordinal]):
+            raise JobException(f"slot {name!r}: bound literal {rule['value']!r} does not occur verbatim in "
+                               f"{part} paragraph {ordinal}", "binding-source")
+        return rule["value"]
     if kind == "literal":
         value = rule["value"]
     elif kind == "regex":
-        rx = re.compile(rule["pattern"])
+        rx = re.compile(rule["pattern"], re.IGNORECASE if rule.get("case_insensitive", False) else 0)
         pars = _source_paragraphs(pkg, rule.get("source", "document"), rule.get("section"))
         values = []
         for p in pars:
             raw = display_text(p)
-            m = rx.search(raw)
-            if m:
-                values.append(m.group(1) if rx.groups else m.group(0))
-        if not values and flex_ws:
-            for p in pars:
-                norm = _norm_ws(display_text(p)).strip()
-                m = rx.search(norm)
-                if m:
-                    values.append(m.group(1) if rx.groups else m.group(0))
+            value = _fill_match(rx, raw, flex_ws)
+            if value is not None:
+                values.append(value)
         if not values:
-            raise JobException(f"slot {name!r}: pattern {rule['pattern']!r} matches nothing in {rule.get('source', 'document')}",
+            first = display_text(pars[0]) if pars else "(empty)"
+            raise JobException(f"slot {name!r}: pattern {rule['pattern']!r} matches nothing in {rule.get('source', 'document')}; "
+                               f"first line: {first!r}",
                                "not-found", {"slot": name, "rule": rule})
         if occ == "first":
             value = values[0]
@@ -641,15 +693,14 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
                                    {"slot": name, "values": sorted(set(values))})
             value = values[0]
     elif kind == "paragraph_after":
-        rx = re.compile(rule["anchor_regex"])
+        rx = re.compile(rule["anchor_regex"], re.IGNORECASE if rule.get("case_insensitive", False) else 0)
         pars = _source_paragraphs(pkg, rule.get("source", "document"), rule.get("section"))
         texts = [display_text(p) for p in pars]
-        hits = [i for i, t in enumerate(texts) if rx.search(t)]
-        if not hits and flex_ws:
-            hits = [i for i, t in enumerate(texts) if rx.search(_norm_ws(t).strip())]
+        hits = [i for i, t in enumerate(texts) if _fill_match(rx, t, flex_ws) is not None]
         if not hits:
             raise JobException(f"slot {name!r}: anchor {rule['anchor_regex']!r} matches 0 paragraph(s); "
-                               f"exactly one needed", "not-found", {"slot": name, "matches": hits})
+                               f"exactly one needed; first line: {texts[0] if texts else '(empty)'!r}",
+                               "not-found", {"slot": name, "matches": hits})
         candidates = []                   # the following paragraphs' own text (verbatim)
         for h in hits:
             nxt = [t for t in texts[h + 1:] if t.strip()]
@@ -666,8 +717,7 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
         raise JobException(f"slot {name!r}: rule must be literal | regex | paragraph_after | first_match, got {kind!r}",
                            "bad-params")
     # The fill keeps the document's own characters (CLAUDE.md rule 11: extracted, never typed). Whitespace
-    # normalization is used only to MATCH and to judge consensus; a match that needed the normalized view yields
-    # that view's text, because the regex group has no other source.
+    # normalization is used only to MATCH and to judge consensus; captures are mapped back to the source span.
     if strip:
         value = value.strip()
     if not value:

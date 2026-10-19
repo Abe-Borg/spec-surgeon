@@ -313,7 +313,8 @@ def effective_size(rpr, p, styles: Styles) -> int:
 # ---- selector resolution (independent of ops/selectors.py) ------------------------------------------
 
 PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range",
-             "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs"}
+             "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs",
+             "case_insensitive", "flexible_whitespace"}
 RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions", "color_in"}
 
 
@@ -375,8 +376,43 @@ def _v_block_text_with_tabs(p) -> str:
     return "".join(parts).replace("\u00a0", " ")
 
 
-def _v_rx_matches(pattern: str, raw_text: str, p) -> bool:
-    rx = re.compile(pattern)
+def _v_selector_regex(pattern, options):
+    flags = re.I if options.get("case_insensitive") else 0
+    parsed = re.compile(pattern, flags)
+    # Verbose expressions own their spaces and comments, including scoped (?x:...) groups.
+    has_verbose_group = re.search(r"\(\?[aiLmsux-]*x[aiLmsux-]*[:)]", pattern) is not None
+    if options.get("flexible_whitespace") and not (parsed.flags & re.X or has_verbose_group):
+        out, in_brackets, class_prefix, protected, space = [], False, "", False, False
+        for character in pattern:
+            if character.isspace() and not protected and not in_brackets:
+                if not space:
+                    out.append(r"(?:\s+)")
+                space = True
+                continue
+            space = False
+            out.append(character)
+            if protected:
+                protected = False
+                if in_brackets:
+                    class_prefix = "content"
+            elif character == "\\":
+                protected = True
+            elif in_brackets:
+                if character == "]" and class_prefix == "content":
+                    in_brackets = False
+                elif character == "^" and class_prefix == "":
+                    class_prefix = "negation"
+                else:
+                    class_prefix = "content"
+            elif character == "[":
+                in_brackets = True
+                class_prefix = ""
+        pattern = "".join(out)
+    return re.compile(pattern, flags)
+
+
+def _v_rx_matches(pattern: str, raw_text: str, p, options=None) -> bool:
+    rx = _v_selector_regex(pattern, options or {})
     if rx.search(raw_text) is not None:
         return True
     return rx.search(_v_block_text_with_tabs(p)) is not None
@@ -386,9 +422,12 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
         return True
     if not isinstance(pred, dict) or set(pred) - PARA_KEYS:
         raise ValueError(f"unknown paragraph selector {pred!r}")
+    if any(key in pred and not isinstance(pred[key], bool)
+           for key in ("case_insensitive", "flexible_whitespace")):
+        raise ValueError("selector matching options must be booleans")
     if "style_in" in pred and _v_selector_style(p, styles) not in pred["style_in"]:
         return False
-    if "text_regex" in pred and not _v_rx_matches(pred["text_regex"], view.texts[bi], p):
+    if "text_regex" in pred and not _v_rx_matches(pred["text_regex"], view.texts[bi], p, pred):
         return False
     if "in_table" in pred and _has_ancestor(p, {W + "tc"}, None) != bool(pred["in_table"]):
         return False
@@ -403,20 +442,20 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
     if "is_all_caps" in pred and _v_para_is_all_caps(p, view.runs[bi], styles) != bool(pred["is_all_caps"]):
         return False
     if "after_heading_regex" in pred:
-        rx = re.compile(pred["after_heading_regex"])
+        rx = _v_selector_regex(pred["after_heading_regex"], pred)
         hits = [i for i, t in enumerate(view.texts) if rx.search(t)]
         if not hits or bi <= hits[0]:
             return False
     if "between_paragraphs" in pred:
         bp = pred["between_paragraphs"]
-        srx = re.compile(bp["start_regex"])
+        srx = _v_selector_regex(bp["start_regex"], pred)
         starts = [i for i, t in enumerate(view.texts) if srx.search(t)]
         if not starts:
             return False
         s_idx = starts[0]
         e_idx = len(view.texts)
         if bp.get("end_regex") is not None:
-            erx = re.compile(bp["end_regex"])
+            erx = _v_selector_regex(bp["end_regex"], pred)
             ends = [i for i in range(s_idx + 1, len(view.texts)) if erx.search(view.texts[i])]
             if ends:
                 e_idx = ends[0]
@@ -1575,7 +1614,8 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     only what resolved to one of those sizes in the source, the rest keeping its size; symbol runs (a preserved
     font in their chain, or holding a w:sym) are exempt from the size."""
     value = a.get("value")
-    slots = a.get("slots", ["ascii", "hAnsi", "cs"]) if value is not None else []
+    default_slots = ["ascii", "hAnsi", "cs"] + (["eastAsia"] if a.get("east_asia") else [])
+    slots = a.get("slots", default_slots) if value is not None else []
     preserve = {f.casefold() for f in a.get("preserve_fonts", [])}
     want_sz = int(a["size"] * 2) if a.get("size") is not None else None
     frm = {int(x * 2) for x in a["size_from"]} if a.get("size_from") else None
@@ -1619,13 +1659,13 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                             preserved += 1
                             continue
                         bad += 1
-                        if len(bad_examples) < 5:
+                        if len(bad_examples) < 3:
                             bad_examples.append(f"{part} block {bi} (text-edited) output run {k} {slot}: {eo.get(slot)!r}")
                     if want_sz is not None and not exempt(q.find(W + "rPr"), op, q):
                         zo = effective_size(q.find(W + "rPr"), op, ctx.out_styles)
                         if not (zo == want_sz or (frm is not None and zo not in frm and zo in src_sizes)):
                             bad += 1
-                            if len(bad_examples) < 5:
+                            if len(bad_examples) < 3:
                                 bad_examples.append(f"{part} block {bi} (text-edited) output run {k} size: {zo}")
                 pairs = []
                 if a.get("include_paragraph_marks", True):
@@ -1653,7 +1693,7 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                             ok = eo.get(slot) == value
                         if not ok:
                             bad += 1
-                            if len(bad_examples) < 5:
+                            if len(bad_examples) < 3:
                                 bad_examples.append(f"{part} block {bi} {label} {slot}: {src_v!r}→{eo.get(slot)!r}")
                 if want_sz is not None and not exempt(o_rpr, op, o_run) \
                         and not symbolic(s_rpr, sp, ctx.src_styles, preserve):
@@ -1661,14 +1701,22 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     zo = effective_size(o_rpr, op, ctx.out_styles)
                     if not size_ok(zs, zo):
                         bad += 1
-                        if len(bad_examples) < 5:
+                        if len(bad_examples) < 3:
                             bad_examples.append(f"{part} block {bi} {label} size: {zs}→{zo} half-points")
+    label_count = 0
+    scope = a.get("scope", ["document"])
+    if slots and a.get("numbering_levels", "document" in scope):
+        from .font_numbering import check_effective_labels
+        label_count, label_preserved, label_bad = check_effective_labels(ctx, a, slots, preserve, bad_examples)
+        preserved += label_preserved
+        bad += label_bad
     if bad:
         errs.append(f"effective_font: {bad} slot(s) do not resolve as asserted, e.g. {bad_examples}")
     what = " and ".join(x for x in (f"{value!r} on {slots}" if slots else "",
                                     f"size {a['size']:g} pt" + (f" (from {sorted(a['size_from'])})" if frm else "")
                                     if want_sz is not None else "") if x)
-    return f"effective_font: {checked} run(s)/mark(s) resolve to {what} ({preserved} preserved symbol slot(s))"
+    return f"effective_font: {checked} run(s)/mark(s) + {label_count} label(s) resolve to {what} " \
+           f"({preserved} preserved symbol slot(s))"
 
 
 # ---- set_properties: the V10 kind "properties" ------------------------------------------------------------------
@@ -2404,6 +2452,20 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_
     # Generic custom-method primitives then cover only paragraphs not already
     # proved by one of those stricter operation rules.
     for a in sorted(assertions, key=lambda value: value.get("kind") == "paragraph_edits"):
+        if a.get("kind") in ("run_fonts", "style_fonts", "doc_defaults_fonts", "numbering_fonts") \
+                and "font_params" in a:
+            params = a["font_params"]
+            # Read the requested slot rule independently of the transform's shared font_values helper.
+            wanted = {}
+            if params.get("font") is not None:
+                wanted = {slot: params["font"] for slot in ("ascii", "hAnsi", "cs")}
+                if params.get("east_asia") is True:
+                    wanted["eastAsia"] = params["font"]
+            for slot in ("ascii", "hAnsi", "cs", "eastAsia"):
+                if params.get(slot) is not None:
+                    wanted[slot] = params[slot]
+            if wanted != a.get("set", {}):
+                errs.append(f"{a['kind']}: planned font slots {a.get('set')} disagree with requested slots {wanted}")
         fn = KINDS.get(a.get("kind"))
         if fn is None:
             errs.append(f"unknown assertion kind {a.get('kind')!r} — cannot be evaluated")
@@ -2427,7 +2489,8 @@ def check_properties(src: VPackage, out: VPackage, plan: Dict[str, Any], source_
     head = (f"{len(assertions)} assertion(s): " + "; ".join(summaries)) if assertions else "no property change predicted"
     summary = (head + f" | residual identity over {len(residual_parts)} changed part(s): "
                + ("everything not asserted is identical" if ok else f"{len(errs)} problem(s): {errs[:3]}"))
-    return ok, summary, {"errors": errs[:50], "assertions": summaries, "residual_parts": residual_parts}
+    return ok, summary, {"errors": errs[:50], "error_count": len(errs),
+                         "assertions": summaries, "residual_parts": residual_parts}
 
 
 # header/footer templating kinds live in verify/template.py, built-in batch 1's word-changing kinds in verify/textops.py
@@ -2461,6 +2524,7 @@ from .tableprops import TABLE_PROP_KINDS  # noqa: E402
 from .applytablestyle import APPLY_TABLE_KINDS  # noqa: E402
 # built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §3, §4): list levels and the numbering audit's fix
 from .listlevel import LIST_LEVEL_KINDS  # noqa: E402
+from .font_numbering import FONT_NUMBERING_KINDS  # noqa: E402
 from .numberingaudit import AUDIT_KINDS  # noqa: E402
 # built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §1, §2): numbering conversions
 from .numberingconvert import CONVERT_KINDS  # noqa: E402
@@ -2488,6 +2552,7 @@ KINDS.update(APPLY_KINDS)
 KINDS.update(TABLE_PROP_KINDS)
 KINDS.update(APPLY_TABLE_KINDS)
 KINDS.update(LIST_LEVEL_KINDS)
+KINDS.update(FONT_NUMBERING_KINDS)
 KINDS.update(AUDIT_KINDS)
 KINDS.update(CONVERT_KINDS)
 KINDS.update(TYPED_KINDS)

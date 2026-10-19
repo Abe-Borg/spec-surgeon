@@ -103,19 +103,36 @@ def render_pdf(docx: Path, work_dir: Path, renderer: str = "auto", log: Optional
     """The file rendered to PDF (Word, else LibreOffice), cached by content. Raises when nothing can render it."""
     from . import render as render_mod
     docx = Path(docx)
-    key = hashlib.md5(docx.read_bytes()).hexdigest()[:12]
+    content = docx.read_bytes()
+    digest = hashlib.sha256(content).hexdigest()
+    key = digest[:16]
     folder = Path(work_dir) / key
-    pdf = folder / f"{docx.stem}.pdf"
-    if pdf.is_file():
+    pdf = folder / "source.pdf"
+    metadata = folder / "source.sha256"
+    if metadata.exists() and metadata.read_text(encoding="ascii") != digest:
+        raise ValueError("render cache identity collision")
+    if pdf.is_file() and metadata.is_file():
         return pdf
     backend = render_mod.pick(renderer)
     if backend is None:
         raise RuntimeError("no Word or LibreOffice on this machine to render pages")
+    folder.mkdir(parents=True, exist_ok=True)
+    # Render the pinned bytes with a short basename. Real source filenames can
+    # be hundreds of characters, independent of the shortened cache identifier.
+    staged = folder / "source.docx"
+    staged.write_bytes(content)
+    metadata.write_text(digest, encoding="ascii")
     problems: List[str] = []
-    got = render_mod.render_pdfs([docx], folder, backend, 1, log=problems.append)
-    if docx not in got:
+    try:
+        got = render_mod.render_pdfs([staged], folder, backend, 1, log=problems.append)
+    finally:
+        try:
+            staged.unlink(missing_ok=True)
+        except OSError:
+            pass  # A renderer may still hold its private source copy open.
+    if staged not in got:
         raise RuntimeError(f"{docx.name} could not be rendered ({'; '.join(problems)[:300] or backend})")
-    return Path(got[docx])
+    return Path(got[staged])
 
 
 def page_pngs(docx: Path, pages: Sequence[int], work_dir: Path, renderer: str = "auto") -> List[Path]:

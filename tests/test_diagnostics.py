@@ -195,7 +195,7 @@ def test_a_worker_that_dies_costs_only_its_own_file(tmp_path, monkeypatch):
     d = _folder(tmp_path)
     out = tmp_path / "out"
     progress = []
-    b = run_batch([str(d)], "edit-spec", {}, out, workers=2, renderer="none", do_render=False, spec=REPLACE,
+    b = run_batch([str(d)], "edit-spec", {}, out, workers=2, worker_mode="process", renderer="none", do_render=False, spec=REPLACE,
                   progress=progress.append)
     status = {f.source.name: f.status for f in b.files}
     assert status["21 01 00 – B.docx"] == "EXCEPTION"
@@ -398,7 +398,6 @@ def test_a_refused_custom_transform_run_says_what_changed(tmp_path):
     s.compile("Set every section's header distance to 900 twips.", lambda m: None)
     assert "passed verification" in generate_reviewed_custom(s)
     s.make_preview(render=False, log=lambda m: None)
-    s.approve_outcomes(s.outcome_review["digest"])
     a = d / "21 00 00 – A.docx"
     a.write_bytes(a.read_bytes() + b"\0")
     with pytest.raises(ValueError, match="since the AI-written transform was tested — press Preview again") as e:
@@ -642,7 +641,6 @@ def test_a_sessions_bundle_holds_its_compile_and_preview_beside_the_run(tmp_path
                                                                    remove_outcome_proposal()))
     s.compile("remove all headers and footers", lambda m: None)
     s.make_preview(render=False, log=lambda m: None)
-    s.approve_outcomes(s.outcome_review["digest"])
     s.run(False, False, lambda m: None)
     assert s.last_run_dir.name == "run" and diag.bundle_root(s.last_run_dir) == s.out_dir.resolve()
     res = diag.make_bundle(tmp_path / "session.zip", s.last_run_dir)
@@ -792,4 +790,5 @@ def test_a_failed_job_puts_its_traceback_in_the_activity_log(qt, tmp_path):
     w._job_failed("KeyError: 'w:val'", "Traceback (most recent call last):\n  File \"x.py\", line 1\nKeyError: 'w:val'")
     log = w.log.toPlainText()
     assert "ERROR: KeyError: 'w:val'" in log and "    Traceback (most recent call last):" in log
-    assert w.run_page.info.text.text() == "KeyError: 'w:val'" and w.stack.currentWidget() is w.run_page
+    assert w.run_page.info.text.text() == "The action could not finish. Save diagnostics so the failure can be investigated."
+    assert w.stack.currentWidget() is w.run_page

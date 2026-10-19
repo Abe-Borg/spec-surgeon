@@ -1,5 +1,5 @@
 """Claude looks at pages (vision.py): ``view_pages`` in the conversation, and Claude's visual check of the preview
-samples — advisory: it can stop a run until the user acknowledges it, never pass anything. Scripted client only."""
+samples — advisory findings accompany preview approval and never replace engine verification. Scripted client only."""
 from __future__ import annotations
 
 import json
@@ -122,28 +122,25 @@ def test_no_images_no_call(tmp_path):
     assert "no page images" in rv.skipped and fake.requests == []
 
 
-def test_a_blocking_finding_stops_run_until_acknowledged_for_this_preview(folder, tmp_path):
+def test_visual_findings_remain_visible_without_a_separate_delivery_gate(folder, tmp_path):
     s = Session(folder=folder, out_root=tmp_path / "out")
     s.load_spec(SPECS / "remove-all-headers-footers.json")
     s.make_preview(render=False, log=lambda m: None)
     s.preview.review = VisualReview(findings=[{"severity": "block", "file": "", "page": None, "text": "logo squashed"}])
-    with pytest.raises(ValueError, match="visual check flagged 1 problem"):
-        s.run(False, False, lambda m: None)
-    with pytest.raises(ValueError, match="not the current one"):
-        s.acknowledge_review("an-old-token")
-    s.acknowledge_review(s.preview.token)
+    assert "logo squashed" in s.preview.to_text()
     assert s.run_blocked_reason() == ""
     assert "PASS 2" in s.run(False, False, lambda m: None)
-    s.make_preview(render=False, log=lambda m: None)                      # a new preview: a new review, no carry-over
+    s.make_preview(render=False, log=lambda m: None)
     s.preview.review = VisualReview(findings=[{"severity": "block", "file": "", "page": None, "text": "again"}])
-    assert s.run_blocked_reason()
+    assert s.run_blocked_reason() == ""
 
 
-def test_the_gate_covers_the_custom_transform_branch_too(folder, tmp_path):
+def test_visual_findings_do_not_bypass_custom_transform_source_identity(folder, tmp_path):
     s = Session(folder=folder, out_root=tmp_path / "out")
     s.generated, s.generated_token = SimpleNamespace(source="x", select={}, params={}), "tok"
     s.generated_preview = SimpleNamespace(review=VisualReview(findings=[{"severity": "block", "text": "x"}]), review_ack="")
-    with pytest.raises(ValueError, match="visual check"):
+    assert s.run_blocked_reason() == ""
+    with pytest.raises(ValueError, match="changed.*since the AI-written transform"):
         s.run(False, False, lambda m: None)
 
 

@@ -53,6 +53,39 @@ def logs_dir() -> Path:
     return data_dir() / "logs"
 
 
+def default_run_root() -> Path:
+    """Keep transient run evidence on the local disk rather than beside source specs."""
+    return data_dir() / "runs"
+
+
+def output_root_warnings(root) -> list[str]:
+    """One-line notices for chosen folders; explicit user choices remain usable."""
+    text = str(root).replace("\\", "/").rstrip("/")
+    parts = text.casefold().split("/")
+    synced = any(part == "dropbox" or part.startswith("dropbox (")
+                 or part == "onedrive" or part.startswith("onedrive - ")
+                 or part in {"google drive", "googledrive", "my drive", "icloud drive", "box"}
+                 for part in parts)
+    # OneDrive can be relocated under a folder with any name. Environment
+    # variables identify that case without opening or querying a sync client.
+    for key in ("OneDrive", "OneDriveConsumer", "OneDriveCommercial"):
+        candidate = os.environ.get(key, "").replace("\\", "/").rstrip("/").casefold()
+        if candidate and (text.casefold() == candidate or text.casefold().startswith(candidate + "/")):
+            synced = True
+    notices = []
+    if synced:
+        notices.append("Output is in a synced folder; sync may lock run files. A local folder is recommended.")
+    # Reserve room for the deepest generated evidence path (a recovery page
+    # render). Count UTF-16 code units as Windows does.
+    suffix = ("/20261019-235959/recovery/inspection/" + "f" * 16 + "/pages/" + "f" * 16
+              + "/renders/" + "f" * 16 + "/pages/p999999.png")
+    projected = len((text + suffix).encode("utf-16-le")) // 2
+    if projected >= 240:
+        notices.append("Output folder is deep enough for generated paths to approach Windows' path limit; "
+                       "choose a shorter local folder.")
+    return notices
+
+
 def settings_path() -> Path:
     return config_dir() / SETTINGS_FILE
 

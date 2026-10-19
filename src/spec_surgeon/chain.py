@@ -115,6 +115,9 @@ def validate_chain(chain: Any) -> None:
         except SpecError as e:
             raise ChainError(f"stage {i} ({stage_name(st, i)}): [{e.code}] {e.reason}",
                              {"stage": i, "code": e.code, **e.details}) from e
+        if i > 1 and st["spec"].get("bindings"):
+            raise ChainError("Source-bound template bindings must run in the first stage: later stages read "
+                             "verified intermediate files, rather than the original source bound in the preview.")
         if i > 1 and any(o["op"] == "capitalize_defined_terms" for o in st["spec"].get("ops", [])):
             raise ChainError("Source-bound capitalization approvals must run in the first stage. "
                              "Run earlier edits first and review fresh proposals on their outputs, or capitalize first.")
@@ -242,6 +245,7 @@ class ChainResult:
     stopped: Optional[str] = None                 # the chain itself failed: the stage and the error
     goal_contract: Optional[Dict[str, Any]] = None
     goal_bindings: Dict[str, Any] = field(default_factory=dict)
+    enforce_goals: bool = False
     input_snapshots: List[Dict[str, Any]] = field(default_factory=list)
 
     @property
@@ -289,19 +293,22 @@ def _stop(cf: ChainFile, stage: int, status: str, code: str, reason: str, detail
 
 def run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, workers: int = 0, renderer: str = "auto",
               do_render: bool = True, in_place: bool = False, progress=None, *,
-              goal_contract=None, goal_bindings=None, approved_inputs=None) -> ChainResult:
+              goal_contract=None, goal_bindings=None, approved_inputs=None, enforce_goals: bool = False,
+              worker_mode: str = "thread") -> ChainResult:
+    """Execute approved recipe stages; enforce outcome data only for an explicit governed workflow."""
     with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), chain_id=diag.new_id()), \
             diag.span("chain", out_dir=str(out_dir), workers=workers, renderer=renderer,
                       do_render=do_render, in_place=in_place) as outcome:
         result = _run_chain(inputs, chain, out_dir, workers, renderer, do_render, in_place, progress,
-                            copy.deepcopy(goal_contract), copy.deepcopy(goal_bindings or {}), copy.deepcopy(approved_inputs))
+                            copy.deepcopy(goal_contract), copy.deepcopy(goal_bindings or {}), copy.deepcopy(approved_inputs),
+                            enforce_goals, worker_mode)
         outcome.update(counts=result.counts(), timings=result.timings)
         return result
 
 
 def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, workers: int, renderer: str,
                do_render: bool, in_place: bool, progress, goal_contract=None, goal_bindings=None,
-               approved_inputs=None) -> ChainResult:
+               approved_inputs=None, enforce_goals=False, worker_mode="thread") -> ChainResult:
     """Run every stage of ``chain`` in order, each a ``run_batch`` in ``<out>/stage-NN/`` on the files the stage
     before it verified (the pin above); then the chain's own report. Raises ``ChainError`` for an unusable chain and
     ``ValueError`` for inputs inside the results folder — both before anything is created. A stage's own failure (the
@@ -317,9 +324,9 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
         if (not isinstance(approved_inputs, dict) or approved_inputs.get("spec") != digest
                 or not isinstance(approved_inputs.get("templates"), dict)):
             raise ValueError("The chain or approval evidence changed since the preview; preview again before running.")
-    stage_in_place = in_place and goal_contract is None
+    stage_in_place = in_place and not (enforce_goals and goal_contract is not None)
     goal_inputs = []
-    if goal_contract is not None:
+    if enforce_goals and goal_contract is not None:
         from .goals import goal_templates
         goal_inputs = goal_templates(goal_contract)
     if stage_in_place and chain.get("assertions"):
@@ -342,7 +349,7 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
             diag.span("chain.execute", file_count=len(files), stage_count=len(chain["stages"]), workers=workers,
                       renderer=renderer, do_render=do_render, in_place=in_place) as execution:
         result = ChainResult(out_dir=out_dir, chain=chain, in_place=in_place, skipped=[str(f) for f in skipped],
-                             goal_contract=goal_contract, goal_bindings=goal_bindings or {})
+                             goal_contract=goal_contract, goal_bindings=goal_bindings or {}, enforce_goals=enforce_goals)
         from .input_snapshots import snapshot_inputs
         out_dir.mkdir(parents=True, exist_ok=True)
         execution_chain, result.input_snapshots = snapshot_inputs(chain, out_dir,
@@ -413,7 +420,8 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                                          spec=execution_chain["stages"][sr.index - 1]["spec"],
                                          _input_snapshots=result.input_snapshots, _public_spec=sr.spec,
                                          _source_identities=stage_sources,
-                                         _source_refusals=source_refusals if sr.index == 1 else None)
+                                         _source_refusals=source_refusals if sr.index == 1 else None,
+                                         worker_mode=worker_mode)
                     outcome["counts"] = sr.batch.counts()
                 result.renderer = result.renderer or sr.batch.renderer
                 by_input = {str(Path(fr.source).resolve()): fr for fr in sr.batch.files}
@@ -461,7 +469,8 @@ def _run_chain(inputs: Sequence[str], chain: Dict[str, Any], out_dir: Path, work
                         cf.reason += " — the file was left untouched"
             stage_label = "deliver"
             with diag.span("chain.delivery"):
-                _deliver(result, current, in_place, verified_bytes, guard, log, goal_contract, goal_bindings or {})
+                _deliver(result, current, in_place, verified_bytes, guard, log,
+                         goal_contract if enforce_goals else None, goal_bindings or {})
             result.timings["total"] = time.perf_counter() - t_start
             stage_label = "reports"
             result.finished = datetime.now().astimezone().isoformat(timespec="seconds")

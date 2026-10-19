@@ -247,7 +247,7 @@ def test_chunk2_gui_session_set_aside_loop(tmp_path):
                  "params": {"find": "COMMON WORK RESULTS", "replace": "FIRE PROTECTION", "author": AUTHOR}}],
     }
     # An explicit saved recipe starts the sieve; the next natural-language pass
-    # gets its own independent, source-bound authority over the remaining file.
+    # uses its approved preview over the remaining file.
     spec1_path = tmp_path / "first-pass.json"
     spec1_path.write_text(json.dumps(spec1), encoding="utf-8")
     s = Session(folder=d, out_root=tmp_path / "out")
@@ -275,7 +275,6 @@ def test_chunk2_gui_session_set_aside_loop(tmp_path):
         resp(tool("propose_plan", {"contract": contract, "rationale": "Replace the remaining document's original title wording."})))
     s.compile("replace WET-PIPE SPRINKLERS with FIRE PROTECTION", lambda m: None)
     s.make_preview(render=False, log=lambda m: None)
-    s.approve_outcomes(s.outcome_review["digest"])
     run_msg2 = s.run(in_place=False, render=False, log=lambda m: None)
     assert "1 file(s): PASS 1  FAIL 0  EXCEPTION 0" in run_msg2
     assert "0 set-aside files remaining" in s.load_set_aside()

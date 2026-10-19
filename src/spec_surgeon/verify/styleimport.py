@@ -419,7 +419,7 @@ def check_styles_imported(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             + (f", lists {d['num_map']} / {d['abs_map']}" if d["num_map"] else ""))
 
 
-NUMBERING_OWNER_KINDS = ("list_level",)
+NUMBERING_OWNER_KINDS = ("list_level", "numbering_fonts")
 
 
 def check_numbering_unchanged(ctx: Ctx, errs: List[str], tag: str, exclude: Optional[Dict[str, Any]] = None) -> None:

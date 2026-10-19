@@ -9,7 +9,7 @@ import pytest
 from fake_claude import FakeClient, resp, tool
 from make_fixtures import build, build_template
 from test_template import params
-from spec_surgeon.codegen import run_in_sandbox, system_prompt, trial, generate_op
+from spec_surgeon.codegen import check_source, run_in_sandbox, system_prompt, trial, generate_op
 from spec_surgeon.goals import resolve_goal
 
 
@@ -145,6 +145,14 @@ def test_governed_prompt_describes_graph_capabilities_and_inputs(case):
     assert "pkg.inputs" in prompt and "pkg.add_member" in prompt
     assert "template_parts" in prompt and "hf_template_refs" in prompt
     assert "- PLAIN formatting only:" in system_prompt()
+
+
+def test_template_display_segments_helper_remains_governed_only(case):
+    _, _, contract, _ = case
+    source = "from spec_surgeon.ops.slots import display_segments\n" + READ_TEMPLATE
+    assert check_source(source, goal_contract=contract) == []
+    assert any("spec_surgeon.ops.slots" in problem and "not allowed" in problem
+               for problem in check_source(source))
 
 
 def test_governed_method_can_complete_template_graph_with_independent_verification(case, tmp_path):
