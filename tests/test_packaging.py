@@ -192,6 +192,30 @@ def test_release_publication_requires_the_installer_and_source_to_match_the_tag(
     assert (run.returncode != 0) is (wrong_installer_revision or changed_source), run.stderr
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="Publication gates execute in Ubuntu bash")
+def test_release_guard_accepts_checkout_lightweight_ref_for_remote_annotated_tag(tmp_path):
+    origin, _, revision = _tagged_checkout(tmp_path)
+    checkout = tmp_path / "actions-checkout"
+    checkout.mkdir()
+
+    def git(*args):
+        return subprocess.run(["git", *args], cwd=checkout, check=True, capture_output=True, text=True).stdout.strip()
+
+    git("init")
+    git("remote", "add", "origin", str(origin))
+    # actions/checkout fetches the event's commit into the tag ref, so its local
+    # ref is lightweight even when the remote tag is annotated.
+    git("fetch", "--no-tags", "--depth=1", "origin", f"{revision}:refs/tags/v1.0.0")
+    git("checkout", "refs/tags/v1.0.0")
+    assert git("cat-file", "-t", "refs/tags/v1.0.0") == "commit"
+    env = {**os.environ, "GITHUB_REF_NAME": "v1.0.0", "WINDOWS_BUILD_REVISION": revision}
+    run = subprocess.run(["bash", "-e", "-o", "pipefail", "-c", _workflow_script(
+        "release.yml", "Check the source and installer still match the release tag")],
+        cwd=checkout, env=env, text=True, capture_output=True)
+    assert run.returncode == 0, run.stderr
+    assert git("rev-parse", "HEAD") == revision
+
+
 def test_installer_schema_check_uses_source_inventory_and_rejects_substitutions(tmp_path):
     import importlib.util
     import json

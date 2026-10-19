@@ -104,9 +104,9 @@ jobs:
         env:
           WINDOWS_BUILD_REVISION: ${{ needs.windows.outputs.revision }}
         run: |
-          git fetch --no-tags origin "refs/tags/$GITHUB_REF_NAME:refs/tags/$GITHUB_REF_NAME"
+          git fetch --no-tags origin "refs/tags/$GITHUB_REF_NAME"
           source_revision="$(git rev-parse HEAD)"
-          tag_revision="$(git rev-parse "refs/tags/$GITHUB_REF_NAME^{commit}")"
+          tag_revision="$(git rev-parse 'FETCH_HEAD^{commit}')"
           test "$source_revision" = "$tag_revision"
           test "$WINDOWS_BUILD_REVISION" = "$tag_revision"
       - name: Publish GitHub release
