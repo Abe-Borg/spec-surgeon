@@ -1,1 +1,1 @@
-Ordinary edits use one preview approval and engine verification; live-run fixes cover local/short run paths, thread workers, clean template fills, source-bound per-file values, list-label fonts, page-count previews, bounded human reports and on-demand operation documentation. Native Windows, private-corpus and live-model acceptance remain pending.
+No changes since v1.2.1.
