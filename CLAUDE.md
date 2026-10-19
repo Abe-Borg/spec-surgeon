@@ -29,6 +29,13 @@ lost or invented is the one failure that matters.
 
 ## Repository layout
 
+The default desktop is `ui/conversation_window.py`, coordinated by `document_task.py`:
+explicit Word attachments, an optional template, and chat. `review_display.py` describes
+the actual previewed EditSpec; ordinary requests never invoke a second outcome planner.
+Keep operations, recipes, model knobs and recovery workspaces out of this interface.
+`ui.app.build_legacy_window` retains the previous UI for integration regression tests.
+See `docs/CONVERSATIONAL_DESKTOP.md` for persistence, cost limits and review behavior.
+
 - `src/spec_surgeon/` — the package.
   - `package.py` — `DocxPackage`: zip, rels, sections, working overlay, repack by substitution.
   - `ooxml.py` — transform-side XML helpers (text views, run surgery, revision stamps, schema orders).

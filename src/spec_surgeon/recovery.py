@@ -48,6 +48,7 @@ class RecoveryOptions:
     renderer: str = "auto"
     allow_codegen: Optional[bool] = None  # automatic: enabled only with an independently checked adaptive contract
     use_memory: bool = True
+    include_nearby_inputs: bool = True  # conversational desktop confines input to explicit attachments
     group_call_slice: int = 4
     critic_review: bool = True
     visual_review: bool = True
@@ -78,7 +79,7 @@ class RecoveryOptions:
                 raise ValueError(f"Unknown analysis limit: {exc}") from exc
         if self.allow_codegen is not None and type(self.allow_codegen) is not bool:
             raise ValueError("allow_codegen must be a boolean or None for contract-based automatic choice")
-        for name in ("render", "use_memory", "critic_review", "visual_review"):
+        for name in ("render", "use_memory", "critic_review", "visual_review", "include_nearby_inputs"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be a boolean")
 
@@ -608,7 +609,8 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
     # input listing the compiler exposes. Freeze that listing before the first model call.
     # New files appearing during investigation cannot become unreviewed sources of wording.
     primary_template = Path(template).resolve() if template else next(iter(templates.values()), None)
-    discovered_inputs = compiler.input_files_near(files, primary_template) if input_files is None else list(input_files)
+    discovered_inputs = (compiler.input_files_near(files, primary_template) if options.include_nearby_inputs else []) \
+        if input_files is None else list(input_files)
     input_files = list(dict.fromkeys(
         [p for s in _specs(goal) for p in spec_input_files(s) if p not in spec_templates(s)]
         + discovered_inputs))
@@ -813,8 +815,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
     used = state.get("used", 0)
     attempt_limit = state.setdefault("attempt_limit", used + options.max_attempts)
     primary_template = Path(template).resolve() if template else next(iter(ctx["templates"].values()), None)
-    batch = compiler._Batch([f.source for f in group], primary_template)
-    batch.inputs = list(ctx.get("input_files", ()))
+    batch = compiler._Batch([f.source for f in group], primary_template, input_files=ctx.get("input_files", ()))
     # All templates named by an approved spec/chain are inspectable, not just the attachment.
     # Full paths are explicit aliases and do not broaden the batch to arbitrary filesystem reads.
     template_paths = {str(p): p for p in ctx["templates"].values()}

@@ -158,7 +158,7 @@ def qt_env(tmp_path, monkeypatch):
 
 
 def test_the_window_library_buttons(qt_env, folder, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     _app, windows = qt_env
     prompts = RecordingPrompts(texts=["Strip headers"], items=["Recipe: Strip headers"])
     s = Session(out_root=tmp_path / "out")

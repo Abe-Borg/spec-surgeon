@@ -35,7 +35,7 @@ def campaign(tmp_path):
 
 
 def workspace(qt_env, campaign, tmp_path, **kwargs):
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     session = Session(campaign=campaign, out_root=tmp_path / "out")
     window = build_window(session, prompts=kwargs.pop("prompts", RecordingPrompts()), **kwargs)
     qt_env[1].append(window)

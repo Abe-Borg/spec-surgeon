@@ -1,1 +1,1 @@
-No changes since v1.2.1.
+- The desktop now uses one conversation with explicit DOCX attachments, an optional template, readable previews and verified copies; it preserves v1.2.1's single-preview approval, progress/cancel and engine fixes. Live Word/private-corpus acceptance is still pending.

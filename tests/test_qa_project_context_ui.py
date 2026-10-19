@@ -20,7 +20,7 @@ def window(tmp_path, monkeypatch, *, selections=()):
     from qt_support import qt_app_or_skip
     from docx import Document
     from spec_surgeon.gui import Session
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")

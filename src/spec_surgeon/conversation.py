@@ -244,7 +244,7 @@ class Conversation:
                  max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS, effort: str = DEFAULT_EFFORT,
                  stall_repetitions: int = DEFAULT_STALL_REPETITIONS, max_image_tokens: Optional[int] = None,
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
-                 continuous_recovery: bool = False):
+                 continuous_recovery: bool = False, simple_experience: bool = False, word_sources=None):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -266,12 +266,13 @@ class Conversation:
         self.work_dir = Path(work_dir) if work_dir else None
         self.log = log or (lambda m: None)
         self._client = client
-        self.batch = compiler._Batch(self.files, self.template)
+        self.simple_experience = simple_experience
+        self.batch = compiler._Batch(self.files, self.template, input_files=[] if simple_experience else None)
         self.batch.work_dir = self.work_dir
         self.batch.max_image_tokens = max_image_tokens
         self.batch.analysis_limits = analysis_limits
         self.batch.context_state = self.context_state
-        self.memory = memory if memory is not None else compiler.load_project_memory(self.files)
+        self.memory = memory if memory is not None else {} if simple_experience else compiler.load_project_memory(self.files)
         self.answers = list(answers)
         self.prior_failures = list(prior_failures or [])
         # never an empty source (conversation.json's approved_words lists them): no PROJECT.json — or one holding
@@ -280,10 +281,18 @@ class Conversation:
         self.sources: List[str] = [w for w in (request, *self.answers,
                                                compiler.memory_source(self.memory) if has_memory else "")
                                    if isinstance(w, str) and w.strip()]
+        if word_sources is not None:
+            # A restored conversation can contain explanatory choice labels. Only the user's
+            # actual words and explicitly accepted draft wording may become text authority.
+            self.sources = list(word_sources)
+            if has_memory:
+                self.sources.append(compiler.memory_source(self.memory))
         # frozen for the whole conversation: rebuilding either between calls would invalidate the cache and the
         # model's earlier thinking
-        self.tools = compiler.CHAT_TOOLS if mode == "chat" else compiler.TOOLS
-        self.system = compiler.system_prompt(chat=(mode == "chat"))
+        self.tools = (compiler.SIMPLE_CHAT_TOOLS if simple_experience else compiler.CHAT_TOOLS) if mode == "chat" else compiler.TOOLS
+        self.system = compiler.system_prompt(chat=(mode == "chat"), simple=simple_experience)
+        if simple_experience:
+            self.system += compiler.SIMPLE_EXPERIENCE
         self.messages: List[Dict[str, Any]] = []
         self.entries: List[Entry] = []
         self.pending: List[Dict[str, Any]] = []   # tool_results owed for the last assistant turn, in call order
@@ -311,7 +320,7 @@ class Conversation:
         if self.started:
             raise RuntimeError("the conversation has already started")
         self.started = True
-        library = compiler.library_index() if self.mode == "chat" else None   # the user's library: chat only
+        library = compiler.library_index() if self.mode == "chat" and not self.simple_experience else None
         self.messages = compiler.build_messages(self.request, self.batch, self.answers, self.memory,
                                                 prior_failures=self.prior_failures or None, library=library)
         self.entries.append(Entry("user", self.request))
@@ -759,6 +768,9 @@ class Conversation:
                                   detail="Approves only this occurrence in this source file.", snapshot=copy.deepcopy(record)))
                 continue
             if kind in NAMED_LIBRARY_KINDS:
+                if self.simple_experience:
+                    errors.append("Choose the implementation internally; ask the user only about the document result.")
+                    continue
                 if self.mode != "chat":               # the one-shot compile: nobody is there to pick it
                     errors.append(f"a choice was dropped (kind {kind!r} is offered in a conversation only)")
                     continue
