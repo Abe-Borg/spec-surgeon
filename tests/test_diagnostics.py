@@ -745,7 +745,8 @@ def qt(tmp_path, monkeypatch):
 
 
 def test_the_window_shows_why_a_file_did_not_pass(qt, tmp_path):
-    from spec_surgeon.gui import Session, build_window
+    from spec_surgeon.gui import Session
+    from spec_surgeon.ui.app import build_legacy_window as build_window
     from spec_surgeon.ui.app import RecordingPrompts
     from spec_surgeon.ui.models import ROW_ROLE
     d = _folder(tmp_path, ["A"])
@@ -782,7 +783,8 @@ def test_the_window_shows_why_a_file_did_not_pass(qt, tmp_path):
 
 
 def test_a_failed_job_puts_its_traceback_in_the_activity_log(qt, tmp_path):
-    from spec_surgeon.gui import Session, build_window
+    from spec_surgeon.gui import Session
+    from spec_surgeon.ui.app import build_legacy_window as build_window
     from spec_surgeon.ui.app import RecordingPrompts
     w = build_window(Session(out_root=tmp_path / "out"), prompts=RecordingPrompts())
     qt[1].append(w)

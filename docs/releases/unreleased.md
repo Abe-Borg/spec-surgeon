@@ -1,1 +1,2 @@
-No changes since v1.2.1.
+- The desktop now uses one conversation with explicit DOCX attachments, an optional template, readable previews and verified copies; it preserves v1.2.1's single-preview approval, progress/cancel and engine fixes. Live Word/private-corpus acceptance is still pending.
+- Budget extensions resume pending custom preparation and recovery checkpoints; successive partial recovery exports use fresh folders and preserve earlier copies, including after reopening the conversation.

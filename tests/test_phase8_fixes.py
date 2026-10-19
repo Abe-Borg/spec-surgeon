@@ -870,7 +870,7 @@ def test_a_vanished_folder_is_no_match_never_an_exception(folder, tmp_path):
 
 
 def test_the_windows_preview_with_a_vanished_folder_reports_on_the_page(qt, folder, tmp_path):
-    from spec_surgeon.gui import build_window
+    from spec_surgeon.ui.app import build_legacy_window as build_window
     from spec_surgeon.ui.app import RecordingPrompts
     s = Session(out_root=tmp_path / "out", client=FakeClient(resp(tool("ask_user", {"questions": ["Which?"]}))))
     w = build_window(s, prompts=RecordingPrompts())
@@ -1389,7 +1389,7 @@ DOCUMENTS = (".docx", ".pdf", ".png")
 
 
 def window(qt, session=None, **kw):
-    from spec_surgeon.gui import build_window
+    from spec_surgeon.ui.app import build_legacy_window as build_window
     from spec_surgeon.ui.app import RecordingPrompts
     kw.setdefault("prompts", RecordingPrompts())
     w = build_window(session, **kw)
@@ -1770,7 +1770,7 @@ def test_a_window_never_loads_or_overwrites_the_saved_key(machine_with_a_saved_k
     from qt_support import close_windows, qt_app_or_skip
     app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    from spec_surgeon.gui import build_window
+    from spec_surgeon.ui.app import build_legacy_window as build_window
     from spec_surgeon.ui.app import RecordingPrompts
     from spec_surgeon.ui.settings_dialog import SettingsDialog
     fake = machine_with_a_saved_key

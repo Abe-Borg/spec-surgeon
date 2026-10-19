@@ -2631,7 +2631,7 @@ def qt_app(settings: Optional[Settings] = None) -> QApplication:
     return app
 
 
-def build_window(session: Optional[Session] = None, *, settings: Optional[Settings] = None, prompts=None,
+def build_legacy_window(session: Optional[Session] = None, *, settings: Optional[Settings] = None, prompts=None,
                  checker=None, downloader=None, launcher=None, installed=None) -> MainWindow:
     """The window. With ``session=None`` it starts from the remembered folders and request; with a session (tests,
     the smoke test) the session's values are used."""
@@ -2681,6 +2681,12 @@ def build_window(session: Optional[Session] = None, *, settings: Optional[Settin
     return w
 
 
+def build_window(session: Optional[Session] = None, **kwargs):
+    """Default desktop entry point. The old window is retained only as a regression harness."""
+    from .conversation_window import build_window as build_conversation
+    return build_conversation(session, **kwargs)
+
+
 def _install_excepthook(window_ref: List[Optional[MainWindow]]) -> None:
     previous_hook = sys.excepthook
 
@@ -2709,8 +2715,11 @@ def _crash_notice(w: MainWindow, previous: List[dict]) -> None:
             + (f"Python's fault handler wrote what it saw to {where}." if where else
                "Nothing was written to its crash log; the app log may say what it was doing."))
     w.write("Previous session ended unexpectedly: " + text)
-    w.files_page.info.show_message("warn", "Spec Surgeon closed unexpectedly last time", text,
-                                   [("Open logs folder", w.open_logs)])
+    if hasattr(w, "_notice"):
+        w._notice("The previous session ended unexpectedly. Your saved conversation is available below.")
+    else:
+        w.files_page.info.show_message("warn", "Spec Surgeon closed unexpectedly last time", text,
+                                       [("Open logs folder", w.open_logs)])
 
 
 def main(argv=None) -> int:

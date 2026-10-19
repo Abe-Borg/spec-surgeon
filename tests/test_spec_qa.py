@@ -245,7 +245,7 @@ def test_fm_data_sheets_notes_textboxes_and_comments_are_audited(tmp_path):
 def test_desktop_audit_and_exports_are_read_only(tmp_path, monkeypatch):
     from qt_support import close_windows, qt_app_or_skip
     from spec_surgeon.gui import Session
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     app = qt_app_or_skip()
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")

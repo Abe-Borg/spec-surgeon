@@ -34,7 +34,7 @@ def _until(app, predicate):
 
 
 def _window(session):
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     return build_window(session, prompts=RecordingPrompts())
 
 

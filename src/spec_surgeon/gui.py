@@ -147,6 +147,12 @@ class Session:
     max_context_tokens: Optional[int] = None
     max_output_tokens: Optional[int] = None
     effort: Optional[str] = None
+    # An explicit attachment list is independent of a folder or a recovery subset.
+    # None retains the CLI/legacy folder behavior; [] means the user attached nothing.
+    documents: Optional[List[Path]] = None
+    simple_conversation: bool = False
+    replay_word_sources: Optional[List[str]] = None
+    recovery_checkpoint: Optional[Path] = None  # current durable investigation, including in-flight work
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
 
     def _diagnostic_state(self) -> Dict[str, Any]:
@@ -192,6 +198,22 @@ class Session:
         from .batch import expand_inputs
         from .editspec import is_template_file
         templates = self._templates(outcome)
+        if self.documents is not None and self.selected_files is None:
+            files = []
+            for value in self.documents:
+                path = Path(value).resolve()
+                if path.suffix.lower() != ".docx" or path.name.startswith("~$"):
+                    raise ValueError(f"Attach a Word .docx document: {path.name}")
+                if not path.is_file():
+                    raise ValueError(f"An attached document is missing: {path}")
+                if path not in files:
+                    if is_template_file(path, templates):
+                        raise ValueError(f"{path.name} is also a copy of the reference template. "
+                                         "Remove it from the documents to edit, or choose a different template.")
+                    files.append(path)
+            if not files:
+                raise ValueError("Add the Word documents you want to edit.")
+            return files
         if self.selected_files is not None:
             files = [f for f in self.selected_files if f.is_file() and not is_template_file(f, templates)]
             if not files:
@@ -270,6 +292,7 @@ class Session:
             raise ValueError("a session runs either a spec, a custom transform or a chain, not two of them")
         self.spec, self.generated, self.chain = spec, generated, chain
         self.recovery = None
+        self.recovery_checkpoint = None
         self.spec_source = source if spec is not None else ""
         self.chain_source = source if chain is not None else ""
         self.recipe_name = recipe if spec is not None else ""
@@ -355,6 +378,8 @@ class Session:
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
                                          prior_failures=self.prior_failures or None, work_dir=out / "chat", log=log,
                                          continuous_recovery=True,
+                                         simple_experience=self.simple_conversation,
+                                         word_sources=self.replay_word_sources if self.simple_conversation else None,
                                          **{k: v for k, v in (("max_output_tokens", self.max_output_tokens),
                                                                ("max_context_tokens", self.max_context_tokens),
                                                                ("model", self.model),
@@ -410,7 +435,8 @@ class Session:
             snapshot = approve(c, chosen.id)
             options = options_for(c, render=render)
             options.visual_review = self.visual_check
-            result = execute(c, snapshot, self.chat_dir / f"recovery-{chosen.id}", options=options)
+            self.recovery_checkpoint = self.chat_dir / f"recovery-{chosen.id}"
+            result = execute(c, snapshot, self.recovery_checkpoint, options=options)
             self._adopt_recovery(result, keep_conversation=True)
             self.turn = result_turn(c, result)
             self._save_chat()
@@ -612,6 +638,7 @@ class Session:
         writer_dir = out / ("codegen" if attempt == 1 else f"codegen-{attempt:02d}")
         g = generate_op(request, proposal or "", samples, writer_dir, client=self.client, log=log, brief=brief,
                         approved_words=list(self.conversation.sources if self.conversation else [request]),
+                        include_nearby_inputs=not self.simple_conversation,
                         **{k: v for k, v in (("max_output_tokens", self.max_output_tokens),
                                             ("max_context_tokens", self.max_context_tokens), ("model", self.model),
                                             ("effort", self.effort)) if v is not None})
@@ -1011,7 +1038,16 @@ class Session:
                 raise ValueError("Recovery exports edited copies only; original files cannot be overwritten.")
             from .recovery import deliver_recovery
             result = self.recovery
-            destination = deliver_recovery(result, acknowledge_review=True)
+            delivery = {}
+            if self.simple_conversation:
+                # Each partial export is a new set of copies. Earlier deliveries stay intact,
+                # including when the investigation was reopened from its saved checkpoint.
+                destination, sequence = result.out_dir / "outputs", 2
+                while destination.exists():
+                    destination = result.out_dir / f"outputs-{sequence}"
+                    sequence += 1
+                delivery["out_dir"] = destination
+            destination = deliver_recovery(result, acknowledge_review=True, **delivery)
             self.last_recovery = result
             self.last_run_dir = result.out_dir
             self.last_batch, self.last_chain, self.last_trials = None, None, None
@@ -1172,6 +1208,7 @@ class Session:
         from .recovery import recover, recover_from_run
         out = Path(self.out_root) / datetime.now().strftime("%Y%m%d-%H%M%S-%f-recovery")
         previous = self.recovery
+        self.recovery_checkpoint = previous.out_dir if previous is not None else out
         if previous is not None:
             from .recovery import resume_recovery
             result = resume_recovery(previous.out_dir, request=request, options=options,

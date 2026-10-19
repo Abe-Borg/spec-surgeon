@@ -1,0 +1,188 @@
+"""Readable views of the actual edit and, for governed recovery, its existing outcome evidence."""
+from __future__ import annotations
+
+from pathlib import Path
+
+
+EFFECT_NAMES = {
+    "format": "Change text formatting", "format_section_title": "Format section titles",
+    "replace_text": "Replace wording", "insert_paragraph": "Insert a paragraph",
+    "delete_paragraphs": "Remove paragraphs", "page_setup": "Change page layout",
+    "header_footer_template": "Match headers and footers to the template",
+    "remove_header_footer": "Remove headers or footers", "paragraph_style": "Apply paragraph styles",
+    "style_mapping": "Match document styles", "proofing_language": "Set proofing language",
+    "table_format": "Format tables", "table_style": "Apply a table style",
+    "numbering": "Change list numbering", "typed_numbering": "Convert typed numbers to automatic numbering",
+    "paragraph_borders": "Change paragraph borders and shading", "review_comments": "Add review comments",
+}
+LABELS = {
+    "b": "Bold", "i": "Italic", "caps": "All capitals", "smallCaps": "Small capitals",
+    "strike": "Strikethrough", "keepNext": "Keep with next paragraph", "keepLines": "Keep lines together",
+    "widowControl": "Avoid isolated lines", "pageBreakBefore": "Page break before",
+    "find": "Original wording", "replace": "Replacement wording", "text": "Exact wording",
+    "run": "Text formatting", "paragraph": "Paragraph formatting", "params": "Settings",
+    "select": "Where to apply", "target": "Where to apply", "locators": "Matching passages (any of these)",
+    "exact_text": "Text is exactly", "contains_text": "Text contains", "text_regex": "Text matching pattern",
+    "cardinality": "Passages per document", "expected_count": "Required matches per document",
+    "expected_matches": "Required text replacements", "tracked": "Show changes in Word",
+    "style_id": "Style", "style_in": "Styles", "index_range": "Paragraph range (zero-based)",
+    "section_title": "section title", "document": "document body", "slot_fills": "Template field values",
+    "template_sections": "Template sections (zero-based)", "size": "Size", "w": "Width", "h": "Height",
+}
+
+EDIT_NAMES = {
+    "set_properties": "Change text and paragraph formatting", "set_font": "Change fonts",
+    "set_doc_defaults_font": "Change the document's default font", "set_style_font": "Change style fonts",
+    "replace_text": "Replace wording", "insert_paragraph": "Insert a paragraph",
+    "delete_paragraphs": "Remove paragraphs", "apply_header_footer_template": "Match headers and footers to the template",
+    "remove_header_footer": "Remove headers or footers", "set_page_setup": "Change page layout",
+    "apply_style": "Apply paragraph styles", "map_styles": "Match document styles",
+    "set_output_name": "Name the edited copies",
+}
+
+
+def spec_changes(spec, chain=None):
+    """Describe the same specification the preview executes, without another model or authority."""
+    specs = [spec] if spec else [stage["spec"] for stage in (chain or {}).get("stages", []) if stage.get("spec")]
+    result = []
+    for value in specs:
+        for op in value.get("ops", []):
+            name, params = op["op"], op.get("params", {})
+            title = EDIT_NAMES.get(name, readable(name).capitalize())
+            summary = title
+            if name == "set_properties":
+                changes = [f"{readable(key).lower()} {'on' if flag else 'off'}"
+                           for group in ("run", "paragraph") for key, flag in params.get(group, {}).items()]
+                if changes:
+                    summary = "Set " + ", ".join(changes) + " for the selected passages."
+            elif name == "replace_text":
+                summary = f'Replace “{params.get("find", "")}” with “{params.get("replace", "")}”.'
+            elif name == "insert_paragraph":
+                summary += ":\n" + params.get("text", "")
+            elif name in {"set_font", "set_style_font", "set_doc_defaults_font"} and params.get("font"):
+                summary += " to " + str(params["font"])
+            details = fields({key: child for key, child in op.items() if key != "op"})
+            result.append({"title": title, "summary": summary, "details": details})
+        if value.get("assumptions"):
+            result.append({"title": "Assumptions to check", "summary": "Assumptions to check",
+                           "details": list(value["assumptions"])})
+    return result
+
+
+def spec_bindings(spec, chain=None):
+    specs = [spec] if spec else [stage["spec"] for stage in (chain or {}).get("stages", []) if stage.get("spec")]
+    rows = []
+    for value in specs:
+        for binding in value.get("bindings", []):
+            details = [f"{readable(name)}: {slot['value']} (from {slot['part']}, paragraph {slot['paragraph'] + 1})"
+                       for name, slot in binding["slots"].items()]
+            rows.append({"title": Path(binding["file"]).name, "source": binding["file"], "details": details})
+    return rows
+
+
+def readable(value):
+    return LABELS.get(str(value), str(value).replace("_", " "))
+
+
+def fields(value, prefix=""):
+    """Render every material field, including unfamiliar future fields, without JSON or hidden truncation.
+
+    Exact text values are never paraphrased. Nested lists preserve their grouping, including
+    nested identifiers or types that can describe actual document properties.
+    """
+    lines = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            title = LABELS.get(key, key.replace("_", " ").capitalize())
+            lines.extend(fields(child, f"{prefix} · {title}" if prefix else title))
+    elif isinstance(value, list):
+        if not value:
+            lines.append(f"{prefix}: none")
+        for number, child in enumerate(value, 1):
+            lines.extend(fields(child, f"{prefix} ({number})"))
+    else:
+        text = "yes" if value is True else "no" if value is False else "none" if value is None else str(value)
+        lines.append(f"{prefix}: {text}")
+    return lines
+
+
+def effects(contract):
+    if not contract:
+        return []
+    values = contract.get("effects", []) if contract.get("kind") == "document_effects" else [contract]
+    result = []
+    for effect in values:
+        kind = effect.get("type", effect.get("kind", ""))
+        # Only the effect's own discriminator/binding metadata is redundant with its title.
+        lines = fields({key: value for key, value in effect.items()
+                        if key not in {"id", "type", "kind", "template_sha256"}})
+        target = effect.get("target")
+        if target is not None and "scope" not in target:
+            lines.append("Where to apply: document body")
+        if kind in {"format", "replace_text", "insert_paragraph", "delete_paragraphs"} and "tracked" not in effect:
+            lines.append("Show changes in Word: " + ("no" if kind == "format" else "yes"))
+        if kind in {"format", "replace_text", "insert_paragraph", "delete_paragraphs"} and effect.get("tracked", kind != "format"):
+            if "author" not in effect:
+                lines.append("Change author: " + contract.get("author", "Abraham Borg"))
+        if kind == "page_setup":
+            lines.append("Page dimensions and margins are in twips (1,440 = 1 inch).")
+        title = EFFECT_NAMES.get(kind, readable(kind).capitalize())
+        summary = title
+        if kind == "format":
+            changes = []
+            for group in ("run", "paragraph"):
+                for key, value in effect.get(group, {}).items():
+                    changes.append(f"{readable(key).lower()} {'on' if value else 'off'}")
+            font = effect.get("font", {})
+            if font.get("name"):
+                changes.append("font " + font["name"])
+            if "size" in font:
+                changes.append(f"{font['size']} pt")
+            passages = [str(loc["exact_text"]) for loc in (target or {}).get("locators", []) if "exact_text" in loc]
+            where = ", ".join(f'“{text}”' for text in passages) or "the selected passages"
+            summary = f"Set {', '.join(changes)} for {where}."
+        elif kind == "replace_text":
+            summary = f'Replace “{effect.get("find", "")}” with “{effect.get("replace", "") }”.'
+        elif kind == "insert_paragraph":
+            summary = f'Insert {effect.get("position", "after")} the selected passage:\n{effect.get("text", "")}'
+        elif kind == "header_footer_template":
+            summary += " · " + Path(effect.get("template", "")).name
+        elif kind == "proofing_language":
+            summary += " · " + ", ".join(str(v) for k, v in effect.get("params", {}).items()
+                                       if k in {"language", "east_asian", "complex_script"})
+        result.append({"title": title, "summary": summary, "details": lines})
+    return result
+
+
+def targets(review):
+    rows = []
+    for document in (review or {}).get("documents", []):
+        source = document["source"]
+        resolution = document.get("resolution", {})
+        binding = document.get("binding") or {}
+        groups = resolution.get("effects", {"change": resolution})
+        details = []
+        for ident, effect in groups.items():
+            bound = binding.get("effects", {}).get(ident, binding if "effects" not in resolution else {})
+            chosen = bound.get("targets", effect.get("candidates", []))
+            details.append(f"{len(chosen)} passage(s)" if chosen else str(effect.get("reason", "Whole-document change")))
+            for target in chosen:
+                location = readable(target.get("scope", "document"))
+                number = target.get("paragraph_index")
+                if number is not None:
+                    location += f", paragraph {number + 1}"
+                details.append(f"{location}: {target.get('text', '')}")
+        rows.append({"title": Path(source).name, "source": source, "details": details})
+    return rows
+
+
+
+def recovery_targets(result):
+    rows = []
+    for file in result.files:
+        binding = result.key.get("adaptive_bindings", {}).get(str(file.source), {})
+        groups = binding.get("effects", {})
+        resolution = {"effects": {ident: {"candidates": effect.get("targets", []),
+                        "reason": file.reason} for ident, effect in groups.items()}}
+        rows.append({"source": str(file.source), "binding": binding, "resolution": resolution})
+    return targets({"documents": rows})

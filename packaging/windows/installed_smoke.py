@@ -37,6 +37,41 @@ def _check_worked_examples(expected):
     return len(actual)
 
 
+def _offline_client(spec):
+    """One scripted chat turn, using no credentials or network even in an installed build."""
+    from contextlib import nullcontext
+    from types import SimpleNamespace as NS
+    from spec_surgeon.llm import DEFAULT_MODEL
+
+    response = NS(content=[NS(type="tool_use", id="smoke", name="submit_editspec", input={"spec": spec})],
+                  stop_reason="tool_use", stop_details=None, model=DEFAULT_MODEL,
+                  usage=NS(input_tokens=0, output_tokens=0, cache_read_input_tokens=0,
+                           cache_creation_input_tokens=0, iterations=None))
+    calls = []
+    def stream(**kwargs):
+        assert not calls, "The smoke test unexpectedly requested another model turn"
+        calls.append(True)
+        return nullcontext(NS(get_final_message=lambda: response))
+    return NS(beta=NS(messages=NS(stream=stream)))
+
+
+def _conversation_run(window, sources):
+    """Exercise the installed default UI: attachments, chat, preview consent, verified copies."""
+    window.task.render = False
+    window.add_documents([str(p) for p in sources])
+    window.composer.setPlainText("remove all headers and footers")
+    window.send.click()
+    log = window._spec_surgeon["wait"](120)
+    assert window.task.stage == "preview", log
+    assert not window.task.results
+    assert window.primary.isEnabled(), log
+    window.primary.click()
+    log = window._spec_surgeon["wait"](180)
+    assert window.task.stage == "done", log
+    assert len(window.task.results) == len(sources), log
+    assert all(Path(p).is_file() for p in window.task.results.values())
+
+
 def _gui(request, result):
     import anthropic
     import pymupdf
@@ -75,22 +110,11 @@ def _gui(request, result):
     inputs = Path(request["input_dir"])
     sources = sorted(inputs.glob("*.docx"))
     before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
-    session = Session(out_root=Path(request["output_dir"]))
-    session.load_spec(catalog.EXAMPLES_DIR / "remove-all-headers-footers.json")
+    spec = json.loads((catalog.EXAMPLES_DIR / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
+    session = Session(out_root=Path(request["output_dir"]), client=_offline_client(spec), visual_check=False)
     w = build_window(session, prompts=RecordingPrompts())
-    ui = w._spec_surgeon
     w.show()
-    ui["vars"]["folder"].set(str(inputs))
-    ui["vars"]["render"].set(False)
-    ui["buttons"]["preview"].click()
-    log = ui["wait"](120)
-    assert ui["status"].get() == "Ready.", log
-    assert "2 plan cleanly" in log, log
-    ui["buttons"]["run"].click()
-    log = ui["wait"](180)
-    assert ui["status"].get() == "Ready.", log
-    assert "PASS 2" in log, log
-    assert ui["results_model"].badges() == ["pass", "pass"]
+    _conversation_run(w, sources)
     w.grab().save(str(Path(request["report"]).with_name("gui-windows.png")))
     assert len(list((session.last_run_dir / "outputs").glob("*.docx"))) == 2
     record_files = list((session.last_run_dir / "records").glob("*.json"))

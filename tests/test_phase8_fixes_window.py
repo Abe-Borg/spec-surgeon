@@ -64,7 +64,7 @@ def qt(monkeypatch):
 
 
 def window(qt, session=None, **kw):
-    from spec_surgeon.gui import build_window
+    from spec_surgeon.ui.app import build_legacy_window as build_window
     from spec_surgeon.ui.app import RecordingPrompts
     kw.setdefault("prompts", RecordingPrompts())
     w = build_window(session, **kw)

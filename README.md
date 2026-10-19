@@ -26,7 +26,7 @@ available from **Spec Surgeon → Example edit specs** in the Start menu.
 
 Microsoft Word or LibreOffice is still needed for page rendering; neither is installed by this setup program. Typed
 requests need your Anthropic API key: enter it in the window's **Settings** and tick *Remember on this computer* to
-keep it in Windows Credential Manager. Saved EditSpecs run without one. The installer is unsigned, so Windows may show a
+keep it in Windows Credential Manager. Saved EditSpecs run through the command line without one. The installer is unsigned, so Windows may show a
 publisher prompt on the first manual install.
 
 **Python package / development setup** (Python 3.10+ on Windows, macOS or Linux; from the project folder):
@@ -57,37 +57,22 @@ render checks are recorded as N/A with the reason.
 | `SPEC_SURGEON_CONFIG_DIR` | where the window keeps `settings.json`, your library, downloaded updates and its logs |
 | `SPEC_SURGEON_THEME` | `light` or `dark`: force the window's colour scheme instead of following Windows |
 
-## The window: four steps
+## The window: documents and a conversation
 
-![The first step: choose the files](docs/gui-files.png)
+![The conversation workspace](docs/conversation-start.png)
 
-1. **Files.** Pick the folder with the .docx files (work on a copy the first few times). Optionally attach a
-   **template spec**: an architect's spec, or a prepared header/footer template with highlighted or `{{NAME}}`
-   placeholders, for requests like "make the header and footer match the template spec". It is left out of the batch.
-   Choose a results folder; previews, edited copies, records and reports land there.
-2. **Describe the change.** Type the request in plain English ("remove all headers and footers", "change all fonts
-   to Arial", "make the header/footer look like this template"), or load a saved spec, or pick a recipe from **Your
-   library**. When Claude needs something it cannot guess (the exact stamp wording, which sections) it asks in a chat
-   under the request, with choices; a word Claude suggests goes into your documents only when you pick the choice
-   that shows those exact words.
-3. **Preview.** Claude turns the request into an EditSpec; the engine plans every file (nothing is written to your
-   files), applies the spec to sample files in memory, verifies them and, with *Render pages* on, shows before/after
-   page images. The page shows every file as *Planned* or *Exception* with the reason, the spec's assumptions to
-   check, each sample's verification result, Claude's advisory visual check of the sample pages, and an approval
-   token. For ordinary typed requests a separate **outcome review** lists the exact targets in every document for
-   you to approve before Run. If the preview is not what you meant, say so in the chat and it is previewed again.
-4. **Run & results.** By default the edited files go to the results folder and your files are not touched. Choose
-   **Write verified results back over the originals (guarded)** to have passing files written back: never a file open
-   in Word, never one changed since the preview. Run is enabled only while the preview is current; changing the
-   folder, template, request or options disables it until you preview again. Afterwards: PASS / FAIL / EXCEPTION
-   tiles, a results table (double-click a failed file to see where it stopped and why), the batch report, the
-   diagnostics, and **Load set-aside files** to run the next pass over the files that did not go through.
+1. **Add Word documents.** Drop one or many `.docx` files into the window, including files from different folders. Only the attached files are selected.
+2. **Optionally add a template.** Attach a reference DOCX for requests such as “Match the headers and fonts to this template. Keep our technical wording.”
+3. **Describe the result.** Answer any clarifications or approve proposed wording in the same conversation. Editing methods and recovery are handled internally.
+4. **Review and create copies.** The app shows the changes and available before/after pages. **Create edited copies** approves the current preview; the engine's independent checks govern delivery. Originals remain intact.
 
-![The Preview step](docs/gui.png)
+Continue chatting to revise the result. Progress and output locations are saved locally. Ordinary requests use one specification and one preview decision; there is no second outcome-planning pass.
 
-**File → Built-in workflows…** configures repeatable style, numbering, table and proofing-language work without an
-API key; **File → Office profiles…** applies an office standard with a per-paragraph review; **File → Spec QA
-audits…** runs report-only checks. Each goes through the same preview, approval and verified run.
+Connect an Anthropic API key once in **Settings**. The conversation starts with an estimated $10 model allowance and pauses for an explicit choice before more work. While work runs, the action button offers **Stop after current step**. The CLI still supports saved specifications and deterministic editing without a key.
+
+![Plan and before/after pages](docs/conversation-preview.png)
+
+See [the conversational desktop guide](docs/CONVERSATIONAL_DESKTOP.md) for saved conversations, recovery, resource use and verification limits.
 
 ## The command line
 

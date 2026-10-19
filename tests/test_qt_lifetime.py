@@ -30,7 +30,8 @@ TESTS = Path(__file__).resolve().parent
 
 def _window(tmp_path):
     from qt_support import qt_app_or_skip
-    from spec_surgeon.gui import Session, build_window
+    from spec_surgeon.gui import Session
+    from spec_surgeon.ui.app import build_legacy_window as build_window
     from spec_surgeon.ui.app import RecordingPrompts
     app = qt_app_or_skip()
     w = build_window(Session(out_root=tmp_path / "out"), prompts=RecordingPrompts())
@@ -88,7 +89,8 @@ SCENARIO = textwrap.dedent("""
     from pathlib import Path
     faulthandler.enable()
     from qt_support import close_windows
-    from spec_surgeon.gui import Session, build_window
+    from spec_surgeon.gui import Session
+    from spec_surgeon.ui.app import build_legacy_window as build_window
     from spec_surgeon.ui.app import RecordingPrompts
     w = build_window(Session(out_root=Path(sys.argv[1])), prompts=RecordingPrompts())
     ui = w._spec_surgeon

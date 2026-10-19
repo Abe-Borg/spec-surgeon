@@ -21,7 +21,7 @@ def qt(monkeypatch):
 
 
 def _window(qt, session, prompts):
-    from spec_surgeon.gui import build_window
+    from spec_surgeon.ui.app import build_legacy_window as build_window
     window = build_window(session, prompts=prompts)
     qt[1].append(window)
     return window, window._spec_surgeon

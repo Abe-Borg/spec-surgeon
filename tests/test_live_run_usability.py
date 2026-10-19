@@ -121,7 +121,7 @@ def test_page_growth_is_visible_and_advisory(tmp_path, monkeypatch):
 
 def test_editing_a_fill_requires_new_source_checked_preview(qt_env, tmp_path):
     from spec_surgeon.gui import Session
-    from spec_surgeon.ui.app import build_window, RecordingPrompts
+    from spec_surgeon.ui.app import build_legacy_window as build_window, RecordingPrompts
     from test_live_template_bindings import bound_spec
     folder = tmp_path / "specs"
     folder.mkdir()

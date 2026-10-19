@@ -189,7 +189,7 @@ def qt_env(monkeypatch):
 
 
 def test_window_resolves_reviews_and_exports_copies(qt_env, recovery_stub, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     recovery_stub.result = result(tmp_path, blocking=True)
     session = Session(folder=tmp_path, out_root=tmp_path / "out", last_run_dir=tmp_path / "previous",
                       pending_recovery_run=tmp_path / "previous", client=object())
@@ -218,7 +218,7 @@ def test_window_resolves_reviews_and_exports_copies(qt_env, recovery_stub, tmp_p
 
 def test_window_reopens_saved_recovery_keylessly(qt_env, recovery_stub, tmp_path, monkeypatch):
     from spec_surgeon import llm
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     monkeypatch.setattr(llm, "credentials_found", lambda: False)
     window = build_window(Session(out_root=tmp_path / "out"),
                           prompts=RecordingPrompts(files=[str(tmp_path / "saved")]))
@@ -233,7 +233,7 @@ def test_window_reopens_saved_recovery_keylessly(qt_env, recovery_stub, tmp_path
 
 
 def test_window_consumes_scoped_answer_once_without_global_replay(qt_env, recovery_stub, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     value = recovery_stub.result
     value.question_records = [{"id": "q0001", "question": "Which project wording?", "status": "open",
                                "files": [str(value.files[0].source)]}]
@@ -254,7 +254,7 @@ def test_window_consumes_scoped_answer_once_without_global_replay(qt_env, recove
 
 
 def test_new_investigation_never_inherits_old_question_scope(qt_env, recovery_stub, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     window = build_window(Session(folder=tmp_path, out_root=tmp_path / "out", last_run_dir=tmp_path / "batch"),
                           prompts=RecordingPrompts())
     qt_env[1].append(window)
@@ -275,7 +275,7 @@ def test_initial_session_refuses_scoped_answer_instead_of_crashing(tmp_path):
 
 
 def test_reopened_recovery_preserves_saved_resource_and_privacy_settings(qt_env, recovery_stub, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_window
+    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
     snapshot = dict(max_cost_usd=1.25, max_attempts=2, max_calls=4, max_output_tokens=1000,
                     max_total_tokens=5000, effort="medium", allow_codegen=True, use_memory=False,
                     render=False, model="saved-model", renderer="none", group_call_slice=8,
