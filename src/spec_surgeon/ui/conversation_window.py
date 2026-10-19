@@ -533,8 +533,8 @@ class ConversationWindow(QMainWindow):
         kind, _, detail = message.partition(": ")
         if kind == "UserCancelled":
             self._notice("Stopped before the next AI step. Your progress is saved.")
-        elif kind in {"ValueError", "OperationFailed", "TrialsFailed", "TransformFailed", "SpecError",
-                      "FileNotFoundError", "PermissionError", "LibraryError"}:
+        elif kind in {"ValueError", "TrialsFailed", "TransformFailed", "SpecError",
+                      "FileNotFoundError", "PermissionError"}:
             self._notice((detail or message).replace("press Preview again", "continue to check the documents again"))
         else:
             self._notice("The work could not finish. You can continue, or open diagnostic logs from Help for details.")
