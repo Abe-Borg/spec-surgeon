@@ -1,6 +1,6 @@
 # Unreleased — one window
 
-Includes the "ez mode" round (`docs/PLAN-2026-10-19-ez-mode.md`): the desktop is one product, the window
+Changes since v1.3.0. Includes the "ez mode" round (`docs/PLAN-2026-10-19-ez-mode.md`): the desktop is one product, the window
 describes its plan in plain sentences, and a mixed batch gets one plan per layout.
 
 ## What you see
