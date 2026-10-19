@@ -55,7 +55,7 @@ def close_windows(app, windows, timeout: float = 30.0) -> None:
 
     Why not just ``close()``: a closed window is still a Python-owned Qt object, freed by the cyclic garbage collector
     whenever — and on whichever thread — a collection happens to run; in ``test_editspec.py``'s 24-file batches that is
-    the process pool's manager thread. PySide6 6.12 then deletes a Python subclass of a Qt class (``MainWindow``) right
+    the process pool's manager thread. PySide6 6.12 then deletes a Python subclass of a Qt class (the window) right
     there, on a thread Qt never allowed to delete widgets from, and defers the plain Qt widgets Shiboken still books as
     Python-owned (the ``QLabel``/``QPushButton``/``QCheckBox`` placed through layouts) to the main thread — where that
     second ``delete`` runs after Qt has already deleted them with their parent: the segmentation fault in

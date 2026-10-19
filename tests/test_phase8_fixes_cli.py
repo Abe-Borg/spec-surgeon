@@ -10,8 +10,8 @@ verifier. Each test fails on the code before its fix (scripted client only; no A
 3. codex-3 residual: Claude's visual check labelled two same-named samples alike and filed their findings under one
    name; the preview text named them alike — both use ``compiler.file_labels``.
 4. review-6 residual: U+1D159 and U+16FE4 render blank and passed ``clean_wording``; the Zs spaces stay allowed.
-5. review-24 minor: ``conversation.json``'s ``approved_words`` held ``"{}"`` (``memory_source`` of no PROJECT.json) —
-   and so did the sources a spec's words are traced to.
+5. review-24 minor: ``conversation.json``'s ``approved_words`` held empty answers (``""``, ``"   "``) — and so did
+   the sources a spec's words are traced to.
 6. V2 (and V4/V5b) sorted values that can be None beside text and raised TypeError instead of reporting: a total sort
    key, the same comparison.
 """
@@ -23,7 +23,6 @@ import json
 import os
 import zipfile
 
-from test_compiler import outcome_cli_flags
 from pathlib import Path
 
 import pytest
@@ -90,18 +89,16 @@ def test_do_codegen_refuses_a_file_edited_while_the_transform_was_written(folder
         return g
     # control: nothing edited — the same command runs (the check compares like with like)
     monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("submit_editspec", OFFER)), WRITER))
-    approval = outcome_cli_flags(tmp_path / "approved-outcomes.json", "header 0.625in from the top",
-                                 sorted(folder.glob("*.docx")), header=True)
     intents = record_reviews(monkeypatch)
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(tmp_path / "ok"),
-                     "--renderer", "none", "--allow-codegen", "--yes", *approval]) == 0
+                     "--renderer", "none", "--allow-codegen", "--yes"]) == 0
     assert "2 of 2 file(s) PASS" in capsys.readouterr().out and (tmp_path / "ok" / "run").is_dir()
     assert len(intents) == 1
 
     monkeypatch.setattr(codegen, "generate_op", writing)
     out = tmp_path / "o"
     assert cli_main(["do", "header 0.625in from the top", str(folder), "--out", str(out), "--renderer", "none",
-                     "--allow-codegen", "--yes", *approval]) == 2
+                     "--allow-codegen", "--yes"]) == 2
     printed = capsys.readouterr()
     assert "passed on the samples" in printed.out
     assert "Not run: a file changed while the custom transform was being written and tested" in printed.err
@@ -222,13 +219,7 @@ def test_approved_words_hold_no_empty_source_and_trace_nothing_to_one(folder, tm
     placing = {"request": "r", "summary": "s", "mode": "content", "ops": [{"op": "replace_text",
                "select": {"scope": ["document"]}, "params": {"find": "FM Global", "replace": "{}", "tracked": True,
                                                             "author": "x"}}]}
-    assert untraceable(placing, c.sources) == ["{}"]            # "{}" was a source: it traced the words "{}"
-    (folder / "PROJECT.json").write_text("{}", encoding="utf-8")
-    c = Conversation("remove all headers and footers", sorted(folder.glob("*.docx")), client=FakeClient())
-    assert c.sources == ["remove all headers and footers"]
-    (folder / "PROJECT.json").write_text(json.dumps({"stamp": "ISSUED FOR BID"}), encoding="utf-8")
-    c = Conversation("remove all headers and footers", sorted(folder.glob("*.docx")), client=FakeClient())
-    assert len(c.sources) == 2 and "ISSUED FOR BID" in c.sources[1] and "PROJECT.json" not in c.sources[1]
+    assert untraceable(placing, c.sources) == ["{}"]            # an empty source once traced the words "{}"
 
 
 # ---- 6. the verifier sorts None beside text without raising, and reports exactly as before ---------------------------

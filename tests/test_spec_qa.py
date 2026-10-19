@@ -240,35 +240,3 @@ def test_fm_data_sheets_notes_textboxes_and_comments_are_audited(tmp_path):
     fm = write_doc(tmp_path / "fm.docx", "21 05 00", "COMMON", "FM Global Data Sheet 2-0, October 2021.")
     standard = audit_batch([fm])["files"][0]["standards"][0]
     assert standard["designation"] == "2-0" and standard["edition"] == "2021"
-
-
-def test_desktop_audit_and_exports_are_read_only(tmp_path, monkeypatch):
-    from qt_support import close_windows, qt_app_or_skip
-    from spec_surgeon.gui import Session
-    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
-    app = qt_app_or_skip()
-    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    folder = tmp_path / "specs"
-    folder.mkdir()
-    path = write_doc(folder / "a.docx", "21 05 00", "COMMON", "TBD")
-    original = path.read_bytes()
-    output = tmp_path / "report.json"
-    prompts = RecordingPrompts(files=[str(path), str(output)])
-    w = build_window(Session(folder=folder, out_root=tmp_path / "out"), prompts=prompts)
-    try:
-        w.act_audit.trigger()
-        w._spec_surgeon["wait"]()
-        app.processEvents()
-        dialog = w.audit_dialog
-        assert "TBD" in dialog.text.toPlainText()
-        assert not dialog.save("json")
-        assert dialog.save("json")
-        assert json.loads(output.read_text(encoding="utf-8"))["report_only"]
-        assert path.read_bytes() == original
-        dialog.identity_fields["project_name"].setText("Harbor Tower")
-        dialog.recheck_button.click()
-        w._spec_surgeon["wait"]()
-        assert w.audit_dialog.report["identity_variants"]["project_name"]["expected"] == "Harbor Tower"
-    finally:
-        close_windows(app, [w])
