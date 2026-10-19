@@ -30,8 +30,9 @@ from lxml import etree
 from ..ooxml import (PPR_ORDER, RPR_ORDER, RevisionStamp, file_uses_date_utc, insert_in_order, mark_rpr,
                      max_revision_id, paragraph_ppr, paragraphs, set_text)
 from ..package import DocxPackage, W
-from . import register, tables
+from . import prose, register, tables
 from .base import BlockDiff, JobException, Op, PlanFragment
+from .apply_header_footer_template import fill_rule_words
 from .insert_paragraph import inherited_ppr, inherited_rpr
 from .replace_table import default_author, tracked_of
 from .selectors import StyleSheet
@@ -106,6 +107,35 @@ class EnsureEndOfSection(Op):
         "V10": "end_of_section re-extracts the number, re-finds the last block and the case, and checks the new or "
                "replaced line (its text, formatting and revision marks)",
     }
+
+    def describe(self, select: Dict[str, Any], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        text = params.get("text") if isinstance(params.get("text"), str) and params.get("text") else DEFAULT_TEXT
+        rule = params.get("number")
+        if isinstance(rule, dict) and rule.get("rule") == "literal":
+            number = "its number given as " + prose.quote(rule.get("value", ""))
+        elif isinstance(rule, dict):
+            number = "its number taken from the document itself — " + fill_rule_words(rule)
+        else:
+            number = "its number taken from the document itself"
+        first = prose.sentence("Make sure the document ends with the line", prose.quote(text) + ",", number)
+        detect = params.get("detect_regex")
+        recognised = (" (recognised by the pattern " + prose.quote(detect) + ")") \
+            if isinstance(detect, str) and detect and detect != DEFAULT_DETECT else ""
+        if params.get("formatting") == "copy":
+            look = "formatted like the paragraph matching " + prose.quote(params.get("copy_from_regex", ""))
+        elif params.get("style"):
+            look = "in " + prose.style(params["style"])
+        else:
+            look = "in the default paragraph style"
+        if params.get("tracked", True) is False:
+            tail = "without tracked changes"
+        else:
+            tail = "shown as a tracked change" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+        second = prose.sentence("An existing end line" + recognised + " that reads otherwise is corrected and a missing "
+                                "one is added after the last content", look + ",",
+                                tail + "; a document with content after its end line is set aside")
+        return first + " " + second
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

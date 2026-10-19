@@ -61,7 +61,6 @@ def triage(path: Path, *, template: bool = False) -> Attachment:
 class DocumentTask:
     def __init__(self, session=None, *, journal=None, render=True):
         self.session = session or Session()
-        self.session.simple_conversation = True
         self.render = render
         self.journal = Path(journal) if journal else None
         self.messages: List[Dict[str, str]] = []
@@ -78,14 +77,9 @@ class DocumentTask:
         self._budget = self._new_budget()
         # Documents a caller handed the session (tests, the installed smoke test) become attachments.
         given: List[Path] = []
-        if self.session.documents is not None:
-            given = list(self.session.documents)
-        elif self.session.selected_files is not None:
-            given = list(self.session.selected_files)
-        elif self.session.folder:
-            given = self.session.files(outcome=False)
+        given = list(self.session.documents or [])
         template = self.session.template
-        self.session.selected_files, self.session.documents, self.session.template = None, [], None
+        self.session.documents, self.session.template = [], None
         for path in given:
             self.attachments.append(triage(Path(path)))
         if template:
@@ -115,8 +109,6 @@ class DocumentTask:
     def _invalidate(self):
         self.session._set_outcome()
         self.session.end_conversation()
-        self.session.selected_files = None
-        self.session.pending_recovery_run = None
         self._resume_recovery = None
         self._revision += 1
         self.stage = "resume" if self.decisions else "empty"
@@ -169,7 +161,6 @@ class DocumentTask:
                                     if len(self.decisions) > 1 else "")
 
     def _compile(self, log):
-        self.session.selected_files = None
         self.session.replay_word_sources = list(self.word_sources)
         self.session.compile(self._request(), log)
 
@@ -337,7 +328,7 @@ class DocumentTask:
         from .recovery import RecoveryOptions
         return RecoveryOptions(max_cost_usd=self._budget.max_cost_usd, max_calls=self._budget.max_calls, max_attempts=8,
                                max_output_tokens=16000, max_total_tokens=self._budget.max_total_tokens, effort="high",
-                               render=self.render, visual_review=self.session.visual_check, include_nearby_inputs=False)
+                               render=self.render, visual_review=self.session.visual_check)
 
     def action_token(self):
         s = self.session
@@ -345,7 +336,7 @@ class DocumentTask:
         preview = outcome.preview
         visual = getattr(preview, "review", None)
         return _fingerprint({"revision": self._revision, "stage": self.stage,
-                             "documents": s.documents, "template": s.template, "spec": s.spec, "chain": s.chain,
+                             "documents": s.documents, "template": s.template, "spec": s.spec,
                              "preview": outcome.token,
                              "visual_findings": visual.to_dict() if visual else None,
                              "warnings": getattr(preview, "warnings", [])})
@@ -464,8 +455,8 @@ class DocumentTask:
                 except Exception:  # noqa: BLE001 — a routing that cannot be read shows counts of zero
                     routing = None
             return review_display.layout_changes(s.spec, routing)
-        changes = review_display.spec_changes(s.spec, s.chain)
-        assumptions = review_display.spec_assumptions(s.spec, s.chain)
+        changes = review_display.spec_changes(s.spec)
+        assumptions = review_display.spec_assumptions(s.spec)
         if not changes and s.generated is not None:
             changes = [{"title": "Requested changes", "summary": s.generated.proposal,
                         "details": [s.generated.request, "The sample copies passed independent verification."]}]
@@ -519,7 +510,7 @@ class DocumentTask:
                 "groups": groups,
                 "effects": [c for g in groups for c in g["changes"]],
                 "assumptions": list(dict.fromkeys(a for g in groups for a in g["assumptions"])),
-                "targets": review_display.recovery_targets(s.recovery) if s.recovery else review_display.spec_bindings(s.spec, s.chain),
+                "targets": review_display.recovery_targets(s.recovery) if s.recovery else review_display.spec_bindings(s.spec),
                 "document_count": len(s.recovery.files) if s.recovery else len(s.documents),
                 "questions": questions,
                 "choices": [{"id": c.id, "label": c.label, "words": list(c.words), "detail": c.detail} for c in choices],

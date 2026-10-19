@@ -44,12 +44,13 @@ from lxml import etree
 from ..package import W, DocxPackage
 from ..ooxml import (PPR_ORDER, STYLE_ORDER, RevisionStamp, block_full_text, file_uses_date_utc, get_or_add,
                      insert_in_order, max_revision_id, paragraph_ppr, paragraphs, property_change)
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .effective import Resolver
 from .replace_text import default_author
 from .selectors import (StyleSheet, chain_reads, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts,
                         table_ordinals)
+from .set_font import style_definitions, tracked_phrase
 
 SIDES = ("top", "left", "bottom", "right", "between", "bar")
 BORDER_STYLES = ("single", "thick", "double", "dotted", "dashed", "dotDash", "dotDotDash", "triple",
@@ -278,6 +279,72 @@ def _describe(borders, shading) -> str:
     return "; ".join(parts)
 
 
+BORDER_STYLE_WORDS = {"single": "single-line", "thick": "thick", "double": "double-line", "dotted": "dotted",
+                      "dashed": "dashed", "dotDash": "dot-dash", "dotDotDash": "dot-dot-dash", "triple": "triple-line",
+                      "thinThickSmallGap": "thin-thick", "thickThinSmallGap": "thick-thin", "wave": "wavy",
+                      "doubleWave": "double wavy", "dashSmallGap": "finely dashed", "threeDEmboss": "embossed",
+                      "threeDEngrave": "engraved", "outset": "outset", "inset": "inset"}
+SIDE_WORDS = {"top": "above", "bottom": "below", "left": "on the left", "right": "on the right",
+              "between": "between the paragraphs", "bar": "as a bar in the margin"}
+PATTERN_WORDS = {"solid": "solid", "horzStripe": "horizontal-stripe", "vertStripe": "vertical-stripe",
+                 "diagStripe": "diagonal-stripe", "reverseDiagStripe": "reverse-diagonal-stripe",
+                 "horzCross": "horizontal-cross", "diagCross": "diagonal-cross",
+                 "pct12": "12.5%", "pct37": "37.5%", "pct62": "62.5%", "pct87": "87.5%"}
+
+
+def _border_spec(b: Any) -> Tuple[str, Any, Any, str]:
+    b = b if isinstance(b, dict) else {}
+    return (str(b.get("style", "single")), b.get("size", 4), b.get("space", 1), str(b.get("color", "auto")).upper())
+
+
+def border_words(borders: Dict[str, Any]) -> str:
+    """``a 0.5 pt single-line border above and below (none on the other sides)``: sides with one look are grouped,
+    in the order above, below, left, right, between, bar; the four edges together are ``all around``."""
+    order = ("top", "bottom", "left", "right", "between", "bar")
+    groups: List[Tuple[Tuple[str, Any, Any, str], List[str]]] = []
+    for side in order:
+        if side not in borders:
+            continue
+        spec = _border_spec(borders[side])
+        for known, sides in groups:
+            if known == spec:
+                sides.append(side)
+                break
+        else:
+            groups.append((spec, [side]))
+    phrases: List[str] = []
+    for (style, size, space, color), sides in groups:
+        words = BORDER_STYLE_WORDS.get(style, prose.quote(style))
+        edges = [x for x in sides if x in ("top", "bottom", "left", "right")]
+        places = (["all around"] if len(edges) == 4 else [SIDE_WORDS[x] for x in edges]) \
+            + [SIDE_WORDS[x] for x in sides if x not in ("top", "bottom", "left", "right")]
+        text = f"a {prose.points_from_eighths(size)} {words} border {prose.join(places)}"
+        if str(space) != "1":
+            text += f", {prose.points(space)} from the text"
+        if color != "AUTO":
+            text += f", coloured {prose.quote(color)}"
+        phrases.append(text)
+    text = prose.join(phrases) if phrases else "no border"
+    if any(x not in borders for x in ("top", "bottom", "left", "right")):
+        text += " (none on the other sides)"
+    return text
+
+
+def shading_words(shading: Dict[str, Any]) -> str:
+    """``a fill of “D9D9D9”``, ``an automatic fill with a 10% pattern coloured “FF0000”``."""
+    fill = str(shading.get("fill", "auto"))
+    text = "an automatic fill" if fill.lower() == "auto" else f"a fill of {prose.quote(fill.upper())}"
+    pattern = str(shading.get("pattern", "clear"))
+    if pattern != "clear":
+        words = PATTERN_WORDS.get(pattern) or (pattern[3:] + "%" if pattern.startswith("pct") and pattern[3:].isdigit()
+                                               else prose.quote(pattern))
+        text += f" with a {words} pattern"
+        color = str(shading.get("color", "auto"))
+        if color.lower() != "auto":
+            text += f" coloured {prose.quote(color.upper())}"
+    return text
+
+
 @register
 class SetBordersShading(Op):
     name = "set_borders_shading"
@@ -313,6 +380,31 @@ class SetBordersShading(Op):
                "re-derived from the source; each changed target's elements exactly as expected and nothing else "
                "changed; the asked box and shading shown by every selected target in the output; residual identical",
         "V7": "none when a border changes (borders take space); source for shading alone"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        borders, shading = params.get("borders"), params.get("shading")
+        sets, removes = [], []
+        if isinstance(borders, dict) and borders:
+            sets.append("the borders to " + border_words(borders))
+        elif borders == "none":
+            removes.append("every border")
+        if isinstance(shading, dict) and shading:
+            sets.append("the shading to " + shading_words(shading))
+        elif shading == "none":
+            removes.append("the shading")
+        heads: List[str] = []
+        if sets:
+            heads.append("set " + prose.join(sets))
+        if removes:
+            heads.append("remove " + prose.join(removes))
+        styles = select.get("styles")
+        if isinstance(styles, dict) and styles.get("ids"):     # style definitions: never tracked
+            where, tracked = style_definitions(styles["ids"]), ""
+        else:
+            where, tracked = prose.where(select), tracked_phrase(select, params)
+        return prose.sentence(prose.join(heads) if heads else "set the borders and shading",
+                              where + (f", {tracked}" if tracked else ""))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         raw_select = dict(select or {})

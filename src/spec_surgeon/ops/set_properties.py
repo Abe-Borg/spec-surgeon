@@ -40,7 +40,7 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..package import W, DocxPackage
 from ..ooxml import (PPR_ORDER, RPR_ORDER, STYLE_ORDER, RevisionStamp, block_full_text, file_uses_date_utc, get_or_add,
                      mark_rpr, max_revision_id, paragraph_ppr, paragraphs, property_change, run_rpr)
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .effective import (CASE_ELEMENTS, PARA_FLAGS, REFLOW_ELEMENTS, UNDERLINES, PropResolver, para_elements,
                         run_elements)
@@ -48,8 +48,19 @@ from .replace_text import default_author
 from .selectors import (DEFAULT_PRESERVE_FONTS, StyleSheet, chain_reads, check_paragraph_selector, check_run_selector,
                         in_revision, is_symbol_rpr, is_targeted, mark_in_revision, paragraph_selected, rpr_selected,
                         runs_by_paragraph, scope_parts, table_ordinals)
+from .set_font import formatting_extras, preserved_fonts_extra, style_definitions, tracked_phrase, two_sentences
 
 BOOL_RUN = ("b", "i", "caps", "smallCaps", "strike")
+# the plan's words for each property (describe): on / off
+RUN_WORDS = {"b": "bold", "i": "italic", "caps": "all capitals", "smallCaps": "small capitals", "strike": "strikethrough"}
+UNDERLINE_WORDS = {"single": "a single underline", "double": "a double underline", "words": "a words-only underline",
+                   "dotted": "a dotted underline", "dash": "a dashed underline", "wave": "a wavy underline"}
+PARA_WORDS = {"keepNext": ("keep each paragraph on the same page as the next",
+                           "stop keeping each paragraph on the same page as the next"),
+              "keepLines": ("keep the lines of each paragraph on one page",
+                            "allow the lines of each paragraph to split across pages"),
+              "widowControl": ("turn on widow and orphan control", "turn off widow and orphan control"),
+              "pageBreakBefore": ("start each paragraph on a new page", "stop starting each paragraph on a new page")}
 HEX_COLOR = re.compile(r"[0-9A-Fa-f]{6}")
 REFLOW_REASON = ("bold, italic and caps change glyph widths and the paragraph flags move paragraphs between pages; "
                  "text reflows, so the source render is no layout reference")
@@ -201,6 +212,43 @@ class SetProperties(Op):
         "V7": "none when bold/italic/caps or a paragraph flag is set (the text reflows); source for colour, underline "
               "and strikethrough alone",
     }
+
+    # ---- describe ------------------------------------------------------------------------------------------------
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        run = params.get("run") if isinstance(params.get("run"), dict) else {}
+        para = params.get("paragraph") if isinstance(params.get("paragraph"), dict) else {}
+        on: List[str] = []
+        off: List[str] = []
+        for k, v in run.items():
+            if k in RUN_WORDS and isinstance(v, bool):
+                (on if v else off).append(RUN_WORDS[k])
+            elif k == "u" and v is not None:
+                if v == "none":
+                    off.append("underlining")
+                else:
+                    on.append(UNDERLINE_WORDS.get(v, f"a {prose.quote(v)} underline"))
+        clauses: List[str] = []
+        if on:
+            clauses.append("apply " + prose.join(on))
+        if off:
+            clauses.append("remove " + prose.join(off))
+        color = run.get("color")
+        if color == "auto":
+            clauses.append("reset the text colour to automatic")
+        elif isinstance(color, str) and color:
+            clauses.append(f"colour the text {prose.quote(color)}")
+        clauses += [PARA_WORDS[k][0 if v else 1] for k, v in para.items() if k in PARA_WORDS and isinstance(v, bool)]
+        if not clauses:
+            clauses.append("change the text and paragraph properties")
+        styles = select.get("styles")
+        if isinstance(styles, dict) and styles.get("ids"):   # style definitions: never tracked, no run filters
+            where, tracked, extras = style_definitions(styles["ids"]), "", preserved_fonts_extra(params)
+        else:
+            where, tracked, extras = prose.where(select), tracked_phrase(select, params), formatting_extras(params)
+        first = prose.sentence(prose.join(clauses), where + (f", {tracked}" if tracked else ""))
+        return two_sentences(first, extras)
 
     # ---- plan ----------------------------------------------------------------------------------------------------
 

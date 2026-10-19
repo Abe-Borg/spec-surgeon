@@ -31,8 +31,7 @@ def options_for(conversation, *, render=False):
     return RecoveryOptions(model=conversation.model, max_calls=conversation.max_calls,
         max_attempts=conversation.max_attempts, effort=conversation.effort,
         max_output_tokens=conversation.max_output_tokens, max_context_tokens=conversation.max_context_tokens,
-        analysis_limits=conversation.batch.analysis_limits, render=render,
-        include_nearby_inputs=not getattr(conversation, "simple_experience", False))
+        analysis_limits=conversation.batch.analysis_limits, render=render)
 
 
 def propose(conversation):

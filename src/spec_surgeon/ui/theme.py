@@ -4,8 +4,7 @@
 - Colours follow Windows' light/dark setting; the accent is the Windows accent colour when Qt reports one.
   ``SPEC_SURGEON_THEME=light|dark`` forces a scheme (screenshots, tests). ``SPEC_SURGEON_QT_STYLE`` forces a Qt
   style — diagnostics only: the controls below are drawn for Fusion, another style gets only the layout rules.
-- A dark navy sidebar carries the four steps (``widgets.StepDelegate`` paints the rail from these tokens); the
-  content area is light with white cards, a white action bar at the foot of every step, and status pills.
+- The content area is light with white cards: the attachments at the left, the conversation at the right.
 - Fonts: Segoe UI Variable / Segoe UI on Windows; Cascadia Mono / Consolas for the activity log.
 """
 from __future__ import annotations

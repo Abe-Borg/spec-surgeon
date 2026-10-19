@@ -13,15 +13,18 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..package import DocxPackage
-from . import register
+from . import prose, register
+from .apply_header_footer_template import fill_rule_words
 from .base import JobException, Op, PlanFragment
 from .slots import extract_fill, fill_reads, rule_uses_literal
 
 PLACEHOLDER = re.compile(r"\{([A-Za-z_][A-Za-z0-9_]*)\}")
 TRANSFORMS = ("as_is", "digits", "upper", "lower", "title")
+TRANSFORM_WORDS = {"digits": "keeping only its digits", "upper": "written in capitals",
+                   "lower": "written in lower case", "title": "with each word capitalized"}
 FORBIDDEN = set('\\/:*?"<>|')
 DEVICES = {"con", "prn", "aux", "nul"} | {f"com{i}" for i in range(1, 10)} | {f"lpt{i}" for i in range(1, 10)}
 MAX_NAME = 200
@@ -87,6 +90,26 @@ class NameOutput(Op):
     select_schema = {"type": "object", "description": "none — names the whole file"}
     verification_profile = {"V10": "output_name re-extracts every value, applies the transforms and the validity rules "
                                    "with the verifier's own code, and compares the result with the output's file name"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        pattern = params.get("pattern")
+        values = params.get("values") if isinstance(params.get("values"), dict) else {}
+        transforms = params.get("transforms") if isinstance(params.get("transforms"), dict) else {}
+        if not isinstance(pattern, str) or not pattern.strip():
+            first = prose.sentence("name each output file by a convention from its own content")
+        else:
+            fills: List[str] = []
+            for name in PLACEHOLDER.findall(pattern):
+                words = prose.quote(name) + " from " + fill_rule_words(values.get(name))
+                how = TRANSFORM_WORDS.get(transforms.get(name))
+                fills.append(words + (f", {how}" if how else ""))
+            # a serial comma keeps the fills apart when one of them holds a comma of its own (prose.join has none)
+            listed = prose.join(fills) if len(fills) < 2 or not any(", " in f for f in fills) \
+                else ", ".join(fills[:-1]) + ", and " + fills[-1]
+            first = prose.sentence("name each output file", prose.quote(with_suffix(pattern))
+                                   + (", with " + listed if fills else ""))
+        return first + " " + prose.sentence("the document itself is not changed; only the edited copy gets the new name")
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

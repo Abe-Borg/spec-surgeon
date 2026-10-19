@@ -680,8 +680,7 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                 max_calls: int = MAX_CALLS, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
                 effort: str = DEFAULT_EFFORT, stall_repetitions: int = DEFAULT_STALL_REPETITIONS,
                 max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
-                goal_contract=None, goal_bindings=None, approved_words: Sequence[str] = (),
-                include_nearby_inputs: bool = True) -> GeneratedOp:
+                goal_contract=None, goal_bindings=None, approved_words: Sequence[str] = ()) -> GeneratedOp:
     """Look → generate → sandbox + verify on the samples → feed failures back: at most ``max_iter`` submissions and
     ``max_calls`` calls. Every tool call is answered in the next message. Existing
     outer budget scopes still apply to every call; local settings cannot bypass them."""
@@ -689,14 +688,14 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
             diag.span("codegen.generate", sample_count=len(samples), max_attempts=max_iter) as record:
         result = _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                               max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
-                              analysis_limits, goal_contract, goal_bindings, approved_words, include_nearby_inputs)
+                              analysis_limits, goal_contract, goal_bindings, approved_words)
         record.update(passed=result.passed, attempts=len(result.attempts), errors=len(result.errors))
         return result
 
 
 def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                  max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
-                 analysis_limits, goal_contract, goal_bindings, approved_words, include_nearby_inputs=True):
+                 analysis_limits, goal_contract, goal_bindings, approved_words):
     from . import compiler, llm
     from .profile import profile
     from .package import DocxPackage
@@ -729,8 +728,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
     profiles = [profile(DocxPackage.from_path(f)) for f in samples]
     from .goals import goal_templates
     templates = goal_templates(goal_contract) if goal_contract is not None else []
-    batch = compiler._Batch(list(samples), templates[0] if templates else None,
-                            input_files=[] if goal_contract is not None or not include_nearby_inputs else None)
+    batch = compiler._Batch(list(samples), templates[0] if templates else None)
     for path in templates:
         batch.files[str(path)] = path
         if not any(pin["path"] == str(path) for pin in batch.source_pins):

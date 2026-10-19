@@ -31,11 +31,12 @@ from typing import Any, Dict, List, Optional, Tuple
 from ..package import W, DocxPackage
 from ..ooxml import (PPR_ORDER, STYLE_ORDER, RevisionStamp, block_full_text, file_uses_date_utc, get_or_add,
                      max_revision_id, paragraph_ppr, paragraphs, property_change)
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .replace_text import default_author
 from .selectors import (StyleSheet, chain_reads, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts,
                         table_ordinals)
+from .set_font import style_definitions, tracked_phrase
 
 SPACING_KEYS = {"before": int, "after": int, "line": int, "lineRule": str, "beforeLines": int, "afterLines": int}
 IND_KEYS = {"left": int, "right": int, "start": int, "end": int, "firstLine": int, "hanging": int,
@@ -47,6 +48,71 @@ TRUE = ("1", "true", "on")
 FIRST = ("firstLine", "firstLineChars")            # the first-line family …
 HANGING = ("hanging", "hangingChars")              # … and the hanging family: mutually exclusive
 IND_SIDES = (("left", "start"), ("right", "end"), ("firstLine", "hanging"))   # twips attributes per side
+
+# the plan's words (describe): Word shows spacing in points and indents in inches; a line value under the "auto" rule
+# is a multiple of the line height (240 = single)
+JC_WORDS = {"left": "left", "center": "centred", "right": "right", "both": "justified", "distribute": "distributed",
+            "start": "to the leading edge", "end": "to the trailing edge"}
+IND_WORDS = (("left", "the left indent"), ("start", "the left indent"), ("right", "the right indent"),
+             ("end", "the right indent"), ("firstLine", "the first-line indent"), ("hanging", "the hanging indent"))
+LINE_RULE_WORDS = {"exact": "exactly", "atLeast": "at least"}
+LINE_MULTIPLES = {1.0: "single", 1.5: "1.5 lines", 2.0: "double"}
+
+
+def _plain(value: float) -> str:
+    text = f"{value:.2f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _hundredths(value: Any, unit: str) -> str:
+    """Hundredths of a line or of a character: ``1.5 lines``, ``2 characters``."""
+    try:
+        n = float(value) / 100
+    except (TypeError, ValueError):
+        return str(value)
+    return f"{_plain(n)} {unit if n == 1 else unit + 's'}"
+
+
+def _twips_points(twips: Any) -> str:
+    try:
+        return prose.points(float(twips) / 20)
+    except (TypeError, ValueError):
+        return str(twips)
+
+
+def spacing_words(sp: Dict[str, Any]) -> List[str]:
+    out: List[str] = []
+    for side in ("before", "after"):
+        if sp.get(side + "Lines") is not None:
+            out.append(f"the space {side} to {_hundredths(sp[side + 'Lines'], 'line')}")
+        if sp.get(side) is not None:
+            out.append(f"the space {side} to {_twips_points(sp[side])}")
+    rule = sp.get("lineRule")
+    if sp.get("line") is not None:
+        if rule in LINE_RULE_WORDS:
+            out.append(f"the line spacing to {LINE_RULE_WORDS[rule]} {_twips_points(sp['line'])}")
+        else:
+            try:
+                n: Optional[float] = float(sp["line"]) / 240
+            except (TypeError, ValueError):
+                n = None
+            out.append("the line spacing to " + (str(sp["line"]) if n is None
+                                                 else LINE_MULTIPLES.get(n) or _hundredths(n * 100, "line")))
+    elif rule in LINE_RULE_WORDS or rule == "auto":
+        out.append({"auto": "the line spacing to a multiple of the line height",
+                    "exact": "the line spacing to an exact height",
+                    "atLeast": "the line spacing to a minimum height"}[rule])
+    return out
+
+
+def indent_words(ind: Dict[str, Any]) -> List[str]:
+    out: List[str] = []
+    for key, label in IND_WORDS:
+        if ind.get(key) is not None:
+            out.append(f"{label} to {prose.inches(ind[key])}")
+        if ind.get(key + "Chars") is not None:
+            out.append(f"{label} to {_hundredths(ind[key + 'Chars'], 'character')}")
+    return out
 
 
 def _clean(params: Dict[str, Any]) -> Dict[str, Any]:
@@ -246,6 +312,23 @@ class SetParagraphProps(Op):
                             "V10": "paragraph_props: selection re-resolved, values merged, snapshot == source pPr; "
                                    "styles: each changed style's pPr = source + the values merged, nothing else",
                             "V7": "none — spacing/indent/alignment move text"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        what: List[str] = []
+        if isinstance(params.get("spacing"), dict):
+            what += spacing_words(params["spacing"])
+        if isinstance(params.get("ind"), dict):
+            what += indent_words(params["ind"])
+        if params.get("jc") is not None:
+            what.append("the alignment to " + JC_WORDS.get(params["jc"], prose.quote(params["jc"])))
+        styles = select.get("styles")
+        if isinstance(styles, dict) and styles.get("ids"):   # style definitions: never tracked
+            where, tracked = style_definitions(styles["ids"]), ""
+        else:
+            where, tracked = prose.where(select), tracked_phrase(select, params)
+        return prose.sentence("set", prose.join(what) if what else "the paragraph spacing, indentation and alignment",
+                              where + (f", {tracked}" if tracked else ""))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

@@ -57,7 +57,7 @@ from lxml import etree
 
 from ..package import W, DocxPackage
 from ..ooxml import (RevisionStamp, file_uses_date_utc, max_revision_id, paragraph_ppr, paragraphs, property_change)
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .replace_text import default_author
 from .selectors import SCOPE_KINDS, StyleSheet, mark_in_revision, runs_by_paragraph, scope_parts
@@ -202,6 +202,40 @@ class MapStyles(Op):
                "nothing else changed; styles_imported: closure, imported/replaced styles and list ids re-derived from the "
                "template, each copy compared whole, numbering.xml compared whole; residual identical",
         "V7": "none (a style change reflows the text)"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        pairs = [m for m in (params.get("map") if isinstance(params.get("map"), list) else [])
+                 if isinstance(m, dict) and isinstance(m.get("from"), str) and isinstance(m.get("to"), str)]
+        if pairs:
+            moves = [("every paragraph, run and table in " if i == 0 else "those in ")
+                     + f"{prose.style(m['from'])} {prose.style(m['to'])}" for i, m in enumerate(pairs)]
+            head = "Give " + prose.join(moves) + " instead"
+        else:
+            head = "Give every paragraph, run and table in the old styles to be named their new styles instead"
+        scope = select.get("scope")
+        kinds = [scope] if isinstance(scope, str) else list(scope or [])
+        if not kinds or set(kinds) >= set(SCOPE_KINDS):
+            where = "everywhere in the document"
+        else:
+            where = prose.scope_words(kinds) or "in the document body"
+        tracked = ""
+        if params.get("tracked") is True:
+            tracked = "shown as tracked changes" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+        first = prose.sentence(f"{head}, {where}" + (f", {tracked}" if tracked else ""))
+        extras = ["the old style definitions stay in the file"]
+        template = params.get("template")
+        if isinstance(template, str) and template.strip():
+            if params.get("existing") == "replace":
+                extras.append(f"the new styles' definitions are taken from the template {prose.quote(template)} "
+                              f"in place of the document's own")
+            else:
+                extras.append(f"a new style the document lacks is imported, with its numbering, from the template "
+                              f"{prose.quote(template)}")
+        if params.get("allow_missing") is False:
+            extras.append("a file that lacks or does not use one of the old styles is set aside")
+        # three or more clauses read better separated by semicolons than strung together with commas
+        return first + " " + prose.sentence("; ".join(extras) if len(extras) > 2 else prose.join(extras))
 
     # ---- plan --------------------------------------------------------------------------------------------------------
 

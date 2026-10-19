@@ -37,7 +37,7 @@ from ..package import W, DocxPackage
 from ..ooxml import (FULL_TEXT_TAGS, RevisionStamp, XML_SPACE, ancestor, clone_run_shell, file_uses_date_utc,
                      flexible_regex_from_literal, max_revision_id, merge_adjacent_runs, paragraphs, set_text,
                      split_run_at_text, to_del_text)
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .selectors import StyleSheet, check_paragraph_selector, paragraph_selected
 
@@ -545,3 +545,39 @@ class ReplaceText(Op):
                 orig_ins.remove(el)
                 suffix_ins.append(el)
             grand.insert(gpos, suffix_ins)
+
+    # ---- describe -------------------------------------------------------------------------
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        scope = select.get("scope") or params.get("scope")
+        if scope:
+            select["scope"] = scope
+        find, replace = params.get("find"), params.get("replace")
+        if find:
+            target = ("the first occurrence of " if params.get("occurrences") == "first" else "") + prose.quote(find)
+            if replace == "":
+                head = f"Delete {target}"
+            elif replace is None:
+                head = f"Replace {target} with the approved wording"
+            else:
+                head = f"Replace {target} with {prose.quote(replace)}"
+        else:
+            head = "Replace the wording to be found with the approved wording"
+        hows: List[str] = []
+        if params.get("match_case") is False:
+            hows.append("ignoring case")
+        if params.get("flexible_whitespace"):
+            hows.append("allowing any spacing or dash")
+        if params.get("ignore_formatting_noise"):
+            hows.append("even where invisible formatting differences split the wording")
+        if params.get("allow_tracked_format_split"):
+            hows.append("even inside text carrying a pending tracked formatting change")
+        tracked = bool(params["tracked"]) if "tracked" in params else params.get("mode") != "untracked"
+        if tracked:
+            tail = "shown as a tracked change" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+        else:
+            tail = "without tracked changes"
+        first = f"{head} {prose.where(select)}" + (", " + prose.join(hows) if hows else "") + f", {tail}."
+        second = "Files in which it does not occur are left unchanged." if params.get("allow_missing") else ""
+        return prose.sentence(first, second)

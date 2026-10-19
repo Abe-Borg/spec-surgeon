@@ -52,7 +52,6 @@ def test_chat_to_verified_copies_and_unsent_revision_blocks_approval(qt, tmp_pat
     w._spec_surgeon["wait"]()
     assert w.primary.isEnabled()
     assert w.primary.text() == "Create edited copies"
-    assert w.session.outcome_approval == ""
     w.composer.setPlainText("Actually, only the cover")
     assert not w.primary.isEnabled()
     w.composer.clear()

@@ -31,12 +31,8 @@ Log = Callable[[str], None]
 
 # Running without an API key (``Session.claude_ready`` False): what each Claude feature says instead of calling. Saved
 # specs, your library, Preview, Run and set-aside passes need no key and are unchanged.
-NEEDS_KEY = ("Describing a change in plain English needs an Anthropic API key — set one in Settings. Without one, use "
-             "a saved spec or Your library: they preview and run without a key.")
-NEEDS_KEY_REPLY = ("Claude needs an Anthropic API key to go on with this conversation — set one in Settings, or Start "
-                   "over and use a saved spec or Your library.")
-NEEDS_KEY_ADVICE = ("Advice on set-aside files comes from Claude and needs an Anthropic API key — set one in Settings. "
-                    "Without one, View diagnostics says why each file was set aside.")
+NEEDS_KEY = "Connect your Anthropic API key in Settings to start the conversation."
+NEEDS_KEY_REPLY = "Connect your Anthropic API key in Settings to continue this conversation."
 NO_KEY_REVIEW = ("Claude's visual check needs an Anthropic API key (Settings) — look at the before/after pages "
                  "yourself.")
 
@@ -59,13 +55,15 @@ class TrialsFailed(RuntimeError):
     every one — a recorded refusal naming each failing sample, never a defect. Nothing changed in the session."""
 
 
-class OperationFailed(TrialsFailed):
-    """One of your saved operations does not pass on this batch's samples. When the conversation offered it (a choice
-    Claude named), this is the ONE outcome Claude hears — as ``TransformFailed`` is for a fresh custom transform; a
-    defect while trying it is never told to Claude as a result."""
 
 
 # ---- the logic (no widgets; tested on its own) ----------------------------------------------------
+
+def _user_request(conversation) -> str:
+    """The request and the user's own replies, never the model's words: what a custom method's approval binds."""
+    replies = [entry.text for entry in conversation.entries[1:] if entry.role == "user"]
+    return conversation.request + ("\n\nUSER DECISIONS:\n" + "\n".join(replies) if replies else "")
+
 
 def _session_action(fn):
     """Trace semantic actions, including refusals before a preview/results folder exists.
@@ -116,11 +114,10 @@ class Outcome:
 @dataclass
 class Session:
     """What the window is working on. Every step is a call into the engine; the window only shows the text."""
-    folder: Optional[Path] = None
+    documents: List[Path] = field(default_factory=list)   # the attached documents, in the order the user gave
     template: Optional[Path] = None
     out_root: Path = field(default_factory=default_run_root)
     spec: Optional[Dict[str, Any]] = None
-    spec_source: str = ""                         # "compiled" | path of a loaded spec file
     out_dir: Optional[Path] = None
     preview: Any = None
     generated: Any = None                         # Tier B op, when the request needed one
@@ -128,8 +125,6 @@ class Session:
     last_run_dir: Optional[Path] = None
     questions: List[str] = field(default_factory=list)
     generated_token: str = ""                     # approval token of the files a generated transform was tested on
-    selected_files: Optional[List[Path]] = None   # when set (e.g. from load_set_aside), narrows the active batch
-    prior_failures: List[Dict[str, Any]] = field(default_factory=list)
     client: Any = None                            # injectable for tests
     last_batch: Any = None                        # BatchResult of the last Run (the window's results table)
     last_trials: Any = None                       # List[codegen.FileTrial] of the last AI-written-transform run
@@ -138,34 +133,13 @@ class Session:
     turn: Any = None                              # its last conversation.Turn
     chat_dir: Optional[Path] = None               # the session folder holding the conversation's records
                                                   # (conversation.json, compile.json); it follows each new folder
-    last_compile: Any = None                      # CompileResult view of the conversation's last turn (compile.json)
     _compiled_dir: Optional[Path] = None          # the session folder the next preview or custom transform goes into
                                                   # (the compile record sits beside its preview); None once used
     generated_inputs: Dict[str, Any] = field(default_factory=dict)   # approval_inputs beside generated_token
     generated_intent: str = ""                    # what the custom transform's visual check is told it should do
-    recipe_name: str = ""                         # the outcome is one of your recipes, picked in the conversation and
-                                                  # used as saved (``spec_source`` "compiled": the conversation's
-                                                  # outcome)
-    chain: Optional[Dict[str, Any]] = None        # the outcome is a chain of specs (chain.py), run stage by stage
-    chain_source: str = ""                        # "library:NAME" | "recipes" (built from your recipes) | a chain file
-    last_chain: Any = None                        # chain.ChainResult of the last Run (the window's results table)
     recovery: Any = None                          # investigated copies, awaiting review and export
     last_recovery: Any = None                     # recovery whose ready copies were exported
-    campaign: Any = None                          # durable multi-project workspace, independent of the four steps
-    outcome_review: Optional[Dict[str, Any]] = None  # legacy advisory data; ordinary previews create no second contract
-    outcome_approval: str = ""
-    outcome_preview_token: str = ""
-    outcome_request: str = ""
-    pending_recovery_run: Optional[Path] = None
     pending_custom_transform: Optional[Dict[str, Any]] = None
-    model: Optional[str] = None
-    max_context_tokens: Optional[int] = None
-    max_output_tokens: Optional[int] = None
-    effort: Optional[str] = None
-    # An explicit attachment list is independent of a folder or a recovery subset.
-    # None retains the CLI/legacy folder behavior; [] means the user attached nothing.
-    documents: Optional[List[Path]] = None
-    simple_conversation: bool = False
     replay_word_sources: Optional[List[str]] = None
     recovery_checkpoint: Optional[Path] = None  # current durable investigation, including in-flight work
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
@@ -174,15 +148,14 @@ class Session:
         """Small metadata snapshot; no file reads, credential checks, document text or expensive approval hashing."""
         try:
             pv, approval = self._current_review()
-            return {"outcome": ("recovery" if self.recovery is not None else "chain" if self.chain is not None else
+            return {"outcome": ("recovery" if self.recovery is not None else
                                 "generated" if self.generated is not None else "spec" if self.spec is not None else
                                 "none"),
-                    "folder": str(self.folder) if self.folder else None,
+                    "document_count": len(self.documents),
                     "template": str(self.template) if self.template else None,
                     "out_dir": str(self.out_dir) if self.out_dir else None,
                     "chat_dir": str(self.chat_dir) if self.chat_dir else None,
                     "last_run_dir": str(self.last_run_dir) if self.last_run_dir else None,
-                    "selected_file_count": len(self.selected_files) if self.selected_files is not None else None,
                     "conversation_open": self.conversation is not None,
                     "turn_status": getattr(self.turn, "status", None),
                     "preview_available": pv is not None, "approval_digest": approval,
@@ -200,98 +173,36 @@ class Session:
     def _templates(self, outcome: bool = True) -> List[Path]:
         """The files that are never part of the batch: the attached template and (``outcome``) every template the
         current spec reads — a spec may name a file of the batch folder as its template."""
-        from .chain import chain_templates
         from .editspec import spec_templates
         from .layouts import is_layout_plan, layout_spec
         own: List[Path] = []
         if outcome and self.spec:
             own = ([t for layout in self.spec["layouts"] for t in spec_templates(layout_spec(self.spec, layout))]
                    if is_layout_plan(self.spec) else spec_templates(self.spec))
-        return (([self.template.resolve()] if self.template else []) + own +
-                (chain_templates(self.chain) if outcome and self.chain else []))
+        return ([self.template.resolve()] if self.template else []) + own
 
     def files(self, outcome: bool = True) -> List[Path]:
-        """The batch: the folder's (or the set-aside pass's) .docx files without the templates. ``outcome=False``: the
-        batch as it reads once the current outcome is void — what a new conversation starts over (``compile``), so its
-        files never depend on the spec it replaces."""
-        from .batch import expand_inputs
+        """The attached documents without the templates, in the order the user attached them. ``outcome=False``: the
+        batch as it reads once the current outcome is void (what a new conversation starts over), so its files never
+        depend on the spec it replaces."""
         from .editspec import is_template_file
         templates = self._templates(outcome)
-        if self.documents is not None and self.selected_files is None:
-            files = []
-            for value in self.documents:
-                path = Path(value).resolve()
-                if path.suffix.lower() != ".docx" or path.name.startswith("~$"):
-                    raise ValueError(f"Attach a Word .docx document: {path.name}")
-                if not path.is_file():
-                    raise ValueError(f"An attached document is missing: {path}")
-                if path not in files:
-                    if is_template_file(path, templates):
-                        raise ValueError(f"{path.name} is also a copy of the reference template. "
-                                         "Remove it from the documents to edit, or choose a different template.")
-                    files.append(path)
-            if not files:
-                raise ValueError("Add the Word documents you want to edit.")
-            return files
-        if self.selected_files is not None:
-            files = [f for f in self.selected_files if f.is_file() and not is_template_file(f, templates)]
-            if not files:
-                diag.event("session.inputs.refused", level="warning", session_id=self.diagnostic_id,
-                           reason="no_remaining_set_aside_files", selected_count=len(self.selected_files))
-                raise ValueError("no set-aside .docx files remain to process")
-            diag.event("session.inputs.selected", session_id=self.diagnostic_id, selection="set_aside",
-                       file_count=len(files), excluded_count=len(self.selected_files) - len(files))
-            return files
-        if not self.folder:
-            diag.event("session.inputs.refused", level="warning", session_id=self.diagnostic_id,
-                       reason="folder_missing")
-            raise ValueError("choose the folder with the specs first")
-        candidates = expand_inputs([str(self.folder)])
-        files = [f for f in candidates if not is_template_file(f, templates)]
+        files: List[Path] = []
+        for value in self.documents:
+            path = Path(value).resolve()
+            if path.suffix.lower() != ".docx" or path.name.startswith("~$"):
+                raise ValueError(f"Attach a Word .docx document: {path.name}")
+            if not path.is_file():
+                raise ValueError(f"An attached document is missing: {path}")
+            if path not in files:
+                if is_template_file(path, templates):
+                    raise ValueError(f"{path.name} is also a copy of the reference template. "
+                                     "Remove it from the documents to edit, or choose a different template.")
+                files.append(path)
         if not files:
-            diag.event("session.inputs.refused", level="warning", session_id=self.diagnostic_id,
-                       reason="no_documents", folder=str(self.folder), candidate_count=len(candidates))
-            raise ValueError(f"no .docx files in {self.folder}")
-        diag.event("session.inputs.selected", session_id=self.diagnostic_id, selection="folder",
-                   folder=str(self.folder), file_count=len(files), excluded_count=len(candidates) - len(files))
+            raise ValueError("Add the Word documents you want to edit.")
         return files
 
-    @_session_action
-    def reset_set_aside(self) -> None:
-        self.selected_files = None
-        self.prior_failures = []
-        self.pending_recovery_run = None
-        self.end_conversation()
-
-    @_session_action
-    def load_set_aside(self, source_dir: Optional[Path] = None) -> str:
-        """Narrow the session to only the files that were set aside in the last run (or ``source_dir``),
-        preserving their failure diagnostics for the next compile pass."""
-        from .batch import load_set_aside
-        target = source_dir or self.last_run_dir or (self.out_dir / "run" if self.out_dir else None)
-        if not target:
-            raise ValueError("run a batch first (or provide a batch output folder with set_aside.json)")
-        manifest = load_set_aside(target)
-        items = manifest.get("files") or []
-        if not items:
-            self.reset_set_aside()
-            return "All files passed in the previous run — 0 set-aside files remaining."
-        self.selected_files = [Path(x["source"]) for x in items]
-        self.prior_failures = list(items)
-        self._set_outcome()
-        self.end_conversation()
-        self.pending_recovery_run = Path(target) if manifest.get("enforce_goals") is True else None
-        lines = [f"Loaded {len(items)} set-aside file(s) for the next pass:"]
-        for x in items:
-            lines.append(f"  - {x['name']} [{x['code']}] ({x['category']}): {x['reason']}")
-        if self.pending_recovery_run is not None:
-            lines.append("The approved outcomes and exact target choices are retained. Use Resolve remaining to resume on copies.")
-            return "\n".join(lines)
-        lines.append("Press Preview to compile an EditSpec tailored to these files." if self.claude_ready() else
-                     "Load a saved spec or use Your library for them, then press Preview.")
-        return "\n".join(lines)
-
-    @_session_action
     def new_out_dir(self) -> Path:
         self.out_dir = Path(self.out_root) / datetime.now().strftime("%Y%m%d-%H%M%S")
         self.out_dir.mkdir(parents=True, exist_ok=True)
@@ -300,54 +211,28 @@ class Session:
     # ---- steps ----
     # ---- outcome: a spec XOR a custom transform, and what was previewed of it ----
     @_session_action
-    def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "",
-                     recipe: str = "", chain: Optional[Dict[str, Any]] = None) -> None:
+    def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "") -> None:
         """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
         old one: a reply that turns a custom transform into a spec must never leave the transform runnable, and a reply
-        that only asks a question must never leave the old spec's preview runnable. ``recipe``: the spec is one of your
-        recipes picked in the conversation (``recipe_name``; the Preview step and the visual check say so). ``chain``:
-        a chain of specs (``chain.py``) is the outcome — a spec XOR a custom transform XOR a chain."""
-        if sum(x is not None for x in (spec, generated, chain)) > 1:
-            raise ValueError("a session runs either a spec, a custom transform or a chain, not two of them")
-        self.spec, self.generated, self.chain = spec, generated, chain
+        that only asks a question must never leave the old spec's preview runnable. The outcome is a spec (or a plan
+        per layout) XOR a custom transform."""
+        if spec is not None and generated is not None:
+            raise ValueError("a session runs either a spec or a custom transform, not both")
+        self.spec, self.generated = spec, generated
         self.recovery = None
         self.recovery_checkpoint = None
-        self.spec_source = source if spec is not None else ""
-        self.chain_source = source if chain is not None else ""
-        self.recipe_name = recipe if spec is not None else ""
         self.preview, self.generated_token, self.generated_preview = None, "", None
         self.generated_inputs, self.generated_intent = {}, ""
-        self.outcome_review, self.outcome_approval, self.outcome_preview_token, self.outcome_request = None, "", "", ""
         self.pending_custom_transform = None
 
     def outcome_key(self) -> Any:
-        """What the approval token is taken over beside the files: the spec, or the chain's key (every stage's spec
-        and templates)."""
-        from .chain import chain_key
-        return chain_key(self.chain) if self.chain is not None else self.spec
-
-    def chain_label(self) -> str:
-        """How the chain is called on the rail, the Preview step and in the visual check's intent."""
-        from .chain import chain_name
-        return chain_name(self.chain) if self.chain is not None else ""
+        """What the approval token is taken over beside the files: the spec (or the plan per layout)."""
+        return self.spec
 
     @_session_action
     def end_conversation(self) -> None:
         self.conversation, self.turn, self.questions = None, None, []
         self._compiled_dir = None                 # a loaded spec or saved operation never previews into its folder
-
-    @_session_action
-    def load_spec(self, path: Path) -> Dict[str, Any]:
-        from .editspec import load_spec, validate_spec
-        spec = load_spec(path)
-        validate_spec(spec)
-        self._set_outcome(spec=spec, source=str(path))
-        self.end_conversation()
-        return spec
-
-    @_session_action
-    def remove_spec(self) -> None:
-        self._set_outcome()
 
     # ---- the conversation ----
     def conversation_matches(self, request: str) -> bool:
@@ -377,12 +262,8 @@ class Session:
         folder (``out_dir``): conversation.json and compile.json there after every turn, and the first preview or
         custom transform beside them (``_session_dir``)."""
         from .conversation import Conversation
-        if self.pending_recovery_run is not None:
-            if not self.claude_ready():
-                raise ValueError(NEEDS_KEY)
-            return self.resolve_remaining(log, request=request or None)
         if not request.strip():
-            raise ValueError("type what you want done (or load a spec file)")
+            raise ValueError("Type what you want done.")
         if not self.claude_ready():
             raise ValueError(NEEDS_KEY)           # before anything changes: the outcome and its preview stay
         # The batch as it reads once the old outcome is void (just below), never through the outgoing spec: a file of
@@ -395,14 +276,8 @@ class Session:
         self.chat_dir = self._compiled_dir = out        # then preview/, codegen/ and run/ beside them (bundle_root)
         log(f"Talking the request through with Claude over {len(files)} file(s)…")
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
-                                         prior_failures=self.prior_failures or None, work_dir=out / "chat", log=log,
-                                         continuous_recovery=True,
-                                         simple_experience=self.simple_conversation,
-                                         word_sources=self.replay_word_sources if self.simple_conversation else None,
-                                         **{k: v for k, v in (("max_output_tokens", self.max_output_tokens),
-                                                               ("max_context_tokens", self.max_context_tokens),
-                                                               ("model", self.model),
-                                                               ("effort", self.effort)) if v is not None})
+                                         work_dir=out / "chat", log=log, continuous_recovery=True,
+                                         word_sources=self.replay_word_sources)
         try:
             turn = self.conversation.start()
         except Exception:
@@ -419,11 +294,11 @@ class Session:
         """The user's next message in the conversation — typed words, a picked choice, or both."""
         c = self.conversation
         if c is None:
-            raise ValueError("there is no conversation yet — type a request and press Preview")
+            raise ValueError("there is no conversation yet — describe the change first")
         if not self.claude_ready():
             raise ValueError(NEEDS_KEY_REPLY)     # nothing said, nothing voided: the conversation waits for a key
         if not self.conversation_matches(c.request):
-            raise ValueError("the files or the template changed since this conversation started — press Start over")
+            raise ValueError("the files or the template changed since this conversation started — describe the change again")
         chosen = c.choice(choice_id) if choice_id else None
         if chosen is not None and chosen.kind == "recovery_target":
             from .continuous_recovery import resume_choice, result_turn
@@ -448,7 +323,6 @@ class Session:
             self.chat_dir = self._compiled_dir = self._next_session_dir()   # as they were; this reply's go here
             log(f"The conversation continues in {self.chat_dir} (conversation.json, compile.json)")
         self._set_outcome()                       # whatever was previewed before this reply is void now
-        from .conversation import LIBRARY_CHOICE_KINDS
         if chosen is not None and chosen.kind == "recovery_plan":
             from .continuous_recovery import approve, execute, result_turn, options_for
             snapshot = approve(c, chosen.id)
@@ -460,8 +334,6 @@ class Session:
             self.turn = result_turn(c, result)
             self._save_chat()
             return result.to_text()
-        if chosen is not None and chosen.kind in LIBRARY_CHOICE_KINDS:
-            return self._take_library_choice(c, chosen, log, render)
         if chosen is not None and chosen.kind == "custom_transform":
             queued = len(c.notes)
             c.take_app_choice(chosen.id)          # queues "…carried it out; the outcome follows." for Claude
@@ -498,45 +370,6 @@ class Session:
             raise
         return self._after_turn(turn)
 
-    def _take_library_choice(self, c, chosen, log: Log, render: bool) -> str:
-        """One of your recipes or operations that Claude offered and you picked. ``Conversation.take_library_choice``
-        checks the item is exactly what was offered (a changed one is ``LibraryChanged``: nothing used, the conversation
-        goes on) and approves the words the choice showed. A recipe becomes the outcome as the validated snapshot the
-        choice holds (the window previews it next, as any spec; ``recipe_name`` says which). An operation follows
-        ``use_operation``'s trial-first rule with the conversation kept: its trials in a new session folder, the outcome
-        only when every sample passes, and Claude told either way — ``OperationFailed`` is the one failure it hears; a
-        defect withdraws the promised outcome and is never told as a result (as for a custom transform)."""
-        queued = len(c.notes)
-        try:
-            chosen, spec = c.take_library_choice(chosen.id)
-        except Exception:                         # LibraryChanged (a recorded refusal) or a defect: both saved first
-            self._save_chat()
-            raise
-        if chosen.kind == "recipe":
-            self._set_outcome(spec=spec, source="compiled", recipe=chosen.name)
-            self._save_chat()
-            log(f"Using your recipe {chosen.name!r} as saved.")
-            return f"Using your recipe {chosen.name!r} as saved — its preview follows."
-        try:
-            msg = self._use_saved_operation(chosen.name, log, render, end_conversation=False)
-            gp = self.generated_preview
-            c.note(f"Your operation {chosen.name!r} passed verification on the sample files; the user reviews its "
-                   f"preview.\n" + (gp.to_text()[:4000] if gp is not None else ""),
-                   display=f"Your operation {chosen.name!r} passed verification on the sample files.")
-        except OperationFailed as e:              # the recorded outcome: told to Claude, nothing changed
-            c.note(str(e))
-            self._save_chat()
-            raise
-        except Exception as e:                    # a defect: the promised outcome is withdrawn, the type alone is said
-            del c.notes[queued:]
-            c.notes.append(f"The user chose: «{chosen.label}». The app could not finish trying your operation: it "
-                           f"stopped with an internal error ({type(e).__name__}) before any result — nothing was "
-                           f"applied.")
-            self._save_chat()
-            raise
-        self._save_chat()
-        return msg
-
     def _after_turn(self, turn) -> str:
         self.turn = turn
         self.questions = list(turn.questions)
@@ -545,8 +378,6 @@ class Session:
         self._save_chat()
         if turn.status == "ok":
             self._set_outcome(spec=turn.spec, source="compiled")
-            from .ordinary_outcomes import user_request
-            self.outcome_request = user_request(self.conversation)
             return "Compiled."
         if turn.status == "questions":
             return "Claude needs your answer — reply in the chat below, or pick one of its choices."
@@ -572,9 +403,8 @@ class Session:
                        error=diag.exception_record(exc, "save-conversation"))
         if c.turn is not None:
             from .diagnostics import write_json
-            self.last_compile = c.compile_result(c.turn)
             write_json(self.chat_dir / "compile.json", {"request": c.request, "answers": list(c.answers),
-                                                        **self.last_compile.to_dict()})
+                                                        **c.compile_result(c.turn).to_dict()})
 
     def _session_dir(self) -> Path:
         """The folder the next preview or custom transform goes into: the conversation's folder while nothing has used
@@ -616,11 +446,9 @@ class Session:
     @_session_action
     def _codegen(self, request: str, proposal: str, files: List[Path], log: Log, brief: Optional[str] = None,
                  render: bool = False) -> str:
-        from .ordinary_outcomes import user_request
         from .preview import approval_token
         out = self._session_dir()
-        self.outcome_request = user_request(self.conversation) if self.conversation else request
-        key = {"request": self.outcome_request, "custom_transform": True}
+        key = {"request": _user_request(self.conversation) if self.conversation else request, "custom_transform": True}
         self.pending_custom_transform = {"request": request, "proposal": proposal, "files": files,
             "brief": brief, "out": out, "key": key, "token": approval_token(key, files)}
         return self.continue_custom_transform(log, render)
@@ -657,10 +485,7 @@ class Session:
         writer_dir = out / ("codegen" if attempt == 1 else f"codegen-{attempt:02d}")
         g = generate_op(request, proposal or "", samples, writer_dir, client=self.client, log=log, brief=brief,
                         approved_words=list(self.conversation.sources if self.conversation else [request]),
-                        include_nearby_inputs=not self.simple_conversation,
-                        **{k: v for k, v in (("max_output_tokens", self.max_output_tokens),
-                                            ("max_context_tokens", self.max_context_tokens), ("model", self.model),
-                                            ("effort", self.effort)) if v is not None})
+                        )
         if not g.passed:
             raise TransformFailed("; ".join(g.errors or [f"attempt {a['attempt']}: {'; '.join(a['problems'][:2])}"
                 for a in g.attempts[-1:]]) or "no transform was submitted",
@@ -713,9 +538,6 @@ class Session:
         from .preview import preview_generated
         self._set_outcome(generated=g)
         self.generated_intent = intent
-        if intent.startswith("A ONE-OFF CUSTOM TRANSFORM"):
-            from .ordinary_outcomes import user_request
-            self.outcome_request = user_request(self.conversation) if self.conversation else g.request
         self.generated_preview = preview_generated(g, out / "preview", "auto", render)
         log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
         if render and self.visual_check:
@@ -756,140 +578,10 @@ class Session:
         self._show_generated(g, out, token, inputs, intent, render, log)
 
     # ---- your library ----
-    @_session_action
-    def load_recipe(self, name: str) -> Dict[str, Any]:
-        from .library import load_recipe
-        return self.load_spec(load_recipe(name))
-
-    @_session_action
-    def use_snippet(self, name: str, anchor: str, position: str = "after", tracked: bool = True) -> Dict[str, Any]:
-        """One of your snippets as the outcome (Your library…): the ``insert_paragraph`` spec ``library.snippet_spec``
-        builds — its text exactly as saved, ``position`` the body paragraph whose text matches ``anchor``, in every file
-        that has one, at most once per file. Like a loaded recipe it ends the conversation; Preview shows it."""
-        from .library import load_snippet, snippet_spec
-        item, sn = load_snippet(name)
-        spec = snippet_spec(item.name, sn, anchor, position, tracked)
-        self._set_outcome(spec=spec, source=f"your snippet {item.name!r}")
-        self.end_conversation()
-        return spec
-
-    @_session_action
-    def new_snippet(self, name: str, text: str, description: str = "", replace: bool = False):
-        """Save a typed paragraph as a snippet (Your library… → New snippet…)."""
-        from .library import save_snippet
-        return save_snippet(name, text, description=description, replace=replace)
-
     # ---- chains: several recipes, one after another (chain.py) ----
-    @_session_action
-    def use_workflow(self, name: str, inputs: Dict[str, Any]) -> Dict[str, Any]:
-        """Configure a built-in workflow. It still needs the ordinary Preview and Run approval."""
-        from .workflows import build_workflow
-        chain = build_workflow(name, inputs)
-        self._set_outcome(chain=chain, source=f"workflow:{name}")
-        self.end_conversation()
-        return chain
-
-    @_session_action
-    def load_chain(self, name: str) -> Dict[str, Any]:
-        """One of your saved chains (Your library…) as the outcome: its stages' specs as saved, previewed and run
-        stage by stage. Ends the conversation like a loaded spec does."""
-        from .library import load_chain
-        chain = load_chain(name)
-        self._set_outcome(chain=chain, source=f"library:{name}")
-        self.end_conversation()
-        return chain
-
-    @_session_action
-    def load_chain_file(self, path: Path) -> Dict[str, Any]:
-        """A chain from a file (a saved chain's file, a run's or a preview's ``chain.json``)."""
-        from .chain import load_chain_file
-        chain = load_chain_file(Path(path))
-        self._set_outcome(chain=chain, source=str(path))
-        self.end_conversation()
-        return chain
-
-    @_session_action
-    def build_chain(self, names: List[str], name: str = "") -> Dict[str, Any]:
-        """A chain from your recipes, in the order given (Chain recipes…): each recipe's spec as saved becomes a stage
-        named after it. The chain is validated (every stage's spec) before it becomes the outcome; a name that is not
-        a recipe of yours is a ``LibraryError`` and changes nothing."""
-        from .chain import chain_from_specs
-        from .editspec import load_spec, validate_spec
-        from .library import load_recipe
-        if not names:
-            raise ValueError("pick at least one recipe for the chain")
-        stages = []
-        for n in names:
-            spec = load_spec(load_recipe(n))
-            validate_spec(spec)
-            stages.append((n, spec, n))
-        chain = chain_from_specs(stages, name=name)
-        self._set_outcome(chain=chain, source="recipes")
-        self.end_conversation()
-        return chain
-
-    @_session_action
-    def save_chain(self, name: str, description: str = "", replace: bool = False):
-        """Save the previewed chain (only while its preview is current) in your library."""
-        from .library import save_chain
-        from .preview import approval_token
-        if self.chain is None or self.preview is None or approval_token(self.outcome_key(), self.files()) != self.preview.token:
-            raise ValueError("preview the chain first — only a chain whose preview is current can be saved")
-        return save_chain(name, self.chain, description, replace)
-
-    @_session_action
-    def use_operation(self, name: str, log: Log, render: bool = False) -> str:
-        """Run one of your saved operations on this batch (Your library…): first on its sample files (sandbox + the
-        full suite — it must pass here, not only where it was made), then its preview; Run writes edited copies only.
-        The trials run in a new folder; only an operation that passes there replaces the session's outcome and ends its
-        conversation — one that does not pass (``OperationFailed``) leaves the conversation, the outcome, its preview
-        and ``out_dir`` as they were. Picked in the conversation instead, the same rule keeps the conversation
-        (``_take_library_choice``)."""
-        return self._use_saved_operation(name, log, render, end_conversation=True)
-
-    def _use_saved_operation(self, name: str, log: Log, render: bool, end_conversation: bool) -> str:
-        from .codegen import pick_samples
-        from .library import load_operation
-        g = load_operation(name)                  # the manifest's sha256 and the whitelist, again, now
-        files = self.files(outcome=False)         # the batch it runs once it replaces the outcome: a file the outgoing
-        samples = pick_samples(files)             # spec read as its template is one of them (compile's rule)
-        out = self._next_session_dir()            # never the current folder: nothing is replaced before it passes
-        log(f"Trying your operation {name!r} on {[f.name for f in samples]}…")
-        token, inputs, trials = self._prove(g, files, samples, out / "library-trial",
-                                            f"your operation {name!r} does not pass on these files", OperationFailed)
-        g.passed, g.trials = True, trials
-        if end_conversation:
-            self.end_conversation()               # Your library…: a saved operation is not part of the conversation
-        self._use_folder(out)
-        self._show_generated(g, out, token, inputs, f"YOUR SAVED OPERATION {name!r} for: {g.request}\n"
-                                                    f"WHAT IT DOES: {g.proposal}", render, log)
-        return (f"Your operation {name!r} passed verification on {len(samples)} sample file(s) of this batch. "
-                f"Run writes edited copies only (never over your files).")
-
-    @_session_action
-    def save_recipe(self, name: str, description: str = "", replace: bool = False):
-        """Save the previewed spec (only while its preview is current) as a recipe."""
-        from .library import save_recipe
-        from .preview import approval_token
-        if self.spec is None or self.preview is None or approval_token(self.spec, self.files()) != self.preview.token:
-            raise ValueError("preview the spec first — only a spec whose preview is current can be saved")
-        return save_recipe(name, self.spec, description, replace)
-
-    @_session_action
-    def save_operation(self, name: str, description: str = "", replace: bool = False):
-        """Save the custom transform (only one that passed on this batch's samples and is still current)."""
-        from .library import save_operation
-        from .preview import approval_token
-        g = self.generated
-        if g is None or not g.passed or approval_token(self._generated_key(g), self.files()) != self.generated_token:
-            raise ValueError("only a custom transform that passed on the current files can be saved — preview again")
-        return save_operation(name, g, description, replace)
-
     @_session_action
     def make_preview(self, render: bool, log: Log) -> str:
         from .preview import approval_token, make_preview
-        if self.pending_recovery_run is not None:
-            raise ValueError("The approved outcomes are retained; use Resolve remaining to resume this investigation.")
         if self.pending_custom_transform is not None:
             pending = self.pending_custom_transform
             pending["files"] = self.files()
@@ -905,18 +597,12 @@ class Session:
             gp = self.generated_preview
             return ((gp.to_text() + "\n\n") if gp is not None else "") + \
                 "AI-written transform verified. Review its preview before Run."
-        if self.spec is None and self.chain is None:
-            raise ValueError("nothing to preview — type a request or load a spec file")
+        if self.spec is None:
+            raise ValueError("nothing to preview — describe the change first")
         files = self.files()                      # the same filtered set Run checks and runs (no template files)
         out = self._session_dir()                 # beside the conversation's records (a loaded spec: a new folder)
         from .layouts import is_layout_plan, make_layout_preview
-        if self.chain is not None:
-            from .preview import make_chain_preview
-            n = len(self.chain["stages"])
-            log(f"Planning stage 1 on every file and running all {n} stage(s) on the samples…")
-            self.preview = make_chain_preview(self.chain, [str(f) for f in files], out / "preview", renderer="auto",
-                                              do_render=render)
-        elif is_layout_plan(self.spec):
+        if is_layout_plan(self.spec):
             n = len(self.spec["layouts"])
             log(f"Planning {n} layout(s) on their own files and trying one sample per layout…")
             self.preview = make_layout_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
@@ -933,48 +619,18 @@ class Session:
         if c is not None and c.continuous_recovery and (
                 any(f.status == "exception" for f in self.preview.batch_plan.files)
                 or any(not s.passed for s in self.preview.samples)):
-            evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec or self.chain)}
+            evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec)}
             self._set_outcome()
             return self._after_turn(c.investigate_failure(evidence))
         return self.preview.to_text()
 
-    def _requires_outcome_review(self) -> bool:
-        # Ordinary edits have one recipe, one independent verification suite and one preview decision.
-        # Retain the legacy review methods for reading old session state, never as delivery authority.
-        return False
-
-    def outcome_review_text(self) -> str:
-        from .ordinary_outcomes import text
-        return text(self.outcome_review)
-
-    @_session_action
-    def approve_outcomes(self, digest: str) -> None:
-        raise ValueError("Outcome reviews are advisory. Review the preview and press Run to approve the edit.")
-
-    @_session_action
-    def choose_outcome_targets(self, source, candidate_ids, *, effect_id=None) -> None:
-        from .ordinary_outcomes import choose_targets, save
-        self.outcome_review = choose_targets(self.outcome_review, source, candidate_ids, effect_id=effect_id)
-        self.outcome_approval = ""
-        if self.out_dir:
-            save(self.outcome_review, self.out_dir / "outcome-review.json")
-
-    def _approved_outcomes(self):
-        """Legacy outcome metadata never grants or withholds ordinary delivery authority."""
-        return {}
-
     # ---- Claude's visual check: findings accompany preview consent ----
     def _intent(self) -> str:
-        if self.chain is not None:
-            from .chain import chain_intent
-            return chain_intent(self.chain)
         spec = self.spec or {}
         lines = [f"REQUEST: {spec.get('request') or ''}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
         for layout in spec.get("layouts") or []:
             lines.append(f"LAYOUT {layout.get('id')} ({layout.get('label') or ''}): {layout['spec'].get('summary') or ''}")
             lines += [f"  ASSUMPTION: {a}" for a in layout["spec"].get("assumptions") or []]
-        if self.recipe_name:
-            lines.insert(1, f"YOUR RECIPE «{self.recipe_name}» (used as saved)")
         lines += [f"ASSUMPTION: {a}" for a in spec.get("assumptions") or []]
         if self.conversation is not None:
             lines.append("THE CONVERSATION:\n" + self.conversation.brief())
@@ -990,15 +646,14 @@ class Session:
             pv.review = vision.VisualReview(skipped=NO_KEY_REVIEW)
         else:
             pv.review = vision.review_samples(intent, pv.samples, folder, lambda: client or compiler._client(), log=log,
-                                             model=self.model or getattr(self.conversation, "model", None),
-                                             max_output_tokens=self.max_output_tokens, effort=self.effort)
+                                             model=getattr(self.conversation, "model", None))
         vision.save_review(pv.review, folder)
         write_preview_files(pv)
 
     def _current_review(self):
         """(the preview object that carries the visual check, the token it was made for)."""
         if self.pending_custom_transform is not None:
-            return self.outcome_review, self.pending_custom_transform["token"]
+            return None, self.pending_custom_transform["token"]
         if self.recovery is not None:
             return self.recovery, self.recovery.token
         if self.generated is not None:
@@ -1030,7 +685,7 @@ class Session:
                 return Outcome("auto", auto_choice=app[0].id)
         # An outcome (a spec, a chain, a prepared custom method) outranks the turn that led to it: a reply voids the
         # old outcome before a new turn can ask anything, so an outcome and an open question never coexist.
-        if self.spec is not None or self.chain is not None or self.generated is not None:
+        if self.spec is not None or self.generated is not None:
             pv, token = self._current_review()
             if pv is None:
                 return Outcome("auto", needs_preview=True)
@@ -1047,8 +702,6 @@ class Session:
 
     def run_blocked_reason(self) -> str:
         """Explain unavailable actions; visual findings are part of the single preview decision."""
-        if self.pending_recovery_run is not None:
-            return "Use Resolve remaining before exporting recovery copies."
         if self.pending_custom_transform is not None:
             return "Press Preview to finish preparing the custom transform."
         if self.generated is not None and not self.generated_token:
@@ -1066,7 +719,7 @@ class Session:
         """The user has looked at the blocking findings of the preview made with ``token`` (and only that one)."""
         pv, current = self._current_review()
         if self.pending_custom_transform is not None:
-            raise ValueError("No visual preview exists yet; approve requested outcomes before custom generation.")
+            raise ValueError("No preview exists yet; the custom method is still being prepared.")
         if pv is None or not token or token != current:
             diag.event("session.approval.refused", level="warning", gate="review_acknowledgement",
                        reason="preview_changed", supplied_digest=token, current_digest=current)
@@ -1082,9 +735,7 @@ class Session:
         bp = pv.batch_plan
         total, planned = len(bp.files), len(bp.files) - len(bp.exceptions)
         flagged = len(pv.review.blocking()) if pv.review is not None else 0
-        head = (f"THE PREVIEW OF YOUR RECIPE «{self.recipe_name}» (used as saved):\n" if self.recipe_name
-                else "THE PREVIEW OF YOUR SPEC:\n")
-        self.conversation.note(head + pv.to_text()[:6000],
+        self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + pv.to_text()[:6000],
                                display=f"Preview made: {planned} of {total} file(s) plan cleanly." +
                                        (f" Claude's visual check flagged {flagged} problem(s)." if flagged else ""))
         self._save_chat()
@@ -1104,19 +755,17 @@ class Session:
                 raise ValueError("Recovery exports edited copies only; original files cannot be overwritten.")
             from .recovery import deliver_recovery
             result = self.recovery
-            delivery = {}
-            if self.simple_conversation:
-                # Each partial export is a new set of copies. Earlier deliveries stay intact,
-                # including when the investigation was reopened from its saved checkpoint.
-                destination, sequence = result.out_dir / "outputs", 2
-                while destination.exists():
-                    destination = result.out_dir / f"outputs-{sequence}"
-                    sequence += 1
-                delivery["out_dir"] = destination
+            # Each partial export is a new set of copies. Earlier deliveries stay intact, including when the
+            # investigation was reopened from its saved checkpoint.
+            destination, sequence = result.out_dir / "outputs", 2
+            while destination.exists():
+                destination = result.out_dir / f"outputs-{sequence}"
+                sequence += 1
+            delivery = {"out_dir": destination}
             destination = deliver_recovery(result, acknowledge_review=True, **delivery)
             self.last_recovery = result
             self.last_run_dir = result.out_dir
-            self.last_batch, self.last_chain, self.last_trials = None, None, None
+            self.last_batch, self.last_trials = None, None
             return result.to_text() + f"\nRecovery copies exported: {destination}. Original files were not changed."
         self.last_recovery = None
         if self.generated is not None:
@@ -1135,20 +784,20 @@ class Session:
                            reason="generated_inputs_changed", changes=what)
                 raise ValueError("a file changed (or the folder changed) since the AI-written transform was tested — "
                                  "press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
-            self._approved_outcomes()
             out = (self.out_dir or self.new_out_dir()) / "run"
             diag.event("session.approval.accepted", approval_digest=self.generated_token,
                        file_count=len(files), in_place=False, run_dir=str(out))
             res = run_generated(self.generated, [str(f) for f in files], out, log=log,
                                 approved_inputs=self.generated_inputs or current_inputs)
-            self.last_run_dir, self.last_trials, self.last_batch, self.last_chain = out, res, None, None
+            self.last_run_dir, self.last_trials, self.last_batch = out, res, None
             ok = sum(r.passed for r in res)
-            return f"{ok} of {len(res)} file(s) PASS. Outputs: {out / 'outputs'} (your files were not changed).\n" + (
-                "Approved outcome checks were included for every delivered copy." if self._requires_outcome_review()
-                else "Recipe verification only; request satisfaction is not independently checked.")
-        if self.preview is None or (self.spec is None and self.chain is None):
+            return f"{ok} of {len(res)} file(s) PASS. Outputs: {out / 'outputs'} (your files were not changed)."
+        if self.preview is None or self.spec is None:
             diag.event("session.approval.refused", level="warning", gate="preview", reason="preview_required")
-            raise ValueError("press Preview first — nothing runs before you have seen the preview")
+            raise ValueError("nothing runs before you have seen the preview")
+        if in_place:
+            diag.event("session.approval.refused", level="warning", gate="delivery_mode", reason="copies_only")
+            raise ValueError("Edited copies only; original files are never overwritten.")
         files = self.files()
         from .layouts import is_layout_plan
         if is_layout_plan(self.spec):
@@ -1165,23 +814,18 @@ class Session:
                                            current_inputs)
             diag.event("session.approval.refused", level="warning", gate="approval_digest",
                        reason="preview_inputs_changed", changes=what)
-            raise ValueError(f"a file or the {'chain' if self.chain is not None else 'spec'} changed since the preview "
-                             "— press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
+            raise ValueError("a file or the plan changed since the preview — check the documents again"
+                             + ("".join(f"\n  • {w}" for w in what) if what else ""))
         out = self.out_dir / "run"
         diag.event("session.approval.accepted", approval_digest=self.preview.token,
                    file_count=len(files), in_place=in_place, run_dir=str(out))
         self.last_run_dir = out                   # set before the run: a run that stops still has its logs there
         approved_inputs = getattr(self.preview, "token_inputs", None) or current_inputs
-        if self.chain is not None:
-            return self._run_chain(files, out, in_place, render, log, approved_inputs=approved_inputs)
         batch = run_batch([str(f) for f in files], "edit-spec", {}, out, renderer="auto", do_render=render,
-                          in_place=in_place, progress=log, spec=self.spec, approved_inputs=approved_inputs,
-                          **self._approved_outcomes())
-        self.last_run_dir, self.last_batch, self.last_trials, self.last_chain = out, batch, None, None
+                          in_place=False, progress=log, spec=self.spec, approved_inputs=approved_inputs)
+        self.last_run_dir, self.last_batch, self.last_trials = out, batch, None
         c = batch.counts()
         lines = [f"{len(batch.files)} file(s): PASS {c['PASS']}  FAIL {c['FAIL']}  EXCEPTION {c['EXCEPTION']}"]
-        lines.append("Approved outcome checks were included for every delivered file." if self._requires_outcome_review()
-                     else "Recipe verification only; request satisfaction is not independently checked.")
         for f in batch.files:
             line = f"  {f.status:<9} {f.source.name}"
             if f.exception:
@@ -1196,14 +840,9 @@ class Session:
         lines.append(f"\nReport: {out / 'BATCH_REPORT.md'}")
         lines.append(f"Diagnostics (why, where and how, per file): {out / 'DIAGNOSTICS.md'} — log: "
                      f"{out / 'logs' / 'run.log'}")
-        if not in_place:
-            lines.append(f"Edited copies that passed every check: {out / 'outputs'} (your files were not changed)")
+        lines.append(f"Edited copies that passed every check: {out / 'outputs'} (your files were not changed)")
         if c["FAIL"]:
             lines.append(f"Copies that FAILED verification: {out / 'failed'} (diagnosis only — do not use them)")
-        if c["EXCEPTION"] or c["FAIL"]:
-            lines.append("Some files were set aside untouched — click 'Load set-aside files' to run the next pass "
-                         "on only those files" + (", or 'Advise on exceptions' for per-file advice." if
-                                                  self.claude_ready() else "."))
         return "\n".join(lines)
 
     @_session_action
@@ -1229,7 +868,7 @@ class Session:
         self.last_run_dir = out
         result = run_layouts([str(f) for f in files], self.spec, out, renderer="auto", do_render=render,
                              progress=log, approved_inputs=self.preview.token_inputs)
-        self.last_run_dir, self.last_batch, self.last_trials, self.last_chain = out, result, None, None
+        self.last_run_dir, self.last_batch, self.last_trials = out, result, None
         c = result.counts()
         lines = [f"{len(result.files)} file(s) in {len(result.batches)} layout(s): PASS {c['PASS']}  FAIL {c['FAIL']}  "
                  f"EXCEPTION {c['EXCEPTION']}"]
@@ -1246,54 +885,11 @@ class Session:
         return "\n".join(lines)
 
     @_session_action
-    def _run_chain(self, files: List[Path], out: Path, in_place: bool, render: bool, log: Log, *, approved_inputs=None) -> str:
-        """Run the chain (every stage a verified batch in ``out/stage-NN/``; ``chain.run_chain``) and say, per file,
-        how far it got."""
-        from .chain import run_chain
-        outcomes = self._approved_outcomes()
-        result = run_chain([str(f) for f in files], self.chain, out, renderer="auto", do_render=render,
-                           in_place=in_place, progress=log, approved_inputs=approved_inputs, **outcomes)
-        self.last_run_dir, self.last_chain, self.last_batch, self.last_trials = out, result, None, None
-        c = result.counts()
-        n = len(result.stages)
-        lines = [f"Chain «{result.name}» — {n} stage(s): " + " → ".join(s.name for s in result.stages),
-                 f"{len(result.files)} file(s): PASS {c['PASS']} (every stage)  FAIL {c['FAIL']}  EXCEPTION {c['EXCEPTION']}"]
-        lines.append("Approved outcome checks were included for every delivered file." if outcomes else
-                     "Recipe verification only; request satisfaction is not independently checked.")
-        for f in result.files:
-            line = f"  {f.status:<9} {f.source.name}  [" + " · ".join(f.stage_status) + "]"
-            if f.stopped_at:
-                line += f"  stopped at stage {f.stopped_at}: [{f.code}] {f.reason}"
-            elif f.delivered_to:
-                line += f"  → written back to {f.delivered_to}" if in_place else f"  → {f.delivered_to}"
-            for fl in f.flags:
-                line += f"\n            FLAG: {fl}"
-            lines.append(line)
-        lines.append(f"\nReport: {out / 'CHAIN_REPORT.md'} (each stage's own report: {out}/stage-NN/BATCH_REPORT.md)")
-        lines.append(f"Diagnostics (which stage, why, where and how, per file): {out / 'DIAGNOSTICS.md'} — log: "
-                     f"{out / 'logs' / 'chain.log'}")
-        if not in_place:
-            lines.append(f"Edited copies that passed every stage: {out / 'outputs'} (your files were not changed)")
-        elif outcomes:
-            lines.append("Files were written back only after every stage and the independently approved outcome passed.")
-        else:
-            lines.append("Files that passed a stage were written back over the originals stage by stage; a file that "
-                         "stopped later keeps the stages before it (see the report).")
-        if c["EXCEPTION"] or c["FAIL"]:
-            lines.append("Some files did not get through every stage — click 'Load set-aside files' to run the next pass "
-                         "on only those files" + (", or 'Advise on exceptions' for per-file advice." if
-                                                  self.claude_ready() else "."))
-        return "\n".join(lines)
-
-    @_session_action
     def load_recovery(self, run_dir: Path) -> str:
         """Reopen saved investigation evidence without making a model call or restoring review approval."""
         from .recovery import load_recovery
         result = load_recovery(run_dir)
         self._adopt_recovery(result)
-        self.selected_files = [Path(item.source) for item in result.files]
-        if self.selected_files:
-            self.folder = self.selected_files[0].parent
         return result.to_text()
 
     def _adopt_recovery(self, result, *, keep_conversation=False) -> None:
@@ -1303,7 +899,6 @@ class Session:
         else:
             self.turn = None
         self.recovery = result
-        self.pending_recovery_run = None
         self.out_dir = result.out_dir
         self.questions = list(result.questions)
 
@@ -1323,9 +918,9 @@ class Session:
                                      client=self.client, log=log)
             self._adopt_recovery(result)
             return result.to_text()
-        source_run = self.pending_recovery_run or (previous.out_dir if previous is not None else self.last_run_dir)
-        if (previous is None and (self.preview is not None or self.conversation is not None)
-                and self.pending_recovery_run is None and self.out_dir is not None and self.last_run_dir != self.out_dir / "run"):
+        source_run = self.last_run_dir
+        if ((self.preview is not None or self.conversation is not None)
+                and self.out_dir is not None and self.last_run_dir != self.out_dir / "run"):
             source_run = None  # the current conversation/preview has not run; an older batch is unrelated
         if source_run is not None:
             from .batch import load_set_aside
@@ -1346,39 +941,14 @@ class Session:
                     return "Nothing to resolve: 0 failed or set-aside files in the current preview."
             approved = list(self.conversation.sources) if self.conversation is not None else []
             original_request = (self.conversation.request if self.conversation is not None else "") or \
-                (self.spec or {}).get("request") or "\n".join(
-                st["spec"].get("request") or "" for st in (self.chain or {}).get("stages", []))
+                (self.spec or {}).get("request") or ""
             clarified = original_request
             if request and request.strip() != original_request.strip():
                 clarified = original_request + "\n\nUser clarification: " + request if original_request else request
-            result = recover(files, clarified, out,
-                             spec=self.spec, chain=self.chain, prior_failures=self.prior_failures,
-                             template=self.template, approved_words=approved, options=options,
-                             client=self.client, log=log)
+            result = recover(files, clarified, out, spec=self.spec, template=self.template,
+                             approved_words=approved, options=options, client=self.client, log=log)
         self._adopt_recovery(result)
         return result.to_text()
-
-    @_session_action
-    def advise(self, log: Log) -> str:
-        from .advisor import advise_batch
-        if not self.last_run_dir:
-            raise ValueError("run something first")
-        if not self.claude_ready():
-            raise ValueError(NEEDS_KEY_ADVICE)
-        if self.last_chain is not None:           # a chain: each stage's exceptions are in its own folder
-            res = []
-            for st in self.last_chain.stages:
-                if st.batch is not None and (st.out_dir / "exceptions").is_dir():
-                    res += [(st, a) for a in advise_batch(st.out_dir, client=self.client, log=log)]
-            if not res:
-                return "No exceptions to advise on."
-            return "\n".join(f"  {a.kind:<14} {Path(a.source).name}  (stage {st.index}: {st.name})" for st, a in res) + \
-                "\n\nAdvice: " + ", ".join(str(st.out_dir / "advice") for st in {id(st): st for st, _ in res}.values())
-        res = advise_batch(self.last_run_dir, client=self.client, log=log)
-        if not res:
-            return "No exceptions to advise on."
-        return "\n".join(f"  {a.kind:<14} {Path(a.source).name}" for a in res) + \
-            f"\n\nAdvice: {self.last_run_dir / 'advice'}"
 
 
 def open_folder(path: Path) -> None:

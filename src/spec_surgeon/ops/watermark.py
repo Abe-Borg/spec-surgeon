@@ -48,7 +48,7 @@ from lxml import etree
 
 from ..ooxml import block_full_text, block_struct_counts, paragraphs
 from ..package import HEADER_REL, DocxPackage, W
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .hf_common import TYPES, effective_refs
 
@@ -482,6 +482,32 @@ class AddWatermark(Op):
                "new and unique and the box inside every section's text area, and each paragraph item by item",
     }
 
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        text = params.get("text")
+        layout = "horizontally" if params.get("layout") == "horizontal" else "diagonally"
+        head = prose.sentence("add a watermark", f"reading {prose.quote(text)}" if isinstance(text, str) and text else "",
+                              f"{layout} behind every page, in every header the document shows")
+        drawn: List[str] = []
+        font = params.get("font")
+        if isinstance(font, str) and font.strip() and font.strip() != DEFAULTS["font"]:
+            drawn.append(f"in the {prose.quote(font.strip())} font")
+        color = params.get("color")
+        if isinstance(color, str) and color.strip().lstrip("#").upper() != DEFAULTS["color"]:
+            drawn.append(f"coloured {prose.quote(color.strip().lstrip('#').upper())}")
+        opacity = params.get("opacity")
+        if isinstance(opacity, (int, float)) and not isinstance(opacity, bool) and opacity != DEFAULTS["opacity"]:
+            drawn.append(f"at {round(opacity * 100):g}% opacity")
+        size = params.get("size")
+        if isinstance(size, (int, float)) and not isinstance(size, bool):
+            drawn.append(f"at {prose.points(size)}")
+        replacing = "replacing any watermark the file already has" if params.get("replace") is True else ""
+        if drawn:
+            return head + " " + prose.sentence("it is drawn", prose.join(drawn) + (f", {replacing}" if replacing else ""))
+        if replacing:
+            return head + " " + prose.sentence("any watermark the file already has is replaced")
+        return head
+
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:
             raise JobException("add_watermark takes no selector: it goes into every header the document shows",
@@ -594,6 +620,17 @@ class RemoveWatermark(Op):
         "V10": "removed_watermark finds every watermark again with its own reading and checks each paragraph item by "
                "item: exactly those runs gone",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        text = params.get("text")
+        which = (f"the watermark reading {prose.quote(text)} (matched ignoring case and spacing)"
+                 if isinstance(text, str) and text.strip() else "every watermark")
+        head = prose.sentence("remove", which, "from every header, leaving the header's paragraphs in place so "
+                                               "nothing moves")
+        if params.get("allow_missing") is False:
+            return head + " " + prose.sentence("a file without such a watermark is set aside")
+        return head
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

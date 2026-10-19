@@ -317,6 +317,7 @@ def make_layout_preview(plan: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "layouts.json").write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str),
                                               encoding="utf-8")
+        (out_dir / "plan.json").write_text(json.dumps(plan, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
         return result
 
 
@@ -388,6 +389,7 @@ def run_layouts(inputs: Sequence[str], plan: Dict[str, Any], out_dir: Path, *, r
         out_dir.mkdir(parents=True, exist_ok=True)
         (out_dir / "layouts.json").write_text(json.dumps(result.to_dict(), indent=2, ensure_ascii=False, default=str),
                                               encoding="utf-8")
+        (out_dir / "plan.json").write_text(json.dumps(plan, indent=2, ensure_ascii=False, default=str), encoding="utf-8")
         _write_report(result)
         outcome.update(counts=result.counts(), timings=result.timings)
         return result

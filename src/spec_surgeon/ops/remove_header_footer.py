@@ -19,12 +19,13 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional, Tuple
 
 from ..package import CT_PART, W, DocxPackage
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .hf_common import KINDS, TYPES, apply_removal, plan_removal, refs
 from .selectors import resolve_sections
 
 _refs = refs
+_TYPE_ADJECTIVES = {"default": "regular", "first": "first-page", "even": "even-page"}
 
 
 @register
@@ -45,6 +46,18 @@ class RemoveHeaderFooter(Op):
         "V10": "section_hf_refs: only the selected references gone; everything else in document.xml identical",
         "V7": "source reference: body text must not move",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select = dict(select or {})
+        kinds = [k for k in (select.get("kinds") or KINDS) if k in KINDS] or list(KINDS)
+        types = [t for t in (select.get("types") or TYPES) if t in TYPES] or list(TYPES)
+        what = "the " + ("" if set(types) == set(TYPES) else prose.join(_TYPE_ADJECTIVES[t] for t in types) + " ") \
+            + prose.join(k + "s" for k in kinds)
+        place = prose.where({"sections": select.get("sections", "all")}, default="every section")[3:]
+        kept = [_TYPE_ADJECTIVES[t] for t in TYPES if t not in types]
+        first = prose.sentence("remove", what, "from", place + (f", leaving the {prose.join(kept)} ones" if kept else ""))
+        second = prose.sentence("Body text does not move, and the page margins and first-page settings are left as they are")
+        return first + " " + second
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

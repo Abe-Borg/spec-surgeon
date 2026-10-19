@@ -22,7 +22,7 @@ from lxml import etree
 
 from ..package import W, DocxPackage
 from ..ooxml import block_full_text, count_revisions, paragraph_marked_text, paragraphs
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .hf_common import effective_refs
 
@@ -67,6 +67,18 @@ class FixPageNumbering(Op):
                "the cover); nothing else changes",
         "V7": "source reference; page 1 excluded for cover-unnumbered",
     }
+
+    def describe(self, select: Dict[str, Any], params: Dict[str, Any]) -> str:
+        option = (params or {}).get("option")
+        if option == "cover-unnumbered":
+            return prose.sentence("Remove the page number from the cover (the first section) by deleting the line that "
+                                  "holds the page-number field in the cover's own footer; the body pages keep their "
+                                  "numbering")
+        if option == "continuous":
+            return prose.sentence("Make the page numbers run continuously from the cover through the whole document by "
+                                  "removing every page-number restart in the sections after the cover")
+        return prose.sentence("Fix the cover and body page numbering: either remove the page number from the cover or "
+                              "make the numbering run continuously through the document")
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

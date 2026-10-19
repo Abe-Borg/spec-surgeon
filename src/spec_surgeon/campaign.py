@@ -306,7 +306,7 @@ class Campaign:
 
     def plan(self, project_id=None, request=None, *, doc_ids=None, template=None, options=None, client=None, log=None):
         from . import campaign_planner, recovery
-        options = options or recovery.RecoveryOptions(**self._state.get("resource_options", {}))
+        options = options or recovery.RecoveryOptions.from_snapshot(self._state.get("resource_options", {}))
         options.validate()
         selected = [self._project(project_id)] if project_id else list(self.projects.values())
         if doc_ids is not None and (not doc_ids or not set(doc_ids).issubset(self.documents)):
@@ -602,7 +602,7 @@ class Campaign:
 
     def run(self, *, options=None, client=None, log=None, allow_model=None):
         from . import llm, recovery
-        options = options or recovery.RecoveryOptions(**self._state.get("resource_options", {}))
+        options = options or recovery.RecoveryOptions.from_snapshot(self._state.get("resource_options", {}))
         options.validate()
         notify = log or (lambda message: None)
         model_allowed = allow_model is not False and (client is not None or llm.credentials_found())

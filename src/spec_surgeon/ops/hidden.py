@@ -43,7 +43,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..ooxml import RevisionStamp, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage, W
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .fields import fields_of
 from .markup import Look, color_in, color_names, valid_color
@@ -70,6 +70,69 @@ CLEANUP_PARAMS = {
                       "description": "true (the default) = a file with nothing to remove plans as a no-op; false = "
                                      "such a file is set aside (not-found)."},
 }
+
+
+# ---- the plan's prose (describe): what the clean-up ops share -------------------------------------------------------
+
+def scope_phrase(select: Optional[Dict[str, Any]], params: Optional[Dict[str, Any]], default: Sequence[str]) -> str:
+    """``in the document body, the headers and the footers``: the parts the op works in, the body named when alone."""
+    scope = (select or {}).get("scope") or (params or {}).get("scope") or list(default)
+    return prose.scope_words(scope) or "in the document body"
+
+
+def tracked_words(params: Optional[Dict[str, Any]]) -> str:
+    """``shown as tracked changes`` (``by “Jane”``, ``dated in UTC``) for the ops that track by default; ``without
+    tracked changes`` when the user switched tracking off."""
+    params = params or {}
+    if params.get("tracked", True) is False:
+        return "without tracked changes"
+    text = "shown as tracked changes"
+    if params.get("author"):
+        text += f" by {prose.quote(params['author'])}"
+    if params.get("date_convention") == "utc":
+        text += " dated in UTC"
+    return text
+
+
+def set_aside_remark(params: Optional[Dict[str, Any]], what: str) -> str:
+    """The non-default ``allow_missing``: a file with nothing to remove is set aside; empty for the default."""
+    if (params or {}).get("allow_missing", True) is False:
+        return f"a file with no {what} is set aside rather than passed through"
+    return ""
+
+
+def _note_paragraph_words(rule: Dict[str, Any]) -> str:
+    """One note rule as the reader says it: ``those in the “Note” style whose text matches the pattern “^Retain” and
+    is all coloured “0000FF”``."""
+    head = "those"
+    if isinstance(rule.get("style_in"), list) and rule["style_in"]:
+        head += " in " + prose.styles(list(rule["style_in"]))
+    tests: List[str] = []
+    if rule.get("text_regex"):
+        tests.append("matches the pattern " + prose.quote(rule["text_regex"]))
+    if isinstance(rule.get("color_in"), list) and rule["color_in"]:
+        tests.append("is all coloured " + prose.join((prose.quote(c) for c in rule["color_in"]), "or"))
+    if rule.get("hidden") is True:
+        tests.append("is all hidden")
+    if tests:
+        head += " whose text " + " and ".join(tests)
+    return head if head != "those" else "any paragraph"
+
+
+def _inline_note_words(rule: Any) -> str:
+    """``hidden text coloured “0000FF” or “FF0000”``: the inline-note rule; empty when there is none."""
+    if not isinstance(rule, dict):
+        return ""
+    colours = rule.get("color_in") if isinstance(rule.get("color_in"), list) else []
+    hidden = rule.get("hidden") is True
+    if colours:
+        return ("hidden text" if hidden else "text") + " coloured " + prose.join((prose.quote(c) for c in colours), "or")
+    return "hidden text" if hidden else ""
+
+
+def _two_sentences(first: str, remarks: List[str]) -> str:
+    remarks = [r for r in remarks if r]
+    return first if not remarks else first + " " + prose.sentence("; ".join(remarks))
 
 
 def nearest_p(el) -> Optional[Any]:
@@ -478,6 +541,14 @@ class RemoveHiddenText(_Removing):
                "each paragraph item by item; deleted paragraphs as a tracked deletion or gone; nothing else changes",
     }
 
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        first = prose.sentence("Remove the hidden text (Word's “Hidden” font setting, whether set directly or by a style)",
+                               scope_phrase(select, params, HIDDEN_SCOPE) + f", {tracked_words(params)}")
+        return _two_sentences(first, ["a paragraph whose text and paragraph mark are all hidden is deleted whole, and "
+                                      "every removed piece is listed in the preview",
+                                      set_aside_remark(params, "hidden text")])
+
     def choose(self, part, bi, p, look, sheet, params):
         where = f"{part} paragraph {bi}"
         content = content_runs(p)
@@ -582,6 +653,25 @@ class RemoveNotes(_Removing):
         "V10": "removed_notes re-derives every note paragraph and inline note (its own style, text, colour and hidden "
                "readings) and checks each paragraph item by item; nothing else changes",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        rules = [r for r in params["rules"] if isinstance(r, dict) and r] if isinstance(params.get("rules"), list) else []
+        inline = _inline_note_words(params.get("runs"))
+        where = scope_phrase(select, params, NOTE_SCOPE)
+        note_paragraphs = "Delete the note paragraphs" + (
+            " (" + prose.join((_note_paragraph_words(r) for r in rules), "or") + ")" if rules else "")
+        if rules and inline:
+            head = f"{note_paragraphs} and remove the inline notes ({inline}) from the other paragraphs {where}"
+        elif rules:
+            head = f"{note_paragraphs} {where}"
+        elif inline:
+            head = f"Remove the inline notes ({inline}) from the paragraphs {where}"
+        else:
+            head = f"Delete the note paragraphs and remove the inline notes {where}"
+        first = prose.sentence(f"{head}, {tracked_words(params)}")
+        return _two_sentences(first, ["hyperlink text and pictures are never taken as notes, and every removed note is "
+                                      "listed in the preview", set_aside_remark(params, "such note")])
 
     def check_params(self, params):
         self._rules = note_rules(params)

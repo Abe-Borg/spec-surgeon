@@ -4,8 +4,10 @@ reading every file in full (docs/NL_SURGICAL_EDITOR_PLAN.md §2, Phase 3).
 ``profile(pkg)`` describes one file: section layout (page, margins, text width, titlePg, numbering) and what each
 section's headers/footers show (part names as resolved through the rels, their display text and fields, any
 template slots), settings, fonts (theme, docDefaults, direct fonts in use), the paragraph styles in use with their
-effective font/size and a sample paragraph, numbering, counts, hygiene/whitespace signals, and the first paragraphs
-of the body. It is bounded (``MAX_PROFILE_BYTES``): long text is truncated and samples are dropped before structure is.
+effective font/size and a sample paragraph, numbering, counts, hygiene/whitespace signals, the first paragraphs of
+the body, and ``roles`` — how the file encodes each specification role (styles, typed or automatic markers, examples)
+with the concrete selector per role the file makes unambiguous (``structure.role_summary``). It is bounded
+(``MAX_PROFILE_BYTES``): long text is truncated and samples are dropped before structure is.
 
 ``profile_batch(files)`` groups files by structure pattern (fingerprint.pattern_id) and profiles one
 representative per pattern — the compiler sees one profile per pattern, not one per file.
@@ -33,6 +35,7 @@ from .ops.selectors import StyleSheet
 from .ops.base import JobException
 from .ops.slots import display_text, extract_fill, field_runs, find_slots, mark_slots, nearest_p, value_tokens
 from .package import NS, W, DocxPackage
+from .structure import role_summary
 
 MAX_PROFILE_BYTES = 6000
 TEXT_CLIP = 90
@@ -359,6 +362,12 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         lists = {"error": f"{type(e).__name__}: {e}"}
     if lists:
         prof["lists"] = lists
+    try:                               # how this file encodes each role, and the selector per role it makes unambiguous
+        roles = role_summary(pkg)
+    except Exception as e:  # noqa: BLE001 — descriptive only, like markup: a modified overlay or an unreadable list
+        roles = {"error": f"{type(e).__name__}: {e}"}   # definition leaves the summary out; the file still profiles
+    if roles:
+        prof["roles"] = roles
     hygiene = fp.get("body_hygiene") or {}
     anomalies = {}
     if hygiene.get("has_nbsp"):
@@ -792,12 +801,42 @@ def etree_local(qname: str) -> str:
 def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any]:
     """Shrink until the JSON fits ``limit`` — always. Samples go first (silently), then structure, each structural
     cut recorded in ``truncated`` (what was omitted), and as a last resort only the file's identity, settings,
-    counts, the body text's font/size (``fonts.body_text`` — what "match the template's font" needs) and the
-    omission list remain."""
+    counts, the body text's font/size (``fonts.body_text`` — what "match the template's font" needs), the role
+    selectors and the omission list remain.
+
+    ``roles`` thins like a sample: its examples go with the style samples, then its markers and unresolved reasons
+    with the hygiene signals, and the rest (counts, numbering, styles, selectors) after the list and table summaries
+    and before any section is cut — silently, like ``hygiene`` and ``styles_unused``: a derived summary, not the file's
+    structure. Its selectors come back in the last resort (what a planner needs most from a profile that small)."""
     omitted: List[str] = []
+    stash: Dict[str, Any] = {}
 
     def size():
         return len(json.dumps(prof, ensure_ascii=False))
+
+    def role_entries():
+        r = prof.get("roles")
+        return (r.get("roles") or {}).values() if isinstance(r, dict) and isinstance(r.get("roles"), dict) else []
+
+    def thin_role_examples(n):
+        for e in role_entries():
+            if isinstance(e, dict) and "examples" in e:
+                e["examples"] = e["examples"][:n]
+                if not e["examples"]:
+                    e.pop("examples")
+
+    def thin_roles():                         # the core stays: count, numbering, styles, selectors, unresolved count
+        for e in role_entries():
+            if isinstance(e, dict):
+                e.pop("markers", None)
+        r = prof.get("roles")
+        if isinstance(r, dict) and isinstance(r.get("unresolved"), dict):
+            r["unresolved"].pop("reasons", None)
+
+    def drop_roles():
+        r = prof.pop("roles", None)
+        if isinstance(r, dict) and r.get("selectors"):
+            stash["roles"] = {"selectors": r["selectors"]}
 
     def cut_sections(n):
         secs = prof["sections"]
@@ -875,11 +914,14 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
     steps = [
         lambda: prof.__setitem__("first_paragraphs", prof["first_paragraphs"][:3]),
         lambda: [st.pop("sample", None) for st in prof["styles_in_use"]],
+        lambda: thin_role_examples(1),
         lambda: prof.__setitem__("styles_in_use", prof["styles_in_use"][:12]),
         lambda: [v.__setitem__("text", v["text"][:2]) for v in prof["header_footer_parts"].values() if "text" in v],
         lambda: prof.__setitem__("first_paragraphs", []),
+        lambda: thin_role_examples(0),
         lambda: prof["fonts"].__setitem__("direct_in_runs", dict(list(prof["fonts"]["direct_in_runs"].items())[:4])),
         lambda: prof.pop("hygiene", None),
+        thin_roles,
         thin_markup,
         thin_tables,
         thin_lists,
@@ -889,6 +931,7 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         drop_other_styles,
         drop_tables,
         drop_lists,
+        drop_roles,
         lambda: cut_sections(6),
         lambda: cut_parts(8),
         lambda: cut_sections(2),
@@ -901,15 +944,17 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
         step()
     prof["truncated"] = omitted
     if size() > limit:
-        keep = {k: prof[k] for k in ("file", "pattern_id", "settings", "counts", "markup") if k in prof}
+        if "roles" not in prof and stash.get("roles"):
+            prof["roles"] = stash["roles"]
+        keep = {k: prof[k] for k in ("file", "pattern_id", "settings", "counts", "markup", "roles") if k in prof}
         body = (prof.get("fonts") or {}).get("body_text")
         prof.clear()
         prof.update(keep)
         if body:
             prof["fonts"] = {"body_text": body}
-        prof["truncated"] = omitted + ["everything but identity, settings, counts and the body text's font/size "
-                                       "(profile limit)"]
-        for k in ("markup", "counts", "settings", "fonts"):     # an absurdly small limit: identity only
+        prof["truncated"] = omitted + ["everything but identity, settings, counts, the body text's font/size and "
+                                       "the role selectors (profile limit)"]
+        for k in ("markup", "roles", "counts", "settings", "fonts"):     # an absurdly small limit: identity only
             if size() <= limit:
                 break
             prof.pop(k, None)

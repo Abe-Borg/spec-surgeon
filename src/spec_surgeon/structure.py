@@ -2,8 +2,11 @@
 
 Roles are proposals, never edit authority. Only ordinary main-story paragraphs are
 classified. Every paragraph keeps the exact ordinal used by ``ooxml.paragraphs``;
-unsupported or ambiguous content receives an explicit disposition. Nothing here
-is imported by the independent verifier.
+unsupported or ambiguous content receives an explicit disposition. ``role_summary``
+condenses that analysis into how one file encodes each role (styles, typed or
+automatic markers, examples) and the concrete selector a planner can write for it
+when the file makes one unambiguous. Nothing here is imported by the independent
+verifier.
 """
 from __future__ import annotations
 
@@ -31,6 +34,11 @@ _MC = "{http://schemas.openxmlformats.org/markup-compatibility/2006}"
 _ROMAN = re.compile(r"[IVXLCDMivxlcdm]+\Z")
 _DEPTH_ROLES = {3: "paragraph", 4: "subparagraph", 5: "subparagraph_2",
                 6: "subparagraph_3", 7: "subparagraph_4"}
+# The two readings that make a paragraph something other than a role-shaped line with an uncertain context: unmarked
+# wording, and an automatic list of a pattern no role covers (a bullet, a Roman list). role_summary treats a style or
+# marker shape these paragraphs share with a role as ambiguous; a missing parent or a pending revision does not.
+NO_MARKER = "no unambiguous supported specification marker"
+UNSUPPORTED_LIST = "automatic numbering pattern has no supported unambiguous specification role"
 
 
 def _paragraph_text(p):
@@ -131,7 +139,7 @@ def analyze_structure(pkg: DocxPackage) -> dict:
         text = _paragraph_text(p)
         row = {"part": main, "paragraph": index, "text": text, "content": text,
                "role": None, "disposition": "unresolved", "evidence": [],
-               "reason": "no unambiguous supported specification marker",
+               "reason": NO_MARKER,
                "style_id": sheet.paragraph_style_id(p), "parent": None, "depth": None,
                "section_id": section, "section_paragraph": section_paragraph,
                "article_label": article_label, "label": None, "reference_id": None,
@@ -243,7 +251,7 @@ def analyze_structure(pkg: DocxPackage) -> dict:
                                    hierarchy_reliable=rows[parent]["hierarchy_reliable"])
                         stack = {k: v for k, v in stack.items() if k < depth} | {depth: index}
                 elif num is not None:
-                    row["reason"] = "automatic numbering pattern has no supported unambiguous specification role"
+                    row["reason"] = UNSUPPORTED_LIST
                     stack = {k: v for k, v in stack.items() if k < 3}
                 else:
                     # An unmarked line might be a heading. Do not let subsequent
@@ -283,3 +291,183 @@ def analyze_structure(pkg: DocxPackage) -> dict:
                             "Tables, drawings, textboxes, fields, hidden text and pending revisions are excluded.",
                             "Unsupported numbering, ambiguous Roman markers and unmarked prose remain unresolved.",
                             "Headers, footers, notes and comments are outside structural coverage."]}
+
+
+# ---- role summary: how this file encodes each role, and the selector a planner can write for it -------------------
+
+EXAMPLE_CLIP = 80            # characters per example
+EXAMPLE_SAMPLES = 2          # examples per role
+MARKER_SAMPLES = 2           # markers shown per role (the regex is built from every distinct marker)
+REASON_LIMIT = 6             # unresolved reasons listed, the most frequent first
+STYLE_SELECTOR_LIMIT = 2     # style_in is offered for a role that shares at most this many styles
+_TABLE_REASON = "table paragraph"
+_SHAPE_TOKEN = re.compile(r"[0-9]+|[A-Z]+|[a-z]+|\s+|.", re.S)
+
+
+def _clip_example(text: str, n: int = EXAMPLE_CLIP) -> str:
+    """The paragraph's words with line breaks folded; tabs and non-breaking spaces stay (a planner's regex meets
+    them); at most ``n`` characters."""
+    s = re.sub(r"[\r\n]+", " ", (text or "").strip())
+    return s if len(s) <= n else s[:n - 1] + "…"
+
+
+def _marker_kind(row) -> str:
+    """How the role's marker reaches the reader: typed in the text, rendered by a list, or none (a title)."""
+    evidence = row.get("evidence") or []
+    if "rendered list marker" in evidence:
+        return "automatic"
+    if "typed specification marker" in evidence:
+        return "typed"
+    return "none"
+
+
+def _marker(row) -> str | None:
+    """The marker as this file carries it: the rendered list text for automatic numbering, else the typed prefix
+    (the stripped text up to the recognized content — ``1.01``, ``A.``, ``PART 1 -``, ``SECTION 21 13 13``)."""
+    kind = _marker_kind(row)
+    if kind == "automatic":
+        return (row.get("numbering") or {}).get("marker") or None
+    if kind != "typed":
+        return None
+    line = (row.get("text") or "").strip()
+    content = row.get("content") or ""
+    if content and content != line and line.endswith(content):
+        return line[:len(line) - len(content)].strip() or None
+    return line or None
+
+
+def _shape(marker: str):
+    tokens = []
+    for m in _SHAPE_TOKEN.finditer(marker):
+        t = m.group()
+        if t[0].isdigit():
+            kind = "digits"
+        elif t.isspace():
+            kind = "space"
+        elif t.isalpha():
+            kind = "upper" if t.isupper() else "lower"
+        else:
+            kind = "punct"
+        tokens.append((kind, t))
+    return tokens
+
+
+def marker_regex(markers) -> str | None:
+    """A ``text_regex`` for the typed marker shape every one of ``markers`` shares, or None when they share none.
+
+    Digit runs become ``\\d{n}`` when every marker has ``n`` digits there (``\\d`` for one), ``\\d+`` otherwise; a
+    single letter becomes its class (``[A-Z]``, ``[a-z]``); a word every marker spells the same (``PART``, ``SECTION``)
+    stays literal; punctuation must agree and is escaped; whitespace becomes ``\\s+``. The regex tolerates leading
+    whitespace (a typed tab before the marker) and requires whitespace or the end of the text after it, so ``1.``
+    never selects ``1.01``. Markers whose token shapes differ (``PART 1 -`` beside ``PART 2``) give None: a guess
+    would select the wrong paragraphs."""
+    shapes = [_shape(m) for m in markers if m]
+    if not shapes or any(len(sh) != len(shapes[0]) for sh in shapes):
+        return None
+    out = [r"^\s*"]
+    for position, (kind, _) in enumerate(shapes[0]):
+        column = [sh[position] for sh in shapes]
+        if any(k != kind for k, _ in column):
+            return None
+        values = {v for _, v in column}
+        if kind == "space":
+            out.append(r"\s+")
+        elif kind == "digits":
+            lengths = {len(v) for v in values}
+            if lengths == {1}:
+                out.append(r"\d")
+            elif len(lengths) == 1:
+                out.append(r"\d{%d}" % lengths.pop())
+            else:
+                out.append(r"\d+")
+        elif kind == "punct":
+            if len(values) != 1:
+                return None
+            out.append(re.escape(values.pop()))
+        elif all(len(v) == 1 for v in values):
+            out.append("[A-Z]" if kind == "upper" else "[a-z]")
+        elif len(values) == 1:
+            out.append(re.escape(values.pop()))
+        else:
+            return None
+    out.append(r"(?:\s|$)")
+    return "".join(out)
+
+
+def _reason_head(reason: str) -> str:
+    return reason.split(":", 1)[0].strip()
+
+
+def _something_else(row) -> bool:
+    """A paragraph the analyzer read as something other than this role: another role, unmarked wording, or an
+    automatic list of an unsupported pattern. A recognized marker with an uncertain parent, a Roman-looking letter
+    or a list disturbed by revisions keeps its shape; it is not evidence against a selector."""
+    if row["disposition"] == "classified":
+        return True
+    return row["disposition"] == "unresolved" and row["reason"] in (NO_MARKER, UNSUPPORTED_LIST)
+
+
+def role_summary(pkg: DocxPackage) -> dict:
+    """How THIS file encodes each role, for a planner that must write concrete selectors per layout.
+
+    ``roles``: per role present (in hierarchy order) its paragraph count, the paragraph styles it uses with counts,
+    its numbering (``typed`` markers in the text, ``automatic`` list markers, ``mixed``, or ``none`` for a title), the
+    first two distinct markers as the file carries them, and two examples of at most 80 characters (the source
+    text: an automatic marker is not in it). ``unresolved``: how many main-body paragraphs the analyzer could not
+    place and why (reasons condensed to their head). ``selectors``: per role, the selector that is unambiguous in
+    this file — ``style_in`` when the role's paragraphs share one or two styles no paragraph read as something else
+    uses; otherwise, when every marker is typed, a ``text_regex`` built from the markers' shared shape that selects
+    no such paragraph; a role with neither is left out. Either gets ``in_table: false`` when a table cell would
+    otherwise be selected too (tables are outside the analyzer's coverage). Descriptive only: nothing here plans an
+    edit, and the analysis is read-only source evidence (``analyze_structure``)."""
+    rows = analyze_structure(pkg)["paragraphs"]
+    by_role: dict = {}
+    for row in rows:
+        if row["role"]:
+            by_role.setdefault(row["role"], []).append(row)
+    unresolved = [r for r in rows if r["disposition"] == "unresolved"]
+    tables = [r for r in rows if r["disposition"] == "excluded" and r["reason"].startswith(_TABLE_REASON)]
+    roles: dict = {}
+    selectors: dict = {}
+    for role in ROLES:
+        members = by_role.get(role)
+        if not members:
+            continue
+        kinds = Counter(_marker_kind(r) for r in members)
+        numbering = ("mixed" if kinds["typed"] and kinds["automatic"] else "typed" if kinds["typed"]
+                     else "automatic" if kinds["automatic"] else "none")
+        markers: list = []
+        for r in members:
+            m = _marker(r)
+            if m and m not in markers:
+                markers.append(m)
+        styles = Counter(r["style_id"] or "(none)" for r in members)
+        roles[role] = {"count": len(members), "styles": dict(styles.most_common()), "numbering": numbering,
+                       "markers": markers[:MARKER_SAMPLES],
+                       "examples": [_clip_example(r["text"]) for r in members[:EXAMPLE_SAMPLES]]}
+        others = [r for r in rows if r["role"] != role and _something_else(r)]
+        selector = None
+        own = [sid for sid, _ in styles.most_common()]
+        if len(own) <= STYLE_SELECTOR_LIMIT and all(r["style_id"] for r in members) \
+                and not any(r["style_id"] in own for r in others):
+            selector = {"style_in": own}
+            if any(r["style_id"] in own for r in tables):
+                selector["in_table"] = False
+        elif numbering == "typed":
+            rx = marker_regex(markers)
+            if rx is not None:
+                try:
+                    compiled = re.compile(rx)
+                except re.error:
+                    compiled = None
+                if compiled is not None and all(compiled.search(r["text"]) for r in members) \
+                        and not any(compiled.search(r["text"]) for r in others):
+                    selector = {"text_regex": rx}
+                    if any(compiled.search(r["text"]) for r in tables):
+                        selector["in_table"] = False
+        if selector:
+            selectors[role] = selector
+    reasons = Counter(_reason_head(r["reason"]) for r in unresolved)
+    return {"roles": roles,
+            "unresolved": {"count": len(unresolved), "reasons": dict(reasons.most_common(REASON_LIMIT))},
+            "selectors": selectors}

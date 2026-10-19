@@ -15,11 +15,12 @@ expressed). Revision delta (tracked): ``rPrChange`` +1 per run and mark.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+import re
+from typing import Any, Dict, List, Optional
 
 from ..ooxml import (RevisionStamp, file_uses_date_utc, max_revision_id, paragraphs, property_change)
 from ..package import W, DocxPackage
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .replace_text import default_author
 from .selectors import SCOPE_KINDS, StyleSheet, runs_by_paragraph, scope_parts
@@ -48,6 +49,20 @@ def canonical_colors(raw: Any) -> List[str]:
 
 def _what(colors: List[str]) -> str:
     return "highlighting" if colors == list(COLORS) else f"{', '.join(colors)} highlighting"
+
+
+def _colour_words(raw: Any) -> str:
+    """The colours as the plan names them: ``the yellow and dark blue highlighting``, or every colour."""
+    if not isinstance(raw, list) or not raw:
+        return "the highlighting of every colour"
+    by_fold = {c.casefold(): c for c in COLORS}
+    names: List[str] = []
+    for c in raw:
+        key = str(c).strip().casefold()
+        name = re.sub(r"([a-z])([A-Z])", r"\1 \2", by_fold[key]).lower() if key in by_fold else prose.quote(c)
+        if name not in names:
+            names.append(name)
+    return "the " + prose.join(names) + " highlighting"
 
 
 def highlighted(rpr, colors: List[str]) -> bool:
@@ -97,6 +112,18 @@ class RemoveHighlight(Op):
                "source's without the highlight (tracked: plus a w:rPrChange whose snapshot is the source); the residual "
                "proves nothing else changed",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        where = prose.scope_words(select.get("scope") or DEFAULT_SCOPE) or "in the document body"
+        head = f"Remove {_colour_words(params.get('colors'))} from the text {where}"
+        if params.get("tracked") is True:
+            head += ", shown as tracked formatting changes" + (f" by {prose.quote(params['author'])}"
+                                                               if params.get("author") else "")
+        remarks = ["the words and their other formatting stay, and a style that highlights its text is left as it is"]
+        if params.get("allow_missing", True) is False:
+            remarks.append("a file with no such highlighting is set aside rather than passed through")
+        return prose.sentence(head) + " " + prose.sentence("; ".join(remarks))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

@@ -28,7 +28,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..ooxml import block_full_text, block_struct_counts, count_revisions, paragraphs
 from ..package import R, REL_TYPE_BASE, W, DocxPackage
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 
 COMMENTS_REL = REL_TYPE_BASE + "comments"
@@ -211,6 +211,24 @@ class RemoveComments(Op):
                "part and every side part whole, every paragraph that held a mark item by item, marks between blocks "
                "through the residual",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        which = params.get("which")
+        authors = [a.strip() for a in params["authors"] if isinstance(a, str) and a.strip()] \
+            if isinstance(params.get("authors"), list) else []
+        if which == "authors" or (which not in WHICH and authors):
+            who = ("the comments by " + prose.join((prose.quote(a) for a in authors), "or")
+                   + " (matched regardless of case and spacing)") if authors else "the comments by the named authors"
+            head = f"Remove {who} from the document, and every reply beneath them"
+        elif which == "resolved":
+            head = "Remove every comment thread that is marked resolved from the document, replies included"
+        else:
+            head = "Remove every comment from the document, whoever wrote it and whether or not it is resolved"
+        remarks = ["the document's text is unchanged; the comment marks in the text go with their comments"]
+        if params.get("allow_missing", True) is False:
+            remarks.append("a file with no such comment is set aside rather than passed through")
+        return prose.sentence(head) + " " + prose.sentence("; ".join(remarks))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

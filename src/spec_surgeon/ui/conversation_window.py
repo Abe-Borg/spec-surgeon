@@ -244,8 +244,10 @@ class ConversationWindow(QMainWindow):
             why = plain(entry["reason"], "Hint")
             why.setAccessibleName(f"Why {path.name} was left out")
             column.addWidget(why)
-        for note in entry["notes"]:
-            column.addWidget(plain(note, "Muted"))
+        if entry["notes"]:
+            notes = plain(" ".join(entry["notes"]), "Muted")
+            notes.setAccessibleName(f"Notes on {path.name}")
+            column.addWidget(notes)
         return box
 
     # ---- rendering ----
@@ -301,7 +303,7 @@ class ConversationWindow(QMainWindow):
             self.file_rows.addWidget(self._attachment(entry))
         self.file_rows.addStretch(1)
         self.attachment_scroll.setVisible(bool(documents))
-        self.attachment_scroll.setMaximumHeight(min(360, max(56, sum(58 + 18 * (len(a["notes"]) + bool(a["reason"]))
+        self.attachment_scroll.setMaximumHeight(min(360, max(56, sum(58 + (40 if a["notes"] else 0) + (20 if a["reason"] else 0)
                                                                      for a in documents))))
         clear(self.template_rows)
         template = next((a for a in view["attachments"] if a["template"]), None)

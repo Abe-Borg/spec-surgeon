@@ -54,9 +54,7 @@ def test_explicit_attachments_never_expand_to_a_folder_and_support_same_names(tm
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "preview"
     assert len(task.session.client.requests) == 1  # one plan, no second intent model
-    assert task.session.outcome_review is None
     assert not task.results
-    assert task.session.outcome_approval == ""
     task.perform("primary", token=view["token"])
     assert task.stage == "done"
     assert set(task.results) == {str(first), str(second)}
@@ -131,7 +129,6 @@ def test_target_question_uses_chat_numbers_without_approving_plan(tmp_path):
     assert "Paragraph 2" in labels and "Paragraph 3" in labels
     view = task.perform("send", text="2")
     assert view["stage"] == "preview"
-    assert task.session.outcome_approval == ""
     assert len(task.session.client.requests) == 2
     assert not task.results
     task.perform("primary", token=view["token"])
@@ -178,7 +175,6 @@ def test_journal_restores_work_without_restoring_approval_or_resetting_spend(tmp
     assert restored.restore()
     assert restored.stage == "resume"
     assert restored.decisions == [REQUEST]
-    assert restored.session.outcome_approval == ""
     assert restored.session.preview is None
     assert restored._budget.calls == task._budget.calls
     assert restored._budget.estimated_cost_usd == task._budget.estimated_cost_usd
@@ -247,7 +243,6 @@ def test_proposed_rewrite_requires_wording_choice_then_preview_approval(tmp_path
     view = task.perform("send", text="1")
     assert view["stage"] == "preview"
     assert draft in task.word_sources and not task.results
-    assert task.session.outcome_approval == ""
     task.perform("primary", token=view["token"])
     assert task.stage == "done"
     from zipfile import ZipFile
@@ -336,10 +331,6 @@ def test_later_revision_retains_earlier_copies_and_originals(tmp_path):
 
 def test_custom_method_is_prepared_internally_but_only_delivered_after_review(tmp_path, monkeypatch):
     from test_codegen import GOOD_OP
-    from spec_surgeon import compiler
-    def forbid(*args):
-        raise AssertionError("Custom preparation must not read neighboring files")
-    monkeypatch.setattr(compiler, "input_files_near", forbid)
     request = "Set the header distance to 900 twips."
     fake = FakeClient(resp(tool("submit_editspec", {"spec": {"request": request, "summary": "Move header",
         "unsupported": "Use a custom method", "proposal": "Set the header distance to 900 twips"},
@@ -352,6 +343,7 @@ def test_custom_method_is_prepared_internally_but_only_delivered_after_review(tm
     assert len(fake.requests) == 2
     assert view["stage"] == "preview"
     assert task.session.generated.passed and not task.results
+    assert task.session.conversation.batch.inputs == []   # nothing beside the attachments is ever read
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and Path(task.results[str(source)]).is_file()
     assert Document(task.results[str(source)]).sections[0].header_distance.twips == 900
@@ -377,7 +369,7 @@ def test_partial_failure_recovers_automatically_and_can_reopen(tmp_path, monkeyp
         resp(tool("submit_repair", {"candidate": {"kind": "spec", "spec": SPEC}})))
     task = task_for(tmp_path, fake, journal=tmp_path / "journal.json")
     monkeypatch.setattr(task, "_recovery_options", lambda: RecoveryOptions(render=False, critic_review=False,
-                                                visual_review=False, include_nearby_inputs=False))
+                                                visual_review=False))
     task.attach([source, second])
     before = [p.read_bytes() for p in (source, second)]
     view = task.perform("send", text=REQUEST)
@@ -387,7 +379,6 @@ def test_partial_failure_recovers_automatically_and_can_reopen(tmp_path, monkeyp
     assert view["document_count"] == 1
     restored = task_for(tmp_path, journal=task.journal)
     restored.restore()
-    assert restored.session.outcome_approval == ""
     view = restored.perform("primary", token=restored.action_token())
     assert view["stage"] == "preview" and len(restored.results) == 1
     restored.perform("primary", token=view["token"])
@@ -395,26 +386,22 @@ def test_partial_failure_recovers_automatically_and_can_reopen(tmp_path, monkeyp
     assert [p.read_bytes() for p in (source, second)] == before
 
 
-def test_only_attached_files_are_inspected_not_neighboring_project_data(tmp_path, monkeypatch):
-    from spec_surgeon import compiler
+def test_only_attached_files_are_inspected_not_neighboring_project_data(tmp_path):
     source = document(tmp_path / "Spec.docx")
     (tmp_path / "PROJECT.json").write_text('{"secret": "unrelated project wording"}')
-    def forbid(*args):
-        raise AssertionError("Unattached neighboring files must not be discovered")
-    monkeypatch.setattr(compiler, "input_files_near", forbid)
-    monkeypatch.setattr(compiler, "load_project_memory", forbid)
-    monkeypatch.setattr(compiler, "library_index", forbid)
+    (tmp_path / "values.csv").write_text("name,value\nsecret,unrelated table wording\n")
     task = task_for(tmp_path)
     task.attach([source])
     task.perform("send", text=REQUEST)
     assert task.session.conversation.batch.inputs == []
-    assert task.session.conversation.memory == {}
     assert "unrelated project wording" not in str(task.session.client.requests)
+    assert "unrelated table wording" not in str(task.session.client.requests)
     tools = task.session.client.requests[0]["tools"]
     assert not {"list_library", "read_library_item"}.intersection(t["name"] for t in tools)
     choices = next(t for t in tools if t["name"] == "ask_user")["input_schema"]["properties"]["choices"]["items"]
     assert "recipe" not in choices["properties"]["kind"]["enum"]
     assert "YOUR LIBRARY" not in task.session.client.requests[0]["system"]
+    assert "PROJECT MEMORY" not in str(task.session.client.requests[0]["messages"])
 
 
 @pytest.mark.parametrize("change_source", [False, True])
@@ -467,7 +454,7 @@ def test_more_budget_resumes_unadopted_recovery_checkpoint(tmp_path, reopen, mon
     task.session.recovery_checkpoint = checkpoint
     with llm.budget_scope(task._budget):
         paused = recovery.recover([source], goal["request"], checkpoint, spec=goal,
-            options=opts(critic_review=False, visual_review=False, include_nearby_inputs=False), client=fake)
+            options=opts(critic_review=False, visual_review=False), client=fake)
     assert paused.paused_reason and len(paused.attempts) == 1
     task.stage = "budget"
     task.save()
@@ -476,7 +463,7 @@ def test_more_budget_resumes_unadopted_recovery_checkpoint(tmp_path, reopen, mon
         task = task_for(tmp_path, fake, journal=task.journal)
         task.restore()
     monkeypatch.setattr(task, "_recovery_options", lambda:
-                        opts(critic_review=False, visual_review=False, include_nearby_inputs=False))
+                        opts(critic_review=False, visual_review=False))
     view = task.perform("primary", token=task.action_token())
     assert view["stage"] == "preview" and not task.results
     assert task.session.recovery.out_dir == checkpoint
@@ -519,7 +506,7 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
     task.attach(paths)
     task.decisions = task.word_sources = [goal["request"]]
     result = recovery.recover(paths, goal["request"], tmp_path / "recovery", spec=goal,
-                              options=opts(include_nearby_inputs=False),
+                              options=opts(),
                               prior_failures=distinct_failures(paths), client=fake)
     assert len(result.ready) == 1 and result.questions
     task.session._adopt_recovery(result)
@@ -533,7 +520,7 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
         task.restore()
         task.perform("primary", token=task.action_token())
     monkeypatch.setattr(task, "_recovery_options", lambda:
-                        opts(critic_review=False, visual_review=False, include_nearby_inputs=False))
+                        opts(critic_review=False, visual_review=False))
     view = task.perform("send", text="Yes, use those margins on the second document.")
     assert view["stage"] == "preview" and len(task.results) == 1
     task.perform("primary", token=view["token"])

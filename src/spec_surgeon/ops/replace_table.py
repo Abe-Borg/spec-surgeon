@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from ..ooxml import block_full_text, file_uses_date_utc, flexible_regex_from_literal, max_revision_id, paragraphs
 from ..ooxml import RevisionStamp
 from ..package import DocxPackage
-from . import register
+from . import prose, register
 from . import tables
 from .base import JobException, Op, PlanFragment
 from .selectors import SCOPE_KINDS, StyleSheet, check_paragraph_selector, paragraph_selected, scope_parts
@@ -310,6 +310,63 @@ class ReplaceTable(_Replacing):
             from_table = [normalize_pair({"find": f, "replace": r}, f"table pair {n}") for n, (f, r) in enumerate(got, 1)]
         return self._plan(pkg, select, params, typed, table, from_table, "each", DEFAULT_SCOPE)
 
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        select["scope"] = select.get("scope") or params.get("scope") or DEFAULT_SCOPE
+        swaps: List[str] = []
+        removals: List[str] = []
+        for pair in (params.get("pairs") if isinstance(params.get("pairs"), list) else []):
+            if not isinstance(pair, dict) or not pair.get("find"):
+                continue
+            hows: List[str] = []
+            if pair.get("regex"):
+                hows.append("as a pattern")
+            if pair.get("match_case") is False:
+                hows.append("ignoring case")
+            if pair.get("whole_word") is False:
+                hows.append("even inside longer words")
+            if pair.get("flexible_whitespace"):
+                hows.append("allowing any spacing or dash")
+            how = f" ({', '.join(hows)})" if hows else ""
+            rep = pair.get("replace")
+            if rep == "":
+                removals.append(prose.quote(pair["find"]) + how)
+            elif rep is None:
+                swaps.append(f"{prose.quote(pair['find'])} with the approved wording{how}")
+            else:
+                swaps.append(f"{prose.quote(pair['find'])} with {prose.quote(rep)}{how}")
+        if len(swaps) > 4:
+            swaps = swaps[:3] + [f"{len(swaps) - 3} more pairs"]
+        spec = params.get("pairs_table")
+        if isinstance(spec, dict) and spec.get("file"):
+            details: List[str] = []
+            if spec.get("sheet"):
+                details.append(f"sheet {prose.quote(spec['sheet'])}")
+            if spec.get("key"):
+                details.append(f"entry {prose.quote(spec['key'])}")
+            find_col, rep_col = spec.get("find_column"), spec.get("replace_column")
+            if find_col and rep_col:
+                details.append(f"columns {prose.quote(find_col)} and {prose.quote(rep_col)}")
+            elif find_col:
+                details.append(f"find column {prose.quote(find_col)}")
+            elif rep_col:
+                details.append(f"replacement column {prose.quote(rep_col)}")
+            swaps.append(f"every wording listed in the file {prose.quote(spec['file'])}"
+                         + (f" ({', '.join(details)})" if details else "") + " with its replacement")
+        if swaps:
+            head = "Replace " + prose.join(swaps) + (" and remove " + prose.join(removals) if removals else "")
+        elif removals:
+            head = "Remove " + prose.join(removals)
+        else:
+            head = "Replace each listed wording with its replacement"
+        if bool(params.get("tracked", True)):
+            tail = "shown as tracked changes" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+        else:
+            tail = "without tracked changes"
+        first = f"{head} {prose.where(select)}, {tail}."
+        second = "Files in which none of them occurs are left unchanged." if params.get("allow_missing") else ""
+        return prose.sentence(first, second)
+
 
 @register
 class SetIssueStamp(_Replacing):
@@ -348,3 +405,24 @@ class SetIssueStamp(_Replacing):
             raw = [{"find": s, "replace": text, "match_case": mc} for s in params["any_of"]]
         pairs = [normalize_pair(p, "stamp") for p in raw]
         return self._plan(pkg, select, params, pairs, None, [], "any", DEFAULT_SCOPE)
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        select["scope"] = select.get("scope") or params.get("scope") or DEFAULT_SCOPE
+        text = params.get("text")
+        new = prose.quote(text) if isinstance(text, str) and text else "the approved wording"
+        how = " (ignoring case)" if params.get("match_case") is False else ""
+        if isinstance(params.get("pattern"), str) and params["pattern"]:
+            current = "wherever it matches the pattern " + prose.quote(params["pattern"]) + how
+        elif isinstance(params.get("any_of"), list) and params["any_of"]:
+            current = "wherever it reads " + prose.join((prose.quote(s) for s in params["any_of"]), "or") + how
+        else:
+            current = ""
+        head = "Replace the issue stamp" + (f", {current}," if current else "") + f" with {new}"
+        if params.get("tracked", True) is False:
+            tail = "without tracked changes"
+        else:
+            tail = "shown as a tracked change" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+        first = prose.sentence(head, prose.where(select) + ",", tail)
+        second = prose.sentence("Files without the stamp are left unchanged") if params.get("allow_missing") else ""
+        return first + (" " + second if second else "")

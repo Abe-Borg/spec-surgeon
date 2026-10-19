@@ -84,7 +84,7 @@ def test_conversation_turns_a_layout_submission_into_a_plan(tmp_path):
     sub = _submission(typed, styled)
     sub["layouts"][0]["spec"]["request"] = "text the model typed, not the user's"
     conversation = Conversation(REQUEST, [typed, styled], client=FakeClient(resp(tool("submit_editspec", {"spec": sub}))),
-                                mode="chat", simple_experience=True)
+                                mode="chat")
     turn = conversation.start()
     assert turn.status == "ok"
     plan = turn.spec

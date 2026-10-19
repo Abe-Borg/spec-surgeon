@@ -20,11 +20,11 @@ Both refuse a paragraph that carries a section break, holds a field, or holds a 
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from ..ooxml import RevisionStamp, block_full_text, count_revisions, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage, W
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .removal import deletable, delete_paragraph  # noqa: F401 — deletable is re-exported
 from .replace_table import COMMON_PARAMS, default_author, resolve_scope, tracked_of
@@ -89,6 +89,41 @@ class FilterTaggedParagraphs(Op):
         "V10": "tagged_paragraphs re-derives every tag and decision, checks each deleted paragraph item by item "
                "(tracked) or its absence (untracked), and each stripped paragraph item by item",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+
+        def systems(key: str) -> List[str]:
+            raw = params.get(key)
+            return [s for s in raw if isinstance(s, str) and s.strip()] if isinstance(raw, list) else []
+
+        keep, delete = systems("keep"), systems("delete")
+        if keep:
+            head = (f"Keep the paragraphs tagged for {prose.join((prose.quote(s) for s in keep), 'or')} and delete "
+                    f"those tagged only for other systems")
+        elif delete:
+            head = (f"Delete the paragraphs tagged for {prose.join((prose.quote(s) for s in delete), 'or')} and keep "
+                    f"those tagged for any other system as well")
+        else:
+            head = "Keep or delete the paragraphs tagged for the systems to be named"
+        rx = params.get("tag_regex")
+        tag = f" (the tag found by the pattern {prose.quote(rx)})" if isinstance(rx, str) and rx else ""
+        scope = select.get("scope") or params.get("scope") or ["document"]
+        where = prose.scope_words(scope) or "in the document body"
+        tails = ["leaving the tags on the paragraphs that stay" if params.get("strip_tags") is False
+                 else "taking the tag off the paragraphs that stay"]
+        sep = params.get("tag_separator")
+        if isinstance(sep, str) and sep and sep != DEFAULT_SEPARATOR:
+            tails.append(f"splitting a tag that names several systems at the pattern {prose.quote(sep)}")
+        if params.get("tracked") is False:
+            tracked = "without tracked changes"
+        else:
+            tracked = "shown as tracked changes" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+        first = prose.sentence(f"{head}{tag} {where}, {prose.join(tails)}, {tracked}")
+        extras = ["untagged paragraphs stay"]
+        if params.get("allow_missing") is True:
+            extras.append("files with no tagged paragraph are left unchanged")
+        return first + " " + prose.sentence(prose.join(extras))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

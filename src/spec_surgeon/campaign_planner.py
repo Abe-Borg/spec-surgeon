@@ -97,7 +97,7 @@ def propose(project, documents, request, options, *, client=None, log=None, prio
     template = (project.get("goal") or {}).get("template")
     from .inventory import digest
     template_pin = {"path": template, "sha256": digest(Path(template))} if template else None
-    batch = compiler._Batch(files, Path(template) if template else None, input_files=[])
+    batch = compiler._Batch(files, Path(template) if template else None)
     batch.analysis_limits = copy.deepcopy(options.analysis_limits)
     batch.renderer = options.renderer
     if project.get("planning_artifact_dir"):

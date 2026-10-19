@@ -42,7 +42,7 @@ from lxml import etree
 
 from ..package import W, DocxPackage
 from ..ooxml import RPR_ORDER, get_or_add, paragraphs
-from . import register
+from . import prose, register
 from .base import VERIFY_PROPS, JobException, Op, PlanFragment
 from .docprops import settings_member
 from .selectors import StyleSheet, runs_by_paragraph
@@ -154,6 +154,9 @@ def auto_hyphenation(pkg: DocxPackage) -> bool:
     return el is not None and el.get(W + "val") not in FALSY
 
 
+LANG_WORDS = {"language": "Latin text", "east_asian": "East Asian text", "complex_script": "complex-script text"}
+
+
 @register
 class SetLanguage(Op):
     name = "set_language"
@@ -176,6 +179,30 @@ class SetLanguage(Op):
                "part resolves to the asked language in the output (replace_only: none to a listed one); residual "
                "identical",
         "V7": "source; none when east_asian/complex_script is asked or automatic hyphenation is on"}
+
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        asked = [(k, params[k].strip()) for k, _ in LANG_PARAMS if isinstance(params.get(k), str) and params[k].strip()]
+        if not asked:
+            what = "of all text"
+        elif len(asked) == 1 and asked[0][0] == "language":
+            what = f"of all text to {prose.quote(asked[0][1])}"
+        elif len(asked) == 1:
+            what = f"of {LANG_WORDS[asked[0][0]]} to {prose.quote(asked[0][1])}"
+        else:
+            what = "of all text to " + prose.join(f"{prose.quote(v)} for {LANG_WORDS[k]}" for k, v in asked)
+        listed = params.get("replace_only")
+        if isinstance(listed, list) and listed:
+            first = prose.sentence("set the proofing language", what + ", but only where it is now "
+                                   + prose.join((prose.quote(t) for t in listed), "or")
+                                   + ", leaving text in any other language as it is")
+        else:
+            first = prose.sentence("set the proofing language", what + ": every style, run and paragraph mark that "
+                                   "names a language changes, and so does the document default, so text that names "
+                                   "none inherits it too")
+        return first + " " + prose.sentence("spelling and grammar checks then follow that language; nothing is shown "
+                                            "as a tracked change and no words change")
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

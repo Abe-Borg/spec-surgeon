@@ -80,6 +80,7 @@ from ..ooxml import (PPR_ORDER, RevisionStamp, file_uses_date_utc, insert_in_ord
                      property_change)
 from . import register
 from . import lists
+from . import prose
 from .base import JobException, Op, PlanFragment
 from .hidden import content_runs
 from .markup import Look
@@ -505,6 +506,23 @@ class AuditNumbering(Op):
                "paragraphs re-derived from the source, each one's pPr = the source's with numPr exactly numId 0 (and "
                "the pPrChange rules), every counted paragraph recounted on the output and equal to both predictions",
         "V7": "source (report only); none with the fix"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        first = prose.sentence("Audit the document's numbering and flag for review every gap, duplicate or number that "
+                               "goes back in what the reader sees (automatic and typed numbers), every empty numbered "
+                               "paragraph that uses up a number, typed numbers on automatically numbered paragraphs, "
+                               "hidden numbered paragraphs, lists the file does not define, lists whose numbers cannot "
+                               "be predicted and restart rules LibreOffice ignores")
+        if params.get("unnumber_empty") is not True:
+            return first + " Nothing changes."
+        how = ""
+        if params.get("tracked") is True:
+            author = params.get("author")
+            how = ", shown as tracked changes" + (f" by {prose.quote(author)}" if isinstance(author, str) and author
+                                                  else "")
+        return first + " " + prose.sentence(f"Each empty numbered paragraph then loses its number{how}, so the later "
+                                            f"numbers of its list move up; nothing else changes")
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

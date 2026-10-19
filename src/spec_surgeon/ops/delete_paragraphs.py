@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import getpass
 import os
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from lxml import etree
 
@@ -13,7 +13,7 @@ from ..ooxml import ( PPR_ORDER, RPR_ORDER, RevisionStamp, block_full_text,
                      count_revisions, file_uses_date_utc, insert_in_order, mark_rpr, max_revision_id,
                      paragraphs, to_del_text )
 from ..package import W, DocxPackage
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .selectors import SCOPE_KINDS, StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts
 from .slots import nearest_p
@@ -227,3 +227,18 @@ class DeleteParagraphs(Op):
                     to_del_text(child)
                     del_wrap.append(child)
             pkg.write_xml(part, root)
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        subject = prose.where(select)[3:]                      # "every paragraph …" or "empty paragraphs outside tables …"
+        if subject.startswith("every paragraph"):
+            head = "Delete the targeted paragraphs" + subject[len("every paragraph"):]
+        else:
+            head = "Delete all " + subject
+        if bool(params.get("tracked", True)):
+            tail = "shown as tracked changes" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+        else:
+            tail = "removing them outright without tracked changes"
+        first = f"{head}, {tail}."
+        second = "Files with no such paragraph are left unchanged." if params.get("allow_missing") else ""
+        return prose.sentence(first, second)

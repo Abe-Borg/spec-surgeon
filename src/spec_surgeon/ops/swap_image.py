@@ -33,7 +33,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..ooxml import paragraphs
 from ..package import CT_PART, REL, DocxPackage
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .images import CONTENT_TYPES, FITS, check_unchanged, file_md5, fitted, image_params
 from .replace_table import resolve_scope
@@ -188,6 +188,28 @@ def free_media_name(pkg: DocxPackage, fmt: str) -> str:
     return posixpath.join(base, f"image{n}.{fmt}")
 
 
+def match_words(match: Any) -> str:
+    """The old picture as the plan names it: ``every picture that shows the file “old.png”``, ``every picture whose
+    name or description matches the pattern “logo”``, ``every picture``."""
+    if match == "all":
+        return "every picture"
+    if isinstance(match, dict) and len(match) == 1:
+        (k, v), = match.items()
+        if k == "image":
+            return f"every picture that shows the file {prose.quote(v)}"
+        if k == "md5":
+            return f"every picture whose image has the checksum {prose.quote(v)}"
+        if k == "name_regex":
+            return f"every picture whose name or description matches the pattern {prose.quote(v)}"
+    return "the matching picture"
+
+
+def _scope_words(scope: Any) -> str:
+    """``in the headers`` (the default), ``in the document body``, ``in the headers and footers``."""
+    kinds = [scope] if isinstance(scope, str) else list(scope or DEFAULT_SCOPE)
+    return "in the document body" if kinds == ["document"] else prose.scope_words(kinds)
+
+
 @register
 class SwapImage(Op):
     name = "swap_image"
@@ -217,6 +239,19 @@ class SwapImage(Op):
         "V10": "image_swaps re-derives the matches (its own md5 of every media member, its own picture reader), the "
                "fitted sizes, every relationship and content type; the residual masks only the swapped sizes",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        new = params.get("image")
+        new_words = f"the picture {prose.quote(new)}" if new else "the new picture"
+        scope = select.get("scope") or params.get("scope") or DEFAULT_SCOPE
+        fit = ("stretched to fill the old picture's space" if params.get("fit") == "stretch"
+               else "fitted inside the old picture's space with its proportions kept")
+        first = prose.sentence("swap", match_words(params.get("match")), "for", new_words,
+                               _scope_words(scope) + ",", fit)
+        if params.get("allow_missing") is not True:
+            return first
+        return first + " " + prose.sentence("files with no such picture are left unchanged")
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         unknown = set(select) - {"scope"}

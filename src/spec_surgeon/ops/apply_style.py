@@ -43,12 +43,13 @@ from lxml import etree
 
 from ..package import W, DocxPackage
 from ..ooxml import RevisionStamp, block_full_text, file_uses_date_utc, max_revision_id, paragraphs
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .clear_formatting import (ClearSettings, ParagraphClearing, changes_needed, check_markers, clear_paragraph,
-                               paragraph_clearing)
+                               paragraph_clearing, selection_subject)
 from .replace_text import default_author
 from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, runs_by_paragraph, scope_parts
+from .set_font import tracked_phrase
 from .style_import import (TemplateStyles, apply_import, check_template_unchanged, plan_import, resolve_style,
                            style_type)
 from .style_owned import style_owned_clearing, style_owned_properties
@@ -125,6 +126,28 @@ class ApplyStyle(Op):
                "paragraph's pPr = the source's with w:pStyle set (and, with clear, the cleared children gone), cleared "
                "runs and marks exactly; styles_imported when the style comes from a template; residual identical",
         "V7": "none — a new style reflows the paragraphs"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        style = params.get("style")
+        what = prose.style(style) if isinstance(style, str) and style.strip() else "the paragraph style to be named"
+        hows: List[str] = []
+        template = params.get("template")
+        if isinstance(template, str) and template.strip():
+            if params.get("existing") == "replace":
+                hows.append(f"taking the style's definition from the template {prose.quote(template)} in place of the "
+                            f"document's own")
+            else:
+                hows.append(f"importing it with its numbering from the template {prose.quote(template)} when the "
+                            f"document lacks it")
+        direct = params.get("direct_formatting")
+        if direct == "clear":
+            hows.append("clearing the paragraphs' own direct formatting so they follow the style")
+        elif direct == "replace_style_owned":
+            hows.append("replacing only the direct formatting the style itself sets and keeping the rest")
+        tracked = tracked_phrase(select, params)
+        return prose.sentence(f"Apply {what} to {selection_subject(select)}"
+                              + (", " + prose.join(hows) if hows else "") + (f", {tracked}" if tracked else ""))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

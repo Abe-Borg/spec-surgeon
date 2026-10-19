@@ -32,7 +32,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
 
 from ..ooxml import block_full_text, block_struct_counts, block_text_without, paragraphs
 from ..package import R, REL_TYPE_BASE, W, DocxPackage
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .fields import NEVER_UNLINK, REFUSAL_TEXT, Field, fields_of, paragraph_of, unlink
 from .replace_table import resolve_scope
@@ -194,6 +194,17 @@ def _bool(params: Dict[str, Any], key: str, default: bool) -> bool:
     return v
 
 
+def _scope_words(select: Dict[str, Any], params: Dict[str, Any]) -> str:
+    """The plan's prose: ``in the document body, the headers and the footers`` (the body named when it is alone)."""
+    return prose.scope_words(select.get("scope") or params.get("scope") or DEFAULT_SCOPE) or "in the document body"
+
+
+def _set_aside(params: Dict[str, Any], what: str) -> str:
+    if params.get("allow_missing", True) is False:
+        return f"a file with no such {what} is set aside rather than passed through"
+    return ""
+
+
 def _textbox(p) -> bool:
     return p is not None and paragraph_of(p) is not None
 
@@ -295,6 +306,24 @@ class RemoveHyperlinks(Op):
                "item (the link gone from every chain, the link style gone, the field's markers gone) and the rels "
                "member (exactly the unused addresses removed); nothing else changes",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        which = params.get("which", "external")
+        what = {"internal": "the internal hyperlinks (links to a place in the document, such as a table of contents' "
+                            "entries)",
+                "all": "every hyperlink, external (web addresses and e-mail links) or internal (links to a place in the "
+                       "document),"}.get(which, "the external hyperlinks (web addresses and e-mail links)")
+        if params.get("keep_style") is True:
+            words = f"keeping the linked words in {prose.styles(['Hyperlink'])} (blue and underlined)"
+        else:
+            words = (f"keeping the linked words but taking {prose.styles(['Hyperlink', 'FollowedHyperlink'])} off them "
+                     f"so they look like the text around them")
+        first = prose.sentence(f"Remove {what} {_scope_words(select, params)}, {words}")
+        remarks = ["a web address that no remaining link uses leaves the file" if which != "internal" else "",
+                   _set_aside(params, "link")]
+        remarks = [r for r in remarks if r]
+        return first if not remarks else first + " " + prose.sentence("; ".join(remarks))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         scope = _scope(select, params, self.name)
@@ -481,6 +510,28 @@ class UnlinkFields(Op):
         "V10": "unlinked_fields re-derives the fields with the verifier's own parser and checks each paragraph item by "
                "item (the markers gone, a simple field unwrapped, the result kept); nothing else changes",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        raw = params.get("types")
+        given = [raw] if isinstance(raw, str) and raw != "all" else raw if isinstance(raw, list) else []
+        types = [t.strip().upper() for t in given if isinstance(t, str) and t.strip()]
+        if raw == "all":
+            what, shown = "every field but the page numbers", "it shows"
+        elif types:
+            what = "the " + prose.join(prose.quote(t) for t in types) + (" fields" if len(types) > 1 else " field")
+            shown = "they show" if len(types) > 1 else "it shows"
+        else:
+            what, shown = "the named fields", "they show"
+        first = prose.sentence(f"Turn {what} {_scope_words(select, params)} into the plain text {shown}")
+        remarks = ["what each field shows stays, with its formatting; the field code goes"]
+        if raw == "all":
+            remarks.append("page numbers are never turned into text, since they would freeze at the page they showed "
+                           "when the file was saved")
+        if raw == "all" or any(t in DATE_TYPES for t in types):
+            remarks.append("a date or time field keeps the date it showed when the file was last saved")
+        remarks.append(_set_aside(params, "field"))
+        return first + " " + prose.sentence("; ".join(r for r in remarks if r))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         scope = _scope(select, params, self.name)

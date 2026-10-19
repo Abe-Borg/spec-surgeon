@@ -80,7 +80,7 @@ from lxml import etree
 
 from ..ooxml import RevisionStamp, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import W, DocxPackage
-from . import lists, register
+from . import lists, prose, register
 from .base import JobException, Op, PlanFragment
 from .clear_formatting import ClearSettings, ParagraphClearing, changes_needed, check_markers, clear_paragraph, \
     paragraph_clearing
@@ -169,6 +169,63 @@ def number_words(x: Optional[lists.NumberedPar]) -> str:
     return repr(x.text) if x.evaluated else f"(not predictable: {x.issue})"
 
 
+# ---- the plan's prose (shared with convert_typed_numbers) ----------------------------------------------------------
+
+def scheme_phrase(params: Dict[str, Any]) -> str:
+    """``the scheme of the “PRT”, “ART” and “PR1” styles, imported with their list from the example file “T.docx”``;
+    ``your scheme`` when no levels are given yet."""
+    levels = params.get("levels")
+    if not isinstance(levels, list) or not levels:
+        return "your scheme"
+    text = "the scheme of " + prose.styles(levels)
+    template = params.get("template")
+    if isinstance(template, str) and template.strip():
+        text += f", imported with their list from the example file {prose.quote(template)}"
+        if params.get("existing") == "replace":
+            text += " (its definitions replacing this file's own)"
+    return text
+
+
+def level_style(levels: Any, k: Any) -> str:
+    """The scheme level's style in words (``the “ART” style``), else the level by its number as Word counts it."""
+    if isinstance(levels, list) and isinstance(k, int) and not isinstance(k, bool) and 0 <= k < len(levels):
+        return prose.style(levels[k])
+    return f"scheme level {k + 1}" if isinstance(k, int) and not isinstance(k, bool) else "its scheme level"
+
+
+def level_map_pairs(lm: Any) -> Dict[int, int]:
+    """``level_map`` as (source level, scheme level) pairs; anything unreadable is left out (plan refuses it)."""
+    pairs: Dict[int, int] = {}
+    if isinstance(lm, dict):
+        for k, v in lm.items():
+            try:
+                pairs[int(k)] = int(v)
+            except (TypeError, ValueError):
+                continue
+    return pairs
+
+
+def tracked_words(params: Dict[str, Any]) -> str:
+    """``shown as tracked changes by “Jane”``."""
+    author = params.get("author")
+    return "shown as tracked changes" + (f" by {prose.quote(author)}" if isinstance(author, str) and author else "")
+
+
+def conversion_extras(params: Dict[str, Any], nothing: str) -> List[str]:
+    """The non-default settings both conversions share, as clauses for a second sentence."""
+    extras: List[str] = []
+    if params.get("direct_formatting") == "clear":
+        extras.append("the paragraphs' own direct formatting is cleared")
+    if params.get("allow_missing") is False:
+        extras.append(f"a file with {nothing} to convert is set aside")
+    return extras
+
+
+def with_second_sentence(first: str, extras: List[str]) -> str:
+    """The first sentence, then the extras as one more sentence when there are any."""
+    return first if not extras else first + " " + prose.sentence("; ".join(extras))
+
+
 @register
 class ConvertNumbering(Op):
     name = "convert_numbering"
@@ -204,6 +261,31 @@ class ConvertNumbering(Op):
                "source; every counted paragraph's number predicted by the verifier's own list model equals the plan's "
                "and its count of the output; each changed pPr exactly; styles_imported for the import; residual identical",
         "V7": "none — numbers, indents and spacing change"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        levels = params.get("levels")
+        level_map = level_map_pairs(params.get("level_map"))
+        frm = params.get("from", "main")
+        if isinstance(frm, dict) and isinstance(frm.get("styles"), list) and frm["styles"]:
+            moves: List[str] = []
+            for k, refs in enumerate(frm["styles"]):
+                refs = refs if isinstance(refs, list) else [refs]
+                group = prose.styles(refs) if refs else "no style"
+                target = level_style(levels, level_map.get(k, k))
+                moves.append(f"the numbered paragraphs in {group} take {target}" if k == 0
+                             else f"those in {group} {target}")
+            source = prose.join(moves) + ", each losing its own list numbering, so your list numbers it"
+        else:
+            mapped = ""
+            if level_map:
+                mapped = " (" + prose.join(f"level {k + 1} of the list going to {level_style(levels, v)}"
+                                           for k, v in sorted(level_map.items())) + ")"
+            source = ("every paragraph numbered by the document's main list takes the paragraph style of its level"
+                      + mapped + " and loses its own list numbering, so your list numbers it")
+        how = f", {tracked_words(params)}" if params.get("tracked") is True else ""
+        first = prose.sentence(f"Convert the document's numbering to {scheme_phrase(params)}{how}: {source}")
+        return with_second_sentence(first, conversion_extras(params, "nothing numbered"))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:
