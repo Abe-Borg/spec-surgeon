@@ -77,8 +77,8 @@ def test_approval_token_changes_when_the_template_changes(project):
 
 def test_run_refuses_after_the_template_spec_was_edited_since_the_preview(project, tmp_path):
     folder, tpl, spec, spec_file = project
-    s = Session(folder=folder, template=tpl, out_root=tmp_path / "out")
-    s.load_spec(spec_file)
+    s = Session(documents=sorted(folder.glob("*.docx")), template=tpl, out_root=tmp_path / "out")
+    s._set_outcome(spec=load_spec(spec_file), source=str(spec_file))
     s.make_preview(render=False, log=lambda m: None)
     # the architect sends a new version of their spec with another header line
     tpl.write_bytes(build_reference_spec(extra_header_text="ISSUED FOR BID — DO NOT USE FOR CONSTRUCTION"))

@@ -85,7 +85,7 @@ def test_gui_keeps_conversation_and_exports_the_recovered_preview(tmp_path, monk
     from spec_surgeon.gui import Session
     from spec_surgeon import continuous_recovery
     source = write_document(tmp_path / "source.docx")
-    s = Session(folder=tmp_path, out_root=tmp_path / "out", client=FakeClient(refusal(), proposal()))
+    s = Session(documents=[source], out_root=tmp_path / "out", client=FakeClient(refusal(), proposal()))
     monkeypatch.setattr(continuous_recovery, "options_for", lambda c, **kw: opts(critic_review=False))
     s.compile("Make the title bold", lambda _: None)
     c = s.conversation
@@ -108,7 +108,7 @@ def test_failed_preview_automatically_investigates_without_switching_modes(tmp_p
     broken = {"request": "Make the title bold", "summary": "Use a style", "mode": "formatting",
         "ops": [{"op": "apply_style", "params": {"style": "MissingStyle"}}]}
     client = FakeClient(resp(tool("submit_editspec", {"spec": broken})), proposal())
-    s = Session(folder=tmp_path, out_root=tmp_path / "out", client=client)
+    s = Session(documents=sorted(tmp_path.glob("*.docx")), out_root=tmp_path / "out", client=client)
     assert s.compile("Make the title bold", lambda _: None) == "Compiled."
     s.make_preview(False, lambda _: None)
     assert s.spec is None and s.preview is None
@@ -168,10 +168,10 @@ def test_ambiguous_targets_are_picked_in_the_same_chat_and_checked_on_resume(tmp
 def test_completed_recovery_can_be_revised_in_chat_into_a_new_review(tmp_path, monkeypatch):
     from spec_surgeon.gui import Session
     from spec_surgeon import continuous_recovery
-    write_document(tmp_path / "source.docx")
+    source = write_document(tmp_path / "source.docx")
     changed = contract()
     changed["effects"][0]["run"] = {"i": False}
-    s = Session(folder=tmp_path, out_root=tmp_path / "out",
+    s = Session(documents=[source], out_root=tmp_path / "out",
         client=FakeClient(refusal(), proposal(), proposal(changed)))
     monkeypatch.setattr(continuous_recovery, "options_for", lambda c, **kw: opts(critic_review=False))
     s.compile("Make the title bold", lambda _: None)
