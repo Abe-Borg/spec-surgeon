@@ -158,6 +158,11 @@ def test_generate_feeds_failures_back_then_runs_the_batch(folder, tmp_path):
     results = run_generated(g, [str(folder)], tmp_path / "run")
     assert [r.passed for r in results] == [True, True]
     assert all((tmp_path / "run" / "outputs" / f.name).is_file() for f in files)
+    for file, result in zip(files, results):
+        evidence = tmp_path / "run" / "records" / f"{file.stem}.record.json"
+        assert json.loads(evidence.read_text(encoding="utf-8"))["checks"] == result.record.to_dict()["checks"]
+        markdown = evidence.with_suffix(".md").read_text(encoding="utf-8")
+        assert f"`{evidence.name}`" in markdown
     assert {f: f.read_bytes() for f in files} == before                    # never in place
 
 

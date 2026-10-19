@@ -41,6 +41,46 @@ from . import diagnostics as diag
 from .resources import (DEFAULT_EFFORT, DEFAULT_MAX_CALLS, DEFAULT_MAX_COST_USD,
                         DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, positive_integer)
 
+_CANCEL_EVENT = ContextVar("spec_surgeon_cancel_event", default=None)
+_CALL_OBSERVER = ContextVar("spec_surgeon_call_observer", default=None)
+
+
+class UserCancelled(RuntimeError):
+    """A user cancelled between model calls; no further provider request is started."""
+
+
+@contextmanager
+def cancellation_scope(event):
+    token = _CANCEL_EVENT.set(event)
+    try:
+        yield
+    finally:
+        _CANCEL_EVENT.reset(token)
+
+
+@contextmanager
+def model_progress_scope(observer):
+    """Observe content-free call/usage updates throughout one job, including nested model work."""
+    token = _CALL_OBSERVER.set(observer)
+    try:
+        yield
+    finally:
+        _CALL_OBSERVER.reset(token)
+
+
+def _model_progress(phase, response=None, model=None):
+    observer = _CALL_OBSERVER.get()
+    if observer is None:
+        return
+    try:
+        usage = None
+        if response is not None:
+            usage = Usage()
+            usage.add(response, model)
+        observer(phase, usage)
+    except Exception as error:  # diagnostics must never affect request accounting or accepted responses
+        diag.event("model.progress.unavailable", level="warning", error_type=type(error).__name__)
+
 DEFAULT_MODEL = os.environ.get("SPEC_SURGEON_MODEL", "claude-opus-5-5")
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
@@ -179,6 +219,9 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
     ``is_api_error`` (an API error is a recorded failure, anything else a defect that propagates) and never half-appends
     a turn. Inside ``budget_scope``, every caller shares its limits, including nested transform and visual calls.
     A refused preflight raises ``BudgetExceeded`` before opening a stream; ordinary calls are unchanged."""
+    cancel = _CANCEL_EVENT.get()
+    if cancel is not None and cancel.is_set():
+        raise UserCancelled("Cancelled before the next model call. Your source files were not changed.")
     with diag.scope(model_call_id=diag.new_id()):
         with diag.span("model.call", requested_model=model) as record:
             try:
@@ -250,6 +293,7 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
     diag.event("model.request.prepared", model=model, max_output_tokens=max_tokens, effort=effort,
                message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets),
                retries_disabled=retries_disabled)
+    _model_progress("started")
     try:
         with client.beta.messages.stream(**kw) as stream:
             record["phase"] = "stream.receive"
@@ -262,6 +306,7 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
             record["budgets"] = _budget_records()
         # Keep the reservation: a dropped stream may have consumed tokens without reporting its usage.
         raise
+    _model_progress("completed", resp, model)
     record["phase"] = "usage.accounting"
     for budget, reservation in zip(budgets, reservations if budgets else ()):
         budget._complete(resp, model, reservation)

@@ -31,7 +31,8 @@
           "SECTION_NUMBER": {
             "rule": "regex",
             "source": "document",
-            "pattern": "^SECTION\\s+(\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\.\\d{2})?)\\b"
+            "pattern": "^SECTION\\s+(\\d{2}[\\s-]*\\d{2}[\\s-]*\\d{2}(?:\\.\\d{2})?)\\b",
+            "case_insensitive": true
           },
           "SECTION_TITLE": {
             "rule": "first_match",
@@ -39,12 +40,14 @@
               {
                 "rule": "paragraph_after",
                 "source": "document",
-                "anchor_regex": "^SECTION\\s+\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\.\\d{2})?\\s*$"
+                "anchor_regex": "^SECTION\\s+\\d{2}[\\s-]*\\d{2}[\\s-]*\\d{2}(?:\\.\\d{2})?\\s*$",
+                "case_insensitive": true
               },
               {
                 "rule": "regex",
                 "source": "document",
-                "pattern": "^SECTION\\s+\\d{2}\\s?\\d{2}\\s?\\d{2}(?:\\.\\d{2})?\\s*[-–—:]\\s*(.+)$"
+                "pattern": "^SECTION\\s+\\d{2}[\\s-]*\\d{2}[\\s-]*\\d{2}(?:\\.\\d{2})?\\s*[-–—:]\\s*(.+)$",
+                "case_insensitive": true
               }
             ]
           }

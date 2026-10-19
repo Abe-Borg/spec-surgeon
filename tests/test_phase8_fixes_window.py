@@ -94,17 +94,16 @@ def revise(f: Path) -> None:
 
 
 def offered(folder, tmp_path, *more) -> Session:
-    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(OFFER_TURN, header_outcome_proposal(), *more))
+    s = Session(folder=folder, out_root=tmp_path / "out", client=FakeClient(OFFER_TURN, *more))
     s.compile("put the header 0.625 in from the top", quiet)
     assert [c.kind for c in s.turn.choices] == ["custom_transform"]
     return s
 
 
 def create_approved_custom(s, *, choice_id=None, render=False):
-    s.reply(choice_id=choice_id or s.turn.choices[0].id, log=quiet, render=render)
-    assert s.pending_custom_transform is not None and s.generated is None
-    s.approve_outcomes(s.outcome_review["digest"])
-    return s.continue_custom_transform(quiet, render=render)
+    message = s.reply(choice_id=choice_id or s.turn.choices[0].id, log=quiet, render=render)
+    assert s.pending_custom_transform is None and s.generated is not None
+    return message
 
 
 def saved_entries(s) -> list:
@@ -192,10 +191,10 @@ def test_an_internal_error_while_making_the_transform_tells_claude_so_never_the_
     assert not any("outcome follows" in (t or "") for t in sent)
 
 
-def test_a_transform_that_comes_out_records_its_actual_result_after_outcome_approval(folder, tmp_path):
+def test_a_transform_that_comes_out_records_its_independently_verified_result(folder, tmp_path):
     s = offered(folder, tmp_path, WRITER)
     assert "passed verification" in create_approved_custom(s)
-    assert any("passed its sample trials against the approved outcome contract" in n for n in s.conversation.notes)
+    assert any("passed its independent sample verification" in n for n in s.conversation.notes)
 
 
 # ---- a sample edited while the transform is being written -----------------------------------------------------------
@@ -225,13 +224,9 @@ def test_a_sample_edited_while_the_transform_is_written_is_never_approved_with_i
     with pytest.raises(ValueError, match="preview again"):
         s.save_operation("Header distance")                         # nor saved
     lines = []
-    assert "Status: PROPOSED" in s.make_preview(render=False, log=lines.append)
-    assert s.pending_custom_transform is not None and s.outcome_approval == ""
-    with pytest.raises(ValueError, match="approve|approval"):
-        s.run(False, False, quiet)
-    s.approve_outcomes(s.outcome_review["digest"])
-    assert "checked again" in s.continue_custom_transform(lines.append, render=False)
-    assert all((s.out_dir / "retrial-01" / f"{i:02d}" / "result.json").is_file() for i in range(2))
+    assert "transform verified" in s.make_preview(render=False, log=lines.append)
+    assert s.pending_custom_transform is None and s.outcome_review is None
+    assert all((s.out_dir / "retrial" / f"{i:02d}" / "result.json").is_file() for i in range(2))
     assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
 
 
@@ -390,7 +385,7 @@ def test_save_to_library_still_asks_before_replacing_a_recipe_of_the_same_name(q
 
 # ---- review-21: a custom transform's blocking finding, acknowledged, then Run ------------------------------------------
 
-def test_a_custom_transform_s_blocking_finding_acknowledged_then_runs_edited_copies_only(folder, tmp_path, monkeypatch):
+def test_a_custom_transform_s_visual_findings_are_included_in_preview_consent(folder, tmp_path, monkeypatch):
     import spec_surgeon.preview as pv
     monkeypatch.setattr(pv, "render_samples", lambda *a, **k: None)  # no renderer in this test
     intents = []
@@ -404,14 +399,9 @@ def test_a_custom_transform_s_blocking_finding_acknowledged_then_runs_edited_cop
     assert "passed verification" in create_approved_custom(s, render=True)
     assert len(intents) == 1 and intents[0].startswith("A ONE-OFF CUSTOM TRANSFORM (set_header_distance)")
     assert s.generated_preview.review.blocking() and s.generated_token
-    assert "visual check flagged 1 problem" in s.run_blocked_reason()
-    with pytest.raises(ValueError, match="visual check flagged"):
-        s.run(False, False, quiet)
+    assert s.run_blocked_reason() == ""
     with pytest.raises(ValueError, match="not the current one"):
         s.acknowledge_review("an old preview's token")
-    assert s.run_blocked_reason()                                   # a wrong token acknowledges nothing
-    s.acknowledge_review(s.generated_token)
-    assert s.run_blocked_reason() == ""
     before = {f: f.read_bytes() for f in docx(folder)}
     out = s.run(in_place=True, render=False, log=quiet)             # in place asked for: copies all the same
     assert "2 of 2 file(s) PASS" in out and "your files were not changed" in out
@@ -436,7 +426,7 @@ def test_your_operation_after_a_spec_that_names_a_folder_template_is_approved_fo
     assert "3 of 3 file(s) PASS" in s.run(False, False, quiet)      # approved for the batch it runs
 
 
-def test_the_window_requires_fresh_outcome_approval_before_retrying_a_transform_edited_while_written(qt, folder, tmp_path,
+def test_the_window_retries_a_transform_on_current_files_before_allowing_preview_consent(qt, folder, tmp_path,
                                                                                                     monkeypatch):
     import spec_surgeon.codegen as cg
     real = cg.generate_op
@@ -446,7 +436,7 @@ def test_the_window_requires_fresh_outcome_approval_before_retrying_a_transform_
         revise(samples[0])
         return g
     monkeypatch.setattr(cg, "generate_op", written_while_edited)
-    fake = FakeClient(OFFER_TURN, header_outcome_proposal(), WRITER)  # planning is separate from generation
+    fake = FakeClient(OFFER_TURN, WRITER)
     s = Session(out_root=tmp_path / "out", client=fake)
     w, ui = window(qt, s)
     ui["vars"]["folder"].set(str(folder))
@@ -457,18 +447,12 @@ def test_the_window_requires_fresh_outcome_approval_before_retrying_a_transform_
     (cid, button), = ui["choices"]()
     button.click()
     ui["wait"]()
-    w.preview_page.outcome_approve_btn.click()
     log = ui["wait"]()
     assert "changed while the custom transform was being written" in log and "press Preview" in log
-    assert not ui["buttons"]["run"].isEnabled()
-    ui["buttons"]["preview"].click()
-    ui["wait"]()
-    assert s.pending_custom_transform is not None and s.outcome_approval == ""
-    assert not ui["buttons"]["run"].isEnabled()
-    w.preview_page.outcome_approve_btn.click()
-    ui["wait"]()
-    assert all((s.out_dir / "retrial-01" / f"{i:02d}" / "result.json").is_file() for i in range(2))
-    assert len(fake.requests) == 3
+    # Reply prepares the final preview in the same job, so drift forces a deterministic reproof immediately.
+    assert s.pending_custom_transform is None and s.outcome_review is None
+    assert all((s.out_dir / "retrial" / f"{i:02d}" / "result.json").is_file() for i in range(2))
+    assert len(fake.requests) == 2
     assert ui["buttons"]["run"].isEnabled(), w.run_page.run_hint.text()
     ui["buttons"]["run"].click()
     ui["wait"]()

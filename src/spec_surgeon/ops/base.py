@@ -403,6 +403,8 @@ def merge_fragments(fragments: Sequence[PlanFragment], job: str = "edit-spec",
         raise JobException("nothing to merge: the spec has no ops", "bad-params")
     for i, f in enumerate(fragments):
         f.op_index = i
+    from .font_numbering import coalesce_numbering_fonts
+    coalesce_numbering_fonts(fragments)
     check_conflicts(fragments)
     mode = merged_mode(fragments)
     id_notes = assign_revision_ids(fragments)

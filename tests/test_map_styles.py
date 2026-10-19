@@ -564,6 +564,10 @@ def test_d2_a_run_property_op_on_the_restyled_paragraphs_mark_plans_and_passes(s
     spec = {"request": "r", "summary": "s", "mode": "formatting",
             "ops": [{"op": "set_font", "params": {"font": "Arial"}},
                     {"op": "map_styles", "params": {"map": [{"from": "Arch Para", "to": "Arch Unused"}]}}]}
+    with pytest.raises(JobException, match="split.*spec"):
+        plan_spec(DocxPackage(src), spec)
+    # Run/mark-only formatting composes; document-wide numbering fonts read the styles being changed.
+    spec["ops"][0]["params"]["numbering_levels"] = False
     plan, frags = plan_spec(DocxPackage(src), spec)
     out = apply_spec(DocxPackage(src), frags).output_bytes()
     rec = run_suite(src, out, plan.to_dict(), "src.docx", "out.docx")

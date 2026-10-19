@@ -159,7 +159,9 @@ def test_context_epochs_preserve_complete_signed_history_and_scope(tmp_path, mon
     assert state["context"]["epoch"] == 1
     record = state["context"]["archives"][0]
     from pathlib import Path
-    archived = json.loads((Path(state["context_folder"]) / "context" / (record["artifact_id"] + ".json")).read_text())
+    from spec_surgeon.contexts import load_context_manifest
+    from spec_surgeon.storage import artifact_path
+    archived = load_context_manifest(artifact_path(Path(state["context_folder"]) / "context", record["artifact_id"]))
     assert archived["messages"][1]["content"][0]["signature"] == "original-signature"
     assert "x" * 240000 in archived["messages"][2]["content"][0]["content"]
     checkpoint = json.loads(state["messages"][0]["content"])
@@ -252,8 +254,10 @@ def test_reopened_session_gains_new_tools_in_new_epoch_without_rewriting_old_sch
     assert state["context"]["epoch"] == 1
     assert "run_analysis" in {t["name"] for t in client.requests[0]["tools"]}
     from pathlib import Path
-    archived = json.loads((Path(state["context_folder"]) / "context" /
-                           (state["context"]["archives"][0]["artifact_id"] + ".json")).read_text())
+    from spec_surgeon.contexts import load_context_manifest
+    from spec_surgeon.storage import artifact_path
+    archived = load_context_manifest(artifact_path(Path(state["context_folder"]) / "context",
+                                                  state["context"]["archives"][0]["artifact_id"]))
     assert "run_analysis" not in {t["name"] for t in archived["tools"]}
     assert archived["messages"][:len(old_history)] == old_history
 

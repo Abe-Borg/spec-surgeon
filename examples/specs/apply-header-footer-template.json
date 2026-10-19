@@ -9,22 +9,53 @@
     "pending tracked changes inside the old headers/footers are discarded with them and flagged by name"
   ],
   "questions": [],
-  "applies_to": {"or": "all"},
+  "applies_to": {
+    "or": "all"
+  },
   "mode": "untracked",
   "ops": [
-    {"op": "apply_header_footer_template",
-     "select": {"sections": "all"},
-     "params": {
-       "template": "../templates/00_00_00_TEMPLATE.docx",
-       "template_sections": {"cover": 0, "body": 1},
-       "slot_fills": {
-         "XX XX XX": {"rule": "regex", "source": "footer.default", "pattern": "^(\\d{2} \\d{2} \\d{2})"},
-         "SECTION_NUMBER": {"rule": "regex", "source": "footer.default", "pattern": "^(\\d{2} \\d{2} \\d{2})"},
-         "SECTION_TITLE": {"rule": "paragraph_after", "source": "document", "anchor_regex": "^SECTION \\d{2} \\d{2} \\d{2}$"},
-         "ISSUED FOR PERMIT": {"rule": "literal", "value": "ISSUED FOR CONSTRUCTION  2026-02-15"}
-       }
-     },
-     "expect": {"text_diffs_in_kept_parts": 0, "members_added": "the template's header/footer parts (+ rels, logo)"}}
+    {
+      "op": "apply_header_footer_template",
+      "select": {
+        "sections": "all"
+      },
+      "params": {
+        "template": "../templates/00_00_00_TEMPLATE.docx",
+        "template_sections": {
+          "cover": 0,
+          "body": 1
+        },
+        "slot_fills": {
+          "XX XX XX": {
+            "rule": "regex",
+            "source": "footer.default",
+            "pattern": "^(\\d{2} \\d{2} \\d{2})"
+          },
+          "SECTION_NUMBER": {
+            "rule": "regex",
+            "source": "footer.default",
+            "pattern": "^(\\d{2} \\d{2} \\d{2})"
+          },
+          "SECTION_TITLE": {
+            "rule": "paragraph_after",
+            "source": "document",
+            "anchor_regex": "^SECTION \\d{2} \\d{2} \\d{2}$",
+            "case_insensitive": true
+          },
+          "ISSUED FOR PERMIT": {
+            "rule": "literal",
+            "value": "ISSUED FOR CONSTRUCTION  2026-02-15"
+          }
+        }
+      },
+      "expect": {
+        "text_diffs_in_kept_parts": 0,
+        "members_added": "the template's header/footer parts (+ rels, logo)"
+      }
+    }
   ],
-  "review": {"sample_files": 2, "geometry_reference": "template"}
+  "review": {
+    "sample_files": 2,
+    "geometry_reference": "template"
+  }
 }

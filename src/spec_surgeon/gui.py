@@ -25,6 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional
 
 from . import diagnostics as diag
+from .settings import default_run_root
 
 Log = Callable[[str], None]
 
@@ -102,7 +103,7 @@ class Session:
     """What the window is working on. Every step is a call into the engine; the window only shows the text."""
     folder: Optional[Path] = None
     template: Optional[Path] = None
-    out_root: Path = field(default_factory=lambda: Path.home() / "SpecSurgeon_out")
+    out_root: Path = field(default_factory=default_run_root)
     spec: Optional[Dict[str, Any]] = None
     spec_source: str = ""                         # "compiled" | path of a loaded spec file
     out_dir: Optional[Path] = None
@@ -136,7 +137,7 @@ class Session:
     recovery: Any = None                          # investigated copies, awaiting review and export
     last_recovery: Any = None                     # recovery whose ready copies were exported
     campaign: Any = None                          # durable multi-project workspace, independent of the four steps
-    outcome_review: Optional[Dict[str, Any]] = None  # separate request-derived authority, never inferred from the recipe
+    outcome_review: Optional[Dict[str, Any]] = None  # legacy advisory data; ordinary previews create no second contract
     outcome_approval: str = ""
     outcome_preview_token: str = ""
     outcome_request: str = ""
@@ -238,7 +239,7 @@ class Session:
         self.prior_failures = list(items)
         self._set_outcome()
         self.end_conversation()
-        self.pending_recovery_run = Path(target) if manifest.get("goal_contract") is not None else None
+        self.pending_recovery_run = Path(target) if manifest.get("enforce_goals") is True else None
         lines = [f"Loaded {len(items)} set-aside file(s) for the next pass:"]
         for x in items:
             lines.append(f"  - {x['name']} [{x['code']}] ({x['category']}): {x['reason']}")
@@ -423,15 +424,9 @@ class Session:
             try:
                 msg = self._codegen(c.request, proposal, self.files(), log, brief=c.brief(), render=render)
                 gp = self.generated_preview
-                if self.pending_custom_transform is not None:
-                    # The app is waiting for outcome review, not carrying out a transform yet.
-                    del c.notes[queued:]
-                    c.note("Independent requested outcomes were proposed for user review; no custom transform was generated.",
-                           display="Review and approve the requested outcomes before generating the custom transform.")
-                else:
-                    c.note(f"The one-off custom transform {self.generated.name!r} passed verification on the sample "
-                       f"files; the user reviews its preview.\n" + (gp.to_text()[:4000] if gp is not None else ""),
-                       display=f"Custom transform {self.generated.name!r} passed verification on the sample files.")
+                c.note(f"The one-off custom transform {self.generated.name!r} passed verification on the sample "
+                   f"files; the user reviews its preview.\n" + (gp.to_text()[:4000] if gp is not None else ""),
+                   display=f"Custom transform {self.generated.name!r} passed verification on the sample files.")
             except TransformFailed as e:          # the recorded outcome (no attempt passed, or the call failed)
                 c.note(str(e))
                 if c.continuous_recovery and e.recoverable:
@@ -583,50 +578,25 @@ class Session:
         key = {"request": self.outcome_request, "custom_transform": True}
         self.pending_custom_transform = {"request": request, "proposal": proposal, "files": files,
             "brief": brief, "out": out, "key": key, "token": approval_token(key, files)}
-        self._prepare_outcome_review(log)
-        return "Review and approve the requested outcomes and each document's targets before custom generation.\n\n" + self.outcome_review_text()
+        return self.continue_custom_transform(log, render)
 
     @_session_action
     def continue_custom_transform(self, log: Log, render: bool = False) -> str:
         pending = self.pending_custom_transform
         if pending is None:
-            raise ValueError("There is no custom transform awaiting outcome approval.")
+            raise ValueError("There is no custom transform awaiting preparation.")
         from .preview import approval_token
         if approval_token(pending["key"], self.files()) != pending["token"]:
-            raise ValueError("The original files changed since outcome approval; press Preview to review their targets again.")
-        authority = self._approved_outcomes()
-        if self.outcome_approval != (self.outcome_review or {}).get("digest"):
-            raise ValueError("Review and approve requested outcomes before custom generation.")
-        approved_review, approved_digest, approved_request = self.outcome_review, self.outcome_approval, self.outcome_request
-        try:
-            message = self._generate_approved_custom(pending, authority, log, render)
-        except (TransformFailed, TrialsFailed) as exc:
-            if self.conversation is not None:
-                c = self.conversation
-                c.note(str(exc))
-                if c.continuous_recovery and isinstance(exc, TransformFailed) and exc.recoverable:
-                    self._set_outcome()
-                    return self._after_turn(c.investigate_failure({"reason": str(exc),
-                        "proposal": pending["proposal"], "approved_goal": authority["goal_contract"]}))
-                self._save_chat()
-            raise
-        except Exception as exc:
-            if self.conversation is not None:
-                self.conversation.notes.append("The app could not finish the custom transform: it stopped with an internal "
-                    f"error ({type(exc).__name__}) before any result — nothing was applied.")
-                self._save_chat()
-            raise
-        self.outcome_review, self.outcome_approval, self.outcome_request = approved_review, approved_digest, approved_request
-        self.outcome_preview_token = self.generated_token
+            raise ValueError("The original files changed; press Preview to prepare the transform again.")
+        message = self._generate_custom(pending, log, render)
         if self.conversation is not None:
-            self.conversation.note("The custom transform passed its sample trials against the approved outcome contract.",
+            self.conversation.note("The custom transform passed its independent sample verification.",
                                    display="Custom transform prepared; review the resulting preview before Run.")
             self._save_chat()
         return message
 
-    def _generate_approved_custom(self, pending, authority, log: Log, render: bool) -> str:
+    def _generate_custom(self, pending, log: Log, render: bool) -> str:
         from .codegen import generate_op, pick_samples
-        from .goals import approved_goal_words
         from .preview import approval_inputs, _approval_token_from_inputs, explain_approval_change
         request, proposal, files, brief, out = (pending[k] for k in ("request", "proposal", "files", "brief", "out"))
         pending["attempts"] = pending.get("attempts", 0) + 1
@@ -639,19 +609,9 @@ class Session:
         # ``_prove``'s trials leaves its token stale.
         before = approval_inputs({}, files)
         log(f"Writing a one-off transform, tested on {[s.name for s in samples]}…")
-        if pending.get("generated") is not None:
-            g = pending["generated"]
-            g.goal_contract, g.goal_bindings = authority["goal_contract"], authority["goal_bindings"]
-            token, inputs, trials = self._prove(g, files, samples, out / f"retrial-{attempt:02d}",
-                                                "the custom transform no longer passes on these files")
-            g.trials = trials
-            self._use_folder(out)
-            self._show_generated(g, out, token, inputs, pending["intent"], render, log)
-            return "Custom transform checked again against the approved outcomes; review its preview before Run."
         writer_dir = out / ("codegen" if attempt == 1 else f"codegen-{attempt:02d}")
         g = generate_op(request, proposal or "", samples, writer_dir, client=self.client, log=log, brief=brief,
-                        **authority, approved_words=[*(self.conversation.sources if self.conversation else [request]),
-                                                    *approved_goal_words(authority["goal_contract"])],
+                        approved_words=list(self.conversation.sources if self.conversation else [request]),
                         **{k: v for k, v in (("max_output_tokens", self.max_output_tokens),
                                             ("max_context_tokens", self.max_context_tokens), ("model", self.model),
                                             ("effort", self.effort)) if v is not None})
@@ -705,8 +665,6 @@ class Session:
         ``out/preview`` (with Claude's visual check when rendering), then the approval token — set last, so a preview
         that stops leaves nothing runnable (Preview tries the transform again)."""
         from .preview import preview_generated
-        prior_review, prior_approval, prior_request = self.outcome_review, self.outcome_approval, self.outcome_request
-        same_generated = self.generated is g
         self._set_outcome(generated=g)
         self.generated_intent = intent
         if intent.startswith("A ONE-OFF CUSTOM TRANSFORM"):
@@ -717,15 +675,6 @@ class Session:
         if render and self.visual_check:
             self._visual_check(self.generated_preview, intent, out / "preview", log)
         self.generated_token, self.generated_inputs = token, inputs
-        if same_generated and prior_review is not None:
-            from .ordinary_outcomes import validate
-            try:
-                validate(prior_review, self.files(), request=prior_request, approval=prior_approval)
-            except (OSError, ValueError):
-                pass
-            else:
-                self.outcome_review, self.outcome_approval, self.outcome_request = prior_review, prior_approval, prior_request
-                self.outcome_preview_token = token
 
     @_session_action
     def _preview_again(self, render: bool, log: Log) -> None:
@@ -897,39 +846,19 @@ class Session:
             raise ValueError("The approved outcomes are retained; use Resolve remaining to resume this investigation.")
         if self.pending_custom_transform is not None:
             pending = self.pending_custom_transform
-            files = self.files()
-            token = approval_token(pending["key"], files)
-            if token != pending["token"]:
-                pending["files"], pending["token"] = files, token
-                self.outcome_review, self.outcome_approval = None, ""
-                self._prepare_outcome_review(log)
-            if self.outcome_approval == (self.outcome_review or {}).get("digest"):
-                return self.continue_custom_transform(log, render)
-            return self.outcome_review_text()
+            pending["files"] = self.files()
+            pending["token"] = approval_token(pending["key"], pending["files"])
+            return self.continue_custom_transform(log, render)
         if self.generated is not None:
             files = self.files()
             if approval_token(self._generated_key(self.generated), files) != self.generated_token:
-                if self._requires_outcome_review() and self.outcome_review is not None:
-                    from .ordinary_outcomes import build_review
-                    key = {"request": self._request_for_outcomes(), "custom_transform": True}
-                    self.pending_custom_transform = {"request": self.generated.request,
-                        "proposal": self.generated.proposal, "files": files, "brief": self.generated.brief,
-                        "out": self._next_session_dir(), "key": key, "token": approval_token(key, files),
-                        "generated": self.generated, "intent": self.generated_intent}
-                    self.outcome_review = build_review(self._request_for_outcomes(), files,
-                        self.outcome_review["contract"], template=self.template)
-                    self.outcome_approval, self.outcome_preview_token = "", self.pending_custom_transform["token"]
-                    from .ordinary_outcomes import save
-                    save(self.outcome_review, self.pending_custom_transform["out"] / "outcome-review.json")
-                    return self.outcome_review_text()
                 self._prove_again(files, render, log)   # stale: Run would refuse forever — re-prove, then preview
             elif (self.generated_preview is None
                   or bool(getattr(self.generated_preview, "rendered", False)) != bool(render)):
                 self._preview_again(render, log)        # Render pages changed: pages and the visual check follow it
             gp = self.generated_preview
-            self._prepare_outcome_review(log)
             return ((gp.to_text() + "\n\n") if gp is not None else "") + \
-                "AI-written transform previewed. Review requested outcomes before Run.\n\n" + self.outcome_review_text()
+                "AI-written transform verified. Review its preview before Run."
         if self.spec is None and self.chain is None:
             raise ValueError("nothing to preview — type a request or load a spec file")
         files = self.files()                      # the same filtered set Run checks and runs (no template files)
@@ -955,71 +884,20 @@ class Session:
             evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec or self.chain)}
             self._set_outcome()
             return self._after_turn(c.investigate_failure(evidence))
-        self._prepare_outcome_review(log)
-        return self.preview.to_text() + "\n\n" + self.outcome_review_text()
+        return self.preview.to_text()
 
     def _requires_outcome_review(self) -> bool:
-        return bool(not self.recipe_name and (
-            self.pending_custom_transform is not None or self.spec_source == "compiled" or (self.generated is not None
-            and self.generated_intent.startswith("A ONE-OFF CUSTOM TRANSFORM"))))
-
-    def _request_for_outcomes(self) -> str:
-        return self.outcome_request or (self.spec or {}).get("request", "") or getattr(self.generated, "request", "")
+        # Ordinary edits have one recipe, one independent verification suite and one preview decision.
+        # Retain the legacy review methods for reading old session state, never as delivery authority.
+        return False
 
     def outcome_review_text(self) -> str:
         from .ordinary_outcomes import text
         return text(self.outcome_review)
 
-    def _prepare_outcome_review(self, log: Log) -> None:
-        if not self._requires_outcome_review():
-            return
-        from . import ordinary_outcomes
-        from .recovery import RecoveryOptions
-        _, token = self._current_review()
-        request = self._request_for_outcomes()
-        if self.outcome_review is not None and self.outcome_preview_token == token:
-            return
-        self.outcome_approval = ""
-        log("Independently planning requested outcomes and resolving every document's targets…")
-        values = {k: v for k, v in (("max_output_tokens", self.max_output_tokens),
-            ("max_context_tokens", self.max_context_tokens),
-            ("model", self.model or getattr(self.conversation, "model", None)), ("effort", self.effort)) if v is not None}
-        try:
-            self.outcome_review = ordinary_outcomes.propose(request, self.files(), template=self.template,
-                client=self.client, options=RecoveryOptions(render=False, renderer="none", **values),
-                folder=self.out_dir, log=log)
-        except Exception as exc:
-            self.outcome_review = ordinary_outcomes._seal({"version": 1, "request": request,
-                "status": "PAUSED", "contract": None, "documents": [],
-                "rationale": f"Outcome planning incomplete: {type(exc).__name__}: {exc}"})
-        self.outcome_preview_token = token
-        if self.out_dir:
-            ordinary_outcomes.save(self.outcome_review, self.out_dir / "outcome-review.json")
-
     @_session_action
     def approve_outcomes(self, digest: str) -> None:
-        from . import ordinary_outcomes
-        from .preview import approval_inputs, approval_token, _approval_token_from_inputs
-        if not self._requires_outcome_review() or self.outcome_review is None:
-            raise ValueError("Prepare an independent outcome review from the current request first.")
-        _, token = self._current_review()
-        if not token or token != self.outcome_preview_token:
-            raise ValueError("The preview changed; review its outcomes again.")
-        files = self.files()
-        key = (self.pending_custom_transform["key"] if self.pending_custom_transform is not None else
-               self._generated_key(self.generated) if self.generated is not None else self.outcome_key())
-        if approval_token(key, files) != token:
-            raise ValueError("A file or recipe changed since the preview; prepare it again.")
-        contract, bindings = ordinary_outcomes.validate(self.outcome_review, files,
-            request=self._request_for_outcomes(), approval=digest)
-        if self.generated is not None and self.pending_custom_transform is None:
-            # The final sandbox trial independently checks this newly approved authority.
-            self.generated.goal_contract, self.generated.goal_bindings = contract, bindings
-            key = self._generated_key(self.generated)
-            self.generated_inputs = approval_inputs(key, files)
-            self.generated_token = _approval_token_from_inputs(key, self.generated_inputs)
-            self.outcome_preview_token = self.generated_token
-        self.outcome_approval = digest
+        raise ValueError("Outcome reviews are advisory. Review the preview and press Run to approve the edit.")
 
     @_session_action
     def choose_outcome_targets(self, source, candidate_ids, *, effect_id=None) -> None:
@@ -1030,14 +908,10 @@ class Session:
             save(self.outcome_review, self.out_dir / "outcome-review.json")
 
     def _approved_outcomes(self):
-        if not self._requires_outcome_review():
-            return {}
-        from .ordinary_outcomes import validate
-        contract, bindings = validate(self.outcome_review, self.files(),
-            request=self._request_for_outcomes(), approval=self.outcome_approval)
-        return {"goal_contract": contract, "goal_bindings": bindings}
+        """Legacy outcome metadata never grants or withholds ordinary delivery authority."""
+        return {}
 
-    # ---- Claude's visual check: advisory, can stop a run, never passes one ----
+    # ---- Claude's visual check: findings accompany preview consent ----
     def _intent(self) -> str:
         if self.chain is not None:
             from .chain import chain_intent
@@ -1079,27 +953,20 @@ class Session:
         return None, ""
 
     def run_blocked_reason(self) -> str:
-        """Why Run must wait for the user: Claude's visual check found something it rates as blocking, and the user
-        has not acknowledged it for this very preview."""
+        """Explain unavailable actions; visual findings are part of the single preview decision."""
         if self.pending_recovery_run is not None:
-            return "The approved outcomes are retained; use Resolve remaining before exporting recovery copies."
-        pv, token = self._current_review()
-        if self._requires_outcome_review() and pv is not None:
-            if self.outcome_review is None:
-                return "Press Preview to prepare an independent review of requested outcomes and per-file targets."
-            if self.outcome_review.get("status") != "PROPOSED":
-                return "Requested outcomes need clarification or independent coverage; review the outcome details and revise the request."
-            if self.outcome_approval != self.outcome_review.get("digest"):
-                return "Review and approve the requested outcomes and every document's targets before Run."
-            if token != self.outcome_preview_token:
-                return "The preview changed; review and approve its requested outcomes again."
-            if self.pending_custom_transform is not None:
-                return "Continue preparing the approved custom transform with Preview before Run."
-        rv = getattr(pv, "review", None) if pv is not None else None
-        if rv is None or not rv.blocking() or getattr(pv, "review_ack", "") == token:
-            return ""
-        return (f"Claude's visual check flagged {len(rv.blocking())} problem(s) on the sample pages — look at them on the "
-                f"Preview step and press \u201cI've looked \u2014 allow Run\u201d, or change the request.")
+            return "Use Resolve remaining before exporting recovery copies."
+        if self.pending_custom_transform is not None:
+            return "Press Preview to finish preparing the custom transform."
+        if self.generated is not None and not self.generated_token:
+            from .preview import approval_inputs, explain_approval_change
+            what = explain_approval_change(self.generated_inputs or {},
+                                          approval_inputs(self._generated_key(self.generated), self.files()))
+            return ("a file changed since the AI-written transform was tested — press Preview again"
+                    + "".join(f"\n  • {detail}" for detail in what))
+        if self._current_review()[0] is None:
+            return "Press Preview first — review its changes before Run."
+        return ""
 
     @_session_action
     def acknowledge_review(self, token: str) -> None:
@@ -1144,8 +1011,7 @@ class Session:
                 raise ValueError("Recovery exports edited copies only; original files cannot be overwritten.")
             from .recovery import deliver_recovery
             result = self.recovery
-            destination = deliver_recovery(result, acknowledge_review=bool(
-                result.token and getattr(result, "review_ack", "") == result.token))
+            destination = deliver_recovery(result, acknowledge_review=True)
             self.last_recovery = result
             self.last_run_dir = result.out_dir
             self.last_batch, self.last_chain, self.last_trials = None, None, None
@@ -1317,12 +1183,14 @@ class Session:
                 and self.pending_recovery_run is None and self.out_dir is not None and self.last_run_dir != self.out_dir / "run"):
             source_run = None  # the current conversation/preview has not run; an older batch is unrelated
         if source_run is not None:
+            from .batch import load_set_aside
+            if (Path(source_run) / "set_aside.json").is_file() and not load_set_aside(source_run).get("files"):
+                return "Nothing to resolve: 0 failed or set-aside files in the previous run."
             result = recover_from_run(source_run, out, request=request, options=options,
                                       client=self.client, log=log)
         else:
             if request is not None and not isinstance(request, str):
                 raise ValueError("Scoped answers require an existing recovery investigation.")
-            outcomes = self._approved_outcomes()
             files = self.files()
             pv = self.preview
             if pv is not None:
@@ -1330,7 +1198,7 @@ class Session:
                 bad.update(Path(s.source) for s in pv.samples if not s.passed)
                 files = [f for f in files if f in bad]
                 if not files:
-                    raise ValueError("The preview has no failed or set-aside files to investigate.")
+                    return "Nothing to resolve: 0 failed or set-aside files in the current preview."
             approved = list(self.conversation.sources) if self.conversation is not None else []
             original_request = (self.conversation.request if self.conversation is not None else "") or \
                 (self.spec or {}).get("request") or "\n".join(
@@ -1341,10 +1209,7 @@ class Session:
             result = recover(files, clarified, out,
                              spec=self.spec, chain=self.chain, prior_failures=self.prior_failures,
                              template=self.template, approved_words=approved, options=options,
-                             client=self.client, log=log,
-                             **({"adaptive_contract": outcomes["goal_contract"],
-                                 "adaptive_binding": {str(Path(f).resolve()): outcomes["goal_bindings"][str(Path(f).resolve())]
-                                                      for f in files}} if outcomes else {}))
+                             client=self.client, log=log)
         self._adopt_recovery(result)
         return result.to_text()
 

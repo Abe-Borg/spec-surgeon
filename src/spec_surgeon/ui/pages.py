@@ -16,7 +16,7 @@ from typing import List
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (QAbstractItemView, QButtonGroup, QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout,
                                QHeaderView, QLabel, QListWidget, QPlainTextEdit, QProgressBar, QPushButton,
-                               QRadioButton, QScrollArea, QTableView, QVBoxLayout, QWidget)
+                               QRadioButton, QScrollArea, QTableView, QTableWidget, QVBoxLayout, QWidget)
 
 from .chat import ChatView
 from .models import ProblemsFilter, RowsModel
@@ -143,6 +143,9 @@ class FilesPage(Page):
                                       "preview gets its own time-stamped folder.")
         self.out = PathPicker("dir", "Where results go", browse=browse_dir)
         card.add(self.out)
+        self.out_warning = label("", "Muted")
+        self.out_warning.hide()
+        card.add(self.out_warning)
         self.content.addWidget(card)
         self.finish()
         self.footer.addStretch(1)
@@ -160,6 +163,7 @@ class FilesPage(Page):
     def set_ready(self, ok: bool, hint: str = "") -> None:
         """Next is enabled only once the folder holds Word files; the hint says what is missing."""
         self.next_btn.setEnabled(ok)
+        self.next_btn.setToolTip("Continue to choose a change." if ok else hint)
         self.next_hint.setText("" if ok else hint)
 
 
@@ -331,6 +335,17 @@ class PreviewPage(Page):
         bl.addWidget(self.tiles)
         self.notes = InfoBar(closable=False)
         bl.addWidget(self.notes)
+        self.bindings_card = Card("Per-file fills", "Values are copied verbatim from the source location shown. "
+                                  "Correct a value or its source, then preview the revised fills.")
+        self.bindings_table = QTableWidget(0, 5, self.bindings_card)
+        self.bindings_table.setHorizontalHeaderLabels(["File / slot", "Value", "Source part", "Paragraph", "Source digest"])
+        self.bindings_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.bindings_table.setMinimumHeight(180)
+        self.bindings_card.add(self.bindings_table)
+        self.bindings_apply = QPushButton("Preview revised fills", self.bindings_card)
+        self.bindings_card.add(self.bindings_apply)
+        self.bindings_card.hide()
+        bl.addWidget(self.bindings_card)
 
         self.table_card = Card("Every file")
         top = QHBoxLayout()

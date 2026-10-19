@@ -309,6 +309,12 @@ def test_a_font_change_of_the_same_paragraphs_beside_a_restyle_plans_and_verifie
     from spec_surgeon.editspec import apply_spec
     apply_op = {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^PART 2"}}, "params": {"style": "Heading1"}}
     font = {"op": "set_font", "params": {"font": "Arial", "only_where_defined": False}}
+    # Whole-document font edits now also read/change used list definitions; a restyle changes those bindings.
+    for ops in ((apply_op, font), (font, apply_op)):
+        with pytest.raises(JobException) as exc:
+            plan_spec(DocxPackage(src), _spec(*ops))
+        assert exc.value.code == "conflict"
+    font["params"]["numbering_levels"] = False  # This composition specifically edits runs and paragraph marks.
     for ops in ((apply_op, font), (font, apply_op)):
         plan, frags = plan_spec(DocxPackage(src), _spec(*ops))
         out = apply_spec(DocxPackage(src), frags).output_bytes()

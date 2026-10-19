@@ -29,6 +29,7 @@ from .package import DocxPackage
 from .preview import SampleView, approval_inputs, approval_token, render_samples
 from .recovery_state import atomic_json, exclusive_session, json_value, repair_interrupted_tools
 from .sampling import representative_samples
+from .storage import conversation_folder, disk_id
 from .resources import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_CALLS, DEFAULT_MAX_COST_USD,
                         DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, DEFAULT_EFFORT,
                         DEFAULT_STALL_REPETITIONS, DEFAULT_CONTEXT_TOKENS)
@@ -824,7 +825,9 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
     batch.analysis_limits = options.analysis_limits
     scoped_pins = [{"path": str(p), "sha256": result.input_pins[str(p)]}
                    for p in dict.fromkeys([*(f.source for f in group), *ctx["templates"].values(), *batch.inputs])]
-    batch.context_dir = Path(state.setdefault("context_folder", str(result.out_dir / "conversations" / _hash(state.get("files", [])))))
+    conversation_id = state.setdefault("conversation_id", _hash(state.get("files", [])))
+    batch.context_dir = conversation_folder(result.out_dir / "conversations", conversation_id, state.get("context_folder"))
+    state["context_folder"] = str(batch.context_dir)
     batch.context_state = state.setdefault("context", {})
     remembered = state.setdefault("remembered", [])
     if store is not None and not state.get("initialized"):
@@ -933,7 +936,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
                 if system != desired_system or tools != desired_tools:
                     messages = start_epoch(messages, system=system, tools=tools, folder=batch.context_dir,
                         state=batch.context_state, authority=authority, max_tokens=options.max_context_tokens,
-                        source_pins=scoped_pins,
+                        source_pins=scoped_pins, catalog_folder=result.out_dir / "context-catalog",
                         next_system=desired_system, next_tools=desired_tools)
                     system, tools = desired_system, desired_tools
                     state["system"], state["tools"] = system, tools
@@ -941,7 +944,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
                 messages = manage_context(messages, system=system, tools=tools, folder=batch.context_dir,
                                           state=batch.context_state, authority=authority,
                                           max_tokens=options.max_context_tokens,
-                                          source_pins=scoped_pins)
+                                          source_pins=scoped_pins, catalog_folder=result.out_dir / "context-catalog")
                 state["messages"] = messages
                 _save(result)
                 if ctx["client"] is None:
@@ -1097,7 +1100,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
                         if not isinstance(pages, list) or any(type(p) is not int or p < 1 for p in pages):
                             raise ValueError("pages must be positive page numbers")
                         from . import vision
-                        pngs = vision.page_pngs(path, sorted(set(pages))[:3], batch.work_dir / "pages" / _hash(str(path)),
+                        pngs = vision.page_pngs(path, sorted(set(pages))[:3], batch.work_dir / "pages" / disk_id(_hash(str(path))),
                                                renderer=options.renderer)
                         out = {"_content_blocks": [{"type": "text", "text": call.name + ": " + str(inp.get("file"))}]
                                + [vision.image_block(p) for p in pngs]}
@@ -1140,7 +1143,7 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
         from .contexts import checkpoint_history
         checkpoint_history(messages, system=system, tools=tools, folder=batch.context_dir,
                            state=batch.context_state, authority=authority,
-                           source_pins=scoped_pins)
+                           source_pins=scoped_pins, catalog_folder=result.out_dir / "context-catalog")
         if unsupported_files and unsupported_files != set(state["files"]):
             # Split only after every tool call has its result and the signed history
             # is checkpointed. The remaining files keep their own runnable scope.
@@ -1531,7 +1534,7 @@ def _custom_trial(ctx, group, proposal, pid, code, latest):
                         record_path = folder / "approved-records" / (Path(names[str(f.source)]).stem + ".json")
                         record_path.parent.mkdir(parents=True, exist_ok=True)
                         record_path.write_text(json.dumps(record.to_dict(), indent=2), encoding="utf-8")
-                        record_path.with_suffix(".md").write_text(record.to_markdown(), encoding="utf-8")
+                        record_path.with_suffix(".md").write_bytes(record.to_markdown().encode("utf-8"))
                         entry["approved_checks"].append({"source": str(f.source), "passed": record.passed,
                                                          "record": str(record_path)})
                         if not record.passed:
@@ -1675,9 +1678,14 @@ def _split_group(result, state, selected_files, identity):
         import shutil
         old_folder = Path(child["context_folder"])
         # A failed checkpoint can leave an unreferenced copy; never reuse its path.
-        new_folder = result.out_dir / "conversations" / uuid.uuid4().hex
+        child["conversation_id"] = _hash(uuid.uuid4().hex)
+        new_folder = result.out_dir / "conversations" / disk_id(child["conversation_id"])
         if old_folder.exists():
             shutil.copytree(old_folder, new_folder)
+            # The copied signed epochs stay intact; the new branch has its own
+            # identity and receives new append-only checkpoints from this point.
+            (new_folder / "conversation.json").unlink(missing_ok=True)
+        conversation_folder(result.out_dir / "conversations", child["conversation_id"])
         child["context_folder"] = str(new_folder)
     child["resume_note"] = state["resume_note"] = True
     state["files"] = sorted(set(state["files"]) - selected_files)
@@ -1858,6 +1866,9 @@ def recover_from_run(run_dir: Path, out_dir: Path, *, request=None, options=None
     if (Path(run_dir) / "recovery.json").is_file():
         return resume_recovery(run_dir, request=request, options=options, client=client, log=log)
     manifest = load_set_aside(run_dir)
+    # New ordinary reports retain old outcome data for reference with an explicit false marker.
+    # A direct request to recover a pre-marker run retains its historical, reviewed authority.
+    enforce_goals = manifest.get("enforce_goals", True) is True
     root = Path(run_dir)
     if root.is_file():
         folder = root.parent
@@ -1868,7 +1879,10 @@ def recover_from_run(run_dir: Path, out_dir: Path, *, request=None, options=None
         if not metadata.is_file():
             continue
         prior = json.loads(metadata.read_text(encoding="utf-8"))
-        if prior.get("goal_contract") is not None:
+        if prior.get("goal_contract") is not None and (
+                prior.get("enforce_goals", True) is True or enforce_goals):
+            if (prior.get("enforce_goals", True) is True) != enforce_goals:
+                raise ValueError("The saved outcome enforcement changed; use the original run record.")
             if any(manifest.get(key) != prior.get(key) for key in ("goal_contract", "goal_bindings")):
                 raise ValueError("The saved outcome authority disagrees with the run record; review the outcome again.")
     # In-place chains may already have changed originals through earlier stages. Replaying them would repeat edits.
@@ -1882,7 +1896,7 @@ def recover_from_run(run_dir: Path, out_dir: Path, *, request=None, options=None
     if not files:
         raise ValueError("There are no remaining files in this run.")
     authority = {}
-    if manifest.get("goal_contract") is not None or manifest.get("goal_bindings") is not None:
+    if enforce_goals and (manifest.get("goal_contract") is not None or manifest.get("goal_bindings") is not None):
         from .goals import validate_contract, validate_binding
         contract, bindings = manifest.get("goal_contract"), manifest.get("goal_bindings")
         validate_contract(contract)

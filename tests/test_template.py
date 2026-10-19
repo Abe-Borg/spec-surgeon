@@ -408,8 +408,12 @@ def test_old_parts_left_behind_are_caught_by_v1(template, target):
 
 
 def test_highlight_left_on_a_fill_is_caught(template, target, monkeypatch):
-    real = tmpl_module.apply_slot
-    monkeypatch.setattr(tmpl_module, "apply_slot", lambda p, slot, fill, remove_highlight: real(p, slot, fill, False))
+    real = tmpl_module.pin_rpr
+    def leave_highlight(rpr, pins):
+        real(rpr, pins)
+        if "color" in pins:  # clear-mode slot decoration is pinned after carving the fill run
+            etree.SubElement(rpr, W + "highlight").set(W + "val", "yellow")
+    monkeypatch.setattr(tmpl_module, "pin_rpr", leave_highlight)
     _, _, rec = run(target, params(template))
     assert failed(rec) == ["V10"] and "slot highlight must go" in rec.get("V10").summary
 

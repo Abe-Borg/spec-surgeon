@@ -18,11 +18,13 @@
         "values": {
           "number": {
             "rule": "regex",
-            "pattern": "^SECTION\\s+(\\d{2}\\s?\\d{2}\\s?\\d{2})\\b"
+            "pattern": "^SECTION\\s+(\\d{2}[\\s-]*\\d{2}[\\s-]*\\d{2})\\b",
+            "case_insensitive": true
           },
           "title": {
             "rule": "regex",
-            "pattern": "^SECTION\\s+\\d{2}\\s?\\d{2}\\s?\\d{2}\\s*[-–—]\\s*(.+)$"
+            "pattern": "^SECTION\\s+\\d{2}[\\s-]*\\d{2}[\\s-]*\\d{2}\\s*[-–—]\\s*(.+)$",
+            "case_insensitive": true
           }
         },
         "transforms": {

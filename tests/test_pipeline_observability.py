@@ -44,7 +44,7 @@ def _source(tmp_path, name="Spec.docx"):
 def test_worker_processes_keep_batch_correlation_and_delivery_evidence(tmp_path):
     sources = [_source(tmp_path, name) for name in ("A.docx", "B.docx")]
     out = tmp_path / "run"
-    result = batch.run_batch([str(f) for f in sources], "edit-spec", {}, out, workers=2,
+    result = batch.run_batch([str(f) for f in sources], "edit-spec", {}, out, workers=2, worker_mode="process",
                              do_render=False, spec=_spec())
     assert result.counts()["PASS"] == 2
     parent = _events(out / "logs" / "events.jsonl")
@@ -82,7 +82,7 @@ def test_native_worker_death_leaves_retry_and_terminal_evidence(tmp_path, monkey
     monkeypatch.setattr(batch, "_process_one", _crash_on_bad)
     sources = [_source(tmp_path, name) for name in ("Good.docx", "Bad.docx")]
     out = tmp_path / "run"
-    result = batch.run_batch([str(f) for f in sources], "edit-spec", {}, out, workers=2,
+    result = batch.run_batch([str(f) for f in sources], "edit-spec", {}, out, workers=2, worker_mode="process",
                              do_render=False, spec=_spec())
     by_name = {f.source.name: f for f in result.files}
     assert by_name["Good.docx"].status == "PASS"

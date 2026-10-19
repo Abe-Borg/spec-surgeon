@@ -613,6 +613,11 @@ def test_conflicts_and_what_plans_beside(tpl):
     # a font change of the runs plans beside it, and both verify
     font = {"op": "set_font", "params": {"font": "Arial", "only_where_defined": False}}
     for ops in ((conv, font), (font, conv)):
+        with pytest.raises(JobException) as exc:
+            plan_spec(DocxPackage(src), _spec(*ops))
+        assert exc.value.code == "conflict"  # Default font scope owns numbering.xml; conversion writes it too.
+    font["params"]["numbering_levels"] = False
+    for ops in ((conv, font), (font, conv)):
         plan, frags = plan_spec(DocxPackage(src), _spec(*ops))
         out = apply_spec(DocxPackage(src), frags).output_bytes()
         rec = run_suite(src, out, plan.to_dict(), "src.docx", "out.docx")

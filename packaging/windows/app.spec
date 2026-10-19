@@ -14,6 +14,7 @@ from PyInstaller.utils.hooks import collect_all, collect_data_files, collect_sub
 root = Path(SPECPATH).parents[1]
 windows = root / "packaging" / "windows"
 icon = str(windows / "SpecSurgeon.ico")
+manifest = str(windows / "app.manifest")
 version = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
 version_tuple = tuple(int(n) for n in version.split(".")) + (0,)
 version_file = root / "build" / "windows-version.txt"
@@ -71,10 +72,10 @@ def analyze(entry):
 gui = analyze("gui_entry.py")
 cli = analyze("cli_entry.py")
 gui_exe = EXE(PYZ(gui.pure), gui.scripts, [], exclude_binaries=True, name="SpecSurgeon",
-              console=False, version=str(version_file), icon=icon, upx=False,
+              console=False, version=str(version_file), icon=icon, manifest=manifest, upx=False,
               contents_directory="_internal")
 cli_exe = EXE(PYZ(cli.pure), cli.scripts, [], exclude_binaries=True, name="spec-surgeon",
-              console=True, version=str(version_file), icon=icon, upx=False,
+              console=True, version=str(version_file), icon=icon, manifest=manifest, upx=False,
               contents_directory="_internal")
 COLLECT(gui_exe, cli_exe, gui.binaries, gui.datas, cli.binaries, cli.datas,
         name="SpecSurgeon", upx=False)

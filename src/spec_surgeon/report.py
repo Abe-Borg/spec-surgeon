@@ -7,6 +7,8 @@ from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple
 
+from .readable import grouped_findings, short, write_report
+
 if TYPE_CHECKING:  # pragma: no cover
     from .batch import BatchResult, FileResult
 
@@ -68,8 +70,9 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "verify-fail": (
         "Failed Verification (Not Delivered)",
         "The edit was applied to a copy, but one or more of the V1–V10 checks failed on the result, so the copy was "
-        "moved to failed/ and nothing was delivered. Read the file's record under records/ for the failing check; "
-        "this is the engine catching a transform it could not prove, not a problem with your file.",
+        "moved to failed/ and nothing was delivered. The rejected copy is for diagnosis only; do not use it. "
+        "Read the failing check in records/, then preview a corrected recipe and run again. If the recipe looks "
+        "right, send the diagnostics bundle so the transform can be fixed.",
     ),
     "section-break": (
         "Paragraph Carries a Section Break",
@@ -447,7 +450,8 @@ def _approved_outcome_fields(result) -> Dict[str, Any]:
     if contract is None:
         return {}
     return {"goal_contract": copy.deepcopy(contract),
-            "goal_bindings": copy.deepcopy(getattr(result, "goal_bindings", None))}
+            "goal_bindings": copy.deepcopy(getattr(result, "goal_bindings", None)),
+            "enforce_goals": bool(getattr(result, "enforce_goals", False))}
 
 
 def _snapshot_fields(result) -> Dict[str, Any]:
@@ -456,11 +460,25 @@ def _snapshot_fields(result) -> Dict[str, Any]:
 
 
 def _outcome_scope(result) -> str:
+    if getattr(result, "enforce_goals", False):
+        return ("Verification scope: engine checks of the approved recipe, plus explicitly requested outcome "
+                "verification. The enforced contract and source-bound targets are retained for retries.")
     if getattr(result, "goal_contract", None) is not None:
-        return ("Outcome verification: the independently approved outcome and source-bound targets are checked "
-                "from original to final, in addition to recipe checks. The contract and bindings are saved for retries.")
-    return ("Verification scope: recipe checks. This run has no independently approved outcome contract. "
-            "PASS does not establish that the recipe expresses an unstated natural-language intention.")
+        return ("Verification scope: engine checks of the approved recipe. Outcome-review information is advisory "
+                "and is retained for reference; it does not withhold a verified output.")
+    return "Verification scope: engine checks of the approved recipe; the approved preview records the requested edit."
+
+
+def _set_aside_summary(manifest: Dict[str, Any]) -> str:
+    """The first sentence names failed checks and tells a reader whether rejected copies are usable."""
+    checks = sorted({cid for item in manifest["files"] for cid in item.get("details", {}).get("failed_checks", [])})
+    if checks:
+        return (f"{', '.join(checks)} failed; {manifest['set_aside_count']} file(s) were set aside. "
+                "Copies in failed/ are for diagnosis only and must not be used; inspect the named checks in records/ "
+                "and preview a corrected recipe.")
+    codes = ", ".join(manifest.get("by_code", {})) or "processing incomplete"
+    return (f"{codes}: {manifest['set_aside_count']} file(s) were set aside before delivery; "
+            "no usable edited copy was delivered for them. The guidance below gives the next action.")
 
 
 def build_set_aside_manifest(batch: "BatchResult") -> Dict[str, Any]:
@@ -537,7 +555,7 @@ def write_batch_report(batch: "BatchResult") -> Path:
               f"EditSpec: “{batch.spec.get('request')}” — mode `{batch.spec.get('mode')}`, "
               f"ops {[o.get('op') for o in batch.spec.get('ops', [])]}"),
              f"Files: {len(batch.files)}  —  PASS {c['PASS']}, FAIL {c['FAIL']}, EXCEPTION {c['EXCEPTION']} "
-             f"(Set aside untouched: {manifest['set_aside_count']})",
+             f"(Set aside: {manifest['set_aside_count']})",
              f"Renderer: {batch.renderer or 'none'}    Timings: " + ", ".join(f"{k} {v:.1f}s" for k, v in batch.timings.items()),
              "", _outcome_scope(batch), "",
              "Rendering is automated backend comparison; human visual acceptance is not recorded. "
@@ -576,22 +594,24 @@ def write_batch_report(batch: "BatchResult") -> Path:
             lines.append(f"| {f.source.name} | **EXCEPTION** ({code}) | | | " + " | ".join(["-"] * 12) + " | |")
     lines.append("")
     if manifest["files"]:
-        lines.append("## Set-Aside Files (Untouched — Ready for Next Pass or Manual Review)")
-        lines.append(f"{manifest['set_aside_count']} file(s) were safely set aside without changes. "
+        lines.append("## Set-Aside Files (Ready for Next Pass or Manual Review)")
+        lines.append(_set_aside_summary(manifest))
+        lines.append(f"{manifest['set_aside_count']} file(s) were set aside. "
                      f"Run `spec-surgeon retry \"{out}\"` (or click **Load set-aside files** in the GUI) to compile "
                      f"a pass specifically for these files.")
         lines.append("")
         for item in manifest["files"]:
             lines.append(f"- **{item['name']}** (pattern `{item['pattern_id']}`) — **{item['category']}** (`{item['code']}`)")
-            lines.append(f"  - Why skipped: {item['reason']}")
-            lines.append(f"  - Next step: {item['explanation']}")
+            lines.append(f"  - Why skipped: {short(item['reason'])}")
+            lines.append(f"  - Next step: {short(item['explanation'], 1000)}")
         lines.append("")
         sa_lines = [
-            "# Set-Aside Files Report",
+            _set_aside_summary(manifest),
+            "", "# Set-Aside Files Report",
             "",
             f"Request: `{manifest['request']}`",
             f"Passed in this pass: {manifest['passed_count']} / {manifest['total_batch_files']}",
-            f"Set aside (untouched): {manifest['set_aside_count']}",
+            f"Set aside: {manifest['set_aside_count']}",
             "",
             "## Summary by Failure Reason",
         ]
@@ -602,15 +622,15 @@ def write_batch_report(batch: "BatchResult") -> Path:
         for item in manifest["files"]:
             sa_lines.append(f"### {item['name']} (pattern `{item['pattern_id']}`)")
             sa_lines.append(f"- **Category**: {item['category']} (`{item['code']}`)")
-            sa_lines.append(f"- **Reason**: {item['reason']}")
-            sa_lines.append(f"- **Guidance**: {item['explanation']}")
+            sa_lines.append(f"- **Reason**: {short(item['reason'])}")
+            sa_lines.append(f"- **Guidance**: {short(item['explanation'], 1000)}")
             sa_lines.append("")
-        (out / "SET_ASIDE_REPORT.md").write_text("\n".join(sa_lines), encoding="utf-8")
+        write_report(out / "SET_ASIDE_REPORT.md", "\n".join(sa_lines), "set_aside.json and records/*.record.json")
     exc = [f for f in batch.files if f.exception]
     if exc:
         lines.append("## Exceptions (Tier 2 — route to a human, `spec-surgeon retry`, or `spec-surgeon advise`)")
         for f in exc:
-            lines.append(f"- **{f.source.name}** — `{f.exception.get('code')}`: {f.exception.get('reason')}")
+            lines.append(f"- **{f.source.name}** — `{f.exception.get('code')}`: {short(f.exception.get('reason'))}")
             lines.append(f"  - diagnosis: `exceptions/{getattr(f, 'record_stem', f.source.stem)}.exception.json`")
         lines.append("")
     failed = [f for f in batch.files if f.record and not f.record.passed]
@@ -620,13 +640,13 @@ def write_batch_report(batch: "BatchResult") -> Path:
                      "diagnosis only — do not use them.")
         for f in failed:
             bad = [c for c in f.record.checks if c.status == "FAIL"]
-            lines.append(f"- **{f.source.name}**: " + "; ".join(f"{c.id} {c.summary}" for c in bad))
+            lines.append(f"- **{f.source.name}**: " + "; ".join(f"{c.id} {short(c.summary)}" for c in bad))
         lines.append("")
     flagged = [(f, fl) for f in batch.files if f.record for fl in f.record.flags]
     if flagged:
         lines.append("## Flagged for review")
-        for f, fl in flagged:
-            lines.append(f"- {f.source.name}: {fl}")
+        for finding in grouped_findings(f"{f.source.name}: {fl}" for f, fl in flagged):
+            lines.append(f"- {finding}")
         lines.append("")
     lines.append("## Where to look")
     lines.append("- **Why a file failed, where and how: `DIAGNOSTICS.md`** (every file that did not pass, with its stage, "
@@ -642,7 +662,7 @@ def write_batch_report(batch: "BatchResult") -> Path:
     lines.append("- Outputs that passed every check: `outputs/` (or written back in place when run with `--in-place`)")
     if failed:
         lines.append("- Copies that FAILED verification (diagnosis only, never delivered): `failed/`")
-    (out / "BATCH_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+    write_report(out / "BATCH_REPORT.md", "\n".join(lines), "batch.json, set_aside.json and records/*.record.json")
     (out / "batch.json").write_text(json.dumps({
         **_approved_outcome_fields(batch),
         **_snapshot_fields(batch),
@@ -687,7 +707,7 @@ CHECK_STAGE = {"V6": "render", "V7": "render", "V9": "deliver"}
 
 
 def _code(text: str, lang: str = "") -> List[str]:
-    return [f"```{lang}", *str(text).rstrip("\n").splitlines(), "```"]
+    return [f"```{lang}", *short(str(text).rstrip("\n"), 6000).splitlines(), "```"]
 
 
 def _detail_lines(details: Dict[str, Any], skip=("op", "op_number", "traceback", "content")) -> List[str]:
@@ -696,7 +716,7 @@ def _detail_lines(details: Dict[str, Any], skip=("op", "op_number", "traceback",
     for k, v in (details or {}).items():
         if k in skip or v in (None, "", [], {}):
             continue
-        out.append(f"  - {k}: " + (str(v) if isinstance(v, (str, int, float)) else compact(v, 500)))
+        out.append(f"  - {k}: " + (short(v, 500) if isinstance(v, (str, int, float)) else compact(v, 500)))
     return out
 
 
@@ -716,7 +736,7 @@ def exception_diagnosis(exc: Dict[str, Any], name: str, stem: Optional[str] = No
     lines = [f"{heading} {f'{number}. ' if number else ''}{name} — {category} (`{code}`)", "",
              f"- **What happened:** {KIND_TEXT.get(kind, KIND_TEXT['refusal'])}.",
              f"- **Where it stopped:** {where}",
-             f"- **Why:** {exc.get('reason', '')}"]
+             f"- **Why:** {short(exc.get('reason', ''))}"]
     if exc.get("hint"):
         lines.append(f"- **What the system said it means:** {exc['hint']}")
     det = _detail_lines(exc.get("details") or {})
@@ -729,7 +749,7 @@ def exception_diagnosis(exc: Dict[str, Any], name: str, stem: Optional[str] = No
     if exc.get("traceback") and kind in ("internal-error", "environment", "worker-died"):
         lines += ["", "**Traceback** (for whoever fixes it):", "", *_code(exc["traceback"])]
     if trace:
-        lines += ["", "**How it got there** (the file's trace):", "", *_code("\n".join(trace))]
+        lines += ["", "**How it got there** (last 30 trace lines; complete trace in logs/):", "", *_code("\n".join(trace[-30:]))]
     return "\n".join(lines)
 
 
@@ -784,7 +804,7 @@ def file_diagnosis(f: "FileResult", heading: str = "##", number: Optional[int] =
         reads.append(f"the rejected copy {out_rel} (diagnosis only — never use it)")
     lines.append("- **Read next:** " + " · ".join(reads))
     if f.trace:
-        lines += ["", "**How it got there** (the file's trace):", "", *_code("\n".join(f.trace))]
+        lines += ["", "**How it got there** (last 30 trace lines; complete trace in logs/):", "", *_code("\n".join(f.trace[-30:]))]
     return "\n".join(lines)
 
 
@@ -869,7 +889,7 @@ def write_diagnostics(batch: "BatchResult") -> Path:
                 + ", ".join(f"{k} {v:.2f}" for k, v in f.timings.items() if k != "total") + ")" for f in slow))
         lines.append("")
     path = out / "DIAGNOSTICS.md"
-    path.write_text("\n".join(lines), encoding="utf-8")
+    write_report(path, "\n".join(lines), "batch.json, records/*.record.json, exceptions/ and logs/")
     return path
 
 
@@ -930,7 +950,8 @@ def write_chain_report(result: "Any") -> Path:
     manifest = build_chain_set_aside_manifest(result)
     (out / "set_aside.json").write_text(json.dumps(manifest, indent=2, ensure_ascii=False), encoding="utf-8")
     n = len(result.stages)
-    atomic_final = bool(result.in_place and getattr(result, "goal_contract", None) is not None)
+    atomic_final = bool(result.in_place and getattr(result, "enforce_goals", False)
+                        and getattr(result, "goal_contract", None) is not None)
     mode = ("written back in place only after final outcome verification" if atomic_final else
             "written back in place, stage by stage (guarded)" if result.in_place else
             "copies — the sources were not changed")
@@ -1020,7 +1041,7 @@ def write_chain_report(result: "Any") -> Path:
                      + ("only after final outcome verification" if atomic_final else "stage by stage"))
     if manifest["files"]:
         lines.append("- Set-aside manifest for the next pass: `set_aside.json`")
-    (out / "CHAIN_REPORT.md").write_text("\n".join(lines), encoding="utf-8")
+    write_report(out / "CHAIN_REPORT.md", "\n".join(lines), "chain.json, set_aside.json and stage-NN/records/*.record.json")
     (out / "chain.json").write_text(json.dumps({
         **_approved_outcome_fields(result),
         **_snapshot_fields(result),
@@ -1092,5 +1113,5 @@ def write_chain_diagnostics(result: "Any") -> Path:
                 lines += [f"## {i}. {f.source.name} — {f.category} (`{f.code}`)", "", f"- **Why:** {f.reason}",
                           f"- **What to do:** {f.explanation}", ""]
     path = out / "DIAGNOSTICS.md"
-    path.write_text("\n".join(lines), encoding="utf-8")
+    write_report(path, "\n".join(lines), "chain.json and stage-NN/records/, exceptions/ and logs/")
     return path

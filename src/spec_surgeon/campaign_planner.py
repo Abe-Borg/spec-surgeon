@@ -156,7 +156,8 @@ def propose(project, documents, request, options, *, client=None, log=None, prio
     if batch.context_dir and ("system" not in state or "tools" not in state):
         active = Path(batch.context_dir) / "context" / f"active-{batch.context_state.get('epoch', 0)}.json"
         if active.exists():
-            saved = json.loads(active.read_text(encoding="utf-8"))
+            from .contexts import load_context_manifest
+            saved = load_context_manifest(active)
             state.setdefault("system", saved["system"])
             state.setdefault("tools", saved["tools"])
     system, tools = state.setdefault("system", system), state.setdefault("tools", tools)

@@ -39,7 +39,8 @@ from .base import JobException, Touch
 STYLES_REL = REL_TYPE_BASE + "styles"
 SCOPE_KINDS = ("document", "headers", "footers", "footnotes", "endnotes", "comments")
 PARAGRAPH_KEYS = ("style_in", "text_regex", "in_table", "is_empty", "index_range",
-                  "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs")
+                  "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs",
+                  "case_insensitive", "flexible_whitespace")
 RUN_KEYS = ("has_direct_font", "font_in", "not_in_revisions", "color_in")
 REVISION_WRAPPERS = (W + "ins", W + "del", W + "moveFrom", W + "moveTo")
 FALSY = ("0", "false", "off")
@@ -73,6 +74,8 @@ def is_targeted(select: Dict[str, Any]) -> bool:
     """Decision §14.1: formatting is plain for whole-document edits and tracked for targeted ones. "Targeted"
     means the selector narrows to particular paragraphs."""
     p = (select or {}).get("paragraphs")
+    if isinstance(p, dict):
+        return bool(set(p) - {"case_insensitive", "flexible_whitespace"})
     return p not in (None, "all", {})
 
 
@@ -85,12 +88,15 @@ def check_paragraph_selector(pred) -> None:
     if unknown:
         raise JobException(f"unknown paragraph selector key(s) {sorted(unknown)}; known: {list(PARAGRAPH_KEYS)}",
                            "bad-params")
+    for key in ("case_insensitive", "flexible_whitespace"):
+        if key in pred and not isinstance(pred[key], bool):
+            raise JobException(f"{key} must be true or false", "bad-params")
     for rx_key in ("text_regex", "after_heading_regex"):
         if rx_key in pred:
             if not isinstance(pred[rx_key], str):
                 raise JobException(f"{rx_key} must be a regex string", "bad-params")
             try:
-                re.compile(pred[rx_key])
+                _selector_regex(pred[rx_key], pred)
             except re.error as e:
                 raise JobException(f"bad {rx_key}: {e}", "bad-params")
     if "style_in" in pred and (not isinstance(pred["style_in"], (list, tuple))
@@ -112,11 +118,11 @@ def check_paragraph_selector(pred) -> None:
         if extra:
             raise JobException(f"unknown between_paragraphs key(s) {sorted(extra)}", "bad-params")
         try:
-            re.compile(bp["start_regex"])
+            _selector_regex(bp["start_regex"], pred)
             if bp.get("end_regex") is not None:
                 if not isinstance(bp["end_regex"], str):
                     raise JobException("between_paragraphs.end_regex must be a string", "bad-params")
-                re.compile(bp["end_regex"])
+                _selector_regex(bp["end_regex"], pred)
         except re.error as e:
             raise JobException(f"bad between_paragraphs regex: {e}", "bad-params")
 
@@ -391,8 +397,46 @@ def _block_text_with_tabs(p: etree._Element) -> str:
     return "".join(parts).replace("\u00a0", " ")
 
 
-def _rx_matches(pattern: str, raw_text: str, p: etree._Element) -> bool:
-    rx = re.compile(pattern)
+def _selector_regex(pattern: str, pred) -> Any:
+    original = re.compile(pattern, re.IGNORECASE if pred.get("case_insensitive") else 0)
+    verbose = bool(original.flags & re.VERBOSE) or re.search(r"\(\?[aiLmsux-]*x[aiLmsux-]*[:)]", pattern)
+    if pred.get("flexible_whitespace") and not verbose:
+        pieces, in_class, class_position, escaped, i = [], False, 0, False, 0
+        while i < len(pattern):
+            char = pattern[i]
+            if escaped:
+                pieces.append(char)
+                escaped = False
+                if in_class:
+                    class_position = 2
+            elif char == "\\":
+                pieces.append(char)
+                escaped = True
+            elif in_class:
+                pieces.append(char)
+                if char == "]" and class_position == 2:
+                    in_class = False
+                elif char == "^" and class_position == 0:
+                    class_position = 1
+                else:
+                    class_position = 2
+            elif char == "[":
+                in_class = True
+                class_position = 0
+                pieces.append(char)
+            elif char.isspace():
+                pieces.append(r"(?:\s+)")
+                while i + 1 < len(pattern) and pattern[i + 1].isspace():
+                    i += 1
+            else:
+                pieces.append(char)
+            i += 1
+        pattern = "".join(pieces)
+    return re.compile(pattern, re.IGNORECASE if pred.get("case_insensitive") else 0)
+
+
+def _rx_matches(pattern: str, raw_text: str, p: etree._Element, pred=None) -> bool:
+    rx = _selector_regex(pattern, pred or {})
     if rx.search(raw_text) is not None:
         return True
     return rx.search(_block_text_with_tabs(p)) is not None
@@ -412,7 +456,7 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
         return True
     if "style_in" in pred and sheet.paragraph_style_id(p) not in set(pred["style_in"]):
         return False
-    if "text_regex" in pred and not _rx_matches(pred["text_regex"], text, p):
+    if "text_regex" in pred and not _rx_matches(pred["text_regex"], text, p, pred):
         return False
     if "in_table" in pred:
         cell = p.getparent()
@@ -432,21 +476,21 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
         return False
     if "after_heading_regex" in pred:
         texts = _part_texts(p, all_pars)
-        rx = re.compile(pred["after_heading_regex"])
+        rx = _selector_regex(pred["after_heading_regex"], pred)
         hits = [i for i, t in enumerate(texts) if rx.search(t)]
         if not hits or index <= hits[0]:
             return False
     if "between_paragraphs" in pred:
         bp = pred["between_paragraphs"]
         texts = _part_texts(p, all_pars)
-        srx = re.compile(bp["start_regex"])
+        srx = _selector_regex(bp["start_regex"], pred)
         starts = [i for i, t in enumerate(texts) if srx.search(t)]
         if not starts:
             return False
         s_idx = starts[0]
         e_idx = len(texts)
         if bp.get("end_regex") is not None:
-            erx = re.compile(bp["end_regex"])
+            erx = _selector_regex(bp["end_regex"], pred)
             ends = [i for i in range(s_idx + 1, len(texts)) if erx.search(texts[i])]
             if ends:
                 e_idx = ends[0]
@@ -613,7 +657,9 @@ def section_reads(pkg: DocxPackage, sections) -> List[Touch]:
 # ---- shared parameter parsing for the font ops ------------------------------------------------------
 
 FONT_PARAM_DOC = {
-    "font": {"type": "string", "description": "shorthand: sets ascii, hAnsi and cs (eastAsia untouched)"},
+    "font": {"type": "string", "description": "shorthand: sets ascii, hAnsi and cs; eastAsia only with east_asia: true"},
+    "east_asia": {"type": "boolean", "default": False,
+                  "description": "also apply the font shorthand to eastAsia; absent/false leaves that slot alone"},
     "ascii": {"type": ["string", "null"]}, "hAnsi": {"type": ["string", "null"]},
     "cs": {"type": ["string", "null"]},
     "eastAsia": {"type": ["string", "null"], "description": "null/absent = leave the East Asian slot alone"},
@@ -634,10 +680,16 @@ FONT_PARAM_DOC = {
 
 def font_values(params: Dict[str, Any]) -> Dict[str, str]:
     values: Dict[str, str] = {}
+    if "east_asia" in params and not isinstance(params["east_asia"], bool):
+        raise JobException("'east_asia' must be a boolean", "bad-params")
+    if params.get("east_asia") and params.get("font") is None:
+        raise JobException("'east_asia: true' needs the 'font' shorthand", "bad-params")
     if params.get("font") is not None:
         if not isinstance(params["font"], str) or not params["font"].strip():
             raise JobException("'font' must be a non-empty font name", "bad-params")
         values = {"ascii": params["font"], "hAnsi": params["font"], "cs": params["font"]}
+        if params.get("east_asia"):
+            values["eastAsia"] = params["font"]
     for slot in ("ascii", "hAnsi", "eastAsia", "cs"):
         if params.get(slot) is not None:
             if not isinstance(params[slot], str) or not params[slot].strip():

@@ -37,13 +37,16 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     ],
     "set_font": [
         "Symbol/Wingdings runs (bullets, special characters) are left alone — changing them changes the glyphs",
-        "the eastAsia font slot is unchanged unless asked",
+        "font shorthand changes ascii/hAnsi/cs; eastAsia stays unless east_asia:true or that slot is explicitly requested",
+        "used body list-level fonts follow whole-document selections by default; numbering_levels:false keeps them, "
+        "numbering_levels:true opts in for a targeted selection; symbol/picture labels and label sizes stay",
         "font size is unchanged unless a size was asked; a size goes only on runs that set their own size (the rest "
         "follows its styles), and with size_from only on the listed sizes — e.g. 9 pt text becomes 10 pt while 8 pt "
         "headers and a 12 pt note keep their size; the complex-script size is left alone",
         "runs inside pending tracked changes are included unless 'leave revisions alone' was asked",
     ],
-    "set_style_font": ["only styles that already name a font (or set a size) change; the others inherit it"],
+    "set_style_font": ["only styles that already name a font (or set a size) change; the others inherit it",
+                       "styles all also updates used body list-level fonts; numbering_levels:false opts out"],
     "set_doc_defaults_font": ["the document default font (and size) changes, so inheriting text follows; with size_from "
                               "its size changes only when it is one of those sizes"],
     "set_paragraph_props": [
@@ -475,12 +478,12 @@ FILL_RULES = {
                "it makes the op untracked and the words must appear verbatim in the request or the user's answers",
     "regex": "{rule: 'regex', pattern: '<Python regex>', source?: 'document' | 'header.<default|first|even>' | "
              "'footer.<default|first|even>' (default 'document'), section?: <int>, occurrence?: 'all' | 'first' (default "
-             "'all'), flexible_whitespace?: bool (default true), strip?: bool (default true)} — searched in the display "
+             "'all'), case_insensitive?: bool (default false), flexible_whitespace?: bool (default true), strip?: bool (default true)} — searched in the display "
              "text of every paragraph of the source; the fill is group 1 if the pattern has groups, else the whole match; "
              "with 'all' every match must agree (compared with whitespace collapsed), otherwise the file is set aside as "
              "'ambiguous'",
     "paragraph_after": "{rule: 'paragraph_after', anchor_regex: '<regex>', source?, section?, occurrence?, "
-                       "flexible_whitespace?, strip?} — the display text of the first non-blank paragraph after a paragraph "
+                       "case_insensitive?, flexible_whitespace?, strip?} — the display text of the first non-blank paragraph after a paragraph "
                        "matching anchor_regex (e.g. the title under a standalone 'SECTION 21 13 13' line); several anchors "
                        "are fine when the paragraphs that follow them agree, or occurrence is 'first'",
     "first_match": "{rule: 'first_match', rules: [<rule>, <rule>, …]} — tries the rules in order and uses the first that "
@@ -496,7 +499,7 @@ FILL_RULES = {
                    "least 3 letters/digits",
     "whitespace": "with flexible_whitespace (default true) a pattern or anchor that fails on the raw text is retried on a "
                   "view where tabs, non-breaking spaces and runs of spaces are one space; the fill keeps the document's "
-                  "own characters whenever the raw match succeeded. Fills are stripped of surrounding whitespace and must "
+                  "own characters, including on the normalized matching path. Fills are stripped of surrounding whitespace and must "
                   "be non-empty; nothing is ever typed into a slot except a 'literal'",
 }
 
@@ -516,12 +519,13 @@ EXPECT_SYNTAX = {
 # spec's own values (read_template shows them and where its headers/footers show them) and each spec's own.
 REFERENCE_FILLS = {
     "SECTION_NUMBER": {"rule": "regex", "source": "document",
-                       "pattern": r"^SECTION\s+(\d{2}\s?\d{2}\s?\d{2}(?:\.\d{2})?)\b"},
+                       "case_insensitive": True,
+                       "pattern": r"^SECTION\s+(\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?)\b"},
     "SECTION_TITLE": {"rule": "first_match", "rules": [
-        {"rule": "paragraph_after", "source": "document",
-         "anchor_regex": r"^SECTION\s+\d{2}\s?\d{2}\s?\d{2}(?:\.\d{2})?\s*$"},
-        {"rule": "regex", "source": "document",
-         "pattern": r"^SECTION\s+\d{2}\s?\d{2}\s?\d{2}(?:\.\d{2})?\s*[-–—:]\s*(.+)$"}]},
+        {"rule": "paragraph_after", "source": "document", "case_insensitive": True,
+         "anchor_regex": r"^SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\s*$"},
+        {"rule": "regex", "source": "document", "case_insensitive": True,
+         "pattern": r"^SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\s*[-–—:]\s*(.+)$"}]},
 }
 
 SELECTOR_GRAMMAR = {
@@ -529,6 +533,8 @@ SELECTOR_GRAMMAR = {
     "paragraphs": "'all' or AND of: style_in [styleIds] (no pStyle = default paragraph style), text_regex (Python "
                   "re.search on the block text), in_table (bool), is_empty (bool), index_range [start, end), "
                   "has_bold (bool), is_all_caps (bool), after_heading_regex (str), "
+                  "case_insensitive (bool, default false), flexible_whitespace (bool, default false; literal whitespace "
+                  "outside regex character classes matches one or more whitespace characters), "
                   "between_paragraphs {start_regex, end_regex?, include_bounds?}",
     "runs": "'all' or {has_direct_font: bool, font_in: [names], not_in_revisions: bool, color_in: [colours]} — "
             "color_in: the run's effective colour (direct, else its character/paragraph style's) is one of the listed "
@@ -611,6 +617,15 @@ def editspec_json_schema() -> Dict[str, Any]:
                 "kind": {"enum": list(SPEC_ASSERTION_KINDS)}}, "required": ["kind"]}},
             "unsupported": {"type": "string"},
             "proposal": {"type": "string"},
+            "bindings": {"type": "array", "items": {"type": "object", "additionalProperties": False,
+                "required": ["file", "md5", "slots"], "properties": {
+                    "file": {"type": "string", "description": "Absolute source path from inspection"},
+                    "md5": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+                    "slots": {"type": "object", "minProperties": 1, "additionalProperties": {
+                        "type": "object", "additionalProperties": False, "required": ["value", "part", "paragraph"],
+                        "properties": {"value": {"type": "string", "minLength": 1},
+                                       "part": {"type": "string", "minLength": 1},
+                                       "paragraph": {"type": "integer", "minimum": 0}}}}}}},
         },
     }
 
@@ -679,3 +694,21 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
     if examples:
         cat["worked_examples"] = worked_examples()
     return cat
+
+
+def op_index() -> Dict[str, Any]:
+    """Small discovery index. Full schemas and examples are fetched with describe_op."""
+    return {name: {"mode": cls.mode, "description": cls.description.split(". ", 1)[0][:180]}
+            for name, cls in sorted(OPS.items())}
+
+
+def describe_op(name: str) -> Dict[str, Any]:
+    """Return current operation documentation, including only its relevant examples."""
+    if name not in OPS:
+        raise ValueError(f"Unknown operation {name!r}; choose a name from the operation index.")
+    catalog = op_catalog(examples=False)
+    return {"name": name, **catalog["ops"][name],
+            **{key: catalog[key] for key in ("selector_grammar", "fill_rules", "reference_fills",
+                                            "expect_checks", "expect_syntax", "spec_assertions")},
+            "worked_examples": [example for example in worked_examples()
+                                if any(op.get("op") == name for op in example.get("ops", []))]}

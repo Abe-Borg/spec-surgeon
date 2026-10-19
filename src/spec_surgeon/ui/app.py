@@ -13,9 +13,11 @@ installed-app smoke test drive it through ``window._spec_surgeon`` (buttons, val
 from __future__ import annotations
 
 import json
+import copy
 import logging
 import os
 import sys
+import threading
 import time
 import traceback
 from logging.handlers import RotatingFileHandler
@@ -26,12 +28,12 @@ from PySide6.QtCore import QByteArray, QModelIndex, QSize, Qt, QTimer, QUrl, Sig
 from PySide6.QtGui import QAction, QDesktopServices, QIcon, QKeySequence, QShortcut
 from PySide6.QtWidgets import (QAbstractItemView, QApplication, QComboBox, QDialog, QDialogButtonBox, QFileDialog, QFrame, QHBoxLayout, QLabel,
                                QListWidget, QListWidgetItem, QMainWindow, QMessageBox, QPlainTextEdit, QProgressBar,
-                               QPushButton, QSplitter, QStackedWidget, QVBoxLayout, QWidget)
+                               QPushButton, QSplitter, QStackedWidget, QTableWidgetItem, QVBoxLayout, QWidget)
 
 from .. import __version__, about, credentials, llm, winapp
 from .. import diagnostics as diag
 from ..gui import NEEDS_KEY, NEEDS_KEY_ADVICE, NEEDS_KEY_REPLY, Session, open_folder
-from ..settings import Settings, load_settings, logs_dir, save_settings
+from ..settings import Settings, load_settings, logs_dir, save_settings, output_root_warnings
 from . import theme
 from .about_dialog import AboutDialog, about_text
 from .chat import cost_line, current_choices, transcript, waiting_for_user
@@ -297,6 +299,7 @@ class MainWindow(QMainWindow):
                     min(840, int(avail.height() * 0.9)) if avail else 840)
         self.bridge = Bridge(self)
         self.bridge.log.connect(self._job_log)
+        self.bridge.model_progress.connect(self._job_model_progress)
         self.bridge.done.connect(self._job_done)
         self.bridge.failed.connect(self._job_failed)
         self.updates = UpdateController(self, **update_kw)
@@ -518,9 +521,44 @@ class MainWindow(QMainWindow):
         self.busy_bar.setRange(0, 0)
         self.busy_bar.hide()
         sb.addPermanentWidget(self.busy_bar)
+        self.cancel_btn = QPushButton("Cancel", self)
+        self.cancel_btn.setToolTip("Stop before the next model call; the current call finishes first.")
+        self.cancel_btn.clicked.connect(self._cancel_job)
+        self.cancel_btn.hide()
+        sb.addPermanentWidget(self.cancel_btn)
+        self._progress_timer = QTimer(self)
+        self._progress_timer.setInterval(1000)
+        self._progress_timer.timeout.connect(self._update_model_progress)
+
+    @Slot()
+    def _cancel_job(self) -> None:
+        event = getattr(self, "_cancel_event", None)
+        if self.busy and event is not None:
+            event.set()
+            self.cancel_btn.setEnabled(False)
+            self.cancel_btn.setText("Cancelling…")
+            self.status_lbl.setText("Cancel requested; finishing the current model call.")
+
+    @Slot()
+    def _update_model_progress(self) -> None:
+        if not self.busy:
+            return
+        elapsed = int(time.perf_counter() - self._job_started)
+        totals = getattr(self, "_job_model_totals", {})
+        calls, cost = totals.get("calls", 0), totals.get("cost", "cost pending")
+        if not self._cancel_event.is_set():
+            self.status_lbl.setText(f"{self._job_context['action']} · {elapsed // 60}:{elapsed % 60:02d} elapsed "
+                                    f"· {calls} model call(s) · {cost}")
+
+    @Slot(object)
+    def _job_model_progress(self, totals) -> None:
+        self._job_model_totals = totals
+        self._update_model_progress()
 
     def _wire(self) -> None:
         f, r, p, run = self.files_page, self.request_page, self.preview_page, self.run_page
+        p.bindings_table.cellChanged.connect(self._binding_edited)
+        p.bindings_apply.clicked.connect(self._apply_bindings)
         self.nav.currentRowChanged.connect(self._nav_changed)
         f.next_btn.clicked.connect(self._go_request)
         r.back_btn.clicked.connect(self._go_files)
@@ -602,7 +640,7 @@ class MainWindow(QMainWindow):
         self.job_buttons = [r.preview_btn, r.load_btn, run.run_btn, run.set_aside_btn, run.advise_btn, run.resolve_btn,
                             p.review_ack_btn, p.outcome_approve_btn, r.library_btn, r.chain_btn, p.save_btn, self.act_load, self.act_library,
                             self.act_chain, self.act_workflows, self.act_office_profiles, r.workflows_btn, self.act_memory, self.act_campaign, self.act_recovery, self.act_audit,
-                            run.load_recovery_btn]
+                            run.load_recovery_btn, p.bindings_apply]
 
     # ---- values ---------------------------------------------------------------------------------------
     def _load_values(self, fresh: bool) -> None:
@@ -629,6 +667,14 @@ class MainWindow(QMainWindow):
             except Exception:
                 pass
         self.set_log_open(st.log_open)
+        self._refresh_output_warnings()
+
+    def _refresh_output_warnings(self) -> None:
+        f = self.files_page
+        warnings = output_root_warnings(f.out.text()) if f.out.text() else []
+        f.out.setToolTip("\n".join(warnings))
+        f.out_warning.setText("\n".join(warnings))
+        f.out_warning.setVisible(bool(warnings))
 
     def save_settings(self) -> None:
         st = self.settings
@@ -656,6 +702,7 @@ class MainWindow(QMainWindow):
         s.template = Path(f.template.text()) if f.template.text() else None
         if f.out.text():
             s.out_root = Path(f.out.text())
+        self._refresh_output_warnings()
         if before != (s.folder, s.template, s.out_root):
             diag.event("ui.inputs.changed", session_id=s.diagnostic_id,
                        folder=str(s.folder) if s.folder else None, template=str(s.template) if s.template else None,
@@ -850,7 +897,7 @@ class MainWindow(QMainWindow):
         else:
             preview = STEP_HINTS[2]
         if current and s.run_blocked_reason():
-            preview = "Review requested outcomes before Run" if self._outcomes_pending() else "Look at Claude's findings before Run"
+            preview = s.run_blocked_reason().splitlines()[0]
         if ran:
             c = self._result_counts
             problems = c["FAIL"] + c["EXCEPTION"]
@@ -873,11 +920,15 @@ class MainWindow(QMainWindow):
         ready = not pending_custom and (s.recovery is None or bool(s.recovery.ready))
         run.run_btn.setEnabled(current and ready and not blocked and not self.busy and not self.updating)
         run.run_btn.setText("Export recovery copies" if s.recovery is not None else "Run")
-        can_resolve = (s.last_run_dir is not None or s.preview is not None or s.recovery is not None
-                       or getattr(s, "pending_recovery_run", None) is not None
-                       or (self._files_ok and bool(self.typed_request())))
+        preview_problems = s.preview is not None and (bool(s.preview.batch_plan.exceptions)
+                           or any(not sample.passed for sample in s.preview.samples))
+        recovery_problems = s.recovery is not None and any(f.status != "READY" for f in s.recovery.files)
+        can_resolve = bool(preview_problems or recovery_problems or
+                          self._result_counts["FAIL"] + self._result_counts["EXCEPTION"] or
+                          getattr(s, "pending_recovery_run", None) is not None)
         run.resolve_btn.setEnabled(can_resolve and self.claude_ok and not self.busy and not self.updating)
-        run.resolve_btn.setToolTip("Investigate remaining files on copies" if self.claude_ok else
+        run.resolve_btn.setToolTip("Nothing to resolve: 0 exceptions or failed checks." if not can_resolve else
+                                  "Investigate remaining files on copies" if self.claude_ok else
                                   "Recovery needs an Anthropic API key; set one in Settings.")
         if self.busy:
             hint = ""
@@ -890,23 +941,23 @@ class MainWindow(QMainWindow):
         elif not current:
             hint = "Something changed since the preview — press Preview again."
         elif blocked:
-            # the action bar holds one short line; the full reason is the tooltip and do_run's message
-            hint = ("Review requested outcomes and targets on the Preview step" if self._outcomes_pending() else
-                    "Claude's visual check flagged problems — see the Preview step")
+            hint = blocked.splitlines()[0]
         else:
             hint = ""
         run.run_hint.setText(hint)
         run.run_hint.setToolTip(blocked)
+        run.run_btn.setToolTip(hint or blocked or "Apply the approved preview and deliver verified files.")
         p.continue_hint.setText("Preview first" if not (s.preview or s.generated or s.recovery) else
                                 ("Something changed — press Preview again" if not current else
-                                 (("Review requested outcomes above first" if self._outcomes_pending() else
-                                   "Look at Claude's findings above first") if blocked else "")))
+                                 (blocked.splitlines()[0] if blocked else "")))
         generated = s.generated is not None or s.recovery is not None
         run.inplace_rb.setEnabled(not generated)
         if generated:
             run.copies_rb.setChecked(True)
         p.continue_btn.setEnabled(current and not pending_custom)
+        p.continue_btn.setToolTip(p.continue_hint.text() or "Review delivery options and run this preview.")
         live = current and not self.busy and not self.updating     # both refuse anything but the current preview:
+        p.bindings_table.setEnabled(not self.busy and not self.updating)
         p.save_btn.setEnabled(live and s.recovery is None and not pending_custom)
         p.review_ack_btn.setEnabled(live)
         review = getattr(s, "outcome_review", None)
@@ -981,6 +1032,7 @@ class MainWindow(QMainWindow):
     @Slot(str)
     def _path_changed(self, _value: str) -> None:
         f = self.files_page
+        self._refresh_output_warnings()
         f.drop.setVisible(not f.folder.text() and self.session.selected_files is None)   # at once, not after the timer
         self._files_timer.start()
         self._inputs_changed()
@@ -1118,6 +1170,9 @@ class MainWindow(QMainWindow):
         for view in (self.request_page.chat, self.preview_page.chat):
             view.set_busy(on or self.updating)
         self.busy_bar.setVisible(on)
+        if not on:
+            self._progress_timer.stop()
+            self.cancel_btn.hide()
         self.set_status(text if on else READY)
         self.busyChanged.emit(on)
         self._refresh_run_state()
@@ -1155,9 +1210,16 @@ class MainWindow(QMainWindow):
             page.info.hide()
         self._job_context = {"session_id": self.session.diagnostic_id, "action_id": diag.new_id(), "action": label_}
         self._job_started = time.perf_counter()
+        self._job_model_totals = {"calls": 0, "cost": "cost pending"}
+        self._cancel_event = threading.Event()
+        self.cancel_btn.setText("Cancel")
+        self.cancel_btn.setEnabled(True)
+        self.cancel_btn.setVisible(label_ in {"Preview", "Reply", "Resolve remaining files",
+                                            "Advice on exceptions", "Create approved custom transform"})
+        self._progress_timer.start()
         with diag.scope(**self._job_context):
             diag.event("ui.action.queued", tracked=track, step=self.stack.currentIndex() + 1)
-            start_job(self.bridge, fn)
+            start_job(self.bridge, fn, cancel_event=self._cancel_event)
         return True
 
     @Slot(str)
@@ -1202,24 +1264,35 @@ class MainWindow(QMainWindow):
 
     @Slot(str, str)
     def _job_failed(self, message: str, tb: str) -> None:
-        diag.event("ui.action.failed", level="error", **getattr(self, "_job_context", {}),
-                   message=message, traceback=tb,
+        cancelled = message.startswith("UserCancelled:")
+        diag.event("ui.action.cancelled" if cancelled else "ui.action.failed",
+                   level="info" if cancelled else "error", **getattr(self, "_job_context", {}),
+                   message=message, **({} if cancelled else {"traceback": tb}),
                    duration_ms=round((time.perf_counter() - getattr(self, "_job_started", time.perf_counter()))
                                      * 1000, 3))
         self._on_done = None
-        self.log.appendPlainText("ERROR: " + message + "\n" + "\n".join("    " + line for line in tb.rstrip().splitlines()))
-        self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
-        _append_error_log(f"{message}\n{tb}")
+        if cancelled:
+            self.write("Cancelled before the next model call. Your source files were not changed.")
+        else:
+            self.log.appendPlainText("ERROR: " + message + "\n" + "\n".join("    " + line for line in tb.rstrip().splitlines()))
+            self.log.verticalScrollBar().setValue(self.log.verticalScrollBar().maximum())
+            _append_error_log(f"{message}\n{tb}")
         self.run_page.progress_box.hide()
         self.set_busy(False)
         self._refresh_chat()
-        self.set_status(ERROR)
+        self.set_status("Cancelled" if cancelled else ERROR)
         page = getattr(self, "_job_page", None) or self.stack.currentWidget()
         if page is not self.stack.currentWidget():
             self.go(self.stack.indexOf(page))
         if page is self.run_page and self.run_page.results.isHidden():
             self.run_page.empty.show()
-        page.info.show_message("error", "That didn't work", message, [("Show log", self._open_log),
+        kind, _, detail = message.partition(": ")
+        expected = kind in {"ValueError", "OperationFailed", "TrialsFailed", "TransformFailed", "SpecError",
+                            "FileNotFoundError", "PermissionError", "LibraryError"}
+        explanation = ("Cancelled before the next model call. Your source files were not changed." if cancelled else
+                       detail if expected and detail else
+                       "The action could not finish. Save diagnostics so the failure can be investigated.")
+        page.info.show_message("info" if cancelled else "error", "Cancelled" if cancelled else "That didn't work", explanation, [("Show log", self._open_log),
                                                                       ("Save diagnostics…", self.save_bundle)])
 
     @Slot()
@@ -1382,8 +1455,71 @@ class MainWindow(QMainWindow):
         self._fill_preview()
         self.go(2)
 
+    def _fill_bindings(self) -> None:
+        page, spec = self.preview_page, self.session.spec or {}
+        bindings = spec.get("bindings", [])
+        page.bindings_card.setVisible(bool(bindings))
+        table = page.bindings_table
+        table.blockSignals(True)
+        try:
+            self._binding_rows = [(i, slot) for i, entry in enumerate(bindings) for slot in entry["slots"]]
+            table.setRowCount(len(self._binding_rows))
+            for row, (index, slot) in enumerate(self._binding_rows):
+                entry, value = bindings[index], bindings[index]["slots"][slot]
+                cells = [f"{Path(entry['file']).name} / {slot}", value["value"], value["part"],
+                         str(value["paragraph"] + 1), entry["md5"]]
+                for column, text in enumerate(cells):
+                    item = QTableWidgetItem(text)
+                    if column in (0, 4):
+                        item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                    table.setItem(row, column, item)
+        finally:
+            table.blockSignals(False)
+
+    @Slot(int, int)
+    def _binding_edited(self, row: int, column: int) -> None:
+        self.preview_key = None
+        self.preview_page.info.show_message("info", "Fills changed", "Preview the revised fills before running.")
+        self._refresh_run_state()
+
+    @Slot()
+    def _apply_bindings(self) -> bool:
+        if self.busy or self.updating or self.session.spec is None:
+            return False
+        candidate = copy.deepcopy(self.session.spec)
+        table = self.preview_page.bindings_table
+        try:
+            for row, (index, slot) in enumerate(self._binding_rows):
+                value = candidate["bindings"][index]["slots"][slot]
+                try:
+                    paragraph = int(table.item(row, 3).text())
+                    if paragraph < 1:
+                        raise ValueError()
+                except ValueError:
+                    self.preview_page.info.text.setTextFormat(Qt.TextFormat.PlainText)
+                    self.preview_page.info.show_message("warn", "Fill needs correction",
+                        f"{table.item(row, 0).text()}: enter a paragraph number of 1 or higher.")
+                    return False
+                value.update(value=table.item(row, 1).text(), part=table.item(row, 2).text(),
+                             paragraph=paragraph - 1)
+            from ..editspec import validate_spec, plan_spec
+            from ..package import DocxPackage
+            validate_spec(candidate)
+            for entry in candidate["bindings"]:
+                plan_spec(DocxPackage.from_path(entry["file"]), candidate)
+        except Exception as error:
+            self.preview_page.info.text.setTextFormat(Qt.TextFormat.PlainText)
+            self.preview_page.info.show_message("warn", "Fill needs correction", str(error))
+            return False
+        self.session.spec = candidate
+        render = self.request_page.render_cb.isChecked()
+        key = self._widget_key()
+        return self._work("Preview", lambda log: self.session.make_preview(render, log),
+                          on_done=lambda text: self._after_preview(text, key), page=self.preview_page)
+
     def _fill_preview(self) -> None:
         s, p = self.session, self.preview_page
+        self._fill_bindings()
         if s.recovery is None:
             if self.run_page.recovery_question.count() > 1:
                 self.run_page.recovery_request.clear()
@@ -1500,7 +1636,7 @@ class MainWindow(QMainWindow):
 
     def _fill_outcome_review(self) -> None:
         s, p = self.session, self.preview_page
-        visible = s.recovery is None and bool(s.preview is not None or s.generated_preview is not None
+        visible = getattr(s, "outcome_review", None) is not None and s.recovery is None and bool(s.preview is not None or s.generated_preview is not None
                                              or getattr(s, "pending_custom_transform", None) is not None)
         p.outcome_card.setVisible(visible)
         if not visible:
@@ -1642,19 +1778,16 @@ class MainWindow(QMainWindow):
             if not rv.findings:
                 lines.append("No findings.")
             if rv.usage.calls:
-                lines.append(f"Claude: {rv.usage.line()}")
+                lines.append(f"Visual check: {rv.seconds:.1f}s · {rv.usage.line()}")
         p.review_lbl.setText("\n".join(lines))
         blocking = rv.blocking()
-        acked = bool(blocking) and getattr(pv, "review_ack", "") == token
-        if blocking and not acked:
+        if blocking:
             p.review_bar.show_message("warn", "Look before you run",
-                                      f"Claude flagged {len(blocking)} problem(s) it rates as blocking. Look at the "
-                                      f"pages above; Run stays off until you acknowledge them (or change the request).")
-        elif acked:
-            p.review_bar.show_message("info", "Acknowledged", "You have looked at Claude's findings for this preview.")
+                                      f"Claude flagged {len(blocking)} problem(s). Inspect the pages before "
+                                      "approving this preview, or revise the request.")
         else:
             p.review_bar.hide()
-        p.review_ack_btn.setVisible(bool(blocking) and not acked)
+        p.review_ack_btn.hide()
 
     @Slot()
     def do_ack_review(self) -> bool:

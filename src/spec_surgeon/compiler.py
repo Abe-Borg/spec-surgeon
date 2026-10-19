@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence
 
-from .catalog import op_catalog
+from .catalog import op_catalog, op_index, describe_op
 from .editspec import SpecError, plan_spec, validate_spec
 from .fingerprint import fingerprint
 from .ops import JobException
@@ -71,6 +71,10 @@ PATTERN_SENSITIVE_CODES = {"unfilled-slot", "expect", "not-found", "ambiguous"}
 SPEC_LEVEL_CODES = FATAL_SPEC_CODES | {"unfilled-slot", "expect"}
 
 INSPECTION_TOOLS = [
+    {"name": "describe_op", "description": "Read an operation's full current selector/parameter schemas, "
+     "verification rules, fill rules and relevant worked examples. Call before first using that operation; "
+     "the system prompt contains only a discovery index.",
+     "input_schema": {"type": "object", "properties": {"name": {"type": "string"}}, "required": ["name"]}},
     {"name": "inspect_template_styles", "description": "Preflight header/footer style compatibility against one "
      "destination. Reports automatic mappings by default role, name and linked-style identity, plus isolated "
      "imports for collisions. Different Word-language IDs do not require rebuilding the template. This is a "
@@ -462,11 +466,21 @@ CHAT_TOOLS = [ASK_USER_CHAT if t["name"] == "ask_user" else t for t in TOOLS] + 
 
 def system_prompt(chat: bool = False) -> str:
     """The system prompt — built once per conversation and never changed during it."""
-    # Keep every catalog entry while leaving room for the visual inspection exchange.
     return (SYSTEM + (CHAT_NOTE if chat else "")
-            + "\nOP CATALOG (ops, selector grammar, common assumptions, custom_transform_limits, the EditSpec JSON schema, "
-            "worked examples):\n"
-            + json.dumps(op_catalog(), ensure_ascii=False, separators=(",", ":")))
+            + "\nOP CATALOG INDEX (call describe_op before using an operation; it returns its full schema, "
+            "selector/fill grammar and examples):\n"
+            + json.dumps(op_index(), ensure_ascii=False, separators=(",", ":"))
+            + "\nEditSpec fields: request, summary, mode (formatting/content/untracked), assumptions, questions, "
+            "ops [{op, select, params, expect}], review {sample_files, geometry_reference}, assertions. "
+            "Use only documented operation parameters. No second outcome plan is required. "
+            "Font shorthand sets ascii/hAnsi/cs; eastAsia requires east_asia:true. Whole-document font changes "
+            "include used list-label fonts, preserving symbol fonts; numbering_levels:false opts out. "
+            "Optional bindings: [{file: absolute source path, md5: source digest, slots: {slot_name: "
+            "{value: exact source substring, part: package member, paragraph: zero-based index}}}]. "
+            "Use inspected per-file bindings for titles/numbers; preserve the exact source case and spacing. "
+            "Bindings override slot_fills fallback rules and require exact source evidence. "
+            "Custom transform limits:\n"
+            + json.dumps(op_catalog(examples=False)["custom_transform_limits"], ensure_ascii=False))
 
 
 @dataclass
@@ -622,6 +636,10 @@ class _Batch:
     """The batch as the tools see it: files by label (``file_labels`` — the name, or the name with the folders that
     tell two same-named files apart), profiles by pattern (the pattern's ``files`` are those labels)."""
 
+    @staticmethod
+    def describe_op(name: str):
+        return describe_op(name)
+
     def __init__(self, files: Sequence[Path], template: Optional[Path]):
         paths = [Path(f) for f in files]
         self.labels = file_labels(paths)                       # str(path) → label
@@ -681,11 +699,15 @@ class _Batch:
                     e["file"] = self.labels.get(path, e["file"])
 
     def pkg(self, name: str) -> DocxPackage:
-        if name not in self.files:
+        if name == "template" and self.template:
+            path = self.template
+        elif name in self.files:
+            path = self.files[name]
+        else:
             raise KeyError(f"no file {name!r} in this batch; files: {sorted(self.files)[:12]}")
-        self.check_source_pin(self.files[name])
+        self.check_source_pin(path)
         if name not in self._pkgs:
-            self._pkgs[name] = DocxPackage.from_path(self.files[name])
+            self._pkgs[name] = DocxPackage.from_path(path)
         return self._pkgs[name]
 
     def representatives(self) -> List[Path]:
@@ -697,6 +719,9 @@ class _Batch:
 
     def summary(self) -> Dict[str, Any]:
         return {"files": self.prof["files"],
+                "binding_sources": [{"file": label, "path": str(path.resolve()),
+                                     "md5": hashlib.md5(path.read_bytes()).hexdigest()}
+                                    for label, path in self.files.items()],
                 "patterns": [{"pattern_id": p["pattern_id"], "count": p["count"], "files": p["files"][:10],
                               "profile": p["profile"]} for p in self.prof["patterns"][:4]]
                 + [{"pattern_id": p["pattern_id"], "count": p["count"], "files": p["files"][:5],
@@ -1147,6 +1172,21 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     is rejected with every file's refusal, so the model can fix the spec instead of the batch setting every file
     aside; a batch with no files is rejected outright.
     """
+    # Every per-file literal is checked, even when another file of the same pattern plans successfully.
+    from .ops.slots import extract_fill
+    allowed = {str(path.resolve()): path for path in batch.files.values()}
+    for binding in spec.get("bindings", []):
+        identity = str(Path(binding["file"]).resolve())
+        if identity not in allowed:
+            return [f"[binding-source] bound file {binding['file']!r} is outside this batch"]
+        path = allowed[identity]
+        try:
+            batch.check_source_pin(path)
+            pkg = DocxPackage.from_path(path)
+            for name, slot in binding["slots"].items():
+                extract_fill(pkg, name, {"rule": "binding", "source_md5": binding["md5"], **slot})
+        except Exception as exc:  # noqa: BLE001 — unreadable bound sources are compile refusals too
+            return [f"[binding-source] {batch.label(path)}: {exc}"]
     if not batch.representatives():
         return ["the batch has no .docx files to plan on"]
     fatal_errs: List[str] = []

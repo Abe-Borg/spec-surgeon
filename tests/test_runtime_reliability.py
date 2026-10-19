@@ -196,6 +196,26 @@ def test_both_batch_pools_use_spawn_even_when_frozen(monkeypatch):
     assert calls == ["spawn", "spawn"]
 
 
+@pytest.mark.parametrize("worker_mode,frozen", [("thread", False), ("serial", False), ("process", True)])
+def test_batch_uses_safe_workers_by_default_and_in_frozen_build(tmp_path, monkeypatch, worker_mode, frozen):
+    def unexpected_pool(*args, **kwargs):
+        pytest.fail("safe worker modes must not start a process pool")
+
+    monkeypatch.setattr(batch, "_process_pool", unexpected_pool)
+    monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+    if worker_mode == "serial":
+        monkeypatch.setattr(batch, "ThreadPoolExecutor", unexpected_pool)
+    sources = []
+    for index in range(2):
+        source = tmp_path / f"spec-{index}.docx"
+        source.write_bytes(build("21 13 13", f"WET-PIPE {index}"))
+        sources.append(str(source))
+    options = {} if worker_mode == "thread" else {"worker_mode": worker_mode}
+    result = batch.run_batch(sources, "page-numbering", {"option": "continuous"}, tmp_path / "run",
+                             workers=2, do_render=False, **options)
+    assert len(result.files) == 2 and all(file.output and file.output.exists() for file in result.files)
+
+
 def test_frozen_launcher_handles_spawn_before_app_mutex_or_ui(monkeypatch):
     from spec_surgeon import winapp
     path = Path(__file__).resolve().parents[1] / "packaging/windows/launcher_bootstrap.py"

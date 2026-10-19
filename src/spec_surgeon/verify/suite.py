@@ -94,36 +94,47 @@ class VerificationRecord:
         rec.checks = [CheckResult(**c) for c in d.get("checks", [])]
         return rec
 
-    def to_markdown(self) -> str:
+    def to_markdown(self, evidence_reference: Optional[str] = None) -> str:
+        from collections import defaultdict
+        from ..readable import RECORD_BYTES, bounded, grouped_findings, short
+        evidence = evidence_reference or f"{Path(self.output).stem}.record.json"
         lines = [f"VERIFICATION RECORD — {Path(self.output).name}",
-                 f"Source:   {self.source}",
-                 f"Output:   {self.output}",
+                 f"RESULT: {'PASS' if self.passed else 'FAIL'}",
+                 f"Source:   {short(self.source, 2000)}",
+                 f"Output:   {short(self.output, 2000)}",
                  f"Mode:     {self.mode}    Job: {self.job}",
-                 f"Predicted part changes: {sorted(self.predicted_parts)}",
+                 f"Predicted part changes ({len(self.predicted_parts)}): {short(sorted(self.predicted_parts), 2000)}",
                  f"Predicted revision delta: ins {self.predicted_rev_delta.get('ins', 0):+d}, del {self.predicted_rev_delta.get('del', 0):+d}"
                  + "".join(f", {k} {v:+d}" for k, v in sorted(self.predicted_rev_delta.items()) if k not in ("ins", "del") and v),
-                 f"Predicted member removals: {self.predicted_members_removed or 'none'}; additions: {self.predicted_members_added or 'none'}",
-                 f"Property assertions (V10): " + (", ".join(f"{a.get('kind')}" + (f" [#{a['op_index'] + 1} {a.get('op')}]" if 'op_index' in a else '')
-                                                            for a in self.property_assertions) or "none — no property change predicted"),
+                 f"Predicted member removals: {short(self.predicted_members_removed or 'none', 1000)}; additions: {short(self.predicted_members_added or 'none', 1000)}",
+                 f"Property assertions (V10), {len(self.property_assertions)} total: " + (short(", ".join(f"{a.get('kind')}" + (f" [#{a['op_index'] + 1} {a.get('op')}]" if 'op_index' in a else '')
+                                                            for a in self.property_assertions), 1000) or "none — no property change predicted"),
                  f"Geometry reference (V7): {self.geometry_reference}"]
         if not self.passed:
             lines += ["", "WHY IT FAILED (each failed check, in specifics; the checks below have the numbers)"]
             for cid, name, _summary, details in self.failures():
                 lines.append(f"  {cid} {name}")
                 lines += [f"    - {x}" for x in details]
-        lines += ["", "Predicted diff list (written before the transform ran):"]
+        lines += ["", f"Predicted diffs: {len(self.predicted_diffs):,} (written before the transform ran).",
+                  f"Full predictions and check data: `{evidence}`."]
         if not self.predicted_diffs:
             lines.append("  (none — zero legitimate text diffs)")
-        for i, d in enumerate(self.predicted_diffs, 1):
-            b = "∅" if d.get("before") is None else repr(d["before"])
-            a = "∅" if d.get("after") is None else repr(d["after"])
-            lines.append(f"  D{i}. {d['part']} / block {d['block_index']}: {b} → {a}")
-            if d.get("note"):
-                lines.append(f"       ({d['note']})")
+        patterns = defaultdict(list)
+        for d in self.predicted_diffs:
+            kind = "added" if d.get("before") is None else "removed" if d.get("after") is None else "changed"
+            patterns[(d.get("part"), kind)].append(d)
+        for (part, kind), diffs in list(patterns.items())[:12]:
+            lines.append(f"  {part}: {len(diffs):,} block(s) {kind}; up to three examples:")
+            for d in diffs[:3]:
+                b = "∅" if d.get("before") is None else short(repr(d["before"]), 160)
+                a = "∅" if d.get("after") is None else short(repr(d["after"]), 160)
+                lines.append(f"    block {d.get('block_index')}: {b} → {a}")
+        if len(patterns) > 12:
+            lines.append(f"  … {len(patterns) - 12} more patterns; see `{evidence}`.")
         lines.append("")
         for c in self.checks:
             lines.append(f"{c.id} {c.name:.<34} {c.status}")
-            lines.append(f"    {c.summary}")
+            lines.append(f"    {short(c.summary, 1000)}")
         lines.append("")
         lines.append(f"RESULT: {'PASS' if self.passed else 'FAIL'}")
         performed = [c.id for c in self.checks if c.status in ("PASS", "FAIL")]
@@ -136,12 +147,12 @@ class VerificationRecord:
         if self.notes:
             lines.append("")
             lines.append("Judgment calls:")
-            lines += [f"  - {n}" for n in self.notes]
+            lines += [f"  - {n}" for n in grouped_findings(self.notes)]
         if self.flags:
             lines.append("")
             lines.append("Flagged for review:")
-            lines += [f"  - {f}" for f in self.flags]
-        return "\n".join(lines)
+            lines += [f"  - {f}" for f in grouped_findings(self.flags)]
+        return bounded("\n".join(lines), RECORD_BYTES, evidence)
 
 
 # ---- helpers ------------------------------------------------------------------------------------

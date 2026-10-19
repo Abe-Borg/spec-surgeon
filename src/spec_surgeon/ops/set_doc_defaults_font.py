@@ -47,7 +47,8 @@ class SetDocDefaultsFont(Op):
         own = own_size(rpr)
         sized = size_applies(own if own is not None else DEFAULT_SIZE, size)
         frag = self.fragment(select, params)
-        frag.property_assertions.append({"kind": "doc_defaults_fonts", "styles_part": sheet.part, "set": values,
+        frag.property_assertions.append({"kind": "doc_defaults_fonts", "font_params": dict(params),
+                                         "styles_part": sheet.part, "set": values,
                                          "clear_theme": clear, "size": size, "expected_sized": sized})
         frag.transform_data = {"styles_part": sheet.part, "values": values, "clear_theme": clear,
                                "size": size["sz"] if sized else None}

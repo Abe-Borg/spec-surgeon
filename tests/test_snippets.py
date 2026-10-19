@@ -262,16 +262,17 @@ def test_read_library_item_shows_a_snippets_text_under_the_rule(folder, snippet)
 def test_the_terminal_snippet_choice_asks_for_the_words_then_claude_writes_the_spec(folder, snippet, tmp_path,
                                                                                    monkeypatch, capsys):
     from spec_surgeon import cli
-    fake = FakeClient(offer(), submit(insert_spec(), "s1"), snippet_outcome_proposal())
+    fake = FakeClient(offer(), submit(insert_spec(), "s1"))
     monkeypatch.setattr(compiler_module, "_client", lambda: fake)
     monkeypatch.setattr(cli, "_interactive", lambda: True)
-    answers = iter(["#1", "y", "y", "y"])
+    answers = iter(["#1", "y", "y"])
     asked = []
     monkeypatch.setattr("builtins.input", lambda prompt="": (asked.append(prompt), next(answers))[1])
     out_dir = tmp_path / "o"
     assert cli_main(["do", REQUEST, str(folder), "--out", str(out_dir), "--no-render"]) == 0
     assert asked[1] == f"Approve these exact words for your documents: «{TEXT}»? [y/N] "
-    assert asked[2] == "Approve these outcomes and every document's targets? [y/N] "
+    assert asked[2] == "\nRun this on 2 file(s)? [y/N] "
+    assert len(asked) == 3 and len(fake.requests) == 2
     saved = json.loads((out_dir / "conversation.json").read_text(encoding="utf-8"))
     assert saved["approved_words"] == [REQUEST, TEXT]
     outs = sorted((out_dir / "run" / "outputs").glob("*.docx"))
@@ -304,7 +305,7 @@ def test_the_window_adds_a_snippet_and_uses_it(qt, folder, tmp_path):
 
 
 def test_the_window_shows_a_snippet_choice_as_insert_it_and_claude_writes_the_spec(qt, folder, snippet, tmp_path):
-    fake = FakeClient(offer(), submit(insert_spec(), "s1"), snippet_outcome_proposal())
+    fake = FakeClient(offer(), submit(insert_spec(), "s1"))
     s = Session(out_root=tmp_path / "out", client=fake)
     w, ui = window(qt, s)
     ui["vars"]["folder"].set(str(folder))
@@ -320,6 +321,6 @@ def test_the_window_shows_a_snippet_choice_as_insert_it_and_claude_writes_the_sp
     ui["wait"]()
     assert s.spec is not None and s.spec["ops"][0]["params"]["text"] == TEXT and TEXT in s.conversation.sources
     assert s.preview is not None
-    assert s.outcome_review["status"] == "PROPOSED" and not ui["buttons"]["run"].isEnabled()
-    w.preview_page.outcome_approve_btn.click()
-    assert s.outcome_approval == s.outcome_review["digest"] and ui["buttons"]["run"].isEnabled()
+    assert s.outcome_review is None and w.preview_page.outcome_card.isHidden()
+    assert ui["buttons"]["run"].isEnabled()
+    assert len(fake.requests) == 2  # the chosen literal and its verified recipe need one preview decision

@@ -47,7 +47,7 @@ from .hf_common import (FOOTER_CT, HEADER_CT, KINDS, TYPES, apply_removal, check
                         plan_removal, refs)
 from .selectors import StyleSheet
 from .template_styles import reconcile_styles, remap_references, reference_parts
-from .slots import (apply_slot, expected_block_text, extract_fill, field_runs, find_slots, mark_slots, nearest_p,
+from .slots import (apply_slot, display_segments, expected_block_text, extract_fill, field_runs, fill_reads, find_slots, mark_slots, nearest_p,
                     paragraph_runs, reference_values, rule_uses_literal)
 
 WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
@@ -93,6 +93,30 @@ def _diff(desired: Dict[str, Any], actual: Dict[str, Any], keys) -> Dict[str, An
 
 PARA_KEYS = ("before", "after", "line", "lineRule", "left", "right", "first", "jc", "tabs")
 RUN_KEYS = ("ascii", "hAnsi", "sz", "color", "b", "i", "caps", "smallCaps")
+SLOT_DECORATIONS = ("color", "highlight", "shd")
+
+
+def _slot_appearance(p, slots, slot, resolver):
+    """Nearest run with non-slot wording supplies decoration; otherwise inherit the paragraph."""
+    runs = paragraph_runs(p)
+    _, segments = display_segments(p)
+    start_run = next(r for _, r, a, b in segments if a <= slot.start < b)
+    candidates = []
+    for i, run in enumerate(runs):
+        outside = "".join((t.text or "")[j - a] for t, r, a, b in segments if r is run
+                          for j in range(a, b) if not any(s.start <= j < s.end for s in slots))
+        if outside.strip():
+            candidates.append((abs(i - runs.index(start_run)), i, run))
+    donor = min(candidates, key=lambda item: item[:2])[2] if candidates else None
+    rpr = etree.fromstring(etree.tostring(start_run.find(W + "rPr"))) if start_run.find(W + "rPr") is not None else etree.Element(W + "rPr")
+    for name in SLOT_DECORATIONS:
+        for child in rpr.findall(W + name):
+            rpr.remove(child)
+        value = donor.find(f"{W}rPr/{W}{name}") if donor is not None else None
+        if value is not None:
+            rpr.append(etree.fromstring(etree.tostring(value)))
+    colour = resolver.run(donor.find(W + "rPr"), p)["color"] if donor is not None else resolver.run(rpr, p)["color"]
+    return {"color": list(colour), "elements": [etree.tostring(e).decode() for e in rpr if e.tag in (W + "highlight", W + "shd")]}
 
 
 def pin_paragraph(p, pins: Dict[str, Any]) -> None:
@@ -187,6 +211,8 @@ class ApplyHeaderFooterTemplate(Op):
                                         "place its header/footer shows that value is a slot — the template's own "
                                         "section number/title become each spec's own"},
         "highlight_colors": {"type": "array", "items": {"type": "string"}, "default": ["yellow"]},
+        "slot_formatting": {"type": "string", "enum": ["clear", "keep"], "default": "clear",
+                            "description": "clear copies surrounding run colour/highlight/shading onto filled slots; keep preserves placeholder formatting"},
         "rescale_tabs": {"type": "boolean", "default": True},
         "align_header_footer_distance": {"type": "boolean", "default": True,
                                          "description": "set each section's pgMar header/footer to the template's"},
@@ -227,6 +253,12 @@ class ApplyHeaderFooterTemplate(Op):
         align_title = bool(params.get("align_title_page", True))
         import_missing = bool(params.get("import_missing_styles", True))
         fills_spec = params.get("slot_fills") or {}
+        binding_rules = params.get("slot_bindings") or {}
+        if params.get("slot_formatting", "clear") not in ("clear", "keep"):
+            raise JobException("slot_formatting must be 'clear' or 'keep'", "bad-params")
+        if not isinstance(binding_rules, dict):
+            raise JobException("slot_bindings must map slot names to source-bound literals", "bad-params")
+        effective_fills = {**fills_spec, **binding_rules}
         reference = markers == ["reference"]
         if not kinds or set(kinds) - set(KINDS) or not markers or \
                 (not reference and set(markers) - {"highlight", "braces"}):
@@ -325,7 +357,7 @@ class ApplyHeaderFooterTemplate(Op):
                                                   f"(its value: {ref_values[s_.name]!r}); each spec's own value is "
                                                   f"placed there as that spec writes it")
             slots_by_copy.append(per_p)
-        unfilled = sorted(all_slot_names - set(fills_spec))
+        unfilled = sorted(all_slot_names - set(effective_fills))
         if unfilled:
             raise JobException(f"template slot(s) {unfilled} have no fill rule", "unfilled-slot", {"slots": unfilled})
         # A rule is "unknown" only when it names a slot in NONE of the template sections the spec maps — not merely
@@ -349,17 +381,17 @@ class ApplyHeaderFooterTemplate(Op):
                                                                  ref_values=ref_values, in_field=other_fields)}
                         except JobException:
                             continue            # a part this document does not use; its own refusals are not ours
-        unknown = sorted(set(fills_spec) - known)
+        unknown = sorted(set(effective_fills) - known)
         if unknown and reference:
             raise JobException("the template spec's own " + ", ".join(f"{n} {ref_values[n]!r}" for n in unknown)
                                + " appear(s) in none of the headers/footers of the template sections the spec uses; "
                                "drop the rule(s) or fix them",
-                               "unknown-slot", {"fills": unknown, "values": {n: ref_values[n] for n in unknown}})
+                               "unknown-slot", {"fills": unknown, "values": {n: ref_values.get(n) for n in unknown}})
         if unknown:
             raise JobException(f"fill rule(s) for {unknown} name no slot in the headers/footers of the template "
                                f"sections the spec uses", "unknown-slot", {"fills": unknown, "slots": sorted(known)})
-        fills = {name: extract_fill(pkg, name, rule) for name, rule in fills_spec.items()}
-        literal = sorted(n for n, r in fills_spec.items() if rule_uses_literal(r))
+        fills = {name: extract_fill(pkg, name, rule) for name, rule in effective_fills.items()}
+        literal = sorted(n for n, r in effective_fills.items() if rule_uses_literal(r))
 
         # ---- styles ----
         tsheet, sheet = StyleSheet(tpkg), StyleSheet(pkg)
@@ -460,6 +492,10 @@ class ApplyHeaderFooterTemplate(Op):
                                             note=f"from template {tp}" + (f"; slots {[s.name for s in sl]}" if sl else "")))
             c["slots"] = {str(bi): [{"name": s.name, "marker": s.marker, "start": s.start, "end": s.end}
                                     for s in sl] for bi, sl in slots_by_copy[k].items()}
+            if params.get("slot_formatting", "clear") == "clear":
+                for bi, sl in slots_by_copy[k].items():
+                    for entry, slot in zip(c["slots"][str(bi)], sl):
+                        entry["appearance"] = _slot_appearance(paragraphs(troot)[bi], sl, slot, tres)
             for tbl in troot.iter(W + "tbl"):
                 g = tbl.find(W + "tblGrid")
                 width = sum(int(gc.get(W + "w") or 0) for gc in (g.findall(W + "gridCol") if g is not None else []))
@@ -506,6 +542,8 @@ class ApplyHeaderFooterTemplate(Op):
         frag.touches += [(main, f"sectPr:{i}", "titlePg") for i in title_changes]
         frag.touches += [(main, f"sectPr:{i}", "pgMar") for i in dist_changes]
         frag.touches += [(m, "*", "remove") for m in frag.members_removed] + [(m, "*", "add") for m in members_added]
+        frag.touches += [(part, ordinal, "verify:text") for rule in effective_fills.values()
+                         for part, ordinal in fill_reads(pkg, rule)]
         frag.touches += [(pkg.rels_path_for(main), "*", "rels"), (CT_PART, "*", "ct")]
         frag.touches += [(styles_part, f"style:{sid}", "add") for sid in imported]
         # What the plan READS from the target (rule 9: a change of it by another op in this spec is a plan-time
@@ -536,7 +574,8 @@ class ApplyHeaderFooterTemplate(Op):
                 "kind": "template_parts", "part": c["part"], "template": str(Path(tpath).resolve()),
                 "template_md5": tmd5, "template_part": c["template_part"], "template_section": c["template_section"],
                 "target_sections": c["target_sections"], "rescale_tabs": rescale, "slot_markers": markers,
-                "highlight_colors": colors, "fills": fills_spec, "expected_fills": fills,
+                "highlight_colors": colors, "fills": effective_fills, "expected_fills": fills,
+                "template_fill_rules": fills_spec, "slot_formatting": params.get("slot_formatting", "clear"),
                 "style_map": style_map, "style_parts": style_parts, "import_missing_styles": import_missing,
                 **({"template_values": ref_values} if reference else {})})
         if imported:
@@ -571,7 +610,10 @@ class ApplyHeaderFooterTemplate(Op):
                               f"{c['part']} ← {c['template_part']} for sections {c['target_sections']}"
                               + (f", tabs {c['template_width']}→{c['target_width']}" if c['template_width'] != c['target_width'] else "")
                               for c in copies))
-        frag.notes.append("fills: " + "; ".join(f"{n} = {fills[n]!r} ({fills_spec[n].get('rule')})" for n in sorted(fills)))
+        frag.notes.append("fills: " + "; ".join(f"{n} = {fills[n]!r} ({effective_fills[n].get('rule')})" for n in sorted(fills)))
+        for name, binding in binding_rules.items():
+            frag.notes.append(f"binding: {name} = {binding['value']!r} from {binding['part']} paragraph {binding['paragraph']} "
+                              f"(source md5 {binding['source_md5']})")
         if reference:
             frag.notes.append("template spec (reference slots): its own " + ", ".join(
                 f"{n} {ref_values[n]!r} → {fills[n]!r}" for n in sorted(ref_values)) + "; replaced at ⟦ ⟧ in "
@@ -619,8 +661,15 @@ class ApplyHeaderFooterTemplate(Op):
             for bi, sl in c["slots"].items():
                 p = pars[int(bi)]
                 for s in sorted(sl, key=lambda s: -s["start"]):
-                    apply_slot(p, Slot(s["name"], s["marker"], s["start"], s["end"], ""), td["fills"][s["name"]],
-                               s["marker"] in ("highlight", "both"))
+                    filled = apply_slot(p, Slot(s["name"], s["marker"], s["start"], s["end"], ""), td["fills"][s["name"]], False)
+                    if "appearance" in s:
+                        rpr = run_rpr(filled)
+                        for name in SLOT_DECORATIONS:
+                            for child in rpr.findall(W + name):
+                                rpr.remove(child)
+                        for xml in s["appearance"]["elements"]:
+                            insert_in_order(rpr, etree.fromstring(xml.encode()), RPR_ORDER)
+                        pin_rpr(rpr, {"color": s["appearance"]["color"]})
             for k, e in enumerate(troot.iter(WP + "docPr")):
                 e.set("id", str(c["docpr_start"] + k))
             payload[c["part"]] = (serialize_xml(troot), HEADER_CT if c["kind"] == "header" else FOOTER_CT)

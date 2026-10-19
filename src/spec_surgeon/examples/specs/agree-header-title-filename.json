@@ -17,8 +17,9 @@
         "places": {
           "title_line": {
             "in": "document",
-            "pattern": "^SECTION\\s+(?P<number>\\d{2}\\s?\\d{2}\\s?\\d{2})\\b",
-            "required": true
+            "pattern": "^SECTION\\s+(?P<number>\\d{2}[\\s-]*\\d{2}[\\s-]*\\d{2})\\b",
+            "required": true,
+            "case_insensitive": true
           },
           "footer": {
             "in": "footers",
