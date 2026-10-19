@@ -99,6 +99,21 @@ def _session_action(fn):
 
 
 @dataclass
+class Outcome:
+    """What the session needs next, decided in one place (``Session.outcome``)."""
+    kind: str                                          # empty | auto | question | preview | resume
+    message: str = ""                                  # a sentence for the user (question, resume)
+    questions: List[str] = field(default_factory=list)
+    choices: List[Any] = field(default_factory=list)   # conversation.Choice the user may pick
+    auto_choice: str = ""                              # kind auto: the app choice to take now
+    needs_preview: bool = False                        # kind auto: an outcome exists but has no preview yet
+    preview: Any = None                                # kind preview: what the user approves
+    token: str = ""
+    blocking: bool = False                             # the preview carries blocking visual findings
+    partial: bool = False                              # kind question: some copies are ready to save meanwhile
+
+
+@dataclass
 class Session:
     """What the window is working on. Every step is a call into the engine; the window only shows the text."""
     folder: Optional[Path] = None
@@ -991,6 +1006,44 @@ class Session:
         if self.preview is not None:
             return self.preview, self.preview.token
         return None, ""
+
+    def outcome(self) -> "Outcome":
+        """The one decision table: what the session needs next, from the session's own state. The coordinator and
+        the window act on this and never probe the fields themselves."""
+        from .conversation import APP_CHOICE_KINDS
+        if self.pending_custom_transform is not None:
+            return Outcome("resume", message="A custom method was being prepared; continue to finish it.")
+        if self.recovery is not None:
+            r = self.recovery
+            review = getattr(r, "review", None)
+            blocking = bool(review is not None and review.blocking())
+            if any(f.status != "READY" for f in r.files):
+                questions = list(r.questions) or [f"{Path(f.source).name}: {f.reason}" for f in r.files
+                                                  if f.status != "READY"]
+                return Outcome("question", message="Some documents still need attention.", questions=questions,
+                               preview=r, token=r.token, blocking=blocking, partial=bool(r.ready))
+            return Outcome("preview", preview=r, token=r.token, blocking=blocking)
+        turn = self.turn
+        if turn is not None and self.generated is None:
+            app = [c for c in turn.choices if c.kind in ("custom_transform", "recovery_plan")]
+            if app:
+                return Outcome("auto", auto_choice=app[0].id)
+        # An outcome (a spec, a chain, a prepared custom method) outranks the turn that led to it: a reply voids the
+        # old outcome before a new turn can ask anything, so an outcome and an open question never coexist.
+        if self.spec is not None or self.chain is not None or self.generated is not None:
+            pv, token = self._current_review()
+            if pv is None:
+                return Outcome("auto", needs_preview=True)
+            review = getattr(pv, "review", None)
+            return Outcome("preview", preview=pv, token=token,
+                           blocking=bool(review is not None and review.blocking()))
+        if turn is not None and turn.needs_user():
+            user = [c for c in turn.choices if c.kind not in APP_CHOICE_KINDS]
+            return Outcome("question", message=turn.message, questions=list(turn.questions), choices=user)
+        if self.conversation is not None:
+            return Outcome("question", message=(getattr(turn, "message", "") or
+                                               "Tell me what you\u2019d like to change or clarify."))
+        return Outcome("empty")
 
     def run_blocked_reason(self) -> str:
         """Explain unavailable actions; visual findings are part of the single preview decision."""

@@ -127,8 +127,8 @@ def test_target_question_uses_chat_numbers_without_approving_plan(tmp_path):
     task.attach([source])
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "question" and not view["action"]
-    assert "Paragraph 2" in "\n".join(view["questions"])
-    assert "Paragraph 3" in "\n".join(view["questions"])
+    labels = "\n".join(c["label"] for c in view["choices"])
+    assert "Paragraph 2" in labels and "Paragraph 3" in labels
     view = task.perform("send", text="2")
     assert view["stage"] == "preview"
     assert task.session.outcome_approval == ""
@@ -242,7 +242,7 @@ def test_proposed_rewrite_requires_wording_choice_then_preview_approval(tmp_path
     task.attach([source])
     view = task.perform("send", text=request)
     assert view["stage"] == "question" and not view["action"]
-    assert draft in "\n".join(view["questions"])
+    assert draft in "\n".join(c["label"] + " " + " ".join(c["words"]) for c in view["choices"])
     assert draft not in task.word_sources and not task.results
     view = task.perform("send", text="1")
     assert view["stage"] == "preview"
@@ -275,12 +275,10 @@ def test_recovery_plan_and_preview_stay_in_same_task_without_json(tmp_path, monk
     task.attach([source])
     before = source.read_bytes()
     view = task.perform("send", text=REQUEST)
-    assert view["stage"] == "plan"
+    assert view["stage"] == "preview", view   # the recovery plan is carried out internally; one decision remains
     assert view["effects"] and not task.results
     assert not any('"effects"' in message["text"] for message in view["messages"])
-    view = task.perform("primary", token=view["token"])
-    assert view["stage"] == "ready", view
-    assert not task.results
+    assert view["action"] == "Create edited copies"
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and Path(task.results[str(source)]).is_file()
     assert source.read_bytes() == before
@@ -385,13 +383,13 @@ def test_partial_failure_recovers_automatically_and_can_reopen(tmp_path, monkeyp
     view = task.perform("send", text=REQUEST)
     view = task.perform("primary", token=view["token"])
     assert len(task.results) == 1
-    assert task.session.recovery and view["stage"] == "ready"
+    assert task.session.recovery and view["stage"] == "preview"
     assert view["document_count"] == 1
     restored = task_for(tmp_path, journal=task.journal)
     restored.restore()
     assert restored.session.outcome_approval == ""
     view = restored.perform("primary", token=restored.action_token())
-    assert view["stage"] == "ready" and len(restored.results) == 1
+    assert view["stage"] == "preview" and len(restored.results) == 1
     restored.perform("primary", token=view["token"])
     assert len(restored.results) == 2
     assert [p.read_bytes() for p in (source, second)] == before
@@ -480,7 +478,7 @@ def test_more_budget_resumes_unadopted_recovery_checkpoint(tmp_path, reopen, mon
     monkeypatch.setattr(task, "_recovery_options", lambda:
                         opts(critic_review=False, visual_review=False, include_nearby_inputs=False))
     view = task.perform("primary", token=task.action_token())
-    assert view["stage"] == "ready" and not task.results
+    assert view["stage"] == "preview" and not task.results
     assert task.session.recovery.out_dir == checkpoint
     assert len(task.session.recovery.attempts) == 2
     assert len(fake.requests) == task._budget.calls == 2
@@ -525,7 +523,7 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
                               prior_failures=distinct_failures(paths), client=fake)
     assert len(result.ready) == 1 and result.questions
     task.session._adopt_recovery(result)
-    task._settle(lambda _: None, preview=False)
+    task._settle(lambda _: None)
     task.perform("primary", token=task.action_token())
     first_output = Path(task.results[str(paths[0])])
     first_bytes = first_output.read_bytes()
@@ -537,7 +535,7 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
     monkeypatch.setattr(task, "_recovery_options", lambda:
                         opts(critic_review=False, visual_review=False, include_nearby_inputs=False))
     view = task.perform("send", text="Yes, use those margins on the second document.")
-    assert view["stage"] == "ready" and len(task.results) == 1
+    assert view["stage"] == "preview" and len(task.results) == 1
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and len(task.results) == 2
     assert first_output.read_bytes() == first_bytes
@@ -545,3 +543,43 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
     assert all(Path(output).is_file() for output in task.results.values())
     assert [p.read_bytes() for p in paths] == original
     assert len(fake.requests) == 3
+
+
+def test_a_mixed_batch_gets_one_plan_per_layout_and_one_decision(tmp_path):
+    from make_fixtures import build, build_styles, build_rich
+    from spec_surgeon.fingerprint import fingerprint
+    from spec_surgeon.package import DocxPackage
+    typed = tmp_path / "a" / "21 13 13.docx"
+    styled = tmp_path / "b" / "21 13 16.docx"
+    other = tmp_path / "c" / "21 13 19.docx"
+    for path, data in ((typed, build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")),
+                       (styled, build_styles("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS")),
+                       (other, build_rich("21 13 19", "PREACTION SPRINKLER SYSTEMS"))):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(data)
+    pid = lambda p: fingerprint(DocxPackage.from_path(p))["pattern_id"]  # noqa: E731
+    bold = {"run": {"b": True}, "tracked": False}
+    submission = {"summary": "Bold body paragraphs in two layouts", "layouts": [
+        {"id": "A", "label": "typed numbers, no styles", "pattern_ids": [pid(typed)],
+         "spec": {"summary": "by text", "mode": "formatting", "assumptions": ["Body paragraphs start with A. to E."],
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": r"^[A-E]\.\t"}}, "params": bold}]}},
+        {"id": "B", "label": "styled body", "pattern_ids": [pid(styled), pid(other)],
+         "spec": {"summary": "by style", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"style_in": ["ArchPara", "Normal"]}}, "params": bold}]}}]}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": submission, "message": "I’ll bold the body paragraphs; your documents use two layouts."})))
+    task = task_for(tmp_path, fake)
+    task.attach([typed, styled, other])
+    before = [p.read_bytes() for p in (typed, styled, other)]
+    view = task.perform("send", text="Make the body paragraphs bold.")
+    assert view["stage"] == "preview" and view["action"] == "Create edited copies"
+    assert [m["text"] for m in view["messages"] if m["role"] == "assistant"] == [
+        "I’ll bold the body paragraphs; your documents use two layouts."]
+    groups = view["groups"]
+    assert [(g["id"], g["label"], g["count"]) for g in groups] == [("A", "typed numbers, no styles", 1), ("B", "styled body", 2)]
+    assert groups[0]["assumptions"] == ["Body paragraphs start with A. to E."]
+    assert all(change["summary"].endswith(".") for g in groups for change in g["changes"])
+    assert len(view["samples"]) == 3 and not view["set_aside"]   # one sample per structure pattern
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and len(task.results) == 3
+    assert [p.read_bytes() for p in (typed, styled, other)] == before
+    assert len(fake.requests) == 1

@@ -907,10 +907,12 @@ class Conversation:
         spec = copy.deepcopy(spec)
         spec["request"] = self.request
         summary = str(spec.get("summary") or "")
+        # The user reads the model's message; the summary is the record's. Without a message the summary stands in.
+        message = str(inp.get("message") or "").strip() or summary
         if isinstance(spec.get("layouts"), list):
             from .layouts import plan_from_submission
             plan = plan_from_submission(spec, self.request)
-            return Turn("ok", message=summary, understanding=summary, spec=plan, errors=list(rejections), images=images)
+            return Turn("ok", message=message, understanding=summary, spec=plan, errors=list(rejections), images=images)
         if spec.get("unsupported"):
             self.unsupported = {"request": self.request, "unsupported": spec.get("unsupported"),
                                 "proposal": spec.get("proposal") or ""}
@@ -935,4 +937,4 @@ class Conversation:
             questions = _texts(spec["questions"], "spec's questions", errors) or ["(the model asked an empty question)"]
             return Turn("questions", understanding=summary, questions=questions, spec=spec, errors=errors,
                         images=images)
-        return Turn("ok", message=summary, understanding=summary, spec=spec, errors=list(rejections), images=images)
+        return Turn("ok", message=message, understanding=summary, spec=spec, errors=list(rejections), images=images)

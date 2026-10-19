@@ -178,6 +178,9 @@ TOOLS = INSPECTION_TOOLS + [
      "its own documents only (see LAYOUTS).",
      "input_schema": {"type": "object", "properties": {
          "spec": {"type": "object"},
+         "message": {"type": "string", "description": "one or two sentences to the user, in their words: what will "
+                                                      "change and where, and anything they should know; never an "
+                                                      "operation or selector name"},
          "custom_transform": {"type": "string", "enum": ["possible", "outside_limits"],
                               "description": "for an unsupported spec only: could a one-off custom transform do it "
                                              "within the catalog's custom_transform_limits?"},
@@ -381,7 +384,7 @@ recognise these documents, e.g. 'styled, PR1 articles'>", "pattern_ids": [...], 
 those documents, with its own concrete selectors and required counts>}, …]}. Every pattern of THE BATCH belongs to \
 exactly one layout; a pattern you cannot plan is an ask_user question, never a silent omission. Each layout's spec is \
 checked on its own documents only. Ask once per layout, never per file. One layout is an ordinary spec: submit it plain.
-- Finish each turn by calling submit_editspec once with the whole spec, or ask_user.
+- Finish each turn by calling submit_editspec once with the whole spec and a message to the user, or ask_user.
 """
 
 SIMPLE_EXPERIENCE = """
