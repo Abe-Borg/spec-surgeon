@@ -907,6 +907,10 @@ class Conversation:
         spec = copy.deepcopy(spec)
         spec["request"] = self.request
         summary = str(spec.get("summary") or "")
+        if isinstance(spec.get("layouts"), list):
+            from .layouts import plan_from_submission
+            plan = plan_from_submission(spec, self.request)
+            return Turn("ok", message=summary, understanding=summary, spec=plan, errors=list(rejections), images=images)
         if spec.get("unsupported"):
             self.unsupported = {"request": self.request, "unsupported": spec.get("unsupported"),
                                 "proposal": spec.get("proposal") or ""}

@@ -41,32 +41,51 @@ EDIT_NAMES = {
 }
 
 
+def _specs(spec, chain=None):
+    return [spec] if spec else [stage["spec"] for stage in (chain or {}).get("stages", []) if stage.get("spec")]
+
+
+def change_sentence(op):
+    """What one operation does, in the words its own module writes (``Op.describe``): the plan reads like a
+    colleague wrote it, and it cannot drift from the operation because the operation owns the sentence."""
+    from .ops import get_op
+    name = op.get("op", "")
+    try:
+        return get_op(name).describe(op.get("select") or {}, op.get("params") or {})
+    except Exception:  # noqa: BLE001 — a description must never hide a plan; fall back to the plain name
+        return EDIT_NAMES.get(name, readable(name).capitalize()) + "."
+
+
 def spec_changes(spec, chain=None):
-    """Describe the same specification the preview executes, without another model or authority."""
-    specs = [spec] if spec else [stage["spec"] for stage in (chain or {}).get("stages", []) if stage.get("spec")]
+    """Describe the same specification the preview executes, without another model or authority: one sentence per
+    operation from the operation itself, and every setting underneath for the reader who wants it all."""
     result = []
-    for value in specs:
+    for value in _specs(spec, chain):
         for op in value.get("ops", []):
-            name, params = op["op"], op.get("params", {})
+            name = op["op"]
             title = EDIT_NAMES.get(name, readable(name).capitalize())
-            summary = title
-            if name == "set_properties":
-                changes = [f"{readable(key).lower()} {'on' if flag else 'off'}"
-                           for group in ("run", "paragraph") for key, flag in params.get(group, {}).items()]
-                if changes:
-                    summary = "Set " + ", ".join(changes) + " for the selected passages."
-            elif name == "replace_text":
-                summary = f'Replace “{params.get("find", "")}” with “{params.get("replace", "")}”.'
-            elif name == "insert_paragraph":
-                summary += ":\n" + params.get("text", "")
-            elif name in {"set_font", "set_style_font", "set_doc_defaults_font"} and params.get("font"):
-                summary += " to " + str(params["font"])
             details = fields({key: child for key, child in op.items() if key != "op"})
-            result.append({"title": title, "summary": summary, "details": details})
-        if value.get("assumptions"):
-            result.append({"title": "Assumptions to check", "summary": "Assumptions to check",
-                           "details": list(value["assumptions"])})
+            result.append({"title": title, "summary": change_sentence(op), "details": details})
     return result
+
+
+def spec_assumptions(spec, chain=None):
+    """The assumptions the plan rests on, shown inline with the changes, never as a change of their own."""
+    out = []
+    for value in _specs(spec, chain):
+        out.extend(str(a) for a in value.get("assumptions") or [])
+    return list(dict.fromkeys(out))
+
+
+def layout_changes(plan, routing=None):
+    """A layout plan, one group per layout: its label, how many attached documents it covers, and its changes."""
+    groups = []
+    for layout in plan.get("layouts", []):
+        files = (routing.files.get(layout["id"], []) if routing is not None else [])
+        groups.append({"id": layout["id"], "label": layout.get("label") or f"Layout {layout['id']}",
+                       "count": len(files), "files": [Path(f).name for f in files],
+                       "changes": spec_changes(layout["spec"]), "assumptions": spec_assumptions(layout["spec"])})
+    return groups
 
 
 def spec_bindings(spec, chain=None):

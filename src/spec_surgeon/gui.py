@@ -187,8 +187,12 @@ class Session:
         current spec reads — a spec may name a file of the batch folder as its template."""
         from .chain import chain_templates
         from .editspec import spec_templates
-        return (([self.template.resolve()] if self.template else []) +
-                (spec_templates(self.spec) if outcome and self.spec else []) +
+        from .layouts import is_layout_plan, layout_spec
+        own: List[Path] = []
+        if outcome and self.spec:
+            own = ([t for layout in self.spec["layouts"] for t in spec_templates(layout_spec(self.spec, layout))]
+                   if is_layout_plan(self.spec) else spec_templates(self.spec))
+        return (([self.template.resolve()] if self.template else []) + own +
                 (chain_templates(self.chain) if outcome and self.chain else []))
 
     def files(self, outcome: bool = True) -> List[Path]:
@@ -890,12 +894,18 @@ class Session:
             raise ValueError("nothing to preview — type a request or load a spec file")
         files = self.files()                      # the same filtered set Run checks and runs (no template files)
         out = self._session_dir()                 # beside the conversation's records (a loaded spec: a new folder)
+        from .layouts import is_layout_plan, make_layout_preview
         if self.chain is not None:
             from .preview import make_chain_preview
             n = len(self.chain["stages"])
             log(f"Planning stage 1 on every file and running all {n} stage(s) on the samples…")
             self.preview = make_chain_preview(self.chain, [str(f) for f in files], out / "preview", renderer="auto",
                                               do_render=render)
+        elif is_layout_plan(self.spec):
+            n = len(self.spec["layouts"])
+            log(f"Planning {n} layout(s) on their own files and trying one sample per layout…")
+            self.preview = make_layout_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
+                                               do_render=render)
         else:
             log("Planning every file and trying the samples…")
             self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
@@ -945,6 +955,9 @@ class Session:
             return chain_intent(self.chain)
         spec = self.spec or {}
         lines = [f"REQUEST: {spec.get('request') or ''}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
+        for layout in spec.get("layouts") or []:
+            lines.append(f"LAYOUT {layout.get('id')} ({layout.get('label') or ''}): {layout['spec'].get('summary') or ''}")
+            lines += [f"  ASSUMPTION: {a}" for a in layout["spec"].get("assumptions") or []]
         if self.recipe_name:
             lines.insert(1, f"YOUR RECIPE «{self.recipe_name}» (used as saved)")
         lines += [f"ASSUMPTION: {a}" for a in spec.get("assumptions") or []]
@@ -1084,6 +1097,9 @@ class Session:
             diag.event("session.approval.refused", level="warning", gate="preview", reason="preview_required")
             raise ValueError("press Preview first — nothing runs before you have seen the preview")
         files = self.files()
+        from .layouts import is_layout_plan
+        if is_layout_plan(self.spec):
+            return self._run_layouts(files, in_place, render, log)
         key = self.outcome_key()
         current_inputs = approval_inputs(key, files)
         try:
@@ -1135,6 +1151,45 @@ class Session:
             lines.append("Some files were set aside untouched — click 'Load set-aside files' to run the next pass "
                          "on only those files" + (", or 'Advise on exceptions' for per-file advice." if
                                                   self.claude_ready() else "."))
+        return "\n".join(lines)
+
+    @_session_action
+    def _run_layouts(self, files: List[Path], in_place: bool, render: bool, log: Log) -> str:
+        """A layout plan: every layout's spec on its own files (``layouts.run_layouts``), copies only; the token the
+        user approved binds every layout, its files and the routing, and is checked again here."""
+        from .layouts import layout_token, run_layouts
+        if in_place:
+            diag.event("session.approval.refused", level="warning", gate="delivery_mode", reason="layouts_copies_only")
+            raise ValueError("A plan per layout writes edited copies only; original files are not overwritten.")
+        try:
+            current = layout_token(self.spec, files)
+        except OSError:
+            current = ""
+        if current != self.preview.token:
+            diag.event("session.approval.refused", level="warning", gate="approval_digest",
+                       reason="layout_inputs_changed")
+            raise ValueError("a file, the plan or the way the files are grouped changed since the preview — "
+                             "check the documents again before creating copies")
+        out = self.out_dir / "run"
+        diag.event("session.approval.accepted", approval_digest=self.preview.token, file_count=len(files),
+                   in_place=False, run_dir=str(out))
+        self.last_run_dir = out
+        result = run_layouts([str(f) for f in files], self.spec, out, renderer="auto", do_render=render,
+                             progress=log, approved_inputs=self.preview.token_inputs)
+        self.last_run_dir, self.last_batch, self.last_trials, self.last_chain = out, result, None, None
+        c = result.counts()
+        lines = [f"{len(result.files)} file(s) in {len(result.batches)} layout(s): PASS {c['PASS']}  FAIL {c['FAIL']}  "
+                 f"EXCEPTION {c['EXCEPTION']}"]
+        for f in result.files:
+            line = f"  {f.status:<9} {f.source.name}"
+            if f.exception:
+                line += f"  [{f.exception.get('code')}] {f.exception.get('reason')}"
+            elif f.record and not f.record.passed:
+                line += "  " + "; ".join(f"{ch.id} FAIL" for ch in f.record.checks if ch.status == "FAIL")
+            elif f.delivered_to:
+                line += f"  → {f.delivered_to}"
+            lines.append(line)
+        lines.append(f"\nReport: {out / 'LAYOUT_REPORT.md'}")
         return "\n".join(lines)
 
     @_session_action

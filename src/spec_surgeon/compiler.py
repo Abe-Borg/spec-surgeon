@@ -172,7 +172,10 @@ TOOLS = INSPECTION_TOOLS + [
                                                          "them; nothing else does)"},
              "detail": {"type": "string"}}, "required": ["label", "kind"]}}}}},
     {"name": "submit_editspec", "description": "Submit the EditSpec. It is validated and dry-planned; errors come "
-     "back to fix. A spec that says 'unsupported' must also judge custom_transform.",
+     "back to fix. A spec that says 'unsupported' must also judge custom_transform. When one spec cannot express "
+     "the request for every structure pattern of THE BATCH, submit spec as {\"summary\", \"layouts\": [{\"id\", "
+     "\"label\", \"pattern_ids\", \"spec\"}]}: one complete EditSpec per layout, each validated and dry-planned on "
+     "its own documents only (see LAYOUTS).",
      "input_schema": {"type": "object", "properties": {
          "spec": {"type": "object"},
          "custom_transform": {"type": "string", "enum": ["possible", "outside_limits"],
@@ -369,6 +372,15 @@ cursors: follow them when a sample omits relevant content. A short preview is no
 Use new evidence and different hypotheses to fix rejected candidates; do not repeat the same failed approach.
 - Omit review.sample_files unless the user requests an explicit sample count. Automatic sampling covers every \
 structural pattern and fills the shared allowance; do not copy a small sample count from an example by default.
+- LAYOUTS. THE BATCH groups the documents by structure pattern (pattern_id), one profile per pattern, with "roles": how \
+that layout encodes the section title, PART headings and article titles (style ids, or typed markers such as "2.01"). \
+Documents from different projects are built differently: PR1 articles in one, Heading 2 in another, Normal paragraphs \
+with typed numbers in a third. When one spec cannot say the request for every pattern, do not write a union selector \
+and do not leave files out: submit spec as {"summary": …, "layouts": [{"id": "A", "label": "<how the user would \
+recognise these documents, e.g. 'styled, PR1 articles'>", "pattern_ids": [...], "spec": <a complete EditSpec for \
+those documents, with its own concrete selectors and required counts>}, …]}. Every pattern of THE BATCH belongs to \
+exactly one layout; a pattern you cannot plan is an ask_user question, never a silent omission. Each layout's spec is \
+checked on its own documents only. Ask once per layout, never per file. One layout is an ordinary spec: submit it plain.
 - Finish each turn by calling submit_editspec once with the whole spec, or ask_user.
 """
 
@@ -588,6 +600,9 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
     """Every string an op of the spec would place in a document as typed in the spec — never what a table file, a
     template, a snippet the user picked or the documents themselves give (agreeing values, kept options, numbers)."""
     out: List[str] = []
+    for layout in (spec.get("layouts") or []) if isinstance(spec.get("layouts"), list) else []:
+        if isinstance(layout, dict) and isinstance(layout.get("spec"), dict):
+            out += placed_words(layout["spec"])
     for o in spec.get("ops") or []:
         if not isinstance(o, dict):
             continue
@@ -1189,7 +1204,7 @@ def _fit_detail(out: Dict[str, Any], budget: int) -> Dict[str, Any]:
     return out
 
 
-def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
+def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence[str]] = None) -> List[str]:
     """Spec-level failures of a dry plan on one file per pattern.
 
     True schema/contract mistakes (FATAL_SPEC_CODES) always reject the spec. Every other refusal is treated as
@@ -1220,6 +1235,8 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     pattern_errs: List[str] = []
     planned_ok = 0
     for pat in batch.prof["patterns"]:
+        if patterns is not None and pat["pattern_id"] not in patterns:
+            continue                              # a layout's spec is judged on its own documents only
         # The representative is one file of the pattern; a refusal that depends on the file's content (the phrase
         # is in the second file, not the first) must not reject a spec that plans on another file of the same
         # structure — try the pattern's other files before saying no file of it plans.
@@ -1252,12 +1269,45 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     return []
 
 
-def check_submission(spec: Any, batch: _Batch, sources: Sequence[str]) -> List[str]:
-    """[] when the spec is acceptable (or is a clean question/unsupported outcome)."""
+def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str]) -> List[str]:
+    """A submission with ``layouts``: the plan is well formed, every pattern of THE BATCH belongs to exactly one
+    layout (a pattern the model cannot plan is a question, never a silent omission), and each layout's spec passes
+    every check a single spec passes — on that layout's documents alone."""
+    from .layouts import layout_spec, plan_from_submission, validate_layout_plan
+    try:
+        plan = plan_from_submission(spec, str(spec.get("request") or "the request"))
+        validate_layout_plan(plan)
+    except SpecError as e:
+        return [f"[{e.code}] {e.reason}"]
+    known = {p["pattern_id"]: p for p in batch.prof["patterns"]}
+    covered: Dict[str, str] = {}
+    for layout in plan["layouts"]:
+        for pid in layout["pattern_ids"]:
+            if pid not in known:
+                return [f"[layouts] layout {layout['id']!r} names pattern {pid}, which THE BATCH does not list; use the "
+                        f"pattern_id values of THE BATCH"]
+            covered[pid] = layout["id"]
+    missing = [pid for pid in known if pid not in covered]
+    if missing:
+        return [f"[layouts] no layout covers pattern {pid} ({', '.join(known[pid]['files'][:3])}); add it to a layout, "
+                f"or ask the user when it cannot be planned" for pid in missing]
+    for layout in plan["layouts"]:
+        errs = check_submission(layout_spec(plan, layout), batch, sources, patterns=layout["pattern_ids"])
+        if errs:
+            return [f"layout {layout['id']!r}: {e}" for e in errs]
+    return []
+
+
+def check_submission(spec: Any, batch: _Batch, sources: Sequence[str],
+                     patterns: Optional[Sequence[str]] = None) -> List[str]:
+    """[] when the spec is acceptable (or is a clean question/unsupported outcome). ``patterns`` limits the dry plan
+    to those structure patterns (a layout's own)."""
     if not isinstance(spec, dict):
         return ["the spec must be a JSON object"]
     if spec.get("questions") or spec.get("unsupported"):
         return []
+    if isinstance(spec.get("layouts"), list):
+        return _check_layouts(spec, batch, sources)
     try:
         validate_spec(spec)
     except SpecError as e:
@@ -1287,7 +1337,7 @@ def check_submission(spec: Any, batch: _Batch, sources: Sequence[str]) -> List[s
     if bad:
         return [f"these words would be placed in the documents but the user never gave them verbatim: {bad}. Use "
                 f"the user's exact words, or call ask_user for them."]
-    return _dry_errors(spec, batch)
+    return _dry_errors(spec, batch, patterns)
 
 
 def build_messages(request: str, batch: _Batch, answers: Sequence[str], memory: Dict[str, Any],

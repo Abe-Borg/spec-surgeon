@@ -236,6 +236,14 @@ class Op:
         return PlanFragment(job=self.name, mode=mode or self.mode, params=dict(params), intended_parts=[],
                             op=self.name, select=dict(select or {}))
 
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        """One or two sentences a person reads in the plan: what changes, where, with every material parameter in
+        words (``ops/prose.py``: inches and points, quoted exact text, no identifiers). Each op overrides this; the
+        default is the op's catalog description plus the selection, which never names a parameter."""
+        from . import prose
+        head = (self.description or self.name.replace("_", " ")).split(". ")[0].rstrip(".")
+        return prose.sentence(head, prose.where(select))
+
 
 # ---- merge ------------------------------------------------------------------------------------------
 
