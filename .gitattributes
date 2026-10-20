@@ -1,2 +1,5 @@
 # These example reports are pinned by their exact byte hashes in the paired manifest.
 examples/evaluation/*.json text eol=lf
+# The window's page is built by Vite with LF line endings and committed; CI rebuilds it on Windows and requires the
+# result byte-identical to the checkout, so the checkout must not be converted to CRLF there.
+src/spec_surgeon/web/static/** text eol=lf
