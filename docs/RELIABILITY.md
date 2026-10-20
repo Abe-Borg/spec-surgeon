@@ -109,8 +109,8 @@ an OS file-size ceiling here. Parent log capture is file-backed and only a bound
 Unavailable memory isolation fails closed. These controls contain accidental resource exhaustion; they do not
 turn the Python restriction layer into an OS security jail.
 
-The model's ample existing allowances remain unchanged: 900,000 estimated working-context tokens and 64,000 output
-tokens by default, with the configured investigation call, attempt and spending budgets. Model output/effort
+The model's ample existing allowances remain unchanged: 900,000 estimated working-context tokens and 128,000
+output tokens (the model's maximum) by default, with the configured investigation call, attempt and spending budgets. Model output/effort
 overrides also reach visual review. A streamed response needs completed blocks, terminal message evidence and
 valid final tool JSON before it is accepted. Truncated streams and context-window cutoffs fail; incomplete calls
 retain their reservations instead of being reported as cheaply completed work.

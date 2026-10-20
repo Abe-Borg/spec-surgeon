@@ -74,7 +74,7 @@ def test_nested_scopes_keep_outer_limits_and_same_budget_is_counted_once():
     ("max_calls", True), ("max_calls", 1.0), ("max_calls", 0), ("max_calls", -2),
     ("max_calls", float("inf")), ("max_calls", None),
     ("max_output_tokens", False), ("max_output_tokens", "10"), ("max_output_tokens", 0),
-    ("max_output_tokens", 64001), ("max_output_tokens", float("nan")),
+    ("max_output_tokens", 128001), ("max_output_tokens", float("nan")),
     ("max_total_tokens", True), ("max_total_tokens", -1), ("max_total_tokens", 3.5),
     ("max_total_tokens", float("inf")),
     ("max_cost_usd", True), ("max_cost_usd", "5"), ("max_cost_usd", 0),
@@ -86,6 +86,14 @@ def test_nested_scopes_keep_outer_limits_and_same_budget_is_counted_once():
 def test_configuration_rejects_non_finite_or_ambiguous_values(field, value):
     with pytest.raises(ValueError, match=field):
         llm.CallBudget(**{field: value})
+
+
+def test_recovery_options_may_drop_the_spending_and_token_ceilings_but_never_the_call_limit():
+    from spec_surgeon.recovery import RecoveryOptions
+    RecoveryOptions(max_cost_usd=None, max_total_tokens=None).validate()
+    for field, value in (("max_calls", None), ("max_cost_usd", 0), ("max_total_tokens", 0)):
+        with pytest.raises(ValueError, match=field):
+            RecoveryOptions(**{field: value}).validate()
 
 
 def test_input_and_full_output_are_reserved_before_opening_the_stream():

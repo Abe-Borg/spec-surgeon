@@ -121,6 +121,7 @@ class Session:
     """What the window is working on. Every step is a call into the engine; the window only shows the text."""
     documents: List[Path] = field(default_factory=list)   # the attached documents, in the order the user gave
     template: Optional[Path] = None
+    inputs: List[Path] = field(default_factory=list)      # pictures and tables the user attached for the edit to use
     out_root: Path = field(default_factory=default_run_root)
     spec: Optional[Dict[str, Any]] = None
     out_dir: Optional[Path] = None
@@ -269,7 +270,8 @@ class Session:
             had = [Path(f).resolve() for f in c.files if not is_template_file(f, templates)]
             return ([Path(f).resolve() for f in files] == had
                     and (self.template.resolve() if self.template else None) ==
-                    (c.template.resolve() if c.template else None))
+                    (c.template.resolve() if c.template else None)
+                    and [Path(p).resolve() for p in self.inputs] == [Path(p).resolve() for p in c.batch.inputs])
         except (ValueError, OSError):
             return False
 
@@ -295,7 +297,7 @@ class Session:
         log(f"Talking the request through with Claude over {len(files)} file(s)…")
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
                                          work_dir=out / "chat", log=log, continuous_recovery=True,
-                                         word_sources=self.replay_word_sources)
+                                         word_sources=self.replay_word_sources, input_files=self.inputs)
         try:
             turn = self.conversation.start()
         except Exception:
@@ -383,6 +385,28 @@ class Session:
             return msg
         try:
             turn = c.reply(text, choice_id, client=self.client)
+        except Exception:
+            self._save_chat()
+            raise
+        return self._after_turn(turn)
+
+    @_session_action
+    def resume_conversation(self, log: Log = lambda m: None) -> str:
+        """Continue the conversation's turn that stopped before Claude answered (a paused allowance, a stop, a failed
+        call), with everything it had investigated, instead of starting the request over."""
+        c = self.conversation
+        if c is None or not c.resumable():
+            raise ValueError("there is no stopped conversation turn to continue")
+        if not self.claude_ready():
+            raise ValueError(NEEDS_KEY_REPLY)
+        if not self.conversation_matches(c.request):
+            raise ValueError("the files or the template changed since this conversation started — describe the change again")
+        if self._compiled_dir is None:
+            self.chat_dir = self._compiled_dir = self._next_session_dir()
+        c.log = log
+        log("Continuing where the conversation stopped…")
+        try:
+            turn = c.resume()
         except Exception:
             self._save_chat()
             raise
@@ -974,7 +998,8 @@ class Session:
             if request and request.strip() != original_request.strip():
                 clarified = original_request + "\n\nUser clarification: " + request if original_request else request
             result = recover(files, clarified, out, spec=self.spec, template=self.template,
-                             approved_words=approved, options=options, client=self.client, log=log)
+                             approved_words=approved, options=options, client=self.client, log=log,
+                             input_files=list(self.inputs))
         self._adopt_recovery(result)
         self.pending_layout_recovery = pending
         return result.to_text()

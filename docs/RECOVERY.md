@@ -16,10 +16,10 @@ required capability is unavailable.
 
 Recovery runs inside the conversation and needs no setup. When **Create edited copies** leaves a
 file that did not pass, or a sample fails during the preview, the app investigates those files on
-copies in the same conversation. It uses the conversation's own allowance (the shared estimated
-$10 ledger, 48 calls, 16,000 output tokens per call), up to eight candidate attempts per problem
-group and high reasoning effort. The window has no budget, attempt or model controls; Settings
-holds only the API key.
+copies in the same conversation. It shares the conversation's ledger (no spending or token ceiling,
+the pause every 48 AI steps, 128,000 output tokens per call), up to eight candidate attempts per
+problem group and high reasoning effort; **Stop now** cuts it off like any other step. The
+window has no budget, attempt or model controls; Settings holds only the API key.
 
 A question from the investigation appears in the chat once, as buttons or a text box. The result
 appears as the ordinary plan view: the ready copies, the documents that still need attention with
@@ -70,7 +70,7 @@ Useful options:
 | `--budget 250` | Estimated model-spending allowance in USD, default 250. |
 | `--max-attempts 50` | Candidate-attempt allowance per problem group, default 50. |
 | `--max-calls 512` | Model-call allowance for the investigation, default 512. |
-| `--max-output-tokens 64000` | Maximum output tokens per model call. |
+| `--max-output-tokens 128000` | Maximum output tokens per model call (the model's maximum, the default). |
 | `--max-total-tokens 20000000` | Estimated total input/output token allowance. |
 | `--allow-codegen` | Permit offered custom formatting transforms within the restricted recovery contract. |
 | `--no-memory` | Neither retrieve nor record local repair cases for this investigation. |

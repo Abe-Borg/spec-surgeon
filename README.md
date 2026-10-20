@@ -99,13 +99,19 @@ reopen the app, with every attachment checked again.
 
 ![The plan in prose and before/after pages, with one action](docs/conversation-preview.png)
 
-Connect an Anthropic API key once in **Settings**. Each conversation starts with an estimated $10 model allowance
-and pauses for an explicit **Allow another estimated $10** before spending more. While work runs the button reads
-**Stop after current step**, and the status line shows elapsed time and estimated spend. Typed requests need the
-key; saved specifications run through the command line without one.
+Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in
+or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
+beside your documents is ever looked for.
 
-See [the window guide](docs/CONVERSATIONAL_DESKTOP.md) for triage notes, layouts, previews, saved conversations,
-recovery, resource use and verification limits.
+Connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
+at high effort with room for its full 128,000-token answer. Instead, the status line shows the estimated spending
+as it accrues, **Stop now** cuts off the AI step that is running at once, and work pauses after every 48 AI
+steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a
+passing reason (an overloaded service, a dropped connection) is sent again automatically. Typed requests need
+the key; saved specifications run through the command line without one.
+
+See [the window guide](docs/CONVERSATIONAL_DESKTOP.md) for triage notes, pictures and tables, layouts, previews,
+saved conversations, recovery, resource use and verification limits.
 
 ## The command line
 

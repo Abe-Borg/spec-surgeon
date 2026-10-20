@@ -40,11 +40,11 @@ from .resources import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_CALLS, DEFAULT_MAX_COS
 class RecoveryOptions:
     max_attempts: int = DEFAULT_MAX_ATTEMPTS
     max_calls: int = DEFAULT_MAX_CALLS
-    max_cost_usd: float = DEFAULT_MAX_COST_USD
+    max_cost_usd: Optional[float] = DEFAULT_MAX_COST_USD        # None: no spending ceiling (the window's)
     model: Optional[str] = None
     effort: str = DEFAULT_EFFORT
     max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS
-    max_total_tokens: int = DEFAULT_MAX_TOTAL_TOKENS
+    max_total_tokens: Optional[int] = DEFAULT_MAX_TOTAL_TOKENS  # None: no token ceiling; the call limit stays
     render: bool = True
     renderer: str = "auto"
     allow_codegen: Optional[bool] = None  # automatic: enabled only with an independently checked adaptive contract
@@ -58,13 +58,16 @@ class RecoveryOptions:
     def validate(self) -> None:
         for name in ("max_attempts", "max_calls", "max_output_tokens", "max_total_tokens", "group_call_slice", "max_context_tokens"):
             value = getattr(self, name)
+            if name == "max_total_tokens" and value is None:
+                continue
             if type(value) is not int or value < 1:
                 raise ValueError(f"{name} must be a positive integer")
         if self.max_output_tokens > llm.MAX_TOKENS:
             raise ValueError(f"max_output_tokens must not exceed {llm.MAX_TOKENS}")
-        if (isinstance(self.max_cost_usd, bool) or not isinstance(self.max_cost_usd, (int, float))
+        if self.max_cost_usd is not None and (
+                isinstance(self.max_cost_usd, bool) or not isinstance(self.max_cost_usd, (int, float))
                 or not math.isfinite(self.max_cost_usd) or self.max_cost_usd <= 0):
-            raise ValueError("max_cost_usd must be a finite positive amount")
+            raise ValueError("max_cost_usd must be a finite positive amount, or None")
         if self.effort not in ("low", "medium", "high", "max"):
             raise ValueError("effort must be low, medium, high, or max")
         if self.renderer not in ("auto", "word", "libreoffice", "none"):

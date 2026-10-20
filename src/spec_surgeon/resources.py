@@ -11,13 +11,13 @@ import json
 DEFAULT_MAX_ATTEMPTS = 50
 DEFAULT_MAX_CALLS = 512
 DEFAULT_MAX_COST_USD = 250.0
-DEFAULT_MAX_OUTPUT_TOKENS = 64000
+DEFAULT_MAX_OUTPUT_TOKENS = 128000      # the most Opus 5.5 (and every model it may fall back to) writes
 DEFAULT_MAX_TOTAL_TOKENS = 20000000
 DEFAULT_MAX_IMAGE_TOKENS = 1000000
 DEFAULT_SAMPLE_FILES = 8
 # Working input before history rollover, not the investigation's total-token budget.
 # Opus 5.5 has a 1M context window: retain substantial evidence while leaving room
-# for the 64k response and estimation error. Smaller-window model overrides should
+# for the 128k response and estimation error. Smaller-window model overrides should
 # also set max_context_tokens explicitly. Prioritize capability; tune costs later.
 DEFAULT_CONTEXT_TOKENS = 900000
 DEFAULT_ANALYSIS_SECONDS = 120

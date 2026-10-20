@@ -93,7 +93,7 @@ def test_local_output_policy_cannot_escape_outer_budget():
     fake = FakeClient(resp(text("ok")))
     with llm.budget_scope(budget):
         llm.call(fake, model="claude-opus-5-5", system="S", tools=[], messages=[{"role": "user", "content": "x"}],
-                 max_output_tokens=64000, effort="max")
+                 max_output_tokens=128000, effort="max")
     assert fake.requests[0]["max_tokens"] == 1234
     assert fake.requests[0]["output_config"] == {"effort": "low"}
     assert budget.calls == budget.usage.calls == 1
@@ -115,7 +115,7 @@ def test_larger_allowances_remain_configurable_and_invalid_values_are_refused(so
     assert conversation.max_calls == 900 and conversation.max_attempts == 200
     defaults = llm.CallBudget()
     assert defaults.max_calls == resources.DEFAULT_MAX_CALLS == 512
-    assert defaults.max_output_tokens == resources.DEFAULT_MAX_OUTPUT_TOKENS == 64000
+    assert defaults.max_output_tokens == resources.DEFAULT_MAX_OUTPUT_TOKENS == 128000
     assert defaults.max_total_tokens == resources.DEFAULT_MAX_TOTAL_TOKENS == 20000000
     assert defaults.max_cost_usd == resources.DEFAULT_MAX_COST_USD == 250
     assert defaults.effort == resources.DEFAULT_EFFORT == "max"

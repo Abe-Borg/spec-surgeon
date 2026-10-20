@@ -104,7 +104,7 @@ before acknowledging export. A changed goal or input requires fresh dependent ve
 | --- | --- |
 | Candidate attempts per problem group | 50 |
 | Model calls per investigation | 512 |
-| Output tokens per call | 64,000 |
+| Output tokens per call | 128,000 (the model's maximum) |
 | Estimated total tokens | 20,000,000 |
 | Estimated model spend per investigation | $250 |
 | Reasoning effort | Maximum |
@@ -120,7 +120,7 @@ and incomplete responses can make accounting estimates differ from the final bil
 The context allowance controls when a conversation archives its complete history and starts a new
 epoch; it is separate from the investigation's 20-million-token total allowance. The default prioritizes
 sustained investigation with the configured [Opus 5.5 model's 1-million-token context](https://platform.claude.com/docs/en/models/opus-5-5/overview),
-leaving room for the configured 64,000-token output and estimation error. It is an application estimate,
+leaving room for the configured 128,000-token output and estimation error. It is an application estimate,
 not a provider token count. When choosing a model with a smaller context window, also set
 `--max-context-tokens` to fit that model with output headroom. Saved investigations retain their saved
 settings; resume with `--max-context-tokens 900000` to increase an older investigation's allowance.

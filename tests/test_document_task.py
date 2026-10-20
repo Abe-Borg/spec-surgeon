@@ -9,7 +9,7 @@ import pytest
 from docx import Document
 
 from fake_claude import FakeClient, resp, tool
-from spec_surgeon.document_task import DocumentTask
+from spec_surgeon.document_task import STEPS_PER_PAUSE, DocumentTask
 from spec_surgeon.gui import Session
 from spec_surgeon import review_display
 
@@ -191,12 +191,50 @@ def test_interrupted_call_pauses_before_new_spending(tmp_path):
     restored.restore()
     assert restored.stage == "budget"
     view = restored.view()
-    assert "$10" in view["action"]
+    assert view["action"] == "Continue" and view["budget_paused"]
     restored.perform("primary", token=view["token"])
     assert len(restored.session.client.requests) == 1
-    assert restored._budget.max_cost_usd == 20
-    assert restored._budget.estimated_cost_usd >= 10
+    assert restored._budget.max_calls == 2 * STEPS_PER_PAUSE
+    assert restored._budget.max_cost_usd is None and restored._budget.max_total_tokens is None
     assert restored.stage == "preview"
+
+
+def test_every_desktop_call_gets_the_models_full_output_at_high_effort_with_no_spending_ceiling(tmp_path):
+    journal = tmp_path / "conversation.json"
+    task = task_for(tmp_path, journal=journal)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.perform("send", text=REQUEST)
+    request = task.session.client.requests[0]
+    assert request["max_tokens"] == 128000 and request["output_config"] == {"effort": "high"}
+    assert (task._budget.max_cost_usd, task._budget.max_total_tokens, task._budget.max_calls) == (None, None, 48)
+    options = task._recovery_options()
+    options.validate()
+    assert (options.max_output_tokens, options.effort) == (128000, "high")
+    assert (options.max_cost_usd, options.max_total_tokens) == (None, None)
+    task.save()
+    restored = task_for(tmp_path, journal=journal)
+    assert restored.restore()
+    assert (restored._budget.max_output_tokens, restored._budget.effort) == (128000, "high")
+    assert (restored._budget.max_cost_usd, restored._budget.max_total_tokens) == (None, None)
+
+
+def test_a_journal_from_the_allowance_version_keeps_its_spending_but_not_its_ceilings(tmp_path):
+    journal = tmp_path / "conversation.json"
+    task = task_for(tmp_path, journal=journal)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.decisions = [REQUEST]
+    task.save()
+    data = json.loads(journal.read_text())
+    data["budget"].update(max_cost_usd=10.0, max_total_tokens=1_000_000, calls=30, estimated_cost_usd=10.2,
+                          exhausted_reason="estimated recovery spending ceiling reached ($10.2000 accounted, "
+                                           "$10.0000 ceiling); provider billing may differ")
+    journal.write_text(json.dumps(data))
+    restored = task_for(tmp_path, journal=journal)
+    assert restored.restore()
+    assert restored.stage == "resume" and restored._budget.exhausted_reason is None
+    assert (restored._budget.max_cost_usd, restored._budget.max_total_tokens) == (None, None)
+    assert restored._budget.calls == 30 and restored._budget.spent_usd == pytest.approx(10.2)
+    assert restored.view()["cost"] == pytest.approx(10.2)
 
 
 def test_budget_covers_all_conversation_turns(tmp_path):
@@ -632,3 +670,125 @@ def test_after_one_layouts_recovery_is_saved_the_next_layouts_documents_are_chec
     task.session.last_recovery, task.session.recovery = task.session.recovery, None
     task.session.resolve_next_layout(lambda m: None)
     assert calls == ["layout-A", "layout-B"] and task.session.pending_layout_recovery == []
+
+
+# ---- no allowance: the pause, the stop and Continue ---------------------------------------------------------------
+
+def _tool_results(messages):
+    return [b["tool_use_id"] for m in messages if m["role"] == "user" and isinstance(m["content"], list)
+            for b in m["content"] if isinstance(b, dict) and b.get("type") == "tool_result"]
+
+
+def test_continue_after_the_pause_picks_the_conversation_up_where_it_stopped(tmp_path):
+    fake = FakeClient(resp(tool("list_styles", {"file": "Spec.docx"}, "t1")),
+                      resp(tool("list_styles", {"file": "Spec.docx"}, "t2")),
+                      resp(tool("submit_editspec", {"spec": SPEC}, "t3")))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task._budget.max_calls = 2
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "budget" and view["action"] == "Continue" and len(fake.requests) == 2
+    conversation = task.session.conversation
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "preview" and len(fake.requests) == 3
+    assert task.session.conversation is conversation                     # the same investigation, not a new one
+    third = fake.requests[2]["messages"]
+    assert third[0] == fake.requests[0]["messages"][0] and _tool_results(third) == ["t1", "t2"]
+    assert task._budget.max_calls == 2 + STEPS_PER_PAUSE
+
+
+def test_continue_after_a_stop_sends_the_stopped_turn_again_as_it_was(tmp_path):
+    from fake_claude import raise_on_enter
+    from spec_surgeon import llm
+    fake = FakeClient(resp(tool("list_styles", {"file": "Spec.docx"}, "t1")),
+                      raise_on_enter(llm.UserCancelled(llm.STOPPED)),
+                      resp(tool("submit_editspec", {"spec": SPEC}, "t2")))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    with pytest.raises(llm.UserCancelled):
+        task.perform("send", text=REQUEST)
+    assert task.stage == "resume" and task.view()["action"] == "Continue"
+    conversation = task.session.conversation
+    assert conversation.resumable()
+    view = task.perform("primary", token=task.view()["token"])
+    assert view["stage"] == "preview" and task.session.conversation is conversation
+    assert fake.requests[2]["messages"] == fake.requests[1]["messages"]
+    assert not conversation.resumable()                                   # a spec now waits for the user
+
+
+def test_a_conversation_waiting_for_the_users_answer_is_not_resumed(tmp_path):
+    fake = FakeClient(resp(tool("ask_user", {"questions": ["Which title?"]})))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.perform("send", text=REQUEST)
+    assert task.stage == "question" and not task.session.conversation.resumable()
+    with pytest.raises(ValueError, match="waiting for the user"):
+        task.session.conversation.resume()
+
+
+# ---- pictures and tables attached for the edit to use -------------------------------------------------------------
+
+def test_pictures_and_tables_attach_for_the_edit_to_use_and_reach_the_conversation(tmp_path):
+    from make_fixtures import png
+    from test_text_edits import _xlsx
+    logo, sheet, broken = tmp_path / "logo.png", tmp_path / "PROJECT.xlsx", tmp_path / "broken.png"
+    logo.write_bytes(png(size=6))
+    sheet.write_bytes(_xlsx([["Variable", "VA3"], ["SITE_NAME", "Leesburg"]]))
+    broken.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 10)
+    journal = tmp_path / "conversation.json"
+    task = task_for(tmp_path, journal=journal)
+    spec_file = document(tmp_path / "Spec.docx")
+    task.attach([spec_file, logo, sheet, broken])
+    refs = [a for a in task.view()["attachments"] if a["reference"]]
+    assert [Path(a["path"]).name for a in refs] == ["logo.png", "PROJECT.xlsx", "broken.png"]
+    assert refs[0]["state"] == "note" and "6 × 6 pixels" in refs[0]["notes"][0]
+    assert refs[1]["state"] == "note" and "1 sheet" in refs[1]["notes"][0]
+    assert refs[2]["state"] == "refused" and refs[2]["reason"].startswith("broken.png cannot be read")
+    assert task.documents() == [spec_file.resolve()]
+    assert task.session.inputs == [logo.resolve(), sheet.resolve()]
+    (tmp_path / "notes.pdf").write_bytes(b"%PDF-1.7")
+    with pytest.raises(ValueError, match="pictures"):
+        task.attach([tmp_path / "notes.pdf"])
+    with pytest.raises(ValueError, match="Word .docx"):
+        task.attach([logo], template=True)
+    task.perform("send", text=REQUEST)
+    first = task.session.client.requests[0]["messages"][0]["content"]
+    first = first if isinstance(first, str) else json.dumps(first, ensure_ascii=False)
+    assert "INPUT FILES" in first and "logo.png" in first and "PROJECT.xlsx" in first and "broken.png" not in first
+    conversation = task.session.conversation
+    assert conversation.batch.inputs == [logo.resolve(), sheet.resolve()]
+    assert task.session.conversation_matches(conversation.request)
+    restored = task_for(tmp_path, journal=journal)
+    assert restored.restore()
+    assert restored.session.inputs == [logo.resolve(), sheet.resolve()]
+    task.remove(logo.resolve())
+    assert task.session.inputs == [sheet.resolve()] and task.session.conversation is None
+
+
+def test_a_table_attached_in_the_window_fills_the_documents_end_to_end(tmp_path):
+    import zipfile
+    from make_fixtures import build_batch1
+    from test_text_edits import _xlsx
+    doc, sheet = tmp_path / "211319 - Preaction.docx", tmp_path / "PROJECT.xlsx"
+    doc.write_bytes(build_batch1())
+    sheet.write_bytes(_xlsx([["Variable", "VA1", "VA3"], ["SITE_NAME", "Ashburn", "Leesburg"],
+                             ["OWNER_NAME", "Contoso", "Contoso"], ["PROJECT NO", "1001", "1003"]]))
+    request = "Fill in the VA3 site values from PROJECT.xlsx."
+    spec = {"request": request, "summary": "Fill the project values", "mode": "content", "ops": [
+        {"op": "fill_variables", "params": {"table": {"file": str(sheet.resolve()), "name_column": "Variable",
+                                                      "value_column": "VA3"}, "author": "A"}}]}
+    fake = FakeClient(resp(tool("read_input_file", {"path": str(sheet.resolve())}, "r1")),
+                      resp(tool("submit_editspec", {"spec": spec}, "s1")))
+    task = task_for(tmp_path, fake)
+    task.attach([doc, sheet])
+    view = task.perform("send", text=request)
+    assert view["stage"] == "preview", (view["messages"], view["warnings"])
+    read = fake.requests[1]["messages"][-1]["content"][0]
+    assert read["tool_use_id"] == "r1" and not read.get("is_error") and "Leesburg" in read["content"]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and len(task.results) == 1
+    with zipfile.ZipFile(next(iter(task.results.values()))) as z:
+        headers = "".join(z.read(n).decode("utf-8") for n in z.namelist() if n.startswith("word/header"))
+    # filled as a tracked change: the placeholder deleted, the sheet's value inserted
+    assert "<w:t>Leesburg</w:t>" in headers and "<w:delText>{{SITE_NAME}}</w:delText>" in headers
+    assert "<w:t>{{SITE_NAME}}</w:t>" not in headers

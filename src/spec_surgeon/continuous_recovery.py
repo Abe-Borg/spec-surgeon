@@ -42,7 +42,7 @@ def propose(conversation):
 
     c = conversation
     c.recovery_active = True
-    paths = list(c.files) + ([c.template] if c.template else [])
+    paths = list(c.files) + ([c.template] if c.template else []) + list(c.batch.inputs)
     # A draft based on stale inspection must not be presented as current.
     for path in paths:
         c.batch.check_source_pin(path)
@@ -126,7 +126,7 @@ def execute(conversation, snapshot, out_dir, *, render=False, options=None):
     result = prepare_recovery(conversation.files, conversation.request, out_dir,
         template=conversation.template, prior_failures=conversation.prior_failures,
         approved_words=list(conversation.sources), adaptive_contract=copy.deepcopy(snapshot["contract"]),
-        options=selected_options, log=conversation.log)
+        options=selected_options, log=conversation.log, input_files=list(conversation.batch.inputs))
     if any(f.status == "UNRESOLVED" for f in result.files):
         result = resume_recovery(result.out_dir, options=selected_options,
             client=conversation._client_now(), log=conversation.log)
