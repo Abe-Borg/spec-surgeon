@@ -156,7 +156,9 @@ export function reduce(state: UiState, action: UiAction): UiState {
       // reopened mid-job) still gets a live bubble, so the window shows Stop
       // and a status rather than an idle page that refuses every click.
       const live = view.busy ? (state.live ?? { ...emptyLive(), status: { kind: "working", text: "" } }) : null;
-      return { ...state, view, loaded: true, live };
+      // An empty conversation (a new one) carries no reply to keep an aside for.
+      const asides = view.messages.length === 0 ? {} : state.asides;
+      return { ...state, view, loaded: true, live, asides };
     }
     case "job_started": {
       let messages = state.view.messages;

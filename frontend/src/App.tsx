@@ -192,7 +192,10 @@ export default function App() {
     };
     const onLeave = (e: DragEvent) => {
       if (!hasFiles(e)) return;
-      setDragDepth((d) => Math.max(0, d - 1));
+      // Leaving the window altogether (no element under the pointer) ends
+      // the drag as far as the ring is concerned, whatever the counter says.
+      if (e.relatedTarget === null) setDragDepth(0);
+      else setDragDepth((d) => Math.max(0, d - 1));
     };
     const onDrop = (e: DragEvent) => {
       if (!hasFiles(e)) return;
@@ -237,6 +240,8 @@ export default function App() {
     api.openLogs().catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
 
+  /** Follow the update block every 2 s for up to `tries` polls, or until it
+   *  settles (anything but "none" or "downloading"). Returns the stop. */
   const pollUpdate = useCallback((tries: number) => {
     let left = tries;
     const timer = window.setInterval(() => {
@@ -252,6 +257,7 @@ export default function App() {
         .catch(() => window.clearInterval(timer));
       if (left <= 0) window.clearInterval(timer);
     }, 2000);
+    return () => window.clearInterval(timer);
   }, []);
 
   const onCheckUpdates = useCallback(() => {
@@ -266,26 +272,25 @@ export default function App() {
       .catch((failure: unknown) => setNotice(failureText(failure)));
   }, [pollUpdate]);
 
+  // The download is followed by the effect below, which starts polling the
+  // moment the update block says "downloading" — from this click or from a
+  // view that found the download already running.
   const onDownloadUpdate = useCallback(() => {
     api
       .downloadUpdate()
-      .then((update) => {
-        dispatch({ type: "update", update });
-        pollUpdate(600);
-      })
+      .then((update) => dispatch({ type: "update", update }))
       .catch((failure: unknown) => setNotice(failureText(failure)));
-  }, [pollUpdate]);
+  }, []);
 
   const onInstallUpdate = useCallback(() => {
     api.installUpdate().catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
 
-  // A download that was already running when the page loaded is followed too.
+  const downloading = view.update?.state === "downloading";
   useEffect(() => {
-    if (view.update?.state === "downloading") pollUpdate(600);
-    // Only on the first view with a download in flight.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [view.update?.state === "downloading"]);
+    if (!downloading) return;
+    return pollUpdate(600);
+  }, [downloading, pollUpdate]);
 
   const updateShown =
     view.update &&

@@ -38,12 +38,17 @@ export function imageSrc(url: string): string {
   return imageSrcFor(setup, url);
 }
 
+const BUSY = "Spec Surgeon is busy with the current work. Wait for it to finish, or stop it.";
+
 function messageFrom(data: unknown, status: number): string {
   if (data && typeof data === "object" && typeof (data as { error?: unknown }).error === "string") {
-    return (data as { error: string }).error;
+    const error = (data as { error: string }).error.trim();
+    // The contract's one-word refusal (`{"error": "busy"}`) gets a sentence.
+    if (error.toLowerCase() === "busy") return BUSY;
+    if (error) return error;
   }
   if (status === 401) return "The page is not connected to its app. Close the window and open Spec Surgeon again.";
-  if (status === 409) return "Spec Surgeon is busy with the current work. Wait for it to finish, or stop it.";
+  if (status === 409) return BUSY;
   if (status === 404) return "That file is gone.";
   return `The app could not answer (${status}).`;
 }
