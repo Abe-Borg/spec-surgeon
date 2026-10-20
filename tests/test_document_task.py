@@ -178,7 +178,7 @@ def test_journal_restores_work_without_restoring_approval_or_resetting_spend(tmp
     assert restored.session.preview is None
     assert restored._budget.calls == task._budget.calls
     assert restored._budget.estimated_cost_usd == task._budget.estimated_cost_usd
-    assert "outcome_approval" not in json.loads(journal.read_text())
+    assert "outcome_approval" not in json.loads(journal.read_text(encoding="utf-8"))
 
 
 def test_interrupted_call_pauses_before_new_spending(tmp_path):
@@ -226,7 +226,7 @@ def test_a_journal_from_the_allowance_version_keeps_its_spending_but_not_its_cei
     task.attach([document(tmp_path / "Spec.docx")])
     task.decisions = [REQUEST]
     task.save()
-    data = json.loads(journal.read_text())
+    data = json.loads(journal.read_text(encoding="utf-8"))
     data["budget"].update(max_cost_usd=10.0, max_total_tokens=1_000_000, calls=30, estimated_cost_usd=10.2,
                           exhausted_reason="estimated recovery spending ceiling reached ($10.2000 accounted, "
                                            "$10.0000 ceiling); provider billing may differ")
