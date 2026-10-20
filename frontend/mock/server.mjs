@@ -472,10 +472,12 @@ function startStream(res) {
     res.write(`data: ${JSON.stringify({ type: "done", state: view })}\n\n`);
     res.end();
   };
-  const fail = (message) => {
+  // `resend`: the request's text when it was refused before it was recorded (the real server sends it when no
+  // user message with that text was kept); the page takes it back into the composer.
+  const fail = (message, resend = "") => {
     view.busy = false;
     running = null;
-    res.write(`data: ${JSON.stringify({ type: "error", message, state: view })}\n\n`);
+    res.write(`data: ${JSON.stringify({ type: "error", message, state: view, ...(resend ? { resend } : {}) })}\n\n`);
     res.end();
   };
   return { job, emit, text, end, fail };
@@ -578,7 +580,7 @@ async function failJob(res, userText) {
   await s.emit({ type: "cost", cost: spend(0.03, 1) });
   // Nothing of this job is kept: the server rolled back; the view is as before the send.
   view.messages.pop();
-  s.fail("The AI service could not be reached after three attempts. Nothing was changed; you can send the request again.");
+  s.fail("The AI service could not be reached after three attempts. Nothing was changed; you can send the request again.", userText);
 }
 
 async function pauseJob(res, userText) {

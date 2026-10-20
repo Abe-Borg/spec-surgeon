@@ -44,6 +44,8 @@ try {
   await page.waitForTimeout(400);
   check("the failed job's user bubble gave way to the server's view", (await userBubbles().count()) === 0);
   check("Send is back after the failure", await page.getByRole("button", { name: "Send" }).isVisible());
+  check("the refused request is back in the composer", (await box.inputValue()) === "please fail", await box.inputValue());
+  await box.fill("");
 
   // 2. A pause: the card with Continue; Continue runs the primary job.
   await box.fill("pause please");
