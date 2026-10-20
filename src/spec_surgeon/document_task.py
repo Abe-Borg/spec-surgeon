@@ -18,6 +18,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -209,7 +210,7 @@ class DocumentTask:
 
     def say(self, text, role="app"):
         if text:
-            message = {"role": role, "text": str(text)}
+            message = {"role": role, "text": str(text), "at": time.time()}
             self.messages.append(message)
             if role != "user":
                 self._emit({"type": "message", "message": dict(message)})
