@@ -145,15 +145,23 @@ def test_a_style_change_under_the_templating_op_is_refused_as_a_conflict(style_o
     assert rec2.passed, rec2.to_markdown()
 
 
-def test_the_compilers_dry_plan_rejects_the_style_change_with_the_templating_op(tmp_path):
+def test_the_compilers_dry_plan_composes_the_style_change_with_the_templating_op_into_steps(tmp_path):
+    """The plan-time conflict stands (above); the compiler answers it by composing the two ops into ordered steps,
+    the style change first and the templating op on its outputs, instead of refusing the submission (2026-10-20:
+    the user never performs the split)."""
+    from spec_surgeon.compiler import compose_submission
+    from spec_surgeon.editspec import is_chain
     folder = tmp_path / "specs"
     folder.mkdir()
     (folder / "21 13 13 – WET-PIPE SPRINKLER SYSTEMS.docx").write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
     (folder / "21 05 00 – COMMON WORK RESULTS.docx").write_bytes(build("21 05 00", "COMMON WORK RESULTS"))
     spec = _spec([{"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": "Courier New"}}, _hf()])
     batch = _Batch(sorted(folder.glob("*.docx")), Path(spec["ops"][1]["params"]["template"]))
-    errs = check_submission(spec, batch, [spec["request"]])
-    assert errs and "conflict" in errs[0] and "split out ['#1 set_style_font']" in errs[0]
+    assert check_submission(spec, batch, [spec["request"]]) == []
+    outcome, errs = compose_submission(spec, batch, [spec["request"]])
+    assert errs == [] and is_chain(outcome)
+    assert [[o["op"] for o in st["spec"]["ops"]] for st in outcome["stages"]] == [
+        ["set_style_font"], ["apply_header_footer_template"]]
     assert check_submission(_spec([_hf()]), batch, [REQUEST]) == []
 
 

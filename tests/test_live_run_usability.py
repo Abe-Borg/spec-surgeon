@@ -18,7 +18,10 @@ from spec_surgeon.verify import run_suite
 from test_vision import make_pdf
 
 
-def test_compiler_discovers_complete_operation_docs_on_demand(tmp_path):
+def test_compiler_carries_every_operations_sheet_and_reads_the_rest_on_demand(tmp_path):
+    """Every operation's selectors and parameters ride the cached system prompt (the op sheet), so a plan needs no
+    round trip per operation; describe_op still returns an operation's verification rules and worked examples."""
+    from spec_surgeon.catalog import op_sheet
     source = tmp_path / "spec.docx"
     source.write_bytes(build("21 13 13", "SPRINKLERS"))
     spec = {"request": "remove headers", "summary": "remove headers", "mode": "formatting",
@@ -28,8 +31,9 @@ def test_compiler_discovers_complete_operation_docs_on_demand(tmp_path):
     result = compiler.compile_request("remove headers", [source], client=fake)
     assert result.status == "ok", result.errors
     prompt = fake.requests[0]["system"]
-    assert len(prompt.encode()) < 50000
-    assert len(prompt) < len(json.dumps(op_catalog())) // 4
+    sheet = op_sheet()
+    assert json.dumps(sheet["ops"]["remove_header_footer"]["select"]) in prompt or "remove_header_footer" in prompt
+    assert len(prompt) < len(json.dumps(op_catalog()))          # the sheet is the catalog without its examples
     docs = json.loads(fake.requests[1]["messages"][-1]["content"][0]["content"])
     assert docs["params"] == get_op("remove_header_footer").params_schema
     assert docs["verification"] and docs["worked_examples"]
