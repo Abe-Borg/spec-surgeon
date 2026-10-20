@@ -13,7 +13,7 @@ transform cannot hide behind the same bug in the check.
 
 from pathlib import Path as _Path
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 # The docx-surgical-edit method the engine implements, shipped inside the package (read it before changing any op or check).
 SKILL_DIR = _Path(__file__).resolve().parent / "skill"
