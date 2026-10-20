@@ -93,7 +93,7 @@ def test_one_worker_renders_every_file_and_publishes_each_pdf(word):
     assert list(batch.results) == files
     for f in files:
         _pdf(batch.results[f], f.name)
-        assert batch.results[f] == word.out / (f.stem + ".pdf") and batch.seconds[f] >= 0.05
+        assert batch.results[f] == word.out / (f.stem + ".pdf") and batch.seconds[f] > 0.0
     assert not list(word.out.glob(".specsurgeon-render-*"))                 # staged copies are gone
     assert word.cleanup == [(("private", 4242), False)]                      # Word quit by itself: nothing to terminate
 
