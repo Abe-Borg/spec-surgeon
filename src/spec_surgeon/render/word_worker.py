@@ -440,7 +440,12 @@ def _run_batch_worker(files: List[Path], out_dir: Path, seconds: float, batch: W
                         what = f"Word stopped answering between files for {seconds:g} seconds"
                     bail("word-timeout", what)
                     break
-                if receive.poll(min(left, POLL_SECONDS)):
+                try:
+                    ready = receive.poll(min(left, POLL_SECONDS))
+                except (BrokenPipeError, OSError):   # Windows ends the pipe when the worker dies: poll raises, recv never runs
+                    bail("word-worker-died", "Word worker stopped without a completed result")
+                    break
+                if ready:
                     try:
                         message = receive.recv()
                     except EOFError:
