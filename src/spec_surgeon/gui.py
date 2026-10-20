@@ -313,8 +313,9 @@ class Session:
 
     @_session_action
     def reply(self, text: str = "", choice_id: Optional[str] = None, log: Log = lambda m: None,
-              render: bool = False) -> str:
-        """The user's next message in the conversation — typed words, a picked choice, or both."""
+              render: bool = False, approve: bool = True) -> str:
+        """The user's next message in the conversation — typed words, a picked choice, or both. ``approve=False``
+        for a tapped suggested reply: the model's words carry the decision but are never approved wording."""
         c = self.conversation
         if c is None:
             raise ValueError("there is no conversation yet — describe the change first")
@@ -387,7 +388,7 @@ class Session:
             self._save_chat()
             return msg
         try:
-            turn = c.reply(text, choice_id, client=self.client)
+            turn = c.reply(text, choice_id, client=self.client, approve=approve)
         except Exception:
             self._save_chat()
             raise

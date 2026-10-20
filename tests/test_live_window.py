@@ -96,3 +96,33 @@ def test_the_next_request_builds_on_the_copies_and_start_over_returns_to_the_ori
     view = task.perform("send", text=REQUEST)
     assert "CHANGES ALREADY MADE" not in fake.requests[2]["messages"][0]["content"]
     assert view["stage"] == "preview"
+
+
+def test_a_tapped_suggested_reply_is_the_users_decision_but_never_their_wording(tmp_path):
+    """A chip is the model's text. Tapping it sends it as the user's reply (the model hears the decision) but it
+    never joins the approved word sources: a later edit placing its words would still need the user's own words
+    (CLAUDE.md invariant 6)."""
+    chip = "Everything, and replace Contractor with Design-Builder"
+    fake = FakeClient(resp(text("One thing first."),
+                           tool("ask_user", {"message": "Only the body text, or everything?",
+                                             "questions": ["Only the body text, or everything?"],
+                                             "suggested_replies": [chip, "Just the body text"]})),
+                      resp(tool("submit_editspec", {"spec": SPEC})))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "question" and chip in view["chips"]
+    view = task.perform("send", text=chip, chip=True)
+    assert view["stage"] == "preview"
+    assert chip in task.decisions and chip not in task.word_sources
+    assert chip not in task.session.conversation.sources
+    assert chip in repr(fake.requests[1]["messages"])                  # the model heard the decision
+    assert any(m["role"] == "user" and m["text"] == chip for m in task.messages)
+    # typed as the user's own words, the same text is approved wording
+    typed = task_for(tmp_path / "typed", FakeClient(
+        resp(text("One thing first."), tool("ask_user", {"message": "?", "questions": ["?"], "suggested_replies": [chip]})),
+        resp(tool("submit_editspec", {"spec": SPEC}))))
+    typed.attach([document(tmp_path / "typed" / "Spec.docx")])
+    typed.perform("send", text=REQUEST)
+    typed.perform("send", text=chip)
+    assert chip in typed.word_sources and chip in typed.session.conversation.sources

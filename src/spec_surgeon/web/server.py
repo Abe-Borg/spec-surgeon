@@ -365,7 +365,7 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         text = str(body.get("text") or "").strip()
         if not text:
             return error("Type what you'd like to do with these documents.")
-        return stream("send", text=text)
+        return stream("send", text=text, chip=bool(body.get("chip")))
 
     @app.post("/api/choose")
     async def choose(request: Request):

@@ -334,7 +334,7 @@ class DocumentTask:
                                 "Reply with the number, or numbers separated by commas."}
         return None
 
-    def perform(self, action, *, text="", token="", choice_id="", log=lambda _: None, events=None):
+    def perform(self, action, *, text="", token="", choice_id="", chip=False, log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end."""
@@ -351,7 +351,7 @@ class DocumentTask:
         try:
             with llm.budget_scope(self._budget), llm.stream_observer_scope(self._on_stream):
                 if action == "send":
-                    self._send(text, checkpointed_log)
+                    self._send(text, checkpointed_log, chip=chip)
                 elif action == "choose":
                     self._choose(choice_id, checkpointed_log)
                 elif action == "primary":
@@ -384,7 +384,9 @@ class DocumentTask:
         if not self.session.claude_ready():
             raise ValueError("Connect your Anthropic API key in Settings to start the conversation.")
 
-    def _send(self, text, log):
+    def _send(self, text, log, chip=False):
+        """The user's message. ``chip``: the text is one of the model's suggested replies, tapped — the user's
+        decision, carried to the model as their reply, but never approved wording (the words are Claude's)."""
         text = text.strip()
         if not text:
             return
@@ -414,11 +416,12 @@ class DocumentTask:
         else:
             self.say(text, "user")
             self.decisions.append(text)
-            self.word_sources.append(text)
+            if not chip:
+                self.word_sources.append(text)
             self.save(in_progress=True)
             s = self.session
             if s.conversation is not None and s.conversation_matches(s.conversation.request):
-                s.reply(text, render=self.render, log=log)
+                s.reply(text, render=self.render, log=log, approve=not chip)
             elif s.recovery is not None and any(f.status != "READY" for f in s.recovery.files):
                 s.resolve_remaining(log, request=text, options=self._recovery_options())
             else:

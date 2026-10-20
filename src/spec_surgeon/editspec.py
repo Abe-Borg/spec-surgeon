@@ -648,12 +648,17 @@ def _stage_spec(spec: Dict[str, Any], ops: List[Dict[str, Any]], frags: List[Pla
 
 
 def _bound_ops_first(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
-    """Source-bound template bindings must run in a chain's first stage: the op that reads them leads the order."""
+    """The spec's ops in the user's order — never reordered (rule 5: an order the engine chose is an order nobody
+    approved). Source-bound template bindings are read from the file as attached and run in a chain's first stage
+    (``validate_chain``), so the op that reads them must be listed first; anything else is refused, with the way
+    out, so the model re-lists it."""
     ops = list(spec["ops"])
-    if not spec.get("bindings"):
-        return ops
-    bound = [o for o in ops if o.get("op") == "apply_header_footer_template"]
-    return bound + [o for o in ops if o not in bound]
+    if spec.get("bindings") and ops and ops[0].get("op") != "apply_header_footer_template":
+        raise JobException("the template op with source-bound bindings must be listed first: its bindings are read "
+                           "from the file as attached, so it runs as the first step — list it first, or fill its "
+                           "slots with rules instead of bindings", "bindings-order",
+                           {"first": ops[0].get("op"), "bound": "apply_header_footer_template"})
+    return ops
 
 
 def stage_cuts(pkg: DocxPackage, spec: Dict[str, Any]) -> List[int]:

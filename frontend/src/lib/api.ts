@@ -143,7 +143,9 @@ async function* streamJob(path: string, body: unknown): AsyncGenerator<JobEvent>
   yield* readSse<JobEvent>(resp);
 }
 
-export const send = (text: string) => streamJob("/api/send", { text });
+/** A typed message, or (`chip`) one of the model's suggested replies the user tapped: the user's decision, never
+ * approved wording — the words are the model's (docs/WEB_API.md). */
+export const send = (text: string, chip = false) => streamJob("/api/send", chip ? { text, chip: true } : { text });
 export const choose = (choiceId: string) => streamJob("/api/choose", { choice_id: choiceId });
 export const primary = (token: string) => streamJob("/api/primary", { token });
 

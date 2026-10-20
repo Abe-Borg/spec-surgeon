@@ -12,7 +12,7 @@ interface Props {
   busy: boolean;
   canSend: boolean;
   sendReason: string;
-  onSend: (text: string) => void;
+  onSend: (text: string, chip?: boolean) => void;
   onChoose: (choice: Choice) => void;
   onContinue: () => void;
   onStop: () => void;

@@ -8,8 +8,8 @@ interface Props {
   busy: boolean;
   /** A choice carries approval semantics: picking one may approve its exact words. */
   onChoose: (choice: Choice) => void;
-  /** A chip is a plain suggested reply, sent as typed text. */
-  onSend: (text: string) => void;
+  /** A chip is one of the model's suggested replies, sent as the user's decision (never as their wording). */
+  onSend: (text: string, chip?: boolean) => void;
 }
 
 /**
@@ -79,7 +79,7 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
             <button
               key={chip}
               type="button"
-              onClick={() => onSend(chip)}
+              onClick={() => onSend(chip, true)}
               disabled={busy}
               title={chip}
               className="prompt-chip-in max-w-full truncate rounded-full border border-accent/50 bg-accent/10 px-3 py-1 text-xs text-ink transition-colors hover:border-accent hover:bg-accent/15 disabled:pointer-events-none disabled:opacity-40"

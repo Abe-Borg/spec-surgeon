@@ -330,9 +330,11 @@ class Conversation:
                 return c
         raise ValueError("that choice is not offered any more — pick one of the current choices or type a reply")
 
-    def reply(self, text: str = "", choice_id: Optional[str] = None, client=None) -> Turn:
+    def reply(self, text: str = "", choice_id: Optional[str] = None, client=None, approve: bool = True) -> Turn:
         """The user's next message: their own words, a picked choice, or both. Picking a choice approves its exact
-        wording (if it has any); typed words are approved as typed."""
+        wording (if it has any); typed words are approved as typed. ``approve=False`` sends text the user did not
+        write — a tapped suggested reply, which is the model's wording — as the user's decision but never as a
+        source of words the documents may carry (CLAUDE.md invariant 6: Claude's words are never the user's)."""
         if not self.started:
             raise RuntimeError("start the conversation first")
         if client is not None:
@@ -350,7 +352,7 @@ class Conversation:
             self.sources.append(approval_source(record))
         if chosen is not None and chosen.words:
             self.sources += list(chosen.words)   # each its own source: never stitched together
-        if text:
+        if text and approve:
             self.sources.append(text)
         self.turn = None          # the turn being answered is over: its choices can no longer be picked
         said = []
@@ -775,12 +777,14 @@ class Conversation:
         # for a model that wrote neither); the summary is the record's.
         parts = [p for p in (said.strip(), str(inp.get("message") or "").strip()) if p]
         message = "\n\n".join(dict.fromkeys(parts)) or summary
-        if isinstance(spec.get("layouts"), list):
+        # a question or an unsupported outcome is answered before any plan the submission also carries could run
+        # (compose_submission refuses the two together; this order is the second guard)
+        if isinstance(spec.get("layouts"), list) and not (spec.get("unsupported") or spec.get("questions")):
             from .layouts import plan_from_submission
             plan = plan_from_submission(spec, self.request)
             return Turn("ok", message=message, understanding=summary, spec=plan, errors=errors, images=images,
                         chips=chips)
-        if is_chain(spec):
+        if is_chain(spec) and not (spec.get("unsupported") or spec.get("questions")):
             return Turn("ok", message=message, understanding=summary, spec=spec, errors=errors, images=images,
                         chips=chips)
         if spec.get("unsupported"):

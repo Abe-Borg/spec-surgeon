@@ -103,7 +103,7 @@ export default function App() {
     [refresh],
   );
 
-  const onSend = useCallback((text: string) => void runJob(api.send(text), text), [runJob]);
+  const onSend = useCallback((text: string, chip = false) => void runJob(api.send(text, chip), text), [runJob]);
   const onChoose = useCallback(
     (choice: Choice) => void runJob(api.choose(choice.id), choice.label),
     [runJob],

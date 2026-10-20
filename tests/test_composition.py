@@ -278,3 +278,63 @@ def test_a_composed_chain_is_never_run_in_place(folder, tmp_path, capsys):
     assert code == 2
     assert "--in-place" in capsys.readouterr().err
     assert not (tmp_path / "out").exists()
+
+
+def test_a_submission_that_is_both_steps_and_a_question_is_refused_not_half_run(folder, tmp_path):
+    """Stages beside an unsupported outcome (or questions): the plan branch would win the turn and the preview would
+    crash on the unknown chain keys, with the model's explanation never shown. Refused to the model, which answers
+    with one outcome; the conversation then shows it."""
+    batch = compiler._Batch(sorted(folder.glob("*.docx")), None)
+    both = {"summary": "the font", "stages": [{"name": "font", "spec": font_spec()}],
+            "unsupported": "The watermark cannot be matched.", "proposal": "none"}
+    outcome, errs = compiler.compose_submission(copy.deepcopy(both), batch, [REQUEST])
+    assert errs and "never both" in errs[0]
+    layouts_and_question = {"summary": "x", "layouts": [], "questions": ["Which font?"]}
+    assert "never both" in compiler.compose_submission(layouts_and_question, batch, [REQUEST])[1][0]
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": both})),
+                      resp(tool("submit_editspec", {"spec": {"summary": "x", "unsupported": both["unsupported"],
+                                                             "proposal": "none"}})))
+    task = DocumentTask(Session(client=fake, out_root=tmp_path / "out", visual_check=False), render=False)
+    task.attach([str(p) for p in sorted(folder.glob("*.docx"))])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "question" and len(fake.requests) >= 2
+    assert "never both" in repr(fake.requests[1]["messages"])          # the rejection reached the model
+    # (what follows an unsupported outcome — the app's own investigation — is scripted elsewhere; here the turn
+    # ended in a question to the user, never in a crash at the preview)
+
+
+def test_a_source_bound_template_op_is_never_reordered_only_refused_when_not_first(tmp_path):
+    """Bindings are read from the file as attached and run in the first step; the app does not move the template op
+    ahead of the ops the model listed before it (an order the engine chose is an order nobody approved): it refuses
+    with the way out, and accepts the model's own listing with the bindings on the first step alone."""
+    import hashlib
+    from make_fixtures import build_template
+    from spec_surgeon.ops.base import JobException
+    from test_live_template_bindings import TEMPLATE_FILLS, template_params
+    source = tmp_path / "21 13 13 – WET-PIPE.docx"
+    source.write_bytes(build_sized())
+    template = tmp_path / "template.docx"
+    template.write_bytes(build_template())
+    fills = copy.deepcopy(TEMPLATE_FILLS)
+    del fills["SECTION_TITLE"]
+    hf = {"op": "apply_header_footer_template", "params": {**template_params(template), "slot_fills": fills}}
+    title = Document(str(source)).paragraphs[1].text            # the bound literal must occur in its paragraph
+    assert title
+    bindings = [{"file": str(source.resolve()), "md5": hashlib.md5(source.read_bytes()).hexdigest(),
+                 "slots": {"SECTION_TITLE": {"value": title, "part": "word/document.xml", "paragraph": 1}}}]
+    listed_last = {"request": REQUEST, "summary": "font, then the template", "mode": "untracked", "bindings": bindings,
+                   "ops": font_spec()["ops"] + [hf]}
+    pkg = DocxPackage.from_path(source)
+    with pytest.raises(JobException) as e:
+        stage_cuts(pkg, listed_last)
+    assert e.value.code == "bindings-order" and "listed first" in e.value.reason
+    batch = compiler._Batch([source], template)
+    words = [REQUEST, title] + [r["value"] for r in fills.values() if r.get("rule") == "literal"]
+    _outcome, errs = compiler.compose_submission(copy.deepcopy(listed_last), batch, words)
+    assert errs and any("listed first" in err for err in errs)
+    listed_first = {**listed_last, "ops": [hf] + font_spec()["ops"]}
+    chain = split_into_stages(pkg, listed_first)
+    assert chain is not None and [[o["op"] for o in st["spec"]["ops"]] for st in chain["stages"]][0] == \
+        ["apply_header_footer_template"]
+    assert "bindings" in chain["stages"][0]["spec"] and all("bindings" not in st["spec"] for st in chain["stages"][1:])
+    validate_chain(chain)

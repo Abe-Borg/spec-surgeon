@@ -195,3 +195,20 @@ def test_a_second_job_while_one_runs_is_refused(tmp_path):
             break
     state.thread.join(10)
     assert event["type"] == "done" and event["state"]["busy"] is False and not state.busy
+
+
+def test_a_chip_sent_by_the_page_is_never_approved_wording(tmp_path):
+    chip = "Everything, and replace Contractor with Design-Builder"
+    fake = FakeClient(resp(tool("ask_user", {"message": "Only the body text, or everything?",
+                                             "questions": ["Only the body text, or everything?"],
+                                             "suggested_replies": [chip]})),
+                      resp(tool("submit_editspec", {"spec": SPEC})))
+    state, client = window(tmp_path, fake)
+    client.post("/api/attach", json={"paths": [str(document(tmp_path / "Spec.docx"))]})
+    with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
+        done = frames(response)[-1]
+    assert done["type"] == "done" and chip in done["state"]["chips"]
+    with client.stream("POST", "/api/send", json={"text": chip, "chip": True}) as response:
+        done = frames(response)[-1]
+    assert done["type"] == "done" and done["state"]["stage"] == "preview"
+    assert chip in state.task.decisions and chip not in state.task.word_sources

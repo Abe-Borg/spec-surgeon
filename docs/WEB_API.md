@@ -77,7 +77,7 @@ Rules the page relies on:
 | POST | `/api/upload` | multipart `files[]`, `template` field | copies the bytes under the config folder's `attachments/<stamp>/` and attaches them; the view |
 | POST | `/api/pick` | `{"kind": "documents | template | references"}` | opens the NATIVE file dialog through the shell (pywebview); `{"paths": [...]}` — 501 when no shell |
 | POST | `/api/remove` | `{"path": "...", "template": false}` | the view |
-| POST | `/api/send` | `{"text": "..."}` | SSE stream (below) |
+| POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
 | POST | `/api/choose` | `{"choice_id": "c1"}` | SSE stream |
 | POST | `/api/primary` | `{"token": "..."}` | SSE stream |
 | POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done` |

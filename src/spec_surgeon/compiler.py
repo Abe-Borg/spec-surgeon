@@ -1195,6 +1195,11 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
     if not isinstance(spec, dict):
         return spec, ["the spec must be a JSON object"]
     if spec.get("questions") or spec.get("unsupported"):
+        if is_chain(spec) or isinstance(spec.get("layouts"), list):
+            # two outcomes in one submission: a chain or a layout plan the preview would run, and a question or an
+            # unsupported outcome the user would never see (the plan branch wins the turn); refused to the model
+            return spec, ["a submission is either steps or layouts to run, or a question / an unsupported outcome, "
+                          "never both: drop the stages or layouts, or drop the questions / unsupported"]
         return spec, []
     if isinstance(spec.get("layouts"), list):
         return _check_layouts(spec, batch, sources)
