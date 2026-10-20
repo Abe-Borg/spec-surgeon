@@ -248,7 +248,7 @@ def test_a_failed_render_says_why_in_v6_and_the_trace(tmp_path, monkeypatch):
 def test_a_comparison_that_fails_is_this_files_v6_never_a_crashed_batch(tmp_path, monkeypatch):
     from spec_surgeon import render as render_mod
 
-    def fake_render(files, out_dir, backend, workers=4, log=None, detail=None):
+    def fake_render(files, out_dir, backend, workers=4, log=None, detail=None, cache=None):
         Path(out_dir).mkdir(parents=True, exist_ok=True)
         out = {}
         for f in files:
@@ -427,7 +427,7 @@ def test_a_failing_page_comparison_is_a_warning_not_a_lost_preview(tmp_path, mon
     d = _folder(tmp_path, ["A"])
     spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
 
-    def fake_render(files, out_dir, backend, workers=4, log=None, detail=None):
+    def fake_render(files, out_dir, backend, workers=4, log=None, detail=None, cache=None):
         return {Path(f): make_pdf(Path(out_dir) / f"{Path(f).stem}.pdf") for f in files}
 
     def boom(*a, **k):

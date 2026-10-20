@@ -5,6 +5,11 @@ file it cannot convert is reported through ``log`` and left out of the result, a
 failed" for that file (V6) — a rendering problem is never a crashed batch or a preview without its plan. What a
 renderer says along the way (LibreOffice's own output, Word's version, a traceback) goes to ``detail`` — the run's
 log — so a failed render can be traced to its cause.
+
+Given a ``cache`` (``render.cache.RenderCache``), ``render_pdfs`` serves every file whose bytes this renderer has
+rendered before and renders only the rest, keeping their PDFs for next time: the run does not render what the
+preview rendered, and an unchanged source attached again is not rendered again. A hit is keyed by the file's bytes
+and the renderer's identity (``renderer_identity``): a changed file, or a renderer upgraded since, is a miss.
 """
 from __future__ import annotations
 
@@ -14,6 +19,8 @@ from pathlib import Path
 from typing import Callable, Dict, Optional, Sequence
 
 from . import libreoffice, word_com
+from . import cache as cache_mod
+from .cache import RenderCache
 from .. import diagnostics as diag
 
 
@@ -34,6 +41,19 @@ def describe(backend: Optional[str]) -> str:
     if backend == "word":
         return "Microsoft Word — a private, invisible instance through COM (its version is logged when it starts)"
     return "none"
+
+
+def renderer_identity(backend: str) -> str:
+    """The cache key's renderer part — the backend and the version installed now (``libreoffice 24.2.7.2``,
+    ``word 16.0.17328.20068``). A version that cannot be read is ``unknown``: such a cache still never serves another
+    file's pages, only an upgrade of that renderer goes unnoticed until its entries age out."""
+    if backend == "libreoffice":
+        version = libreoffice.version() or libreoffice.executable_identity()
+    elif backend == "word":
+        version = word_com.installed_version()
+    else:
+        version = None
+    return f"{backend} {version or 'unknown'}"
 
 
 def unavailable_reason(prefer: str = "auto") -> str:
@@ -59,28 +79,60 @@ def error_text(e: BaseException) -> str:
 
 def render_pdfs(files: Sequence[Path], out_dir: Path, backend: str, workers: int = 4,
                 log: Optional[Callable[[str], None]] = None,
-                detail: Optional[Callable[[str], None]] = None) -> Dict[Path, Path]:
-    """{docx: pdf} for the files that rendered; the others are missing (and said on ``log``)."""
+                detail: Optional[Callable[[str], None]] = None,
+                cache: Optional[RenderCache] = None) -> Dict[Path, Path]:
+    """{docx: pdf} for the files that rendered (or were served from ``cache``); the others are missing (and said on
+    ``log``)."""
     with diag.span("render.batch", backend=backend, out_dir=str(out_dir), file_count=len(files),
-                   workers=workers) as outcome:
-        result = _render_pdfs(files, out_dir, backend, workers, log, detail)
-        outcome.update(rendered=len(result), missing=[str(f) for f in files if f not in result])
+                   workers=workers, cache=str(cache.root) if cache is not None else None) as outcome:
+        result, served = _render_pdfs(files, out_dir, backend, workers, log, detail, cache)
+        outcome.update(rendered=len(result) - served, cached=served,
+                       missing=[str(f) for f in files if Path(f) not in result])
         return result
 
 
 def _render_pdfs(files: Sequence[Path], out_dir: Path, backend: str, workers: int,
                  log: Optional[Callable[[str], None]],
-                 detail: Optional[Callable[[str], None]]) -> Dict[Path, Path]:
+                 detail: Optional[Callable[[str], None]],
+                 cache: Optional[RenderCache]):
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
-    try:
-        if backend == "word":
-            return word_com.render_pdfs(files, out_dir, log=log, detail=detail)
-        if backend == "libreoffice":
-            return libreoffice.render_pdfs(files, out_dir, workers=workers, log=log, detail=detail)
-    except Exception as e:  # noqa: BLE001 — the renderer itself failed: no PDFs, the batch goes on without them
-        diag.event("render.backend_failed", level="error", backend=backend,
-                   exception=diag.exception_record(e, "render"))
-        log(f"rendering with {backend} failed: {error_text(e)}")
-        detail(traceback.format_exc())
-    return {}
+    files = [Path(f) for f in files]
+    out_dir = Path(out_dir)
+    served: Dict[Path, Path] = {}
+    pending = files
+    renderer = None
+    if cache is not None and cache_mod.enabled() and files:
+        renderer = renderer_identity(backend)
+        pending = []
+        for f in files:
+            hit = cache.get(f, out_dir / (f.stem + ".pdf"), renderer)
+            if hit is not None:
+                served[f] = hit
+            else:
+                pending.append(f)
+        if served:
+            detail(f"render cache: {len(served)} of {len(files)} PDF(s) came from earlier renders by {renderer} "
+                   f"({cache.root}); {len(pending)} to render")
+    rendered: Dict[Path, Path] = {}
+    if pending:
+        try:
+            if backend == "word":
+                rendered = word_com.render_pdfs(pending, out_dir, log=log, detail=detail)
+            elif backend == "libreoffice":
+                rendered = libreoffice.render_pdfs(pending, out_dir, workers=workers, log=log, detail=detail)
+        except Exception as e:  # noqa: BLE001 — the renderer itself failed: no PDFs, the batch goes on without them
+            diag.event("render.backend_failed", level="error", backend=backend,
+                       exception=diag.exception_record(e, "render"))
+            log(f"rendering with {backend} failed: {error_text(e)}")
+            detail(traceback.format_exc())
+        if rendered and cache is not None and renderer is not None:
+            kept = sum(1 for f, pdf in rendered.items() if cache.put(f, pdf, renderer))
+            cache.trim()
+            detail(f"render cache: kept {kept} of {len(rendered)} fresh render(s) for next time")
+    result: Dict[Path, Path] = {}
+    for f in files:
+        pdf = served.get(f) or rendered.get(f)
+        if pdf is not None:
+            result[f] = Path(pdf)
+    return result, len(served)
