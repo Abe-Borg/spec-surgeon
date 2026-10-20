@@ -594,6 +594,10 @@ def _stage_spec(spec: Dict[str, Any], ops: List[Dict[str, Any]], frags: List[Pla
     bindings on the first stage only (``validate_chain``); the spec's final assertions on the last stage."""
     from .ops.base import merged_mode
     stage = {k: copy.deepcopy(v) for k, v in spec.items() if k not in ("ops", "assertions", "bindings", "questions")}
+    # a layout's pattern pin belongs to the first stage alone: a later stage reads the step before it, whose
+    # structure the first stage already checked and whose pattern the step may have changed
+    if not first:
+        stage.pop("applies_to", None)
     # each stage's ops decide its layout reference (a font change gives it up, a template claims it); the spec's own
     # declaration described the whole, not one step
     if isinstance(stage.get("review"), dict):

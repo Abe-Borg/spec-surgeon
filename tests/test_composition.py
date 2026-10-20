@@ -192,3 +192,44 @@ def test_a_request_the_user_answers_with_a_chip_sends_it_as_their_words(folder, 
     assert view["stage"] == "preview" and view["chips"] == []
     sent = fake.requests[1]["messages"][-1]["content"]
     assert any("Everything, including the headers" in json.dumps(block) for block in sent)
+
+
+# ---- a layout composes the same way ----------------------------------------------------------------------------------
+
+def test_a_layout_whose_ops_overlap_is_accepted_as_the_chain_the_engine_composed(tmp_path):
+    """A mixed batch: the accepted submission carries the composed chain for the layout whose ops overlap (the plan
+    the conversation builds from the submission is what the preview and the run execute), and the layout's pattern
+    pin rides the first stage only (Codex review on PR #46)."""
+    from make_fixtures import build_styles
+    from spec_surgeon import layouts
+    from spec_surgeon.fingerprint import fingerprint
+    typed = tmp_path / "typed" / "21 13 13 – WET-PIPE.docx"
+    styled = tmp_path / "styled" / "21 13 16 – DRY-PIPE.docx"
+    typed.parent.mkdir(); styled.parent.mkdir()
+    typed.write_bytes(build_sized())
+    styled.write_bytes(build_styles("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS"))
+    pid = lambda p: fingerprint(DocxPackage.from_path(p))["pattern_id"]  # noqa: E731
+    assert pid(typed) != pid(styled)
+    bold = {"run": {"b": True}, "tracked": False}
+    submission = {"summary": "The template's header, footer and font; bold styled articles", "layouts": [
+        {"id": "A", "label": "typed numbers", "pattern_ids": [pid(typed)], "spec": combined_spec()},
+        {"id": "B", "label": "styled", "pattern_ids": [pid(styled)],
+         "spec": {"summary": "bold by style", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"style_in": ["ArchPara"]}},
+                           "params": bold}]}}]}
+    batch = compiler._Batch([typed, styled], None)
+    outcome, errs = compiler.compose_submission(copy.deepcopy(submission), batch, [REQUEST])
+    assert errs == []
+    assert is_chain(outcome["layouts"][0]["spec"]) and len(outcome["layouts"][0]["spec"]["stages"]) == 2
+    assert not is_chain(outcome["layouts"][1]["spec"])
+    assert compiler.check_submission(copy.deepcopy(submission), batch, [REQUEST]) == []
+    # the plan the conversation builds from the accepted submission runs the chain, pinned on its first stage only
+    plan = layouts.plan_from_submission(outcome, REQUEST)
+    layouts.validate_layout_plan(plan)
+    spec_a = layouts.layout_spec(plan, plan["layouts"][0])
+    assert is_chain(spec_a)
+    assert spec_a["stages"][0]["spec"]["applies_to"] == {"pattern_ids": [pid(typed)]}
+    assert "applies_to" not in spec_a["stages"][1]["spec"]
+    pv = layouts.make_layout_preview(plan, [str(typed), str(styled)], tmp_path / "preview", do_render=False)
+    assert [layout["id"] for layout, _ in pv.previews] == ["A", "B"]
+    assert len(pv.samples) == 2 and all(s.passed for s in pv.samples)

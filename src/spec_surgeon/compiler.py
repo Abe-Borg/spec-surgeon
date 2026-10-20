@@ -50,7 +50,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Sequence
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 from .catalog import op_sheet, op_catalog, op_index, describe_op
 from .editspec import SpecError, plan_spec, validate_spec
@@ -1056,34 +1056,41 @@ def _dry_errors(spec: Dict[str, Any], batch: _Batch, patterns: Optional[Sequence
     return []
 
 
-def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str]) -> List[str]:
+def _check_layouts(spec: Dict[str, Any], batch: _Batch, sources: Sequence[str]) -> Tuple[Dict[str, Any], List[str]]:
     """A submission with ``layouts``: the plan is well formed, every pattern of THE BATCH belongs to exactly one
     layout (a pattern the model cannot plan is a question, never a silent omission), and each layout's spec passes
-    every check a single spec passes — on that layout's documents alone."""
+    every check a single spec passes — on that layout's documents alone. Returns ``(submission, errors)``: the
+    submission as the engine will run it, each layout's spec replaced by the chain the app composed from it when
+    its ops overlap (the model's own spec is kept when nothing was composed), and the errors, if any."""
+    from .editspec import is_chain
     from .layouts import layout_spec, plan_from_submission, validate_layout_plan
     try:
         plan = plan_from_submission(spec, str(spec.get("request") or "the request"))
         validate_layout_plan(plan)
     except SpecError as e:
-        return [f"[{e.code}] {e.reason}"]
+        return spec, [f"[{e.code}] {e.reason}"]
     known = {p["pattern_id"]: p for p in batch.prof["patterns"]}
     covered: Dict[str, str] = {}
     for layout in plan["layouts"]:
         for pid in layout["pattern_ids"]:
             if pid not in known:
-                return [f"[layouts] layout {layout['id']!r} names pattern {pid}, which THE BATCH does not list; use the "
-                        f"pattern_id values of THE BATCH"]
+                return spec, [f"[layouts] layout {layout['id']!r} names pattern {pid}, which THE BATCH does not list; "
+                              f"use the pattern_id values of THE BATCH"]
             covered[pid] = layout["id"]
     missing = [pid for pid in known if pid not in covered]
     if missing:
-        return [f"[layouts] no layout covers pattern {pid} ({', '.join(known[pid]['files'][:3])}); add it to a layout, "
-                f"or ask the user when it cannot be planned" for pid in missing]
-    for layout in plan["layouts"]:
+        return spec, [f"[layouts] no layout covers pattern {pid} ({', '.join(known[pid]['files'][:3])}); add it to a "
+                      f"layout, or ask the user when it cannot be planned" for pid in missing]
+    composed = copy.deepcopy(spec)
+    for i, layout in enumerate(plan["layouts"]):
         outcome, errs = compose_submission(layout_spec(plan, layout), batch, sources, patterns=layout["pattern_ids"])
-        layout["spec"] = outcome                  # the layout's spec as the engine will run it (a chain when composed)
         if errs:
-            return [f"layout {layout['id']!r}: {e}" for e in errs]
-    return []
+            return spec, [f"layout {layout['id']!r}: {e}" for e in errs]
+        if is_chain(outcome) and not is_chain(layout["spec"]):
+            # the layout's ops overlap: the engine runs the chain it composed, so the accepted submission carries it
+            # (the plan the conversation builds from the submission is what the preview and the run execute)
+            composed["layouts"][i]["spec"] = outcome
+    return composed, []
 
 
 def _planner_for(outcome: Any):
@@ -1187,8 +1194,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
     if spec.get("questions") or spec.get("unsupported"):
         return spec, []
     if isinstance(spec.get("layouts"), list):
-        errs = _check_layouts(spec, batch, sources)
-        return spec, errs
+        return _check_layouts(spec, batch, sources)
     if is_chain(spec):
         chain = _normalize_chain(spec)
         try:
