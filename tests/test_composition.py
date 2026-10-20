@@ -233,3 +233,48 @@ def test_a_layout_whose_ops_overlap_is_accepted_as_the_chain_the_engine_composed
     pv = layouts.make_layout_preview(plan, [str(typed), str(styled)], tmp_path / "preview", do_render=False)
     assert [layout["id"] for layout, _ in pv.previews] == ["A", "B"]
     assert len(pv.samples) == 2 and all(s.passed for s in pv.samples)
+
+
+# ---- the review's probes (PR #46): the trial merge, the stage modes, in place -----------------------------------------
+
+def test_the_trial_merge_coalesces_the_numbering_fonts_the_way_the_real_merge_does():
+    """On a document with numbered lists the three font ops share one numbering label-font edit, which
+    merge_fragments gives one owner before judging conflicts; the trial that decides the cuts must do the same, or
+    the owner's headline request becomes three steps instead of two on every real section."""
+    from make_fixtures import build_numbering
+    pkg = DocxPackage(build_numbering(), name="numbered.docx")
+    assert stage_cuts(pkg, combined_spec()) == [3, 1]
+    assert stage_cuts(pkg, font_spec()) == [3]
+
+
+def test_a_composed_stage_declares_the_mode_its_ops_plan_not_the_mode_of_their_class(folder):
+    """A template op with a literal fill plans untracked (it places the user's words); the stage that carries it
+    must say so, or plan_spec refuses the step the app itself composed."""
+    spec = combined_spec()
+    hf = next(o for o in spec["ops"] if o["op"] == "apply_header_footer_template")
+    hf["params"]["slot_fills"]["SECTION_TITLE"] = {"rule": "literal", "value": "WET-PIPE SPRINKLER SYSTEMS",
+                                                   "in_template": "DOOR HARDWARE"}
+    pkg = DocxPackage(build_sized(), name="x.docx")
+    chain = split_into_stages(pkg, spec)
+    assert chain is not None and [st["spec"]["mode"] for st in chain["stages"]] == ["formatting", "untracked"]
+    plans = plan_chain(pkg, chain)                       # every step accepted, the second as untracked
+    assert len(plans) == 2
+    batch = compiler._Batch(sorted(folder.glob("*.docx")), None)
+    outcome, errs = compiler.compose_submission(spec, batch, [REQUEST, "WET-PIPE SPRINKLER SYSTEMS"])
+    assert errs == [] and is_chain(outcome)
+    assert [st["spec"]["mode"] for st in outcome["stages"]] == ["formatting", "untracked"]
+
+
+def test_a_composed_chain_is_never_run_in_place(folder, tmp_path, capsys):
+    """Written back step by step, a file that fails the last step's final assertion would keep the earlier steps —
+    where the one request the user approved would have withheld it whole. The command line refuses --in-place for
+    the steps the app composed, before anything is previewed or written."""
+    from types import SimpleNamespace
+    from spec_surgeon import cli
+    pkg = DocxPackage(build_sized(), name="x.docx")
+    chain = split_into_stages(pkg, combined_spec())
+    args = SimpleNamespace(in_place=True, no_render=True, renderer=None, yes=True, workers=1)
+    code = cli._preview_and_run_chain(args, chain, sorted(folder.glob("*.docx")), tmp_path / "out")
+    assert code == 2
+    assert "--in-place" in capsys.readouterr().err
+    assert not (tmp_path / "out").exists()

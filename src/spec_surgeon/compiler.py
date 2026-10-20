@@ -1158,13 +1158,16 @@ def _compose_conflicts(spec: Dict[str, Any], batch: _Batch, patterns: Optional[S
     from .chain import validate_chain
     from .editspec import compose_chain, merge_cuts, stage_cuts
     all_cuts: List[List[int]] = []
+    representative: Optional[DocxPackage] = None      # the first file the steps were planned on: it declares the modes
     why = ""
     for pat in batch.prof["patterns"]:
         if patterns is not None and pat["pattern_id"] not in patterns:
             continue
         for f in batch.pattern_paths(pat):
             try:
-                all_cuts.append(stage_cuts(DocxPackage.from_path(f), spec))
+                pkg = DocxPackage.from_path(f)
+                all_cuts.append(stage_cuts(pkg, spec))
+                representative = representative or pkg
                 break
             except JobException as e:
                 why = f"{batch.label(f)}: [{e.code}] {e.reason}"
@@ -1173,7 +1176,7 @@ def _compose_conflicts(spec: Dict[str, Any], batch: _Batch, patterns: Optional[S
     if not all_cuts:
         return None, why or "no file of the batch could be planned"
     try:
-        chain = compose_chain(spec, merge_cuts(all_cuts))
+        chain = compose_chain(spec, merge_cuts(all_cuts), representative)
         validate_chain(chain)
     except (ValueError, SpecError, JobException) as e:
         return None, f"the composed steps are not a valid chain: {e}"

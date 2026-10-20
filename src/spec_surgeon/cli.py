@@ -681,6 +681,13 @@ def _preview_and_run_chain(args, chain, files, out_dir):
     again, then ``chain.run_chain``."""
     from .chain import chain_intent, chain_key, chain_name, run_chain
     from .preview import changed_since_preview, make_chain_preview
+    if getattr(args, "in_place", False):
+        # a composed chain carries the request's final assertions on its last step: written back step by step, a
+        # file that fails that check would be left with the earlier steps applied — where the one request the user
+        # approved would have withheld it whole. Copies only, as the window delivers.
+        print("--in-place: this request runs as ordered steps, which write copies only (a file that fails the last "
+              "step's check would otherwise be left half-edited); run it without --in-place", file=sys.stderr)
+        return 2
     if getattr(args, "save_as", None):
         why = _save_as_refusal(args.save_as, "chain", getattr(args, "replace", False))
         if why:

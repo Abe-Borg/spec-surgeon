@@ -572,12 +572,26 @@ def _plan_fragments(pkg: DocxPackage, spec: Dict[str, Any]) -> List[PlanFragment
     return frags
 
 
+def _trial(frags: List[PlanFragment]) -> List[PlanFragment]:
+    """Copies of the fragments as ``merge_fragments`` would merge them (the shared numbering label-font edit given one
+    owner), so a judgement or an in-memory apply never touches the originals. ``coalesce_numbering_fonts`` drops a
+    key of ``transform_data`` and reassigns the lists it trims, so a shallow copy with its own dict is enough."""
+    from .ops.font_numbering import coalesce_numbering_fonts
+    trial = []
+    for i, f in enumerate(frags):
+        t = copy.copy(f)
+        t.transform_data = dict(f.transform_data)
+        t.op_index = i
+        trial.append(t)
+    coalesce_numbering_fonts(trial)
+    return trial
+
+
 def _merges_cleanly(frags: List[PlanFragment]) -> bool:
-    """Whether these fragments would merge into one plan (rule 9 and the mode rule), judged without side effects."""
+    """Whether these fragments would merge into one plan (rule 9 and the mode rule), judged the way
+    ``merge_fragments`` judges them and without side effects."""
     from .ops.base import check_conflicts, merged_mode
-    trial = [copy.copy(f) for f in frags]
-    for i, f in enumerate(trial):
-        f.op_index = i
+    trial = _trial(frags)
     try:
         check_conflicts(trial)
         merged_mode(trial)
@@ -586,6 +600,25 @@ def _merges_cleanly(frags: List[PlanFragment]) -> bool:
             raise
         return False
     return True
+
+
+def _stage_modes(pkg: DocxPackage, spec: Dict[str, Any], cuts: List[int]) -> List[str]:
+    """Each stage's mode as its ops make it on ``pkg`` — what ``plan_spec`` will compare the stage's declaration
+    against — each stage planned on the output of the stages before it. An op refines its mode in ``plan()`` (a
+    template op with a literal fill plans untracked; a properties op that only clears plans formatting), so the op
+    class alone can declare a mode the engine then refuses."""
+    from .ops.base import merged_mode
+    ops = _bound_ops_first(spec)
+    current = pkg
+    modes: List[str] = []
+    at = 0
+    for take in cuts:
+        group = ops[at:at + take]
+        at += take
+        trial = _trial(_plan_fragments(current, {**spec, "ops": group}))
+        modes.append(merged_mode(trial))
+        current = apply_spec(current, trial)
+    return modes
 
 
 def _stage_spec(spec: Dict[str, Any], ops: List[Dict[str, Any]], frags: List[PlanFragment], *, first: bool,
@@ -637,17 +670,19 @@ def stage_cuts(pkg: DocxPackage, spec: Dict[str, Any]) -> List[int]:
         while take < len(ops) and _merges_cleanly(frags[:take + 1]):
             take += 1
         cuts.append(take)
-        current = apply_spec(current, frags[:take])
+        current = apply_spec(current, _trial(frags[:take]))
         ops = ops[take:]
     return cuts
 
 
-def compose_chain(spec: Dict[str, Any], cuts: List[int]) -> Dict[str, Any]:
+def compose_chain(spec: Dict[str, Any], cuts: List[int], pkg: Optional[DocxPackage] = None) -> Dict[str, Any]:
     """The chain whose stages are the spec's ops cut at ``cuts`` (lengths, in order); the spec's own fields on
-    every stage. ``cuts`` summing to anything but the op count is a defect."""
+    every stage. With ``pkg`` each stage declares the mode its ops make it on that file (``_stage_modes``); without
+    one, the mode the op classes give it. ``cuts`` summing to anything but the op count is a defect."""
     ops = _bound_ops_first(spec)
     if sum(cuts) != len(ops) or any(c < 1 for c in cuts):
         raise ValueError(f"stage cuts {cuts} do not cover {len(ops)} op(s)")
+    modes = _stage_modes(pkg, spec, cuts) if pkg is not None else None
     stages = []
     at = 0
     for n, take in enumerate(cuts, 1):
@@ -657,6 +692,8 @@ def compose_chain(spec: Dict[str, Any], cuts: List[int]) -> Dict[str, Any]:
         # content or untracked by its own class), the same rule merged_mode applies to planned fragments
         frags = [get_op(o["op"]).fragment(o.get("select"), _op_params(o), mode=_op_mode(o)) for o in group]
         stage = _stage_spec(spec, group, frags, first=n == 1, last=n == len(cuts), index=n, count=len(cuts))
+        if modes is not None:
+            stage["mode"] = modes[n - 1]
         stages.append({"name": f"step {n}", "spec": stage})
     return {"name": str(spec.get("summary") or spec.get("request") or "edit"), "stages": stages}
 
@@ -677,7 +714,7 @@ def split_into_stages(pkg: DocxPackage, spec: Dict[str, Any]) -> Optional[Dict[s
     cuts = stage_cuts(pkg, spec)
     if len(cuts) <= 1:
         return None
-    return compose_chain(spec, cuts)
+    return compose_chain(spec, cuts, pkg)
 
 
 def merge_cuts(all_cuts: List[List[int]]) -> List[int]:
