@@ -132,7 +132,8 @@ def propose(project, documents, request, options, *, client=None, log=None, prio
     if decisions:
         state["messages"].append({"role": "user", "content": "SCOPED USER DECISIONS:\n" + json.dumps(decisions, ensure_ascii=False)})
     from .vision import VIEW_BUDGET_TOKENS
-    batch.max_image_tokens = min(VIEW_BUDGET_TOKENS, options.max_total_tokens)
+    batch.max_image_tokens = (VIEW_BUDGET_TOKENS if options.max_total_tokens is None
+                              else min(VIEW_BUDGET_TOKENS, options.max_total_tokens))
     batch._image_tokens = state.get("image_tokens", 0)
     budget = llm.CallBudget(model=options.model or llm.DEFAULT_MODEL, effort=options.effort,
                             max_calls=options.max_calls, max_output_tokens=options.max_output_tokens,

@@ -39,6 +39,10 @@ The user's inputs are documents, one optional template and chat. Nothing else is
 Decisions recorded 2026-10-19: office profiles and spec QA audits remain command-line features; their Qt dialogs are
 removed; the paragraph role classifier in `structure.py` is promoted into ordinary planning.
 
+Decisions recorded 2026-10-20 (owner, PR #45): the window has no spending ceiling (every call gets the model's full
+output at high effort; work pauses every 48 calls; **Stop now** cuts off the running call; transient failures are
+re-sent); pictures and tables may be attached explicitly for the edit to use, never discovered.
+
 ## Workstream J (P0) — One product
 
 **Goal.** The package contains one desktop window, one conversation mode and one coordinator that owns the state machine.

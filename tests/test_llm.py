@@ -1,4 +1,4 @@
-"""llm.py — the one place Spec Surgeon calls Claude: the streamed request (max_tokens 64000, effort, refusal fallback),
+"""llm.py — the one place Spec Surgeon calls Claude: the streamed request (max_tokens 128000, effort, refusal fallback),
 the fallback echo rule, which model served a response, token/cost accounting; and the real SDK, offline, against a
 canned event stream (proves the request body the SDK actually sends and that its parsed message works with llm.py).
 Also the one classification of a failed call (``is_api_error``: an API error is a recorded failure, anything else a
@@ -6,6 +6,9 @@ defect) and the transcript entries every caller records, which are total and nev
 from __future__ import annotations
 
 import json
+import threading
+import time
+from types import SimpleNamespace
 
 import pytest
 
@@ -18,7 +21,7 @@ def test_call_streams_with_the_agreed_settings():
     r = llm.call(fake, model="claude-opus-5-5", system="S", tools=[{"name": "t"}], messages=[{"role": "user", "content": "x"}])
     assert r.content[0].text == "hi"
     req = fake.requests[0]
-    assert req["max_tokens"] == 64000 == llm.MAX_TOKENS
+    assert req["max_tokens"] == 128000 == llm.MAX_TOKENS
     assert req["output_config"] == {"effort": "max"}
     assert req["fallbacks"] == "default" and req["betas"] == [llm.FALLBACK_BETA]
     assert req["cache_control"] == {"type": "ephemeral"}
@@ -107,7 +110,7 @@ def test_the_real_sdk_offline_sends_what_we_mean_and_its_message_works_with_llm(
     msgs = [{"role": "user", "content": "hi"}]
     r = llm.call(client, model="claude-opus-5-5", system="S", tools=tools, messages=msgs)
     body = seen[0]["body"]
-    assert body["max_tokens"] == 64000 and body["stream"] is True and body["fallbacks"] == "default"
+    assert body["max_tokens"] == 128000 and body["stream"] is True and body["fallbacks"] == "default"
     assert body["output_config"] == {"effort": "max"} and body["cache_control"] == {"type": "ephemeral"}
     assert "thinking" not in body and "tool_choice" not in body
     assert llm.FALLBACK_BETA in (seen[0]["beta"] or "")
@@ -217,3 +220,236 @@ def test_the_entries_are_total_and_never_hold_image_data():
                     {"type": "text", "text": "[note from the app] PREVIEW"}, {"type": "image"}]
     assert llm.results_entry(1, [{"tool_use_id": "v1", "content": [image]}])["tool_results"][0]["content"] == "[image]"
     assert "iVBOR" not in json.dumps([sent, llm.transcript_content("x" * 9000)]) and len(llm.transcript_content("x" * 9000)) == 6000
+
+
+# ---- the automatic re-send of a transient failure -------------------------------------------------------------------
+
+@pytest.fixture
+def resend(monkeypatch):
+    """The production re-send policy, without the waits (tests/conftest.py turns re-sends off by default)."""
+    monkeypatch.setattr(llm, "RETRIES", 2)
+    monkeypatch.setattr(llm, "RETRY_DELAYS", ())
+
+
+ARGS = dict(model="claude-opus-5-5", system="S", tools=[], messages=[{"role": "user", "content": "x"}])
+
+
+def test_an_overloaded_or_dropped_call_is_sent_again_and_its_answer_used(resend):
+    from fake_claude import raise_on_enter, raise_on_final
+    fake = FakeClient(raise_on_enter(api_error("Overloaded", status=529)),
+                      raise_on_final(llm.IncompleteResponse("dropped", transient=True)), resp(text("hi"), stop="end_turn"))
+    assert llm.call(fake, **ARGS).content[0].text == "hi"
+    assert len(fake.requests) == 3 and fake.requests[0] == fake.requests[2]
+
+
+def test_a_refused_request_is_never_sent_again_and_the_last_failure_propagates(resend):
+    from fake_claude import raise_on_enter
+    fake = FakeClient(raise_on_enter(api_error("bad request", status=400)), resp(text("never")))
+    with pytest.raises(Exception, match="bad request"):
+        llm.call(fake, **ARGS)
+    assert len(fake.requests) == 1
+    fake = FakeClient(*(raise_on_enter(api_error("Overloaded", status=529)) for _ in range(3)), resp(text("never")))
+    with pytest.raises(Exception, match="Overloaded"):
+        llm.call(fake, **ARGS)
+    assert len(fake.requests) == 3                                   # RETRIES + 1 attempts, then the failure
+
+
+def test_what_counts_as_transient():
+    httpx2 = pytest.importorskip("httpx2")
+    anthropic = pytest.importorskip("anthropic")
+    for e in (api_error(status=429), api_error(status=500), api_error(status=529), api_error(status=408),
+              api_error(), ConnectionResetError("reset"), TimeoutError(), httpx2.ReadError("closed"),
+              anthropic.APIConnectionError(request=httpx2.Request("POST", "https://x")),
+              llm.IncompleteResponse("dropped", transient=True)):
+        assert llm.is_transient(e), e
+    for e in (api_error(status=400), api_error(status=401), api_error(status=413), llm.UserCancelled("stop"),
+              llm.BudgetExceeded("paused"), llm.ClaudeUnavailable("x"), llm.IncompleteResponse("malformed"),
+              ValueError("defect"), AssertionError("scripted turns ran out")):
+        assert not llm.is_transient(e), e
+
+
+def test_an_error_event_inside_a_stream_that_opened_is_sent_again_with_the_real_sdk(resend):
+    anthropic = pytest.importorskip("anthropic")
+    httpx2 = pytest.importorskip("httpx2")
+    sent = []
+
+    def handler(request):
+        sent.append(json.loads(request.content))
+        if len(sent) == 1:
+            return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=_sse([
+                ("error", {"type": "error", "error": {"type": "overloaded_error", "message": "Overloaded"}})]))
+        return httpx2.Response(200, headers={"content-type": "text/event-stream"}, content=_sse([
+            ("message_start", {"type": "message_start", "message": {
+                "id": "msg_2", "type": "message", "role": "assistant", "model": "claude-opus-5-5", "content": [],
+                "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 10, "output_tokens": 1}}}),
+            ("content_block_start", {"type": "content_block_start", "index": 0,
+                                     "content_block": {"type": "text", "text": ""}}),
+            ("content_block_delta", {"type": "content_block_delta", "index": 0,
+                                     "delta": {"type": "text_delta", "text": "ok"}}),
+            ("content_block_stop", {"type": "content_block_stop", "index": 0}),
+            ("message_delta", {"type": "message_delta", "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                               "usage": {"output_tokens": 3}}),
+            ("message_stop", {"type": "message_stop"})]))
+
+    client = anthropic.Anthropic(api_key="test-key", max_retries=0,
+                                 http_client=anthropic.DefaultHttpxClient(transport=httpx2.MockTransport(handler)))
+    budget = llm.CallBudget(max_calls=5, max_cost_usd=None, max_total_tokens=None)
+    with llm.budget_scope(budget):
+        r = llm.call(client, **ARGS)
+    assert llm.texts(r.content) == ["ok"] and len(sent) == 2
+    assert budget.calls == 2 and budget.failed_calls == 1            # every attempt counts against the same limits
+
+
+def test_a_resend_must_pass_the_same_preflight(resend):
+    from fake_claude import raise_on_enter
+    fake = FakeClient(raise_on_enter(api_error("Overloaded", status=529)), resp(text("never")))
+    budget = llm.CallBudget(max_calls=1, max_cost_usd=None, max_total_tokens=None)
+    with llm.budget_scope(budget), pytest.raises(llm.BudgetExceeded):
+        llm.call(fake, **ARGS)
+    assert len(fake.requests) == 1 and budget.calls == budget.failed_calls == 1
+
+
+def test_the_wait_before_a_resend_honours_retry_after_and_the_kill_switch(monkeypatch):
+    from fake_claude import raise_on_enter
+    monkeypatch.setattr(llm, "RETRY_DELAYS", (5.0, 20.0))
+    limited = api_error("rate", status=429)
+    limited.response = SimpleNamespace(headers={"retry-after": "30"})
+    assert llm._retry_delay(limited, 0) == 30.0
+    limited.response = SimpleNamespace(headers={"retry-after": "900"})
+    assert llm._retry_delay(limited, 1) == llm.RETRY_AFTER_CAP
+    assert llm._retry_delay(api_error(status=529), 1) == 20.0
+    monkeypatch.setattr(llm, "RETRIES", 2)
+    stop = threading.Event()
+    fake = FakeClient(raise_on_enter(api_error("Overloaded", status=529)), resp(text("never")))
+    threading.Timer(0.2, stop.set).start()
+    started = time.monotonic()
+    with llm.cancellation_scope(stop), pytest.raises(llm.UserCancelled):
+        llm.call(fake, **ARGS)
+    assert time.monotonic() - started < 3 and len(fake.requests) == 1
+
+
+# ---- the kill switch: a running call is cut off ---------------------------------------------------------------------
+
+class _RunningStream:
+    """A response being written: it reports its input, then writes until the stream is closed (as a socket closed
+    under a blocked read fails)."""
+
+    def __init__(self):
+        self.opened, self.closed = threading.Event(), threading.Event()
+        self.usage = SimpleNamespace(input_tokens=2000, output_tokens=1, cache_read_input_tokens=60000,
+                                     cache_creation_input_tokens=0)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        yield SimpleNamespace(type="message_start", message=SimpleNamespace(usage=self.usage))
+        self.opened.set()
+        if not self.closed.wait(10):
+            raise AssertionError("the stream was never closed")
+        raise ConnectionError("the connection was closed under the read")
+
+    def close(self):
+        self.closed.set()
+
+    def get_final_message(self):
+        raise AssertionError("a stopped stream has no final message")
+
+
+class _RunningClient:
+    def __init__(self):
+        self.stream = _RunningStream()
+        self.beta = SimpleNamespace(messages=SimpleNamespace(stream=lambda **kw: self.stream))
+
+
+def test_stop_cuts_off_the_running_call_and_settles_what_it_could_have_cost(resend):
+    client, stop, failure = _RunningClient(), threading.Event(), []
+    budget = llm.CallBudget(max_calls=48, max_cost_usd=None, max_total_tokens=None, effort="high")
+
+    def run():
+        try:
+            with llm.budget_scope(budget), llm.cancellation_scope(stop):
+                llm.call(client, **ARGS)
+        except BaseException as e:  # noqa: BLE001 — what the worker thread saw
+            failure.append(e)
+
+    worker = threading.Thread(target=run)
+    worker.start()
+    assert client.stream.opened.wait(5)
+    assert budget.spent_usd == 0                                      # a running call is not counted yet
+    pressed = time.monotonic()
+    stop.set()
+    worker.join(5)
+    assert not worker.is_alive() and time.monotonic() - pressed < 2
+    assert client.stream.closed.is_set()
+    assert len(failure) == 1 and isinstance(failure[0], llm.UserCancelled) and "Stopped by you" in str(failure[0])
+    assert budget.calls == budget.failed_calls == 1
+    row = budget.usage.by_model["claude-opus-5-5"]
+    assert row["input_tokens"] == 2000 and row["cache_read_input_tokens"] == 60000      # what the stream reported
+    assert 1 <= row["output_tokens"] <= 2 * llm.STOPPED_OUTPUT_RATE                   # what it could have written
+    assert budget._reserved_cost_usd == 0 and budget._reserved_tokens == 0           # not the 128,000-token reservation
+    assert 0 < budget.spent_usd < 0.05
+
+
+def test_a_stop_that_reports_no_usage_is_settled_from_the_estimate():
+    budget = llm.CallBudget(max_calls=48, max_cost_usd=None, max_total_tokens=None)
+    budget._reserve((10_000 + llm.MAX_TOKENS, 1.0))
+    budget._settle_stopped("claude-opus-5-5", (10_000 + llm.MAX_TOKENS, 1.0), None, llm.MAX_TOKENS, 4.0)
+    row = budget.usage.by_model["claude-opus-5-5"]
+    assert row["input_tokens"] == 10_000 and row["output_tokens"] == 4 * llm.STOPPED_OUTPUT_RATE
+    assert budget.spent_usd == pytest.approx((10_000 * 4.0 + 600 * 20.0) / 1e6)
+    assert budget.usage.calls == 0                                    # a stopped call is not a returned response
+
+
+def test_stop_cuts_off_a_real_streaming_connection_that_has_gone_quiet():
+    """The real SDK over a real socket: the response reports its input, then writes nothing (a long thinking phase).
+    Closing the stream alone does not wake that read on every platform; the kill switch shuts the socket down."""
+    anthropic = pytest.importorskip("anthropic")
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+    gone = threading.Event()
+
+    class Quiet(BaseHTTPRequestHandler):
+        def do_POST(self):
+            self.rfile.read(int(self.headers["content-length"]))
+            self.send_response(200)
+            self.send_header("content-type", "text/event-stream")
+            self.end_headers()
+            self.wfile.write(_sse([("message_start", {"type": "message_start", "message": {
+                "id": "m", "type": "message", "role": "assistant", "model": "claude-opus-5-5", "content": [],
+                "stop_reason": None, "stop_sequence": None, "usage": {"input_tokens": 1000, "output_tokens": 1}}})]))
+            self.wfile.flush()
+            gone.wait(20)
+
+        def log_message(self, *args):
+            pass
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Quiet)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    client = anthropic.Anthropic(api_key="test-key", base_url=f"http://127.0.0.1:{server.server_address[1]}",
+                                 max_retries=0, http_client=anthropic.DefaultHttpxClient(trust_env=False))
+    stop, seen = threading.Event(), {}
+    budget = llm.CallBudget(max_calls=48, max_cost_usd=None, max_total_tokens=None)
+
+    def run():
+        try:
+            with llm.budget_scope(budget), llm.cancellation_scope(stop):
+                llm.call(client, **ARGS)
+        except BaseException as e:  # noqa: BLE001 — what the worker thread saw
+            seen["error"] = e
+    worker = threading.Thread(target=run, daemon=True)
+    try:
+        worker.start()
+        time.sleep(1.0)                                              # the stream is open and quiet
+        pressed = time.monotonic()
+        stop.set()
+        worker.join(5)
+        assert not worker.is_alive() and time.monotonic() - pressed < 3
+        assert isinstance(seen.get("error"), llm.UserCancelled)
+        assert budget.usage.by_model["claude-opus-5-5"]["input_tokens"] == 1000
+    finally:
+        gone.set()
+        server.shutdown()
+        server.server_close()

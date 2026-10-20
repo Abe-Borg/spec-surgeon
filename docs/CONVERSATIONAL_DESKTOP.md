@@ -1,9 +1,9 @@
 # The conversational desktop
 
-Spec Surgeon is one window. On the left are the Word documents you attached and, optionally, one reference
-template. On the right are a conversation and one button. You add documents, describe the result, read the
-plan, look at the before/after pages and create edited copies. Nothing else is asked of you: no operations,
-recipes, methods or settings beyond an API key.
+Spec Surgeon is one window. On the left are the Word documents you attached, optionally one reference
+template, and any pictures or tables you attached for the edit to use. On the right are a conversation and one
+button. You add documents, describe the result, read the plan, look at the before/after pages and create edited
+copies. Nothing else is asked of you: no operations, recipes, methods or settings beyond an API key.
 
 ![The conversation starts with Word documents, an optional template, and a request](conversation-start.png)
 
@@ -16,6 +16,16 @@ only; it never selects the other documents in its folder, and tables or pictures
 listed. Files from different folders can be used together, including files with the same name. Each file has
 a remove button. **Add a template (optional)** attaches one reference document; it is never part of the batch,
 and if one of the documents is a copy of the template the window says so and asks you to remove one of them.
+
+**Add a picture or table (optional)**, or dropping one, attaches a file for the edit to use: a picture
+(`.png`, `.jpg`, `.jpeg`, `.gif`), for example a new logo to put in place of the old one, or a table
+(`.xlsx`, `.csv`, `.json`), for example a sheet of project names and numbers to fill in. It is listed under the
+template with one line saying what it is ("A PNG picture, 600 × 200 pixels, for the edit to use."); one that
+cannot be read or is larger than 20 MB is refused with the reason. Claude is told about each one (a picture's
+format and size, a table's sheets and columns) and can read the tables, but nothing beside your documents is
+ever looked for. A plan that uses one names it, and
+the approval covers its exact content: changing the file after the preview means the plan must be checked again.
+Values a table gives are yours, not Claude's words.
 
 The moment a file is attached, Spec Surgeon reads it. This takes milliseconds and makes no model call. Under
 the file name it shows one of three states:
@@ -104,8 +114,9 @@ Every path ends in the same button. Its label says what it does:
   checked against the request again before anything can be approved.
 - **Save N ready copies**: during recovery, save the copies that are already verified while a question about
   other files is still open.
-- **Allow another estimated $10**: the conversation reached its allowance (see below).
-- **Stop after current step**, while work runs.
+- **Continue** after a pause: the conversation has used 48 AI steps since you last said to go on, or the app
+  closed while work was running (see below).
+- **Stop now**, while work runs: the kill switch (see below).
 
 The button is tied to what is on screen. If a document, the template, the plan, a preview or a visual finding
 changes, the displayed action is void and the window says "The documents or plan changed. Review the updated
@@ -128,7 +139,7 @@ A file can be left out at three points, each time with one sentence that names t
 ## Recovery and custom methods run internally
 
 After **Create edited copies**, a file that did not pass goes straight into recovery ("Checking the files that
-still need work…"). Recovery works on copies, within the same allowance, and ends where everything else ends:
+still need work…"). Recovery works on copies, within the same conversation, and ends where everything else ends:
 a question in the chat (for example "Which passage(s) in Spec.docx should change? Reply with the number, or
 numbers separated by commas.") or the same button. While a question is open, the copies that are already
 verified can be saved. The independent checks and the source-change guards are the same as for a first run.
@@ -153,16 +164,25 @@ tick **Remember securely on this computer** to keep it in Windows Credential Man
 configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer says
 "Connect your Anthropic API key in Settings to start." The command line runs saved specifications without a key.
 
-Each conversation has one allowance that covers every model call it makes: the conversation itself, custom
-methods, the visual check and recovery. It starts at an estimated $10, 48 calls, 64,000 output tokens per call
-and one million tokens in total. When it is reached, work pauses with its progress saved and the button reads
-**Allow another estimated $10**; accepting extends the same ledger by $10, 48 calls and one million tokens. The
-amounts are estimates from a built-in price table, not provider billing caps. Usage that could not be
-confirmed is counted conservatively.
+There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
+custom method, the visual check or recovery) runs at high reasoning effort and may write up to 128,000 tokens,
+the most the model writes. Three things keep the spending in your hands instead:
 
-While work runs the button reads **Stop after current step**. Stopping takes effect before the next model
-call; a response already in flight or a file operation already running finishes. The status line shows the
-current step, the elapsed seconds and the estimated spend so far.
+- **You see it.** While work runs the status line shows the current step, the elapsed seconds and the
+  estimated spending so far; the footer keeps the conversation's total. A step that is still running is
+  counted when it ends. The amounts are estimates from a built-in price table, not provider bills.
+- **Stop now.** While work runs the button is the kill switch. It cuts off the AI step that is running at
+  once, so Claude stops writing, and starts no other; a document check or file operation already running
+  finishes first, since it costs nothing. A step that was cut off is counted from the input it reported and at
+  most what it could have written in the time it ran. Your progress is saved, and **Continue** picks the
+  conversation up where it stopped.
+- **A pause every 48 AI steps.** Work pauses with its progress saved and the button reads **Continue**;
+  continuing allows 48 more and the conversation goes on where it stopped, with everything it had found.
+
+A call that fails for a passing reason (the service is overloaded or rate-limited, a server error, a dropped
+connection or a response cut off in transit) is sent again automatically, up to twice, after 5 and then 20
+seconds (longer when the service asks for it). Every attempt counts as an AI step. A request the service
+refuses is never sent again.
 
 ## Saved conversations
 
@@ -175,8 +195,9 @@ visual finding; those belong to one displayed preview only.
 On reopening, the conversation and the result links come back. Every attachment is triaged again, since a file
 may have changed, moved or been fixed; a file that is gone is marked with where it used to be. The button
 reads **Continue**: the documents are checked against the request again before any new approval, and a
-recovery checkpoint is reloaded and revalidated. If the app stopped in the middle of work before its usage was
-recorded, continuing needs a new explicit allowance. **New conversation** archives the current journal under
+recovery checkpoint is reloaded and revalidated. If the app closed in the middle of work, before the last
+step's usage was recorded, the conversation reopens paused and continuing needs your **Continue**. **New
+conversation** archives the current journal under
 `conversations\` and starts empty. An unsent draft is kept in `settings.json`.
 
 ## Capability and verification limits

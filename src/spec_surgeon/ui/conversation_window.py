@@ -1,4 +1,7 @@
-"""The desktop: documents, an optional template, and one conversation."""
+"""The desktop: documents, an optional template, pictures and tables for the edit to use, and one conversation.
+
+While work runs the one button is the kill switch: **Stop now** cuts off the AI step that is running and starts no
+other (``llm.cancellation_scope``); the status line shows the estimated spending as it accrues."""
 from __future__ import annotations
 
 import os
@@ -13,7 +16,7 @@ from PySide6.QtWidgets import (QApplication, QCheckBox, QDialog, QFileDialog, QF
     QToolButton, QTreeWidget, QTreeWidgetItem, QVBoxLayout, QWidget)
 
 from .. import about, credentials, diagnostics as diag
-from ..document_task import DocumentTask
+from ..document_task import STEPS_PER_PAUSE, DocumentTask
 from ..gui import Session, open_folder
 from ..settings import config_dir, load_settings, logs_dir, save_settings
 from . import theme
@@ -22,7 +25,15 @@ from .widgets import Card, ImageViewer, Thumb, label, primary_button
 from .worker import Bridge, start_job
 
 PROGRESS = {"Preparing and checking the preview…", "Creating and checking your edited copies…",
-            "Checking the files that still need work…"}
+            "Checking the files that still need work…", "Continuing where the conversation stopped…"}
+REFERENCE_FILTER = "Pictures and tables (*.png *.jpg *.jpeg *.gif *.xlsx *.csv *.json)"
+
+
+def spent_text(cost):
+    """The estimated spending as the window says it (an estimate from the price table, never a bill)."""
+    if cost is None:
+        return "an amount the price table cannot estimate"
+    return "less than $0.01" if cost < 0.005 else f"about ${cost:.2f}"
 
 
 def plain(text, name=""):
@@ -149,7 +160,7 @@ class ConversationWindow(QMainWindow):
         self.add_btn = QPushButton("Add Word documents")
         self.add_btn.clicked.connect(self.pick_documents)
         left.addWidget(self.add_btn)
-        left.addWidget(plain("Drop one or more .docx files anywhere in this window.", "Muted"))
+        left.addWidget(plain("Drop .docx files, pictures or spreadsheets anywhere in this window.", "Muted"))
         self.attachment_scroll = QScrollArea()
         self.attachment_scroll.setWidgetResizable(True)
         self.attachment_scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -163,6 +174,12 @@ class ConversationWindow(QMainWindow):
         self.template_btn = QPushButton("Add a template (optional)")
         self.template_btn.clicked.connect(self.pick_template)
         left.addWidget(self.template_btn)
+        self.reference_rows = QVBoxLayout()
+        left.addLayout(self.reference_rows)
+        self.reference_btn = QPushButton("Add a picture or table (optional)")
+        self.reference_btn.setToolTip("A new logo, or a spreadsheet of values, for the edit to use")
+        self.reference_btn.clicked.connect(self.pick_references)
+        left.addWidget(self.reference_btn)
         left.addStretch(1)
         left.addWidget(plain("Edited copies are saved separately. Your originals stay intact.", "Muted"))
         body.addWidget(self.attachments)
@@ -295,10 +312,11 @@ class ConversationWindow(QMainWindow):
     def _render(self):
         view = self.task.view()
         self._action_token = view["token"]
-        accepted = [a for a in view["attachments"] if not a["template"] and a["state"] != "refused"]
+        accepted = [a for a in view["attachments"] if not a["template"] and not a.get("reference")
+                    and a["state"] != "refused"]
         self.attachment_heading.setText(f"Your documents · {len(accepted)}" if accepted else "Your documents")
         clear(self.file_rows)
-        documents = [a for a in view["attachments"] if not a["template"]]
+        documents = [a for a in view["attachments"] if not a["template"] and not a.get("reference")]
         for entry in documents:
             self.file_rows.addWidget(self._attachment(entry))
         self.file_rows.addStretch(1)
@@ -310,6 +328,10 @@ class ConversationWindow(QMainWindow):
         if template:
             self.template_rows.addWidget(self._attachment(template))
         self.template_btn.setVisible(template is None)
+        clear(self.reference_rows)
+        for entry in view["attachments"]:
+            if entry.get("reference"):
+                self.reference_rows.addWidget(self._attachment(entry))
         clear(self.conversation)
         self._choice_buttons = []
         self._focus_widget = None
@@ -363,9 +385,10 @@ class ConversationWindow(QMainWindow):
             card.add(plain("Pick an answer, or describe what you want in your own words below.", "Muted"))
         if view["budget_paused"]:
             card = self._card("Work paused; your progress is saved")
-            card.add(plain("This conversation reached its investigation allowance, or stopped before usage could be "
-                           "confirmed. Continuing allows up to another estimated $10 of model work. "
-                           "Provider charges can differ from this estimate."))
+            card.add(plain(f"The conversation used {view['steps_per_pause']} AI steps since you last said to go on, or "
+                           f"the app closed while work was running. Continue allows up to {view['steps_per_pause']} "
+                           f"more and picks up where it stopped. Estimated spending so far: "
+                           f"{spent_text(view['cost'])}; provider charges can differ."))
         for sample in view["samples"]:
             if sample.images or sample.pages_before is not None or sample.pages_after is not None:
                 card = Card("Preview · " + Path(sample.source).name)
@@ -427,10 +450,15 @@ class ConversationWindow(QMainWindow):
             button.setEnabled(active and ready and has_documents)
         if self.busy:
             self.primary.show()
-            self.primary.setText("Stopping after this step…" if self._cancel.is_set() else "Stop after current step")
+            self.primary.setText("Stopping…" if self._cancel.is_set() else "Stop now")
             self.primary.setEnabled(not self._cancel.is_set())
-        self.connection.setText("Ctrl+Enter to send" if ready else "Connect your Anthropic API key in Settings to start.")
-        if typed and self.primary.isVisible():
+        cost = self.task._budget.spent_usd
+        spent = f" · {spent_text(cost)} spent in this conversation" if cost is None or cost > 0 else ""
+        self.connection.setText(("Ctrl+Enter to send" if ready else "Connect your Anthropic API key in Settings to start.")
+                                + spent)
+        if self.busy:
+            self.primary.setToolTip("Cuts off the AI step that is running and starts no other. Your progress is saved.")
+        elif typed and self.primary.isVisible():
             self.primary.setToolTip("Send your new message before approving a plan.")
         else:
             self.primary.setToolTip("")
@@ -450,6 +478,11 @@ class ConversationWindow(QMainWindow):
     @Slot()
     def pick_documents(self):
         files, _ = QFileDialog.getOpenFileNames(self, "Add Word documents", "", "Word documents (*.docx)")
+        self.add_documents(files)
+
+    @Slot()
+    def pick_references(self):
+        files, _ = QFileDialog.getOpenFileNames(self, "Add pictures or tables for the edit to use", "", REFERENCE_FILTER)
         self.add_documents(files)
 
     @Slot()
@@ -532,7 +565,8 @@ class ConversationWindow(QMainWindow):
             self.composer.setPlainText(self._submitted_text)
         kind, _, detail = message.partition(": ")
         if kind == "UserCancelled":
-            self._notice("Stopped before the next AI step. Your progress is saved.")
+            self._notice("Stopped. No AI step runs until you continue; your progress is saved. Estimated spending so "
+                         f"far: {spent_text(self.task._budget.spent_usd)}.")
         elif kind in {"ValueError", "TrialsFailed", "TransformFailed", "SpecError",
                       "FileNotFoundError", "PermissionError"}:
             self._notice((detail or message).replace("press Preview again", "continue to check the documents again"))
@@ -567,9 +601,9 @@ class ConversationWindow(QMainWindow):
         text = self._status_text
         if self.busy:
             text += f" · {int(time.monotonic() - self._job_started)}s"
-            cost = self.task._budget.estimated_cost_usd
-            if cost is not None and cost > 0:
-                text += f" · estimated ${cost:.2f} so far"
+            cost = self.task._budget.spent_usd
+            if cost is None or cost > 0:
+                text += f" · {spent_text(cost)} spent so far"
         self.status.setText(text)
 
     def set_checking(self, on):
@@ -678,8 +712,9 @@ class ConnectionDialog(QDialog):
         self.remember.setEnabled(credentials.available())
         self.remember.setChecked(credentials.available())
         card.add(self.remember)
-        card.add(plain("Each conversation pauses before exceeding its estimated $10 allowance. "
-                       "Continuing beyond that is your choice. Provider charges can differ.", "Muted"))
+        card.add(plain(f"There is no spending limit. Work pauses after every {STEPS_PER_PAUSE} AI steps until you continue, the "
+                       "status line shows the estimated spending, and Stop now cuts off the AI step that is running. "
+                       "Provider charges can differ from the estimate.", "Muted"))
         layout.addWidget(card)
         self.error = plain("")
         layout.addWidget(self.error)

@@ -143,14 +143,50 @@ def test_stop_action_prevents_the_next_model_call(qt, tmp_path, monkeypatch):
     w.do_send()
     assert reached.wait(5)
     try:
-        assert w.primary.text() == "Stop after current step"
+        assert w.primary.text() == "Stop now"
         w.do_primary()
-        assert not w.primary.isEnabled()
+        assert not w.primary.isEnabled() and w.primary.text() == "Stopping…"
     finally:
         release.set()
         w._spec_surgeon["wait"]()
     assert len(fake.requests) == 1
-    assert "Stopped before the next AI step" in w.notice.text()
+    assert w.notice.text().startswith("Stopped. No AI step runs until you continue")
+
+
+def test_stop_now_cuts_off_the_ai_step_that_is_running(qt, tmp_path, monkeypatch):
+    import time
+    from spec_surgeon import llm
+    from test_llm import _RunningClient
+    w = window(qt, tmp_path)
+    w.add_documents([str(document(tmp_path / "Spec.docx"))])
+    running = _RunningClient()
+
+    def work(*args, **kwargs):
+        with llm.budget_scope(w.task._budget):
+            llm.call(running, model=llm.DEFAULT_MODEL, system="s", tools=[], messages=[{"role": "user", "content": "x"}])
+    monkeypatch.setattr(w.task, "perform", work)
+    w.composer.setPlainText(REQUEST)
+    w.do_send()
+    assert running.stream.opened.wait(5)
+    pressed = time.monotonic()
+    w.do_primary()
+    w._spec_surgeon["wait"](10)
+    assert time.monotonic() - pressed < 5 and running.stream.closed.is_set()
+    assert w.notice.text().startswith("Stopped.") and "spending so far: about $0.0" in w.notice.text()
+    assert "spent in this conversation" in w.connection.text()
+
+
+def test_pictures_and_tables_are_listed_apart_from_the_documents(qt, tmp_path):
+    from PySide6.QtWidgets import QLabel
+    from make_fixtures import png
+    w = window(qt, tmp_path)
+    logo = tmp_path / "logo.png"
+    logo.write_bytes(png(size=6))
+    w.add_documents([str(document(tmp_path / "Spec.docx")), str(logo)])
+    assert w.attachment_heading.text() == "Your documents · 1"
+    assert w.reference_rows.count() == 1 and w.reference_btn.isVisible()
+    assert any("pixels, for the edit to use" in label.text() for label in w.findChildren(QLabel))
+    assert w.session.inputs == [logo.resolve()]
 
 
 def test_rendered_page_growth_is_visible_in_the_conversation(qt, tmp_path):

@@ -72,8 +72,9 @@ def _hermetic(request, tmp_path_factory, monkeypatch):
     """Every test is sealed off from the machine it runs on: settings and the personal library live in a temporary
     folder (never the real %APPDATA%), no API key is visible (and none a test writes outlives it), Windows Credential
     Manager is out of reach (only tests/test_credentials.py's throw-away round trip reaches it), the model is the
-    default whatever SPEC_SURGEON_MODEL says, a Claude client that was not scripted cannot be built, and the command
-    line never thinks it is talking to a person (no prompt can block a test run in a console)."""
+    default whatever SPEC_SURGEON_MODEL says, a Claude client that was not scripted cannot be built, a scripted failure
+    is not re-sent, and the command line never thinks it is talking to a person (no prompt can block a test run in a
+    console)."""
     monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path_factory.mktemp("config")))
     seal_environment(monkeypatch)
     if Path(str(request.node.path)).resolve() != REAL_CREDENTIALS_TEST:
@@ -84,6 +85,8 @@ def _hermetic(request, tmp_path_factory, monkeypatch):
         monkeypatch.setattr(llm, "client", _no_live_claude)
         monkeypatch.setattr(llm, "credentials_found", _scripted_claude_reachable)
         monkeypatch.setattr(llm, "_sdk_credentials", _no_sdk_profile)
+        # One scripted failure is one failure: a test of the automatic re-send (tests/test_llm.py) turns it back on.
+        monkeypatch.setattr(llm, "RETRIES", 0)
     except ImportError:
         pass
     try:

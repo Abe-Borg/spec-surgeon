@@ -231,7 +231,7 @@ class Conversation:
                  max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS, effort: str = DEFAULT_EFFORT,
                  stall_repetitions: int = DEFAULT_STALL_REPETITIONS, max_image_tokens: Optional[int] = None,
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
-                 continuous_recovery: bool = False, word_sources=None):
+                 continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = ()):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -253,7 +253,8 @@ class Conversation:
         self.work_dir = Path(work_dir) if work_dir else None
         self.log = log or (lambda m: None)
         self._client = client
-        self.batch = compiler._Batch(self.files, self.template)
+        # Pictures and tables the user attached for the edit to use (INPUT FILES); nothing beside them is discovered.
+        self.batch = compiler._Batch(self.files, self.template, input_files=[Path(p) for p in input_files])
         self.batch.work_dir = self.work_dir
         self.batch.max_image_tokens = max_image_tokens
         self.batch.analysis_limits = analysis_limits
@@ -346,6 +347,20 @@ class Conversation:
         self._send_user(said_text)
         return self._advance()
 
+    def resumable(self) -> bool:
+        """The last turn stopped before Claude answered (the allowance paused it, the user stopped it, or the call
+        failed): the history ends with the app's own message and nothing is owed, so it can be sent again as it is."""
+        return (self.started and not self.recovery_active and bool(self.messages) and not self.pending
+                and self.messages[-1].get("role") == "user" and (self.turn is None or self.turn.status == "failed"))
+
+    def resume(self) -> Turn:
+        """Continue a turn that stopped before Claude answered, from the history it had: the investigation so far is
+        kept, nothing is said on the user's behalf and no wording is approved."""
+        if not self.resumable():
+            raise ValueError("this conversation is waiting for the user's reply, not for a continuation")
+        self.turn = None
+        return self._advance()
+
     def take_app_choice(self, choice_id: str) -> Choice:
         """A choice the app carries out itself (the custom transform, a recovery plan or target): recorded in the
         transcript and told to Claude with the next message; no request is made now."""
@@ -393,7 +408,8 @@ class Conversation:
 
     def to_dict(self) -> Dict[str, Any]:
         return {"id": self.id, "request": self.request, "files": [str(f) for f in self.files],
-                "template": str(self.template) if self.template else None, "model": self.model, "mode": self.mode,
+                "template": str(self.template) if self.template else None,
+                "input_files": [str(p) for p in self.batch.inputs], "model": self.model, "mode": self.mode,
                 "approved_words": list(self.sources), "answers": list(self.answers),
                 "entries": [e.to_dict() for e in self.entries], "turn": self.turn.to_dict() if self.turn else None,
                 "unsupported": self.unsupported, "tool_calls": self.tool_calls, "usage": self.usage.to_dict(),

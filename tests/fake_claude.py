@@ -2,7 +2,7 @@
 
 ``FakeClient(*responses)`` answers ``client.beta.messages.stream(**kw)`` with the scripted responses in order and
 records every request (a deep copy of its keyword arguments, so later appends to the message list do not leak into the
-record). Every Claude call in the app streams (``llm.call``, max_tokens 64000: the SDK refuses a non-streaming request
+record). Every Claude call in the app streams (``llm.call``, max_tokens 128000: the SDK refuses a non-streaming request
 that large), so ``create`` raises — a call site left on the old path fails here exactly as it would against the SDK.
 
 A scripted item may be ``raise_on_enter(exc)`` (an HTTP error when the stream opens) or ``raise_on_final(exc)`` (the

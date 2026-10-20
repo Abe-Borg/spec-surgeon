@@ -30,8 +30,12 @@ lost or invented is the one failure that matters.
 ## Repository layout
 
 The desktop is one window, `ui/conversation_window.py`, coordinated by `document_task.py`:
-explicit Word attachments, an optional template, and chat. `triage.py` checks every attachment
-the moment it arrives (deterministic, no model call) and refuses or notes it in one sentence.
+explicit Word attachments, an optional template, explicitly attached pictures and tables for the
+edit to use (INPUT FILES; nothing beside them is discovered), and chat. `triage.py` checks every
+document the moment it arrives (deterministic, no model call) and refuses or notes it in one
+sentence. The window has no spending ceiling: every call gets the model's full output at high
+effort, work pauses every 48 calls (`STEPS_PER_PAUSE`), and **Stop now** closes the running
+stream (`llm.cancellation_scope`); `llm.call` re-sends transient failures.
 `layouts.py` gives a mixed batch one EditSpec per structural layout, each planned, previewed
 and verified on its own documents, with one approval. `review_display.py` describes the actual
 previewed EditSpec in the sentences each operation writes for itself (`Op.describe`,
@@ -65,7 +69,8 @@ for persistence, cost limits and review behavior.
   - `workflows.py`, `goals.py`, `goal_contracts.py`, `goal_operations.py` — named workflows and reviewed outcome
     contracts; `recovery*.py`, `campaign*.py`, `inventory.py` — bounded investigation and workspaces.
   - `office_profiles.py`, `structure.py`, `spec_qa.py`, `project_evidence.py` — office standards, structure analysis, QA audits.
-  - `document_task.py` — the window's coordinator: attachments and triage, stages, the allowance, the journal;
+  - `document_task.py` — the window's coordinator: attachments and triage, stages, the call ledger and its pause,
+    Continue that resumes a stopped conversation turn, the journal;
     `review_display.py` — the plan as the window reads it (sentences, assumptions, layouts, targets).
   - `cli.py`, `gui.py` (`Session`, no Qt), `ui/` (the Qt window: `app.py` (application, prompts, main),
     `conversation_window.py`, `widgets.py`, `theme.py`, `update_ui.py`, `about_dialog.py`, `worker.py`),

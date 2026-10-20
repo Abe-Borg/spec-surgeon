@@ -5,6 +5,13 @@ the stages the user sees — empty, question, preview, done, budget, resume — 
 single decision table (``Session.outcome``), never by probing engine fields. It keeps the user's decisions together,
 triages every attachment the moment it arrives, and persists a recoverable journal. Journals never restore delivery
 approval or execute saved code.
+
+Attachments are Word documents to edit, at most one template, and pictures or tables the user attached for the edit
+to use (``reference``: a new logo, a sheet of project values); nothing beside them is discovered. There is no spending
+ceiling: every model call writes up to the model's maximum output at high effort, the work pauses after
+``STEPS_PER_PAUSE`` model calls until the user says to go on, the window shows the estimated spending, and its Stop
+cuts off the call that is running (``llm.cancellation_scope``). Continue after a pause, a stop or a failed call picks
+the conversation up where it stopped.
 """
 from __future__ import annotations
 
@@ -17,19 +24,22 @@ from typing import Any, Dict, List, Optional
 
 from . import llm, review_display
 from .gui import Session
+from .inputs import KINDS as REFERENCE_KINDS
 from .recovery_state import atomic_json
 from .resources import DEFAULT_MAX_OUTPUT_TOKENS
 
-ALLOWANCE_USD = 10.0
+STEPS_PER_PAUSE = 48    # model calls between the pauses where the user says to go on
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
 
 
 @dataclass
 class Attachment:
-    """A document the user attached, with what triage found the moment it arrived."""
+    """A file the user attached, with what triage found the moment it arrived: a document to edit, the template, or a
+    picture or table for the edit to use (``reference``)."""
     path: Path
     template: bool = False
+    reference: bool = False
     state: str = "ok"                       # ok | note | refused
     notes: List[str] = field(default_factory=list)
     reason: str = ""                        # the refusal, one sentence
@@ -40,12 +50,32 @@ class Attachment:
         return self.state == "refused"
 
     def to_dict(self) -> Dict[str, Any]:
-        return {"path": str(self.path), "template": self.template, "state": self.state, "notes": list(self.notes),
-                "reason": self.reason, "pattern_id": self.pattern_id}
+        return {"path": str(self.path), "template": self.template, "reference": self.reference, "state": self.state,
+                "notes": list(self.notes), "reason": self.reason, "pattern_id": self.pattern_id}
 
 
 def _fingerprint(value):
     return hashlib.sha256(json.dumps(value, sort_keys=True, default=str).encode()).hexdigest()
+
+
+def triage_reference(path: Path) -> Attachment:
+    """A picture or table attached for the edit to use: model-free, milliseconds — it opens, it is within the size the
+    conversation reads, and what it is."""
+    from .inputs import overview
+    path = Path(path)
+    found = overview(path)
+    if found.get("problem"):
+        return Attachment(path, reference=True, state="refused", reason=f"{path.name} {found['problem']}.")
+    if found["kind"] == "picture":
+        width, height = found.get("pixels") or (0, 0)
+        note = f"A {str(found.get('format') or 'picture').upper()} picture, {width} × {height} pixels, for the edit to use."
+    elif found.get("sheets") is not None:
+        note = f"A spreadsheet with {len(found['sheets'])} sheet(s), for the edit to use."
+    elif found.get("headers") is not None:
+        note = f"A table with {found.get('rows', 0)} row(s), for the edit to use."
+    else:
+        note = "A data file, for the edit to use."
+    return Attachment(path, reference=True, state="note", notes=[note])
 
 
 def triage(path: Path, *, template: bool = False) -> Attachment:
@@ -77,32 +107,40 @@ class DocumentTask:
         self._resume_recovery = None
         self._resume_layouts = []           # layout batch folders still to recover, from the journal
         self._budget = self._new_budget()
-        # Documents a caller handed the session (tests, the installed smoke test) become attachments.
+        # Files a caller handed the session (tests, the installed smoke test) become attachments.
         given: List[Path] = []
         given = list(self.session.documents or [])
         template = self.session.template
-        self.session.documents, self.session.template = [], None
+        references = list(self.session.inputs or [])
+        self.session.documents, self.session.template, self.session.inputs = [], None, []
         for path in given:
             self.attachments.append(triage(Path(path)))
         if template:
             self.attachments.append(triage(Path(template), template=True))
+        for path in references:
+            self.attachments.append(triage_reference(Path(path)))
         self._sync()
 
     @staticmethod
-    def _new_budget():
-        return llm.CallBudget(max_cost_usd=ALLOWANCE_USD, max_calls=48, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-                              max_total_tokens=1_000_000, effort="high")
+    def _new_budget(max_calls=STEPS_PER_PAUSE):
+        """No spending or token ceiling; the call count pauses the work for the user's go-ahead."""
+        return llm.CallBudget(max_cost_usd=None, max_calls=max_calls, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
+                              max_total_tokens=None, effort="high")
 
     # ---- attachments ----
     def documents(self) -> List[Path]:
-        return [a.path for a in self.attachments if not a.template and not a.refused]
+        return [a.path for a in self.attachments if not a.template and not a.reference and not a.refused]
 
     def template(self) -> Optional[Path]:
         return next((a.path for a in self.attachments if a.template and not a.refused), None)
 
+    def references(self) -> List[Path]:
+        return [a.path for a in self.attachments if a.reference and not a.refused]
+
     def _sync(self) -> None:
         self.session.documents = self.documents()
         self.session.template = self.template()
+        self.session.inputs = self.references()
 
     def say(self, text, role="app"):
         if text:
@@ -117,18 +155,24 @@ class DocumentTask:
         self.problem = ""
 
     def attach(self, paths, *, template=False):
+        """Word documents to edit, or the template; pictures and tables (``REFERENCE_KINDS``) are attached for the edit
+        to use. Anything else is refused before anything changes."""
         checked: List[Path] = []
         for value in paths:
             path = Path(value).resolve()
-            if not path.is_file() or path.suffix.lower() != ".docx" or path.name.startswith("~$"):
-                raise ValueError(f"Choose a Word .docx file: {path.name}")
+            suffix = path.suffix.lower()
+            usable = suffix == ".docx" or (not template and suffix in REFERENCE_KINDS)
+            if not path.is_file() or not usable or path.name.startswith("~$"):
+                raise ValueError(f"Choose a Word .docx file: {path.name}" if template else
+                                 f"Choose Word .docx documents, pictures (.png, .jpg, .gif) or tables (.xlsx, .csv, "
+                                 f".json): {path.name}")
             if path not in checked:
                 checked.append(path)
         if not checked:
             return
         if template and len(checked) != 1:
             raise ValueError("Choose one template document.")
-        before = (self.documents(), self.template())
+        before = (self.documents(), self.template(), self.references())
         if template:
             found = triage(checked[0], template=True)
             if found.refused:
@@ -140,9 +184,9 @@ class DocumentTask:
             for path in checked:
                 if path in known:
                     continue
-                self.attachments.append(triage(path))
+                self.attachments.append(triage(path) if path.suffix.lower() == ".docx" else triage_reference(path))
         self._sync()
-        if before != (self.documents(), self.template()):
+        if before != (self.documents(), self.template(), self.references()):
             self._invalidate()
             if self.decisions:
                 self.say("The attachments changed. I’ll check the updated documents against your request.")
@@ -187,7 +231,7 @@ class DocumentTask:
         return None
 
     def perform(self, action, *, text="", token="", choice_id="", log=lambda _: None):
-        """Worker entry point. One allowance covers every nested model call and every turn."""
+        """Worker entry point. One ledger covers every nested model call and every turn."""
         self.problem = ""
         self.save(in_progress=True)
 
@@ -328,8 +372,8 @@ class DocumentTask:
 
     def _recovery_options(self):
         from .recovery import RecoveryOptions
-        return RecoveryOptions(max_cost_usd=self._budget.max_cost_usd, max_calls=self._budget.max_calls, max_attempts=8,
-                               max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_total_tokens=self._budget.max_total_tokens,
+        return RecoveryOptions(max_cost_usd=None, max_calls=self._budget.max_calls, max_attempts=8,
+                               max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_total_tokens=None,
                                effort="high", render=self.render, visual_review=self.session.visual_check)
 
     def action_token(self):
@@ -338,7 +382,7 @@ class DocumentTask:
         preview = outcome.preview
         visual = getattr(preview, "review", None)
         return _fingerprint({"revision": self._revision, "stage": self.stage,
-                             "documents": s.documents, "template": s.template, "spec": s.spec,
+                             "documents": s.documents, "template": s.template, "inputs": s.inputs, "spec": s.spec,
                              "preview": outcome.token,
                              "visual_findings": visual.to_dict() if visual else None,
                              "warnings": getattr(preview, "warnings", [])})
@@ -349,12 +393,10 @@ class DocumentTask:
         s = self.session
         if self.stage == "budget":
             # Extend the same ledger; do not reset accumulated usage or nested limits.
-            self._budget.max_cost_usd += ALLOWANCE_USD
-            self._budget.max_calls += 48
-            self._budget.max_total_tokens += 1_000_000
+            self._budget.max_calls = max(self._budget.max_calls, self._budget.calls) + STEPS_PER_PAUSE
             self._budget.exhausted_reason = None
             self.stage = "resume"
-            self.say("Continuing with another estimated $10 allowance.")
+            self.say(f"Continuing for up to {STEPS_PER_PAUSE} more AI steps.")
             self._primary(self.action_token(), log)
             return
         if self.stage == "resume":
@@ -429,7 +471,12 @@ class DocumentTask:
             s.resolve_remaining(log, options=self._recovery_options())
             self._settle(log)
             return
-        self._compile(log)
+        c = s.conversation
+        if c is not None and c.resumable() and s.conversation_matches(c.request):
+            # A pause, a stop or a failed call: the conversation goes on with what it had investigated.
+            s.resume_conversation(log)
+        else:
+            self._compile(log)
         self._settle(log)
 
     def _collect_results(self):
@@ -510,7 +557,7 @@ class DocumentTask:
         for item in getattr(batch_plan, "exceptions", []) or []:
             exc = item.exception or {}
             set_aside.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
-        labels = {"preview": "Create edited copies", "resume": "Continue", "budget": "Allow another estimated $10"}
+        labels = {"preview": "Create edited copies", "resume": "Continue", "budget": "Continue"}
         if outcome.blocking and self.stage == "preview":
             labels["preview"] = "I reviewed the flagged pages — create copies"
         if self.stage == "question" and outcome.partial:
@@ -529,7 +576,8 @@ class DocumentTask:
                 "samples": samples, "set_aside": set_aside,
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
-                "budget_paused": self.stage == "budget", "cost": self._budget.estimated_cost_usd,
+                "budget_paused": self.stage == "budget", "steps_per_pause": STEPS_PER_PAUSE,
+                "cost": self._budget.spent_usd,
                 "blocking": outcome.blocking}
 
     # ---- the journal ----
@@ -580,10 +628,11 @@ class DocumentTask:
         self.attachments = []
         for entry in entries:
             path = Path(entry["path"])
+            template, reference = bool(entry.get("template")), bool(entry.get("reference"))
             if path.is_file():
-                self.attachments.append(triage(path, template=bool(entry.get("template"))))
+                self.attachments.append(triage_reference(path) if reference else triage(path, template=template))
             else:
-                self.attachments.append(Attachment(path, template=bool(entry.get("template")), state="refused",
+                self.attachments.append(Attachment(path, template=template, reference=reference, state="refused",
                                                    reason=f"{path.name} is no longer at {path.parent}."))
         self._sync()
         self.messages = data.get("messages", [])
@@ -598,19 +647,19 @@ class DocumentTask:
             raise ValueError("The saved conversation could not be read.")
         self._resume_layouts = list(layouts)
         budget = data.get("budget", {})
-        self._budget = llm.CallBudget(max_cost_usd=budget.get("max_cost_usd", ALLOWANCE_USD),
-                                      max_calls=budget.get("max_calls", 48),
-                                      max_total_tokens=budget.get("max_total_tokens", 1_000_000),
-                                      max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, effort="high")
+        # A journal from a version with a spending allowance keeps its call count and spending, never its ceilings.
+        max_calls = budget.get("max_calls", STEPS_PER_PAUSE)
+        self._budget = self._new_budget(max_calls if type(max_calls) is int and max_calls > 0 else STEPS_PER_PAUSE)
         # Retain conservative accounting; never reset spending by reopening the app.
         self._budget.calls = int(budget.get("calls", 0))
         self._budget._reserved_tokens = int(budget.get("accounted_tokens", 0))
         cost = budget.get("estimated_cost_usd", 0)
         self._budget._reserved_cost_usd = float(cost or 0)
-        self._budget.exhausted_reason = budget.get("exhausted_reason")
+        exhausted = budget.get("exhausted_reason")
+        self._budget.exhausted_reason = exhausted if exhausted and "call limit" in exhausted else None
         if data.get("in_progress") or cost is None:
+            # The app closed while work ran: its last call may have cost more than was recorded; ask before going on.
             self._budget.exhausted_reason = "Previous work stopped before its final usage was recorded."
-            self._budget._reserved_cost_usd = max(self._budget.max_cost_usd, self._budget._reserved_cost_usd)
         self.stage = "budget" if self._budget.exhausted_reason else "resume" if self.decisions else "empty"
         if self.decisions:
             self.say("Your conversation is restored. I’ll recheck the documents before making further changes.")

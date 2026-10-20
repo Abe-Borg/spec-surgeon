@@ -1,11 +1,17 @@
 """Every call Spec Surgeon makes to Claude goes through this module (the compiler's chat, the custom-transform writer,
 the advisor and the visual check of the preview samples).
 
-* ``call`` **streams** (``client.beta.messages.stream`` + ``get_final_message``): the output cap is 64,000 tokens, and
-  the SDK refuses a non-streaming request that large. Effort ``max``; thinking is left to the model (Opus 5.5 always
-  thinks — sending a ``thinking`` setting, a forced ``tool_choice`` or an assistant prefill is a 400 there). The
-  server-side refusal fallback is on (``fallbacks="default"``): a request the model's safety filters decline is re-run
-  on another model inside the same call.
+* ``call`` **streams** (``client.beta.messages.stream`` + ``get_final_message``): the output cap is 128,000 tokens (the
+  most Opus 5.5 writes), and the SDK refuses a non-streaming request that large. Effort ``max``; thinking is left to the
+  model (Opus 5.5 always thinks — sending a ``thinking`` setting, a forced ``tool_choice`` or an assistant prefill is a
+  400 there). The server-side refusal fallback is on (``fallbacks="default"``): a request the model's safety filters
+  decline is re-run on another model inside the same call.
+* ``call`` re-sends a call that failed transiently (``is_transient``: overloaded, rate-limited, a 5xx, a dropped
+  connection or stream) up to ``RETRIES`` times after ``RETRY_DELAYS``; each attempt passes the same preflight and
+  counts against the same limits. Nothing of a failed attempt was returned, so nothing of it was acted on.
+* The kill switch: inside ``cancellation_scope`` a set event refuses the next call, and closes the stream of a call
+  that is running (``_stop_on_cancel``), so the provider stops writing at once. That call raises ``UserCancelled``; its
+  spending is settled from what the stream reported plus at most what it could have written in the time it ran.
 * ``history_content`` is what a caller appends to its message history **and** reads its tool calls and text from: after
   a fallback, the blocks the abandoned attempt produced before the last ``fallback`` marker (thinking, tool calls) must
   not be echoed back or acted on — only its text is kept.
@@ -33,8 +39,12 @@ import copy
 import json
 import math
 import os
+import socket
+import threading
+import time
 from contextlib import contextmanager
 from contextvars import ContextVar
+from types import SimpleNamespace
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import diagnostics as diag
@@ -85,6 +95,14 @@ DEFAULT_MODEL = os.environ.get("SPEC_SURGEON_MODEL", "claude-opus-5-5")
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 MAX_TOKENS = DEFAULT_MAX_OUTPUT_TOKENS
 EFFORT = DEFAULT_EFFORT
+RETRIES = 2                       # re-sends of a call that failed transiently (tests/conftest.py sets 0)
+RETRY_DELAYS = (5.0, 20.0)        # seconds before each re-send; a longer retry-after from the provider wins
+RETRY_AFTER_CAP = 60.0            # the longest a provider's retry-after is honoured before re-sending
+STOP_POLL_SECONDS = 0.25          # how often a running call looks at the kill switch
+STOPPED_OUTPUT_RATE = 150         # output tokens per second: an upper bound for what a stopped response wrote
+STOPPED = "Stopped by you. The AI step that was running was cut off; your source files were not changed."
+_TRANSIENT_TYPES = {"overloaded_error", "rate_limit_error", "api_error", "timeout_error"}
+_TRANSPORT_ROOTS = ("httpx", "httpcore", "httpx2", "httpcore2")
 
 # USD per million tokens: (input, output, cache read, 5-minute cache write). An estimate shown to the user, never a bill.
 # Update when Anthropic's prices change. A model that is not listed is shown as "price unknown", never guessed.
@@ -104,7 +122,12 @@ class ClaudeUnavailable(RuntimeError):
 
 
 class IncompleteResponse(RuntimeError):
-    """The provider did not finish a usable response; no partial tools may be acted on."""
+    """The provider did not finish a usable response; no partial tools may be acted on. ``transient``: the stream
+    dropped before it finished, which a re-send can cure (a malformed or cut-off answer is not)."""
+
+    def __init__(self, message, *, transient=False):
+        super().__init__(message)
+        self.transient = transient
 
 
 def _stream_events(stream):
@@ -116,18 +139,27 @@ def _stream_events(stream):
         raise IncompleteResponse("the model response stream contained malformed content") from error
 
 
-def _finished_message(stream):
+def _finished_message(stream, seen=None, cancel=None):
     """Check actual SSE completion rather than trusting the SDK's partial snapshot.
 
     The SDK deliberately parses incomplete JSON while streaming and returns its latest
     snapshot even on clean EOF. Keep the original tool JSON until the stream finishes,
     so an unfinished object cannot become a valid-looking tool argument dictionary.
     Non-iterable adapters still have to supply a completed response stop reason.
+    ``seen`` collects the usage the stream reports on its way (what a stopped call is settled from); a set ``cancel``
+    stops reading at the next event.
     """
     if callable(getattr(stream, "__iter__", None)):
         started, stopped, opened, tool_json = False, False, set(), {}
         for event in _stream_events(stream):
+            if cancel is not None and cancel.is_set():
+                raise UserCancelled(STOPPED)
             kind = getattr(event, "type", None)
+            if seen is not None and kind in ("message_start", "message_delta"):
+                usage = getattr(getattr(event, "message", None), "usage", None) or getattr(event, "usage", None)
+                if usage is not None:
+                    seen.setdefault("usage", {}).update(
+                        {k: int(getattr(usage, k, 0) or 0) for k in TOKEN_KEYS if getattr(usage, k, None) is not None})
             if kind == "message_start":
                 started = True
             elif kind == "content_block_start":
@@ -147,7 +179,8 @@ def _finished_message(stream):
             elif kind == "message_stop":
                 stopped = True
         if not started or not stopped or opened:
-            raise IncompleteResponse("the model response stream ended before its final message and content blocks completed")
+            raise IncompleteResponse("the model response stream ended before its final message and content blocks "
+                                     "completed", transient=True)
         for payload in tool_json.values():
             if payload:
                 try:
@@ -215,21 +248,115 @@ def _sdk_credentials() -> bool:
 
 def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], messages: List[Dict[str, Any]],
          max_output_tokens: Optional[int] = None, effort: Optional[str] = None):
-    """One streamed request; returns the final message. Raises whatever the SDK raises: the caller classifies it with
-    ``is_api_error`` (an API error is a recorded failure, anything else a defect that propagates) and never half-appends
-    a turn. Inside ``budget_scope``, every caller shares its limits, including nested transform and visual calls.
-    A refused preflight raises ``BudgetExceeded`` before opening a stream; ordinary calls are unchanged."""
+    """One streamed request; returns the final message. A transient failure is re-sent (``RETRIES``); after the last
+    attempt it raises whatever the SDK raised: the caller classifies it with ``is_api_error`` (an API error is a
+    recorded failure, anything else a defect that propagates) and never half-appends a turn. Inside ``budget_scope``,
+    every caller shares its limits, including nested transform and visual calls, and every attempt counts against them.
+    A refused preflight raises ``BudgetExceeded`` before opening a stream; ordinary calls are unchanged. The kill switch
+    (``cancellation_scope``) raises ``UserCancelled`` before a call, while one runs, or while waiting to re-send."""
     cancel = _CANCEL_EVENT.get()
-    if cancel is not None and cancel.is_set():
-        raise UserCancelled("Cancelled before the next model call. Your source files were not changed.")
-    with diag.scope(model_call_id=diag.new_id()):
-        with diag.span("model.call", requested_model=model) as record:
-            try:
-                return _call(client, model=model, system=system, tools=tools, messages=messages, record=record,
-                             max_output_tokens=max_output_tokens, effort=effort)
-            except BudgetExceeded as exc:
-                diag.event("model.budget.exhausted", level="warning", reason=str(exc), budgets=_budget_records())
-                raise
+    for attempt in range(RETRIES + 1):
+        if cancel is not None and cancel.is_set():
+            raise UserCancelled("Cancelled before the next model call. Your source files were not changed.")
+        with diag.scope(model_call_id=diag.new_id()):
+            with diag.span("model.call", requested_model=model, attempt=attempt + 1) as record:
+                try:
+                    return _call(client, model=model, system=system, tools=tools, messages=messages, record=record,
+                                 max_output_tokens=max_output_tokens, effort=effort)
+                except BudgetExceeded as exc:
+                    diag.event("model.budget.exhausted", level="warning", reason=str(exc), budgets=_budget_records())
+                    raise
+                except Exception as exc:  # noqa: BLE001 — re-sent only when transient; everything else propagates
+                    if attempt >= RETRIES or not is_transient(exc):
+                        raise
+                    delay = _retry_delay(exc, attempt)
+                    record.update(retrying=True, error=_record_error(exc))
+                    diag.event("model.call.retry", level="warning", attempt=attempt + 1, delay_seconds=delay,
+                               error=api_error_text(exc)[:300])
+        if cancel is not None:
+            if cancel.wait(delay):
+                raise UserCancelled("Cancelled before the next model call. Your source files were not changed.")
+        elif delay > 0:
+            time.sleep(delay)
+    raise AssertionError("unreachable: the last attempt returns or raises")
+
+
+def is_transient(e: BaseException) -> bool:
+    """A failure a re-send can cure: an overloaded or rate-limited service, a 5xx, a dropped connection, or a stream
+    that ended early. Never a request the API refused (4xx), a stop, a paused allowance or missing credentials."""
+    if isinstance(e, (UserCancelled, BudgetExceeded, ClaudeUnavailable)):
+        return False
+    if isinstance(e, IncompleteResponse):
+        return e.transient
+    status = getattr(e, "status_code", None)
+    if isinstance(status, int) and not isinstance(status, bool) and status >= 400:
+        return status in (408, 409, 429) or status >= 500
+    body = getattr(e, "body", None)
+    error = body.get("error") if isinstance(body, dict) else None
+    kind = getattr(e, "type", None) or (error.get("type") if isinstance(error, dict) else None)
+    if kind in _TRANSIENT_TYPES:                    # an error event in a stream that opened with 200
+        return True
+    if isinstance(e, (OSError, TimeoutError, ConnectionError)):
+        return True
+    root = (type(e).__module__ or "").split(".")[0]
+    if root in _TRANSPORT_ROOTS:
+        return True
+    return root == "anthropic" and type(e).__name__ in ("APIConnectionError", "APITimeoutError")
+
+
+def _retry_delay(e: BaseException, attempt: int) -> float:
+    delay = RETRY_DELAYS[min(attempt, len(RETRY_DELAYS) - 1)] if RETRY_DELAYS else 0.0
+    headers = getattr(getattr(e, "response", None), "headers", None)
+    try:
+        after = float(headers.get("retry-after")) if headers is not None and headers.get("retry-after") else None
+    except (TypeError, ValueError, AttributeError):
+        after = None
+    if after is not None and delay > 0:
+        delay = max(delay, min(after, RETRY_AFTER_CAP))
+    return delay
+
+
+def _sever(stream) -> None:
+    """Cut a running stream off under the read that waits on it. Closing a response from another thread does not wake
+    a blocked read on every platform; shutting its socket down does, and the provider sees the client gone and stops
+    writing. A stream without a reachable socket (a test's stand-in) is closed instead."""
+    try:
+        network = getattr(getattr(stream, "response", None), "extensions", {}).get("network_stream")
+        sock = network.get_extra_info("socket") if network is not None else None
+        if sock is not None:
+            sock.shutdown(socket.SHUT_RDWR)
+            return
+    except Exception:  # noqa: BLE001 — a socket already gone; closing the stream below is the fallback
+        pass
+    try:
+        stream.close()
+    except Exception:  # noqa: BLE001 — the read it interrupts reports the failure
+        pass
+
+
+@contextmanager
+def _stop_on_cancel(stream, cancel):
+    """The kill switch for a call that is running: when the user stops, cut its stream off at once (``_sever``). The
+    provider stops writing, and the read waiting in this thread fails, instead of the response running to its end."""
+    if cancel is None:
+        yield
+        return
+    done = threading.Event()
+
+    def watch():
+        while not done.is_set():
+            if cancel.wait(STOP_POLL_SECONDS):
+                if not done.is_set():
+                    _sever(stream)
+                return
+
+    watcher = threading.Thread(target=watch, name="spec-surgeon-stop", daemon=True)
+    watcher.start()
+    try:
+        yield
+    finally:
+        done.set()
+        watcher.join(timeout=STOP_POLL_SECONDS * 4)
 
 
 def _budget_records() -> List[Dict[str, Any]]:
@@ -276,8 +403,8 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
                 budget.exhausted_reason = f"cannot estimate this request's input tokens: {e}"
             raise BudgetExceeded(budgets[-1].exhausted_reason) from e
         reservations = [b._preflight(model, estimated_input, max_tokens) for b in budgets]
-        # SDK retries are additional HTTP attempts invisible to this call site. Let recovery decide whether to
-        # retry; its next call must pass the same preflight and count against the same cap.
+        # SDK retries are additional HTTP attempts invisible to this call site. ``call`` re-sends a transient failure
+        # itself, so that every attempt passes the same preflight and counts against the same cap.
         options = getattr(client, "with_options", None)
         if callable(options):
             client = options(max_retries=0)
@@ -294,17 +421,31 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
                message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets),
                retries_disabled=retries_disabled)
     _model_progress("started")
+    cancel = _CANCEL_EVENT.get()
+    seen: Dict[str, Any] = {}
+    started = time.monotonic()
     try:
         with client.beta.messages.stream(**kw) as stream:
             record["phase"] = "stream.receive"
             diag.event("model.stream.opened")
-            resp = _finished_message(stream)
-    except BaseException:
-        for budget in budgets:
+            with _stop_on_cancel(stream, cancel):
+                resp = _finished_message(stream, seen, cancel)
+    except BaseException as exc:
+        stopped = cancel is not None and cancel.is_set()
+        for budget, reservation in zip(budgets, reservations if budgets else ()):
             budget.failed_calls += 1
+            if stopped:
+                budget._settle_stopped(model, reservation, seen.get("usage"), max_tokens, time.monotonic() - started)
+            else:
+                # Keep the reservation: a dropped stream may have consumed tokens without reporting its usage.
+                budget._abandon(reservation)
         if budgets:
             record["budgets"] = _budget_records()
-        # Keep the reservation: a dropped stream may have consumed tokens without reporting its usage.
+        if stopped and isinstance(exc, Exception):
+            diag.event("model.call.stopped", seconds=round(time.monotonic() - started, 2), usage_seen=bool(seen))
+            if isinstance(exc, UserCancelled):
+                raise
+            raise UserCancelled(STOPPED) from exc
         raise
     _model_progress("completed", resp, model)
     record["phase"] = "usage.accounting"
@@ -651,7 +792,10 @@ class CallBudget:
     ceilings, NOT hard provider-billing caps: tokenization, unreported usage and server-side fallbacks may exceed a
     reservation. Such overruns stop subsequent calls, never discard the response or its usage diagnostics.
 
-    Failed calls count and retain their reservations because a dropped stream can still have incurred a charge.
+    Failed calls count and retain their reservations because a dropped stream can still have incurred a charge. A call
+    the user stopped (the kill switch) is settled from the usage its stream reported plus at most what it could have
+    written in the time it ran. ``spent_usd`` is what the window shows: finished and failed calls, never the
+    reservation of a call still running.
     ``usage`` is this budget's independent ledger; callers continue adding the same response to their own Usage,
     but must not merge those ledgers back into this one. ``calls`` includes failed attempts; ``usage.calls`` counts
     returned responses only. The optional ``None`` limits disable token/USD checks, never the call/output caps.
@@ -692,6 +836,7 @@ class CallBudget:
         self.exhausted_reason: Optional[str] = None
         self._reserved_tokens = 0
         self._reserved_cost_usd = 0.0
+        self._inflight_cost_usd = 0.0             # the part of _reserved_cost_usd held by calls still running
         self._unpriced_reservations = 0
         self._unpriced_response = False
 
@@ -699,6 +844,13 @@ class CallBudget:
     def estimated_cost_usd(self) -> Optional[float]:
         cost = self.usage.cost_usd()
         return None if cost is None or self._unpriced_reservations or self._unpriced_response else cost + self._reserved_cost_usd
+
+    @property
+    def spent_usd(self) -> Optional[float]:
+        """The estimated spending so far: the reported usage of finished calls plus the reservations kept for calls that
+        failed without reporting theirs. A call still running counts once it ends. None when a model's price is unknown."""
+        cost = self.estimated_cost_usd
+        return None if cost is None else max(0.0, cost - self._inflight_cost_usd)
 
     @property
     def accounted_tokens(self) -> int:
@@ -743,8 +895,32 @@ class CallBudget:
             self._unpriced_reservations += 1
         else:
             self._reserved_cost_usd += reservation[1]
+            self._inflight_cost_usd += reservation[1]
+
+    def _abandon(self, reservation: Tuple[int, Optional[float]]) -> None:
+        """A call that failed without reporting usage: no longer running, its reservation kept as spent."""
+        if reservation[1] is not None:
+            self._inflight_cost_usd = max(0.0, self._inflight_cost_usd - reservation[1])
+
+    def _settle_stopped(self, model: str, reservation: Tuple[int, Optional[float]], seen: Optional[Dict[str, int]],
+                        max_output: int, seconds: float) -> None:
+        """A call the user stopped: the input its stream reported when it opened (else the preflight estimate), and the
+        larger of the output it reported and what it could have written in ``seconds`` — never more than ``max_output``."""
+        self._abandon(reservation)
+        seen = dict(seen or {})
+        bound = min(max_output, math.ceil(max(0.0, seconds) * STOPPED_OUTPUT_RATE))
+        if not any(seen.get(k) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")):
+            seen["input_tokens"] = max(0, reservation[0] - max_output)
+        seen["output_tokens"] = max(int(seen.get("output_tokens", 0) or 0), bound)
+        self.usage._add(model, SimpleNamespace(**{k: int(seen.get(k, 0) or 0) for k in TOKEN_KEYS}))
+        self._reserved_tokens -= reservation[0]
+        if reservation[1] is None:
+            self._unpriced_reservations -= 1
+        else:
+            self._reserved_cost_usd = max(0.0, self._reserved_cost_usd - reservation[1])
 
     def _complete(self, resp: Any, model: str, reservation: Tuple[int, Optional[float]]) -> None:
+        self._abandon(reservation)                # no longer running, whatever it reported
         self.usage.add(resp, model)
         if getattr(resp, "usage", None) is None:
             self.unreported_calls += 1
@@ -772,6 +948,7 @@ class CallBudget:
                 "max_cost_usd": self.max_cost_usd, "calls": self.calls, "failed_calls": self.failed_calls,
                 "unreported_calls": self.unreported_calls, "usage": copy.deepcopy(self.usage.to_dict()),
                 "accounted_tokens": self.accounted_tokens, "estimated_cost_usd": self.estimated_cost_usd,
+                "spent_usd": self.spent_usd,
                 "unreported_reserved_tokens": self._reserved_tokens,
                 "unreported_reserved_cost_usd": None if self._unpriced_reservations else self._reserved_cost_usd,
                 "exhausted_reason": self.exhausted_reason,
