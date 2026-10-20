@@ -19,7 +19,9 @@ import configparser
 import contextvars
 import os
 import shutil
+import signal
 import subprocess
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -35,6 +37,7 @@ _CANDIDATES = [
 ]
 PROFILES_DIR_NAME = "render-profiles"
 MAX_PROFILES = 32           # indexes a lease may try past the one it was asked for
+_RETIRED_PROFILES: Set[Path] = set()   # profiles whose soffice timed out this process: possibly still occupied
 
 
 def find_soffice() -> Optional[str]:
@@ -85,7 +88,9 @@ def executable_identity(soffice: Optional[str] = None) -> Optional[str]:
     if not exe:
         return None
     try:
-        st = Path(exe).resolve().stat()
+        launcher = Path(exe).resolve()
+        binary = launcher.parent / "soffice.bin"       # the program itself, beside the launcher it is started by
+        st = (binary if binary.is_file() else launcher).stat()
     except OSError:
         return None
     return f"exe-{st.st_size}-{int(st.st_mtime)}"
@@ -139,6 +144,8 @@ class ProfileLease:
     def __enter__(self) -> "ProfileLease":
         self.root.mkdir(parents=True, exist_ok=True)
         for i in range(self.wanted, self.wanted + MAX_PROFILES):
+            if (self.root / str(i)).resolve() in _RETIRED_PROFILES:
+                continue                                   # a run on it timed out: never hand it more work
             fh = open(self.root / f"{i}.lock", "a+b")
             try:
                 _try_lock(fh)
@@ -164,6 +171,53 @@ def reset_profile(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
 
 
+def retire_profile(path: Path) -> None:
+    """A profile whose soffice run timed out is not leased again in this process: the launcher's tree is killed
+    on a timeout, but a survivor that escaped the kill would take every later request on its profile and never
+    answer, so the one-by-one retries and every later call lease a fresh index instead."""
+    _RETIRED_PROFILES.add(Path(path).resolve())
+    diag.event("render.profile_retired", level="warning", backend="libreoffice", profile=str(path))
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """End the launcher AND what it started: ``soffice`` is a launcher (``oosplash``/``soffice.exe``) whose child
+    ``soffice.bin`` does the work and would otherwise outlive a timeout, holding its profile."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=30)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:  # noqa: BLE001 — the process may be gone already; the plain kill below is the fallback
+        pass
+    try:
+        proc.kill()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _run_tree(cmd: List[str], env: Dict[str, str], timeout: float) -> subprocess.CompletedProcess:
+    """``subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)`` whose timeout kills the whole
+    process tree (its own session on POSIX, a job of ``taskkill /T`` on Windows), not the launcher alone."""
+    kwargs: Dict[str, object] = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, **kwargs)  # noqa: S603
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            out, err = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            out, err = b"", b""
+        raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err) from None
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=out, stderr=err)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
 # ---- conversion -----------------------------------------------------------------------------------------------------
 
 def _convert_batch(soffice: str, files: Sequence[Path], out_dir: Path, profile_dir: Path, timeout: int):
@@ -177,7 +231,7 @@ def _convert_batch(soffice: str, files: Sequence[Path], out_dir: Path, profile_d
                    files=[str(f) for f in files], out_dir=str(out_dir), profile=str(profile_dir),
                    timeout_seconds=timeout) as outcome:
         try:
-            result = subprocess.run(cmd, check=True, capture_output=True, timeout=timeout, env=env)
+            result = _run_tree(cmd, env, timeout)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             outcome.update(returncode=getattr(e, "returncode", None),
                            stdout=_tail(getattr(e, "stdout", None)), stderr=_tail(getattr(e, "stderr", None)))
@@ -259,6 +313,7 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
             except subprocess.TimeoutExpired:
                 if came_out(chunk):
                     worked.add(lease.path)
+                retire_profile(lease.path)         # the retries and every later call take a fresh profile
                 raise
         if came_out(chunk):
             worked.add(lease.path)

@@ -8,6 +8,8 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import time
+import sys
 from pathlib import Path
 
 import pytest
@@ -127,7 +129,10 @@ def test_a_timeout_or_a_crash_after_output_never_wipes_the_profile(tmp_path, mon
     assert marker.is_dir()                                                     # the profile was left alone
     assert not any(e["event"] == "render.profile_reset" for e in _events(journal))
     if failure == "timeout":
-        assert got == {} and runs == [("0", ["A.docx", "B.docx"]), ("0", ["A.docx"]), ("0", ["B.docx"])]
+        # a timed-out profile is retired for the process: each one-by-one retry leases the next index (here every
+        # run times out, so each retry retires its own profile too)
+        assert got == {} and runs == [("0", ["A.docx", "B.docx"]), ("1", ["A.docx"]), ("2", ["B.docx"])]
+        assert any(e["event"] == "render.profile_retired" for e in _events(journal))
     else:
         assert set(got) == {files[0]} and runs == [("0", ["A.docx", "B.docx"]), ("0", ["B.docx"])]
 
@@ -171,3 +176,53 @@ def test_the_real_soffice_renders_twice_on_one_kept_profile(tmp_path):
     assert all("(profile 0)" in d for d in details) and len(details) == 2
     with ProfileLease(profiles_root(), 0) as lease:                           # the lease was released after each run
         assert lease.index == 0
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="a POSIX process group; Windows uses taskkill /T")
+def test_a_timed_out_soffice_run_takes_its_whole_process_tree_with_it(tmp_path):
+    """``soffice`` is a launcher whose child does the work; killing the launcher alone on a timeout left the child
+    alive on the profile, where every later request on that profile was handed to it and lost."""
+    import os
+    import stat
+    import textwrap
+    pidfile = tmp_path / "child.pid"
+    launcher = tmp_path / "soffice"
+    launcher.write_text(textwrap.dedent(f"""\
+        #!/bin/sh
+        sleep 300 &
+        echo $! > "{pidfile}"
+        wait
+        """))
+    launcher.chmod(launcher.stat().st_mode | stat.S_IEXEC)
+    with pytest.raises(subprocess.TimeoutExpired):
+        libreoffice._convert_batch(str(launcher), [tmp_path / "A.docx"], tmp_path / "out", tmp_path / "profile", 1)
+    child = int(pidfile.read_text().strip())
+    for _ in range(50):                                    # the kill is delivered; the child is reaped by init
+        try:
+            os.kill(child, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.1)
+    else:
+        raise AssertionError(f"the launcher's child {child} survived the timeout")
+
+
+def test_a_retired_profile_is_never_leased_again_in_this_process(tmp_path, monkeypatch):
+    root = profiles_root()
+    libreoffice.retire_profile(root / "0")
+    with libreoffice.ProfileLease(root, 0) as lease:
+        assert lease.index == 1
+    with libreoffice.ProfileLease(root, 1) as lease:
+        assert lease.index == 1
+
+
+def test_the_renderer_identity_carries_the_version_and_the_executable(monkeypatch):
+    """A distribution's build id is the same across its security updates; the executable's size and date move."""
+    from spec_surgeon import render
+    monkeypatch.setattr(libreoffice, "version", lambda soffice=None: "build 420(Build:2)")
+    monkeypatch.setattr(libreoffice, "executable_identity", lambda soffice=None: "exe-1-2")
+    assert render.renderer_identity("libreoffice") == "libreoffice build 420(Build:2) exe-1-2"
+    monkeypatch.setattr(libreoffice, "version", lambda soffice=None: None)
+    assert render.renderer_identity("libreoffice") == "libreoffice exe-1-2"
+    monkeypatch.setattr(libreoffice, "executable_identity", lambda soffice=None: None)
+    assert render.renderer_identity("libreoffice") == "libreoffice unknown"

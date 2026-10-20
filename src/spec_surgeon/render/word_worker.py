@@ -474,6 +474,8 @@ def _run_batch_worker(files: List[Path], out_dir: Path, seconds: float, batch: W
                                 resolve(index, _publish(scratch / f"{index}.pdf", out_dir / (files[index].stem + ".pdf")))
                             except WordWorkerError as exc:
                                 resolve(index, exc)
+                            except OSError as exc:      # the destination is held, the disk is full: this file's
+                                resolve(index, WordWorkerError("word-publish", f"{type(exc).__name__}: {exc}"))
                         else:
                             resolve(index, WordWorkerError(message.get("code", "word-com"),
                                                            message.get("reason", "Word failed"),

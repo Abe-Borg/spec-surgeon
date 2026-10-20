@@ -230,10 +230,14 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[st
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     files = [Path(f) for f in files]
+    held: Dict[Path, str] = {}                      # an old PDF that cannot be replaced: that file's failure
     for f in files:
-        (out_dir / (f.stem + ".pdf")).unlink(missing_ok=True)
+        try:
+            (out_dir / (f.stem + ".pdf")).unlink(missing_ok=True)
+        except OSError as exc:
+            held[f] = f"{type(exc).__name__}: {exc}"
     with diag.span("render.word_batch", out_dir=str(out_dir), file_count=len(files)) as outcome:
-        batch = run_word_batch(files, out_dir, timeout_per_file=timeout)
+        batch = run_word_batch([f for f in files if f not in held], out_dir, timeout_per_file=timeout)
         outcome.update(workers=batch.workers, version=batch.version,
                        rendered=sum(1 for v in batch.results.values() if isinstance(v, Path)),
                        failed=sum(1 for v in batch.results.values() if not isinstance(v, Path)))
@@ -243,7 +247,11 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[st
     for f in files:
         got = batch.results.get(f)
         pdf = out_dir / (f.stem + ".pdf")
-        if isinstance(got, Path) and got.is_file():
+        if f in held:
+            diag.event("render.word_worker_failed", level="error", source=str(f), output=str(pdf),
+                       code="word-publish", details={"reason": held[f]})
+            log(f"{f.name}: Word could not render it: the old {pdf.name} could not be replaced ({held[f]})")
+        elif isinstance(got, Path) and got.is_file():
             result[f] = got
             detail(f"Word {batch.version}: {f.name} → {got.name} in {batch.seconds.get(f, 0.0):.1f}s")
         elif isinstance(got, Exception):

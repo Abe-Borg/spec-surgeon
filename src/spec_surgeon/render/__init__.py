@@ -48,7 +48,9 @@ def renderer_identity(backend: str) -> str:
     ``word 16.0.17328.20068``). A version that cannot be read is ``unknown``: such a cache still never serves another
     file's pages, only an upgrade of that renderer goes unnoticed until its entries age out."""
     if backend == "libreoffice":
-        version = libreoffice.version() or libreoffice.executable_identity()
+        # the version AND the executable: a distribution's build id (Debian's ``420(Build:2)``) is the same across
+        # its security updates, and the executable's size and date move with every one
+        version = " ".join(x for x in (libreoffice.version(), libreoffice.executable_identity()) if x) or None
     elif backend == "word":
         version = word_com.installed_version()
     else:

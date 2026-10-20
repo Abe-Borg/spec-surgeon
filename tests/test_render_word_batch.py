@@ -245,3 +245,42 @@ def test_installed_word_version_comes_from_the_registry_click_to_run_first(monke
     assert word_com.installed_version() == "Word.Application.16"            # an MSI install without an App Path
     monkeypatch.setitem(sys.modules, "winreg", _winreg({}))
     assert word_com.installed_version() is None                               # no Word registered at all
+
+
+def test_a_pdf_that_cannot_be_published_fails_that_file_only(word, monkeypatch):
+    """A PermissionError from the destination (held by a viewer or the indexer) or a full disk is one file's
+    failure: the others publish, the private Word instance goes on, and nothing already published is lost."""
+    files = word.files("ok1.docx", "ok2.docx", "ok3.docx")
+    real = word_worker._publish
+
+    def publish(staged, destination):
+        if destination.stem == "ok2":
+            raise PermissionError(13, "The process cannot access the file", str(destination))
+        return real(staged, destination)
+    monkeypatch.setattr(word_worker, "_publish", publish)
+    batch = run_word_batch(files, word.out, timeout_per_file=20)
+    assert batch.start_error is None and list(batch.results) == files
+    _pdf(batch.results[files[0]], "ok1.docx")
+    _pdf(batch.results[files[2]], "ok3.docx")
+    failed = batch.results[files[1]]
+    assert isinstance(failed, Exception) and getattr(failed, "code", "") == "word-publish"
+    assert "PermissionError" in str(failed)
+    assert word.cleanup == [(("private", 4242), False)]                      # Word quit by itself
+
+
+def test_an_old_pdf_that_cannot_be_replaced_fails_that_file_only(word, monkeypatch):
+    from spec_surgeon.render import word_com
+    files = word.files("ok1.docx", "ok2.docx")
+    word.out.mkdir(parents=True, exist_ok=True)
+    (word.out / "ok2.pdf").write_bytes(b"old")
+    real_unlink = Path.unlink
+
+    def unlink(self, missing_ok=False):
+        if self.name == "ok2.pdf":
+            raise PermissionError(13, "The process cannot access the file", str(self))
+        return real_unlink(self, missing_ok=missing_ok)
+    monkeypatch.setattr(Path, "unlink", unlink)
+    said = []
+    got = word_com.render_pdfs(files, word.out, timeout=20, log=said.append)
+    assert set(got) == {files[0]}
+    assert any("ok2.docx" in m and "could not be replaced" in m for m in said)
