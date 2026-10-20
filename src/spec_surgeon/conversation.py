@@ -108,6 +108,7 @@ class Turn:
     images: List[str] = field(default_factory=list)  # pages Claude looked at during this turn
     custom_transform: str = ""                    # "possible" | "outside_limits" | "" (unsupported turns)
     custom_transform_reason: str = ""
+    chips: List[str] = field(default_factory=list)  # suggested replies the user may tap (plain text, no approval)
 
     def needs_user(self) -> bool:
         return self.status in ("questions", "unsupported", "failed")
@@ -116,7 +117,7 @@ class Turn:
         return {"status": self.status, "message": self.message, "understanding": self.understanding,
                 "questions": self.questions, "choices": [c.to_dict() for c in self.choices], "spec": self.spec,
                 "errors": self.errors, "images": self.images, "custom_transform": self.custom_transform,
-                "custom_transform_reason": self.custom_transform_reason}
+                "custom_transform_reason": self.custom_transform_reason, "chips": list(self.chips)}
 
 
 @dataclass
@@ -129,10 +130,11 @@ class Entry:
     choices: List[Dict[str, Any]] = field(default_factory=list)
     images: List[str] = field(default_factory=list)
     at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
+    chips: List[str] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:
         return {"role": self.role, "text": self.text, "status": self.status, "understanding": self.understanding,
-                "choices": self.choices, "images": self.images, "at": self.at}
+                "choices": self.choices, "images": self.images, "at": self.at, "chips": list(self.chips)}
 
 
 def _bid(block) -> str:
@@ -205,6 +207,22 @@ def clean_wording(w: Any) -> Optional[str]:
     return w
 
 
+def _chips(raw: Any, errors: List[str]) -> List[str]:
+    """Suggested replies as the model offered them: short plain strings, at most five, never empty; anything else
+    is dropped with a note in the turn's errors (never a failed turn)."""
+    if raw is None:
+        return []
+    if not isinstance(raw, list):
+        errors.append("the suggested replies were dropped: expected a list of short strings")
+        return []
+    out: List[str] = []
+    for item in raw:
+        text = str(item).strip() if isinstance(item, (str, int, float)) else ""
+        if text and len(text) <= 120 and text not in out:
+            out.append(text)
+    return out[:5]
+
+
 def _texts(raw: Any, what: str, errors: List[str]) -> List[str]:
     """A list of non-empty texts from what Claude sent where the tool schema asks for an array of strings: a single
     string is one item (never one item per character), anything else is dropped — and the wrong shape is said."""
@@ -231,7 +249,8 @@ class Conversation:
                  max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS, effort: str = DEFAULT_EFFORT,
                  stall_repetitions: int = DEFAULT_STALL_REPETITIONS, max_image_tokens: Optional[int] = None,
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
-                 continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = ()):
+                 continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = (),
+                 history: Sequence[str] = ()):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -260,6 +279,7 @@ class Conversation:
         self.batch.analysis_limits = analysis_limits
         self.batch.context_state = self.context_state
         self.answers = list(answers)
+        self.history = [str(h) for h in history if str(h).strip()]   # changes already made to the files (continue-on-result)
         self.prior_failures = list(prior_failures or [])
         # The words a spec may place: the request, the user's answers, and (on a replay of a saved conversation) the
         # words the user actually typed or accepted — never a choice's label; never an empty source.
@@ -297,7 +317,7 @@ class Conversation:
             raise RuntimeError("the conversation has already started")
         self.started = True
         self.messages = compiler.build_messages(self.request, self.batch, self.answers,
-                                                prior_failures=self.prior_failures or None)
+                                                prior_failures=self.prior_failures or None, history=self.history or None)
         self.entries.append(Entry("user", self.request))
         self.exchange.append({"turn": 0, "role": "user", "content": self.messages[0]["content"],
                               "files": [str(f) for f in self.files],
@@ -484,7 +504,7 @@ class Conversation:
         shown += [f"• {q}" for q in turn.questions]
         self.entries.append(Entry("claude", "\n".join(x for x in shown if x), status=turn.status,
                                   understanding=turn.understanding, choices=[c.to_dict() for c in turn.choices],
-                                  images=list(turn.images)))
+                                  images=list(turn.images), chips=list(turn.chips)))
         return turn
 
     def _next_choice_id(self) -> str:
@@ -617,10 +637,12 @@ class Conversation:
                                             "content": "the configured attempt limit was reached; this candidate was not tried"}
                         continue
                     spec = inp.get("spec")
+                    outcome = spec
                     try:
                         with diag.span("conversation.submission.validate", tool_use_id=_bid(b), model_turn=self.calls) as record:
-                            errs = compiler.check_submission(spec, self.batch, self.sources)
-                            record.update(accepted=not bool(errs), errors=errs)
+                            outcome, errs = compiler.compose_submission(spec, self.batch, self.sources)
+                            record.update(accepted=not bool(errs), errors=errs,
+                                          composed=bool(errs) is False and outcome is not spec)
                     except Exception as e:  # noqa: BLE001 — the call must be answered (rule 14): a spec the checks
                         # cannot even read goes back to Claude as rejected, with what went wrong
                         self.log(f"Claude: the submitted spec could not be checked ({type(e).__name__})")
@@ -637,8 +659,9 @@ class Conversation:
                         results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "is_error": True,
                                             "content": "REJECTED — fix and call submit_editspec again:\n- " + "\n- ".join(errs)}
                         continue
-                    accepted = (b, spec, inp)
-                    diag.event("conversation.submission.accepted", tool_use_id=_bid(b), model_turn=self.calls)
+                    accepted = (b, outcome, inp)
+                    diag.event("conversation.submission.accepted", tool_use_id=_bid(b), model_turn=self.calls,
+                               composed=outcome is not spec)
                     results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "content": ACCEPTED_RESULT}
                     continue
                 results[_bid(b)] = self._dispatch(b, name, inp, images)
@@ -655,11 +678,11 @@ class Conversation:
                             r["content"] = "not taken: you asked the user in the same turn — resubmit after their reply"
                 self.pending, self._ask_ids = ordered, [_bid(b) for b, _ in asks]
                 self._record_results(ordered, pending=True)
-                return self._finish(self._ask_turn(asks, rejections, images))
+                return self._finish(self._ask_turn(asks, rejections, images, said))
             if accepted is not None:
                 self.pending = ordered
                 self._record_results(ordered, pending=True)
-                return self._finish(self._spec_turn(accepted[1], accepted[2], rejections, images))
+                return self._finish(self._spec_turn(accepted[1], accepted[2], rejections, images, said))
             if stalled or rejected >= self.max_attempts:
                 why = (f"investigation stalled after {self.stall_repetitions} equivalent rejected candidates "
                        "without new evidence" if stalled else f"no spec after {rejected} rejected attempts")
@@ -714,34 +737,52 @@ class Conversation:
             out.append(Choice(self._next_choice_id(), label, kind, wording, str(c.get("detail") or "")))
         return out
 
-    def _ask_turn(self, asks, rejections, images) -> Turn:
+    def _ask_turn(self, asks, rejections, images, said: str = "") -> Turn:
         errors = list(rejections)
-        questions, choices, messages, understanding = [], [], [], []
+        questions, choices, messages, understanding, chips = [], [], [], [], []
+        if said:
+            messages.append(said)
         for _b, inp in asks:
             questions += _texts(inp.get("questions"), "questions", errors)
             choices += self._choices_from(inp.get("choices"), errors)
+            chips += _chips(inp.get("suggested_replies"), errors)
             if isinstance(inp.get("message"), str) and inp["message"].strip():
                 messages.append(inp["message"].strip())
             if isinstance(inp.get("understanding"), str) and inp["understanding"].strip():
                 understanding.append(inp["understanding"].strip())
         if not (questions or choices or messages):
             questions = ["(the model asked an empty question)"]
-        return Turn("questions", message="\n".join(messages), understanding=" ".join(understanding),
-                    questions=questions, choices=choices, errors=errors, images=images)
+        return Turn("questions", message="\n\n".join(dict.fromkeys(messages)), understanding=" ".join(understanding),
+                    questions=questions, choices=choices, errors=errors, images=images, chips=chips)
 
-    def _spec_turn(self, spec, inp, rejections, images) -> Turn:
+    def _spec_turn(self, spec, inp, rejections, images, said: str = "") -> Turn:
         # The spec the app gets carries the USER's request, never the text Claude wrote in "request": the advisor and
         # the next pass (set_aside.json → retry) count it among the approved words. A copy — the history keeps the
-        # tool call exactly as Claude made it.
+        # tool call exactly as Claude made it. A chain (the app's composition of overlapping ops, or the model's own
+        # stages) carries it on every stage.
+        from .editspec import is_chain
         spec = copy.deepcopy(spec)
-        spec["request"] = self.request
-        summary = str(spec.get("summary") or "")
-        # The user reads the model's message; the summary is the record's. Without a message the summary stands in.
-        message = str(inp.get("message") or "").strip() or summary
+        errors = list(rejections)
+        chips = _chips(inp.get("suggested_replies"), errors)
+        if is_chain(spec):
+            for st in spec["stages"]:
+                st["spec"]["request"] = self.request
+            summary = str(spec.get("summary") or spec.get("description") or spec.get("name") or "")
+        else:
+            spec["request"] = self.request
+            summary = str(spec.get("summary") or "")
+        # The user reads the model's words: its plain text of the turn and the tool's message (the summary stands in
+        # for a model that wrote neither); the summary is the record's.
+        parts = [p for p in (said.strip(), str(inp.get("message") or "").strip()) if p]
+        message = "\n\n".join(dict.fromkeys(parts)) or summary
         if isinstance(spec.get("layouts"), list):
             from .layouts import plan_from_submission
             plan = plan_from_submission(spec, self.request)
-            return Turn("ok", message=message, understanding=summary, spec=plan, errors=list(rejections), images=images)
+            return Turn("ok", message=message, understanding=summary, spec=plan, errors=errors, images=images,
+                        chips=chips)
+        if is_chain(spec):
+            return Turn("ok", message=message, understanding=summary, spec=spec, errors=errors, images=images,
+                        chips=chips)
         if spec.get("unsupported"):
             self.unsupported = {"request": self.request, "unsupported": spec.get("unsupported"),
                                 "proposal": spec.get("proposal") or ""}
@@ -766,4 +807,4 @@ class Conversation:
             questions = _texts(spec["questions"], "spec's questions", errors) or ["(the model asked an empty question)"]
             return Turn("questions", understanding=summary, questions=questions, spec=spec, errors=errors,
                         images=images)
-        return Turn("ok", message=message, understanding=summary, spec=spec, errors=list(rejections), images=images)
+        return Turn("ok", message=message, understanding=summary, spec=spec, errors=errors, images=images, chips=chips)

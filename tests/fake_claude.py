@@ -13,6 +13,7 @@ script failures with it; a plain ``RuntimeError``/``AssertionError`` is a defect
 from __future__ import annotations
 
 import copy
+import json
 from types import SimpleNamespace
 
 
@@ -53,6 +54,50 @@ class raise_on_final:  # noqa: N801
         self.exc = exc
 
 
+class _LiveStream:
+    """A scripted response played back as the SSE events the SDK would yield (``FakeClient(live=True)``): the
+    window's live events are read from these, and llm's completion checks run on them."""
+    def __init__(self, item):
+        self.item = item
+
+    def __enter__(self):
+        if isinstance(self.item, raise_on_enter):
+            raise self.item.exc
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        if isinstance(self.item, raise_on_final):
+            return iter([])
+        resp = self.item
+        yield SimpleNamespace(type="message_start", message=SimpleNamespace(usage=resp.usage))
+        for i, block in enumerate(resp.content):
+            kind = getattr(block, "type", "")
+            yield SimpleNamespace(type="content_block_start", index=i, content_block=block)
+            if kind == "text":
+                words = (block.text or "").split(" ")
+                for n, word in enumerate(words):
+                    piece = word if n == len(words) - 1 else word + " "
+                    yield SimpleNamespace(type="content_block_delta", index=i,
+                                          delta=SimpleNamespace(type="text_delta", text=piece))
+            elif kind == "thinking":
+                yield SimpleNamespace(type="content_block_delta", index=i,
+                                      delta=SimpleNamespace(type="thinking_delta", thinking=block.thinking))
+            elif kind == "tool_use":
+                yield SimpleNamespace(type="content_block_delta", index=i,
+                                      delta=SimpleNamespace(type="input_json_delta", partial_json=json.dumps(block.input)))
+            yield SimpleNamespace(type="content_block_stop", index=i)
+        yield SimpleNamespace(type="message_delta", usage=resp.usage)
+        yield SimpleNamespace(type="message_stop")
+
+    def get_final_message(self):
+        if isinstance(self.item, raise_on_final):
+            raise self.item.exc
+        return self.item
+
+
 class _Stream:
     def __init__(self, item):
         self.item = item
@@ -74,8 +119,9 @@ class _Stream:
 class FakeClient:
     """client.beta.messages.stream(**kw) returns the scripted responses in order and records every request."""
 
-    def __init__(self, *responses):
+    def __init__(self, *responses, live=False):
         self.responses = list(responses)
+        self.live = live                       # play each response back as SSE events (the window's live view)
         self.requests = []
         self.beta = SimpleNamespace(messages=SimpleNamespace(create=self._create, stream=self._stream))
 
@@ -86,7 +132,8 @@ class FakeClient:
         self.requests.append(copy.deepcopy({k: v for k, v in kw.items() if k != "system"}) | {"system": kw.get("system")})
         if not self.responses:
             raise AssertionError("the code asked Claude for more turns than were scripted")
-        return _Stream(self.responses.pop(0))
+        item = self.responses.pop(0)
+        return _LiveStream(item) if self.live else _Stream(item)
 
 
 def api_error(message="Overloaded", status=None, request_id=None, module="anthropic._exceptions"):

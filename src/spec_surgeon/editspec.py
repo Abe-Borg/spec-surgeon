@@ -25,6 +25,7 @@ the op catalog) grows out of this module.
 """
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import re
@@ -504,3 +505,210 @@ def apply_spec(pkg: DocxPackage, fragments: List[PlanFragment],
         if trace:
             trace("apply", i, f.op, "done")
     return work
+
+
+# ---- composition: a spec whose ops conflict becomes a chain of stages (chain.py), never a question to the user ------
+
+def is_chain(value: Any) -> bool:
+    """A chain (``chain.py``): ``{"stages": [{"spec": EditSpec}, …]}`` — several specs one after another. A spec has
+    ``ops``; a layout plan has ``kind: "layouts"``; a chain has ``stages`` and neither."""
+    return (isinstance(value, dict) and isinstance(value.get("stages"), list) and "ops" not in value
+            and value.get("kind") != "layouts")
+
+
+def chain_specs(value: Any) -> List[Dict[str, Any]]:
+    """The specs the engine runs for ``value``: a chain's stages in order, else the spec itself."""
+    if is_chain(value):
+        return [st["spec"] for st in value["stages"] if isinstance(st, dict) and isinstance(st.get("spec"), dict)]
+    return [value] if isinstance(value, dict) else []
+
+
+def templates_of(value: Any) -> List[Path]:
+    """Every template a spec or chain reads (``spec_templates`` over every stage)."""
+    out: List[Path] = []
+    for spec in chain_specs(value):
+        for t in spec_templates(spec):
+            if t not in out:
+                out.append(t)
+    return out
+
+
+def input_files_of(value: Any) -> List[Path]:
+    """Every picture or table a spec or chain reads (``spec_input_files`` over every stage)."""
+    out: List[Path] = []
+    for spec in chain_specs(value):
+        for p in spec_input_files(spec):
+            if p not in out:
+                out.append(p)
+    return out
+
+
+def approval_key(value: Any) -> Any:
+    """What an approval token hashes beside the files: the spec itself, or a chain's key (every stage's name and
+    spec, ``chain.chain_key``)."""
+    if is_chain(value):
+        from .chain import chain_key
+        return chain_key(value)
+    return value
+
+
+def _plan_fragments(pkg: DocxPackage, spec: Dict[str, Any]) -> List[PlanFragment]:
+    """Each op's fragment on ``pkg``, in spec order, with its selection reads (the per-op half of ``plan_spec``:
+    nothing merged, no conflict judged)."""
+    bound_slots = _file_bindings(pkg, spec)
+    frags: List[PlanFragment] = []
+    for i, o in enumerate(spec["ops"], 1):
+        try:
+            params = _op_params(o)
+            if o["op"] == "apply_header_footer_template" and bound_slots:
+                params = {**params, "slot_bindings": bound_slots}
+            frag = get_op(o["op"]).plan(pkg, o.get("select") or {}, params)
+        except JobException as e:
+            raise JobException(f"op #{i} ({o['op']}): {e.reason}", e.code,
+                               {**e.details, "op": o["op"], "op_number": i}) from e
+        frag.touches += selection_reads(pkg, o["op"], o.get("select") or {}, _op_params(o), frag.touches)
+        frag.op_index = i - 1
+        frags.append(frag)
+    return frags
+
+
+def _merges_cleanly(frags: List[PlanFragment]) -> bool:
+    """Whether these fragments would merge into one plan (rule 9 and the mode rule), judged without side effects."""
+    from .ops.base import check_conflicts, merged_mode
+    trial = [copy.copy(f) for f in frags]
+    for i, f in enumerate(trial):
+        f.op_index = i
+    try:
+        check_conflicts(trial)
+        merged_mode(trial)
+    except JobException as e:
+        if e.code != "conflict":
+            raise
+        return False
+    return True
+
+
+def _stage_spec(spec: Dict[str, Any], ops: List[Dict[str, Any]], frags: List[PlanFragment], *, first: bool,
+                last: bool, index: int, count: int) -> Dict[str, Any]:
+    """One stage of a composed chain: the spec's own fields over these ops; its mode what the ops make it; source-bound
+    bindings on the first stage only (``validate_chain``); the spec's final assertions on the last stage."""
+    from .ops.base import merged_mode
+    stage = {k: copy.deepcopy(v) for k, v in spec.items() if k not in ("ops", "assertions", "bindings", "questions")}
+    # each stage's ops decide its layout reference (a font change gives it up, a template claims it); the spec's own
+    # declaration described the whole, not one step
+    if isinstance(stage.get("review"), dict):
+        stage["review"] = {k: v for k, v in stage["review"].items() if k != "geometry_reference"}
+        if not stage["review"]:
+            del stage["review"]
+    stage["ops"] = copy.deepcopy(ops)
+    stage["mode"] = merged_mode([copy.copy(f) for f in frags])
+    stage["summary"] = f"{spec.get('summary') or ''} (step {index} of {count})".strip()
+    if first and spec.get("bindings"):
+        stage["bindings"] = copy.deepcopy(spec["bindings"])
+    if last and spec.get("assertions"):
+        stage["assertions"] = copy.deepcopy(spec["assertions"])
+    return stage
+
+
+def _bound_ops_first(spec: Dict[str, Any]) -> List[Dict[str, Any]]:
+    """Source-bound template bindings must run in a chain's first stage: the op that reads them leads the order."""
+    ops = list(spec["ops"])
+    if not spec.get("bindings"):
+        return ops
+    bound = [o for o in ops if o.get("op") == "apply_header_footer_template"]
+    return bound + [o for o in ops if o not in bound]
+
+
+def stage_cuts(pkg: DocxPackage, spec: Dict[str, Any]) -> List[int]:
+    """Where the spec's ops split into stages on ``pkg``: the lengths of the longest prefixes of the remaining ops
+    that merge into one plan, in order, each later prefix planned on the output of the stages before it (predict
+    first: a later stage's prediction is computed on the bytes it will actually read). ``[len(ops)]`` when the
+    whole spec merges. Raises what planning raises when an op cannot be planned at all."""
+    ops = _bound_ops_first(spec)
+    current = pkg
+    cuts: List[int] = []
+    while ops:
+        frags = _plan_fragments(current, {**spec, "ops": ops})
+        take = 1
+        while take < len(ops) and _merges_cleanly(frags[:take + 1]):
+            take += 1
+        cuts.append(take)
+        current = apply_spec(current, frags[:take])
+        ops = ops[take:]
+    return cuts
+
+
+def compose_chain(spec: Dict[str, Any], cuts: List[int]) -> Dict[str, Any]:
+    """The chain whose stages are the spec's ops cut at ``cuts`` (lengths, in order); the spec's own fields on
+    every stage. ``cuts`` summing to anything but the op count is a defect."""
+    ops = _bound_ops_first(spec)
+    if sum(cuts) != len(ops) or any(c < 1 for c in cuts):
+        raise ValueError(f"stage cuts {cuts} do not cover {len(ops)} op(s)")
+    stages = []
+    at = 0
+    for n, take in enumerate(cuts, 1):
+        group = ops[at:at + take]
+        at += take
+        # the mode of a stage is what its ops make it; judged from the ops alone (every text-placing op is
+        # content or untracked by its own class), the same rule merged_mode applies to planned fragments
+        frags = [get_op(o["op"]).fragment(o.get("select"), _op_params(o), mode=_op_mode(o)) for o in group]
+        stage = _stage_spec(spec, group, frags, first=n == 1, last=n == len(cuts), index=n, count=len(cuts))
+        stages.append({"name": f"step {n}", "spec": stage})
+    return {"name": str(spec.get("summary") or spec.get("request") or "edit"), "stages": stages}
+
+
+def _op_mode(o: Dict[str, Any]) -> str:
+    """The mode an op's class and params give it (``tracked: false`` on a text op makes it untracked)."""
+    cls = get_op(o["op"])
+    mode = cls.mode
+    if mode == "content" and (o.get("tracked") is False or _op_params(o).get("tracked") is False):
+        return "untracked"
+    return mode
+
+
+def split_into_stages(pkg: DocxPackage, spec: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """The chain the engine composes from a spec whose ops conflict on ``pkg`` (rule 5: overlapping ops are never
+    ordered by guess inside one plan — but the user's order across STAGES is the user's, as a chain keeps it), or
+    None when the whole spec merges into one plan."""
+    cuts = stage_cuts(pkg, spec)
+    if len(cuts) <= 1:
+        return None
+    return compose_chain(spec, cuts)
+
+
+def merge_cuts(all_cuts: List[List[int]]) -> List[int]:
+    """One cut list every file in a batch can take: the union of every file's cut points (a stage a file needs
+    split further is split for every file; a stage that merges on every file stays one)."""
+    points: set = set()
+    total = None
+    for cuts in all_cuts:
+        at = 0
+        for c in cuts:
+            at += c
+            points.add(at)
+        total = at if total is None else total
+    if total is None:
+        return []
+    out, prev = [], 0
+    for p in sorted(points):
+        if p > prev:
+            out.append(p - prev)
+            prev = p
+    return out
+
+
+def plan_chain(pkg: DocxPackage, chain: Dict[str, Any], pattern_id: Optional[str] = None,
+               trace: Optional[Callable[..., None]] = None) -> List[Tuple[Plan, List[PlanFragment]]]:
+    """Predict-first for every stage of a chain on one file: stage 1 on the file, each later stage on the bytes the
+    stage before it would produce (applied in memory, never written). Raises what ``plan_spec`` raises, with the
+    stage named."""
+    out: List[Tuple[Plan, List[PlanFragment]]] = []
+    current = pkg
+    for i, st in enumerate(chain.get("stages") or [], 1):
+        try:
+            plan, frags = plan_spec(current, st["spec"], pattern_id if i == 1 else None, trace)
+        except JobException as e:
+            raise JobException(f"step {i}: {e.reason}", e.code, {**e.details, "chain_stage": i}) from e
+        out.append((plan, frags))
+        current = apply_spec(current, frags)
+    return out

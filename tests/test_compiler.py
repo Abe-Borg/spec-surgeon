@@ -69,7 +69,8 @@ def test_compile_inspects_then_submits(folder):
     assert [c["tool"] for c in res.tool_calls] == ["inspect_profile", "submit_editspec"]
     first = fake.requests[0]
     assert first["model"] == "claude-opus-5-5" and first["fallbacks"] == "default" and first["max_tokens"] == 128000
-    assert "OP CATALOG" in first["system"] and "apply_header_footer_template" in first["system"]
+    assert "OPERATIONS" in first["system"] and "apply_header_footer_template" in first["system"]
+    assert "slot_fills" in first["system"]          # every op's parameters ride the prompt: no describe_op round trip
     assert "remove all headers and footers" in first["messages"][0]["content"]
     result = fake.requests[1]["messages"][-1]["content"][0]
     assert result["type"] == "tool_result" and "21 00 00" in result["content"]          # the profile came back

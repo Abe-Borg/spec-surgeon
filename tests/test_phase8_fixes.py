@@ -274,9 +274,9 @@ def test_a_malformed_spec_goes_back_to_claude_as_rejected_and_the_conversation_p
 
 
 def test_a_check_that_raises_is_answered_as_rejected(folder, monkeypatch):
-    def boom(spec, batch, sources):
+    def boom(spec, batch, sources, patterns=None):
         raise TypeError("unhashable type: 'dict'")
-    monkeypatch.setattr(compiler_module, "check_submission", boom)
+    monkeypatch.setattr(compiler_module, "compose_submission", boom)
     fake = FakeClient(submit(REMOVE, "s1"), ask("a2", questions=["Which sections?"]),
                       ask("a3", questions=["And the cover?"]))
     c = conv(folder, fake)

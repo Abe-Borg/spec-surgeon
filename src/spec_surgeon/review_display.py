@@ -42,7 +42,10 @@ EDIT_NAMES = {
 
 
 def _specs(spec, chain=None):
-    return [spec] if spec else [stage["spec"] for stage in (chain or {}).get("stages", []) if stage.get("spec")]
+    from .editspec import chain_specs
+    if spec:
+        return chain_specs(spec)
+    return [stage["spec"] for stage in (chain or {}).get("stages", []) if stage.get("spec")]
 
 
 def change_sentence(op):
@@ -89,7 +92,7 @@ def layout_changes(plan, routing=None):
 
 
 def spec_bindings(spec, chain=None):
-    specs = [spec] if spec else [stage["spec"] for stage in (chain or {}).get("stages", []) if stage.get("spec")]
+    specs = _specs(spec, chain)
     rows = []
     for value in specs:
         for binding in value.get("bindings", []):

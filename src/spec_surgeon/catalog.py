@@ -117,8 +117,8 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "French); without it every named language becomes the asked one",
         "language is the Latin-text language (w:val); east_asian and complex_script set the East Asian and "
         "complex-script languages only when asked",
-        "never tracked (Word does not track a language change); a spec of its own — beside another operation that "
-        "changes run properties or styles it is a conflict (offer a chain)",
+        "never tracked (Word does not track a language change); beside another operation that changes run properties "
+        "or styles it runs as its own ordered step",
     ],
     "map_styles": [
         "every use of the style changes: paragraphs whose style it is (with the default paragraph style — Normal — also "
@@ -259,8 +259,7 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "tracked by default (the removed numbers show as deletions); tracked false removes them outright; "
         "direct_formatting 'clear' needs tracked false; tracked with existing 'replace' over paragraphs already in "
         "those styles is refused",
-        "a spec of its own: beside another operation that changes text, styles or numbering of the body it is a "
-        "conflict (offer a chain)",
+        "beside another operation that changes text, styles or numbering of the body it runs as its own ordered step",
     ],
     "set_page_setup": [
         "margins are in twips (1440 = 1 inch); header/footer distances unchanged unless given",
@@ -397,7 +396,7 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "a file with no matching change is left as it is (allow_missing, the default); a table row/cell change, a change "
         "in an equation, an accept that would join two paragraphs or take a footnote/comment anchor away sets the file "
         "aside",
-        "it runs as a spec of its own (or the first stage of a chain): it changes the parts it touches as a whole",
+        "it runs as its own ordered step: it changes the parts it touches as a whole",
     ],
     "remove_hidden_text": [
         "hidden text is text with Word's Hidden font setting (directly or by a style) — white or tiny text is not hidden",
@@ -680,7 +679,7 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
             "choices — a closest built-in only as an 'alternative' that says how it differs); when nothing fits after "
             "the user's answers, return 'unsupported' and a 'proposal' instead of ops, judged against "
             "custom_transform_limits",
-            "two ops must not touch the same thing (the engine refuses overlapping ops)",
+            "ops that touch the same thing run as ordered steps the app composes itself; list them in the order they should take effect",
             "a TEMPLATE SPEC (an ordinary spec from the architect or another firm — no highlights, no {{placeholders}}) "
             "is used with apply_header_footer_template slot_markers ['reference'] and reference_fills (adapted when "
             "read_template shows another layout); a prepared template keeps the default markers",
@@ -694,6 +693,17 @@ def op_catalog(examples: bool = True) -> Dict[str, Any]:
     if examples:
         cat["worked_examples"] = worked_examples()
     return cat
+
+
+def op_sheet() -> Dict[str, Any]:
+    """What the system prompt carries for every operation: mode, description, selectors and parameters, plus the
+    grammar they share. Verification rules, common assumptions and worked examples stay behind ``describe_op``."""
+    ops = {name: {"mode": cls.mode, "description": cls.description, "select": cls.select_schema,
+                  "params": cls.params_schema} for name, cls in sorted(OPS.items())}
+    return {"ops": ops, "selector_grammar": SELECTOR_GRAMMAR, "fill_rules": FILL_RULES,
+            "reference_fills": REFERENCE_FILLS, "expect_checks": list(EXPECT_CHECKS), "expect_syntax": EXPECT_SYNTAX,
+            "spec_assertions": list(SPEC_ASSERTION_KINDS), "modes": op_catalog(examples=False)["modes"],
+            "rules": op_catalog(examples=False)["rules"]}
 
 
 def op_index() -> Dict[str, Any]:
