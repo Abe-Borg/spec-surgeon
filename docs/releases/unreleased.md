@@ -20,7 +20,6 @@ Changes since v1.5.0.
   operation; the conversation runs at the model's default effort; the thinking summary is shown.
 - **Render once.** One Word instance renders a whole batch; renders are cached by content, so the run never renders
   again what the preview rendered.
-
 - **A tapped reply is your decision, never your wording.** The short replies the assistant offers are its words:
   tapping one sends it as your answer, but words that go into a document are always ones you typed or picked.
 - **A document attached after a run** is an original beside the copies; the window says so, and it gets only the
