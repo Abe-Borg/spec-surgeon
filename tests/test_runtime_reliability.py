@@ -322,17 +322,50 @@ def test_word_render_discards_stale_pdf_and_continues_after_timeout(tmp_path, mo
     out = tmp_path / "pdf"
     out.mkdir()
     (out / "one.pdf").write_bytes(b"stale")
+    asked = []
 
-    def run(action, source, *, pdf, timeout):
-        if source == first:
-            raise word_worker.WordWorkerError("word-timeout", "timed out", {"timeout_seconds": timeout})
-        pdf.write_bytes(b"fresh")
-        return {"version": "mock"}
+    def run_batch(files, out_dir, timeout_per_file=None):
+        asked.append((list(files), out_dir, timeout_per_file))
+        assert not (out / "one.pdf").exists()           # a PDF from an earlier run is gone before Word starts
+        batch = word_worker.WordBatchResult(version="mock", workers=2)
+        batch.results[first] = word_worker.WordWorkerError("word-timeout", "timed out", {"timeout_seconds": timeout_per_file})
+        (out_dir / "two.pdf").write_bytes(b"fresh")
+        batch.results[second] = out_dir / "two.pdf"
+        batch.seconds[second] = 0.5
+        return batch
 
-    monkeypatch.setattr(word_worker, "run_word", run)
+    monkeypatch.setattr(word_worker, "run_word_batch", run_batch)
+    errors, details = [], []
+    assert word_com.render_pdfs([first, second], out, log=errors.append, detail=details.append,
+                                timeout=2) == {second: out / "two.pdf"}
+    assert asked == [([first, second], out, 2)]         # one batch call for every file, with the per-file deadline
+    assert not (out / "one.pdf").exists() and "timed out" in errors[0] and errors[0].startswith("one.docx:")
+    assert details == ["Word mock: two.docx → two.pdf in 0.5s"]
+
+
+def test_word_render_raises_only_when_word_never_started_and_nothing_rendered(tmp_path, monkeypatch):
+    first, second = tmp_path / "one.docx", tmp_path / "two.docx"
+    out = tmp_path / "pdf"
+    start = word_worker.WordWorkerError("word-com", "DispatchEx failed", {"stage": "word_start"})
+
+    def never_starts(files, out_dir, timeout_per_file=None):
+        return word_worker.WordBatchResult(results={f: start for f in files}, workers=1, start_error=start)
+
+    monkeypatch.setattr(word_worker, "run_word_batch", never_starts)
+    with pytest.raises(word_worker.WordWorkerError) as caught:
+        word_com.render_pdfs([first, second], out)
+    assert caught.value.details["stage"] == "word_start"
+
+    def starts_then_dies(files, out_dir, timeout_per_file=None):
+        # the first worker rendered one.docx; the fresh worker for the rest could not start: a per-file failure,
+        # never a raise that would lose the PDF already made
+        (out_dir / "one.pdf").write_bytes(b"%PDF")
+        return word_worker.WordBatchResult(results={first: out_dir / "one.pdf", second: start}, workers=2)
+
+    monkeypatch.setattr(word_worker, "run_word_batch", starts_then_dies)
     errors = []
-    assert word_com.render_pdfs([first, second], out, log=errors.append, timeout=2) == {second: out / "two.pdf"}
-    assert not (out / "one.pdf").exists() and "timed out" in errors[0]
+    assert word_com.render_pdfs([first, second], out, log=errors.append) == {first: out / "one.pdf"}
+    assert errors == ["two.docx: Word could not render it: DispatchEx failed"]
 
 
 def test_word_process_identity_never_adopts_an_existing_pid(monkeypatch):

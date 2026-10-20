@@ -400,8 +400,13 @@ def render_samples(samples: List[SampleView], out_dir: Path, renderer: str, do_r
     # a renderer failure (Word that will not start, a file LibreOffice chokes on) is a warning beside the plan
     # summaries and verification, never a preview that dies without them
     labels = sample_labels(samples)              # two folders' Spec.docx are told apart in the warnings too
-    srcs = render_mod.render_pdfs(src_in, rdir / "source", backend, 2, log=warn, detail=detail)
-    outs = render_mod.render_pdfs(out_in, rdir / "output", backend, 2, log=warn, detail=detail)
+    # the cache beside the session folders: what this preview renders, the run does not render again (and a source
+    # rendered in an earlier session is not rendered again now) — keyed by the file's bytes, never its name
+    cache = render_mod.RenderCache.for_out_dir(Path(out_dir))
+    if cache is not None:
+        detail(f"render cache: {cache.root}")
+    srcs = render_mod.render_pdfs(src_in, rdir / "source", backend, 2, log=warn, detail=detail, cache=cache)
+    outs = render_mod.render_pdfs(out_in, rdir / "output", backend, 2, log=warn, detail=detail, cache=cache)
     for s, a, b, name in zip(done, src_in, out_in, unique):
         sp, op = srcs.get(a), outs.get(b)
         if not sp or not op:

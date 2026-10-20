@@ -104,6 +104,15 @@ their file and page. A finding it marks as blocking changes that card's title to
 button to **I reviewed the flagged pages — create copies**; that is a separate, explicit decision on the
 displayed preview.
 
+Rendering. Word renders a whole batch in one private, invisible instance (never your open Word), with a
+deadline per file: a file Word gets stuck on is reported as not rendered and the rest carry on in a fresh
+instance. LibreOffice keeps its user profiles under the app's config folder (`render-profiles`) instead of
+creating one per run. Rendered pages are kept in a cache beside the session folders (`<output root>/.render-cache`,
+at most 2 GB, oldest first out), keyed by the document's exact bytes and the renderer's version: the run does not
+render again what the preview rendered, and a source you attach again unchanged is not rendered again either — a
+file whose content differs in any way is always rendered afresh. The preview and run logs say how many pages came
+from the cache. `SPEC_SURGEON_RENDER_CACHE=0` turns the cache off (see `docs/RENDER_PIPELINE.md`).
+
 ## One action
 
 Every path ends in the same button. Its label says what it does:
