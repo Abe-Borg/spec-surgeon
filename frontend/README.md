@@ -20,6 +20,8 @@ whole view, and the page renders it (`src/lib/view.ts`). Streamed frames are pre
 | `src/components/` | the header, the chat, the workbench, the modals |
 | `mock/server.mjs` | a Node-only mock of the whole contract |
 | `tools/screenshots.mjs` | Playwright screenshots against the mock |
+| `tools/flows.mjs` | Playwright walk through the other paths (a failed job, a pause, Stop, a drop, Settings, updates) |
+| `tools/browser.mjs` | shared by both: the mock's launch and the Chromium lookup |
 | `tests/*.test.ts` | `node --test` over the pure rules |
 
 ## Development
@@ -70,9 +72,21 @@ npm run dev
 
 ## Tests
 
+The pure rules (the frame parser, the reducer, the chat rules, the action label, the token and base
+resolution, the workbench rules) run under `node --test`:
+
 ```
 cd frontend
 npm test
+```
+
+The paths the screenshots do not show — a failed job, a pause and its Continue, Stop now mid-job, typing
+ahead, a chip click, the draft hold on the action button, the file-chooser fallback, a drop, Settings, About,
+the update banner, Start over — run in a real browser against the mock, one PASS/FAIL line each (build first):
+
+```
+cd frontend
+npm run flows
 ```
 
 ## Build

@@ -14,6 +14,7 @@
     "test": "node --test tests/sse.test.ts tests/view.test.ts tests/chat.test.ts tests/action.test.ts tests/connection.test.ts tests/workbench.test.ts",
     "mock": "node mock/server.mjs",
     "screenshots": "node tools/screenshots.mjs",
+    "flows": "node tools/flows.mjs",
     "preview": "vite preview"
   },
   "dependencies": {

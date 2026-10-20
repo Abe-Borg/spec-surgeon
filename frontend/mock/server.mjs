@@ -640,6 +640,14 @@ async function primaryJob(res, token) {
   s.end();
 }
 
+/** Adding or removing a document after a plan exists voids that plan: the
+ *  button reads Continue until the documents are checked again. */
+function voidPlan() {
+  if (!view.plan) return;
+  view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue" };
+  view.messages.push(msg("app", "The documents changed. Review the updated plan first."));
+}
+
 // --- Multipart (just enough for the upload route) -------------------------
 
 function parseMultipart(body, contentType) {
@@ -723,10 +731,7 @@ async function handle(req, res) {
         if (kind === "template") view.attachments = view.attachments.filter((a) => a.kind !== "template");
         if (!view.attachments.some((a) => a.path === p)) view.attachments.push(attachment(p, kind, kind === "reference" ? PICTURE : {}));
       }
-      if (view.plan) {
-        view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue" };
-        view.messages.push(msg("app", "The documents changed. Review the updated plan first."));
-      }
+      voidPlan();
       return json(res, 200, view);
     }
     case "POST /api/upload": {
@@ -740,6 +745,7 @@ async function handle(req, res) {
         if (!/\.(docx|png|jpe?g|gif|xlsx|csv|json)$/i.test(f)) return json(res, 400, { error: `${f} is not a .docx; save it as a Word document first.` });
         view.attachments.push(attachment(p, kind, extra));
       }
+      if (files.length) voidPlan();
       return json(res, 200, view);
     }
     case "POST /api/pick":
@@ -753,10 +759,7 @@ async function handle(req, res) {
       if (view.busy) return busyRefusal();
       const body = await readJson(req);
       view.attachments = view.attachments.filter((a) => a.path !== body.path);
-      if (view.plan) {
-        view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue" };
-        view.messages.push(msg("app", "The documents changed. Review the updated plan first."));
-      }
+      voidPlan();
       return json(res, 200, view);
     }
     case "POST /api/send": {
