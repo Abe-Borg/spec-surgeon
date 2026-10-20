@@ -624,7 +624,9 @@ class Session:
 
     # ---- the preview: a spec, a plan per layout (layouts.py) or a custom transform, tried on samples ----
     @_session_action
-    def make_preview(self, render: bool, log: Log) -> str:
+    def make_preview(self, render: bool, log: Log, on_preview: Optional[Callable[[], None]] = None) -> str:
+        """``on_preview`` is called once the preview exists and before Claude's visual check: the window shows the
+        pages while Claude looks at them."""
         from .preview import approval_token, make_preview
         if self.pending_custom_transform is not None:
             pending = self.pending_custom_transform
@@ -663,7 +665,10 @@ class Session:
             self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
                                         do_render=render)
         log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
+        if on_preview is not None:
+            on_preview()
         if render and self.visual_check:
+            log("Looking at the rendered pages…")
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
         c = self.conversation

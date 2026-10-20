@@ -48,6 +48,7 @@ TOOL_ACTIVITY = {
     "submit_editspec": "Writing the plan", "ask_user": "",
 }
 STATUS_FOR_LOG = {"Preparing and checking the preview…": ("previewing", "Preparing and checking the preview…"),
+                  "Looking at the rendered pages…": ("looking", "Looking at the rendered pages…"),
                   "Creating and checking your edited copies…": ("creating", "Creating and checking your edited copies…"),
                   "Checking the files that still need work…": ("recovering", "Checking the files that still need work…"),
                   "Continuing where the conversation stopped…": ("resuming", "Continuing where the conversation stopped…")}
@@ -480,8 +481,9 @@ class DocumentTask:
             if outcome.needs_preview:
                 self._emit({"type": "plan", "plan": self._plan_view()})    # the plan shows before any page renders
                 log("Preparing and checking the preview…")
-                s.make_preview(self.render, log)
-                self._emit({"type": "samples", **self._samples_view()})
+                s.make_preview(self.render, log,
+                               on_preview=lambda: self._emit({"type": "samples", **self._samples_view()}))
+                self._emit({"type": "samples", **self._samples_view()})     # again with Claude's visual findings
             else:
                 s.reply(choice_id=outcome.auto_choice, render=self.render, log=log)
             self._collect_conversation()
