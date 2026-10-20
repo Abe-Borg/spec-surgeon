@@ -1,0 +1,35 @@
+{
+  "name": "spec-surgeon-frontend",
+  "private": true,
+  "version": "1.5.0",
+  "license": "MIT",
+  "author": {
+    "name": "Abraham Borg",
+    "url": "https://github.com/Abe-Borg"
+  },
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "test": "node --test tests/sse.test.ts tests/view.test.ts tests/chat.test.ts tests/action.test.ts tests/connection.test.ts tests/workbench.test.ts",
+    "mock": "node mock/server.mjs",
+    "screenshots": "node tools/screenshots.mjs",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^9.0.1",
+    "remark-gfm": "^4.0.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.0.0",
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@vitejs/plugin-react": "^4.3.4",
+    "playwright": "^1.64.1",
+    "tailwindcss": "^4.0.0",
+    "typescript": "~5.6.2",
+    "vite": "^6.0.0"
+  }
+}
