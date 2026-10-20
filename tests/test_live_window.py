@@ -7,6 +7,7 @@ import copy
 import json
 from pathlib import Path
 
+import pytest
 from docx import Document
 
 from fake_claude import FakeClient, resp, text, tool
@@ -226,3 +227,55 @@ def test_a_restored_journal_whose_copies_are_gone_says_so_and_lists_no_vanished_
     assert again.documents() == [source] and again.stage == "empty"
     assert any("could not be found" in m["text"] for m in again.messages)
     assert again.view()["results"] == {}                           # the window lists no vanished copy
+
+
+def test_a_request_refused_for_its_thinking_display_is_sent_again_without_it_once(tmp_path, monkeypatch):
+    """The SDK sends the request when the stream is entered; the 400 for the display must be caught there, the
+    request sent once more without it, and the display kept off for the process."""
+    from fake_claude import api_error, raise_on_enter
+    from spec_surgeon import llm
+    monkeypatch.setattr(llm, "_thinking_display_refused", False)
+    fake = FakeClient(raise_on_enter(api_error("thinking.display: Extra inputs are not permitted", status=400)),
+                      resp(text("I'll make the title bold."), tool("submit_editspec", {"spec": SPEC})), live=True)
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    events = []
+    view = task.perform("send", text=REQUEST, events=events.append)
+    assert view["stage"] == "preview"
+    assert len(fake.requests) == 2 and "thinking" in fake.requests[0] and "thinking" not in fake.requests[1]
+    assert llm._thinking_display_refused is True
+    monkeypatch.setattr(llm, "_thinking_display_refused", False)
+    # a 400 for anything else propagates untouched: one request, the latch untouched, the turn a recorded failure
+    other = FakeClient(raise_on_enter(api_error("messages.3.content.0: thinking blocks must be unmodified", status=400)),
+                       live=True)
+    again = task_for(tmp_path / "again", other)
+    again.attach([document(tmp_path / "again" / "Spec.docx")])
+    view = again.perform("send", text=REQUEST)
+    assert view["stage"] != "preview" and len(other.requests) == 1 and llm._thinking_display_refused is False
+
+
+def test_a_resent_attempt_tells_the_page_to_drop_the_abandoned_words(tmp_path, monkeypatch):
+    from fake_claude import api_error, raise_on_final
+    from spec_surgeon import llm
+    monkeypatch.setattr(llm, "RETRY_DELAYS", (0.0,))
+    monkeypatch.setattr(llm, "RETRIES", 1)
+    fake = FakeClient(raise_on_final(api_error("Overloaded", status=529)),
+                      resp(text("I'll make the title bold."), tool("submit_editspec", {"spec": SPEC})), live=True)
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    events = []
+    view = task.perform("send", text=REQUEST, events=events.append)
+    assert view["stage"] == "preview" and len(fake.requests) == 2
+    kinds = [(e["type"], e.get("kind")) for e in events]
+    at = kinds.index(("status", "retrying"))
+    words = "".join(e["text"] for e in events[at:] if e["type"] == "text_delta")
+    assert words == "I'll make the title bold."
+
+
+def test_a_stream_before_any_conversation_call_neither_raises_nor_relays(tmp_path):
+    task = task_for(tmp_path, FakeClient())
+    seen = []
+    task._events = seen.append
+    task._on_stream({"type": "text_delta", "text": "Looking at page 1…"})
+    task._on_stream({"type": "thinking_delta", "text": "…"})
+    assert seen == []

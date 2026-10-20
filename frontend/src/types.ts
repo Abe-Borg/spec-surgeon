@@ -156,6 +156,7 @@ export interface View {
 export type StatusKind =
   | "working"
   | "thinking"
+  | "retrying"
   | "reading"
   | "planning"
   | "checking"

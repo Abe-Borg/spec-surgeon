@@ -35,6 +35,7 @@ content).
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import math
@@ -305,6 +306,7 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
                         raise
                     delay = _retry_delay(exc, attempt)
                     record.update(retrying=True, error=_record_error(exc))
+                    _observe({"type": "retry"})      # the window drops the abandoned attempt's words
                     diag.event("model.call.retry", level="warning", attempt=attempt + 1, delay_seconds=delay,
                                error=api_error_text(exc)[:300])
         if cancel is not None:
@@ -397,21 +399,28 @@ def _stop_on_cancel(stream, cancel):
         watcher.join(timeout=STOP_POLL_SECONDS * 4)
 
 
+@contextlib.contextmanager
 def _open_stream(client, kw):
-    """``client.beta.messages.stream(**kw)``; a request refused for its thinking display (a 400 naming it) is sent
-    again without it, once, and the display stays off for the process."""
+    """``with client.beta.messages.stream(**kw) as stream``; a request refused for its thinking display (a 400
+    naming ``thinking.display``) is sent again without it, once, and the display stays off for the process. The
+    SDK sends the request when the manager is ENTERED, not when it is built, so the manager is entered here, inside
+    the catch; a 400 for anything else (a thinking block the history carries, say) propagates untouched."""
     global _thinking_display_refused
-    if "thinking" not in kw:
-        return client.beta.messages.stream(**kw)
+    manager = client.beta.messages.stream(**kw)
     try:
-        return client.beta.messages.stream(**kw)
+        stream = manager.__enter__()
     except Exception as e:  # noqa: BLE001 — classified below; anything else propagates untouched
         status = getattr(e, "status_code", None)
-        if status != 400 or "thinking" not in str(e).lower():
+        if "thinking" not in kw or status != 400 or "thinking.display" not in str(e).lower():
             raise
         _thinking_display_refused = True
         diag.event("model.thinking_display.refused", level="warning", error=str(e)[:300])
-        return client.beta.messages.stream(**{k: v for k, v in kw.items() if k != "thinking"})
+        manager = client.beta.messages.stream(**{k: v for k, v in kw.items() if k != "thinking"})
+        stream = manager.__enter__()
+    try:
+        yield stream
+    finally:
+        manager.__exit__(None, None, None)
 
 
 def _budget_records() -> List[Dict[str, Any]]:

@@ -207,11 +207,14 @@ export function reduce(state: UiState, action: UiAction): UiState {
 function reduceEvent(state: UiState, event: JobEvent): UiState {
   const live = state.live ?? emptyLive();
   switch (event.type) {
-    case "status":
+    case "status": {
+      // `retrying`: the attempt whose words are in the bubble was abandoned and is sent again from the start.
+      const abandoned = event.kind === "retrying" ? { text: "", thinking: "" } : {};
       return {
         ...state,
-        live: { ...live, status: { kind: event.kind, text: event.text ?? "" } },
+        live: { ...live, ...abandoned, status: { kind: event.kind, text: event.text ?? "" } },
       };
+    }
     case "activity": {
       const text = (event.text ?? "").trim();
       if (!text) return state;

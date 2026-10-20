@@ -231,3 +231,17 @@ test("normalizeView fills every list and block a server might leave out", () => 
   assert.equal(normalizeView(null).stage, "empty");
   assert.equal(normalizeView({ plan: null }).plan, null);
 });
+
+test("a retrying status drops the abandoned attempt's words and thinking", () => {
+  const state = run(
+    loaded(),
+    { type: "status", kind: "thinking" },
+    { type: "thinking_delta", text: "first thoughts" },
+    { type: "text_delta", text: "I'll make the title bold and" },
+    { type: "status", kind: "retrying", text: "Sending again…" },
+    { type: "text_delta", text: "I'll make the title bold." },
+  );
+  assert.equal(state.live?.text, "I'll make the title bold.");
+  assert.equal(state.live?.thinking, "");
+  assert.equal(state.live?.status, null); // the reply being written clears the strip, as always
+});

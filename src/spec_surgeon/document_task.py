@@ -138,6 +138,7 @@ class DocumentTask:
         self.generation = 0
         self.history: List[str] = []
         self._events = None                 # the window's live channel for the job that is running (perform)
+        self._talking = False               # inside a call of the conversation itself: its words are the reply
         self._seen = 0
         self._conversation_id = None
         self._revision = 0
@@ -208,6 +209,9 @@ class DocumentTask:
         kind = event.get("type")
         if kind == "started":
             self._emit({"type": "status", "kind": "thinking", "text": "Thinking…"})
+        elif kind == "retry":
+            # the attempt is abandoned and sent again: the page drops the words it had from it
+            self._emit({"type": "status", "kind": "retrying", "text": "Sending again…"})
         elif kind in ("text_delta", "thinking_delta"):
             if self._talking:
                 self._emit({"type": kind, "text": event.get("text", "")})

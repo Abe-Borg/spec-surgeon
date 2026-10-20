@@ -103,7 +103,7 @@ Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/50
 
 | type | payload | meaning |
 | --- | --- | --- |
-| `status` | `kind`, `text` | what the app is doing now: `working`, `thinking`, `reading` (documents/template), `planning`, `checking` (verification), `previewing`, `rendering`, `looking` (visual check), `creating` (copies), `recovering`, `resuming`. Replaces the status strip; cleared by the next `text_delta` or `message`. |
+| `status` | `kind`, `text` | what the app is doing now: `working`, `thinking`, `reading` (documents/template), `planning`, `checking` (verification), `previewing`, `rendering`, `looking` (visual check), `creating` (copies), `recovering`, `resuming`. Replaces the status strip; cleared by the next `text_delta` or `message`. `retrying` means the running attempt was abandoned and sent again from the start: the page drops the words it had from it |
 | `activity` | `text` | one plain sentence of model activity, e.g. "Reading the template's header and footer" (from a tool call), shown as a quiet line inside the streaming reply |
 | `thinking_delta` | `text` | a chunk of the model's thinking summary (collapsible aside) |
 | `text_delta` | `text` | a chunk of the assistant's reply as it is written |
