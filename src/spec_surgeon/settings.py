@@ -6,12 +6,13 @@
 
 ``SPEC_SURGEON_CONFIG_DIR`` moves all of it (settings at its root, the rest under ``data/``) — the tests use it.
 
-Plain JSON, not QSettings: the user can see and delete the file, and the updater reads it without Qt. Never stored:
+Plain JSON: the user can see and delete the file, and the updater and the command line read it without the
+window. Never stored:
 the API key (Windows Credential Manager, ``credentials``), the safety-relevant switch (write back over the originals —
 off at every start), the conversation with Claude and any acknowledgement of Claude's visual check (both belong to one
-preview, never to the next start). Not settings at all (since the GUI rework after v0.4.1): the look (the window
-follows Windows' light/dark setting; ``SPEC_SURGEON_THEME`` forces one for screenshots) and the automatic update check
-(once a day, always; ``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an older ``settings.json`` still
+preview, never to the next start). Not settings at all (since the GUI rework after v0.4.1): the look (the page
+follows the system's light/dark setting) and the automatic update check (once a day, always;
+``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an older ``settings.json`` still
 holds for them (``theme``, ``native_style``, ``auto_check_updates``) are ignored.
 """
 from __future__ import annotations

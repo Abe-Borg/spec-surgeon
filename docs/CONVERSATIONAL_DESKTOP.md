@@ -1,9 +1,12 @@
 # The conversational desktop
 
-Spec Surgeon is one window. On the left are the Word documents you attached, optionally one reference
-template, and any pictures or tables you attached for the edit to use. On the right are a conversation and one
-button. You add documents, describe the result, read the plan, look at the before/after pages and create edited
-copies. Nothing else is asked of you: no operations, recipes, methods or settings beyond an API key.
+Spec Surgeon is one window: a web page shown in a native window (Microsoft's WebView2 control through pywebview;
+the default browser when pywebview is not installed) and served by a local server on your computer — nothing
+leaves the machine but the model calls you ask for (the contract between the page and the server is
+`docs/WEB_API.md`). On the left are the Word documents you attached, optionally one reference template, and any
+pictures or tables you attached for the edit to use. On the right are a conversation and one button. You add
+documents, describe the result, read the plan, look at the before/after pages and create edited copies. Nothing
+else is asked of you: no operations, recipes, methods or settings beyond an API key.
 
 ![The conversation starts with Word documents, an optional template, and a request](conversation-start.png)
 
@@ -219,5 +222,6 @@ The window has no other mode. The command line is unchanged; office profiles, sp
 evidence, built-in workflows, campaign workspaces and recovery workspaces are command-line features.
 
 Validation uses generated Word fixtures (including a family of deliberately dirty files), scripted model
-responses, the real engine and verifier, and offscreen Qt. It does not establish live-model success rates or
-acceptance of rendered Word layouts; those remain the owner's to run on real files.
+responses, the real engine and verifier, and the window's server driven in-process (FastAPI's test client, no
+browser); the page's own rules are tested in `frontend/` with Node. It does not establish live-model success
+rates or acceptance of rendered Word layouts; those remain the owner's to run on real files.

@@ -22,7 +22,10 @@ Repository = "https://github.com/Abe-Borg/spec-surgeon"
 Releases = "https://github.com/Abe-Borg/spec-surgeon/releases"
 
 [project.optional-dependencies]
-gui = ["PySide6-Essentials>=6.8,<7"]
+# The window: a local server (FastAPI, uvicorn; python-multipart for uploads) and the page in a native WebView2
+# window through pywebview (it brings its own Windows backend, pythonnet; the WebView2 runtime ships with Windows
+# 10/11). Node is needed only to rebuild the page (frontend/) — the built page is committed under web/static.
+gui = ["fastapi>=0.115", "uvicorn>=0.32", "python-multipart>=0.0.9", "pywebview>=5.3"]
 word = ["pywin32>=306; sys_platform == 'win32'"]
 agent = ["anthropic>=1.13"]
 dev = ["pytest>=8", "python-docx>=1.1"]
@@ -37,7 +40,7 @@ spec-surgeon-gui = "spec_surgeon.gui:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
-spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "ui/resources/*", "examples/specs/*.json"]
+spec_surgeon = ["schemas/**/*.xsd", "skill/**/*.md", "web/static/**/*", "examples/specs/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -1,4 +1,4 @@
-"""One conversational document task, independent of Qt.
+"""One conversational document task, independent of the window.
 
 The Session is a toolbox: compile, reply, preview, run, recover, each a verified engine step. This coordinator owns
 the stages the user sees — empty, question, preview, done, budget, resume — and moves between them on the Session's

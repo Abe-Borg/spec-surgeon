@@ -18,7 +18,8 @@ It runs as a Windows desktop app, as a command line on Windows, macOS or Linux, 
 
 **Windows 10/11 (64-bit):** download `SpecSurgeon-<version>-Setup-x64.exe` from
 [GitHub Releases](https://github.com/Abe-Borg/spec-surgeon/releases), run it, then launch **Spec Surgeon** from the
-Start menu. The installer includes Python, Qt (the window), the editing engine, Word integration and the Anthropic
+Start menu. The installer includes Python, the window (a local server and its page, shown in a native WebView2
+window; the WebView2 runtime ships with Windows 10/11), the editing engine, Word integration and the Anthropic
 client; no separate Python installation or terminal commands are needed. From then on the app keeps itself up to date:
 a banner offers each new version, and **Help → Check for updates** checks at any time. It installs for the current
 user without administrator access, offers a desktop shortcut and includes an uninstaller. Example EditSpecs are
@@ -33,7 +34,7 @@ installer is unsigned, so Windows may show a publisher prompt on the first manua
 
 ```powershell
 py -3 -m pip install -e .            # core: lxml, pymupdf
-py -3 -m pip install -e ".[gui]"     # the window: PySide6 (Qt 6) — spec-surgeon-gui
+py -3 -m pip install -e ".[gui]"     # the window: FastAPI, uvicorn, pywebview (WebView2 on Windows) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
 py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests (`do`, the window), `advise`
 py -3 -m pip install -e ".[dev]"     # pytest + python-docx (fixtures)
@@ -41,7 +42,13 @@ py -3 -m pip install -e ".[dev]"     # pytest + python-docx (fixtures)
 
 or `py -3 -m pip install -r requirements.txt` for everything. Start the window with `spec-surgeon-gui` (or
 `spec-surgeon gui`); a copy installed this way is not updated in-app, the banner shows the `pip install -U` command
-instead. On Linux and macOS use `python3` in place of `py -3`.
+instead. On Linux and macOS use `python3` in place of `py -3`. Without pywebview the window opens in the default
+browser instead of its own window.
+
+The window is a web page served by a local server on your computer (the contract is
+[docs/WEB_API.md](docs/WEB_API.md)). The built page is committed under `src/spec_surgeon/web/static/`, so a
+checkout runs as is; Node 22 is needed only to rebuild it after changing `frontend/` (`cd frontend`, then
+`npm ci` and `npm run build`).
 
 Rendering needs one of Microsoft Word (Windows, with `pywin32`) or LibreOffice (any platform; set
 `SPEC_SURGEON_SOFFICE` if it is not on `PATH`). Without either, the engine still runs every XML check; the two
@@ -55,7 +62,6 @@ render checks are recorded as N/A with the reason.
 | `SPEC_SURGEON_MODEL` | the model every Claude call uses (default `claude-opus-5-5`; `--model` overrides per command) |
 | `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own |
 | `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json`, the saved conversation, the command-line library, downloaded updates and its logs |
-| `SPEC_SURGEON_THEME` | `light` or `dark`: force the window's colour scheme instead of following Windows |
 
 ## The window: documents and a conversation
 

@@ -1,4 +1,5 @@
-"""Updates from the project's GitHub releases (no Qt; every network and process call is injectable for the tests).
+"""Updates from the project's GitHub releases (no window code; every network and process call is injectable for
+the tests).
 
 1. **Check** — ``GET https://api.github.com/repos/Abe-Borg/spec-surgeon/releases/latest`` (drafts and
    prereleases are never offered). When GitHub rate-limits the API (60 calls/hour per network address — an office
@@ -524,8 +525,9 @@ def installer_cmdline(path: Path, *, install_dir: Path, log: Path) -> str:
     return " ".join([f'"{path}"'] + installer_args(install_dir=install_dir, log=log))
 
 
-_STRIP_ENV = ("QT_PLUGIN_PATH", "QML2_IMPORT_PATH", "QT_QPA_PLATFORM_PLUGIN_PATH", "QT_QPA_PLATFORM",
-              "TCL_LIBRARY", "TK_LIBRARY")
+# Runtime variables an older frozen build (the Tk window of 0.3.x) set for itself; the reopened app must not inherit
+# them.
+_STRIP_ENV = ("TCL_LIBRARY", "TK_LIBRARY")
 
 
 def installer_env(environ: Optional[Dict[str, str]] = None) -> Dict[str, str]:

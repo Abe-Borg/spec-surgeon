@@ -371,7 +371,7 @@ def test_installer_command_line():
 
 def test_installer_env_strips_the_key_and_runtime_variables():
     env = installer_env({"PATH": "p", "ANTHROPIC_API_KEY": "sk-ant-secret", "anthropic_api_key": "x",
-                         "_PYI_APPLICATION_HOME_DIR": "a", "_MEIPASS2": "b", "QT_PLUGIN_PATH": "q", "HOME": "h"})
+                         "_PYI_APPLICATION_HOME_DIR": "a", "_MEIPASS2": "b", "TCL_LIBRARY": "q", "HOME": "h"})
     assert env == {"PATH": "p", "HOME": "h"}
 
 

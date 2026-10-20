@@ -66,3 +66,6 @@ def test_about_text_says_everything_in_plain_words():
     for name, lic, url in about.THIRD_PARTY:
         assert f"{name}: {lic}" in text and url.startswith("https://")
     assert any("PyMuPDF" in name and "AGPL" in lic for name, lic, _ in about.THIRD_PARTY)
+    names = [name for name, _, _ in about.THIRD_PARTY]
+    for component in ("pywebview", "FastAPI", "uvicorn", "React", "Tailwind CSS"):        # the window's stack
+        assert any(component in name for name in names), component

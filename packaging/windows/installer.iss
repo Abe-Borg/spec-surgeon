@@ -51,8 +51,10 @@ SetupLogging=yes
 Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
 
 [InstallDelete]
-; A fresh runtime on every install and update: files an older version shipped (an older Qt or Python, the Tk
-; runtime of 0.3.x) must not linger, since Qt loads every plugin it finds in its folders.
+; A fresh runtime on every install and update: files an older version shipped (an older Python, the widget
+; toolkit of 0.4-1.5, the Tk runtime of 0.3.x) must not linger beside the current runtime.
+; The window is a web page in Microsoft's WebView2 (Edge) control, driven through .NET by pywebview; the
+; WebView2 runtime ships with Windows 10/11 and is not bundled here.
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Messages]

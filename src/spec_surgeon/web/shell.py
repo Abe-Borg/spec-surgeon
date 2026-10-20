@@ -1,8 +1,10 @@
-"""The native window around the page: pywebview (Edge WebView2 on Windows) when it is there, else the default
-browser. ``run_window`` starts the server on a free port, opens the page with the launch token, blocks until the
-window closes, and stops the server."""
+"""The native window around the page: pywebview (Edge WebView2 on Windows) when it is installed and has a backend
+on this computer, else the default browser. ``run_window`` starts the server on a free port, opens the page with
+the launch token, blocks until the window closes (or, in the browser, until it is told to stop), and stops the
+server."""
 from __future__ import annotations
 
+import signal
 import socket
 import sys
 import threading
@@ -68,6 +70,41 @@ def serve(state: WindowState, port: int, *, dev: bool = False):
     raise RuntimeError("the window's server did not start")
 
 
+def _stop_on_signals() -> None:
+    """The browser fallback waits in the main thread for Ctrl+C. A process started in the background by a script or
+    a service inherits SIGINT ignored, and Python then never installs its KeyboardInterrupt handler, so make a
+    termination request — SIGTERM, or an inherited-ignored SIGINT — stop the wait the same way: the server is shut
+    down and the settings saved, and the exit code is 0."""
+    def stop(signum, frame):
+        raise KeyboardInterrupt
+    for name in ("SIGTERM", "SIGINT"):
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        if name == "SIGINT" and signal.getsignal(sig) is not signal.SIG_IGN:
+            continue                                  # Python's own Ctrl+C handling is in place; keep it
+        try:
+            signal.signal(sig, stop)
+        except (ValueError, OSError):                 # not the main thread, or a signal this platform refuses
+            pass
+
+
+def native_backend_problem() -> Optional[str]:
+    """None when pywebview can open a native window on this computer; else one line why not — it is not installed,
+    or it has no backend here (pythonnet and WebView2 on Windows, GTK bindings on Linux, PyObjC on macOS).
+    ``webview.start`` would raise the same failure after the server is up; asking first keeps the browser fallback
+    reachable with pywebview installed, which it is wherever the ``gui`` extra is."""
+    try:
+        from webview.guilib import initialize
+    except ImportError as e:
+        return f"pywebview is not installed ({e})"
+    try:
+        initialize()
+    except Exception as e:  # noqa: BLE001 — WebViewException, a backend's own ImportError or load failure
+        return f"pywebview has no native window backend on this computer ({e})"
+    return None
+
+
 def run_window(state: WindowState, *, dev: bool = False, page_url: Optional[str] = None) -> int:
     """Serve, open the page, block until the window closes. ``page_url`` (dev): the Vite dev server instead of the
     built page."""
@@ -76,11 +113,9 @@ def run_window(state: WindowState, *, dev: bool = False, page_url: Optional[str]
     base = f"http://127.0.0.1:{port}"
     url = (page_url or base + "/") + f"?token={state.token}&api={base}"
     try:
-        try:
+        problem = native_backend_problem()
+        if problem is None:
             import webview
-        except ImportError:
-            webview = None
-        if webview is not None:
             shell = WebviewShell()
             state.shell = shell
             try:
@@ -91,7 +126,8 @@ def run_window(state: WindowState, *, dev: bool = False, page_url: Optional[str]
                                                  min_size=MIN_SIZE, text_select=True)
             webview.start(debug=dev)
         else:
-            diag.app_log().warning("pywebview is not installed; opening the page in the default browser")
+            diag.app_log().warning(f"{problem}; opening the page in the default browser")
+            _stop_on_signals()
             webbrowser.open(url)
             print(f"Spec Surgeon is open in your browser at {base}/ — press Ctrl+C here to close it.", file=sys.stderr)
             try:

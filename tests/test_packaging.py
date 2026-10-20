@@ -47,8 +47,11 @@ def test_the_installer_states_the_license_and_the_author():
     assert (ROOT / "LICENSE").is_file()
 
 
-def test_the_bundle_has_the_icon_and_the_ui_resources():
-    assert SPEC.count("icon=icon") == 2 and '"ui/resources/*"' in SPEC
+def test_the_bundle_has_the_icon_the_page_and_the_window_s_runtime():
+    assert SPEC.count("icon=icon") == 2 and '"web/static/**/*"' in SPEC
+    for name in ("uvicorn", "webview", "clr_loader", "pythonnet", "\"clr\"", "fastapi", "starlette", "anyio",
+                 "spec_surgeon.web.server", "spec_surgeon.web.shell", "spec_surgeon.web.updates"):
+        assert name in SPEC, name
     assert "SetupIconFile={#SourcePath}SpecSurgeon.ico" in ISS
     sys.path.insert(0, str(ROOT / "packaging" / "windows"))
     try:
@@ -57,8 +60,8 @@ def test_the_bundle_has_the_icon_and_the_ui_resources():
         sys.path.pop(0)
     sizes = {w for w, h, _ in read_ico_sizes((ROOT / "packaging" / "windows" / "SpecSurgeon.ico").read_bytes())}
     assert {16, 24, 32, 48, 256} <= sizes
-    assert (ROOT / "src" / "spec_surgeon" / "ui" / "resources" / "icon.svg").is_file()
-    assert (ROOT / "src" / "spec_surgeon" / "ui" / "resources" / "icon-256.png").is_file()
+    assert (ROOT / "src" / "spec_surgeon" / "web" / "icons" / "icon.svg").is_file()
+    assert (ROOT / "src" / "spec_surgeon" / "web" / "icons" / "icon-256.png").is_file()
 
 
 def test_releases_publish_the_checksums_the_updater_needs():
@@ -71,9 +74,27 @@ def test_releases_publish_the_checksums_the_updater_needs():
 def test_version_and_package_data():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert pyproject["project"]["version"] == __version__
-    assert "ui/resources/*" in pyproject["tool"]["setuptools"]["package-data"]["spec_surgeon"]
-    assert any(d.startswith("PySide6-Essentials") for d in pyproject["project"]["optional-dependencies"]["gui"])
+    package_data = pyproject["tool"]["setuptools"]["package-data"]["spec_surgeon"]
+    assert "web/static/**/*" in package_data and not any(d.startswith("ui/") for d in package_data)
+    gui = pyproject["project"]["optional-dependencies"]["gui"]
+    for dist in ("fastapi", "uvicorn", "python-multipart", "pywebview"):
+        assert any(d.startswith(dist) for d in gui), dist
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert all(dist in requirements for dist in ("fastapi", "uvicorn", "python-multipart", "pywebview"))
     assert (ROOT / "docs" / "releases" / f"v{__version__}.md").is_file()
+
+
+def test_the_workflows_build_the_page_before_the_tests_and_prove_it_is_committed():
+    """The page is committed under src/spec_surgeon/web/static; every workflow rebuilds it from frontend/ with
+    Node 22 before the Python tests and fails when the committed copy is not what the source builds."""
+    for name in ("verify.yml", "windows-build.yml", "release.yml"):
+        workflow = (ROOT / ".github" / "workflows" / name).read_text(encoding="utf-8")
+        assert "actions/setup-node@v4" in workflow and 'node-version: "22"' in workflow, name
+        assert "npm ci" in workflow and "npm run build" in workflow and "npm test" in workflow, name
+        assert workflow.index("npm run build") < workflow.index("python -m pytest"), name
+        assert "git diff --exit-code" in workflow and "src/spec_surgeon/web/static" in workflow, name
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert "spec-surgeon-gui" in release and "open in your browser" in release     # the headless window smoke
 
 
 def test_packaged_worked_examples_match_the_documented_examples_exactly():

@@ -8,12 +8,14 @@ optional template: the conversation with Claude (``compile``, ``reply``), ``make
 approval-token check), custom transforms and the recovery of set-aside files. Each step is a plain call into the
 engine with an explicit result, and ``Session.outcome`` is the one decision table that says what is needed next.
 Nothing is applied before a preview, and ``run`` refuses when a file changed since the preview. The stages the user
-sees belong to ``document_task.DocumentTask``, which also triages every attachment; the one window is
-``ui/conversation_window.py``. This module has no widgets and no Qt, so it is tested on its own and the command line
-never loads Qt.
+sees belong to ``document_task.DocumentTask``, which also triages every attachment; the one window is the ``web``
+package: a local FastAPI server around one ``DocumentTask`` (``web/server.py``, contract ``docs/WEB_API.md``), the
+page built from ``frontend/`` into ``web/static/``, a native WebView2 window through pywebview (``web/shell.py``)
+and the headless update flow (``web/updates.py``). This module has no server and no window code, so it is tested
+on its own and the command line never loads them.
 
-The window itself is the ``web`` package (a local server and the page in a native WebView2 window): ``main()`` below imports it lazily
-and explain how to install Qt when it is missing (``pip install "spec-surgeon[gui]"``).
+``main()`` below imports the ``web`` package lazily and, when its dependencies are missing, explains how to install
+them (``pip install "spec-surgeon[gui]"``) instead of crashing.
 """
 from __future__ import annotations
 
@@ -1097,15 +1099,31 @@ def open_folder(path: Path) -> None:
 
 # ---- the window ----------------------------------------------------------------------------------
 
+GUI_MISSING = ("The Spec Surgeon window needs its web dependencies (FastAPI, uvicorn, python-multipart; pywebview for "
+               "the native window). Install them with:\n\n    pip install \"spec-surgeon[gui]\"\n\n"
+               "The command line (spec-surgeon) works without them.")
+
+
 def main(argv=None) -> int:
     """``spec-surgeon-gui``: the window — a local server around one ``DocumentTask`` (``web.server``) and the page
-    in a native WebView2 window, or the default browser when pywebview is not installed (``web.shell``)."""
+    in a native WebView2 window, or the default browser when pywebview is not installed (``web.shell``). Without
+    the ``gui`` extra it says how to install it and returns 2."""
     from . import __version__, winapp
     from .document_task import DocumentTask
     from .settings import config_dir, load_settings, logs_dir
-    from .web.server import WindowState, new_token, release_notes_text
-    from .web.shell import run_window
-    from .web.updates import UpdateFlow
+    diag.setup_app_logging(logs_dir())           # also records an import failure before the window can start
+    try:
+        from .web.server import WindowState, new_token, release_notes_text
+        from .web.shell import run_window
+        from .web.updates import UpdateFlow
+    except ImportError as e:                      # FastAPI or uvicorn missing: the gui extra is not installed
+        diag.event("gui.startup.failed", level="error", **diag.error_fields(e))
+        msg = f"{GUI_MISSING}\n\n({e})"
+        if sys.stderr is not None:
+            print(msg, file=sys.stderr)
+        else:                                      # pythonw (the windowed launcher): no console to print to
+            winapp.message_box("Spec Surgeon", msg)  # modal — never shown when a stream can take the message
+        return 2
     winapp.set_app_user_model_id()
     winapp.hold_app_mutex()
     settings = load_settings()
