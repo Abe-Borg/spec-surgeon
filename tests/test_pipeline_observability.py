@@ -138,7 +138,8 @@ def test_renderer_timeout_retry_preserves_thread_context_and_process_evidence(tm
     def timed_out(cmd, **kwargs):
         raise subprocess.TimeoutExpired(cmd, kwargs["timeout"], output=b"starting conversion", stderr=b"hung on file")
 
-    monkeypatch.setattr(libreoffice.subprocess, "run", timed_out)
+    # the run is a process tree now (_run_tree); its timeout raises exactly as subprocess.run's did
+    monkeypatch.setattr(libreoffice, "_run_tree", lambda cmd, env, timeout: timed_out(cmd, timeout=timeout))
     journal = tmp_path / "render.events.jsonl"
     with diag.scope(journal, run_id="render-case"):
         result = libreoffice.render_pdfs([source], tmp_path / "pdf", workers=1, timeout=7)
