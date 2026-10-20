@@ -50,7 +50,7 @@ Settle these in the first exchange (one message, questions led with a recommenda
    | Anything else | No playbook; the contract and verification suite still apply in full |
 
 3. **Environment**: which of the setups in `references/environments.md` this session is in — it decides how files are acquired, what tooling exists, and the exact shape of the overwrite guard.
-4. **Per-project facts** the job depends on (template file, numbering exemplar, issue stamp, author name, which file is "latest"). The spec-document instance of this list is `references/per-project-setup.md`; record answers in project memory so mid-project sessions apply them instead of re-asking.
+4. **Per-project facts** the job depends on (template file, numbering exemplar, issue stamp, author name, which file is "latest"). The spec-document instance of this list is `references/per-project-setup.md`; write the answers in a short project notes file (template there) so later sessions on the same project apply them instead of re-asking.
 5. **Scope of the text-preservation check**: list every text-bearing part the transform will touch — `document.xml`, headers/footers (resolved via rels, never guessed), footnotes/endnotes, comments, textbox content — so the verifier's scope is decided before the transform exists.
 
 ## Pipeline per job

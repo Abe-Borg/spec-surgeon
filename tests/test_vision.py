@@ -12,6 +12,7 @@ import pytest
 from fake_claude import FakeClient, api_error, raise_on_enter, resp, text, tool
 from make_fixtures import build
 from spec_surgeon import llm, vision
+from spec_surgeon.editspec import load_spec
 from spec_surgeon.gui import Session
 from spec_surgeon.preview import SampleView
 from spec_surgeon.vision import VisualReview, review_samples
@@ -123,8 +124,8 @@ def test_no_images_no_call(tmp_path):
 
 
 def test_visual_findings_remain_visible_without_a_separate_delivery_gate(folder, tmp_path):
-    s = Session(folder=folder, out_root=tmp_path / "out")
-    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    s = Session(documents=sorted(folder.glob("*.docx")), out_root=tmp_path / "out")
+    s._set_outcome(spec=load_spec(SPECS / "remove-all-headers-footers.json"), source="remove-all-headers-footers")
     s.make_preview(render=False, log=lambda m: None)
     s.preview.review = VisualReview(findings=[{"severity": "block", "file": "", "page": None, "text": "logo squashed"}])
     assert "logo squashed" in s.preview.to_text()
@@ -136,7 +137,7 @@ def test_visual_findings_remain_visible_without_a_separate_delivery_gate(folder,
 
 
 def test_visual_findings_do_not_bypass_custom_transform_source_identity(folder, tmp_path):
-    s = Session(folder=folder, out_root=tmp_path / "out")
+    s = Session(documents=sorted(folder.glob("*.docx")), out_root=tmp_path / "out")
     s.generated, s.generated_token = SimpleNamespace(source="x", select={}, params={}), "tok"
     s.generated_preview = SimpleNamespace(review=VisualReview(findings=[{"severity": "block", "text": "x"}]), review_ack="")
     assert s.run_blocked_reason() == ""
@@ -204,9 +205,9 @@ def test_the_visual_check_rewrite_keeps_the_approval_inputs(tmp_path):
 
 @pytest.mark.skipif(not (shutil.which("soffice") or shutil.which("libreoffice")), reason="LibreOffice not installed")
 def test_real_render_keeps_the_pdfs_and_the_pages_for_the_visual_check(folder, tmp_path):
-    s = Session(folder=folder, out_root=tmp_path / "out",
+    s = Session(documents=sorted(folder.glob("*.docx")), out_root=tmp_path / "out",
                 client=FakeClient(resp(tool("submit_review", {"summary": "Headers removed.", "findings": []}))))
-    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    s._set_outcome(spec=load_spec(SPECS / "remove-all-headers-footers.json"), source="remove-all-headers-footers")
     s.make_preview(render=True, log=lambda m: None)
     pv = s.preview
     assert pv.samples and all(x.source_pdf and x.output_pdf and 1 in x.look_pages for x in pv.samples)

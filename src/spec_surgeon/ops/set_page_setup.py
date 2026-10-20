@@ -35,7 +35,7 @@ from lxml import etree
 
 from ..package import W, DocxPackage
 from ..ooxml import SECTPR_ORDER, insert_in_order
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .hf_common import effective_refs, refs
 from .selectors import resolve_sections, section_reads
@@ -76,6 +76,35 @@ def shown_parts(eff: List[Dict[Tuple[str, str], Optional[str]]], titles: List[bo
     return out
 
 
+PAGE_SIZE_NAMES = {(12240, 15840): "US Letter", (12240, 20160): "US Legal", (15840, 24480): "Tabloid",
+                   (11906, 16838): "A4", (16838, 23811): "A3", (8391, 11906): "A5"}
+
+
+def page_size_words(w: Any, h: Any) -> str:
+    """``US Letter (8.5 by 11 inches)``, ``8.27 by 11.69 inches`` — either way around for a landscape sheet."""
+    try:
+        wi, hi = int(w), int(h)
+    except (TypeError, ValueError):
+        return f"{w} by {h}"
+    dims = f"{prose.inches(wi).split(' ')[0]} by {prose.inches(hi)}"
+    name = PAGE_SIZE_NAMES.get((wi, hi)) or PAGE_SIZE_NAMES.get((hi, wi))
+    return f"{name} ({dims})" if name else dims
+
+
+def margin_words(margins: Dict[str, Any]) -> List[str]:
+    """``every margin to 1 inch``, ``the top margin to 1 inch``, ``the header 0.5 inch from the page edge``."""
+    out: List[str] = []
+    edges = ("top", "bottom", "left", "right")
+    if all(k in margins for k in edges) and len({str(margins[k]) for k in edges}) == 1:
+        out.append(f"every margin to {prose.inches(margins['top'])}")
+    else:
+        out += [f"the {k} margin to {prose.inches(margins[k])}" for k in edges if k in margins]
+    if "gutter" in margins:
+        out.append(f"the gutter to {prose.inches(margins['gutter'])}")
+    out += [f"the {k} {prose.inches(margins[k])} from the page edge" for k in ("header", "footer") if k in margins]
+    return out
+
+
 @register
 class SetPageSetup(Op):
     name = "set_page_setup"
@@ -104,6 +133,36 @@ class SetPageSetup(Op):
                                    "pgMar/pgSz attributes exactly as set, titlePg present without w:val / absent; "
                                    "nothing else",
                             "V7": "none — page geometry changes by design"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        what: List[str] = []
+        margins, size = params.get("margins"), params.get("size")
+        if isinstance(margins, dict) and margins:
+            what += margin_words(margins)
+        if isinstance(size, dict) and size.get("w") is not None and size.get("h") is not None:
+            what.append("the page size to " + page_size_words(size["w"], size["h"]))
+        orient = params.get("orientation")
+        if orient in ("portrait", "landscape"):
+            what.append(f"the orientation to {orient}")
+        first = params.get("different_first_page")
+        first_clause = ("give the first page its own header and footer" if first is True else
+                        "show the ordinary header and footer on the first page" if first is False else "")
+        where = prose.where(select, default="every section")
+        if what:
+            head = prose.sentence("set", prose.join(what), where, f"and {first_clause}" if first_clause else "")
+        elif first_clause:
+            head = prose.sentence(first_clause, where)
+        else:
+            head = prose.sentence("set the margins, page size, orientation and first-page header and footer", where)
+        extras: List[str] = []
+        if orient in ("portrait", "landscape"):
+            extras.append("the page width and height swap where they disagree with it")
+            if not (isinstance(margins, dict) and margins):
+                extras.append("the margins stay as they are")
+        if params.get("allow_missing") is True:
+            extras.append("files where no section matches are left unchanged")
+        return head if not extras else head + " " + prose.sentence(prose.join(extras))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

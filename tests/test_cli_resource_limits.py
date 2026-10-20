@@ -90,7 +90,6 @@ def test_cli_keeps_model_token_limits_when_handing_off_to_custom_transform(tmp_p
                      "--model", "claude-sonnet-5-5", "--max-context-tokens", "131072",
                      "--max-output-tokens", "8192"]
     assert cli.main(args) == 0
-    assert not (tmp_path / "output" / "outcome-review.json").exists()
     assert (tmp_path / "output" / "codegen").exists()
     assert not (tmp_path / "output" / "run").exists()  # preview still needs the user's execution decision
     assert limits == [131072] * 2

@@ -4,16 +4,16 @@ slots set are cleared by default (Word lets them override the explicit name). Th
 is given and docDefaults' own size (10 pt when it sets none) is not listed."""
 from __future__ import annotations
 
-from typing import Any, Dict
+from typing import Any, Dict, List, Optional
 
 from lxml import etree
 
 from ..package import W, DocxPackage
 from ..ooxml import RPR_ORDER, own_size, set_rfonts, set_size
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .selectors import DEFAULT_PRESERVE_FONTS, FONT_PARAM_DOC, StyleSheet, font_values, size_applies, size_values
-from .set_font import FONT_REFLOW
+from .set_font import FONT_REFLOW, font_phrase, two_sentences
 
 DEFAULT_SIZE = 20                                    # half-points a run gets when no level sets w:sz (10 pt)
 
@@ -31,6 +31,27 @@ class SetDocDefaultsFont(Op):
     verification_profile = {"V1": "styles.xml only", "V2": "zero text diffs",
                             "V10": "doc_defaults_fonts: only rFonts / w:sz of rPrDefault changed",
                             "V7": "none — a font change reflows the text"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        font = font_phrase(params)                       # "the font to “Arial”" / "the font of … to …"
+        what: List[str] = []
+        if font:
+            what.append("the document's default " + font[len("the "):])
+        if params.get("size") is not None:
+            text = ("its" if font else "the document's") + f" default size to {prose.points(params['size'])}"
+            frm = params.get("size_from")
+            if isinstance(frm, (list, tuple)) and frm:
+                text += " (if the current default is " + prose.join((prose.points(x) for x in frm), "or") + ")"
+            what.append(text)
+        first = prose.sentence("set", prose.join(what) if what else "the document's default font and size")
+        extras: List[str] = []
+        if what:
+            props = [w for w, on in (("font", bool(font)), ("size", params.get("size") is not None)) if on]
+            extras.append("styles and text that set their own " + prose.join(props, "or") + " keep it")
+        if font and params.get("clear_theme_fonts") is False:
+            extras.append("theme font settings are kept")
+        return two_sentences(first, extras)
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

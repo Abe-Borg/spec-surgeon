@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..ooxml import RevisionStamp, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage
-from . import register, tables
+from . import prose, register, tables
 from .base import JobException, Op, PlanFragment
 from .replace_table import COMMON_PARAMS, default_author, resolve_scope, tracked_of
 from .selectors import SCOPE_KINDS, scope_parts
@@ -192,3 +192,56 @@ class FillVariables(Op):
             root = pkg.xml(part)
             apply_part_edits(root, by_block, td["tracked"], stamp, next_id)
             pkg.write_xml(part, root)
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        scope = select.get("scope") or params.get("scope") or DEFAULT_SCOPE
+        markers = [m for m in (params.get("slot_markers") or MARKERS) if m in MARKERS] or list(MARKERS)
+        colors = [str(c) for c in (params.get("highlight_colors") or ["yellow"])]
+        kinds: List[str] = []
+        if "braces" in markers:
+            kinds.append("the placeholders written as " + prose.quote("{{NAME}}"))
+        if "highlight" in markers:
+            kinds.append("the yellow-highlighted text" if colors == ["yellow"]
+                         else "the text highlighted in " + prose.join(colors, "or"))
+        where = prose.scope_words(scope) or "in the document body"
+        typed = params.get("values") if isinstance(params.get("values"), dict) else {}
+        shown = [f"{prose.quote(k)} becomes {prose.quote(v)}" for k, v in typed.items()]
+        if len(shown) > 4:
+            shown = shown[:3] + [f"{len(shown) - 3} more"]
+        spec = params.get("table")
+        table = ""
+        if isinstance(spec, dict) and spec.get("file"):
+            details: List[str] = []
+            if spec.get("sheet"):
+                details.append(f"sheet {prose.quote(spec['sheet'])}")
+            if spec.get("key"):
+                details.append(f"entry {prose.quote(spec['key'])}")
+            if spec.get("name_column"):
+                details.append(f"names in the column {prose.quote(spec['name_column'])}")
+            if spec.get("value_column"):
+                details.append(f"values in the column {prose.quote(spec['value_column'])}")
+            table = f"the file {prose.quote(spec['file'])}" + (f" ({', '.join(details)})" if details else "")
+        if shown and table:
+            source = "with the project's values: " + prose.join(shown) + ", taking any other value from " + table
+        elif shown:
+            source = "with the project's values: " + prose.join(shown)
+        elif table:
+            source = "with the values in " + table
+        else:
+            source = "with the project's values"
+        first = f"Fill {prose.join(kinds)} {where} {source}."
+        effects: List[str] = []
+        if params.get("unknown") == "leave":
+            effects.append("a placeholder with no value is left as it is")
+        if "highlight" in markers:
+            effects.append("the highlight is removed")
+        if bool(params.get("tracked", True)):
+            effects.append("each fill is shown as a tracked change"
+                           + (f" by {prose.quote(params['author'])}" if params.get("author") else ""))
+        else:
+            effects.append("the fills are made without tracked changes")
+        second = prose.join(effects)
+        second = second[0].upper() + second[1:] + "."
+        third = "Files with nothing to fill are left unchanged." if params.get("allow_missing") else ""
+        return prose.sentence(first, second, third)

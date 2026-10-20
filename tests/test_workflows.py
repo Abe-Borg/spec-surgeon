@@ -8,7 +8,6 @@ import pytest
 from make_fixtures import SCHEME_LEVELS, build_numbering, build_scheme_example, build_style_template, build_styles
 from spec_surgeon import llm
 from spec_surgeon.chain import run_chain
-from spec_surgeon.gui import Session
 from spec_surgeon.package import DocxPackage, W
 from spec_surgeon.workflows import WorkflowError, build_workflow, get_workflow, load_workflow_inputs, workflow_catalog
 
@@ -87,41 +86,14 @@ def test_cleanup_requires_an_explicit_choice_and_inputs_are_snapshot_copied(docu
     assert get_workflow("architect-styles")["inputs"][0]["name"] == "template"
 
 
-def test_inputs_resolve_relative_to_their_file_and_preview_pins_the_template(documents, tmp_path):
-    source, template = documents
+def test_inputs_resolve_relative_to_their_file(documents, tmp_path):
+    _, template = documents
     path = tmp_path / "inputs.json"
     path.write_text(json.dumps({"template": template.name,
                                 "style_map": [{"from": "ArchNote", "to": "SpecNote"}]}), encoding="utf-8")
     values, base = load_workflow_inputs("@" + str(path))
     chain = build_workflow("architect-styles", values, base)
     assert chain["stages"][0]["spec"]["ops"][0]["params"]["template"] == str(template)
-    s = Session(folder=source.parent, out_root=tmp_path / "session")
-    # The GUI supplies absolute paths from its picker.
-    s.use_workflow("architect-styles", {**values, "template": str(template)})
-    assert s.chain_source == "workflow:architect-styles" and s.preview is None
-    with pytest.raises(ValueError, match="[Pp]review"):
-        s.run(False, False, lambda _: None)
-    s.make_preview(render=False, log=lambda _: None)
-    before = source.read_bytes()
-    template.write_bytes(build_scheme_example())
-    with pytest.raises(ValueError, match="changed since the preview"):
-        s.run(False, False, lambda _: None)
-    assert source.read_bytes() == before
-
-
-def test_configuring_a_new_workflow_invalidates_previous_preview(documents, tmp_path):
-    source, _ = documents
-    s = Session(folder=source.parent, out_root=tmp_path / "session")
-    s.use_workflow("proofing-language", {"language": "en-US"})
-    s.make_preview(render=False, log=lambda _: None)
-    assert s.preview is not None
-    s.use_workflow("proofing-language", {"language": "en-CA"})
-    assert s.preview is None
-    with pytest.raises(ValueError, match="[Pp]review"):
-        s.run(False, False, lambda _: None)
-    s.make_preview(render=False, log=lambda _: None)
-    s.run(False, False, lambda _: None)
-    assert s.last_chain.counts()["PASS"] == 1
 
 
 @pytest.mark.parametrize("name,values,match", [

@@ -70,9 +70,10 @@ from lxml import etree
 
 from ..ooxml import TBL_CELLMAR_ORDER, TBLPR_ORDER, TRPR_ORDER, insert_in_order
 from ..package import W, DocxPackage
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .selectors import StyleSheet, scope_parts
+from .set_borders_shading import BORDER_STYLE_WORDS
 from .table_select import (all_cells, all_rows, build, cells_wrapped, check_table_selector, element_sig, in_text_box,
                            is_nested, own_cells, own_rows, right_to_left, rows_wrapped, selection_reads, selects_all,
                            style_chain, style_chain_reads, table_selected)
@@ -473,6 +474,100 @@ def _conditional_rows(chain: Sequence[Any], names: Sequence[str]) -> bool:
     return any(c.find(f"{W}trPr/{W}{n}") is not None for st in chain for c in st.findall(W + "tblStylePr") for n in names)
 
 
+# ---- prose for the plan ---------------------------------------------------------------------------------------------
+
+PLACE_WORDS = {"top": "at the top", "bottom": "at the bottom", "left": "on the left", "right": "on the right",
+               "insideH": "between the rows", "insideV": "between the columns"}
+
+
+def _listed(items: Sequence[str]) -> str:
+    """``a, b and c``; with a serial comma (``a, b, and c``) when an item itself holds an ``and`` or a comma, so the
+    reader can tell the items apart. Built here: ``prose.join`` has no serial-comma form."""
+    items = [x for x in items if x]
+    if len(items) < 2 or not any(" and " in x or ", " in x for x in items):
+        return prose.join(items)
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
+def _places(sides: Sequence[str]) -> str:
+    """``all around``, ``at the top and bottom``, ``on the left and right``, ``between the rows and columns``: the
+    edges first, then the inside lines."""
+    edges = [s for s in ("top", "bottom", "left", "right") if s in sides]
+    inner = [s for s in ("insideH", "insideV") if s in sides]
+    words: List[str] = []
+    if len(edges) == 4:
+        words.append("all around")
+    elif edges == ["top", "bottom"]:
+        words.append("at the top and bottom")
+    elif edges == ["left", "right"]:
+        words.append("on the left and right")
+    else:
+        words += [PLACE_WORDS[s] for s in edges]
+    if inner == ["insideH", "insideV"]:
+        words.append("between the rows and columns")
+    else:
+        words += [PLACE_WORDS[s] for s in inner]
+    return prose.join(words)
+
+
+def table_border_words(borders: Dict[str, Any]) -> str:
+    """``a 0.5 pt single-line border all around and between the rows and columns``: sides with one look are grouped,
+    and because the asked borders are the table's whole set, the sides not named are said to have none. The border
+    style words are the ones paragraph borders use (``set_borders_shading.BORDER_STYLE_WORDS``)."""
+    groups: List[Tuple[Tuple[str, Any, Any, str], List[str]]] = []
+    for side in ("top", "bottom", "left", "right", "insideH", "insideV"):
+        if side not in borders:
+            continue
+        b = borders[side] if isinstance(borders[side], dict) else {}
+        spec = (str(b.get("style", "single")), b.get("size", 4), b.get("space", 0), str(b.get("color", "auto")).upper())
+        for known, sides in groups:
+            if known == spec:
+                sides.append(side)
+                break
+        else:
+            groups.append((spec, [side]))
+    phrases: List[str] = []
+    for (style, size, space, color), sides in groups:
+        words = BORDER_STYLE_WORDS.get(style, prose.quote(style))
+        text = f"a {prose.points_from_eighths(size)} {words} border {_places(sides)}"
+        if str(space) not in ("0", "0.0"):
+            text += f", {prose.points(space)} from the text"
+        if color != "AUTO":
+            text += f", coloured {prose.colour(color)}"
+        phrases.append(text)
+    text = prose.join(phrases) if phrases else "no border"
+    missing = [s for s in TABLE_SIDES if s not in borders]
+    if missing and all(s in ("insideH", "insideV") for s in missing):
+        text += " (none between the cells)" if len(missing) == 2 else f" (none {PLACE_WORDS[missing[0]]})"
+    elif missing:
+        text += " (none on the other sides)"
+    return text
+
+
+def cell_margin_words(margins: Dict[str, Any]) -> str:
+    """``0.075 inch on the left and right and 0 inch at the top and bottom``: sides with one value are grouped."""
+    groups: List[Tuple[Any, List[str]]] = []
+    for side in ("top", "bottom", "left", "right"):
+        if side not in margins:
+            continue
+        for known, sides in groups:
+            if known == margins[side]:
+                sides.append(side)
+                break
+        else:
+            groups.append((margins[side], [side]))
+    return _listed([f"{prose.inches(v)} {_places(sides)}" for v, sides in groups]) if groups else "the values given"
+
+
+def width_words(width: Dict[str, Any]) -> str:
+    """``100% of the text width`` or ``5 inches``."""
+    if "pct" in width:
+        return f"{width['pct']}% of the text width"
+    if "twips" in width:
+        return prose.inches(width["twips"])
+    return "the width given"
+
+
 @register
 class SetTableProps(Op):
     name = "set_table_props"
@@ -507,6 +602,40 @@ class SetTableProps(Op):
                "the source; each changed table's w:tblPr, row's w:trPr and cell's w:tcPr exactly as expected; every "
                "selected table shows the asked borders, margins, width and rows in the output; residual identical",
         "V7": "none — borders, margins, widths and row breaks move the layout"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        heads: List[str] = []
+        borders = params.get("borders")
+        if isinstance(borders, dict) and borders:
+            heads.append("set the borders to " + table_border_words(borders))
+        elif borders == "none":
+            heads.append("remove every border")
+        margins = params.get("cell_margins")
+        if isinstance(margins, dict) and margins:
+            heads.append("set the cell margins to " + cell_margin_words(margins))
+        width = params.get("width")
+        if width == "auto":
+            heads.append("let the width be set automatically")
+        elif isinstance(width, dict) and width:
+            heads.append("set the width to " + width_words(width))
+        n = params.get("repeat_header_rows")
+        if isinstance(n, int) and not isinstance(n, bool):
+            if n <= 0:
+                heads.append("let no row repeat at the top of each page")
+            else:
+                heads.append("repeat the first " + ("row" if n == 1 else f"{n} rows") + " at the top of every page")
+        if params.get("cant_split") is True:
+            heads.append("keep every row on one page")
+        elif params.get("cant_split") is False:
+            heads.append("let rows break across pages")
+        first = prose.sentence(_listed(heads) if heads else "set the table properties",
+                               prose.where(select, default="every table"))
+        if params.get("clear_cell_overrides") is not True:
+            return first
+        own = [w for w, k in (("borders", "borders"), ("margins", "cell_margins")) if params.get(k) is not None]
+        return first + " " + prose.sentence("the cells' own", prose.join(own) if own else "borders and margins",
+                                            "are removed so the table's show")
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         raw_select = dict(select or {})

@@ -29,39 +29,52 @@ lost or invented is the one failure that matters.
 
 ## Repository layout
 
-The default desktop is `ui/conversation_window.py`, coordinated by `document_task.py`:
-explicit Word attachments, an optional template, and chat. `review_display.py` describes
-the actual previewed EditSpec; ordinary requests never invoke a second outcome planner.
-Keep operations, recipes, model knobs and recovery workspaces out of this interface.
-`ui.app.build_legacy_window` retains the previous UI for integration regression tests.
-See `docs/CONVERSATIONAL_DESKTOP.md` for persistence, cost limits and review behavior.
+The desktop is one window, `ui/conversation_window.py`, coordinated by `document_task.py`:
+explicit Word attachments, an optional template, and chat. `triage.py` checks every attachment
+the moment it arrives (deterministic, no model call) and refuses or notes it in one sentence.
+`layouts.py` gives a mixed batch one EditSpec per structural layout, each planned, previewed
+and verified on its own documents, with one approval. `review_display.py` describes the actual
+previewed EditSpec in the sentences each operation writes for itself (`Op.describe`,
+`ops/prose.py`); ordinary requests never invoke a second outcome planner. Keep operations,
+recipes, model knobs and recovery workspaces out of this interface. There is no legacy window
+and no other mode; those features are command-line only. See `docs/CONVERSATIONAL_DESKTOP.md`
+for persistence, cost limits and review behavior.
 
 - `src/spec_surgeon/` — the package.
   - `package.py` — `DocxPackage`: zip, rels, sections, working overlay, repack by substitution.
   - `ooxml.py` — transform-side XML helpers (text views, run surgery, revision stamps, schema orders).
   - `ops/` — the operation library; `base.py` (`Op`, `Plan`, `PlanFragment`, `merge_fragments`, `JobException`),
-    `selectors.py`, one module per op, shared cores (`textedit.py`, `slots.py`, `effective.py`, `lists.py`, `style_import.py`).
+    `selectors.py`, `prose.py` (the words of `describe()`: inches, points, quoted text), one module per op, shared
+    cores (`textedit.py`, `slots.py`, `effective.py`, `lists.py`, `style_import.py`).
   - `verify/` — the INDEPENDENT verifier: `suite.py` (V1–V10 as a `VerificationRecord`), `props.py` (V10 assertion
     kinds and the residual), `textcheck.py`, `reader.py`, `xsd.py`, `geometry.py`, `explain.py`, one module per family.
   - `jobs/` — the two v0.1.0 CLI jobs, aliases over ops.
   - `editspec.py` — EditSpec load, validate, plan every op, merge, apply.
+  - `layouts.py` — a layout plan: one EditSpec per structure pattern, routing, per-layout preview, run and approval token.
   - `batch.py` — the per-file pipeline (pool, verify, render, guarded delivery, records); `report.py`, `diagnostics.py`.
   - `guard.py` — acquisition identity, drift, lock file, atomic guarded write-back.
   - `chain.py` — several specs one after another, each stage a verified run on the one before.
-  - `profile.py`, `planner.py`, `catalog.py` — per-pattern profiles, dry runs, the op catalog and EditSpec schema.
+  - `profile.py`, `planner.py`, `catalog.py` — per-pattern profiles (with `structure.role_summary` as role evidence),
+    dry runs, the op catalog and EditSpec schema.
+  - `triage.py` — attach-time triage: refused, noted or ok, with the facts the planner reads.
   - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec with Claude; `llm.call` is the one call site.
   - `preview.py` — samples applied and verified in memory, before/after pages, the approval token.
   - `codegen.py`, `sandbox_runner.py` — custom transforms: AST whitelist, isolated process, hard limits.
   - `advisor.py` — a recommendation or re-compiled spec per exception; writes, never applies.
-  - `library.py` — recipes, chains, operations and snippets under the config folder.
-  - `workflows.py`, `goals.py`, `goal_contracts.py`, `goal_operations.py`, `ordinary_outcomes.py` — named workflows
-    and reviewed outcome contracts; `recovery*.py`, `campaign*.py`, `inventory.py` — bounded investigation and workspaces.
+  - `library.py` — recipes, chains, operations and snippets under the config folder (command line only).
+  - `workflows.py`, `goals.py`, `goal_contracts.py`, `goal_operations.py` — named workflows and reviewed outcome
+    contracts; `recovery*.py`, `campaign*.py`, `inventory.py` — bounded investigation and workspaces.
   - `office_profiles.py`, `structure.py`, `spec_qa.py`, `project_evidence.py` — office standards, structure analysis, QA audits.
-  - `cli.py`, `gui.py` (`Session`, no Qt), `ui/` (the Qt window), `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
+  - `document_task.py` — the window's coordinator: attachments and triage, stages, the allowance, the journal;
+    `review_display.py` — the plan as the window reads it (sentences, assumptions, layouts, targets).
+  - `cli.py`, `gui.py` (`Session`, no Qt), `ui/` (the Qt window: `app.py` (application, prompts, main),
+    `conversation_window.py`, `widgets.py`, `theme.py`, `update_ui.py`, `about_dialog.py`, `worker.py`),
+    `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
   - `render/` — Word COM and LibreOffice renderers. `schemas/` — vendored ECMA-376 XSDs. `skill/` — the method
     (`SKILL.md`, `references/verification-checklist.md`). `examples/` — the installed copy of the worked examples.
 - `tests/` — pytest suite; `make_fixtures.py` builds the synthetic hard-case documents; `fake_claude.py` scripts
-  Claude; `conftest.py` seals keys, config dir and the model; `qt_support.py` is the only way a test lets go of a window.
+  Claude; `conftest.py` seals keys, config dir and the model; `qt_support.py` is the only way a test lets go of a window;
+  `describe_cases/` holds the (select, params) cases `test_describe.py` checks for every op.
 - `examples/specs/`, `examples/templates/`, `examples/jobs/` — worked EditSpecs, template fixtures, job params.
 - `docs/` — design notes, `releases/`, `audits/`, `history/` (the previous CLAUDE.md and README.md).
 - `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests, screenshot script.
@@ -72,7 +85,7 @@ See `docs/CONVERSATIONAL_DESKTOP.md` for persistence, cost limits and review beh
 pip install -e ".[dev,gui,agent]"            # Windows: py -3 -m pip install -e ".[dev,gui,agent,word]"
 QT_QPA_PLATFORM=offscreen python3 -m pytest -q    # Windows: py -3 -m pytest -q -s
 python3 -m pytest -q tests/test_ops.py        # one module
-python3 tests/make_fixtures.py OUT            # fixtures; --rich, --template, --reference, --styles-template, --numbering-scheme
+python3 tests/make_fixtures.py OUT            # fixtures; --rich, --template, --reference, --styles-template, --numbering-scheme, --dirty
 spec-surgeon ops --catalog
 spec-surgeon plan-spec examples/specs/change-all-font-arial.json FILES...
 spec-surgeon run-spec examples/specs/change-all-font-arial.json FILES... --out OUT
@@ -85,18 +98,21 @@ spec-surgeon-gui                              # or: spec-surgeon gui
 ## How to add an op
 
 1. Copy `src/spec_surgeon/ops/set_font.py`; keep `@register`, `name`, `mode`, `params_schema`, `select_schema`,
-   `verification_profile`, `plan()`, `apply()`; import it at the bottom of `ops/__init__.py`.
+   `verification_profile`, `describe()`, `plan()`, `apply()`; import it at the bottom of `ops/__init__.py`.
+   `describe(select, params)` returns one or two sentences built with `ops/prose.py` (inches and points, quoted exact
+   text, no identifiers, no JSON); it is the line the user reads in the plan.
 2. `plan()` fills the fragment analytically from the source: `intended_parts`, `diffs`, members, `rev_delta`,
    `property_assertions`, and honest `touches` (what it changes and what it reads).
 3. Add the V10 assertion kind in `verify/` first, with its own selector resolution and "exactly this change" check.
 4. `apply()` mutates the working copy through the overlay (`write_xml`, `remove_member`, `add_member`, `edit_rels`).
 5. Fixture in `tests/make_fixtures.py`, an end-to-end test (plan → merge → apply → `run_suite`, `record.passed`),
    and a planted-defect test for every new grammar: a wrong output and a wrong implementation shared by plan and apply.
-6. Add the op to `compiler.placed_words` if it places text, and a `COMMON_ASSUMPTIONS` entry in `catalog.py`.
+6. Add the op to `compiler.placed_words` if it places text, a `COMMON_ASSUMPTIONS` entry in `catalog.py`, and at
+   least one case in `tests/describe_cases/` (`test_describe.py` fails for an op without one).
 
 ## Session protocol
 
-Current round: docs/PLAN-2026-10-18-live-runs.md. Read it before any work. One workstream
+Current round: docs/PLAN-2026-10-19-ez-mode.md. Read it before any work. One workstream
 item per session, chosen from the plan's status table. Follow its goal, why and expected
 outcome. Add no operations, review layers, planners, or documentation beyond what the plan
 names. Nothing is 'done' on fixtures alone; the plan's acceptance names a real-file run,

@@ -53,7 +53,7 @@ def seal_environment(monkeypatch) -> None:
 
 def seal_credential_manager(monkeypatch) -> None:
     """No test reads or writes the key saved on this computer. On a Windows machine with pywin32 and a key saved through
-    Settings, a window would load the real key (``MainWindow._init_key``) and the Settings test would overwrite it."""
+    Settings, a window would load the real key (``ConversationWindow.__init__``) and a Settings test would overwrite it."""
     from spec_surgeon import credentials
     monkeypatch.setattr(credentials, "_win32cred", _no_credential_manager)
 

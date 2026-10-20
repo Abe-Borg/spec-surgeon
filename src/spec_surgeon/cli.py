@@ -159,8 +159,12 @@ def cmd_workflows(args):
 
 def cmd_run_spec(args):
     from .editspec import SpecError, load_spec, validate_spec
+    from .layouts import is_layout_plan, validate_layout_plan
     try:
         spec = load_spec(args.spec)
+        if is_layout_plan(spec):
+            validate_layout_plan(spec)
+            return _run_layout_plan(args, spec, expand_inputs(args.files), _run_output(args), approval=getattr(args, "approval", None))
         validate_spec(spec)
     except SpecError as e:
         diag.event("cli.spec.refused", level="warning", code=e.code, reason=e.reason)
@@ -175,13 +179,7 @@ def cmd_run_spec(args):
     print(f"EditSpec: {spec['request']!r} — {spec['summary']}")
     for a in spec.get("assumptions", []):
         print(f"  assumption: {a}")
-    if getattr(args, "outcome_review", None):
-        from .editspec import is_template_file, spec_templates
-        files = [f for f in expand_inputs(args.files) if not is_template_file(f, spec_templates(spec))]
-        args.out = str(_run_output(args))
-        _ensure_outcome_review(args, files, Path(args.out), request=None)
-    else:
-        print("Recipe verification only; request satisfaction is not independently checked.")
+    print("Recipe verification and preview approval govern delivery.")
     if getattr(args, "approval", None):
         from .editspec import is_template_file, spec_templates
         from .preview import approval_inputs, _approval_token_from_inputs, explain_approval_change
@@ -213,9 +211,13 @@ def cmd_run_spec(args):
 
 def _load_valid_spec(arg):
     from .editspec import SpecError, load_spec, validate_spec
+    from .layouts import is_layout_plan, validate_layout_plan
     try:
         spec = load_spec(arg)
-        validate_spec(spec)
+        if is_layout_plan(spec):
+            validate_layout_plan(spec)
+        else:
+            validate_spec(spec)
         return spec
     except SpecError as e:
         diag.event("cli.spec.refused", level="warning", code=e.code, reason=e.reason)
@@ -295,9 +297,20 @@ def cmd_audit(args):
 
 def cmd_plan_spec(args):
     from .planner import plan_batch
+    from .layouts import is_layout_plan, make_layout_preview
     spec = _load_valid_spec(args.spec)
     if spec is None:
         return 2
+    if is_layout_plan(spec):
+        import tempfile
+        with tempfile.TemporaryDirectory() as tmp:
+            pv = make_layout_preview(spec, args.files, Path(tmp), do_render=False)
+        bp = pv.batch_plan
+        if args.json:
+            print(json.dumps(bp.to_dict(), indent=2, ensure_ascii=False))
+        else:
+            print(bp.to_text(per_file=args.per_file))
+        return 0 if not bp.exceptions else 1
     bp = plan_batch(args.files, spec)
     if args.json:
         print(json.dumps(bp.to_dict(), indent=2, ensure_ascii=False))
@@ -394,7 +407,7 @@ def cmd_run(args, spec=None):
                           do_render=not args.no_render, in_place=args.in_place, progress=progress, spec=spec,
                           approved_inputs=getattr(args, "_approved_inputs", None),
                           worker_mode=getattr(args, "worker_mode", "thread"),
-                          **getattr(args, "_approved_outcome_kwargs", {}))
+                          )
     except ValueError as e:          # refused before anything was written (an input inside the results folder)
         diag.event("cli.run.refused", level="warning", reason=str(e), out_dir=str(out_dir))
         print(f"refused: {e}", file=sys.stderr)
@@ -490,8 +503,6 @@ def cmd_do(args):
             return _do_codegen(args, value, files, out_dir, brief=conv.brief())
         if outcome == "recovery":
             return _do_continuous_recovery(args, conv, value, out_dir)
-        if outcome == "operation":                # one of your operations, passed its trials in the conversation
-            return _run_saved_operation(args, value, files, out_dir, brief=conv.brief())
         spec = value                              # Claude's spec, or one of your recipes as saved
     else:
         print(f"compiling {args.request!r} over {len(files)} file(s) with {args.model} …", file=sys.stderr)
@@ -545,11 +556,58 @@ def cmd_do(args):
                             conversation=conv)
 
 
+def _run_layout_plan(args, plan, files, out_dir, *, approval=None, ask=False):
+    """A plan per layout from the command line: every layout's spec on its own files, copies only
+    (``layouts.run_layouts``). With ``ask`` the plan is previewed and confirmed first, as ``do`` does for a spec;
+    ``approval`` is the token of an earlier preview and must still match."""
+    from .layouts import layout_inputs, layout_token, make_layout_preview, run_layouts
+    if getattr(args, "in_place", False):
+        print("A plan per layout writes edited copies only; --in-place is not available.", file=sys.stderr)
+        return 2
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if ask:
+        pv = make_layout_preview(plan, [str(f) for f in files], out_dir / "preview",
+                                 renderer=args.renderer, do_render=not args.no_render)
+        print(pv.to_text())
+        print(f"\npreview: {out_dir / 'preview'}")
+        approved = args.yes
+        if not approved and _interactive():
+            approved = bool(_confirm(f"\nRun this on {len(files)} file(s) in {len(pv.previews)} layout(s)? [y/N] "))
+        if not approved:
+            print(f"\nNot run. To run exactly this:\n  spec-surgeon run-spec \"{out_dir / 'preview' / 'plan.json'}\" "
+                  + " ".join(f'\"{f}\"' for f in files) + f" --approval {pv.token}")
+            return 0
+        approval = pv.token
+    if approval is not None and layout_token(plan, files) != approval:
+        print("approval token does not match: a file, the plan or the way the files are grouped changed since the "
+              "preview — preview again", file=sys.stderr)
+        return 2
+    result = run_layouts([str(f) for f in files], plan, out_dir / "run" if ask else out_dir,
+                         renderer=args.renderer, do_render=not args.no_render, progress=print,
+                         approved_inputs=layout_inputs(plan, files) if approval is not None else None)
+    c = result.counts()
+    print(f"{len(result.files)} file(s) in {len(result.batches)} layout(s): PASS {c['PASS']}  FAIL {c['FAIL']}  "
+          f"EXCEPTION {c['EXCEPTION']}")
+    for f in result.files:
+        line = f"  {f.status:<9} {f.source.name}"
+        if f.exception:
+            line += f"  [{f.exception.get('code')}] {f.exception.get('reason')}"
+        elif f.delivered_to:
+            line += f"  → {f.delivered_to}"
+        print(line)
+    print(f"\nReport: {result.out_dir / 'LAYOUT_REPORT.md'}")
+    return 0 if c["FAIL"] == 0 and c["EXCEPTION"] == 0 else 1
+
+
 def _preview_and_run(args, spec, files, out_dir, brief=None, *, conversation=None):
     """The tail a spec takes, compiled by Claude (``cmd_do``) or one of your recipes (``library use``): --save-as
     checked, the preview, Claude's visual check (with a key, rendering on and no --no-review), --save-as saved, the y/N
     question (a blocking finding needs a look; --yes), the approval token checked again, then the verified batch."""
     from .preview import make_preview
+    from .layouts import is_layout_plan
+    if is_layout_plan(spec):
+        return _run_layout_plan(args, spec, files, out_dir, ask=True)
     if getattr(args, "save_as", None):
         why = _save_as_refusal(args.save_as, "recipe", getattr(args, "replace", False))
         if why:
@@ -569,8 +627,6 @@ def _preview_and_run(args, spec, files, out_dir, brief=None, *, conversation=Non
         if outcome == "recovery":
             return _do_continuous_recovery(args, conv, value, out_dir)
         return value if outcome == "stop" else 2
-    if getattr(args, "outcome_review", None):
-        _ensure_outcome_review(args, files, out_dir)
     print("Recipe verification and preview approval govern delivery.")
     if getattr(args, "save_as", None):
         from .library import LibraryError, save_recipe
@@ -784,22 +840,6 @@ def _review(intent, samples, folder, args):
                                  log=lambda m: print(m, file=sys.stderr))
 
 
-def _ensure_outcome_review(args, files, folder, *, request=None, template=None):
-    """Read a legacy outcome file as a report attachment, without a planner or delivery authority."""
-    review_path = getattr(args, "outcome_review", None)
-    if not review_path:
-        return None
-    try:
-        review = json.loads(Path(review_path).read_text(encoding="utf-8"))
-        from .diagnostics import write_json
-        write_json(Path(folder) / "legacy-outcome-review.json", review)
-        print("Legacy outcome review retained for reference; it does not approve or withhold delivery.")
-        return review
-    except (OSError, ValueError, TypeError) as exc:
-        print(f"Legacy outcome review could not be read: {exc}. Recipe delivery is unaffected.", file=sys.stderr)
-        return None
-
-
 def _interactive() -> bool:
     """A person is at the terminal (tests replace this with False, so no prompt can block a test run)."""
     return bool(sys.stdin is not None and sys.stdin.isatty() and sys.stdout is not None and sys.stdout.isatty())
@@ -894,11 +934,8 @@ def _chat(args, files, template, out_dir, prior_failures, log):
 
 
 def _talk(conv, save, out_dir, files, *, initial_turn=None, recovery_answers=False):
-    """_chat's loop: one turn of Claude's, then the user's reply or choice, until a spec, a custom transform, one of
-    your recipes ("recipe": its spec as saved, with this request) or operations ("operation": passed its trials here —
-    one that fails returns to the prompt, the refusal noted to Claude) or stop.
-    With ``recovery_answers``, free text returns to the active recovery instead of replanning."""
-    from .conversation import LIBRARY_CHOICE_KINDS, LibraryChanged
+    """_chat's loop: one turn of Claude's, then the user's reply or choice, until a spec, a custom transform, a
+    recovery plan or stop. With ``recovery_answers``, free text returns to the active recovery instead of replanning."""
     turn = conv.start() if initial_turn is None else initial_turn
     told = False
     while True:
@@ -944,27 +981,7 @@ def _talk(conv, save, out_dir, files, *, initial_turn=None, recovery_answers=Fal
             conv.take_app_choice(choice.id)
             save()
             return "codegen", conv.unsupported, conv
-        if choice.kind in LIBRARY_CHOICE_KINDS:
-            try:
-                chosen, spec = conv.take_library_choice(choice.id)
-            except LibraryChanged as e:           # the item changed since Claude offered it: nothing used
-                print(f"Not used: {e}")
-                save()
-                continue
-            if chosen.kind == "recipe":
-                save()
-                print(f"Using your recipe {chosen.name!r} as saved.")
-                return "recipe", spec, conv
-            picked = _try_saved_operation(conv, chosen.name, files, out_dir)
-            save()
-            if picked is None:                    # its trials failed: said, noted to Claude, the conversation goes on
-                continue
-            return "operation", picked, conv
-        try:
-            turn = conv.reply(choice_id=choice.id)
-        except LibraryChanged as e:               # a snippet that changed since Claude offered it: nothing approved
-            print(f"Not used: {e}")
-            save()
+        turn = conv.reply(choice_id=choice.id)
 
 
 def _try_saved_operation(conv, name, files, out_dir):
@@ -1106,6 +1123,18 @@ def cmd_resolve(args):
     from .workspace_cli import recovery_options
     out = _run_output(args, recovery=True)
     try:
+        from .layouts import is_layout_run, layouts_needing_work
+        if is_layout_run(Path(args.run_dir)):
+            # one batch per layout, each with its own spec and manifest: recovery takes one layout folder at a time
+            folders = layouts_needing_work(Path(args.run_dir))
+            if not folders:
+                print("Nothing to resolve: every document that had a plan passed; a document no layout covered "
+                      "stays as it was (see LAYOUT_REPORT.md).")
+                return 0
+            print("This is a layout run; resolve one layout folder at a time:", file=sys.stderr)
+            for folder in folders:
+                print(f"  spec-surgeon resolve {folder}", file=sys.stderr)
+            return 2
         saved = load_recovery(Path(args.run_dir)).options_snapshot if (Path(args.run_dir) / "recovery.json").is_file() else None
         options = recovery_options(args, saved)
         result = recover_from_run(Path(args.run_dir), out, request=args.request, options=options,
@@ -1540,13 +1569,6 @@ def _add_conversation_token_arguments(parser):
                         help="model reasoning effort for compilation and visual review")
 
 
-def _add_outcome_arguments(parser):
-    parser.add_argument("--outcome-review", default=None, metavar="FILE",
-                        help="legacy outcome review retained for reference only; never blocks delivery")
-    parser.add_argument("--outcome-approval", default=None, metavar="DIGEST",
-                        help="legacy compatibility option; preview approval is the only consent gate")
-
-
 def main(argv=None) -> int:
     from .settings import logs_dir
     diag.setup_app_logging(logs_dir())
@@ -1644,7 +1666,6 @@ def main(argv=None) -> int:
     p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
     p.add_argument("--no-render", action="store_true", help="skip rendering (V6/V7 recorded as N/A)")
     p.add_argument("--approval", default=None, help="token from a preview: refuse if the spec or a file changed since")
-    _add_outcome_arguments(p)
     p.set_defaults(fn=cmd_run_spec)
 
     p = sub.add_parser("do", help="natural-language request → EditSpec (Claude) → preview → approve → verified run")
@@ -1667,7 +1688,6 @@ def main(argv=None) -> int:
     p.add_argument("--no-review", action="store_true",
                    help="skip Claude's visual check of the rendered sample pages (--no-render skips it too)")
     _add_conversation_token_arguments(p)
-    _add_outcome_arguments(p)
     p.add_argument("--ack-review", action="store_true",
                    help="legacy compatibility option; visual findings are part of preview approval")
     p.add_argument("--save-as", default=None, metavar="NAME",
@@ -1698,13 +1718,12 @@ def main(argv=None) -> int:
     p.add_argument("--model", default=None)
     p.add_argument("--no-review", action="store_true", help="skip Claude's visual check of the sample pages")
     _add_conversation_token_arguments(p)
-    _add_outcome_arguments(p)
     p.add_argument("--ack-review", action="store_true", help="legacy compatibility option; visual findings are part of preview approval")
     p.add_argument("--allow-codegen", action="store_true")
     p.set_defaults(fn=cmd_retry)
 
     p = sub.add_parser("resolve", help="investigate remaining files on copies within a budget, review, then export")
-    p.add_argument("run_dir", help="previous batch or chain output folder containing set_aside.json")
+    p.add_argument("run_dir", help="previous batch or chain output folder containing set_aside.json (for a layout run, one of its layout-ID folders)")
     p.add_argument("--request", default=None, help="append a clarification or answer to the original request")
     p.add_argument("--out", default=None)
     from .workspace_cli import add_resource_arguments, add_workspace_parser

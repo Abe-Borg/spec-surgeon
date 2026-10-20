@@ -1,16 +1,17 @@
 # Project facts and approved standards
 
-Project evidence lives inside the existing campaign project context, under
-`project_evidence`. Legacy `PROJECT.json` properties remain supported. There is no
-separate facts database or automatically learned standards list.
+Project evidence is a command-line feature of multi-project workspaces. It lives inside
+the workspace's project context, under `project_evidence`. Other properties of a
+project's `PROJECT.json` are kept as they are. There is no separate facts database or
+automatically learned standards list. The conversation window does not read
+`PROJECT.json` and keeps no project memory: the only sources of wording it may place
+are the attached documents, the attached template and what you type.
 
-The desktop workspace's **Project facts and standards** editor shows active facts,
-assumptions and superseded history. Adding or replacing a fact, or changing the
-standards register, uses the existing campaign setters: the affected project's
-prepared results are invalidated and its proposed plan becomes stale. Other projects
-remain unchanged. Changes are saved immediately; closing the editor does not undo them.
+Adding or replacing a fact, or changing the standards register, uses the campaign
+setters: the affected project's prepared results are invalidated and its proposed plan
+becomes stale. Other projects remain unchanged. Changes are saved immediately.
 
-The command line exposes the same operations:
+The command line exposes the operations:
 
 ```text
 spec-surgeon evidence /path/to/workspace PROJECT_ID inspect

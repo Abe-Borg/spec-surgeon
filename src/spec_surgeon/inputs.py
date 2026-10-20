@@ -22,31 +22,10 @@ from .ops.tables import Bad, csv_rows, xlsx_rows, xlsx_sheet_names
 
 KINDS = {".json": "table", ".csv": "table", ".xlsx": "table", ".png": "picture", ".jpg": "picture",
          ".jpeg": "picture", ".gif": "picture"}
-MAX_LISTED = 30                       # files the first message lists
 MAX_BYTES = 20 * 1024 * 1024          # a bigger file is listed as too big, never read
 MAX_ROWS = 40                         # rows read_input_file shows of a sheet
 CELL_CHARS = 120
 JSON_CHARS = 12000
-
-
-def near(files: Sequence[Path], template: Optional[Path] = None) -> List[Path]:
-    """The input files in the folders of ``files`` and of ``template`` (not their subfolders), sorted, at most
-    ``MAX_LISTED``; Office lock files (``~$…``) and hidden files are left out."""
-    folders: List[Path] = []
-    for f in list(files) + ([template] if template else []):
-        d = Path(f).resolve().parent
-        if d not in folders:
-            folders.append(d)
-    out: List[Path] = []
-    for d in folders:
-        try:
-            entries = sorted(d.iterdir())
-        except OSError:
-            continue
-        for p in entries:
-            if p.suffix.lower() in KINDS and p.is_file() and not p.name.startswith(("~$", ".")) and p not in out:
-                out.append(p)
-    return out[:MAX_LISTED]
 
 
 def _cell(v: Any) -> str:
@@ -86,10 +65,6 @@ def overview(path: Path) -> Dict[str, Any]:
     except (OSError, ValueError, JobException) as e:
         out["problem"] = f"cannot be read ({getattr(e, 'reason', e)})"
     return out
-
-
-def listing(files: Sequence[Path], template: Optional[Path] = None) -> List[Dict[str, Any]]:
-    return [overview(p) for p in near(files, template)]
 
 
 def read(path: str, allowed: Sequence[Path], sheet: Optional[str] = None, rows: int = MAX_ROWS) -> Dict[str, Any]:

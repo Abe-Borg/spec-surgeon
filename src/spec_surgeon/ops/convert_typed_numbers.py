@@ -78,12 +78,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..ooxml import RevisionStamp, block_full_text, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import W, DocxPackage
-from . import lists, register
+from . import lists, prose, register
 from .audit_numbering import typed_shape
 from .base import JobException, Op, PlanFragment
 from .clear_formatting import ClearSettings, ParagraphClearing, changes_needed, check_markers, clear_paragraph, \
     paragraph_clearing
-from .convert_numbering import REVISION_IN_NUMPR, restyle_edit
+from .convert_numbering import (REVISION_IN_NUMPR, conversion_extras, restyle_edit, scheme_phrase, tracked_words,
+                                with_second_sentence)
 from .effective import PropResolver
 from .markup import Look
 from .numbering_convert import (LOOK_FLAGGED, LOOK_REFUSED, destination, level_sample, look_of, number_look,
@@ -223,6 +224,20 @@ class ConvertTypedNumbers(Op):
                "same in the output (number + text) as in the source; the plan's predicted numbers equal the verifier's "
                "and its count of the output; styles_imported for the import",
         "V7": "none — list indents replace typed spacing"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        where = prose.where(select)
+        subject = where[3:] if where.startswith("in ") else where
+        how = tracked_words(params) if params.get("tracked", True) is not False else "without tracked changes"
+        first = prose.sentence(f"Turn the typed numbers at the start of {subject} into real list numbers of "
+                               f"{scheme_phrase(params)}: each typed number and the space or tab after it are removed, "
+                               f"{how}, and your list shows the same number in its place")
+        extras = ["nothing is added, and a file is converted only where the whole document then reads exactly as before"]
+        if select.get("include_tables") is True:
+            extras.append("typed numbers in table cells are converted too")
+        extras += conversion_extras(params, "no typed number")
+        return with_second_sentence(first, extras)
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

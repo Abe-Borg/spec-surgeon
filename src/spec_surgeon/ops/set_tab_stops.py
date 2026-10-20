@@ -42,7 +42,7 @@ from lxml import etree
 from ..package import W, DocxPackage
 from ..ooxml import (PPR_ORDER, RevisionStamp, block_full_text, file_uses_date_utc, get_or_add, max_revision_id,
                      paragraph_ppr, paragraphs, property_change)
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .effective import Resolver, text_width
 from .empty_paragraphs import numbered
@@ -50,6 +50,7 @@ from .hf_common import effective_refs
 from .replace_text import default_author
 from .selectors import (StyleSheet, chain_reads, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts,
                         table_ordinals)
+from .set_font import tracked_phrase
 
 ALIGNS = ("left", "center", "right", "decimal", "bar")
 LEADERS = ("none", "dot", "hyphen", "underscore", "heavy", "middleDot")
@@ -257,6 +258,33 @@ def resolve_position(v: Any, width: Optional[int]) -> int:
     return v
 
 
+ALIGN_WORDS = {"left": "left", "center": "centre", "right": "right", "decimal": "decimal", "bar": "bar"}
+LEADER_WORDS = {"dot": "dot", "hyphen": "hyphen", "underscore": "underscore", "heavy": "heavy-line",
+                "middleDot": "middle-dot"}
+
+
+def position_words(pos: Any) -> str:
+    """``0.5 inch`` from the left margin, ``the right margin``, ``the centre of the text``."""
+    if pos == "right_margin":
+        return "the right margin"
+    if pos == "center":
+        return "the centre of the text"
+    return prose.inches(pos)
+
+
+def stop_words(stop: Any) -> str:
+    """``a right tab stop at the right margin with a dot leader``."""
+    if not isinstance(stop, dict):
+        return "a tab stop"
+    align = ALIGN_WORDS.get(stop.get("align", "left"), prose.quote(stop.get("align")))
+    leader = stop.get("leader", "none")
+    text = f"a {align} tab stop at {position_words(stop.get('pos'))}"
+    if leader not in (None, "none"):
+        word = LEADER_WORDS.get(leader, prose.quote(leader))
+        text += f" with {'an' if word[0] in 'aeiou' else 'a'} {word} leader"
+    return text
+
+
 @register
 class SetTabStops(Op):
     name = "set_tab_stops"
@@ -291,6 +319,28 @@ class SetTabStops(Op):
                "each changed paragraph's w:tabs exactly as expected, the asked stops in effect (and no other with "
                "clear_others) in the output; residual identical",
         "V7": "none when a stop changes (text moves)"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        stops = params.get("set") if isinstance(params.get("set"), list) else []
+        clear = params.get("clear") if isinstance(params.get("clear"), list) else []
+        others = params.get("clear_others") is True
+        heads: List[str] = []
+        if stops:
+            heads.append("set " + prose.join(stop_words(s) for s in stops))
+        if others and not stops:
+            heads.append("clear every tab stop")
+        elif clear:
+            heads.append(("clear the tab stop at " if len(clear) == 1 else "clear the tab stops at ")
+                         + prose.join(position_words(c) for c in clear))
+        tail: List[str] = []
+        if others and stops:
+            tail.append("clearing every other tab stop")
+        tracked = tracked_phrase(select, params)
+        if tracked:
+            tail.append(tracked)
+        return prose.sentence(prose.join(heads) if heads else "set the tab stops",
+                              prose.where(select) + "".join(f", {t}" for t in tail))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         raw_select = dict(select or {})

@@ -62,7 +62,9 @@ def main() -> int:
             sources.append(path)
         spec = json.loads((ROOT / "examples/specs/remove-all-headers-footers.json").read_text())
         chat = "--chat" in sys.argv[1:]
-        response = tool("ask_user", CHAT_ASK) if chat else tool("submit_editspec", {"spec": spec})
+        response = tool("ask_user", CHAT_ASK) if chat else tool("submit_editspec", {"spec": spec, "message":
+            "I\u2019ll remove every header and footer from both documents. The body text, page margins and the "
+            "tracked changes in the body stay exactly as they are."})
         session = Session(out_root=work / "Results", client=FakeClient(resp(response)), visual_check=False)
         window = build_window(session, settings=Settings(), prompts=RecordingPrompts())
         window.task.render = "--render" in sys.argv[1:]

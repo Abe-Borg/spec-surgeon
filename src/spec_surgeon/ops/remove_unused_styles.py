@@ -46,7 +46,7 @@ from __future__ import annotations
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from ..package import REL_TYPE_BASE, W, DocxPackage
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .selectors import StyleSheet
 
@@ -305,6 +305,26 @@ class RemoveUnusedStyles(Op):
                "plan; the output's styles part = the source's minus exactly those; every style reference, "
                "basedOn/next/link and field-named style in the output still finds its definition",
         "V7": "source — an unused definition shows on no page"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        asked = params.get("types") if isinstance(params.get("types"), list) else None
+        kinds = [t for t in STYLE_TYPES if asked and t in asked]
+        kind = prose.join(kinds, "or") + " style" if kinds and len(kinds) < len(STYLE_TYPES) else "style"
+        custom = params.get("which") == "custom"
+        head = f"Remove every {'custom ' if custom else ''}{kind} definition that nothing in the document uses"
+        tails: List[str] = []
+        if custom:
+            tails.append("leaving Word's built-in styles alone")
+        keep = [k for k in params.get("keep") or [] if isinstance(k, str) and k.strip()] \
+            if isinstance(params.get("keep"), list) else []
+        if keep:
+            tails.append(f"keeping {prose.styles(keep)} whether used or not")
+        first = prose.sentence(head + (", " + prose.join(tails) if tails else ""))
+        extras = ["nothing shown on any page changes"]
+        if params.get("allow_missing") is False:
+            extras.append("a file with nothing to remove is set aside")
+        return first + " " + prose.sentence(prose.join(extras))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

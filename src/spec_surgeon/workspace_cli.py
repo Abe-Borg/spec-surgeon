@@ -53,7 +53,7 @@ def recovery_options(args, saved=None):
         value = getattr(args, "budget" if name == "max_cost_usd" else name, None)
         if value is not None:
             values[name] = value
-    return RecoveryOptions(**values)
+    return RecoveryOptions.from_snapshot(values)
 
 
 def _chain(value):

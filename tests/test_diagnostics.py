@@ -7,8 +7,7 @@ or a batch that fails, the verification record's specifics (which paragraph, whi
 preview's log (and a page comparison that fails: a warning, never a lost preview) and the approval refusal that says
 what changed (for a spec and for a custom transform), the compiler's transcript and API errors (an API error is a failed
 turn, a defect propagates with what was said kept), the window session's folders and the records beside each preview,
-the Tier B sandbox's traceback, the bundle (never the documents), `spec-surgeon diagnose`, the window's crash watch, and
-the window's diagnosis views."""
+the Tier B sandbox's traceback, the bundle (never the documents), `spec-surgeon diagnose` and the crash watch."""
 from __future__ import annotations
 
 import faulthandler
@@ -373,12 +372,14 @@ def test_a_preview_keeps_a_log_and_survives_a_sample_that_fails(tmp_path, monkey
 def test_a_refused_run_says_what_changed_since_the_preview(tmp_path):
     from spec_surgeon.gui import Session
     d = _folder(tmp_path, ["A", "B"])
-    s = Session(folder=d, out_root=tmp_path / "out")
-    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    s = Session(documents=sorted(d.glob("*.docx")), out_root=tmp_path / "out")
+    s._set_outcome(spec=load_spec(SPECS / "remove-all-headers-footers.json"), source="remove-all-headers-footers.json")
     s.make_preview(render=False, log=lambda m: None)
     a = d / "21 00 00 – A.docx"
     a.write_bytes(a.read_bytes() + b"\0")
-    (d / "21 05 00 – NEW.docx").write_bytes(build("21 05 00", "NEW"))
+    new = d / "21 05 00 – NEW.docx"
+    new.write_bytes(build("21 05 00", "NEW"))
+    s.documents.append(new)                                    # attached after the preview
     with pytest.raises(ValueError, match="changed since the preview") as e:
         s.run(False, False, lambda m: None)
     assert "21 00 00 – A.docx: modified since the preview (size" in str(e.value)
@@ -388,12 +389,11 @@ def test_a_refused_run_says_what_changed_since_the_preview(tmp_path):
 def test_a_refused_custom_transform_run_says_what_changed(tmp_path):
     from spec_surgeon.gui import Session
     from test_codegen import GOOD_OP
-    from test_compiler import FakeClient, resp, tool, header_outcome_proposal, generate_reviewed_custom
+    from test_compiler import FakeClient, resp, tool, generate_reviewed_custom
     d = _folder(tmp_path, ["A", "B"])
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
-    s = Session(folder=d, out_root=tmp_path / "out",
+    s = Session(documents=sorted(d.glob("*.docx")), out_root=tmp_path / "out",
                 client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
-                                  header_outcome_proposal(),
                                   resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}))))
     s.compile("Set every section's header distance to 900 twips.", lambda m: None)
     assert "passed verification" in generate_reviewed_custom(s)
@@ -484,7 +484,8 @@ def test_the_window_session_writes_the_compile_record_beside_its_preview(tmp_pat
     from test_compiler import FakeClient, resp, tool
     d = _folder(tmp_path, ["A"])
     spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
-    s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
+    s = Session(documents=sorted(d.glob("*.docx")), out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
     lines = []
     assert s.compile("remove all headers and footers", lines.append) == "Compiled."
     record = s.out_dir / "compile.json"
@@ -504,7 +505,7 @@ def test_the_window_session_records_a_failed_call_and_keeps_what_was_said_before
     from spec_surgeon.gui import Session
     from test_compiler import FakeClient, resp, tool
     d = _folder(tmp_path, ["A"])
-    s = Session(folder=d, out_root=tmp_path / "out",
+    s = Session(documents=sorted(d.glob("*.docx")), out_root=tmp_path / "out",
                 client=FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]})),
                                   raise_on_final(_ApiError()),
                                   raise_on_enter(AssertionError("a planted defect"))))
@@ -541,8 +542,7 @@ def test_every_preview_of_a_conversation_has_the_records_that_led_to_it(tmp_path
     from spec_surgeon import gui
     from spec_surgeon.gui import Session
     from test_codegen import GOOD_OP
-    from test_compiler import (FakeClient, resp, tool, remove_outcome_proposal, header_outcome_proposal,
-                               generate_reviewed_custom)
+    from test_compiler import FakeClient, resp, tool, generate_reviewed_custom
 
     class Clock:                                  # every folder a second apart (no same-second reuse in a fast test)
         t = 0
@@ -556,14 +556,11 @@ def test_every_preview_of_a_conversation_has_the_records_that_led_to_it(tmp_path
     spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
     again = dict(spec, summary="remove them again")
     unsupported = {"request": "r", "summary": "s", "unsupported": "no op", "proposal": "set_header_distance"}
-    s = Session(folder=d, out_root=tmp_path / "out",
+    s = Session(documents=sorted(d.glob("*.docx")), out_root=tmp_path / "out",
                 client=FakeClient(resp(tool("submit_editspec", {"spec": unsupported, "custom_transform": "possible"})),
-                                  header_outcome_proposal(),
                                   resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})),
                                   resp(tool("submit_editspec", {"spec": spec}, "s2")),
-                                  remove_outcome_proposal(),
-                                  resp(tool("submit_editspec", {"spec": again}, "s3")),
-                                  remove_outcome_proposal()))
+                                  resp(tool("submit_editspec", {"spec": again}, "s3"))))
 
     def records(folder):
         return (json.loads((folder / "compile.json").read_text(encoding="utf-8")),
@@ -592,7 +589,8 @@ def test_every_preview_of_a_conversation_has_the_records_that_led_to_it(tmp_path
         assert compiled["spec"] == dict(which, request="Set every section's header distance to 900 twips.")
         assert compiled["spec"] == json.loads((folder / "preview" / "spec.json").read_text(encoding="utf-8"))
     assert users(records(f2)[1]) < users(records(f3)[1])
-    s.load_spec(SPECS / "remove-all-headers-footers.json")
+    s._set_outcome(spec=load_spec(SPECS / "remove-all-headers-footers.json"), source="remove-all-headers-footers.json")
+    s.end_conversation()                                   # a loaded spec replaces the conversation
     s.make_preview(render=False, log=lambda m: None)
     assert s.out_dir not in (f1, f2, f3) and not (s.out_dir / "compile.json").exists()
     assert not (s.out_dir / "conversation.json").exists()
@@ -634,11 +632,11 @@ def test_a_sessions_bundle_holds_its_compile_and_preview_beside_the_run(tmp_path
     codegen/ — the bundle of that run folder is the whole session's."""
     from spec_surgeon.cli import main as cli_main
     from spec_surgeon.gui import Session
-    from test_compiler import FakeClient, resp, tool, remove_outcome_proposal
+    from test_compiler import FakeClient, resp, tool
     d = _folder(tmp_path, ["A"])
     spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
-    s = Session(folder=d, out_root=tmp_path / "out", client=FakeClient(resp(tool("submit_editspec", {"spec": spec})),
-                                                                   remove_outcome_proposal()))
+    s = Session(documents=sorted(d.glob("*.docx")), out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
     s.compile("remove all headers and footers", lambda m: None)
     s.make_preview(render=False, log=lambda m: None)
     s.run(False, False, lambda m: None)
@@ -728,69 +726,3 @@ def test_app_logging_keeps_every_line(tmp_path):
         for h in [h for h in logger.handlers if isinstance(h, diag.RotatingFileHandler)]:
             logger.removeHandler(h)
             h.close()
-
-
-# ---- the window ------------------------------------------------------------------------------------------------------------
-
-@pytest.fixture
-def qt(tmp_path, monkeypatch):
-    from qt_support import close_windows, qt_app_or_skip
-    app = qt_app_or_skip()
-    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    windows = []
-    yield app, windows
-    close_windows(app, windows)
-
-
-def test_the_window_shows_why_a_file_did_not_pass(qt, tmp_path):
-    from spec_surgeon.gui import Session
-    from spec_surgeon.ui.app import build_legacy_window as build_window
-    from spec_surgeon.ui.app import RecordingPrompts
-    from spec_surgeon.ui.models import ROW_ROLE
-    d = _folder(tmp_path, ["A"])
-    (d / "21 99 00 – BROKEN.docx").write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
-    s = Session(out_root=tmp_path / "out")
-    s.load_spec(SPECS / "remove-all-headers-footers.json")
-    prompts = RecordingPrompts(files=[str(tmp_path / "bundle.zip")])
-    w = build_window(s, prompts=prompts)
-    qt[1].append(w)
-    ui = w._spec_surgeon
-    ui["vars"]["folder"].set(str(d))
-    ui["vars"]["render"].set(False)
-    ui["buttons"]["preview"].click()
-    ui["wait"]()
-    ptable = w.preview_page.table
-    prow = next(ptable.model().index(i, 0).data(ROW_ROLE) for i in range(ptable.model().rowCount())
-                if ptable.model().index(i, 0).data(ROW_ROLE).badge == "exception")
-    assert "password-protected" in prow.diagnosis and w.show_diagnosis(prow).windowTitle().startswith("Why 21 99 00")
-    ui["buttons"]["run"].click()
-    ui["wait"]()
-    table = w.run_page.table
-    rows = [table.model().index(i, 0) for i in range(table.model().rowCount())]
-    bad = next(ix for ix in rows if ix.data(ROW_ROLE).badge == "exception")
-    n = len(w._viewers)
-    w._open_row(bad)                                               # a double-click: the diagnosis, in the app
-    assert len(w._viewers) == n + 1 and "Not a Readable Word Document" in w._viewers[-1].browser.toPlainText()
-    assert w.run_page.diag_btn.isEnabled() and w.do_diagnostics() is True
-    assert "Spec Surgeon — diagnostics" in w._viewers[-1].browser.toPlainText()
-    bundle = w.save_bundle()
-    with zipfile.ZipFile(bundle) as z:              # the session: its preview beside the run (Codex review on #10)
-        assert bundle == tmp_path / "bundle.zip" and "results/run/DIAGNOSTICS.md" in z.namelist()
-        assert "results/preview/logs/preview.log" in z.namelist()
-    assert any(kind == "notify" and "not the documents" in text for kind, _, text in prompts.shown)
-
-
-def test_a_failed_job_puts_its_traceback_in_the_activity_log(qt, tmp_path):
-    from spec_surgeon.gui import Session
-    from spec_surgeon.ui.app import build_legacy_window as build_window
-    from spec_surgeon.ui.app import RecordingPrompts
-    w = build_window(Session(out_root=tmp_path / "out"), prompts=RecordingPrompts())
-    qt[1].append(w)
-    w._job_page = w.run_page
-    w._job_failed("KeyError: 'w:val'", "Traceback (most recent call last):\n  File \"x.py\", line 1\nKeyError: 'w:val'")
-    log = w.log.toPlainText()
-    assert "ERROR: KeyError: 'w:val'" in log and "    Traceback (most recent call last):" in log
-    assert w.run_page.info.text.text() == "The action could not finish. Save diagnostics so the failure can be investigated."
-    assert w.stack.currentWidget() is w.run_page

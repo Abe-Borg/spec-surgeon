@@ -44,7 +44,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from ..ooxml import block_full_text, block_struct_counts, block_text_without, paragraphs, revision_kind
 from ..package import DocxPackage, W, REL_TYPE_BASE
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .fields import fields_of
 from .replace_table import resolve_scope
@@ -552,6 +552,25 @@ def _counts(revs: List[Revision]) -> str:
                      for label, a in sorted(by.items()))
 
 
+MONTHS = ("January", "February", "March", "April", "May", "June", "July", "August", "September", "October",
+          "November", "December")
+
+
+def _date_words(text: Any) -> str:
+    """A user date (YYYY-MM-DD, optionally THH:MM[:SS]) as ``1 January 2026`` / ``1 January 2026 at 09:30``; anything
+    else is repeated as given."""
+    m = USER_DATE.match(str(text)) if isinstance(text, str) else None
+    if not m:
+        return str(text)
+    year, month, day, hour, minute, second = m.groups()
+    if not 1 <= int(month) <= 12:
+        return str(text)
+    words = f"{int(day)} {MONTHS[int(month) - 1]} {year}"
+    if hour is not None:
+        words += f" at {hour}:{minute}" + (f":{second}" if second else "")
+    return words
+
+
 @register
 class ResolveTrackedChanges(Op):
     name = "resolve_tracked_changes"
@@ -589,6 +608,33 @@ class ResolveTrackedChanges(Op):
         "V10": "resolved_changes: the verifier resolves every part in scope again with its own code and compares it "
                "whole with the output",
     }
+
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        action = params.get("action")
+        verb = action if action in ("accept", "reject") else "accept or reject"
+        which = ["every tracked change"]
+        authors = params.get("authors")
+        if isinstance(authors, list) and authors:
+            which.append("by " + prose.join((prose.quote(a) for a in authors), "or"))
+        since, until = params.get("on_or_after"), params.get("before")
+        if since and until:
+            which.append(f"made on or after {_date_words(since)} and before {_date_words(until)}")
+        elif since:
+            which.append(f"made on or after {_date_words(since)}")
+        elif until:
+            which.append(f"made before {_date_words(until)}")
+        scope = select.get("scope") or params.get("scope")
+        place = prose.scope_words(scope if scope else DEFAULT_SCOPE) or "in the document body"
+        first = prose.sentence(verb, " ".join(which),
+                               "— insertions, deletions, moved text and formatting changes —", place)
+        extras: List[str] = []
+        if action == "reject":
+            extras.append("rejected deletions put their words back into the text")
+        if params.get("allow_missing") is False:
+            extras.append("a file with no such tracked change is set aside")
+        return first if not extras else first + " " + prose.sentence("; ".join(extras))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

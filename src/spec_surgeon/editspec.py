@@ -1,4 +1,4 @@
-"""EditSpec — the JSON program the natural-language compiler will produce (docs/NL_SURGICAL_EDITOR_PLAN.md §3,
+"""EditSpec — the JSON program the natural-language compiler will produce (docs/history/NL_SURGICAL_EDITOR_PLAN.md §3,
 Appendix A). Phase 1 executes hand-written specs: validate → plan every op on the file (predict first) → merge
 with conflict detection → apply in spec order on a working copy → the verifier reads the merged plan.
 

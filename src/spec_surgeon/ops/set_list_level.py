@@ -84,6 +84,7 @@ from ..package import W, DocxPackage
 from ..ooxml import insert_in_order
 from . import register
 from . import lists
+from . import prose
 from .base import JobException, Op, PlanFragment
 from .selectors import StyleSheet
 from .style_import import resolve_style, style_type
@@ -91,6 +92,8 @@ from .numbering_flags import stale_fields, stale_fields_flag, written_references
 from .textedit import run_text, shown
 
 FORMAT_CHOICES = ("decimal", "decimalZero", "upperLetter", "lowerLetter", "upperRoman", "lowerRoman")
+FORMAT_WORDS = {"decimal": "1, 2, 3", "decimalZero": "01, 02, 03", "upperLetter": "A, B, C", "lowerLetter": "a, b, c",
+                "upperRoman": "I, II, III", "lowerRoman": "i, ii, iii"}       # the plan's prose for each format
 NOT_FROM_ZERO = ("upperLetter", "lowerLetter", "upperRoman", "lowerRoman")
 LVL_ORDER = ["start", "numFmt", "lvlRestart", "pStyle", "isLgl", "suff", "lvlText", "lvlPicBulletId", "legacy", "lvlJc",
              "pPr", "rPr"]
@@ -330,6 +333,42 @@ class SetListLevel(Op):
                "numbering part compared with the source plus exactly that level's change; every counted paragraph's "
                "counters and number recounted on the output and equal to the plan's and the verifier's own prediction",
         "V7": "none — numbers change width"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        style, level = params.get("style"), params.get("level")
+        if isinstance(style, str) and style.strip():
+            owner = f"the list that {prose.style(style)} numbers with"
+            target = (f"level {level + 1} of {owner}" if isinstance(level, int) and not isinstance(level, bool)
+                      else f"the level that {prose.style(style)} numbers with")
+        else:
+            target = "one level of a list"
+        changes: List[str] = []
+        fmt = params.get("format")
+        if isinstance(fmt, str):
+            changes.append("its numbers are shown as " + (FORMAT_WORDS.get(fmt) or prose.quote(fmt)))
+        if params.get("zero_pad") is True:
+            changes.append("its numbers are zero-padded (1 becomes 01)")
+        elif params.get("zero_pad") is False:
+            changes.append("its numbers lose their zero padding (01 becomes 1)")
+        start = params.get("start")
+        if isinstance(start, int) and not isinstance(start, bool):
+            changes.append(f"it starts at {start}")
+        restart = params.get("restart")
+        if restart == AFTER_HIGHER:
+            changes.append("it restarts after any higher level")
+        elif restart == NEVER:
+            changes.append("it never restarts")
+        elif isinstance(restart, dict) and isinstance(restart.get("after_level"), int) \
+                and not isinstance(restart["after_level"], bool):
+            changes.append(f"it restarts only after level {restart['after_level'] + 1}")
+        elif restart is not None:
+            changes.append("it restarts by the rule given")
+        first = prose.sentence(f"In the list's definition, change {target}, so every paragraph at that level follows"
+                               + (": " + prose.join(changes) if changes else ""))
+        if params.get("allow_missing") is False:
+            return first + " " + prose.sentence("a file whose style is missing or not numbered is set aside")
+        return first
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

@@ -1,7 +1,7 @@
 """Built-in batch 1 in the rest of the app (docs/BUILTIN_OPS_BATCH1_DESIGN.md §0.2, §0.3): the words the new ops place
 are traced to the user (compiler.placed_words); tables and pictures are inputs like a template (rule 12) — in the
-approval token, resolved beside a spec file, stored absolute in a recipe; every new refusal code has a plain-words
-explanation; and Claude sees the tables and pictures beside the documents (INPUT FILES, read_input_file) — only those."""
+approval token, resolved beside a spec file, stored absolute in a recipe; and every new refusal code has a plain-words
+explanation. Nothing beside the attached documents is discovered or read: a table or picture is named by the spec."""
 from __future__ import annotations
 
 import json
@@ -10,11 +10,9 @@ from pathlib import Path
 
 import pytest
 
-from fake_claude import FakeClient, resp, tool
 from make_fixtures import build_batch1, png
-from spec_surgeon import compiler, inputs, library
+from spec_surgeon import compiler, library
 from spec_surgeon.compiler import _Batch, check_submission, placed_words, untraceable
-from spec_surgeon.conversation import Conversation
 from spec_surgeon.editspec import load_spec, spec_input_files, spec_templates
 from spec_surgeon.ops import end_of_section
 from spec_surgeon.preview import approval_inputs, approval_token, explain_approval_change
@@ -35,7 +33,6 @@ def folder(tmp_path) -> Path:
                                             ["OWNER_NAME", "Contoso", "Contoso"], ["PROJECT NO", "1001", "1003"]]))
     (d / "pairs.csv").write_text("find,replace\nOwner,Client\n", encoding="utf-8")
     (d / "logo.png").write_bytes(png((1, 2, 3), size=6))
-    (d / "notes.txt").write_text("not an input", encoding="utf-8")
     return d
 
 
@@ -112,17 +109,6 @@ def test_a_table_or_picture_edited_after_the_preview_voids_the_approval(folder):
     assert approval_token(plain, files) == approval_token(plain, files)
 
 
-def test_a_recipe_whose_table_is_gone_is_not_offered(folder, tmp_path):
-    spec = fill_spec(folder)
-    library.save_recipe("Site set", spec)
-    (folder / "PROJECT.xlsx").unlink()
-    fake = FakeClient(resp(tool("ask_user", {"understanding": "u", "message": "m",
-                                             "choices": [{"kind": "recipe", "name": "Site set"}]}, "a1")))
-    turn = Conversation("fill the site like last time", sorted(folder.glob("*.docx")), client=fake).start()
-    assert turn.choices == []
-    assert any("a file it reads (its template, table or picture) is no longer at" in e for e in turn.errors)
-
-
 # ---- explanations ----------------------------------------------------------------------------------------------------
 
 def test_every_refusal_code_of_the_new_ops_is_explained():
@@ -135,39 +121,3 @@ def test_every_refusal_code_of_the_new_ops_is_explained():
     assert {"table-value", "spans-structure", "nested-options", "bad-name", "image-changed"} <= codes
     assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
     assert "eos-not-last" in FAILURE_EXPLANATIONS
-
-
-# ---- what Claude sees ------------------------------------------------------------------------------------------------
-
-def test_the_input_files_beside_the_documents_are_listed_and_only_they_can_be_read(folder, tmp_path):
-    docs = sorted(folder.glob("*.docx"))
-    listed = inputs.near(docs)
-    # Path ordering is case-insensitive on Windows; check the same exact files on every platform.
-    assert sorted(p.name for p in listed) == ["PROJECT.xlsx", "logo.png", "pairs.csv"]
-    over = {Path(o["path"]).name: o for o in inputs.listing(docs)}
-    assert over["PROJECT.xlsx"]["sheets"] == [{"name": "Sites", "headers": ["Variable", "VA1", "VA3"], "rows": 3}]
-    assert over["logo.png"] == {"path": str(folder / "logo.png"), "kind": "picture", "format": "png", "pixels": [6, 6]}
-    assert over["pairs.csv"]["headers"] == ["find", "replace"]
-    got = inputs.read(str(folder / "PROJECT.xlsx"), listed)
-    assert got["rows_shown"][2] == ["OWNER_NAME", "Contoso", "Contoso"] and got["rows_total"] == 3
-    outside = tmp_path / "secret.csv"
-    outside.write_text("a,b\n", encoding="utf-8")
-    for bad in [str(outside), str(folder / "notes.txt"), "PROJECT.xlsx"]:
-        with pytest.raises(KeyError):
-            inputs.read(bad, listed)
-
-
-def test_claude_is_shown_the_input_files_and_reads_one(folder):
-    fake = FakeClient(resp(tool("read_input_file", {"path": str(folder / "PROJECT.xlsx")}, "t1")),
-                      resp(tool("read_input_file", {"path": "/etc/passwd"}, "t2")),
-                      resp(tool("submit_editspec", {"spec": fill_spec(folder)}, "s1")))
-    c = Conversation("fill the VA3 site from PROJECT.xlsx", sorted(folder.glob("*.docx")), client=fake)
-    turn = c.start()
-    assert turn.status == "ok"
-    first = fake.requests[0]["messages"][0]["content"]
-    assert "INPUT FILES beside the documents" in first and "PROJECT.xlsx" in first and "VA3" in first
-    results = [b for m in fake.requests[2]["messages"] if m["role"] == "user" and isinstance(m["content"], list)
-               for b in m["content"] if b.get("type") == "tool_result"]
-    assert "Leesburg" in results[0]["content"] and not results[0].get("is_error")
-    assert results[1]["is_error"] and "not one of the input files" in results[1]["content"]
-    assert "read_input_file" in [t["name"] for t in fake.requests[0]["tools"]]

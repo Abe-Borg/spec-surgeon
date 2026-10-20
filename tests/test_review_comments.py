@@ -340,9 +340,8 @@ def test_original_to_final_outcome_proof_uses_no_execution_plan(data, pattern):
     assert not verify_effects(data, output, goal, binding)["passed"]
 
 
-def test_review_and_compilation_carry_only_approved_literal_comment_wording(tmp_path):
+def test_compilation_carries_only_approved_literal_comment_wording(tmp_path):
     from spec_surgeon.goals import approved_goal_words, compile_goal_candidate, resolve_goal
-    from spec_surgeon.ordinary_outcomes import build_review, validate
     data = build_plain()
     path = tmp_path / "source.docx"
     path.write_bytes(data)
@@ -352,13 +351,7 @@ def test_review_and_compilation_carry_only_approved_literal_comment_wording(tmp_
     assert resolution["status"] == "resolved"
     candidate = compile_goal_candidate(path, goal, resolution["binding"])
     assert candidate["spec"]["mode"] == "untracked"
-    review = build_review("Include approved reasons", [path], goal, rationale="Model's rationale is not comment text")
-    checked, _ = validate(review, [path], approval=review["digest"])
-    assert checked["effects"][0]["params"]["text"] == REASON
-    tampered = copy.deepcopy(review)
-    tampered["contract"]["effects"][0]["params"]["text"] = review["rationale"]
-    with pytest.raises(ValueError, match="review changed"):
-        validate(tampered, [path], approval=review["digest"])
+    assert candidate["spec"]["ops"][0]["params"]["text"] == REASON
 
 
 def test_comment_effect_requires_its_own_approved_stage():

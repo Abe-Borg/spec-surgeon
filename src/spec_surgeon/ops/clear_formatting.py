@@ -83,9 +83,10 @@ from typing import Any, Callable, Dict, FrozenSet, Iterable, List, Optional, Seq
 from ..package import W, DocxPackage
 from ..ooxml import (RevisionStamp, block_full_text, file_uses_date_utc, max_revision_id, paragraph_ppr, paragraphs,
                      property_change)
-from . import register
+from . import prose, register
 from .base import VERIFY_PROPS, JobException, Op, PlanFragment
 from .replace_text import default_author
+from .set_font import formatting_extras, tracked_phrase, two_sentences
 from .selectors import (DEFAULT_PRESERVE_FONTS, StyleSheet, check_paragraph_selector, check_run_selector, in_revision,
                         is_symbol_rpr, is_targeted, mark_in_revision, paragraph_selected, rpr_selected,
                         runs_by_paragraph, scope_parts)
@@ -378,6 +379,39 @@ def clean_params(params: Dict[str, Any]) -> ClearSettings:
 USER_PARAMS = ("run", "paragraph", "keep", "also", "include_paragraph_marks", "in_revisions", "skip_sym_runs",
                "preserve_fonts", "tracked")
 
+# the cleared and opt-in property names in a person's words (``describe``); an unknown name is quoted as written
+PROPERTY_WORDS = {
+    "rFonts": "the font", "b": "bold", "bCs": "bold", "i": "italic", "iCs": "italic", "caps": "capitals",
+    "smallCaps": "small capitals", "strike": "strikethrough", "dstrike": "double strikethrough", "outline": "outline",
+    "shadow": "shadow", "emboss": "emboss", "imprint": "engrave", "color": "the colour", "spacing": "spacing",
+    "w": "character scale", "kern": "kerning", "sz": "the size", "szCs": "the size", "u": "underlining",
+    "effect": "text effects", "bdr": "text borders", "shd": "shading", "fitText": "fit-text", "em": "emphasis marks",
+    "highlight": "highlighting", "vertAlign": "superscripts and subscripts", "position": "raised or lowered text",
+    "keepNext": "keep with next", "keepLines": "keep lines together", "pageBreakBefore": "page break before",
+    "widowControl": "widow and orphan control", "suppressLineNumbers": "line-number suppression",
+    "pBdr": "paragraph borders", "tabs": "tab stops", "suppressAutoHyphens": "hyphenation suppression",
+    "ind": "indents", "contextualSpacing": "contextual spacing", "mirrorIndents": "mirrored indents",
+    "jc": "alignment", "textDirection": "text direction", "textAlignment": "vertical text alignment",
+    "textboxTightWrap": "tight wrapping", "outlineLvl": "outline levels", "framePr": "frames",
+    "suppressOverlap": "overlap suppression"}
+
+
+def selection_subject(select: Optional[Dict[str, Any]]) -> str:
+    """``every paragraph in the headers``, ``bold all-capitals paragraphs``: ``prose.where`` without its leading ``in``,
+    for sentences shaped ``Apply … to …`` / ``Clear … from …`` (prose.py has no subject-only form)."""
+    text = prose.where(select)
+    return text[3:] if text.startswith("in ") else text
+
+
+def property_words(names: Any) -> List[str]:
+    """``["bold", "italic", "the size"]`` for ``["b", "bCs", "i", "sz"]`` — each word once, in the order given."""
+    out: List[str] = []
+    for n in (names if isinstance(names, (list, tuple)) else []):
+        word = PROPERTY_WORDS.get(n, prose.quote(n)) if isinstance(n, str) else prose.quote(n)
+        if word not in out:
+            out.append(word)
+    return out
+
 
 @register
 class ClearDirectFormatting(Op):
@@ -423,6 +457,24 @@ class ClearDirectFormatting(Op):
                "counts and targets matched; each output rPr/pPr = the source's minus exactly the cleared children "
                "(absent when emptied, plain); residual identical",
         "V7": "none when anything is cleared (the text reflows)"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        run, para = params.get("run") is not False, params.get("paragraph") is not False
+        what = ("the direct character and paragraph formatting" if run and para else
+                "the direct character formatting" if run else
+                "the direct paragraph formatting" if para else "the direct formatting")
+        head = f"Clear {what} from {selection_subject(select)} so the text follows its styles again"
+        tails: List[str] = []
+        kept = property_words(params.get("keep"))
+        if kept:
+            tails.append(f"leaving {prose.join(kept)} untouched")
+        also = property_words(params.get("also"))
+        if also:
+            tails.append(f"clearing {prose.join(also)} too")
+        tracked = tracked_phrase(select, params)
+        first = prose.sentence(head + (", " + prose.join(tails) if tails else "") + (f", {tracked}" if tracked else ""))
+        return two_sentences(first, formatting_extras(params))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         raw_select = dict(select or {})

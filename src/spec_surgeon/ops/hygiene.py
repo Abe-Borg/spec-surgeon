@@ -9,7 +9,7 @@ import re
 from pathlib import Path
 
 from ..ooxml import RevisionStamp, block_full_text, file_uses_date_utc, max_revision_id, paragraphs
-from . import register
+from . import prose, register
 from .base import JobException, Op
 from .replace_table import COMMON_PARAMS, DEFAULT_SCOPE, SELECT_SCHEMA, default_author, resolve_scope, tracked_of
 from .selectors import StyleSheet, check_paragraph_selector, paragraph_selected, scope_parts
@@ -98,6 +98,18 @@ def character_edits(text, operation, options):
         spaces = {i for a, b in spans for i in range(a, b) if text[i] == " "}
         changes += [Edit(i, i+1, "\u00a0") for i in sorted(spaces)]
     return sorted([e for e in changes if text[e.start:e.end] != e.text], key=lambda e: e.start)
+
+
+def tracked_words(params):
+    """``shown as tracked changes by “Jane”`` or ``without tracked changes``, for the plan the user reads."""
+    if params.get("tracked", True) is False:
+        return "without tracked changes"
+    tail = "shown as tracked changes"
+    if params.get("author"):
+        tail += f" by {prose.quote(params['author'])}"
+    if params.get("date_convention") == "utc":
+        tail += " dated in UTC"
+    return tail
 
 
 class _Hygiene(Op):
@@ -195,6 +207,19 @@ class _Hygiene(Op):
     def validate(self, params):
         pass
 
+    def _describe(self, head, select, params, note=""):
+        """``head`` + where (the paragraphs and the scope, default body, headers and footers) + the tracked words;
+        a second sentence carries the op's own remark and a non-default ``allow_missing``."""
+        select, params = dict(select or {}), dict(params or {})
+        select["scope"] = select.get("scope") or params.get("scope") or DEFAULT_SCOPE
+        first = prose.sentence(f"{head} {prose.where(select)}, {tracked_words(params)}")
+        remarks = [note] if note else []
+        if params.get("allow_missing", True) is False:
+            remarks.append("a file with nothing to change is set aside rather than passed through")
+        if not remarks:
+            return first
+        return first + " " + prose.sentence("; ".join(remarks))
+
 
 BASE_PARAMS = {**COMMON_PARAMS, "allow_missing": {"type": "boolean", "default": True}}
 
@@ -204,6 +229,11 @@ class NormalizeWhitespace(_Hygiene):
     name = "normalize_whitespace"
     description = "Collapse repeated ordinary spaces and remove trailing ordinary spaces; no words, tabs or non-breaking spaces change."
     params_schema = {"type": "object", "properties": BASE_PARAMS}
+
+    def describe(self, select, params):
+        return self._describe("Collapse each run of two or more ordinary spaces into one and remove ordinary spaces "
+                              "at the end of a line", select, params,
+                              note="Words, tabs and non-breaking spaces are left as they are")
 
 
 @register
@@ -222,6 +252,29 @@ class NormalizePunctuation(_Hygiene):
             if key in params and params[key] not in allowed:
                 raise JobException(f"invalid {key}", "bad-params")
 
+    DASH_WORDS = {"en": "an en dash (–)", "em": "an em dash (—)"}
+    SEPARATOR_WORDS = {"space": "a space", "hyphen": "a hyphen", "en": "an en dash", "em": "an em dash"}
+
+    def describe(self, select, params):
+        params = params or {}
+        changes = []
+        if params.get("quotes") in ("straight", "curly"):
+            changes.append(f"use {params['quotes']} quotation marks throughout")
+        if params.get("dash") in self.DASH_WORDS:
+            changes.append(f"turn each {prose.quote('--')} into {self.DASH_WORDS[params['dash']]}")
+        if params.get("section_separator") in SEPARATORS:
+            sep = SEPARATORS[params["section_separator"]]
+            changes.append("separate the parts of every section number with "
+                           f"{self.SEPARATOR_WORDS[params['section_separator']]} (09{sep}91{sep}23)")
+        if changes:
+            head = prose.join(changes)
+            head = head[0].upper() + head[1:]
+        else:
+            head = "Standardize the punctuation (quotation marks, dashes or section-number separators)"
+        note = ("Quotation marks right after a digit are left alone as possible inch or foot marks"
+                if params.get("quotes") == "curly" else "")
+        return self._describe(head, select, params, note=note)
+
 
 @register
 class ProtectNonbreakingSpaces(_Hygiene):
@@ -237,6 +290,23 @@ class ProtectNonbreakingSpaces(_Hygiene):
             raise JobException("units must be a list of unit symbols", "bad-params")
         if type(params.get("section_numbers", True)) is not bool:
             raise JobException("section_numbers must be true or false", "bad-params")
+
+    def describe(self, select, params):
+        params = params or {}
+        units = params.get("units", ["psi"])
+        units = [u for u in units if isinstance(u, str) and u] if isinstance(units, list) else []
+        targets = []
+        if units:
+            targets.append(f"a number and the {'unit' if len(units) == 1 else 'units'} "
+                           + prose.join((prose.quote(u) for u in units), "or"))
+        if params.get("section_numbers", True) is not False:
+            targets.append("the parts of a spaced section number such as 09 91 23")
+        if targets:
+            head = ("Replace the ordinary spaces between " + prose.join(targets)
+                    + " with non-breaking spaces, so they stay together on one line,")
+        else:
+            head = "Protect no spaces, since no unit is named and section numbers are excluded, so nothing changes"
+        return self._describe(head, select, params)
 
 
 @register
@@ -273,3 +343,23 @@ class CapitalizeDefinedTerms(_Hygiene):
             ids.append(r["id"])
         if len(ids) != len(set(ids)):
             raise JobException("duplicate capitalization approval", "bad-params")
+
+    def describe(self, select, params):
+        params = params or {}
+        raw = params.get("approvals") if isinstance(params.get("approvals"), list) else []
+        records = [r for r in raw if isinstance(r, dict) and isinstance(r.get("before"), str) and r["before"]
+                   and isinstance(r.get("after"), str) and r["after"]]
+        counts = {}
+        for r in records:
+            key = (r["before"], r["after"])
+            counts[key] = counts.get(key, 0) + 1
+        items = [f"{prose.quote(b)} to {prose.quote(a)} in {prose.count(n, 'place')}" for (b, a), n in counts.items()]
+        if len(items) > 5:
+            items = items[:4] + [f"{len(items) - 4} more"]
+        files = {r["file"] for r in records if isinstance(r.get("file"), str) and r["file"]}
+        head = "Capitalize the individually approved occurrences of defined terms"
+        if items:
+            head += ", changing " + prose.join(items) + (
+                f" across {prose.count(len(files), 'file')}" if len(files) > 1 else "") + ","
+        return self._describe(head, select, params,
+                              note="Only the reviewed occurrences change; nothing is capitalized by guess")

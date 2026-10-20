@@ -90,9 +90,10 @@ Tables (`.json`, `.csv`, `.xlsx`) and images are inputs exactly like a template 
 apply refuses a changed file (`table-changed`, `image-changed`), V10 re-reads and compares, the approval token hashes
 them (`editspec.spec_input_files` — every op's `template` plus `INPUT_FILE_PARAMS`; `spec_templates` stays templates only,
 for the batch filter and `set_aside.json`), relative paths resolve against a spec file's folder, recipes store them
-absolute. In a conversation Claude sees them as **INPUT FILES beside the documents** (`inputs.py`: the tables and
-pictures in the folders of the batch files and the template — path, a table's sheets and headers, a picture's format
-and size) and reads one with `read_input_file` — only a listed file, by its exact path.
+absolute. In a conversation Claude sees as **INPUT FILES** only the tables and pictures named explicitly for the batch
+(`inputs.py`: path, a table's sheets and headers, a picture's format and size) and reads one with `read_input_file` —
+only a listed file, by its exact path. (Changed 2026-10-19: files beside the documents are no longer discovered or
+listed; a spec still names a file by its path.)
 Each side has its own reader (rule 1): `ops/tables.py` / `verify/tables.py`, `ops/images.py` / `verify/images.py`.
 
 **Table readers** (both sides, no new dependency): JSON — an object `{name: text}` (or the object at a dotted `key`),
@@ -223,12 +224,12 @@ Rule 10 holds: the added member is the op's whole purpose, predicted in `members
 
 A **snippet** is a third library kind (`snippets/<slug>.json` + `.meta.json`): `text`, `style` (optional), `formatting`
 (`inherit`/`none`), saved typed (`library add-snippet NAME --text …`) or taken from a document's paragraph
-(`--from FILE --paragraph REGEX`), or in the window (Your library… → New snippet…). It is inserted by `insert_paragraph`
-(text verbatim; `allow_missing: true` = "every file that has the anchor"): from the command line without a key
-(`library use SNIPPET FILES… --after REGEX`), from the window (pick it in Your library…, give the anchor), or in the
-conversation: Claude may name it (`{"kind": "snippet", "name": …}`), the app builds the choice from the library (its
-words shown), and — unlike a recipe — picking it is a reply: the pick approves the words (each its own source, the item
-hash checked first) and Claude writes the spec. A name still belongs to one item across all kinds. As built, the spec
+(`--from FILE --paragraph REGEX`). It is inserted by `insert_paragraph` (text verbatim; `allow_missing: true` = "every
+file that has the anchor") from the command line without a key (`library use SNIPPET FILES… --after REGEX`). As built on
+2026-10-16 the window had a snippet editor and Claude could name a snippet in the conversation (the pick approved its
+words); since 2026-10-19 the desktop has no library view and the conversation offers no library items: a `recipe`,
+`operation` or `snippet` choice from the model is dropped and the model is told to choose the implementation
+internally. A name still belongs to one item across all kinds. As built, the spec
 `library.snippet_spec` makes carries `allow_missing: true` and `expect: {"text_diffs": {"max": 1}}`: a file where the
 anchor matches twice is set aside, never given two copies. A snippet is one plain paragraph: no tab, line break, field
 or character the user cannot see (`snippet_text_problem`; insert_paragraph places it in one run).
@@ -247,7 +248,8 @@ or character the user cannot see (`snippet_text_problem`; insert_paragraph place
 8. Agreement: equal letters/digits = agree (left alone); the truth's text placed verbatim elsewhere.
 9. File names: transforms allowed (a name is not document text), collisions refused, copies only.
 10. Logos: proportions kept inside the old box, top-left; the old picture's alt text is left as it was (flagged).
-11. Snippets: a library kind inserted by `insert_paragraph`; Claude can offer one, the pick approves its words.
+11. Snippets: a library kind inserted by `insert_paragraph`, from the command line (the conversation offer was
+    removed 2026-10-19).
 
 Not in this batch, recorded: tags that are styles or highlight colours; tags that cover a whole article; editing inside
 text boxes; replacing across tabs/breaks; `w:tab` inside a replacement; snippets with rich run formatting; renaming in
@@ -262,4 +264,5 @@ chains (`chain.py`). Merged without changing either: the ops that extract a valu
 paragraph a place matched and, with a file-name place, the output's name — so rewriting the line a name or a number comes
 from in the same spec is a plan-time conflict (run it first, as its own spec or an earlier chain stage). A chain keeps a
 renaming stage's name in its `outputs/` and refuses `in_place` with a renaming stage before anything is written; its
-approval token covers every stage's tables and pictures; snippets can be offered in a conversation, chains cannot.
+approval token covers every stage's tables and pictures; neither snippets nor chains are offered in a conversation
+(snippets were, until 2026-10-19).

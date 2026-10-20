@@ -1,21 +1,23 @@
 # Continue a request and reuse what worked
 
-Ordinary desktop chat and interactive `do` now continue into outcome planning when
-the compiler cannot offer a supported method. A failed ordinary preview or desktop
-custom-transform attempt also feeds its evidence into that investigation. The
+The conversation window and interactive `do` continue into outcome planning when
+the compiler cannot offer a supported method. A failed ordinary preview or a failed
+custom-method trial also feeds its evidence into that investigation. The
 conversation keeps the original request, actual answers, template and source pins;
 the user does not have to create a project workspace.
 
-The app shows the complete proposed outcomes, target scope, counts and exact new
-wording. Choosing that plan approves that snapshot. Changed input bytes or altered
-plans require a fresh review. Recovery first tries deterministic implementations,
-then investigates unresolved files with inspection, analysis and generated methods.
-Single-target ambiguities become source-bound choices in the same chat.
-Free-text answers to investigation and critic questions resume the existing recovery
-in both the terminal and desktop, retaining its evidence and ready files. Target
-ambiguity still requires a bound choice or a freshly reviewed plan. A revision
-after completion creates a new reviewed outcome and a separate recovery folder.
-Verified copies use the existing review/export path; originals remain unchanged.
+At the terminal, `do` prints the complete proposed outcomes, target scope, counts and
+exact new wording; choosing that plan approves that snapshot. In the conversation window
+the plan is carried out internally and its result is shown as the ordinary plan view, with
+the targets, any exact wording placed and before/after pages; **Create edited copies**
+approves it. Changed input bytes or altered plans require a fresh plan. Recovery first
+tries deterministic implementations, then investigates unresolved files with inspection,
+analysis and generated methods. Single-target ambiguities become source-bound choices in
+the same chat. Free-text answers to investigation and critic questions resume the existing
+recovery in both the terminal and the conversation window, retaining its evidence and
+ready files. Target ambiguity still requires a bound choice or a freshly reviewed plan. A
+revision after completion creates a new reviewed outcome and a separate recovery folder.
+Verified copies are exported with that same approval; originals remain unchanged.
 
 Noninteractive `do` can also plan after an unsupported compilation. Without `--yes`
 it saves the proposal in `conversation.json`. With `--yes`, it can continue only if
@@ -29,9 +31,9 @@ Successful governed generated methods can now be stored in the bounded local rep
 database. The source has a protocol version, engine version, SHA256, a 64 KiB limit,
 goal shape, parameters, assumptions and the existing verification/feedback record.
 Compressed source is data in the database, not an installed operation. It can contain
-literal project text; the memory store is not anonymized. Existing memory controls
-can inspect cases, give feedback and forget them; disabling memory prevents lookup
-and recording.
+literal project text; the memory store is not anonymized. The `memory` command
+can inspect cases, give feedback and forget them; `--no-memory` on a command-line run
+prevents lookup and recording.
 
 A related goal can retrieve a method even when its title, paragraph position,
 formatting values or attached template changes. Each trial receives fresh job-local

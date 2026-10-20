@@ -2,7 +2,7 @@
 
 These were decided fresh on past projects and will differ; never carry them over silently. The list below is the specification-document instance (construction specs with cover pages, issue stamps, part/article numbering). For other document families, build the equivalent list at intake: the facts the job depends on that no file in front of you can settle.
 
-Once a setup answer is given, record it (project memory or a short project notes file — template at the end) so mid-project sessions apply it instead of re-asking.
+Once a setup answer is given, write it in a short project notes file (template at the end) so later sessions on the same project apply it instead of re-asking.
 
 ## Questions for specification documents
 
@@ -25,7 +25,7 @@ Once a setup answer is given, record it (project memory or a short project notes
 
 ## Project notes template
 
-Keep this short and in the project's memory (CLAUDE.md or a `PROJECT_NOTES.md` beside the specs, whichever the project uses):
+Keep this short, in a `PROJECT_NOTES.md` beside the specs (or in the project's own CLAUDE.md when the project keeps one):
 
 ```
 # <Project> — docx editing notes

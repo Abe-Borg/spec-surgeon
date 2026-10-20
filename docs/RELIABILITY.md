@@ -6,48 +6,51 @@ does the final document satisfy the intended effects on the approved original ta
 
 ## Desktop review
 
-Open **File → Built-in operations…** to search all 50 operations and inspect their inputs, selection rules,
-behavior, limits and checks. Related operations link to the four existing guided workflows. Browsing is offline
-and does not change the current recipe. Guided workflows and saved EditSpecs remain usable without an API key.
+The conversation window has one approval. Attach the Word documents and, optionally, one template, then type the
+request. Each attachment is triaged the moment it is added, without a model call: a file the engine cannot work
+with (not a `.docx`, a macro-enabled file, a Word lock file, a package that does not open, an empty body) is refused
+in one sentence and never enters a plan; a note says what to expect (typed numbers, no styles, text-box headers,
+compatibility mode, protection, pending tracked changes, comments).
 
-For natural-language edits, Preview prepares two kinds of evidence: the editing recipe and a separately proposed
-outcome contract based on the request and original document inventories. The outcome card shows the full contract,
-literal wording, counts and per-document targets. Ambiguous matches require deliberate choices; none is preselected.
-Approve the current outcome review, inspect the sample preview and any visual findings, then Run. A changed request,
-recipe, source, template or scope invalidates the relevant approval.
+The compiler turns the request into one EditSpec per structural layout of the batch. The plan shows one sentence per
+change, written by the operation itself, with assumptions inline; a mixed batch shows one card per layout. The
+preview applies and verifies the specification on one sample per layout and shows before/after pages. Files left
+untouched are listed with their reason. Clarifications are buttons; typing also works.
 
-A requested one-off custom method prepares its outcome review before code generation. Approving that review
-allows generation and trial on copies; the resulting preview still needs inspection before Run.
+**Create edited copies** approves exactly the displayed preview. Its approval token covers the specification, the
+documents, the template and every other named input; if any of them changes, the action is invalid and the plan is
+prepared again. Every delivered file must pass the independent verifier (V1–V10); a file that fails is set aside,
+never delivered, and its recovery runs inside the same conversation and ends in the same action. A blocking visual
+finding appears under **Please check**; the same action records that you looked at it.
 
-If independent outcome coverage is unavailable, the natural-language flow pauses. Clarify the request or deliberately
-load an explicit saved recipe and review its narrower verification scope. The supported outcome vocabulary is in
-[Adaptive workspaces](ADAPTIVE_WORKSPACES.md) and [Built-in workflows](BUILTIN_WORKFLOWS.md). It does not cover every
-possible request or every operation combination. A contract proposal is model output until the user approves it.
-
-Workspace **Only selected documents** scope persists for direct title, EditSpec and chain goals. Valid saved recipes
-are tried deterministically before a model is needed; a keyless workspace pauses clearly if investigation is required.
-The application refuses to close while background work is active.
+There is no second, model-derived outcome contract for ordinary edits and no outcome review gate. Custom methods are
+prepared and tested on sample copies internally before their preview. Office profiles (`spec-surgeon profiles`) keep
+their two command-line approvals; governed recovery keeps its approved contract and exact source bindings. The window
+refuses to close while work is active. The keyless path is the command line: saved EditSpecs, recipes, chains and
+built-in workflows run without an API key.
 
 ## Command line approval
 
-An interactive `do` prints the separate outcome review and asks for approval. A noninteractive run saves
-`outcome-review.json` and stops until that exact review is approved. `--yes` only accepts execution prompts;
-it cannot approve outcome evidence that has not been inspected.
+`do` compiles the request, writes the preview under `OUT/preview/`, prints the plan and asks "Run this on N
+file(s)?" (for a mixed batch, "... in N layout(s)?"). `--yes` approves without the question, after the preview is
+written. When Claude's visual check reports a blocking finding, the question says that you have looked at the
+findings; `--ack-review` is accepted for compatibility and changes nothing. Before running, the approval token is
+checked again: a file or template changed since the preview refuses the run. When you decline, the printed command
+runs exactly the previewed specification later with `run-spec --approval TOKEN`. There are no outcome-review flags.
 
 ```text
-spec-surgeon do "Project specs" "Make the section titles bold" --out review-run --no-render
-# Inspect review-run/outcome-review.json and its printed digest and targets.
-spec-surgeon do "Project specs" "Make the section titles bold" --out approved-run --no-render --yes --outcome-review review-run/outcome-review.json --outcome-approval DIGEST
+spec-surgeon do "Make the section titles bold" "Project specs" --out review-run --no-render
+# Inspect review-run/preview/: the plan, the sample records and the rendered pages.
+spec-surgeon do "Make the section titles bold" "Project specs" --out approved-run --no-render --yes
 ```
 
-Use the digest actually emitted for your review. The review must match the current request and source files.
-The printed continuation command can also run the saved implementation with `run-spec` while retaining the
-`--outcome-review` and `--outcome-approval` flags. A manual `run-spec` without them remains recipe-only.
-
-`retry` and **Load set-aside files** retain a contract-bearing run's approved contract and exact source bindings.
-They resume recovery on copies; a revised method cannot drop an approved effect or pick a different ambiguous
-target. Missing or inconsistent saved authority is refused. A clarification does not authorize expanded effects.
-Older in-place chains that already wrote partial stages require original copies before replay.
+`retry` on a run whose set-aside manifest carries an approved outcome contract resumes that reviewed run on copies
+under the same authority: it cannot drop an approved effect or pick a different ambiguous target, a clarification does
+not expand effects, missing or inconsistent saved authority is refused, and `--in-place` is refused. A run without a
+contract is retried as an ordinary pass. `resolve` investigates set-aside files and asks before exporting (`--yes`
+without a terminal); `workspace export --yes` exports ready workspace candidates; `profiles run` needs both the
+review digest and the preview digest. Older in-place chains that already wrote partial stages require original copies
+before replay.
 
 ## Source and delivery checks
 
@@ -114,7 +117,7 @@ retain their reservations instead of being reported as cheaply completed work.
 
 ## Packaging and evidence limits
 
-All 49 worked EditSpecs ship as package resources. The source checkout, wheel and frozen application use the same
+All 50 worked EditSpecs ship as package resources. The source checkout, wheel and frozen application use the same
 examples and compiler prompt; a missing bundle fails visibly. Installer publication checks the exact source SHA
 against the release tag and never replaces an existing version's installer with a different master build.
 Checksum publication verifies the actual release assets and retains the prior manifest as a backup while promoting a staged replacement, so interrupted updates can be retried without replacing the installer.

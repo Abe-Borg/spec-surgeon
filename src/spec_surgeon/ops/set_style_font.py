@@ -14,12 +14,13 @@ from typing import Any, Dict, List, Optional
 
 from ..package import W, DocxPackage
 from ..ooxml import RPR_ORDER, STYLE_ORDER, get_or_add, own_size, set_rfonts, set_size
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .font_numbering import NUMBERING_PARAM, apply_numbering, numbering_enabled, plan_numbering
 from .selectors import (DEFAULT_PRESERVE_FONTS, FONT_PARAM_DOC, StyleSheet, font_values, is_symbol_style,
                         size_applies, size_values)
-from .set_font import FONT_REFLOW
+from .set_font import (FONT_REFLOW, font_phrase, label_fonts_included, preserved_fonts_extra, size_phrase,
+                       two_sentences)
 
 STYLE_TYPES = ("paragraph", "character", "table", "numbering")
 
@@ -82,6 +83,29 @@ class SetStyleFont(Op):
                             "V10": "style_fonts: selected style ids re-derived and matched; only rFonts / w:sz "
                                    "changed, each where the style gets it; numbering_fonts proves label changes whole",
                             "V7": "none — a font change reflows the text"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        font, size = font_phrase(params), size_phrase(params)
+        what = [p for p in (font, size) if p]
+        # a size limited by size_from already says "where it is now 9 pt": a style without its own size never changes
+        props = [w for w, on in (("font", bool(font)), ("size", bool(size) and not params.get("size_from"))) if on]
+        if not what:
+            props = ["font", "size"]
+        if params.get("only_where_defined") is not False:
+            clause = ("only where a style already sets its own " + prose.join(props, "or")) if props else ""
+        else:
+            clause = ("even where a style now inherits its " + prose.join(props, "or")) if props else ""
+        labels = label_fonts_included(select, params, style=True) if font else None
+        tail = [t for t in (clause, "list labels included" if labels else "") if t]
+        first = prose.sentence("set", prose.join(what) if what else "the font and size",
+                               prose.where(select, default="every style") + "".join(f", {t}" for t in tail))
+        extras: List[str] = []
+        if labels is False:
+            extras.append("list labels are left alone")
+        if font and params.get("clear_theme_fonts") is False:
+            extras.append("theme font settings are kept")
+        return two_sentences(first, extras + preserved_fonts_extra(params))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

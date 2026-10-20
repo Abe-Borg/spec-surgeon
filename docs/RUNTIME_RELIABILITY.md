@@ -47,18 +47,19 @@ preservation, and it is not proof of human-accepted appearance in Word.
 
 ## Local run storage and short evidence paths
 
-The default run root is `%LOCALAPPDATA%\Spec Surgeon\runs` on Windows. Explicitly
-selected roots remain supported; the window warns about common synced folders
-and roots deep enough to put generated paths near the Windows path limit.
+The default run root is `%LOCALAPPDATA%\Spec Surgeon\runs` on Windows. The
+conversation window always uses it. Explicitly selected roots (`--out`) remain
+supported on the command line, which warns about common synced folders and roots
+deep enough to put generated paths near the Windows path limit.
 
 New conversation directories and content-addressed evidence files use 16-character
 disk identifiers. The complete SHA-256 remains in their JSON metadata, references
 and identity checks. Short-name collisions fail without replacing evidence. Reads
-also accept older files named with all 64 digest characters; resumed legacy
-conversation folders are copied to their shorter location before new checkpoints.
+also accept older files named with all 64 digest characters; conversation folders
+from older versions are copied to their shorter location before new checkpoints.
 Both frozen executables declare `longPathAware` in their application manifest.
 User-selected roots and source filenames can still exceed platform limits; the
-startup notice recommends a shorter local root before a run starts.
+command line prints its output warning before a run starts.
 
 Active conversation checkpoints and sealed epochs reference a shared prompt/tool
 catalog by its complete digest. Signed provider messages remain unchanged. Catalog

@@ -1,8 +1,10 @@
-"""Tier B — a generated transform for a request no op can express (docs/NL_SURGICAL_EDITOR_PLAN.md §8; Phase 5).
+"""Tier B — a generated transform for a request no op can express (docs/history/NL_SURGICAL_EDITOR_PLAN.md §8; Phase 5).
 
 Offered when it is needed (decided 2026-10-15): when the conversation ends with ``unsupported`` and Claude judged the
-request within the catalog's ``custom_transform_limits``, the user picks "Have Claude write a one-off custom transform"
-(in the window or at the terminal; ``do --allow-codegen`` accepts the offer without a terminal). ``generate_op`` gives
+request within the catalog's ``custom_transform_limits``, the conversation offers a one-off custom transform. The
+window takes that offer itself (``document_task.DocumentTask`` acting on ``Session.outcome``): the user sees the
+result as a plan, a preview and the one action, never the offer. At the terminal the user picks the choice, or
+``do --allow-codegen`` accepts it without a terminal. ``generate_op`` gives
 Claude the whole conversation as its brief, read-only tools to look at the sample files' XML (``show_xml``,
 ``find_paragraphs``, ``list_styles``, ``show_part_text``), and asks for ONE op module against a restricted API (the
 ``Op`` interface, ``DocxPackage``, ``ooxml`` helpers, selectors, lxml); it tests it:
@@ -100,18 +102,22 @@ def allowed_imports(goal_contract=None):
         for name, values in GOAL_FROM.items():
             allowed.setdefault(name, set()).update(values)
     return allowed
-# What legacy formatting methods may not import: tracked-formatting helpers and the engine's registration hook.
+# What plain (ungoverned) formatting methods may not import: tracked-formatting helpers and the engine's registration hook.
 # Governed methods have the additional GOAL_FROM helpers. tests/test_codegen.py pins that every name
 # the examples import is either allowed above or listed here.
 EXCLUDED_FROM_EXAMPLES: Dict[str, set] = {
     "spec_surgeon.ooxml": {"RevisionStamp", "property_change", "max_revision_id", "file_uses_date_utc"},
     "spec_surgeon.ops.replace_text": {"default_author"},
-    "spec_surgeon.ops": {"register"},
+    # ``register`` enters the op library; ``prose`` and set_font's phrase helpers write the sentence a built-in op
+    # shows in the plan (``describe``). A generated one-off transform is neither registered nor described — the window
+    # shows its brief instead.
+    "spec_surgeon.ops": {"register", "prose"},
+    "spec_surgeon.ops.set_font": {"style_definitions", "tracked_phrase"},
     # set_page_setup's built-in batch 5 notes and reads (what a first page shows through inheritance, what a content
     # selection of sections reads): a generated op neither selects sections by content nor flags their headers
     "spec_surgeon.ops.hf_common": {"effective_refs", "refs"},
     "spec_surgeon.ops.selectors": {"section_reads"},
-    # Numbering fonts require a whole-member built-in proof; legacy generated formatting covers runs only.
+    # Numbering fonts require a whole-member built-in proof; plain generated formatting covers runs only.
     "spec_surgeon.ops.font_numbering": {"NUMBERING_PARAM", "apply_numbering", "numbering_enabled", "plan_numbering"},
 }
 EXAMPLE_OPS = ("set_page_setup.py", "set_paragraph_props.py", "set_font.py")
@@ -363,7 +369,7 @@ def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contrac
 
 def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = None, *, goal_contract=None) -> List[str]:
     """Check a generated plan before the suite runs; governed methods also face the independent final-goal check.
-    Legacy ``allowed_parts``: the source's
+    Plain formatting (``allowed_parts``): the source's
     text parts and its styles part — the parts V10's residual identity covers; any other part (numbering.xml, docProps,
     a chart…) could carry a change no verified assertion checks, so it is refused outright."""
     probs = []
@@ -559,7 +565,8 @@ Rules:
 imports, no file or network access, no open/exec/eval/getattr, no dunder names or attributes except __init__. A plainly imported module (and etree) is used ONLY as `module.name` with these names: {module_attrs} — never passed, assigned or returned as an object. No attributes starting with f_, gi_, cr_, ag_, tb_, co_ (frames, generators).
 - Define exactly one class deriving from Op with: name, mode = "formatting", description, params_schema, \
 select_schema, plan(self, pkg, select, params) -> PlanFragment, apply(self, pkg, frag) -> None. No decorators \
-from the engine (no @register).
+from the engine (no @register) and no describe() — the examples import `prose` and phrase helpers for the sentence \
+a built-in op shows in the plan; a one-off transform shows the user's brief instead, so leave those imports out.
 - plan() must PREDICT everything from the source package analytically, before apply() runs: intended_parts \
 (every part whose bytes change), property_assertions (one per changed property family; V10 compares everything \
 else in changed parts and styles.xml for identity, so an unasserted change FAILS), touches, notes, \
@@ -643,7 +650,7 @@ def system_prompt(goal_contract=None) -> str:
             "pkg.add_member / pkg.remove_member / pkg.edit_rels for approved package graph changes. "
             "All member, relationship, content-type and text changes must be predicted in plan first.\n"
         ) + prompt[end:]
-        # The legacy formatting allowlist is not the capability boundary of an
+        # The plain-formatting allowlist is not the capability boundary of an
         # approved, independently verified outcome. Leaving it here told writers
         # to refuse header/footer graphs even on the governed path.
         start = prompt.index("- Only these property families")
@@ -680,8 +687,7 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
                 max_calls: int = MAX_CALLS, max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS,
                 effort: str = DEFAULT_EFFORT, stall_repetitions: int = DEFAULT_STALL_REPETITIONS,
                 max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
-                goal_contract=None, goal_bindings=None, approved_words: Sequence[str] = (),
-                include_nearby_inputs: bool = True) -> GeneratedOp:
+                goal_contract=None, goal_bindings=None, approved_words: Sequence[str] = ()) -> GeneratedOp:
     """Look → generate → sandbox + verify on the samples → feed failures back: at most ``max_iter`` submissions and
     ``max_calls`` calls. Every tool call is answered in the next message. Existing
     outer budget scopes still apply to every call; local settings cannot bypass them."""
@@ -689,14 +695,14 @@ def generate_op(request: str, proposal: str, samples: Sequence[Path], out_dir: P
             diag.span("codegen.generate", sample_count=len(samples), max_attempts=max_iter) as record:
         result = _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                               max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
-                              analysis_limits, goal_contract, goal_bindings, approved_words, include_nearby_inputs)
+                              analysis_limits, goal_contract, goal_bindings, approved_words)
         record.update(passed=result.passed, attempts=len(result.attempts), errors=len(result.errors))
         return result
 
 
 def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, log, brief,
                  max_calls, max_output_tokens, effort, stall_repetitions, max_context_tokens,
-                 analysis_limits, goal_contract, goal_bindings, approved_words, include_nearby_inputs=True):
+                 analysis_limits, goal_contract, goal_bindings, approved_words):
     from . import compiler, llm
     from .profile import profile
     from .package import DocxPackage
@@ -729,8 +735,7 @@ def _generate_op(request, proposal, samples, out_dir, client, model, max_iter, l
     profiles = [profile(DocxPackage.from_path(f)) for f in samples]
     from .goals import goal_templates
     templates = goal_templates(goal_contract) if goal_contract is not None else []
-    batch = compiler._Batch(list(samples), templates[0] if templates else None,
-                            input_files=[] if goal_contract is not None or not include_nearby_inputs else None)
+    batch = compiler._Batch(list(samples), templates[0] if templates else None)
     for path in templates:
         batch.files[str(path)] = path
         if not any(pin["path"] == str(path) for pin in batch.source_pins):

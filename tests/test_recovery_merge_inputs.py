@@ -1,4 +1,7 @@
-"""Recovery keeps batch-1 input files inspectable, bounded, and pinned through delivery."""
+"""Recovery keeps batch-1 input files inspectable, bounded, and pinned through delivery.
+
+An input table is listed only when the request names it (``input_files``) or the goal does; nothing is
+discovered beside the documents."""
 from __future__ import annotations
 
 import json
@@ -43,7 +46,7 @@ def test_raw_recovery_reads_listed_table_and_pins_its_bytes_for_delivery(batch, 
     goal = _goal(table)
     client = FakeClient(resp(tool("read_input_file", {"path": str(table)})), _submit(goal))
     result = recovery.recover([source], goal["request"], tmp_path / "recovery",
-                              options=_options(), client=client)
+                              options=_options(), client=client, input_files=[table])
     assert result.ready, result.to_text()
     message = json.loads(client.requests[0]["messages"][0]["content"])
     assert message["input_files"][0]["path"] == str(table)
@@ -99,14 +102,14 @@ def test_changed_input_contents_prevent_automatic_memory_reuse(batch, tmp_path, 
     monkeypatch.setattr("spec_surgeon.repair_memory.CaseStore", lambda: store)
     goal = {"request": "Set the left margin to one inch", "mode": "formatting", "summary": "Margin",
             "ops": [{"op": "set_page_setup", "params": {"margins": {"left": 1440}}}]}
-    first = recovery.recover([source], goal["request"], tmp_path / "first", spec=goal,
+    first = recovery.recover([source], goal["request"], tmp_path / "first", spec=goal, input_files=[table],
                              options=_options(use_memory=True), client=FakeClient(_submit(goal)))
-    warm = recovery.recover([source], goal["request"], tmp_path / "warm", spec=goal,
+    warm = recovery.recover([source], goal["request"], tmp_path / "warm", spec=goal, input_files=[table],
                             options=_options(use_memory=True), client=FakeClient())
     assert first.ready and warm.ready
     assert warm.budget["calls"] == 0
     table.write_text(json.dumps({**VALUES, "SITE_NAME": "Dallas TX1"}), encoding="utf-8")
-    changed = recovery.recover([source], goal["request"], tmp_path / "changed", spec=goal,
+    changed = recovery.recover([source], goal["request"], tmp_path / "changed", spec=goal, input_files=[table],
                                options=_options(use_memory=True), client=FakeClient(_submit(goal)))
     assert changed.ready
     assert changed.budget["calls"] == 1

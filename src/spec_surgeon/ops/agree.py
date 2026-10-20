@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from ..ooxml import RevisionStamp, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .naming import OUTPUT_NAME_TOUCH, check_name, with_suffix
 from .replace_table import default_author, tracked_of
@@ -231,3 +231,54 @@ class MakeValuesAgree(Op):
             apply_part_edits(root, by_block, td["tracked"], stamp, next_id)
             pkg.write_xml(part, root)
 
+
+    PLACE_WORDS = {"document": "in the document body", "headers": "in the headers", "footers": "in the footers",
+                   "filename": "in the file name"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        places = params.get("places") if isinstance(params.get("places"), dict) else {}
+        truth = params.get("truth") if params.get("truth") in places else None
+        values = [str(v) for v in params["values"]] if isinstance(params.get("values"), list) else []
+        if not values and truth is not None and isinstance(places[truth], dict):
+            try:
+                values = sorted(re.compile(places[truth].get("pattern") or "").groupindex)
+            except (re.error, TypeError):
+                values = []
+        has_name = any(isinstance(p, dict) and p.get("in") == "filename" for p in places.values())
+        if bool(params.get("tracked", True)):
+            tail = "shown as a tracked change" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+        else:
+            tail = "without tracked changes"
+
+        def place_words(name: str, with_pattern: bool) -> str:
+            place = places.get(name) if isinstance(places.get(name), dict) else {}
+            words = prose.quote(name)
+            if place.get("in") in self.PLACE_WORDS:
+                words += " " + self.PLACE_WORDS[place["in"]]
+            notes = []
+            if with_pattern and place.get("pattern"):
+                notes.append(f"matching {prose.quote(place['pattern'])}")
+            if place.get("required"):
+                notes.append("must be present")
+            return words + (f" ({'; '.join(notes)})" if notes else "")
+
+        def build(with_pattern: bool) -> str:
+            others = [n for n in places if n != truth]
+            if places:
+                head = ("Make " + prose.join(place_words(n, with_pattern) for n in others)) if others else "Make every place"
+                head += " agree with " + (place_words(truth, with_pattern) if truth is not None
+                                          else "the place chosen as correct")
+            else:
+                head = "Make the places that show the section number and title agree with the one chosen as correct"
+            if values:
+                head += " on " + prose.join(prose.quote(v) for v in values)
+            second = ("Values that already agree apart from case or spacing are left alone; where one differs, it is "
+                      "replaced by the wording exactly as "
+                      + (prose.quote(truth) if truth is not None else "the correct place") + f" shows it, {tail}")
+            if has_name:
+                second += "; a file name that differs gives the output copy the corrected name"
+            return prose.sentence(head + ".", second)
+
+        text = build(True)
+        return text if len(text) <= 600 else build(False)

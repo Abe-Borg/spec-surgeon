@@ -7,11 +7,13 @@ verify/comment_additions.py and does not import this module.
 from __future__ import annotations
 
 import posixpath
+from typing import Any, Dict, List, Optional
+
 from lxml import etree
 
 from ..ooxml import block_full_text, block_struct_counts, paragraphs
 from ..package import REL, REL_TYPE_BASE, W, DocxPackage, serialize_xml
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op
 from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected
 
@@ -230,6 +232,33 @@ class AddReviewComments(Op):
         "V4": "No tracked revisions added, removed or changed.",
         "V10": "Independently derive original targets, ids, comment metadata and whole expected package parts.",
     }
+
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        author, initials = params.get("author"), params.get("initials")
+        text, source = params.get("text"), params.get("source")
+        head = "attach a Word comment"
+        if isinstance(author, str) and author.strip():
+            head += " by " + prose.quote(author)
+            if isinstance(initials, str) and initials.strip():
+                head += f" (initials {prose.quote(initials)})"
+        if isinstance(text, str) and text.strip():
+            head += " reading " + prose.quote(text)
+        if isinstance(source, str) and source.strip():
+            head += ", with the source wording " + prose.quote(source) + " as a second paragraph,"
+        # prose.where() begins with "in "; the comment goes "to" each paragraph it names
+        where = prose.where(select)
+        subject = where[3:] if where.startswith("in ") else where
+        first = prose.sentence(head, "to " + subject + ", one comment covering each whole paragraph")
+        extras: List[str] = ["existing comments and tracked changes stay as they are"]
+        expected = params.get("expected_count")
+        if isinstance(expected, int) and not isinstance(expected, bool):
+            extras.append("the file is set aside unless exactly "
+                          + (f"{expected} paragraph matches" if expected == 1 else f"{expected} paragraphs match"))
+        if params.get("allow_missing") is True:
+            extras.append("a file with no matching paragraph is passed through unchanged")
+        return first + " " + prose.sentence("; ".join(extras))
 
     def plan(self, pkg, select, params):
         d = derive(pkg, select, params)

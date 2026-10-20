@@ -40,7 +40,7 @@ from lxml import etree
 from ..package import CT_PART, MEDIA_REL_TYPES, NS, R, REL, W, DocxPackage, parse_xml, serialize_xml, REL_TYPE_BASE
 from ..ooxml import (PPR_ORDER, RPR_ORDER, SECTPR_ORDER, block_full_text, count_revisions, get_or_add,
                      insert_in_order, mark_rpr, paragraph_ppr, paragraphs, run_rpr, set_rfonts)
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .effective import AmbiguousToggle, Resolver, rescale_tabs, text_width, theme_fonts, theme_part
 from .hf_common import (FOOTER_CT, HEADER_CT, KINDS, TYPES, apply_removal, check_part_relationships, effective_refs,
@@ -182,6 +182,65 @@ def _unjson_pins(d: Dict[str, Any]) -> Dict[str, Any]:
     return {k: ([tuple(x) for x in v] if k == "tabs" else (tuple(v) if k == "color" else v)) for k, v in d.items()}
 
 
+_SOURCE_TYPE_WORDS = {"default": "", "first": "first-page", "even": "even-page"}
+
+
+def _source_words(rule: Dict[str, Any]) -> str:
+    """Where a fill rule reads: ``in the document body``, ``in the first-page footer``, ``in the header of section 2``."""
+    src = rule.get("source")
+    section = rule.get("section")
+    try:
+        section_words = f"section {int(section) + 1}" if section is not None else ""
+    except (TypeError, ValueError):
+        section_words = ""
+    if src == "document":
+        return f"in the body of {section_words}" if section_words else "in the document body"
+    if isinstance(src, str) and src:
+        kind, _, typ = src.partition(".")
+        adjective = _SOURCE_TYPE_WORDS.get(typ or "default", typ)
+        words = "in the " + (adjective + " " if adjective else "") + kind
+        return words + (f" of {section_words}" if section_words else "")
+    return f"in {section_words}" if section_words else ""
+
+
+def fill_rule_words(rule: Any) -> str:
+    """A fill rule as a phrase a person reads: what is taken and from where. The shared vocabulary in ops/prose.py has
+    no helper for fill rules, so it lives here; ensure_end_of_section borrows it for the section number."""
+    if not isinstance(rule, dict):
+        return "a value taken from the document itself"
+    kind = rule.get("rule")
+    if kind == "first_match" or ("rules" in rule and kind is None):
+        subs = [fill_rule_words(r) for r in (rule.get("rules") or []) if isinstance(r, dict)]
+        words = ("the first of these that is found: " + prose.join(subs, "or")) if subs else \
+            "the first of the listed rules that is found"
+    elif kind == "literal":
+        words = "the approved wording " + prose.quote(rule.get("value", ""))
+    elif kind in ("regex", "paragraph_after"):
+        qualifiers: List[str] = []
+        if rule.get("occurrence") == "first":
+            qualifiers.append("the first match")
+        if rule.get("case_insensitive"):
+            qualifiers.append("ignoring case")
+        if rule.get("flexible_whitespace") is False:
+            qualifiers.append("with exact spacing")
+        source = _source_words(rule)
+        tail = (" " + source if source else "") + (f" ({', '.join(qualifiers)})" if qualifiers else "")
+        if kind == "regex":
+            words = "the text matching the pattern " + prose.quote(rule.get("pattern", "")) + tail
+        else:
+            words = "the paragraph after the one matching " + prose.quote(rule.get("anchor_regex", "")) + tail
+    else:
+        words = "a value taken from the document itself"
+    if rule.get("in_template"):
+        words += ", where the template shows " + prose.quote(rule["in_template"])
+    return words
+
+
+def _kind_words(kinds: Any) -> str:
+    chosen = [k for k in (kinds if isinstance(kinds, (list, tuple)) else []) if k in KINDS] or list(KINDS)
+    return prose.join(k + "s" for k in chosen)
+
+
 @register
 class ApplyHeaderFooterTemplate(Op):
     name = "apply_header_footer_template"
@@ -232,6 +291,63 @@ class ApplyHeaderFooterTemplate(Op):
         "V10": "hf_template_refs, template_parts (slots, fills re-derived, effective properties, skeleton), styles_added",
         "V7": "template reference: header/footer anchor words vs the template render",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        kind_words = _kind_words(params.get("kinds"))
+        template = params.get("template")
+        head = (f"Give every section the {kind_words} of "
+                + (f"the template {prose.quote(template)}" if template else "the project template"))
+        ts = params.get("template_sections") if isinstance(params.get("template_sections"), dict) else {}
+        uses: List[str] = []
+        if isinstance(ts.get("all"), int):
+            uses.append(f"its section {ts['all'] + 1} throughout")
+        else:
+            if isinstance(ts.get("cover"), int):
+                uses.append(f"its section {ts['cover'] + 1} for the cover")
+            if isinstance(ts.get("body"), int):
+                uses.append(("its " if not uses else "") + f"section {ts['body'] + 1} for the body")
+        if uses:
+            head += f" ({', '.join(uses)})"
+        markers = list(params.get("slot_markers") or ["highlight", "braces"])
+        colors = [str(c) for c in (params.get("highlight_colors") or ["yellow"])]
+        if markers == ["reference"]:
+            what = "with every place that shows the template's own values filled from the document itself"
+        else:
+            forms: List[str] = []
+            if "highlight" in markers:
+                forms.append("text highlighted in " + prose.join(colors, "or"))
+            if "braces" in markers:
+                forms.append(prose.quote("{{NAME}}"))
+            what = "with each placeholder" + (f" ({prose.join(forms, 'or')})" if forms else "") + \
+                " filled from the document itself"
+        fills: Dict[str, Any] = {}
+        for key in ("slot_fills", "slot_bindings"):
+            if isinstance(params.get(key), dict):
+                fills.update(params[key])
+        items: List[str] = []
+        for name, rule in fills.items():
+            if isinstance(rule, dict) and rule.get("rule") == "literal":
+                items.append(f"{prose.quote(name)} set to {fill_rule_words(rule)}")
+            else:
+                items.append(f"{prose.quote(name)} from {fill_rule_words(rule)}")
+        if len(items) > 4:
+            items = items[:3] + [f"{len(items) - 3} more"]
+        if items:
+            what += ": " + prose.join(items)
+        extras: List[str] = []
+        if params.get("slot_formatting") == "keep":
+            extras.append("placeholder formatting is kept")
+        if params.get("rescale_tabs") is False:
+            extras.append("tab stops are not rescaled")
+        if params.get("align_header_footer_distance") is False:
+            extras.append("header and footer distances are left as they are")
+        if params.get("align_title_page") is False:
+            extras.append("first-page settings are left as they are")
+        if params.get("import_missing_styles") is False:
+            extras.append("no new styles are added")
+        second = f"The old {kind_words} are removed; " + prose.join(["the new ones keep the template's look"] + extras)
+        return prose.sentence(head + ", " + what) + " " + prose.sentence(second)
 
     # ------------------------------------------------------------------------------------------------
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:

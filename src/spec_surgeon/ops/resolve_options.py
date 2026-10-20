@@ -24,7 +24,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from ..ooxml import RevisionStamp, block_full_text, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .replace_table import COMMON_PARAMS, SELECT_SCHEMA, default_author, resolve_scope, tracked_of
 from .selectors import StyleSheet, check_paragraph_selector, paragraph_selected, scope_parts
@@ -217,6 +217,37 @@ class ResolveOptions(Op):
         if not tracked:
             frag.flags.append("UNTRACKED deletions at the user's request: no revision marks; V2's list is the proof.")
         return frag
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        scope = select.get("scope") or params.get("scope")
+        if scope:
+            select["scope"] = scope
+        clauses: List[str] = []
+        for r in (params.get("rules") if isinstance(params.get("rules"), list) else []):
+            if not isinstance(r, dict) or not isinstance(r.get("match"), str) or not r["match"].strip():
+                continue
+            target = prose.quote(r["match"]) + (" (matching case exactly)" if r.get("match_case") else "")
+            if r.get("action") == "drop":
+                clauses.append(f"remove every option matching {target}, with its brackets and spacing")
+            else:
+                clauses.append(f"keep only the option matching {target}, dropping the alternatives and the brackets")
+        if len(clauses) > 4:
+            clauses = clauses[:3] + [f"{len(clauses) - 3} more rules"]
+        if params.get("tracked", True) is False:
+            tail = "without tracked changes"
+        else:
+            tail = "shown as tracked changes" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+            if params.get("date_convention") == "utc":
+                tail += " dated in UTC"
+        head = f"Resolve the choices offered in square brackets {prose.where(select)}"
+        if clauses:
+            first = prose.sentence(f"{head}, {tail}: " + "; ".join(clauses))
+        else:
+            first = prose.sentence(f"{head} by the rules given, {tail}")
+        second = "The first rule that fits a choice decides it; choices no rule fits are left as they are" + (
+            ", and files with no such choice are left unchanged" if params.get("allow_missing") else "")
+        return first + " " + prose.sentence(second)
 
     def apply(self, pkg: DocxPackage, frag: PlanFragment) -> None:
         td = frag.transform_data

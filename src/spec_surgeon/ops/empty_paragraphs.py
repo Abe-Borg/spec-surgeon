@@ -20,13 +20,13 @@ Deleted as a tracked change by default (every run in a ``w:del``, the mark delet
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from ..ooxml import RevisionStamp, count_revisions, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage, W
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
-from .hidden import CLEANUP_PARAMS, blocks_of, keep_rules, nearest_p
+from .hidden import CLEANUP_PARAMS, blocks_of, keep_rules, nearest_p, scope_phrase, set_aside_remark, tracked_words
 from .removal import deletable, delete_paragraph, plan_paragraph_deletion
 from .replace_table import default_author, resolve_scope, tracked_of
 from .selectors import SCOPE_KINDS, StyleSheet, scope_parts
@@ -133,6 +133,19 @@ class RemoveEmptyParagraphs(Op):
         "V10": "removed_empty_paragraphs re-derives the blank paragraphs, the collapse and the container rules with its "
                "own code, and checks each deletion (tracked: item by item; untracked: gone, nothing else changed)",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        where = scope_phrase(select, params, ["document"])
+        if params.get("mode") == "all":
+            head = f"Remove every blank paragraph {where}"
+        else:
+            head = f"Remove the extra blank paragraphs {where}, leaving one blank line where several stand together"
+        first = prose.sentence(f"{head}, {tracked_words(params)}")
+        remarks = ["a paragraph with a number or bullet, a border, a bookmark, a picture, a field, a tab or a break is "
+                   "not blank; the last paragraph of a cell, a header or the document always stays, and two tables are "
+                   "never joined", set_aside_remark(params, "blank paragraph to remove")]
+        return first + " " + prose.sentence("; ".join(r for r in remarks if r))
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

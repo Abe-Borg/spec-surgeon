@@ -1,8 +1,8 @@
 """Chains (chain.py, 2026-10-16): several specs run one after another, each stage a full verified run on the stage
 before it — the pin between stages, a file going as far as it passes, templates of any stage skipped, the order
 flagged where a later stage changes a part an earlier one added; the chain preview and its approval token over every
-stage; the library's chain kind under the one-name rule; the window's Session, the window itself and the command
-line."""
+stage; the library's chain kind under the one-name rule; and the command line. Chains are command-line only: the
+desktop's one conversation window never builds, previews or runs one."""
 from __future__ import annotations
 
 import json
@@ -12,7 +12,7 @@ from pathlib import Path
 
 import pytest
 
-from make_fixtures import build, build_sized
+from make_fixtures import build_sized
 from spec_surgeon import batch as batch_module
 from spec_surgeon import library
 from spec_surgeon.batch import load_set_aside
@@ -20,11 +20,9 @@ from spec_surgeon.chain import (ChainError, chain_from_specs, chain_intent, chai
                                 run_chain, validate_chain)
 from spec_surgeon.cli import main as cli_main
 from spec_surgeon.editspec import load_spec
-from spec_surgeon.gui import Session
 from spec_surgeon.library import LibraryError
 from spec_surgeon.package import DocxPackage
 from spec_surgeon.preview import approval_token, changed_since_preview, key_templates, make_chain_preview
-from spec_surgeon.ui.rows import ProgressTracker, chain_rows, result_counts
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 FONT_SPEC = SPECS / "match-template-spec-font.json"
@@ -145,10 +143,6 @@ def test_a_file_that_stops_at_a_stage_goes_no_further_and_is_set_aside_with_the_
                for x in manifest["files"])
     diag = (tmp_path / "run" / "DIAGNOSTICS.md").read_text(encoding="utf-8")
     assert "stopped at stage 2 of 3 (refuse)" in diag and "stage-02/" in diag and "NO SUCH PHRASE ANYWHERE" in diag
-    s = Session(folder=folder, out_root=tmp_path / "out")
-    s.last_run_dir = tmp_path / "run"
-    text = s.load_set_aside()
-    assert "Loaded 2 set-aside file(s)" in text and "[not-found]" in text and len(s.selected_files) == 2
 
 
 def test_the_pin_between_stages_refuses_a_file_changed_between_them(folder, tmp_path, monkeypatch):
@@ -263,8 +257,6 @@ def test_a_runs_chain_json_loads_back_as_the_chain(folder, tmp_path):
     assert load_chain_file(tmp_path / "run" / "chain.json") == chain
     pv = make_chain_preview(chain, [str(folder)], tmp_path / "preview", renderer="none", do_render=False)
     assert load_chain_file(tmp_path / "preview" / "chain.json") == chain      # the preview's: the chain itself
-    s = Session(folder=folder, out_root=tmp_path / "out")
-    assert s.load_chain_file(tmp_path / "run" / "chain.json") == chain and s.chain_source == str(tmp_path / "run" / "chain.json")
     (tmp_path / "x.json").write_text(json.dumps({"counts": {}, "files": []}), encoding="utf-8")
     with pytest.raises(ChainError, match="unknown chain key"):                  # neither shape: refused, not misread
         load_chain_file(tmp_path / "x.json")
@@ -338,86 +330,9 @@ def test_the_library_keeps_chains_under_the_one_name_rule(folder, tmp_path):
         library.save_chain("Template chain", chain)
     library.save_chain("Template chain", chain, replace=True)
     assert sorted(i.label() for i in library.list_items()) == ["Chain: Template chain", "Recipe: Match the font"]
-    h = library.item_hash(item)
-    item.path.write_text(item.path.read_text(encoding="utf-8") + "\n", encoding="utf-8")
-    assert library.item_hash(item) != h
     with pytest.raises(LibraryError, match="there is no chain named 'nope'"):
         library.load_chain("nope")
     assert library.delete("template chain").kind == "chain" and [i.kind for i in library.list_items()] == ["recipe"]
-    # the compiler never offers a chain: it is not in Claude's index, and read_library_item says so
-    from spec_surgeon.compiler import library_index, library_item_detail
-    library.save_chain("Template chain", chain)
-    assert [e["kind"] for e in library_index()["items"]] == ["recipe"]
-    detail = library_item_detail("Template chain")
-    assert detail["kind"] == "chain" and [s["name"] for s in detail["stages"]] == ["Match the font", "Match the header/footer"]
-    assert "cannot be offered as a choice" in detail["note"]
-
-
-# ---- the window's logic ----------------------------------------------------------------------------------------------
-
-def test_the_session_builds_a_chain_from_recipes_previews_runs_and_saves_it(folder, tmp_path):
-    library.save_recipe("Font", _font())
-    library.save_recipe("HF", _hf(), "the architect's header and footer")
-    s = Session(folder=folder, out_root=tmp_path / "out")
-    with pytest.raises(LibraryError, match="there is no recipe named 'Nope'"):
-        s.build_chain(["Font", "Nope"])
-    assert s.chain is None
-    chain = s.build_chain(["Font", "HF"])
-    assert s.chain is chain and s.chain_source == "recipes" and s.spec is None and s.chain_label() == "Font → HF"
-    assert [st["recipe"] for st in chain["stages"]] == ["Font", "HF"]
-    assert len(s.files()) == 2                                                 # the template copy is left out
-    with pytest.raises(ValueError, match="preview the chain first"):
-        s.save_chain("x")
-    with pytest.raises(ValueError, match="Preview first"):
-        s.run(False, False, lambda m: None)
-    text = s.make_preview(render=False, log=lambda m: None)
-    assert "PREVIEW — chain «Font → HF»: 2 stage(s)" in text and "stage 1 PASS · stage 2 PASS" in text
-    assert "A CHAIN «Font → HF» of 2 stage(s)" in s._intent()
-    item, notes = s.save_chain("My chain", "font then header/footer")
-    assert item.kind == "chain" and library.load_chain("my chain")["stages"][1]["recipe"] == "HF"
-    out = s.run(in_place=False, render=False, log=lambda m: None)
-    assert "PASS 2 (every stage)" in out and "your files were not changed" in out and "CHAIN_REPORT.md" in out
-    assert s.last_chain is not None and s.last_batch is None and (s.last_run_dir / "outputs").is_dir()
-    assert sorted(p.name for p in (s.last_run_dir / "outputs").iterdir()) == sorted(f.name for f in folder.glob("21*.docx"))
-    # a file changed since the preview: refused, as for a spec
-    f = sorted(folder.glob("21*.docx"))[0]
-    os.utime(f, ns=(f.stat().st_atime_ns, f.stat().st_mtime_ns + 10_000_000))
-    with pytest.raises(ValueError, match="a file or the chain changed since the preview"):
-        s.run(False, False, lambda m: None)
-    # a saved chain from Your library, and Remove
-    s.remove_spec()
-    assert s.chain is None and s.preview is None
-    s.load_chain("My chain")
-    assert s.chain_source == "library:My chain" and s.chain_label() == "My chain"
-    assert "stage 1 PASS · stage 2 PASS" in s.make_preview(render=False, log=lambda m: None)
-    assert "PASS 2 (every stage)" in s.run(in_place=False, render=False, log=lambda m: None)
-    # a spec loaded afterwards replaces the chain (one outcome at a time)
-    s.load_spec(SPECS / "remove-all-headers-footers.json")
-    assert s.chain is None and s.spec is not None
-    with pytest.raises(ValueError, match="not two of them"):
-        s._set_outcome(spec=_font(), chain=chain)
-
-
-def test_the_rows_and_the_progress_bar_follow_a_chain(folder, tmp_path):
-    lines = []
-    r = run_chain([str(folder)], chain_from_specs([("strip", _remove()), ("refuse", _refuse())]), tmp_path / "run",
-                  workers=1, renderer="none", do_render=False, progress=lines.append)
-    rows = chain_rows(r)                           # three files: the architect's copy is no template of THIS chain
-    assert [x.badge for x in rows] == ["exception"] * 3 and result_counts(rows)["EXCEPTION"] == 3
-    wet = next(x for x in rows if x.cells[0] == "21 13 13 – WET-PIPE.docx")
-    assert wet.cells[1] == "Exception" and wet.cells[2].startswith("Stopped at stage 2 of 2 (refuse) — ")
-    assert wet.diagnosis.startswith("# 21 13 13 – WET-PIPE.docx — stopped at stage 2 of 2 (refuse)")
-    assert "NO SUCH PHRASE ANYWHERE" in wet.diagnosis
-    r2 = run_chain([str(folder)], _template_chain(), tmp_path / "run2", workers=1, renderer="none", do_render=False)
-    rows = chain_rows(r2)
-    assert [x.badge for x in rows] == ["pass", "pass"] and rows[0].cells[2] == "Verified at every stage (2)"
-    assert rows[0].open_path and rows[0].open_path.parent == tmp_path / "run2" / "outputs"
-    tracker = ProgressTracker()
-    moves = [m for m in (tracker.feed(line) for line in lines) if m]
-    assert moves[0] == (0, 0, "Stage 1 of 2 (strip) · Starting")
-    assert (0, 3, "Stage 1 of 2 (strip) · Editing and verifying") in moves and (3, 3, "Stage 1 of 2 (strip) · Editing and verifying") in moves
-    assert (0, 3, "Stage 2 of 2 (refuse) · Editing and verifying") in moves
-    assert tracker.seen.count("21 13 13 – WET-PIPE.docx") == 2
 
 
 # ---- the command line ------------------------------------------------------------------------------------------------
@@ -463,91 +378,14 @@ def test_the_command_line_chain_command_and_library_use(folder, tmp_path, capsys
     assert "Not run." in capsys.readouterr().out and not (tmp_path / "o6" / "run").exists()
 
 
-# ---- the window --------------------------------------------------------------------------------------------------------
-
-@pytest.fixture
-def qt_env(tmp_path, monkeypatch):
-    from qt_support import close_windows, qt_app_or_skip
-    app = qt_app_or_skip()
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    windows = []
-    yield app, windows
-    close_windows(app, windows)
-
-
-def test_the_window_chains_recipes_previews_runs_and_saves_the_chain(qt_env, folder, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
-    _app, windows = qt_env
-    library.save_recipe("Font", _font())
-    library.save_recipe("HF", _hf())
-    prompts = RecordingPrompts(sequences=[["Font", "HF"]], texts=["My chain"], items=["Chain: My chain"])
-    s = Session(out_root=tmp_path / "out")
-    w = build_window(s, prompts=prompts)
-    windows.append(w)
-    ui = w._spec_surgeon
-    ui["vars"]["folder"].set(str(folder))
-    ui["vars"]["render"].set(False)
-    ui["buttons"]["chain"].click()
-    assert s.chain is not None and s.chain_label() == "Font → HF" and prompts.shown[0][0] == "pick_sequence"
-    assert "Chain" in w.request_page.spec_bar.title.text() and "1. Font → 2. HF" in w.request_page.spec_bar.text.text()
-    assert not ui["buttons"]["run"].isEnabled()
-    ui["buttons"]["preview"].click()
-    log = ui["wait"]()
-    assert "Using the chain 'Font → HF' (2 stage(s))." in log and "stage 1 PASS · stage 2 PASS" in log
-    assert ui["buttons"]["run"].isEnabled() and w.preview_page.request_lbl.text().startswith("Your chain “Font → HF” — 2 stage(s)")
-    assert "1. Font:" in w.preview_page.summary_lbl.text() and "2. HF:" in w.preview_page.summary_lbl.text()
-    assert w.nav.item(1).data(__import__("spec_surgeon.ui.widgets", fromlist=["STEP_STATUS_ROLE"]).STEP_STATUS_ROLE) == "Chain: Font → HF"
-    ui["buttons"]["save_to_library"].click()
-    assert [i.label() for i in library.list_items("chain")] == ["Chain: My chain"]
-    ui["buttons"]["run"].click()
-    ui["wait"]()
-    assert s.last_chain is not None and s.last_chain.counts()["PASS"] == 2
-    assert ui["results_model"].rowCount() == 2 and "Done" in w.run_page.summary.title.text()
-    assert w.run_page.report_btn.isEnabled() and (s.last_run_dir / "CHAIN_REPORT.md").is_file()
-    # the library dialog loads a saved chain like a recipe
-    s.remove_spec()
-    ui["buttons"]["library"].click()
-    assert s.chain is not None and s.chain_source == "library:My chain" and "My chain" in w.request_page.spec_bar.text.text()
-
+# ---- no Qt for the engine --------------------------------------------------------------------------------------------
 
 def test_the_engine_and_command_line_never_load_qt_for_a_chain():
     import subprocess
     import sys
-    code = ("import sys, spec_surgeon.chain, spec_surgeon.cli, spec_surgeon.gui, spec_surgeon.ui.rows; "
+    code = ("import sys, spec_surgeon.chain, spec_surgeon.cli, spec_surgeon.gui; "
             "bad = [m for m in sys.modules if m.split('.')[0] in ('PySide6', 'shiboken6')]; assert not bad, bad")
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
 
 
-def test_the_sequence_dialog_builds_an_ordered_chain(qt_env):
-    """The real picker behind Chain recipes… (RecordingPrompts stands in for it above): add, remove, move, the OK
-    button only with a stage, and what it hands back, in order."""
-    from PySide6.QtWidgets import QDialogButtonBox
-    from qt_support import flush_deferred_deletes
-    from spec_surgeon.ui.app import SequenceDialog
-    app, _windows = qt_env
-    dlg = SequenceDialog("Chain recipes", "Pick them in order", ["Font", "HF", "Strip"])
-    try:
-        ok = dlg.buttons.button(QDialogButtonBox.StandardButton.Ok)
-        assert dlg.picked() == [] and not ok.isEnabled()
-        dlg.available.setCurrentRow(1)
-        dlg._add()
-        dlg.available.setCurrentRow(0)
-        dlg._add()
-        assert dlg.picked() == ["HF", "Font"] and ok.isEnabled()
-        dlg.chain.setCurrentRow(1)
-        dlg._move(-1)
-        assert dlg.picked() == ["Font", "HF"]
-        dlg._move(-1)                                   # already first: nothing moves
-        assert dlg.picked() == ["Font", "HF"]
-        dlg.chain.setCurrentRow(0)
-        dlg._move(1)
-        assert dlg.picked() == ["HF", "Font"]
-        dlg.chain.setCurrentRow(0)
-        dlg._remove()
-        assert dlg.picked() == ["Font"]
-        dlg._remove()                                   # the selection moved with the removal: nothing selected now
-        assert dlg.picked() in (["Font"], []) and ok.isEnabled() == bool(dlg.picked())
-    finally:
-        dlg.deleteLater()
-        flush_deferred_deletes(app)

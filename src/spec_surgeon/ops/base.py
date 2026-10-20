@@ -1,4 +1,4 @@
-"""Operation interface — the composable unit of the natural-language editor (docs/NL_SURGICAL_EDITOR_PLAN.md §4).
+"""Operation interface — the composable unit of the natural-language editor (docs/history/NL_SURGICAL_EDITOR_PLAN.md §4).
 
 An op is two functions over a package:
 
@@ -13,6 +13,10 @@ Two ops that would touch the same thing are a conflict and raise ``JobException`
 engine never guesses an order for overlapping edits.
 
 A plan that cannot be made deterministically raises ``JobException`` (→ Tier 2), never guesses.
+
+``describe(select, params)`` is the sentence a person reads for the op in the plan: what changes and where, with
+every material parameter in words (``ops/prose.py``: inches and points, quoted exact text, no identifiers). Every
+registered op has one; ``tests/test_describe.py`` checks them all.
 """
 from __future__ import annotations
 
@@ -235,6 +239,14 @@ class Op:
     def fragment(self, select: Optional[Dict[str, Any]], params: Dict[str, Any], mode: Optional[str] = None) -> PlanFragment:
         return PlanFragment(job=self.name, mode=mode or self.mode, params=dict(params), intended_parts=[],
                             op=self.name, select=dict(select or {}))
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        """One or two sentences a person reads in the plan: what changes, where, with every material parameter in
+        words (``ops/prose.py``: inches and points, quoted exact text, no identifiers). Each op overrides this; the
+        default is the op's catalog description plus the selection, which never names a parameter."""
+        from . import prose
+        head = (self.description or self.name.replace("_", " ")).split(". ")[0].rstrip(".")
+        return prose.sentence(head, prose.where(select))
 
 
 # ---- merge ------------------------------------------------------------------------------------------

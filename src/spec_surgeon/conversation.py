@@ -16,20 +16,15 @@ What makes it safe:
   (``check_pairing`` runs before every request). Results the app cannot give yet — the answer to ``ask_user``, what
   the preview of an accepted spec showed — wait in ``pending`` and go out first in the next user message.
 * **Approved words only.** ``sources`` — the words a spec may place in the documents — are the request, the user's
-  ``--answer`` lines and replies, ``PROJECT.json``, and the exact ``wording`` of a choice the user picked. Never
-  Claude's own text: its understanding, messages, choice labels, notes or the custom-transform brief. A wording with a
-  character the user cannot see (``invisible``) is never offered. conversation.json records the sources as
-  ``approved_words`` (beside ``answers``; never an empty one — without a PROJECT.json, or with an empty one, there is
-  no memory source), and the spec the app gets carries the user's ``request``, never the text
-  Claude wrote there (the advisor and the next pass count the spec's request as approved words).
-* **Choices are built by code.** Claude may offer ``clarify``/``alternative``/``rephrase`` choices; only the app adds
-  the ``custom_transform`` choice, and only when Claude declared the request within ``CUSTOM_TRANSFORM_LIMITS``.
-  Claude may also NAME one of the user's library items (``recipe`` / ``operation``, chat mode only): the app builds
-  that choice from the library alone (``_library_choice``) — the words a recipe places are shown on it and become
-  approved only when the user picks it (``take_library_choice``), each its own source; Claude's label and wording never
-  reach it; the item is pinned by its content hash, and a pick refuses one that changed (``LibraryChanged``). A
-  ``snippet`` (a saved paragraph) is named and built the same way, but picking it is a reply: its words are approved
-  (the hash checked first) and Claude writes the ``insert_paragraph`` spec that places them.
+  ``--answer`` lines and replies, and the exact ``wording`` of a choice the user picked. Never Claude's own text: its
+  understanding, messages, choice labels, notes or the custom-transform brief. A wording with a character the user
+  cannot see (``invisible``) is never offered. conversation.json records the sources as ``approved_words`` (beside
+  ``answers``), and the spec the app gets carries the user's ``request``, never the text Claude wrote there (the
+  advisor and the next pass count the spec's request as approved words).
+* **Choices are built by code.** Claude may offer ``clarify``/``alternative``/``rephrase`` choices about the
+  document result; only the app adds the ``custom_transform`` choice, and only when Claude declared the request within
+  ``CUSTOM_TRANSFORM_LIMITS``. Claude never offers a choice of implementation (a recipe, an operation, a snippet): the
+  engine picks the operations itself and the user is asked only about the outcome.
 
 ``mode="compile"`` is the one-shot behaviour ``compiler.compile_request`` keeps (a plain-text answer gets one nudge,
 then fails); ``mode="chat"`` (the window, the interactive command line) treats Claude's plain text as a message to the
@@ -58,10 +53,7 @@ from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTE
                         DEFAULT_STALL_REPETITIONS, InvestigationProgress, positive_integer)
 
 CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from Claude's own label and wording
-LIBRARY_CHOICE_KINDS = ("recipe", "operation")                       # named by Claude, built from the library (rule 13)
-APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target") + LIBRARY_CHOICE_KINDS
-SNIPPET_CHOICE_KIND = "snippet"                                      # named by Claude, built from the library, picked
-NAMED_LIBRARY_KINDS = LIBRARY_CHOICE_KINDS + (SNIPPET_CHOICE_KIND,)  # as a REPLY: Claude writes the insert_paragraph
+APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target")   # carried out by the app, never sent
 MAX_CALLS_PER_TURN = compiler.MAX_TURNS
 NUDGE = "Finish by calling submit_editspec (or ask_user)."
 # the tool result an accepted spec gets (the user's next message, if any, says what the preview found)
@@ -73,10 +65,6 @@ class ProtocolError(RuntimeError):
     """The history would break the tool_use / tool_result pairing — a bug in this module, never sent to the API."""
 
 
-class LibraryChanged(ValueError):
-    """The library item a choice offers changed on disk between Claude's offer and the user's pick (its content hash
-    differs — ``library.item_hash``): nothing was used and nothing approved; the user asks again, or uses Your
-    library…"""
 
 
 @dataclass
@@ -88,8 +76,7 @@ class Choice:
     detail: str = ""
     words: List[str] = field(default_factory=list)   # EVERY word picking approves, each its own source: [wording] for
                                                      # Claude's choices, the placed words of a recipe
-    name: str = ""                                # a library choice: the item's exact name …
-    item_hash: str = ""                           # … and its content hash as offered (library.item_hash)
+    item_hash: str = ""                           # an app choice: the hash of the snapshot it was offered with
     snapshot: Optional[Dict[str, Any]] = None     # a recipe choice: the spec as validated when offered; a snippet
                                                   # choice: the snippet as read when offered (neither is recorded)
 
@@ -99,7 +86,7 @@ class Choice:
 
     def to_dict(self) -> Dict[str, Any]:
         return {"id": self.id, "label": self.label, "kind": self.kind, "wording": self.wording, "detail": self.detail,
-                "words": list(self.words), "name": self.name, "item_hash": self.item_hash}
+                "words": list(self.words), "item_hash": self.item_hash}
 
     def exact_words(self) -> str:
         return ", ".join(f"«{w}»" for w in self.words)
@@ -237,14 +224,14 @@ def _texts(raw: Any, what: str, errors: List[str]) -> List[str]:
 
 class Conversation:
     def __init__(self, request: str, files: Sequence[Path], template: Optional[Path] = None, client=None,
-                 model: Optional[str] = None, memory: Optional[Dict[str, Any]] = None,
+                 model: Optional[str] = None,
                  prior_failures: Optional[Sequence[Dict[str, Any]]] = None, answers: Sequence[str] = (),
                  work_dir: Optional[Path] = None, mode: str = "chat", log: Optional[Callable[[str], None]] = None,
                  max_calls: Optional[int] = None, max_attempts: int = DEFAULT_MAX_ATTEMPTS,
                  max_output_tokens: int = DEFAULT_MAX_OUTPUT_TOKENS, effort: str = DEFAULT_EFFORT,
                  stall_repetitions: int = DEFAULT_STALL_REPETITIONS, max_image_tokens: Optional[int] = None,
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
-                 continuous_recovery: bool = False, simple_experience: bool = False, word_sources=None):
+                 continuous_recovery: bool = False, word_sources=None):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -266,38 +253,26 @@ class Conversation:
         self.work_dir = Path(work_dir) if work_dir else None
         self.log = log or (lambda m: None)
         self._client = client
-        self.simple_experience = simple_experience
-        self.batch = compiler._Batch(self.files, self.template, input_files=[] if simple_experience else None)
+        self.batch = compiler._Batch(self.files, self.template)
         self.batch.work_dir = self.work_dir
         self.batch.max_image_tokens = max_image_tokens
         self.batch.analysis_limits = analysis_limits
         self.batch.context_state = self.context_state
-        self.memory = memory if memory is not None else {} if simple_experience else compiler.load_project_memory(self.files)
         self.answers = list(answers)
         self.prior_failures = list(prior_failures or [])
-        # never an empty source (conversation.json's approved_words lists them): no PROJECT.json — or one holding
-        # nothing — is no source (memory_source would be "{}", nobody's wording), nor is an empty request or answer
-        has_memory = any(k != "_path" for k in (self.memory or {}))
-        self.sources: List[str] = [w for w in (request, *self.answers,
-                                               compiler.memory_source(self.memory) if has_memory else "")
-                                   if isinstance(w, str) and w.strip()]
+        # The words a spec may place: the request, the user's answers, and (on a replay of a saved conversation) the
+        # words the user actually typed or accepted — never a choice's label; never an empty source.
+        self.sources: List[str] = [w for w in (request, *self.answers) if isinstance(w, str) and w.strip()]
         if word_sources is not None:
-            # A restored conversation can contain explanatory choice labels. Only the user's
-            # actual words and explicitly accepted draft wording may become text authority.
             self.sources = list(word_sources)
-            if has_memory:
-                self.sources.append(compiler.memory_source(self.memory))
         # frozen for the whole conversation: rebuilding either between calls would invalidate the cache and the
         # model's earlier thinking
-        self.tools = (compiler.SIMPLE_CHAT_TOOLS if simple_experience else compiler.CHAT_TOOLS) if mode == "chat" else compiler.TOOLS
-        self.system = compiler.system_prompt(chat=(mode == "chat"), simple=simple_experience)
-        if simple_experience:
-            self.system += compiler.SIMPLE_EXPERIENCE
+        self.tools = compiler.CHAT_TOOLS if mode == "chat" else compiler.TOOLS
+        self.system = compiler.system_prompt(chat=(mode == "chat"))
         self.messages: List[Dict[str, Any]] = []
         self.entries: List[Entry] = []
         self.pending: List[Dict[str, Any]] = []   # tool_results owed for the last assistant turn, in call order
         self.notes: List[str] = []                 # app text for the next user message (never approved words)
-        self._dropped: List[str] = []              # library choices not shown, said to the user with the next entry
         self.usage = llm.Usage()
         self.tool_calls: List[Dict[str, Any]] = []
         self.turn: Optional[Turn] = None
@@ -320,9 +295,8 @@ class Conversation:
         if self.started:
             raise RuntimeError("the conversation has already started")
         self.started = True
-        library = compiler.library_index() if self.mode == "chat" and not self.simple_experience else None
-        self.messages = compiler.build_messages(self.request, self.batch, self.answers, self.memory,
-                                                prior_failures=self.prior_failures or None, library=library)
+        self.messages = compiler.build_messages(self.request, self.batch, self.answers,
+                                                prior_failures=self.prior_failures or None)
         self.entries.append(Entry("user", self.request))
         self.exchange.append({"turn": 0, "role": "user", "content": self.messages[0]["content"],
                               "files": [str(f) for f in self.files],
@@ -348,8 +322,6 @@ class Conversation:
             raise ValueError("that choice is carried out by the app, not sent to Claude")
         if not text and chosen is None:
             raise ValueError("type a reply or pick one of the choices")
-        if chosen is not None and chosen.kind == SNIPPET_CHOICE_KIND:
-            self._check_item(chosen)          # LibraryChanged: nothing approved, nothing sent — the turn stays open
         if chosen is not None and chosen.kind == "capitalization":
             from .ops.hygiene import approval_source
             record = chosen.snapshot
@@ -364,12 +336,6 @@ class Conversation:
         if chosen is not None:
             said.append(f"The user chose: «{chosen.label}»" +
                         (f" — approving these exact words: {chosen.exact_words()}" if chosen.words else ""))
-            if chosen.kind == SNIPPET_CHOICE_KIND:
-                sn = chosen.snapshot or {}
-                said.append("Insert it with insert_paragraph: text exactly those words, style "
-                            + (repr(sn["style"]) if sn.get("style") else "'inherit'")
-                            + f", formatting {sn.get('formatting', 'inherit')!r}; ask the user which paragraph it goes "
-                              f"after (or before) if that is not clear yet.")
             if chosen.kind == "capitalization":
                 said.append("Individually approved capitalize_defined_terms record: " + json.dumps(chosen.snapshot, ensure_ascii=False))
         if text:
@@ -381,13 +347,11 @@ class Conversation:
         return self._advance()
 
     def take_app_choice(self, choice_id: str) -> Choice:
-        """A choice the app carries out itself (the custom transform): recorded in the transcript and told to Claude
-        with the next message; no request is made now. A library choice goes through ``take_library_choice``."""
+        """A choice the app carries out itself (the custom transform, a recovery plan or target): recorded in the
+        transcript and told to Claude with the next message; no request is made now."""
         chosen = self.choice(choice_id)
         if chosen.kind not in APP_CHOICE_KINDS:
             raise ValueError("that choice is answered by Claude — send it as a reply")
-        if chosen.kind in LIBRARY_CHOICE_KINDS:
-            raise ValueError("a library choice is taken with take_library_choice (the item is checked first)")
         self.entries.append(Entry("user", f"Chose: {chosen.label}"))
         self.notes.append(f"The user chose: «{chosen.label}». The app carried it out; the outcome follows.")
         return chosen
@@ -397,51 +361,6 @@ class Conversation:
         self.prior_failures.append(copy.deepcopy(evidence))
         self.recovery_active = True
         return self._advance()
-
-    def take_library_choice(self, choice_id: str):
-        """The user picked one of their library items Claude offered (a ``recipe`` / ``operation`` choice); the app
-        carries it out. First the item is checked to be exactly what was offered (``library.item_hash`` equal to the
-        choice's): a changed, renamed or missing item is ``LibraryChanged`` — nothing used, nothing approved, said to
-        the user and to Claude. Only then are the words the choice showed appended to ``sources`` (the pick approves them,
-        each its own source), the pick recorded, and Claude told the outcome follows. Returns ``(choice, spec)``: for a
-        recipe the spec to use — a copy of the snapshot validated when it was offered (never a re-read file), its placed
-        words asserted to be the words the choice showed, carrying THIS conversation's ``request`` (rule 13: the spec a
-        conversation hands the app carries the user's request); None for an operation."""
-        chosen = self.choice(choice_id)
-        if chosen.kind == SNIPPET_CHOICE_KIND:
-            raise ValueError("a snippet choice is sent as a reply (the pick approves its words; Claude writes the spec)")
-        if chosen.kind not in LIBRARY_CHOICE_KINDS:
-            raise ValueError("that choice is not one of your library items")
-        self._check_item(chosen)
-        spec = None
-        if chosen.kind == "recipe":
-            spec = copy.deepcopy(chosen.snapshot)
-            if not isinstance(spec, dict) or list(dict.fromkeys(compiler.placed_words(spec))) != list(chosen.words):
-                raise RuntimeError(f"the snapshot of your recipe «{chosen.name}» does not place the words its choice "
-                                   f"showed — a defect; nothing was used")
-            spec["request"] = self.request
-        self.sources += list(chosen.words)
-        self.entries.append(Entry("user", f"Chose: {chosen.describe()}"))
-        self.notes.append(f"The user chose: «{chosen.label}»"
-                          + (f" — approving these exact words: {chosen.exact_words()}" if chosen.words else "")
-                          + ". The app carried it out; the outcome follows.")
-        return chosen, spec
-
-    def _check_item(self, chosen: Choice) -> None:
-        """The library item a choice offers must be exactly what was offered (``library.item_hash`` equal to the
-        choice's): a changed, renamed or missing item is ``LibraryChanged`` — nothing used, nothing approved, said to the
-        user (an app entry) and to Claude (a note with the next message)."""
-        from . import library
-        try:
-            now = library.item_hash(library.find(chosen.name, chosen.kind))
-        except (library.LibraryError, OSError) as e:
-            now = f"unreadable: {e}"
-        if not chosen.item_hash or now != chosen.item_hash:
-            why = (f"your {chosen.kind} «{chosen.name}» changed since Claude offered it — nothing was used; ask again, "
-                   f"or use Your library…")
-            self.entries.append(Entry("app", f"Not used: {why}"))
-            self.notes.append(f"The user chose «{chosen.label}», but {why}")
-            raise LibraryChanged(why)
 
     def note(self, text: str, display: Optional[str] = None) -> None:
         """Tell Claude something with the next user message (what a preview found, what a custom transform did).
@@ -550,9 +469,6 @@ class Conversation:
         self.entries.append(Entry("claude", "\n".join(x for x in shown if x), status=turn.status,
                                   understanding=turn.understanding, choices=[c.to_dict() for c in turn.choices],
                                   images=list(turn.images)))
-        if self._dropped:                          # a library choice that was not shown: the user hears why
-            self.entries.append(Entry("app", "\n".join(self._dropped)))
-            self._dropped = []
         return turn
 
     def _next_choice_id(self) -> str:
@@ -767,16 +683,8 @@ class Conversation:
                 out.append(Choice(self._next_choice_id(), label, kind, wording=record["after"],
                                   detail="Approves only this occurrence in this source file.", snapshot=copy.deepcopy(record)))
                 continue
-            if kind in NAMED_LIBRARY_KINDS:
-                if self.simple_experience:
-                    errors.append("Choose the implementation internally; ask the user only about the document result.")
-                    continue
-                if self.mode != "chat":               # the one-shot compile: nobody is there to pick it
-                    errors.append(f"a choice was dropped (kind {kind!r} is offered in a conversation only)")
-                    continue
-                ch = self._library_choice(kind, c, errors)
-                if ch is not None:
-                    out.append(ch)
+            if kind in ("recipe", "operation", "snippet"):
+                errors.append("Choose the implementation internally; ask the user only about the document result.")
                 continue
             if not label or kind not in CHOICE_KINDS_FROM_CLAUDE:
                 errors.append(f"a choice was dropped (kind {kind!r} is not one Claude may offer)" if label else
@@ -789,101 +697,6 @@ class Conversation:
                 continue
             out.append(Choice(self._next_choice_id(), label, kind, wording, str(c.get("detail") or "")))
         return out
-
-    def _library_choice(self, kind: str, c: Dict[str, Any], errors: List[str]) -> Optional[Choice]:
-        """A choice naming one of the user's library items, built from the library alone (rule 13). The item must
-        exist under that exact name and kind (``library.find``: never a path, never a fuzzy match); a recipe must
-        load and validate, keep every template file it names, place only words the user can see (``clean_wording``'s
-        rule) and plan on this batch (``compiler._dry_errors``, the gate every fresh spec passes); an operation must
-        load with its code unchanged (``library.load_operation``). Its label comes from the item (name, description,
-        when and from which request it was saved), its ``words`` from ``compiler.placed_words`` — the same function the
-        traceability check uses — and its ``item_hash`` pins the files as read now. Claude's ``label`` and ``wording``
-        never reach it (a wording is said to be ignored); its ``detail`` is kept as the detail. Whatever fails drops the
-        choice, said three ways: in the errors, to the user (an app entry), to Claude (a note with the next message)."""
-        from . import library
-        from .editspec import SpecError, load_spec, spec_input_files, validate_spec
-        name = str(c.get("name") or "").strip()
-        if not name:
-            errors.append(f"a {kind} choice without a name was dropped")
-            return None
-        if c.get("wording"):
-            errors.append(f"the wording Claude put on the {kind} choice «{name}» was ignored: a library choice's words "
-                          f"come from the library item itself")
-
-        def drop(reason: str) -> None:
-            errors.append(f"the {kind} choice «{name}» was dropped: {reason}")
-            self._dropped.append(f"Claude offered your {kind} «{name}», but {reason} — the choice was not shown.")
-            self.notes.append(f"The {kind} choice «{name}» was not shown to the user: {reason}")
-
-        try:
-            item = library.find(name, kind)
-            item_hash = library.item_hash(item)
-        except library.LibraryError as e:
-            drop(str(e))
-            return None
-        except OSError as e:
-            drop(f"it cannot be read ({e})")
-            return None
-        detail = str(c.get("detail") or c.get("label") or "")
-        saved = (item.saved_at or "")[:10]
-        origin = (f"saved {saved}" if saved else "saved earlier") + \
-            (f" from the request «{compiler._cut(item.request, 120)}»" if item.request else "")
-        verb = {"recipe": "Use your recipe", "operation": "Try your operation", "snippet": "Insert your snippet"}[kind]
-        head = (f"{verb} “{item.name}”"
-                + (f" — {compiler._cut(item.description, compiler.DESCRIPTION_CHARS)}" if item.description else ""))
-        if kind == SNIPPET_CHOICE_KIND:
-            try:
-                sn = library.read_snippet(item)
-                clean_wording(sn["text"])
-            except library.LibraryError as e:
-                drop(str(e))
-                return None
-            except (OSError, ValueError) as e:              # a file that is gone, not JSON, or unreadable words
-                drop(f"it cannot be used ({e})")
-                return None
-            return Choice(self._next_choice_id(), f"{head} ({origin}; Claude then writes where it goes)", "snippet",
-                          None, detail, words=[sn["text"]], name=item.name, item_hash=item_hash, snapshot=sn)
-        if kind == "operation":
-            try:
-                library.load_operation(item.name)          # the manifest's sha256 and the whitelist
-            except library.LibraryError as e:
-                drop(str(e))
-                return None
-            except OSError as e:
-                drop(f"it cannot be read ({e})")
-                return None
-            return Choice(self._next_choice_id(),
-                          f"{head} ({origin}; tried on this batch's sample files first — edited copies only)",
-                          "operation", None, detail, name=item.name, item_hash=item_hash)
-        try:
-            spec = load_spec(library.load_recipe(item.name))
-            validate_spec(spec)
-        except (library.LibraryError, SpecError) as e:
-            drop(str(e))
-            return None
-        except (OSError, ValueError) as e:                  # a file that is gone, or that is not JSON
-            drop(f"it cannot be read ({e})")
-            return None
-        missing = [t for t in spec_input_files(spec) if not t.is_file()]
-        if missing:
-            what = ("its template file" if all(t.suffix.lower() == ".docx" for t in missing) else
-                    "a file it reads (its template, table or picture)")
-            drop(f"{what} is no longer at {', '.join(map(str, missing))} — save the recipe again with the "
-                 f"{'template' if what == 'its template file' else 'file'} where it is now")
-            return None
-        words = list(dict.fromkeys(compiler.placed_words(spec)))
-        try:
-            for w in words:
-                clean_wording(w)
-        except ValueError as e:
-            drop(f"it places words with characters you cannot see ({e})")
-            return None
-        dry = compiler._dry_errors(spec, self.batch)
-        if dry:
-            drop("it plans on none of these files: " + " | ".join(dry[:3]))
-            return None
-        return Choice(self._next_choice_id(), f"{head} ({origin})", "recipe", None, detail, words=words,
-                      name=item.name, item_hash=item_hash, snapshot=spec)
 
     def _ask_turn(self, asks, rejections, images) -> Turn:
         errors = list(rejections)
@@ -907,6 +720,12 @@ class Conversation:
         spec = copy.deepcopy(spec)
         spec["request"] = self.request
         summary = str(spec.get("summary") or "")
+        # The user reads the model's message; the summary is the record's. Without a message the summary stands in.
+        message = str(inp.get("message") or "").strip() or summary
+        if isinstance(spec.get("layouts"), list):
+            from .layouts import plan_from_submission
+            plan = plan_from_submission(spec, self.request)
+            return Turn("ok", message=message, understanding=summary, spec=plan, errors=list(rejections), images=images)
         if spec.get("unsupported"):
             self.unsupported = {"request": self.request, "unsupported": spec.get("unsupported"),
                                 "proposal": spec.get("proposal") or ""}
@@ -931,4 +750,4 @@ class Conversation:
             questions = _texts(spec["questions"], "spec's questions", errors) or ["(the model asked an empty question)"]
             return Turn("questions", understanding=summary, questions=questions, spec=spec, errors=errors,
                         images=images)
-        return Turn("ok", message=summary, understanding=summary, spec=spec, errors=list(rejections), images=images)
+        return Turn("ok", message=message, understanding=summary, spec=spec, errors=list(rejections), images=images)

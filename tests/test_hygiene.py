@@ -123,7 +123,7 @@ def test_capitalization_choices_come_from_inspected_occurrences(tmp_path):
     from spec_surgeon.conversation import Conversation
     path = tmp_path / "section.docx"
     path.write_bytes(document("owner and work"))
-    conv = Conversation("review defined terms", [path], memory={})
+    conv = Conversation("review defined terms", [path])
     proposal = conv.batch.propose_defined_terms(path.name, ["Owner"])["proposals"][0]
     errors = []
     choices = conv._choices_from([{"kind": "capitalization", "proposal_id": proposal["id"],
@@ -149,7 +149,7 @@ def test_a_real_conversation_pick_approves_only_that_source_occurrence(tmp_path)
         resp(tool("ask_user", {"understanding": "Review defined terms", "message": "Review this occurrence",
                               "choices": [{"kind": "capitalization", "proposal_id": record["id"]}]}, "a1")),
         resp(tool("submit_editspec", {"spec": spec}, "s1")))
-    c = Conversation("review defined terms", [path], memory={}, client=fake)
+    c = Conversation("review defined terms", [path], client=fake)
     turn = c.start()
     assert turn.status == "questions" and len(turn.choices) == 1
     assert hygiene.approval_source(record) not in c.sources

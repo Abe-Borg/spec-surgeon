@@ -20,13 +20,18 @@ of the font ops (9 pt text, 8 pt headers, a 12 pt note, symbol runs with sizes).
 insertion in the body footer), ``side_margin_twips``, ``header_distance_twips``, ``footer_distance_twips``,
 ``body_picture`` (a drawing whose id the template's logo must not reuse). Built-in batch 5's numbering fixtures:
 ``build_numbering()`` (an architect's spec numbered by its own outline list), ``build_typed()`` (numbered by typed text)
-and ``build_scheme_example()`` (``--numbering-scheme``: ``examples/templates/NUMBERING SCHEME.docx``).
+and ``build_scheme_example()`` (``--numbering-scheme``: ``examples/templates/NUMBERING SCHEME.docx``). The dirty
+fixture family: ``build_dirty(kind)`` for every kind in ``DIRTY_KINDS`` (``--dirty``) — one recognizable specification
+per deliberate defect family (fragmented runs, text-box headers, non-breaking spaces, compatibility mode, hundreds of
+tracked changes, protection, LibreOffice output, an empty body) beside a well-styled one.
 """
 from __future__ import annotations
 
 import argparse
 import copy
 import io
+import posixpath
+import re
 import struct
 import sys
 import zipfile
@@ -1884,6 +1889,338 @@ def build_tables(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINK
     return docx_bytes(doc)
 
 
+# ---- the dirty fixture family (docs/PLAN-2026-10-18-live-runs.md: live runs on messy project files) -----------------
+
+DIRTY_KINDS = ("fragmented_runs", "textbox_headers", "nbsp_spaces", "compat_mode", "many_revisions", "protected",
+               "libreoffice_like", "empty_body", "styled")
+
+DIRTY_STAMP = "ISSUED FOR PERMIT 2026-01-15"
+
+# CT_Settings child order (ECMA-376 §17.15.1.78) as far as these fixtures write into it; what python-docx's template
+# carries after this prefix (characterSpacingControl, compat, rsids, …) stays where it is.
+_SETTINGS_ORDER = ["writeProtection", "view", "zoom", "removePersonalInformation", "removeDateAndTime",
+                   "doNotDisplayPageBoundaries", "displayBackgroundShape", "printPostScriptOverText",
+                   "printFractionalCharacterWidth", "printFormsData", "embedTrueTypeFonts", "embedSystemFonts",
+                   "saveSubsetFonts", "saveFormsData", "mirrorMargins", "alignBordersAndEdges",
+                   "bordersDoNotSurroundHeader", "bordersDoNotSurroundFooter", "gutterAtTop", "hideSpellingErrors",
+                   "hideGrammaticalErrors", "activeWritingStyle", "proofState", "formsDesign", "attachedTemplate",
+                   "linkStyles", "stylePaneFormatFilter", "stylePaneSortMethod", "documentType", "mailMerge",
+                   "revisionView", "trackRevisions", "doNotTrackMoves", "doNotTrackFormatting", "documentProtection",
+                   "autoFormatOverride", "styleLockTheme", "styleLockQFSet", "defaultTabStop", "autoHyphenation"]
+
+_LO_MEMBERS_GONE = ("word/stylesWithEffects.xml", "word/webSettings.xml", "customXml/item1.xml",
+                    "customXml/_rels/item1.xml.rels", "customXml/itemProps1.xml", "docProps/thumbnail.jpeg")
+_LO_SETTINGS = (f'<w:settings xmlns:w="{W_NS}"><w:zoom w:percent="100"/><w:defaultTabStop w:val="709"/>'
+                '<w:autoHyphenation w:val="true"/><w:compat><w:compatSetting w:name="compatibilityMode" '
+                'w:uri="http://schemas.microsoft.com/office/word" w:val="15"/></w:compat>'
+                '<w:themeFontLang w:val="en-US"/></w:settings>')
+_FRAG_TOKEN = re.compile(r"\s+|\w+|[^\w\s]")
+
+
+def _settings_insert(root, el):
+    """Insert a settings child at its CT_Settings position: after the last sibling the schema puts before it."""
+    rank = _SETTINGS_ORDER.index(etree.QName(el).localname)
+    at = 0
+    for i, c in enumerate(root):
+        local = etree.QName(c).localname if isinstance(c.tag, str) else ""
+        if local in _SETTINGS_ORDER and _SETTINGS_ORDER.index(local) < rank:
+            at = i + 1
+    root.insert(at, el)
+
+
+def _set_compat_mode(root, val: str):
+    """Word's compatibilityMode in a settings root (python-docx's template says 14 — Word 2010 mode — so every
+    fixture built on it is in compatibility mode unless this says otherwise)."""
+    compat = root.find(W + "compat")
+    if compat is None:
+        compat = etree.SubElement(root, W + "compat")
+    for cs in compat.findall(W + "compatSetting"):
+        if cs.get(W + "name") == "compatibilityMode":
+            cs.set(W + "val", val)
+            return
+    cs = etree.SubElement(compat, W + "compatSetting")
+    cs.set(W + "name", "compatibilityMode"); cs.set(W + "uri", "http://schemas.microsoft.com/office/word")
+    cs.set(W + "val", val)
+
+
+def _set_app(root, application: str, version: str):
+    """docProps/app.xml's Application and AppVersion (CT_Properties is xsd:all — order-free)."""
+    ns = etree.QName(root).namespace
+    for tag, val in (("Application", application), ("AppVersion", version)):
+        el = root.find("{%s}%s" % (ns, tag))
+        if el is None:
+            el = etree.SubElement(root, "{%s}%s" % (ns, tag))
+        el.text = val
+
+
+def _strip_rsids(root):
+    """Every rsid* attribute and every w:rsids / w:rsid / w:rsidRoot element, gone (as LibreOffice writes nothing
+    of the kind)."""
+    for el in root.iter():
+        if not isinstance(el.tag, str):
+            continue
+        for k in list(el.attrib):
+            if etree.QName(k).localname.startswith("rsid"):
+                del el.attrib[k]
+    for el in list(root.iter(W + "rsids", W + "rsid", W + "rsidRoot")):
+        el.getparent().remove(el)
+
+
+def _drop_members(data: bytes, names) -> bytes:
+    """``data`` without the members ``names``, the relationships that target them (in every .rels member) and their
+    content-type overrides (fixture surgery: a package another application never wrote those parts into)."""
+    gone = set(names)
+    zin = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as zout:
+        for info in zin.infolist():
+            if info.filename in gone:
+                continue
+            payload = zin.read(info.filename)
+            if info.filename.endswith(".rels"):
+                base = info.filename.split("_rels/")[0]              # "_rels/.rels" → "", "word/_rels/x.rels" → "word/"
+                root = etree.fromstring(payload)
+                for rel in list(root):
+                    target = rel.get("Target") or ""
+                    if rel.get("TargetMode") != "External" and posixpath.normpath(posixpath.join(base, target)) in gone:
+                        root.remove(rel)
+                payload = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            elif info.filename == "[Content_Types].xml":
+                root = etree.fromstring(payload)
+                for ov in list(root.findall("{%s}Override" % CT_NS)):
+                    if (ov.get("PartName") or "").lstrip("/") in gone:
+                        root.remove(ov)
+                payload = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            zi = zipfile.ZipInfo(info.filename, date_time=info.date_time)
+            zi.compress_type = zipfile.ZIP_DEFLATED
+            zout.writestr(zi, payload)
+    return out.getvalue()
+
+
+def _xml_text(s: str) -> str:
+    return s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+def _anchored_textbox(inner: str, docpr_id: int, name: str):
+    """A run holding a floating text box anchored to its paragraph — the way Word writes a header or footer whose
+    content was drawn as a "text box": DrawingML (wps) with the VML fallback, so the paragraphs in ``inner`` exist
+    twice. ``inner`` is w:p XML with the w: prefix undeclared."""
+    xml = (
+        '<w:r xmlns:w="%s" xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        'xmlns:wp="http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing" '
+        'xmlns:a="http://schemas.openxmlformats.org/drawingml/2006/main" '
+        'xmlns:wps="http://schemas.microsoft.com/office/word/2010/wordprocessingShape" '
+        'xmlns:v="urn:schemas-microsoft-com:vml" xmlns:o="urn:schemas-microsoft-com:office:office">'
+        '<mc:AlternateContent><mc:Choice Requires="wps"><w:drawing>'
+        '<wp:anchor distT="0" distB="0" distL="114300" distR="114300" simplePos="0" relativeHeight="251659264" '
+        'behindDoc="0" locked="0" layoutInCell="1" allowOverlap="1"><wp:simplePos x="0" y="0"/>'
+        '<wp:positionH relativeFrom="margin"><wp:posOffset>0</wp:posOffset></wp:positionH>'
+        '<wp:positionV relativeFrom="paragraph"><wp:posOffset>0</wp:posOffset></wp:positionV>'
+        '<wp:extent cx="5943600" cy="457200"/><wp:effectExtent l="0" t="0" r="0" b="0"/><wp:wrapNone/>'
+        '<wp:docPr id="%d" name="%s"/><wp:cNvGraphicFramePr/>'
+        '<a:graphic><a:graphicData uri="http://schemas.microsoft.com/office/word/2010/wordprocessingShape">'
+        '<wps:wsp><wps:cNvSpPr txBox="1"/><wps:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="5943600" cy="457200"/>'
+        '</a:xfrm><a:prstGeom prst="rect"><a:avLst/></a:prstGeom><a:noFill/><a:ln><a:noFill/></a:ln></wps:spPr>'
+        '<wps:txbx><w:txbxContent>%s</w:txbxContent></wps:txbx>'
+        '<wps:bodyPr rot="0" vert="horz" wrap="square" lIns="91440" tIns="45720" rIns="91440" bIns="45720" '
+        'anchor="t" anchorCtr="0"><a:noAutofit/></wps:bodyPr></wps:wsp></a:graphicData></a:graphic></wp:anchor>'
+        '</w:drawing></mc:Choice><mc:Fallback><w:pict><v:shape id="%s" o:spid="_x0000_s%d" type="#_x0000_t202" '
+        'style="position:absolute;margin-left:0;margin-top:0;width:468pt;height:36pt;z-index:251659264;'
+        'mso-position-horizontal-relative:margin" filled="f" stroked="f"><v:textbox><w:txbxContent>%s</w:txbxContent>'
+        '</v:textbox></v:shape></w:pict></mc:Fallback></mc:AlternateContent></w:r>'
+    ) % (W_NS, docpr_id, name, inner, name, 1024 + docpr_id, inner)
+    return etree.fromstring(xml)
+
+
+def _dirty_lines(section_number: str, title: str, nbsp: bool = False):
+    """The one specification every dirty kind shows: the SECTION line, the title, three PARTs with typed article
+    numbers and lettered paragraphs, END OF SECTION. ``nbsp``: a non-breaking space between every number and its
+    unit (and inside "NFPA 13"), and runs of two spaces where a typist doubled them."""
+    u = " " if nbsp else " "
+    d = "  " if nbsp else " "
+    return [
+        f"SECTION {section_number}",
+        title,
+        "PART 1 - GENERAL",
+        "1.01\tSUMMARY",
+        f"A.\tSection includes wet-pipe sprinkler systems, piping, valves and hangers for the data halls.",
+        f"B.\tThe Owner's insurer is FM Global;{d}all equipment shall be FM Approved.",
+        "1.02\tREFERENCES",
+        f"A.\tNFPA{u}13 (2025), Standard for the Installation of Sprinkler Systems.",
+        "B.\tFM Global Property Loss Prevention Data Sheet 2-0.",
+        "PART 2 - PRODUCTS",
+        "2.01\tPIPE AND FITTINGS",
+        f"A.\tPipe shall be black steel, Schedule 40,{d}per ASTM A53.",
+        f"B.\tWorking pressure 175{u}psi;{d}test pressure 200{u}psi for 2{u}hours.",
+        "2.02\tSPRINKLERS",
+        f"A.\tQuick-response pendent sprinklers, K-factor 5.6, 155{u}F.",
+        "PART 3 - EXECUTION",
+        "3.01\tINSTALLATION",
+        f"A.\tInstall per NFPA{u}13 and the hydraulic calculations.",
+        f"B.\tHangers at 12{u}ft maximum spacing for 4{u}in mains.{d}Trapeze hangers for mains over 4{u}in.",
+        "END OF SECTION",
+    ]
+
+
+def _plain_paragraph(doc, text: str):
+    return doc.add_paragraph(text)
+
+
+def _fragmented_writer():
+    """A paragraph writer that puts every word, every space and every punctuation mark in its own run — some words
+    letter by letter — each run stamped with different rsid-like revision-save ids, as a paragraph looks after years
+    of edits in Word."""
+    k = [0]
+
+    def write(doc, text: str):
+        p = doc.add_paragraph()
+        p._p.set(qn("w:rsidR"), f"{(0x0041A000 + 0x9B1 * k[0]) & 0xFFFFFFFF:08X}")
+        p._p.set(qn("w:rsidRDefault"), "00B47730")
+        for tok in _FRAG_TOKEN.findall(text):
+            pieces = list(tok) if (tok.isalpha() and len(tok) > 3 and k[0] % 7 == 3) else [tok]
+            for piece in pieces:
+                k[0] += 1
+                r = p.add_run(piece)
+                r._r.set(qn("w:rsidR"), f"{(0x00A1C000 + 0x1F3 * k[0]) & 0xFFFFFFFF:08X}")
+                if k[0] % 3 == 0:
+                    r._r.set(qn("w:rsidRPr"), f"{(0x0062B000 + 0x2D1 * k[0]) & 0xFFFFFFFF:08X}")
+        return p
+    return write
+
+
+def _tracked_paragraph(doc, k: int):
+    """A lettered paragraph of four runs carrying one pending insertion and one pending deletion (INS:/DEL: markers
+    that ``_post_process`` turns into Jeremy's w:ins and Jack's w:del) — few enough runs that hundreds of them leave
+    the body's run fragmentation ratio under 4 (the ``fragmented_runs`` kind's own signal)."""
+    p = doc.add_paragraph()
+    p.add_run(f"{'ABCDEFGH'[k % 8]}.\tThe Owner's insurer ")
+    p.add_run("INS:requires ")
+    p.add_run("DEL:recommends ")
+    p.add_run("FM Approved sprinklers per NFPA 13 (2025).")
+    return p
+
+
+def _dirty_doc(section_number: str, title: str, lines, *, textbox_hf: bool = False, writer=None,
+               tracked_per_line: int = 0, styled_lo: bool = False):
+    """One single-section spec in Normal, Arial 10: the header "SECTION <n> - <title><tab><stamp>", the footer
+    "<n> - <PAGE>", the body ``lines`` written by ``writer`` (``_plain_paragraph`` unless told otherwise).
+    ``textbox_hf``: the header and footer paragraphs hold nothing but a text box with that content inside it.
+    ``tracked_per_line``: that many tracked paragraphs (``_tracked_paragraph``) after every body line.
+    ``styled_lo``: PART lines in Heading 1, everything else in a "Text Body" style with LibreOffice's id."""
+    doc = Document()
+    st = doc.styles["Normal"]; st.font.name = "Arial"; st.font.size = Pt(10)
+    if styled_lo:
+        _add_style(doc, '<w:style w:type="paragraph" w:styleId="TextBody"><w:name w:val="Text Body"/>'
+                        '<w:basedOn w:val="Normal"/><w:pPr><w:spacing w:after="140" w:line="276" w:lineRule="auto"/>'
+                        '</w:pPr></w:style>')
+    sec = doc.sections[0]
+    sec.header.is_linked_to_previous = False
+    sec.footer.is_linked_to_previous = False
+    hp, fp = sec.header.paragraphs[0], sec.footer.paragraphs[0]
+    fp.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+    if textbox_hf:
+        hp._p.append(_anchored_textbox(
+            f'<w:p><w:r><w:t xml:space="preserve">SECTION {_xml_text(section_number)} - {_xml_text(title)}</w:t></w:r>'
+            f'<w:r><w:tab/></w:r><w:r><w:t>{DIRTY_STAMP}</w:t></w:r></w:p>', 901, "Text Box 1"))
+        fp._p.append(_anchored_textbox(
+            f'<w:p><w:pPr><w:jc w:val="right"/></w:pPr><w:r><w:t xml:space="preserve">{_xml_text(section_number)} - '
+            f'</w:t></w:r><w:fldSimple w:instr=" PAGE "><w:r><w:t>1</w:t></w:r></w:fldSimple></w:p>', 902, "Text Box 2"))
+    else:
+        hp.add_run(f"SECTION {section_number} - {title}"); hp.add_run("\t"); hp.add_run(DIRTY_STAMP)
+        fp.add_run(f"{section_number} - ")
+        _page_field(fp)
+    write = writer or _plain_paragraph
+    k = 0
+    for line in lines:
+        if styled_lo:
+            doc.add_paragraph(line, style="Heading 1" if line.startswith("PART ") else "Text Body")
+        else:
+            write(doc, line)
+        for _ in range(tracked_per_line):
+            _tracked_paragraph(doc, k); k += 1
+    return doc
+
+
+def build_dirty(kind: str, section_number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS") -> bytes:
+    """The dirty fixture family: one valid .docx per ``kind`` in ``DIRTY_KINDS``, each the same recognizable
+    specification (``_dirty_lines``: SECTION line, title, PART/article/paragraph text, END OF SECTION; a header with
+    the section line and the issue stamp ``DIRTY_STAMP``, a footer with the page number) carrying exactly one
+    deliberate defect family — the shapes real project files bring. python-docx's template underneath says
+    compatibilityMode 14 by itself; every kind but ``compat_mode`` is set to 15 (current Word) so that one kind alone
+    is in compatibility mode.
+
+    * ``fragmented_runs`` — every word, space and punctuation mark in its own w:r (some words letter by letter), each
+      run with different rsid-like ids: ``body_hygiene.run_fragmentation_ratio`` far above 4, the visible text normal;
+    * ``textbox_headers`` — the header's and the footer's content lives inside a floating text box
+      (mc:AlternateContent with w:txbxContent, DrawingML and VML copies): the fingerprint reports text boxes in the
+      header and footer parts; the issue stamp sits in the header's box;
+    * ``nbsp_spaces`` — a non-breaking space between numbers and units (175 psi, 4 in, NFPA 13) and doubled spaces
+      after punctuation: ``has_nbsp`` and ``has_multi_space``;
+    * ``compat_mode`` — settings.xml's compatibilityMode 14 (Word 2010 mode; app.xml says AppVersion 14.0000);
+    * ``many_revisions`` — eight tracked paragraphs after every body line, one of Jeremy's pending insertions and
+      one of Jack's pending deletions each: 320 revisions spread through the body (the run fragmentation ratio stays
+      under 4: that is ``fragmented_runs``'s signal, not this kind's); trackRevisions on;
+    * ``protected`` — ``w:documentProtection w:edit="readOnly" w:enforcement="1"`` in settings.xml;
+    * ``libreoffice_like`` — as LibreOffice 7.6 writes a file: no rsid attribute or element anywhere, body paragraphs
+      in "Text Body" (style id ``TextBody``) and PART lines in Heading 1 (id ``Heading1``), docProps/app.xml
+      Application "LibreOffice/7.6…", a settings.xml of five elements, and none of Word's extra parts
+      (stylesWithEffects, webSettings, customXml, the thumbnail); the theme part stays (the styles' fonts name it);
+    * ``empty_body`` — the body holds one empty paragraph and the sectPr, nothing else (the header still names the
+      section);
+    * ``styled`` — the well-formed styled specification (``build_styles``): the clean end of the range.
+    """
+    if kind not in DIRTY_KINDS:
+        raise ValueError(f"unknown dirty kind {kind!r}; one of {DIRTY_KINDS}")
+    lines = _dirty_lines(section_number, title, nbsp=(kind == "nbsp_spaces"))
+    if kind == "styled":
+        data = build_styles(section_number, title)
+    elif kind == "empty_body":
+        doc = _dirty_doc(section_number, title, [])
+        doc.add_paragraph()
+        data = docx_bytes(doc)
+    elif kind == "fragmented_runs":
+        data = docx_bytes(_dirty_doc(section_number, title, lines, writer=_fragmented_writer()))
+    elif kind == "textbox_headers":
+        data = docx_bytes(_dirty_doc(section_number, title, lines, textbox_hf=True))
+    elif kind == "many_revisions":
+        data = _post_process(docx_bytes(_dirty_doc(section_number, title, lines, tracked_per_line=8)))
+    elif kind == "libreoffice_like":
+        data = docx_bytes(_dirty_doc(section_number, title, lines, styled_lo=True))
+    else:                                       # nbsp_spaces, compat_mode, protected: the plain spec, settings apart
+        data = docx_bytes(_dirty_doc(section_number, title, lines))
+
+    if kind == "libreoffice_like":
+        zin = zipfile.ZipFile(io.BytesIO(data))
+        edits = {n: _strip_rsids for n in zin.namelist() if n.endswith(".xml") and n not in _LO_MEMBERS_GONE}
+
+        def settings(root):
+            _strip_rsids(root)
+            for c in list(root):
+                root.remove(c)
+            for c in etree.fromstring(_LO_SETTINGS):
+                root.append(c)
+
+        def app(root):
+            _set_app(root, "LibreOffice/7.6.4.1$Linux_X86_64 LibreOffice_project/60", "15.0000")
+        edits["word/settings.xml"] = settings
+        edits["docProps/app.xml"] = app
+        return _drop_members(patch_docx(data, edits), _LO_MEMBERS_GONE)
+
+    def settings(root):
+        _set_compat_mode(root, "14" if kind == "compat_mode" else "15")
+        if kind == "protected":
+            dp = etree.Element(W + "documentProtection")
+            dp.set(W + "edit", "readOnly"); dp.set(W + "enforcement", "1")
+            _settings_insert(root, dp)
+        if kind == "many_revisions" and root.find(W + "trackRevisions") is None:
+            _settings_insert(root, etree.Element(W + "trackRevisions"))
+
+    def app(root):
+        _set_app(root, "Microsoft Office Word", "14.0000" if kind == "compat_mode" else "16.0000")
+    return patch_docx(data, {"word/settings.xml": settings, "docProps/app.xml": app})
+
+
+
 def main(argv=None):
     ap = argparse.ArgumentParser()
     ap.add_argument("out_dir")
@@ -1895,8 +2232,15 @@ def main(argv=None):
                     help="write the office styles template (map_styles / apply_style) only")
     ap.add_argument("--numbering-scheme", action="store_true",
                     help="write the numbering scheme example file (convert_numbering / convert_typed_numbers) only")
+    ap.add_argument("--dirty", action="store_true",
+                    help="write the dirty fixture family (dirty-<kind>.docx for every kind in DIRTY_KINDS) only")
     args = ap.parse_args(argv)
     out = Path(args.out_dir); out.mkdir(parents=True, exist_ok=True)
+    if args.dirty:
+        for kind in DIRTY_KINDS:
+            (out / f"dirty-{kind}.docx").write_bytes(build_dirty(kind))
+        print(f"wrote {len(DIRTY_KINDS)} dirty fixtures to {out}")
+        return
     if args.numbering_scheme:
         (out / "NUMBERING SCHEME.docx").write_bytes(build_scheme_example())
         print(f"wrote {out / 'NUMBERING SCHEME.docx'}")

@@ -44,7 +44,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from lxml import etree
 
 from ..package import CT_PART, REL_TYPE_BASE, W, DocxPackage, serialize_xml
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .fields import fields_of
 
@@ -435,6 +435,23 @@ def author_flags(pkg: DocxPackage) -> List[str]:
     return out
 
 
+# property name → how the plan names it (File → Info shows these labels)
+PROPERTY_WORDS = {"title": "title", "subject": "subject", "author": "author", "keywords": "keywords",
+                  "comments": "comments", "category": "category", "status": "status",
+                  "last_modified_by": "last-modified-by name", "company": "company", "manager": "manager"}
+
+
+def _property_word(name: Any) -> str:
+    return PROPERTY_WORDS.get(str(name), str(name).replace("_", " "))
+
+
+def _clauses(items: List[str]) -> str:
+    """Join clauses; a serial comma keeps them apart when one of them holds a comma or an "and" of its own."""
+    if len(items) < 2 or not any(", " in c or " and " in c for c in items):
+        return prose.join(items)
+    return ", ".join(items[:-1]) + ", and " + items[-1]
+
+
 # ---- set_document_properties -----------------------------------------------------------------------------------------
 
 @register
@@ -467,6 +484,33 @@ class SetDocumentProperties(Op):
         "V10": "document_properties: every asked property re-read in the output (text exact, cleared = absent); the "
                "member residual compares everything else in those parts element for element",
     }
+
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        sets = params.get("set") if isinstance(params.get("set"), dict) else {}
+        clears = list(params.get("clear")) if isinstance(params.get("clear"), list) else []
+        custom = params.get("custom") if isinstance(params.get("custom"), dict) else {}
+        clear_custom = list(params.get("clear_custom")) if isinstance(params.get("clear_custom"), list) else []
+        clauses: List[str] = []
+        if sets:
+            clauses.append("set " + prose.join(f"the {_property_word(k)} to {prose.quote(v)}" for k, v in sets.items()))
+        if clears:
+            clauses.append("clear " + prose.join(f"the {_property_word(k)}" for k in clears))
+        if custom:
+            clauses.append(("set the custom property " if len(custom) == 1 else "set the custom properties ")
+                           + prose.join(f"{prose.quote(k)} to {prose.quote(v)}" for k, v in custom.items())
+                           + " (added when the file has no such property)")
+        if clear_custom:
+            clauses.append(("remove the custom property " if len(clear_custom) == 1 else "remove the custom properties ")
+                           + prose.join(prose.quote(n) for n in clear_custom))
+        if not clauses:
+            return prose.sentence("set or clear the file's document properties (title, author, company and the like), "
+                                  "as shown under File → Info")
+        first = prose.sentence("in the file's properties (File → Info),", _clauses(clauses))
+        if {"author", "last_modified_by"} & set(clears):
+            return first + " " + prose.sentence("tracked changes and comments keep the names of their authors")
+        return first
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:
@@ -584,6 +628,25 @@ class SetDocumentState(Op):
         "V10": "document_state: the setting and the two Mark-as-Final markers re-read in the output; the member "
                "residual compares everything else",
     }
+
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        params = dict(params or {})
+        track, final = params.get("track_changes"), params.get("final")
+        clauses: List[str] = []
+        if track in ("off", "on"):
+            clauses.append(f"turn the file's Track Changes setting {track}, so it opens with tracking {track}")
+        if final is True:
+            clauses.append("mark the file as final, so Word opens it read-only with a “Marked as Final” bar")
+        elif final is False:
+            clauses.append("remove the file's Mark as Final, so it opens for editing again")
+        if not clauses:
+            return prose.sentence("turn the file's Track Changes setting off or on, or mark the file as final or unmark it")
+        first = prose.sentence(_clauses(clauses))
+        if track in ("off", "on"):
+            return first + " " + prose.sentence("tracked changes already in the file stay as they are; only the setting "
+                                                "Word opens with changes")
+        return first
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         if select:

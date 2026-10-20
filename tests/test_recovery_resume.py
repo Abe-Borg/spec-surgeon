@@ -208,14 +208,17 @@ def test_full_trial_results_are_paginated_without_losing_tail_files(tmp_path):
     assert json.loads(json.dumps(final)) == final
 
 
-def test_explicit_project_inputs_do_not_discover_nearby_other_project_files(tmp_path, monkeypatch):
+def test_explicit_project_inputs_do_not_discover_nearby_other_project_files(tmp_path):
     source = documents(tmp_path, 1)[0]
     goal = spec([margin()])
-    monkeypatch.setattr(recovery.compiler, "input_files_near", lambda *a: pytest.fail("Cross-project discovery"))
+    nearby = tmp_path / "other-project-values.csv"           # another job's table beside the document
+    nearby.write_text("name,value\nsection,99 99 99\n", encoding="utf-8")
     result = recovery.prepare_recovery([source], goal["request"], tmp_path / "session", spec=goal,
                                       options=opts(), project_context={"job": "A"}, input_files=[])
     assert result.ready and result.key["project_context"] == {"job": "A"}
     assert result.key["recovery_inputs"] == [] and result.budget["calls"] == 0
+    assert str(nearby) not in result.input_pins and str(nearby) not in json.dumps(result.key)
+    assert recovery.compiler._Batch([source], None).inputs == []   # nothing is discovered beside the documents
 
 
 def test_session_lock_refuses_overlapping_continuations_and_releases_after_error(tmp_path):

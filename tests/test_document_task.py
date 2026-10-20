@@ -54,9 +54,7 @@ def test_explicit_attachments_never_expand_to_a_folder_and_support_same_names(tm
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "preview"
     assert len(task.session.client.requests) == 1  # one plan, no second intent model
-    assert task.session.outcome_review is None
     assert not task.results
-    assert task.session.outcome_approval == ""
     task.perform("primary", token=view["token"])
     assert task.stage == "done"
     assert set(task.results) == {str(first), str(second)}
@@ -127,11 +125,10 @@ def test_target_question_uses_chat_numbers_without_approving_plan(tmp_path):
     task.attach([source])
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "question" and not view["action"]
-    assert "Paragraph 2" in "\n".join(view["questions"])
-    assert "Paragraph 3" in "\n".join(view["questions"])
+    labels = "\n".join(c["label"] for c in view["choices"])
+    assert "Paragraph 2" in labels and "Paragraph 3" in labels
     view = task.perform("send", text="2")
     assert view["stage"] == "preview"
-    assert task.session.outcome_approval == ""
     assert len(task.session.client.requests) == 2
     assert not task.results
     task.perform("primary", token=view["token"])
@@ -178,7 +175,6 @@ def test_journal_restores_work_without_restoring_approval_or_resetting_spend(tmp
     assert restored.restore()
     assert restored.stage == "resume"
     assert restored.decisions == [REQUEST]
-    assert restored.session.outcome_approval == ""
     assert restored.session.preview is None
     assert restored._budget.calls == task._budget.calls
     assert restored._budget.estimated_cost_usd == task._budget.estimated_cost_usd
@@ -242,12 +238,11 @@ def test_proposed_rewrite_requires_wording_choice_then_preview_approval(tmp_path
     task.attach([source])
     view = task.perform("send", text=request)
     assert view["stage"] == "question" and not view["action"]
-    assert draft in "\n".join(view["questions"])
+    assert draft in "\n".join(c["label"] + " " + " ".join(c["words"]) for c in view["choices"])
     assert draft not in task.word_sources and not task.results
     view = task.perform("send", text="1")
     assert view["stage"] == "preview"
     assert draft in task.word_sources and not task.results
-    assert task.session.outcome_approval == ""
     task.perform("primary", token=view["token"])
     assert task.stage == "done"
     from zipfile import ZipFile
@@ -275,12 +270,10 @@ def test_recovery_plan_and_preview_stay_in_same_task_without_json(tmp_path, monk
     task.attach([source])
     before = source.read_bytes()
     view = task.perform("send", text=REQUEST)
-    assert view["stage"] == "plan"
+    assert view["stage"] == "preview", view   # the recovery plan is carried out internally; one decision remains
     assert view["effects"] and not task.results
     assert not any('"effects"' in message["text"] for message in view["messages"])
-    view = task.perform("primary", token=view["token"])
-    assert view["stage"] == "ready", view
-    assert not task.results
+    assert view["action"] == "Create edited copies"
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and Path(task.results[str(source)]).is_file()
     assert source.read_bytes() == before
@@ -338,10 +331,6 @@ def test_later_revision_retains_earlier_copies_and_originals(tmp_path):
 
 def test_custom_method_is_prepared_internally_but_only_delivered_after_review(tmp_path, monkeypatch):
     from test_codegen import GOOD_OP
-    from spec_surgeon import compiler
-    def forbid(*args):
-        raise AssertionError("Custom preparation must not read neighboring files")
-    monkeypatch.setattr(compiler, "input_files_near", forbid)
     request = "Set the header distance to 900 twips."
     fake = FakeClient(resp(tool("submit_editspec", {"spec": {"request": request, "summary": "Move header",
         "unsupported": "Use a custom method", "proposal": "Set the header distance to 900 twips"},
@@ -354,6 +343,7 @@ def test_custom_method_is_prepared_internally_but_only_delivered_after_review(tm
     assert len(fake.requests) == 2
     assert view["stage"] == "preview"
     assert task.session.generated.passed and not task.results
+    assert task.session.conversation.batch.inputs == []   # nothing beside the attachments is ever read
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and Path(task.results[str(source)]).is_file()
     assert Document(task.results[str(source)]).sections[0].header_distance.twips == 900
@@ -379,44 +369,39 @@ def test_partial_failure_recovers_automatically_and_can_reopen(tmp_path, monkeyp
         resp(tool("submit_repair", {"candidate": {"kind": "spec", "spec": SPEC}})))
     task = task_for(tmp_path, fake, journal=tmp_path / "journal.json")
     monkeypatch.setattr(task, "_recovery_options", lambda: RecoveryOptions(render=False, critic_review=False,
-                                                visual_review=False, include_nearby_inputs=False))
+                                                visual_review=False))
     task.attach([source, second])
     before = [p.read_bytes() for p in (source, second)]
     view = task.perform("send", text=REQUEST)
     view = task.perform("primary", token=view["token"])
     assert len(task.results) == 1
-    assert task.session.recovery and view["stage"] == "ready"
+    assert task.session.recovery and view["stage"] == "preview"
     assert view["document_count"] == 1
     restored = task_for(tmp_path, journal=task.journal)
     restored.restore()
-    assert restored.session.outcome_approval == ""
     view = restored.perform("primary", token=restored.action_token())
-    assert view["stage"] == "ready" and len(restored.results) == 1
+    assert view["stage"] == "preview" and len(restored.results) == 1
     restored.perform("primary", token=view["token"])
     assert len(restored.results) == 2
     assert [p.read_bytes() for p in (source, second)] == before
 
 
-def test_only_attached_files_are_inspected_not_neighboring_project_data(tmp_path, monkeypatch):
-    from spec_surgeon import compiler
+def test_only_attached_files_are_inspected_not_neighboring_project_data(tmp_path):
     source = document(tmp_path / "Spec.docx")
     (tmp_path / "PROJECT.json").write_text('{"secret": "unrelated project wording"}')
-    def forbid(*args):
-        raise AssertionError("Unattached neighboring files must not be discovered")
-    monkeypatch.setattr(compiler, "input_files_near", forbid)
-    monkeypatch.setattr(compiler, "load_project_memory", forbid)
-    monkeypatch.setattr(compiler, "library_index", forbid)
+    (tmp_path / "values.csv").write_text("name,value\nsecret,unrelated table wording\n")
     task = task_for(tmp_path)
     task.attach([source])
     task.perform("send", text=REQUEST)
     assert task.session.conversation.batch.inputs == []
-    assert task.session.conversation.memory == {}
     assert "unrelated project wording" not in str(task.session.client.requests)
+    assert "unrelated table wording" not in str(task.session.client.requests)
     tools = task.session.client.requests[0]["tools"]
     assert not {"list_library", "read_library_item"}.intersection(t["name"] for t in tools)
     choices = next(t for t in tools if t["name"] == "ask_user")["input_schema"]["properties"]["choices"]["items"]
     assert "recipe" not in choices["properties"]["kind"]["enum"]
     assert "YOUR LIBRARY" not in task.session.client.requests[0]["system"]
+    assert "PROJECT MEMORY" not in str(task.session.client.requests[0]["messages"])
 
 
 @pytest.mark.parametrize("change_source", [False, True])
@@ -469,7 +454,7 @@ def test_more_budget_resumes_unadopted_recovery_checkpoint(tmp_path, reopen, mon
     task.session.recovery_checkpoint = checkpoint
     with llm.budget_scope(task._budget):
         paused = recovery.recover([source], goal["request"], checkpoint, spec=goal,
-            options=opts(critic_review=False, visual_review=False, include_nearby_inputs=False), client=fake)
+            options=opts(critic_review=False, visual_review=False), client=fake)
     assert paused.paused_reason and len(paused.attempts) == 1
     task.stage = "budget"
     task.save()
@@ -478,9 +463,9 @@ def test_more_budget_resumes_unadopted_recovery_checkpoint(tmp_path, reopen, mon
         task = task_for(tmp_path, fake, journal=task.journal)
         task.restore()
     monkeypatch.setattr(task, "_recovery_options", lambda:
-                        opts(critic_review=False, visual_review=False, include_nearby_inputs=False))
+                        opts(critic_review=False, visual_review=False))
     view = task.perform("primary", token=task.action_token())
-    assert view["stage"] == "ready" and not task.results
+    assert view["stage"] == "preview" and not task.results
     assert task.session.recovery.out_dir == checkpoint
     assert len(task.session.recovery.attempts) == 2
     assert len(fake.requests) == task._budget.calls == 2
@@ -521,11 +506,11 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
     task.attach(paths)
     task.decisions = task.word_sources = [goal["request"]]
     result = recovery.recover(paths, goal["request"], tmp_path / "recovery", spec=goal,
-                              options=opts(include_nearby_inputs=False),
+                              options=opts(),
                               prior_failures=distinct_failures(paths), client=fake)
     assert len(result.ready) == 1 and result.questions
     task.session._adopt_recovery(result)
-    task._settle(lambda _: None, preview=False)
+    task._settle(lambda _: None)
     task.perform("primary", token=task.action_token())
     first_output = Path(task.results[str(paths[0])])
     first_bytes = first_output.read_bytes()
@@ -535,9 +520,9 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
         task.restore()
         task.perform("primary", token=task.action_token())
     monkeypatch.setattr(task, "_recovery_options", lambda:
-                        opts(critic_review=False, visual_review=False, include_nearby_inputs=False))
+                        opts(critic_review=False, visual_review=False))
     view = task.perform("send", text="Yes, use those margins on the second document.")
-    assert view["stage"] == "ready" and len(task.results) == 1
+    assert view["stage"] == "preview" and len(task.results) == 1
     task.perform("primary", token=view["token"])
     assert task.stage == "done" and len(task.results) == 2
     assert first_output.read_bytes() == first_bytes
@@ -545,3 +530,105 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
     assert all(Path(output).is_file() for output in task.results.values())
     assert [p.read_bytes() for p in paths] == original
     assert len(fake.requests) == 3
+
+
+def test_a_mixed_batch_gets_one_plan_per_layout_and_one_decision(tmp_path):
+    from make_fixtures import build, build_styles, build_rich
+    from spec_surgeon.fingerprint import fingerprint
+    from spec_surgeon.package import DocxPackage
+    typed = tmp_path / "a" / "21 13 13.docx"
+    styled = tmp_path / "b" / "21 13 16.docx"
+    other = tmp_path / "c" / "21 13 19.docx"
+    for path, data in ((typed, build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")),
+                       (styled, build_styles("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS")),
+                       (other, build_rich("21 13 19", "PREACTION SPRINKLER SYSTEMS"))):
+        path.parent.mkdir(parents=True)
+        path.write_bytes(data)
+    pid = lambda p: fingerprint(DocxPackage.from_path(p))["pattern_id"]  # noqa: E731
+    bold = {"run": {"b": True}, "tracked": False}
+    submission = {"summary": "Bold body paragraphs in two layouts", "layouts": [
+        {"id": "A", "label": "typed numbers, no styles", "pattern_ids": [pid(typed)],
+         "spec": {"summary": "by text", "mode": "formatting", "assumptions": ["Body paragraphs start with A. to E."],
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": r"^[A-E]\.\t"}}, "params": bold}]}},
+        {"id": "B", "label": "styled body", "pattern_ids": [pid(styled), pid(other)],
+         "spec": {"summary": "by style", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"style_in": ["ArchPara", "Normal"]}}, "params": bold}]}}]}
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": submission, "message": "I’ll bold the body paragraphs; your documents use two layouts."})))
+    task = task_for(tmp_path, fake)
+    task.attach([typed, styled, other])
+    before = [p.read_bytes() for p in (typed, styled, other)]
+    view = task.perform("send", text="Make the body paragraphs bold.")
+    assert view["stage"] == "preview" and view["action"] == "Create edited copies"
+    assert [m["text"] for m in view["messages"] if m["role"] == "assistant"] == [
+        "I’ll bold the body paragraphs; your documents use two layouts."]
+    groups = view["groups"]
+    assert [(g["id"], g["label"], g["count"]) for g in groups] == [("A", "typed numbers, no styles", 1), ("B", "styled body", 2)]
+    assert groups[0]["assumptions"] == ["Body paragraphs start with A. to E."]
+    assert all(change["summary"].endswith(".") for g in groups for change in g["changes"])
+    assert len(view["samples"]) == 3 and not view["set_aside"]   # one sample per structure pattern
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and len(task.results) == 3
+    assert [p.read_bytes() for p in (typed, styled, other)] == before
+    assert len(fake.requests) == 1
+
+
+def _layout_submission(tmp_path):
+    from make_fixtures import build, build_rich, build_styles
+    from spec_surgeon.fingerprint import fingerprint
+    from spec_surgeon.package import DocxPackage
+    typed, styled, other = tmp_path / "a" / "21 13 13.docx", tmp_path / "b" / "21 13 16.docx", tmp_path / "c" / "21 13 19.docx"
+    for path, data in ((typed, build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")),
+                       (styled, build_styles("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS")),
+                       (other, build_rich("21 13 19", "PREACTION SPRINKLER SYSTEMS"))):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(data)
+    pid = lambda p: fingerprint(DocxPackage.from_path(p))["pattern_id"]  # noqa: E731
+    bold = {"run": {"b": True}, "tracked": False}
+    submission = {"summary": "Bold body paragraphs in two layouts", "layouts": [
+        {"id": "A", "label": "typed numbers", "pattern_ids": [pid(typed)],
+         "spec": {"summary": "by text", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": r"^[A-E]\.\t"}}, "params": bold}]}},
+        {"id": "B", "label": "styled body", "pattern_ids": [pid(styled)],
+         "spec": {"summary": "by style", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"style_in": ["ArchPara"]}}, "params": bold}]}}]}
+    return submission, [typed, styled, other]
+
+
+def test_after_one_layouts_recovery_is_saved_the_next_layouts_documents_are_checked(tmp_path, monkeypatch):
+    """Both layouts set their document aside at run time: recovery takes layout A first; once its copies are saved
+    the coordinator moves on to layout B by itself, and the queue survives a reopened conversation. (The compiler
+    refuses a plan that fails on its own documents, so the plan is set as the outcome directly.)"""
+    from spec_surgeon import recovery
+    submission, docs = _layout_submission(tmp_path)
+    plan = {"kind": "layouts", "request": "Make the body paragraphs bold.", "summary": submission["summary"],
+            "layouts": submission["layouts"]}
+    for layout in plan["layouts"]:
+        layout["spec"]["request"] = plan["request"]
+        layout["spec"]["ops"][0]["expect"] = {"text_diffs": 5}
+    calls = []
+
+    def fake_recover(run_dir, out_dir, *, request=None, options=None, client=None, log=None):
+        calls.append(Path(run_dir).name)
+        out = Path(out_dir)
+        (out / "outputs").mkdir(parents=True, exist_ok=True)   # a delivery is not part of this test
+        return recovery.RecoveryResult(out_dir=out, request=str(request or ""))
+    monkeypatch.setattr(recovery, "recover_from_run", fake_recover)
+    journal = tmp_path / "journal.json"
+    task = task_for(tmp_path, journal=journal)
+    task.attach(docs[:2])
+    task.session._set_outcome(spec=plan, source="test")
+    task._settle(lambda m: None)
+    assert task.stage == "preview"
+    view = task.view()
+    assert [item["name"] for item in view["set_aside"]] == ["21 13 13.docx", "21 13 16.docx"]
+    view = task.perform("primary", token=view["token"])
+    run = task.session.last_run_dir
+    assert calls == ["layout-A"] and task.session.pending_layout_recovery == [run / "layout-B"]
+    assert view["stage"] == "preview"                                # layout A's recovery awaits its review
+    assert json.loads(journal.read_text(encoding="utf-8"))["pending_layouts"] == [str(run / "layout-B")]
+    reopened = task_for(tmp_path, journal=journal)                   # a reopened conversation keeps the queue
+    assert reopened.restore() and reopened._resume_layouts == [str(run / "layout-B")]
+    # the empty stub recovery has nothing to export; the coordinator's own step to the next layout is the subject
+    task.session.last_recovery, task.session.recovery = task.session.recovery, None
+    task.session.resolve_next_layout(lambda m: None)
+    assert calls == ["layout-A", "layout-B"] and task.session.pending_layout_recovery == []

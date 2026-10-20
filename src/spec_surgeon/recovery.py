@@ -14,6 +14,7 @@ import math
 import time
 import uuid
 from collections import Counter
+import dataclasses
 from dataclasses import asdict, dataclass, field, fields, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
@@ -48,7 +49,6 @@ class RecoveryOptions:
     renderer: str = "auto"
     allow_codegen: Optional[bool] = None  # automatic: enabled only with an independently checked adaptive contract
     use_memory: bool = True
-    include_nearby_inputs: bool = True  # conversational desktop confines input to explicit attachments
     group_call_slice: int = 4
     critic_review: bool = True
     visual_review: bool = True
@@ -79,9 +79,17 @@ class RecoveryOptions:
                 raise ValueError(f"Unknown analysis limit: {exc}") from exc
         if self.allow_codegen is not None and type(self.allow_codegen) is not bool:
             raise ValueError("allow_codegen must be a boolean or None for contract-based automatic choice")
-        for name in ("render", "use_memory", "critic_review", "visual_review", "include_nearby_inputs"):
+        for name in ("render", "use_memory", "critic_review", "visual_review"):
             if type(getattr(self, name)) is not bool:
                 raise ValueError(f"{name} must be a boolean")
+
+
+    @classmethod
+    def from_snapshot(cls, values) -> "RecoveryOptions":
+        """Options saved by an earlier version may name settings that no longer exist (for example the removed
+        neighboring-input discovery); they are ignored rather than refusing to reopen the investigation."""
+        known = {f.name for f in dataclasses.fields(cls)}
+        return cls(**{k: v for k, v in dict(values or {}).items() if k in known})
 
 
 @dataclass
@@ -609,8 +617,7 @@ def recover(files: Sequence[Path], request: str, out_dir: Path, *, spec=None, ch
     # input listing the compiler exposes. Freeze that listing before the first model call.
     # New files appearing during investigation cannot become unreviewed sources of wording.
     primary_template = Path(template).resolve() if template else next(iter(templates.values()), None)
-    discovered_inputs = (compiler.input_files_near(files, primary_template) if options.include_nearby_inputs else []) \
-        if input_files is None else list(input_files)
+    discovered_inputs = [] if input_files is None else list(input_files)
     input_files = list(dict.fromkeys(
         [p for s in _specs(goal) for p in spec_input_files(s) if p not in spec_templates(s)]
         + discovered_inputs))
@@ -1798,7 +1805,7 @@ def resume_recovery(run_dir: Path, *, request=None, options=None, client=None, l
     result = load_recovery(run_dir)
     with diag.scope(result.out_dir / "logs" / "events.jsonl", recovery_id=result.recovery_id), \
             diag.span("recovery.resume", file_count=len(result.files), single_round=_single_round):
-        options = options or RecoveryOptions(**result.options_snapshot)
+        options = options or RecoveryOptions.from_snapshot(result.options_snapshot)
         options.validate()
         if options.allow_codegen is None:
             options = replace(options, allow_codegen=adaptive.contract_of(result) is not None)

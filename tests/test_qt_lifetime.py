@@ -3,16 +3,16 @@
 The segmentation fault of 2026-10-16: ``tests/test_diagnostics.py``'s windows were only closed, so the cyclic garbage
 collector freed them later, on whatever thread was allocating at the time — in ``test_editspec.py``'s 24-file batch that
 is the process pool's manager thread, while the main thread waits in ``as_completed``. PySide6 6.12 deletes a Python
-subclass of a Qt class (``MainWindow``) right there, on that thread, and defers the plain Qt widgets Shiboken still
-books as Python-owned (44 of them in a window: the ``QLabel``/``QPushButton``/``QCheckBox`` placed through layouts) to
-the main thread — where that second ``delete`` runs on memory Qt freed with the window: SIGSEGV in
+subclass of a Qt class (the window: then ``MainWindow``, now ``ConversationWindow``) right there, on that thread, and
+defers the plain Qt widgets Shiboken still books as Python-owned (the ``QLabel``/``QPushButton``/``QScrollArea`` placed
+through layouts) to the main thread — where that second ``delete`` runs on memory Qt freed with the window: SIGSEGV in
 ``Shiboken::BindingManager::runDeletionInMainThread``, in whatever test ran next, whenever a collection happened to run
 off the main thread (one run in five passed). ``qt_support.close_windows`` is the fix: close, ``deleteLater``, flush
 the deferred deletes (``processEvents()`` alone never delivers them outside an event loop — ``test_gui.py``'s old
 teardown only leaked its windows) and collect the garbage on the main thread, while the test still holds every wrapper.
 
-These tests pin the helper, the rule that every window test tears down through it, and the one Qt object the window
-made without a parent (the table models) now belonging to their page."""
+These tests pin the helper, the rule that every window test tears down through it, and that the conversation window
+makes no Qt object without a parent in the window (everything it owns dies with it, on the GUI thread)."""
 from __future__ import annotations
 
 import ast
@@ -30,11 +30,11 @@ TESTS = Path(__file__).resolve().parent
 
 def _window(tmp_path):
     from qt_support import qt_app_or_skip
-    from spec_surgeon.gui import Session
-    from spec_surgeon.ui.app import build_legacy_window as build_window
+    from spec_surgeon.gui import Session, build_window
+    from spec_surgeon.settings import Settings
     from spec_surgeon.ui.app import RecordingPrompts
     app = qt_app_or_skip()
-    w = build_window(Session(out_root=tmp_path / "out"), prompts=RecordingPrompts())
+    w = build_window(Session(out_root=tmp_path / "out"), settings=Settings(), prompts=RecordingPrompts())
     w._spec_surgeon["wait"]()
     return app, w
 
@@ -57,9 +57,10 @@ def test_close_windows_deletes_the_window_and_everything_it_owns_on_the_main_thr
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     app, w = _window(tmp_path)
     descendants = [o for o in shiboken6.getAllValidWrappers() if isinstance(o, QObject) and o is not w and _under(o, w)]
-    owned = [w.bridge, w.updates, w.updates.banner, w._files_timer, w.preview_page.model, w.preview_page.proxy,
-             w.run_page.model, w.run_page.proxy]
-    assert len(descendants) > 100 and all(shiboken6.isValid(o) for o in owned)
+    owned = [w.bridge, w.updates, w.updates.banner, w._ticker, w.composer, w.scroll, w.primary, w.send, w.notice,
+             w.attachments, w.attachment_scroll, w.status, w.progress]
+    assert len(descendants) > 50 and all(shiboken6.isValid(o) for o in owned)
+    assert all(_under(o, w) for o in owned)      # the window's long-lived children: Qt deletes them with it
     windows = [w]
     close_windows(app, windows)
     assert windows == [] and not shiboken6.isValid(w)
@@ -70,29 +71,15 @@ def test_close_windows_deletes_the_window_and_everything_it_owns_on_the_main_thr
     close_windows(app, [w])                      # a second time is harmless (an invalid window is skipped)
 
 
-def test_the_table_models_belong_to_their_pages(tmp_path, monkeypatch):
-    """A QObject the window makes has a Qt parent in the window, so Qt deletes it with the window on the GUI thread —
-    the models were the only parentless ones, left to the garbage collector (which runs on any thread)."""
-    from qt_support import close_windows
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    app, w = _window(tmp_path)
-    try:
-        for page in (w.preview_page, w.run_page):
-            assert page.model.parent() is page and page.proxy.parent() is page
-            assert page.proxy.sourceModel() is page.model and page.table.model() is page.proxy
-    finally:
-        close_windows(app, [w])
-
-
 SCENARIO = textwrap.dedent("""
     import faulthandler, gc, sys, threading, weakref
     from pathlib import Path
     faulthandler.enable()
     from qt_support import close_windows
-    from spec_surgeon.gui import Session
-    from spec_surgeon.ui.app import build_legacy_window as build_window
+    from spec_surgeon.gui import Session, build_window
+    from spec_surgeon.settings import Settings
     from spec_surgeon.ui.app import RecordingPrompts
-    w = build_window(Session(out_root=Path(sys.argv[1])), prompts=RecordingPrompts())
+    w = build_window(Session(out_root=Path(sys.argv[1])), settings=Settings(), prompts=RecordingPrompts())
     ui = w._spec_surgeon
     app = ui["app"]
     ui["wait"]()
@@ -118,10 +105,15 @@ def test_a_window_whose_job_still_runs_is_kept_alive_not_deleted(tmp_path, monke
     import shiboken6
     import qt_support
     from qt_support import close_windows
+    from test_document_task import document
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     app, w = _window(tmp_path)
     gate = threading.Event()
-    assert w._work("Something long", lambda log: gate.wait(30) and "finished")
+    monkeypatch.setattr(w.task, "perform", lambda *a, **kw: gate.wait(30) and w.task.view())
+    w.add_documents([str(document(tmp_path / "Spec.docx"))])
+    w.composer.setPlainText("Something long")
+    w.do_send()                                  # the job thread runs task.perform (held at the gate)
+    assert w.busy
     windows = [w]
     try:
         with pytest.raises(TimeoutError, match=r"still had a job.*kept alive"):
@@ -131,6 +123,7 @@ def test_a_window_whose_job_still_runs_is_kept_alive_not_deleted(tmp_path, monke
         gate.set()
         w._spec_surgeon["wait"]()
         qt_support.KEPT_ALIVE.remove(w)
+    assert not w.busy
     close_windows(app, [w])
     assert not shiboken6.isValid(w)
 

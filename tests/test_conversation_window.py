@@ -52,7 +52,6 @@ def test_chat_to_verified_copies_and_unsent_revision_blocks_approval(qt, tmp_pat
     w._spec_surgeon["wait"]()
     assert w.primary.isEnabled()
     assert w.primary.text() == "Create edited copies"
-    assert w.session.outcome_approval == ""
     w.composer.setPlainText("Actually, only the cover")
     assert not w.primary.isEnabled()
     w.composer.clear()
@@ -190,3 +189,75 @@ def test_installed_smoke_uses_default_chat_and_delivers_verified_copies(qt, tmp_
     assert original == [p.read_bytes() for p in sources]
     for output in w.task.results.values():
         assert not Document(output).sections[0].header.paragraphs[0].text
+
+
+def test_choices_are_buttons_and_a_click_answers(qt, tmp_path):
+    from fake_claude import FakeClient, resp, tool
+    from test_document_task import SPEC
+    fake = FakeClient(resp(tool("ask_user", {"message": "Two titles match.", "choices": [
+        {"kind": "clarify", "label": "Only the first title"}, {"kind": "clarify", "label": "Both titles"}]})),
+        resp(tool("submit_editspec", {"spec": SPEC, "message": "I’ll bold the first title."})))
+    w = window(qt, tmp_path)
+    w.session.client = fake
+    w.add_documents([str(document(tmp_path / "Spec.docx"))])
+    w.composer.setPlainText(REQUEST)
+    w.do_send()
+    w._spec_surgeon["wait"]()
+    assert w.task.stage == "question" and not w.primary.isVisible()
+    assert [b.text() for b in w._choice_buttons] == ["Only the first title", "Both titles"]
+    assert all(b.isEnabled() for b in w._choice_buttons)
+    w._choice_buttons[1].click()
+    w._spec_surgeon["wait"]()
+    assert w.task.stage == "preview" and w.primary.text() == "Create edited copies"
+    assert "Both titles" in w.task.decisions
+    assert [m["text"] for m in w.task.messages if m["role"] == "assistant"][-1] == "I’ll bold the first title."
+    assert not any("•" in m["text"] for m in w.task.messages)
+
+
+def test_a_mixed_batch_shows_one_card_per_layout_with_its_assumptions(qt, tmp_path):
+    from PySide6.QtWidgets import QLabel
+    from fake_claude import FakeClient, resp, tool
+    from make_fixtures import build, build_styles
+    from spec_surgeon.fingerprint import fingerprint
+    from spec_surgeon.package import DocxPackage
+    typed, styled = tmp_path / "a" / "21 13 13.docx", tmp_path / "b" / "21 13 16.docx"
+    typed.parent.mkdir(); styled.parent.mkdir()
+    typed.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    styled.write_bytes(build_styles("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS"))
+    pid = lambda p: fingerprint(DocxPackage.from_path(p))["pattern_id"]  # noqa: E731
+    bold = {"run": {"b": True}, "tracked": False}
+    submission = {"summary": "two layouts", "layouts": [
+        {"id": "A", "label": "typed numbers, no styles", "pattern_ids": [pid(typed)],
+         "spec": {"summary": "by text", "mode": "formatting", "assumptions": ["Body paragraphs start with A. to E."],
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": r"^[A-E]\.\t"}}, "params": bold}]}},
+        {"id": "B", "label": "styled body", "pattern_ids": [pid(styled)],
+         "spec": {"summary": "by style", "mode": "formatting",
+                  "ops": [{"op": "set_properties", "select": {"paragraphs": {"style_in": ["ArchPara"]}}, "params": bold}]}}]}
+    w = window(qt, tmp_path)
+    w.session.client = FakeClient(resp(tool("submit_editspec", {"spec": submission, "message": "Two layouts, one plan."})))
+    w.add_documents([str(typed), str(styled)])
+    w.composer.setPlainText("Make the body paragraphs bold.")
+    w.do_send()
+    w._spec_surgeon["wait"]()
+    assert w.task.stage == "preview" and w.primary.text() == "Create edited copies"
+    texts = [label.text() for label in w.findChildren(QLabel)]
+    assert "Your documents use 2 layouts" in texts
+    assert "typed numbers, no styles · 1 document" in texts
+    assert "styled body · 1 document" in texts
+    assert "Assuming: Body paragraphs start with A. to E." in texts
+    assert not any(t.startswith("• Assumptions") for t in texts)
+    assert all(not t.startswith("• ") or t.endswith(".") for t in texts)
+
+
+def test_set_aside_documents_are_named_with_their_reason(qt, tmp_path):
+    from PySide6.QtWidgets import QLabel
+    from spec_surgeon.planner import FilePlan
+    w = window(qt, tmp_path)
+    w.add_documents([str(document(tmp_path / "Spec.docx"))])
+    w.task.perform("send", text=REQUEST)
+    w.session.preview.batch_plan.files.append(FilePlan(tmp_path / "Other.docx", "x", "exception",
+        exception={"code": "layout", "reason": "Other.docx is built differently; it was left untouched."}))
+    w._render()
+    texts = [label.text() for label in w.findChildren(QLabel)]
+    assert "Left untouched" in texts
+    assert "Other.docx: Other.docx is built differently; it was left untouched." in texts

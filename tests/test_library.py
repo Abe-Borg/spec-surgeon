@@ -1,6 +1,6 @@
 """Your library (library.py): recipes (saved specs) and your own operations (saved custom transforms) — names that can
 never leave the library folder, recipes that load and run like any spec, operations that are re-proven on every batch
-and refused when their code changed, the window's Library / Save buttons and the command line."""
+and refused when their code changed, and the command line."""
 from __future__ import annotations
 
 import json
@@ -12,11 +12,12 @@ from make_fixtures import build
 from spec_surgeon import compiler as compiler_module
 from spec_surgeon import library
 from spec_surgeon.cli import main as cli_main
-from spec_surgeon.codegen import generate_op
+from spec_surgeon.codegen import generate_op, pick_samples, run_generated, trial
+from spec_surgeon.editspec import load_spec
 from spec_surgeon.gui import Session
 from spec_surgeon.library import LibraryError
 from test_codegen import GOOD_OP
-from test_compiler import FakeClient, outcome_cli_flags, resp, tool
+from test_compiler import FakeClient, resp, tool
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
@@ -62,9 +63,11 @@ def test_a_recipe_round_trips_and_runs_like_any_spec(folder, tmp_path):
         library.save_recipe("remove ALL headers", REMOVE)                       # same name, other case: one file
     library.save_recipe("remove ALL headers", REMOVE, replace=True)
     assert [i.name for i in library.list_items()] == ["remove ALL headers"]
-    s = Session(folder=folder, out_root=tmp_path / "out")
-    s.load_recipe("Remove all headers")
-    assert s.spec_source == str(item.path) and "2 plan cleanly" in s.make_preview(render=False, log=lambda m: None)
+    path = library.load_recipe("Remove all headers")                            # the recipe's file: a spec like any
+    assert path == item.path
+    s = Session(documents=sorted(folder.glob("*.docx")), out_root=tmp_path / "out")
+    s._set_outcome(spec=load_spec(path), source=str(path))
+    assert "2 plan cleanly" in s.make_preview(render=False, log=lambda m: None)
     assert "PASS 2" in s.run(False, False, lambda m: None)
     library.delete("remove all headers")
     assert library.list_items() == [] and not item.path.exists()
@@ -90,53 +93,29 @@ def test_an_operation_is_proven_again_on_each_batch_and_refused_when_its_code_ch
     item = library.save_operation("Header distance", g, "0.625 in")
     manifest = json.loads((item.path / "manifest.json").read_text(encoding="utf-8"))
     assert manifest["op_name"] == "set_header_distance" and manifest["brief"].startswith("REQUEST")
-    s = Session(folder=folder, out_root=tmp_path / "out")
-    msg = s.use_operation("header distance", lambda m: None)
-    assert "passed verification" in msg and s.generated.passed and s.generated_preview.samples
-    out = s.run(False, False, lambda m: None)
-    assert "2 of 2 file(s) PASS" in out
+    loaded = library.load_operation("header distance")
+    # never trusted on its record: it comes back NOT passed and is tried on the files at hand first
+    assert loaded.passed is False and loaded.source == g.source and loaded.name == "set_header_distance"
+    assert loaded.params == {"twips": 900} and loaded.brief == g.brief
+    files = sorted(folder.glob("*.docx"))
+    trials = [trial(loaded.source, f, loaded.select, loaded.params, tmp_path / "trial" / f"{i:02d}")
+              for i, f in enumerate(pick_samples(files))]
+    assert trials and all(t.passed for t in trials), [t.problems for t in trials]
+    loaded.passed = True
+    results = run_generated(loaded, [str(f) for f in files], tmp_path / "out", lambda m: None)
+    assert [t.passed for t in results] == [True, True]
+    assert len(list((tmp_path / "out" / "outputs").glob("*.docx"))) == 2
     (item.path / "op.py").write_text(GOOD_OP + "\n# edited by hand\n", encoding="utf-8")
     with pytest.raises(LibraryError, match="changed since it was saved"):
-        s.use_operation("Header distance", lambda m: None)
+        library.load_operation("Header distance")
     with pytest.raises(LibraryError, match="passed verification"):              # only a passing transform is saved
         library.save_operation("x", type(g)())
 
 
-def test_a_saved_operation_that_fails_on_this_batch_is_refused(folder, tmp_path, monkeypatch):
-    g = passing_op(folder, tmp_path)
-    library.save_operation("Header distance", g)
-    import spec_surgeon.codegen as cg
-    real = cg.trial
-
-    def failing(*a, **k):
-        t = real(*a, **k)
-        t.passed, t.problems = False, ["V10 FAIL: not here"]
-        return t
-    monkeypatch.setattr(cg, "trial", failing)
-    s = Session(folder=folder, out_root=tmp_path / "out")
-    with pytest.raises(RuntimeError, match="does not pass on these files"):
-        s.use_operation("Header distance", lambda m: None)
-    assert s.generated is None
-
-
-def test_session_saves_only_current_previews(folder, tmp_path):
-    s = Session(folder=folder, out_root=tmp_path / "out")
-    s.load_spec(SPECS / "remove-all-headers-footers.json")
-    with pytest.raises(ValueError, match="preview the spec first"):
-        s.save_recipe("x")
-    s.make_preview(render=False, log=lambda m: None)
-    item, _ = s.save_recipe("Strip headers")
-    assert item.kind == "recipe"
-    with pytest.raises(ValueError, match="only a custom transform"):
-        s.save_operation("y")
-
-
 def test_the_command_line_library_and_save_as(folder, tmp_path, monkeypatch, capsys):
     monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
-    approval = outcome_cli_flags(tmp_path / "approved-outcomes.json", "remove all headers and footers",
-                                 sorted(folder.glob("*.docx")))
     assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(tmp_path / "o"), "--no-render",
-                     "--save-as", "Strip headers", *approval]) == 0
+                     "--save-as", "Strip headers"]) == 0
     assert "Saved to your library: Recipe: Strip headers" in capsys.readouterr().out
     assert cli_main(["do", "x", str(folder), "--out", str(tmp_path / "o2"), "--no-render", "--save-as",
                      "strip HEADERS"]) == 2                                    # taken: refused before any compile
@@ -145,35 +124,3 @@ def test_the_command_line_library_and_save_as(folder, tmp_path, monkeypatch, cap
     assert cli_main(["library", "delete", "strip headers"]) == 2                 # no terminal, no --yes
     assert cli_main(["library", "delete", "strip headers", "--yes"]) == 0
     assert cli_main(["library", "show", "strip headers"]) == 2
-
-
-@pytest.fixture
-def qt_env(tmp_path, monkeypatch):
-    from qt_support import close_windows, qt_app_or_skip
-    app = qt_app_or_skip()
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    windows = []
-    yield app, windows
-    close_windows(app, windows)
-
-
-def test_the_window_library_buttons(qt_env, folder, tmp_path):
-    from spec_surgeon.ui.app import RecordingPrompts, build_legacy_window as build_window
-    _app, windows = qt_env
-    prompts = RecordingPrompts(texts=["Strip headers"], items=["Recipe: Strip headers"])
-    s = Session(out_root=tmp_path / "out")
-    w = build_window(s, prompts=prompts)
-    windows.append(w)
-    ui = w._spec_surgeon
-    ui["vars"]["folder"].set(str(folder))
-    ui["vars"]["render"].set(False)
-    s.load_spec(SPECS / "remove-all-headers-footers.json")
-    ui["buttons"]["preview"].click()
-    ui["wait"]()
-    ui["buttons"]["save_to_library"].click()
-    assert [i.label() for i in library.list_items()] == ["Recipe: Strip headers"]
-    assert "Saved to your library" in w.preview_page.info.title.text()
-    s.remove_spec()
-    ui["buttons"]["library"].click()
-    assert s.spec == REMOVE and s.spec_source.endswith("strip-headers.json")
-    assert "Strip headers" in w.request_page.spec_bar.text.text() or "strip-headers" in w.request_page.spec_bar.text.text()

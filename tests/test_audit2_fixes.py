@@ -45,7 +45,6 @@ from spec_surgeon.verify import run_suite
 from spec_surgeon.verify.reader import VPackage
 from spec_surgeon.verify.template import _v_field_runs, slots_of
 from test_codegen import GOOD_OP
-from test_gui import qt, window  # noqa: F401 — the Qt fixture and the window helper
 from test_compiler import FakeClient, resp, tool
 
 
@@ -485,26 +484,6 @@ def test_the_guard_sees_a_content_change_that_keeps_size_and_mtime(tmp_path):
     with pytest.raises(guard.GuardError, match="content changed"):
         guard.write_back(ident, b"new")
     assert f.read_bytes() == b"0123456780"
-
-
-def test_changing_the_results_folder_after_a_preview_disables_run(qt, tmp_path):
-    from spec_surgeon.gui import Session
-    folder = tmp_path / "Specs"
-    folder.mkdir()
-    (folder / "21 00 21 – PAPA.docx").write_bytes(build("21 00 21", "PAPA"))
-    s = Session(out_root=tmp_path / "out")
-    s.load_spec(Path(__file__).resolve().parent.parent / "examples" / "specs" / "remove-all-headers-footers.json")
-    w, ui = window(qt, s)
-    ui["vars"]["folder"].set(str(folder))
-    ui["vars"]["out"].set(str(tmp_path / "out"))
-    ui["vars"]["render"].set(False)
-    ui["buttons"]["preview"].click()
-    ui["wait"]()
-    assert ui["buttons"]["run"].isEnabled()
-    ui["vars"]["out"].set(str(tmp_path / "elsewhere"))
-    assert not ui["buttons"]["run"].isEnabled() and w.do_run() is False
-    ui["vars"]["out"].set(str(tmp_path / "out"))
-    assert ui["buttons"]["run"].isEnabled()
 
 
 # ---- Strict Open XML ------------------------------------------------------------------------------------------------

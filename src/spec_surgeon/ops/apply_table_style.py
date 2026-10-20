@@ -39,12 +39,12 @@ cell in the OUTPUT (nothing cleared left), so the plan soft-reads those elements
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 
 from ..package import W, DocxPackage
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .selectors import StyleSheet, scope_parts
 from .style_import import (TemplateStyles, apply_import, check_template_unchanged, plan_import, resolve_style,
@@ -130,6 +130,26 @@ class ApplyTableStyle(Op):
                "selected table, row or cell of the output; styles_imported when the style comes from a template; "
                "residual identical",
         "V7": "none — a table style re-lays the table"}
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        style = params.get("style")
+        what = f"the {prose.quote(style)} table style" if style else "a table style"
+        where = prose.where(select, default="every table")
+        subject = where[3:] if where.startswith("in ") else where
+        template = params.get("template")
+        source = ""
+        if template:
+            if params.get("existing") == "replace":
+                source = (f", as the template {prose.quote(template)} defines it, in place of the document's own "
+                          f"definition")
+            else:
+                source = f", imported from the template {prose.quote(template)} when the document lacks it"
+        first = prose.sentence("give", subject, what + source)
+        if params.get("direct_formatting") != "clear":
+            return first
+        return first + " " + prose.sentence("the tables' own borders, shading and cell margins, and their rows' and "
+                                            "cells' own, are removed so the style shows")
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         raw_select = dict(select or {})

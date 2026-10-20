@@ -19,12 +19,12 @@ be expressed); a plain change on such a run is made and flagged (reject-all woul
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from ..package import W, DocxPackage
 from ..ooxml import (RevisionStamp, THEME_FONT_ATTR, block_full_text, file_uses_date_utc, mark_rpr, max_revision_id,
                      own_size, paragraphs, property_change, run_rpr, set_rfonts, set_size)
-from . import register
+from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .font_numbering import NUMBERING_PARAM, apply_numbering, numbering_enabled, plan_numbering
 from .replace_text import default_author
@@ -34,6 +34,99 @@ from .selectors import (DEFAULT_PRESERVE_FONTS, FONT_PARAM_DOC, StyleSheet, chec
                         paragraph_selected, rpr_selected, runs_by_paragraph, scope_parts, size_applies, size_values)
 
 FONT_REFLOW = "a font change re-measures every glyph it touches; text reflows, so the source render is no layout reference"
+FONT_SLOT_WORDS = {"ascii": "basic Latin text", "hAnsi": "extended Latin text", "cs": "complex-script text",
+                   "eastAsia": "East Asian text"}
+
+
+# ---- prose shared by the font and formatting ops' ``describe`` (ops/prose.py is the vocabulary) --------------------
+
+def font_phrase(params: Dict[str, Any]) -> str:
+    """``the font to “Arial”`` (``(East Asian text included)`` / ``and East Asian text to “SimSun”``), or the font of each
+    kind of text when the slots differ; empty when no font is asked."""
+    font = params.get("font")
+    asked: Dict[str, str] = {}
+    if isinstance(font, str) and font.strip():
+        asked = {"ascii": font, "hAnsi": font, "cs": font}
+        if params.get("east_asia") is True:
+            asked["eastAsia"] = font
+    for slot in ("ascii", "hAnsi", "eastAsia", "cs"):
+        if isinstance(params.get(slot), str) and params[slot].strip():
+            asked[slot] = params[slot]
+    if not asked:
+        return ""
+    if font and {asked.get(s) for s in ("ascii", "hAnsi", "cs")} == {font}:
+        east = asked.get("eastAsia")
+        tail = "" if east is None else (" (East Asian text included)" if east == font
+                                        else f" and East Asian text to {prose.quote(east)}")
+        return f"the font to {prose.quote(font)}" + tail
+    groups: Dict[str, List[str]] = {}
+    for slot, name in asked.items():
+        groups.setdefault(name, []).append(FONT_SLOT_WORDS[slot])
+    return "the font of " + prose.join(f"{prose.join(words)} to {prose.quote(name)}" for name, words in groups.items())
+
+
+def size_phrase(params: Dict[str, Any]) -> str:
+    """``the size to 10 pt`` (``(where it is now 9 pt or 11 pt)`` with ``size_from``); empty when no size is asked."""
+    if params.get("size") is None:
+        return ""
+    text = f"the size to {prose.points(params['size'])}"
+    frm = params.get("size_from")
+    if isinstance(frm, (list, tuple)) and frm:
+        text += " (where it is now " + prose.join((prose.points(x) for x in frm), "or") + ")"
+    return text
+
+
+def tracked_phrase(select: Dict[str, Any], params: Dict[str, Any]) -> str:
+    """``shown as tracked changes`` (``by “Jane”``) when the change is tracked — asked, or the default for a targeted
+    selection (§14.1); ``without tracked changes`` when the default would have tracked it; empty otherwise."""
+    default = is_targeted(select)
+    asked = params.get("tracked")
+    if asked if isinstance(asked, bool) else default:
+        author = params.get("author")
+        return "shown as tracked changes" + (f" by {prose.quote(author)}" if author else "")
+    return "without tracked changes" if default else ""
+
+
+def preserved_fonts_extra(params: Dict[str, Any]) -> List[str]:
+    """``text in the “Symbol” and “Wingdings” fonts is left alone`` when the user names the fonts to preserve."""
+    fonts = params.get("preserve_fonts")
+    if isinstance(fonts, (list, tuple)) and fonts and [str(f) for f in fonts] != DEFAULT_PRESERVE_FONTS:
+        return ["text in the " + prose.join(prose.quote(f) for f in fonts)
+                + (" fonts" if len(fonts) > 1 else " font") + " is left alone"]
+    return []
+
+
+def formatting_extras(params: Dict[str, Any]) -> List[str]:
+    """The non-default settings a run-formatting op shares with set_properties, as clauses for a second sentence."""
+    out: List[str] = []
+    if params.get("in_revisions") == "exclude":
+        out.append("text inside existing tracked changes is left alone")
+    if params.get("include_paragraph_marks") is False:
+        out.append("paragraph marks are not changed")
+    if params.get("skip_sym_runs") is False:
+        out.append("symbol characters are included")
+    return out + preserved_fonts_extra(params)
+
+
+def label_fonts_included(select: Dict[str, Any], params: Dict[str, Any], *, style: bool = False) -> Optional[bool]:
+    """True when the fonts of list labels change too, False when they are left alone although the default would have
+    changed them, None when the setting makes no difference to this selection."""
+    try:
+        on = numbering_enabled(select, params, style=style)
+    except JobException:
+        return None
+    return True if on else (False if numbering_enabled(select, {}, style=style) else None)
+
+
+def style_definitions(ids: Iterable[Any]) -> str:
+    """``in the definition of the “PR1” style`` / ``in the definitions of the “PR1” and “PR2” styles``."""
+    ids = list(ids)
+    return ("in the definition of " if len(ids) == 1 else "in the definitions of ") + prose.styles(ids)
+
+
+def two_sentences(first: str, extras: List[str]) -> str:
+    """The main sentence, then one more for the non-default settings when there are any."""
+    return first if not extras else first + " " + prose.sentence(prose.join(extras))
 
 
 @register
@@ -75,6 +168,31 @@ class SetFont(Op):
                "theme attrs cleared; numbering_fonts compares the whole numbering member when included; residual identical",
         "V7": "none — a font change reflows the text",
     }
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        font = font_phrase(params)
+        what: List[str] = []
+        if font:
+            what.append(font + (" (where a font is set directly)" if params.get("only_where_defined") is True else ""))
+        if params.get("size") is not None:
+            size = size_phrase(params)
+            if params.get("size_from"):
+                what.append(size)
+            elif params.get("add_missing_size") is True:
+                what.append(size + " (inherited sizes included)")
+            else:
+                what.append(size + " (where a size is set directly)")
+        labels = label_fonts_included(select, params) if font else None
+        tail = [t for t in (tracked_phrase(select, params), "list labels included" if labels else "") if t]
+        first = prose.sentence("set", prose.join(what) if what else "the font",
+                               prose.where(select) + "".join(f", {t}" for t in tail))
+        extras = formatting_extras(params)
+        if labels is False:
+            extras.append("list labels are left alone")
+        if font and params.get("clear_theme_fonts") is False:
+            extras.append("theme font settings are kept")
+        return two_sentences(first, extras)
 
     def plan(self, pkg: DocxPackage, select: Dict[str, Any], params: Dict[str, Any]) -> PlanFragment:
         select = dict(select or {})

@@ -2,17 +2,18 @@
 
 Available starting in Spec Surgeon 1.0 (v1.0.0).
 
-**File → Built-in operations…** lists all 50 operation contracts offline, including their inputs and limitations.
-The browser links relevant operations to these four guided forms. Natural-language requests also use a separate
-outcome review; see [Reliability and approved outcomes](RELIABILITY.md).
+Built-in workflows are a command-line feature. They turn common combinations of operations into named starting
+points. They ship with the installed package and work without an API key or a previously populated personal
+library. Each produces an ordinary chain: preview every stage, inspect the proposed changes, approve execution, and
+receive independently verified copies.
 
-Built-in workflows turn common combinations of operations into named starting points. They ship with the installed
-package and work without an API key or a previously populated personal library. Each produces an ordinary chain:
-preview every stage, inspect the proposed changes, approve execution, and receive independently verified copies.
+The conversation window has no workflow picker and no operation browser. There you attach the documents, type the
+result you want, and the app compiles the operations itself; see [Reliability and approved outcomes](RELIABILITY.md).
+`spec-surgeon ops --catalog` lists every operation offline, with its selectors, parameters and limits.
 
-In the desktop, choose **Built-in workflows…**, select a workflow and enter its inputs. Loading a workflow does not
-execute it. Use **Preview**, then **Run** after reviewing the result. Save a useful configuration to **Your library**
-as a chain. A template is an input to the preview's approval digest and is excluded from the edited file set.
+`workflows use` loads a workflow with its inputs, previews it, and runs only after confirmation. `--save-as NAME`
+saves the configured workflow as a chain in your library (`spec-surgeon library`). A template is an input to the
+preview's approval digest and is excluded from the edited file set.
 
 | Workflow ID | Purpose | Explicit choices |
 | --- | --- | --- |
@@ -70,14 +71,15 @@ inspect `workflows show ID` instead of assuming a universal office numbering sch
 
 ## Workspace planning
 
-The multi-project workspace's **Generate plan** uses reviewed outcome contracts. The expanded effect families are
-`paragraph_style`, `style_mapping`, `proofing_language`, `table_format`, `table_style`, `numbering` and
-`typed_numbering`. Page setup also supports a different first page and selection by section content.
+`spec-surgeon workspace plan` uses reviewed outcome contracts (see [Adaptive workspaces](ADAPTIVE_WORKSPACES.md)).
+The expanded effect families are `paragraph_style`, `style_mapping`, `proofing_language`, `table_format`,
+`table_style`, `numbering` and `typed_numbering`. Page setup also supports a different first page and selection by
+section content.
 
 Each new effect records explicit selection rules and settings, a target count, and the SHA-256 of any attached
 template. `expected_count: "all"` approves all original matches while each document retains its own source-bound
 count. An exact integer requires that count. Planning inspection can determine counts without editing the files or
-granting approval. Review shows the complete settings and template pins before approval.
+granting approval. The plan shows the complete settings and template pins before approval.
 
 The independent verifier re-resolves the approved selection and requested result against the original source.
 Changing the implementation does not authorize extra edits or drop a requested effect. Some combinations require

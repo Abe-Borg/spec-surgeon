@@ -25,7 +25,7 @@ from lxml import etree
 from ..ooxml import (PPR_ORDER, RPR_ORDER, RevisionStamp, block_full_text, file_uses_date_utc, insert_in_order,
                      mark_rpr, max_revision_id, paragraph_ppr, paragraphs, set_text)
 from ..package import W, DocxPackage
-from . import register
+from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .selectors import SCOPE_KINDS, StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts
 from .slots import nearest_p
@@ -299,3 +299,31 @@ class InsertParagraph(Op):
                 else:
                     anchor.addprevious(new_p)
             pkg.write_xml(part, root)
+
+    def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
+        select, params = dict(select or {}), dict(params or {})
+        text = params.get("text")
+        what = f"a new paragraph reading {prose.quote(text)}" if text else "a new paragraph with the approved wording"
+        position = "before" if params.get("position") == "before" else "after"
+        subject = prose.where(select)[3:]                      # "every paragraph …" or "paragraphs in the “PR1” style …"
+        if subject.startswith("every paragraph"):
+            anchor = "each anchor paragraph" + subject[len("every paragraph"):]
+        else:
+            anchor = "each of the " + subject
+        clauses: List[str] = []
+        style = params.get("style", "inherit")
+        if style not in (None, "inherit"):
+            clauses.append(f"in {prose.style(style)}")
+        if params.get("formatting") == "none":
+            clauses.append("without copying that paragraph's formatting")
+        elif clauses:
+            clauses.append("otherwise formatted like that paragraph")
+        else:
+            clauses.append("formatted like that paragraph")
+        if bool(params.get("tracked", True)):
+            tail = "shown as a tracked change" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
+        else:
+            tail = "without tracked changes"
+        first = f"Insert {what} {position} {anchor}, " + ", ".join(clauses) + f", {tail}."
+        second = "Files with no such paragraph are left unchanged." if params.get("allow_missing") else ""
+        return prose.sentence(first, second)
