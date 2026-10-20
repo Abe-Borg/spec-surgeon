@@ -69,3 +69,22 @@ what the app is doing while it works, and gets a window that looks and feels lik
 | T — the web window | implemented; installed app pending | claude/jolly-goldberg-wrlwva | 2026-10-20: the server, shell and update flow; the React page (`frontend/`, built into `web/static/`, committed); the Qt window, PySide6, its tests and packaging deleted; `app.spec`, the installer, `installed_smoke.py` (over HTTP) and CI (Node 22 build, byte-identical static check) ported. The built page was driven against the real server in headless Chromium (plan, question and template scenarios) and the mock walk (`frontend/tools/flows.mjs`) passes. The adversarial review's findings (composition modes and cuts, layouts, chips as decisions, the working set's paths, the live channel's ids, window close, proxy, updates, token) are fixed with tests. Needs the owner's machine: the installed Windows app with WebView2 and Word. |
 | U — docs and release | implemented; live run pending | claude/jolly-goldberg-wrlwva | 2026-10-20: README, CLAUDE.md, docs/CONVERSATIONAL_DESKTOP.md, docs/WEB_API.md, docs/RENDER_PIPELINE.md, screenshots from the page, `docs/releases/unreleased.md`. Pending on the owner's machine: a live request over real specifications, the measured time and cost per request. |
 | O — composition | implemented; live run pending | claude/jolly-goldberg-wrlwva | 2026-10-20 (review): the trial merge coalesces numbering fonts (the headline request is two steps on every real section, not three); a composed step declares the mode its plan gives it; a composed chain is never run in place; a layout's composed chain is what the accepted submission carries; a bound template op is listed first or refused, never reordered; a submission that is both steps and a question is refused. |
+
+## Resume here — 2026-10-20, session paused on the owner's usage limit
+
+The branch `claude/jolly-goldberg-wrlwva` is pushed and PR #46 is open and mergeable at `257ef6f`. Every
+workstream above is implemented, documented and tested; the owner wants the two unfinished checks completed
+when the next session starts:
+
+1. **The adversarial review of the fixes** (`review-the-fixes` workflow, six lenses over the review-fix
+   commits f4811c2, d3d3e89, bce6733, 5172678, ed7ff58, e229d7a, fdcc062, 257ef6f, two skeptics per finding)
+   was stopped before any reviewer reported. Re-run it (the script is saved under the session's workflows
+   folder, or write it again from the plan in the PR body) and fix what survives verification, with tests.
+2. **The first review's unfinished parts**: its test-integrity reviewer never reported, and its skeptic phase
+   was stopped after two verdicts (both refuted findings the fixes already covered). Re-run the test-integrity
+   lens alone; the other seven lenses' findings are fixed and need no second pass.
+3. **CI on `257ef6f`** was running when the session paused (three jobs; GitGuardian green). The two earlier
+   Windows failures were CRLF checkouts of the built page and its sources, fixed by `.gitattributes`; a red job
+   on this head is this PR's to fix.
+4. Then the owner's machine: the installed Windows app with WebView2 and Word, and one live request over real
+   specifications (time and cost per request).
