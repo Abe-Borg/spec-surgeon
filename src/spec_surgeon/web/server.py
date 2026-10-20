@@ -182,11 +182,21 @@ class WindowState:
                 if phase != "started":
                     events.put({"type": "cost", "cost": task._cost()})
 
+            def relay(event):
+                # The coordinator's events name files; the page is sent URLs (the contract's shape for
+                # ``samples[].images``), exactly as the state payload sends them.
+                if isinstance(event, dict) and event.get("type") == "samples":
+                    event = dict(event)
+                    event["samples"] = [dict(sv, images=[self.image_url(p) for p in sv.get("images", [])
+                                                         if Path(p).is_file()])
+                                        for sv in event.get("samples", [])]
+                events.put(event)
+
             def target():
                 terminal: Dict[str, Any]
                 try:
                     with llm.cancellation_scope(cancel), llm.model_progress_scope(progress):
-                        task.perform(action, log=log, events=events.put, **values)
+                        task.perform(action, log=log, events=relay, **values)
                 except Exception as e:  # noqa: BLE001 — every outcome reaches the page
                     diag.app_log().error(traceback.format_exc())
                     kind = type(e).__name__

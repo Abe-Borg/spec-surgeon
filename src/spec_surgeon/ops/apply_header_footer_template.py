@@ -203,6 +203,18 @@ def _source_words(rule: Dict[str, Any]) -> str:
     return f"in {section_words}" if section_words else ""
 
 
+PATTERN_QUOTE_MAX = 32
+
+
+def _pattern_words(pattern: Any, lead: str = "the pattern ") -> str:
+    """A short pattern is quoted; a long one (a section-number regex runs to sixty characters) reads as "a
+    pattern": the sentence is for the user, and every setting is shown on demand beside it."""
+    pattern = str(pattern or "")
+    if len(pattern) <= PATTERN_QUOTE_MAX:
+        return lead + prose.quote(pattern)
+    return "a pattern"
+
+
 def fill_rule_words(rule: Any) -> str:
     """A fill rule as a phrase a person reads: what is taken and from where. The shared vocabulary in ops/prose.py has
     no helper for fill rules, so it lives here; ensure_end_of_section borrows it for the section number."""
@@ -226,9 +238,9 @@ def fill_rule_words(rule: Any) -> str:
         source = _source_words(rule)
         tail = (" " + source if source else "") + (f" ({', '.join(qualifiers)})" if qualifiers else "")
         if kind == "regex":
-            words = "the text matching the pattern " + prose.quote(rule.get("pattern", "")) + tail
+            words = "the text matching " + _pattern_words(rule.get("pattern", "")) + tail
         else:
-            words = "the paragraph after the one matching " + prose.quote(rule.get("anchor_regex", "")) + tail
+            words = "the paragraph after the one matching " + _pattern_words(rule.get("anchor_regex", ""), "") + tail
     else:
         words = "a value taken from the document itself"
     if rule.get("in_template"):

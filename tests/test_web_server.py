@@ -107,6 +107,12 @@ def test_a_job_streams_its_events_and_ends_with_the_full_view(tmp_path):
         events = frames(response)
     kinds = [e["type"] for e in events]
     assert kinds[-1] == "done" and "text_delta" in kinds and "plan" in kinds and "samples" in kinds
+    # A mid-job samples event carries the same URLs the state payload does, never a file path (the page would
+    # request the path and get a 404 until the final view arrived).
+    for event in (e for e in events if e["type"] == "samples"):
+        assert event["samples"], "the previews are in"
+        for sample in event["samples"]:
+            assert all(url.startswith("/api/image?path=") and "token=" in url for url in sample["images"])
     assert "".join(e["text"] for e in events if e["type"] == "text_delta") == "I'll make the title bold."
     done = events[-1]["state"]
     assert done["stage"] == "preview" and done["action"]["kind"] == "approve" and done["busy"] is False

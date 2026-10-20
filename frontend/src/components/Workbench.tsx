@@ -198,7 +198,7 @@ export default function Workbench({
           <div ref={resultsRef} className="scroll-mt-6">
           <PaperCard
             title="Your edited copies"
-            subtitle="Click a document to open it in Word. Your originals stay intact."
+            subtitle="Each copy was checked against the plan, word for word. Click one to open it in Word; your originals stay intact."
             aside={
               folder ? (
                 <Tip tip={`Open the folder with these copies: ${folder}`}>
