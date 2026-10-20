@@ -16,6 +16,7 @@ the conversation up where it stopped.
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import json
 import re
 import time
@@ -111,6 +112,14 @@ def triage(path: Path, *, template: bool = False) -> Attachment:
                       reason=found.reason, pattern_id=getattr(found, "pattern_id", "") or "")
 
 
+def _same_file_key(path) -> str:
+    """One spelling of a path for comparing files: resolved when the file system can, the text otherwise."""
+    try:
+        return str(Path(path).resolve())
+    except OSError:
+        return str(Path(path))
+
+
 class DocumentTask:
     def __init__(self, session=None, *, journal=None, render=True):
         self.session = session or Session()
@@ -164,14 +173,25 @@ class DocumentTask:
         return Path(self.working.get(str(Path(original)), str(Path(original))))
 
     def origin_of(self, current) -> Path:
-        """The attached original a working copy stands for (itself when it is an original)."""
-        wanted = str(Path(current))
+        """The attached original a working copy stands for (itself when it is an original). Compared as the files
+        on disk: the engine resolves the paths it reads (a results folder behind a junction, a mapped drive or
+        another spelling of the case would otherwise never match the copy it was given)."""
+        wanted = _same_file_key(current)
         for original, path in self.working.items():
-            if path == wanted:
+            if path == str(Path(current)) or _same_file_key(path) == wanted:
                 return Path(original)
         return Path(current)
 
     # ---- the window's live channel ----
+    @contextlib.contextmanager
+    def _conversation(self):
+        """Around a call of the conversation itself (compile, a reply, a resumed turn): its words are the reply."""
+        self._talking = True
+        try:
+            yield
+        finally:
+            self._talking = False
+
     def _emit(self, event: Dict[str, Any]) -> None:
         if self._events is None:
             return
@@ -182,12 +202,15 @@ class DocumentTask:
 
     def _on_stream(self, event: Dict[str, Any]) -> None:
         """A model call's stream, as the window shows it: the model's words as they are written, its thinking
-        summary, and one plain sentence per tool it uses."""
+        summary, and one plain sentence per tool it uses. Words and thinking are relayed from the conversation's
+        own calls alone (``_talking``): the visual reviewer, recovery and a custom method also call the model, and
+        their text is not the assistant's reply to the user."""
         kind = event.get("type")
         if kind == "started":
             self._emit({"type": "status", "kind": "thinking", "text": "Thinking…"})
         elif kind in ("text_delta", "thinking_delta"):
-            self._emit({"type": kind, "text": event.get("text", "")})
+            if self._talking:
+                self._emit({"type": kind, "text": event.get("text", "")})
         elif kind == "tool":
             name = str(event.get("name") or "")
             if name == "submit_editspec":
@@ -213,7 +236,9 @@ class DocumentTask:
             message = {"role": role, "text": str(text), "at": time.time()}
             self.messages.append(message)
             if role != "user":
-                self._emit({"type": "message", "message": dict(message)})
+                # the id the view numbers this message by (docs/WEB_API.md: ``m<index>``), so the page can finalize
+                # the streaming bubble under it and keep its aside
+                self._emit({"type": "message", "message": {"id": f"m{len(self.messages) - 1}", **message}})
 
     def _invalidate(self):
         self.session._set_outcome()
@@ -242,6 +267,7 @@ class DocumentTask:
         if template and len(checked) != 1:
             raise ValueError("Choose one template document.")
         before = (self.documents(), self.template(), self.references())
+        fresh: List[str] = []
         if template:
             found = triage(checked[0], template=True)
             if found.refused:
@@ -254,19 +280,32 @@ class DocumentTask:
                 if path in known:
                     continue
                 self.attachments.append(triage(path) if path.suffix.lower() == ".docx" else triage_reference(path))
+                if self.working and path.suffix.lower() == ".docx":
+                    fresh.append(path.name)
         self._sync()
         if before != (self.documents(), self.template(), self.references()):
             self._invalidate()
             if self.decisions:
                 self.say("The attachments changed. I’ll check the updated documents against your request.")
+            if fresh:
+                self.say(f"{', '.join(fresh)}: attached as an original. The changes already made to the other copies "
+                         f"are not in it; the next change is made to it as it is. To give it every change, say "
+                         f"“{START_OVER}” and ask again.")
         self.save()
 
     def remove(self, path, *, template=False):
         path = Path(path)
         self.attachments = [a for a in self.attachments if not (a.path == path and a.template == template)]
+        had_copies = bool(self.working)
         self.working.pop(str(path), None)
         self._sync()
         self._invalidate()
+        if had_copies and not self.working:
+            # the last working copy left with its original: the attached documents are originals again, and the
+            # changes the history lists are in none of them
+            self.history, self.generation, self.results = [], 0, {}
+            self.stage = "resume" if self.decisions else "empty"
+            self.say("No edited copy is attached any more, so the next change starts from your originals.")
         self.save()
 
     # ---- the request ----
@@ -279,7 +318,8 @@ class DocumentTask:
     def _compile(self, log):
         self.session.replay_word_sources = list(self.word_sources)
         self._emit({"type": "status", "kind": "reading", "text": "Reading your documents…"})
-        self.session.compile(self._request(), log, history=list(self.history))
+        with self._conversation():
+            self.session.compile(self._request(), log, history=list(self.history), fresh=self._fresh_documents())
 
     # ---- continue on the result ----
     def _advance_generation(self) -> None:
@@ -289,7 +329,7 @@ class DocumentTask:
         moved = False
         for original, output in self.results.items():
             if Path(output).is_file():
-                self.working[str(Path(original))] = str(Path(output))
+                self.working[str(Path(original))] = str(Path(output).resolve())
                 moved = True
         if not moved:
             return
@@ -300,6 +340,14 @@ class DocumentTask:
         self._sync()
         self.session._set_outcome()
         self.session.end_conversation()
+
+    def _fresh_documents(self) -> List[str]:
+        """Documents attached after the last run: originals among working copies, carrying none of the changes the
+        history lists (the model is told; the user was told when they attached them)."""
+        if not self.working:
+            return []
+        return [a.path.name for a in self.attachments
+                if not a.template and not a.reference and not a.refused and str(a.path) not in self.working]
 
     def start_over(self) -> None:
         """Back to the attached originals: the working copies are set aside (the files stay where they are), the
@@ -370,6 +418,7 @@ class DocumentTask:
                 self.stage = "budget"
             self._emit({"type": "cost", "cost": self._cost()})
             self._events = None
+            self._talking = False
             self.save()
         return self.view()
 
@@ -421,7 +470,8 @@ class DocumentTask:
             self.save(in_progress=True)
             s = self.session
             if s.conversation is not None and s.conversation_matches(s.conversation.request):
-                s.reply(text, render=self.render, log=log, approve=not chip)
+                with self._conversation():
+                    s.reply(text, render=self.render, log=log, approve=not chip)
             elif s.recovery is not None and any(f.status != "READY" for f in s.recovery.files):
                 s.resolve_remaining(log, request=text, options=self._recovery_options())
             else:
@@ -443,7 +493,8 @@ class DocumentTask:
         self.decisions.extend(chosen.words)
         self.word_sources.extend(chosen.words)
         self.save(in_progress=True)
-        self.session.reply(choice_id=chosen.id, render=self.render, log=log)
+        with self._conversation():
+            self.session.reply(choice_id=chosen.id, render=self.render, log=log)
 
     @staticmethod
     def _numbers(text, count):
@@ -489,7 +540,8 @@ class DocumentTask:
                                on_preview=lambda: self._emit({"type": "samples", **self._samples_view()}))
                 self._emit({"type": "samples", **self._samples_view()})     # again with Claude's visual findings
             else:
-                s.reply(choice_id=outcome.auto_choice, render=self.render, log=log)
+                with self._conversation():
+                    s.reply(choice_id=outcome.auto_choice, render=self.render, log=log)
             self._collect_conversation()
             outcome = s.outcome()
         self._revision += 1
@@ -610,7 +662,8 @@ class DocumentTask:
         c = s.conversation
         if c is not None and c.resumable() and s.conversation_matches(c.request):
             # A pause, a stop or a failed call: the conversation goes on with what it had investigated.
-            s.resume_conversation(log)
+            with self._conversation():
+                s.resume_conversation(log)
         else:
             self._compile(log)
         self._settle(log)
@@ -838,7 +891,14 @@ class DocumentTask:
             self.working, self.history = dict(working), list(history)
             self.generation = int(data.get("generation", 0) or 0) if type(data.get("generation", 0)) is int else 0
         else:
-            self.working, self.history, self.generation = {}, [], 0   # a copy is gone: the originals are the set again
+            # a copy is gone: the originals are the set again, the vanished copies are no longer results, and the
+            # user is told before their next request builds on the wrong files
+            lost = isinstance(working, dict) and bool(working)
+            self.working, self.history, self.generation = {}, [], 0
+            self.results = {k: v for k, v in self.results.items() if Path(v).is_file()}
+            if lost:
+                self.say("The edited copies from your last run could not be found where they were saved, so the next "
+                         "change starts from your originals.")
         self._sync()
         self._resume_recovery = data.get("recovery")
         layouts = data.get("pending_layouts", [])

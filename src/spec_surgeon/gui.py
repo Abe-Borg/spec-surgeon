@@ -280,7 +280,8 @@ class Session:
             return False
 
     @_session_action
-    def compile(self, request: str, log: Log, history: Optional[List[str]] = None) -> str:
+    def compile(self, request: str, log: Log, history: Optional[List[str]] = None,
+                fresh: Optional[List[str]] = None) -> str:
         """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
         Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user. It opens the session
         folder (``out_dir``): conversation.json and compile.json there after every turn, and the first preview or
@@ -302,7 +303,7 @@ class Session:
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
                                          work_dir=out / "chat", log=log, continuous_recovery=True,
                                          word_sources=self.replay_word_sources, input_files=self.inputs,
-                                         history=list(history or []))
+                                         history=list(history or []), fresh=list(fresh or []))
         try:
             turn = self.conversation.start()
         except Exception:

@@ -126,3 +126,103 @@ def test_a_tapped_suggested_reply_is_the_users_decision_but_never_their_wording(
     typed.perform("send", text=REQUEST)
     typed.perform("send", text=chip)
     assert chip in typed.word_sources and chip in typed.session.conversation.sources
+
+
+# ---- the review's probes (PR #46): the working set across runs, attachments beside copies, the live channel ----------
+
+def test_the_working_set_advances_when_the_results_folder_is_reached_by_another_path(tmp_path):
+    """The engine resolves the paths it reads; a results folder behind a link (a junction, a mapped drive) must still
+    match the copy the run was given, or the third request would silently build on the first copy."""
+    import os
+    real = tmp_path / "real-runs"
+    real.mkdir()
+    link = tmp_path / "runs-link"
+    try:
+        os.symlink(real, link, target_is_directory=True)
+    except (OSError, NotImplementedError):
+        pytest.skip("no symlinks here")
+    second = copy.deepcopy(SPEC)
+    second["ops"][0]["params"]["run"] = {"i": True}
+    second["summary"] = "Make the title italic"
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})), resp(tool("submit_editspec", {"spec": second})))
+    task = DocumentTask(Session(client=fake, out_root=link, visual_check=False), render=False)
+    source = document(tmp_path / "Spec.docx")
+    task.attach([source])
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    first_copy = task.current_of(source)
+    assert task.generation == 1 and first_copy != source
+    view = task.perform("send", text="Also make it italic.")
+    task.perform("primary", token=view["token"])
+    second_copy = task.current_of(source)
+    assert task.generation == 2 and second_copy not in (source, first_copy), task.working
+    assert list(task.results) == [str(source)]                     # keyed by the attached original, not by a copy
+    assert task.documents() == [second_copy]
+
+
+def test_removing_the_last_copy_or_attaching_an_original_beside_copies_is_said_and_told(tmp_path):
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})), resp(tool("submit_editspec", {"spec": SPEC})),
+                      resp(tool("submit_editspec", {"spec": SPEC})))
+    task = task_for(tmp_path, fake)
+    source = document(tmp_path / "Spec.docx")
+    task.attach([source])
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    assert task.generation == 1 and task.history
+    # an original attached beside the copies: the user hears it, and the model is told which document is fresh
+    other = document(tmp_path / "Other.docx")
+    task.attach([other])
+    assert any("Other.docx" in m["text"] and "attached as an original" in m["text"] for m in task.messages)
+    assert task._fresh_documents() == ["Other.docx"]
+    task.perform("send", text="Also make it italic.")
+    first_message = repr(fake.requests[1]["messages"][0])
+    assert "CHANGES ALREADY MADE" in first_message and "EXCEPT Other.docx" in first_message
+    # the last copy leaves with its original: the history is reset and the user is told
+    task.remove(other)
+    assert task.working and task.history                            # the first document's copy still carries it
+    task.remove(source)
+    assert task.working == {} and task.history == [] and task.generation == 0 and task.results == {}
+    assert any("starts from your originals" in m["text"] for m in task.messages)
+
+
+def test_the_live_channel_numbers_messages_and_relays_only_the_conversations_words(tmp_path):
+    fake = FakeClient(resp(text("I'll make the title bold."), tool("submit_editspec", {"spec": SPEC})), live=True)
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    events = []
+    view = task.perform("send", text=REQUEST, events=events.append)
+    said = [e["message"] for e in events if e["type"] == "message"]
+    assert said and all(isinstance(m.get("id"), str) for m in said)
+    by_id = {m["id"]: m for m in view["messages"]} if "id" in (view["messages"] or [{}])[0] else {
+        f"m{i}": m for i, m in enumerate(view["messages"])}
+    for m in said:
+        assert by_id[m["id"]]["text"] == m["text"]                  # the id the view numbers it by
+    assert any(e["type"] == "text_delta" for e in events)           # the conversation's own words were relayed
+    # a model call outside the conversation (the visual reviewer, recovery, a custom method) is not the reply
+    outside = []
+    task._events = outside.append
+    task._on_stream({"type": "text_delta", "text": "Looking at page 1…"})
+    task._on_stream({"type": "tool", "name": "read_paragraphs"})
+    assert [e["type"] for e in outside] == ["activity"]
+    with task._conversation():
+        task._on_stream({"type": "text_delta", "text": "I'll…"})
+    assert outside[-1] == {"type": "text_delta", "text": "I'll…"}
+
+
+def test_a_restored_journal_whose_copies_are_gone_says_so_and_lists_no_vanished_result(tmp_path):
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
+    journal = tmp_path / "conversation.json"
+    task = task_for(tmp_path, fake, journal=journal)
+    source = document(tmp_path / "Spec.docx")
+    task.attach([source])
+    view = task.perform("send", text=REQUEST)
+    task.perform("primary", token=view["token"])
+    copy_path = Path(task.results[str(source)])
+    assert copy_path.is_file() and task.generation == 1
+    copy_path.unlink()
+    again = task_for(tmp_path, FakeClient(), journal=journal)
+    assert again.restore()
+    assert again.working == {} and again.generation == 0 and again.results == {}
+    assert again.documents() == [source] and again.stage == "empty"
+    assert any("could not be found" in m["text"] for m in again.messages)
+    assert again.view()["results"] == {}                           # the window lists no vanished copy

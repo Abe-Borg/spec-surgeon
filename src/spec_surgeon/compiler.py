@@ -1247,7 +1247,8 @@ def check_submission(spec: Any, batch: _Batch, sources: Sequence[str],
 
 def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                    prior_failures: Optional[Sequence[Dict[str, Any]]] = None,
-                   history: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+                   history: Optional[Sequence[str]] = None,
+                   fresh: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
     """The first user message: the request, the user's answers, the changes already made to these copies (a request
     that builds on a result), any prior pass's set-aside diagnostics, the attached template, the input files a spec
     names, and the batch's profiles per structure pattern."""
@@ -1255,8 +1256,13 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str],
     if answers:
         parts.append("THE USER'S ANSWERS TO EARLIER QUESTIONS:\n" + "\n".join(f"- {a}" for a in answers))
     if history:
-        parts.append("CHANGES ALREADY MADE TO THESE COPIES (the documents you see carry them already; do not redo them, "
-                     "plan only what is new):\n" + "\n".join(f"- {h}" for h in history))
+        block = ("CHANGES ALREADY MADE TO THESE COPIES (the documents you see carry them already; do not redo them, "
+                 "plan only what is new):\n" + "\n".join(f"- {h}" for h in history))
+        if fresh:
+            block += ("\nEXCEPT " + ", ".join(fresh) + ": attached after those changes, an original that carries none of "
+                      "them. One plan makes the same change to every document, so it gets only what is planned now; "
+                      "say so to the user (they can start over from the originals to give it every change).")
+        parts.append(block)
     if prior_failures:
         parts.append("PRIOR PASS SET-ASIDE DIAGNOSTICS (these files failed the previous pass for the reasons below; "
                      "inspect their structure and compile an EditSpec tailored to them):\n"

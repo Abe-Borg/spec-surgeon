@@ -250,7 +250,7 @@ class Conversation:
                  stall_repetitions: int = DEFAULT_STALL_REPETITIONS, max_image_tokens: Optional[int] = None,
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
                  continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = (),
-                 history: Sequence[str] = ()):
+                 history: Sequence[str] = (), fresh: Sequence[str] = ()):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -280,6 +280,7 @@ class Conversation:
         self.batch.context_state = self.context_state
         self.answers = list(answers)
         self.history = [str(h) for h in history if str(h).strip()]   # changes already made to the files (continue-on-result)
+        self.fresh: List[str] = list(fresh)
         self.prior_failures = list(prior_failures or [])
         # The words a spec may place: the request, the user's answers, and (on a replay of a saved conversation) the
         # words the user actually typed or accepted — never a choice's label; never an empty source.
@@ -317,7 +318,8 @@ class Conversation:
             raise RuntimeError("the conversation has already started")
         self.started = True
         self.messages = compiler.build_messages(self.request, self.batch, self.answers,
-                                                prior_failures=self.prior_failures or None, history=self.history or None)
+                                                prior_failures=self.prior_failures or None, history=self.history or None,
+                                                fresh=self.fresh or None)
         self.entries.append(Entry("user", self.request))
         self.exchange.append({"turn": 0, "role": "user", "content": self.messages[0]["content"],
                               "files": [str(f) for f in self.files],
