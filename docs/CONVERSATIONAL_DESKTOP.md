@@ -66,17 +66,32 @@ documents shows those exact words beneath the button; picking it approves exactl
 else. Questions are asked once, and per layout, never per file. For an explicit request to draft or rewrite
 wording, the conversation may offer exact draft wording as a choice; it is applied only if you pick it.
 
-After a result, a new message revises the whole result against the originals; earlier requested changes are
-kept unless you reverse them.
+The assistant goes ahead on sensible defaults and says what it assumed; it asks at most three questions per
+turn, each with the answer it recommends, and offers short replies you can tap. A tapped reply is your decision
+and is sent as your reply, but it is never approved wording: words that go into a document are always ones you
+typed or picked. Changes that touch the same parts of a file — a font change beside a header/footer template,
+restyling beside direct formatting — are composed into ordered steps by the engine itself, each step planned and
+verified on the step before it; the plan says "in N ordered steps" and nothing is asked of you in two steps.
+
+**The next request builds on the result.** After copies are created, the next thing you ask for is made on those
+copies; your originals stay as they are, and the assistant is told what was already done so it plans only what is
+new. **Start over from the originals** (a reply you can tap, or type) returns to your files. A document attached
+after a run is an original beside the copies: the window says so, and it gets only the next change.
+
+While work runs you see it: the assistant's words as they are written, a summary of its thinking, one plain
+sentence per thing it is doing ("Reading your documents…", "Writing the plan…"), the plan the moment it is
+ready, the pages as they render and the copies as they are written. **Stop now** keeps what landed.
 
 ## The plan in prose
 
 When the plan is ready, the card **Here's what will change** lists one sentence per change. Each sentence is
 written by the operation that will make the change, from the same specification the preview ran: units are
 inches and points, exact text is quoted, and selections read as "paragraphs in the Normal style". Assumptions
-the plan rests on appear beneath the changes as "Assuming: …". **See every setting** opens every setting of
-every change for the reader who wants it all. **Where exactly** lists the passages each document contributes,
-such as the value a template field takes from each file.
+the plan rests on appear beneath the changes as "Assuming: …". **Every setting** opens every setting of every
+change for the reader who wants it all (a long pattern is not spelled out in the sentence; it is here). **Where
+exactly** lists the passages each document contributes, such as the value a template field takes from each file.
+A plan the engine composed into ordered steps says so under its title ("in 2 ordered steps"); it is still one plan
+with one button.
 
 JSON, approval hashes, operation catalogs, recipes and recovery workspaces are not part of the window.
 
@@ -177,11 +192,13 @@ configurable there. Without a key the composer keeps your draft, **Send** stays 
 "Connect your Anthropic API key in Settings to start." The command line runs saved specifications without a key.
 
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
-custom method, the visual check or recovery) runs at high reasoning effort and may write up to 128,000 tokens,
-the most the model writes. Three things keep the spending in your hands instead:
+custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
+conversation runs at the model's default reasoning effort (medium: its sentences and plans are short and the
+operations' settings ride the cached prompt, so a plan is one or two calls); recovery and custom methods think at
+high. Three things keep the spending in your hands instead:
 
-- **You see it.** While work runs the status line shows the current step, the elapsed seconds and the
-  estimated spending so far; the footer keeps the conversation's total. A step that is still running is
+- **You see it.** While work runs the chat shows the assistant's words and its thinking summary as they are
+  written, a sentence per step, and the header the estimated spending so far. A step that is still running is
   counted when it ends. The amounts are estimates from a built-in price table, not provider bills.
 - **Stop now.** While work runs the button is the kill switch. It cuts off the AI step that is running at
   once, so Claude stops writing, and starts no other; a document check or file operation already running
@@ -200,9 +217,11 @@ refuses is never sent again.
 
 The window writes `conversation.json` in its configuration folder (`%APPDATA%\Spec Surgeon` on Windows, or
 `SPEC_SURGEON_CONFIG_DIR` when set): the attachments with their triage state, the messages, your decisions and
-approved wording, the result locations, the spending ledger and the location of a recovery checkpoint. It can
-contain document text. It never contains the API key, an approval to deliver, or an acknowledgement of a
-visual finding; those belong to one displayed preview only.
+approved wording, the result locations, the working set (which copy stands for each original, and the changes
+already made to it), the spending ledger and the location of a recovery checkpoint. It can contain document
+text. It never contains the API key, an approval to deliver, or an acknowledgement of a visual finding; those
+belong to one displayed preview only. A reopened conversation whose copies can no longer be found says so and
+starts the next change from your originals.
 
 On reopening, the conversation and the result links come back. Every attachment is triaged again, since a file
 may have changed, moved or been fixed; a file that is gone is marked with where it used to be. The button
@@ -214,9 +233,11 @@ conversation** archives the current journal under
 
 ## Capability and verification limits
 
-The window does not make arbitrary Word requests verifiable. The supported operations, their composition
-limits, the template rules and the custom-method limits still apply; a request outside them is explained or
-clarified, not approximated. Draft wording the conversation proposes is applied only when you pick it, and
+The window does not make arbitrary Word requests verifiable. The supported operations, the template rules and
+the custom-method limits still apply; a request outside them is explained or clarified, not approximated.
+Operations that touch the same part of a file are never ordered by guess inside one specification: the engine
+cuts them into ordered steps in the order they were listed, and a step that still cannot be planned sets the
+file aside with the reason. Draft wording the conversation proposes is applied only when you pick it, and
 picking it never authorizes invented project facts, technical requirements or citations.
 
 The paragraph roles the planner reads (what an article title or a PART heading looks like in each layout) are

@@ -21,9 +21,13 @@ lost or invented is the one failure that matters.
 4. **Never write back blind.** In-place delivery goes through `guard.write_back` and nothing else; it refuses a
    source whose size, mtime or md5 moved, a lock file, or a read-only file. No `force` flag exists and none may be added.
 5. **Refusals over guesses.** A case the op cannot predict raises `JobException` with a code and sets the file aside;
-   overlapping ops are refused at plan time (`merge_fragments`), never ordered by guess.
+   overlapping ops are refused at plan time (`merge_fragments`), never ordered by guess. A submission whose ops
+   overlap is composed by the engine into ordered steps in the user's own order (`editspec.stage_cuts`, a chain whose
+   every step is planned on the step before it), never reordered: a source-bound template op not listed first is
+   refused, not moved.
 6. **No generated characters.** Formatting ops add zero text; content ops place the user's approved wording
-   verbatim (`compiler.placed_words` must trace every word to the user's own sources). Claude's words are never the user's.
+   verbatim (`compiler.placed_words` must trace every word to the user's own sources). Claude's words are never the
+   user's: a tapped suggested reply is the user's decision, never approved wording.
 7. **One specification per edit.** The approved EditSpec (or chain of them) is the only description of a change the
    engine executes; nothing runs that was not planned, previewed and approved as that spec.
 
@@ -34,9 +38,13 @@ The desktop is one window — the page in `web/static/`, served by `web/server.p
 explicit Word attachments, an optional template, explicitly attached pictures and tables for the
 edit to use (INPUT FILES; nothing beside them is discovered), and chat. `triage.py` checks every
 document the moment it arrives (deterministic, no model call) and refuses or notes it in one
-sentence. The window has no spending ceiling: every call gets the model's full output at high
-effort, work pauses every 48 calls (`STEPS_PER_PAUSE`), and **Stop now** closes the running
-stream (`llm.cancellation_scope`); `llm.call` re-sends transient failures.
+sentence. The window has no spending ceiling: every call gets the model's full output (the
+conversation at medium effort, `CONVERSATION_EFFORT`; recovery at high), work pauses every 48
+calls (`STEPS_PER_PAUSE`), and **Stop now** closes the running stream (`llm.cancellation_scope`);
+`llm.call` re-sends transient failures and relays each call's stream to the window
+(`llm.stream_observer_scope`). After a run the delivered copies are the working set the next
+request builds on (`DocumentTask.working`, `history`, `START_OVER`); the model's
+`suggested_replies` are the chat's tap-to-reply chips.
 `layouts.py` gives a mixed batch one EditSpec per structural layout, each planned, previewed
 and verified on its own documents, with one approval. `review_display.py` describes the actual
 previewed EditSpec in the sentences each operation writes for itself (`Op.describe`,
@@ -54,7 +62,9 @@ for persistence, cost limits and review behavior.
   - `verify/` — the INDEPENDENT verifier: `suite.py` (V1–V10 as a `VerificationRecord`), `props.py` (V10 assertion
     kinds and the residual), `textcheck.py`, `reader.py`, `xsd.py`, `geometry.py`, `explain.py`, one module per family.
   - `jobs/` — the two v0.1.0 CLI jobs, aliases over ops.
-  - `editspec.py` — EditSpec load, validate, plan every op, merge, apply.
+  - `editspec.py` — EditSpec load, validate, plan every op, merge, apply; composition (`stage_cuts`, `compose_chain`,
+    `merge_cuts`, `plan_chain`): a spec whose ops overlap becomes a chain of ordered steps, each planned on the
+    step before it.
   - `layouts.py` — a layout plan: one EditSpec per structure pattern, routing, per-layout preview, run and approval token.
   - `batch.py` — the per-file pipeline (pool, verify, render, guarded delivery, records); `report.py`, `diagnostics.py`.
   - `guard.py` — acquisition identity, drift, lock file, atomic guarded write-back.
@@ -62,7 +72,10 @@ for persistence, cost limits and review behavior.
   - `profile.py`, `planner.py`, `catalog.py` — per-pattern profiles (with `structure.role_summary` as role evidence),
     dry runs, the op catalog and EditSpec schema.
   - `triage.py` — attach-time triage: refused, noted or ok, with the facts the planner reads.
-  - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec with Claude; `llm.call` is the one call site.
+  - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec with Claude; `llm.call` is the one
+    call site. `compiler.compose_submission` is the one gate a submission passes (a spec, the model's own stages, a
+    layout plan — composed into a chain when its ops overlap); the op sheet (`catalog.op_sheet`) rides the cached
+    system prompt.
   - `preview.py` — samples applied and verified in memory, before/after pages, the approval token.
   - `codegen.py`, `sandbox_runner.py` — custom transforms: AST whitelist, isolated process, hard limits.
   - `advisor.py` — a recommendation or re-compiled spec per exception; writes, never applies.
@@ -120,7 +133,7 @@ spec-surgeon-gui                              # or: spec-surgeon gui
 
 ## Session protocol
 
-Current round: docs/PLAN-2026-10-19-ez-mode.md. Read it before any work. One workstream
+Current round: docs/PLAN-2026-10-20-one-conversation.md (docs/PLAN-2026-10-19-ez-mode.md before it). Read it before any work. One workstream
 item per session, chosen from the plan's status table. Follow its goal, why and expected
 outcome. Add no operations, review layers, planners, or documentation beyond what the plan
 names. Nothing is 'done' on fixtures alone; the plan's acceptance names a real-file run,

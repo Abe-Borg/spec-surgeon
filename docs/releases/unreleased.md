@@ -21,5 +21,16 @@ Changes since v1.5.0.
 - **Render once.** One Word instance renders a whole batch; renders are cached by content, so the run never renders
   again what the preview rendered.
 
+- **A tapped reply is your decision, never your wording.** The short replies the assistant offers are its words:
+  tapping one sends it as your answer, but words that go into a document are always ones you typed or picked.
+- **A document attached after a run** is an original beside the copies; the window says so, and it gets only the
+  next change (start over from the originals to give it every change). Removing the last copy returns to the
+  originals. A reopened conversation whose copies are gone says so.
+- **Closing the window while work runs** stops the running step (its progress is saved) and nothing goes on
+  without a window. An update downloaded while work runs waits for **Restart to update**. A request refused
+  before it was recorded (no API key yet) comes back into the composer. A link in a reply opens in your browser,
+  never in place of the app.
+- **Command line.** A request composed into ordered steps writes copies only; `--in-place` is refused for it.
+
 Pending on the owner's machine: the installed Windows app with WebView2 and Word, a live request over real
 specifications, and the measured time and cost per request.

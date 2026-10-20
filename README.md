@@ -82,9 +82,13 @@ chat and one button.
 3. **Optionally add a template.** One reference `.docx` for requests such as "Match the headers and fonts to this
    template. Keep our technical wording."
 4. **Describe the result.** Type what you want and press **Send** (Ctrl+Enter). Spec Surgeon inspects the documents,
-   asks only about real ambiguities, and prepares a plan. A question comes as a card with buttons: click one, type
-   its number, or answer in your own words. A choice that would put words into the documents shows those exact
-   words; picking it approves exactly those words.
+   goes ahead on sensible defaults (and says what it assumed), asks at most three questions, each with the answer it
+   recommends, and prepares a plan — while you watch its words, its thinking summary and each step as they happen.
+   A question comes as a card with buttons and short replies you can tap: click one, type its number, or answer in
+   your own words. A choice that would put words into the documents shows those exact words; picking it approves
+   exactly those words (a tapped reply never does). Changes that touch the same parts of a file — the template's
+   header and footer beside its font, say — are composed into ordered steps by the engine; nothing is asked of you
+   in two steps.
 5. **Review the plan.** **Here's what will change** lists one sentence per change, written by the operation that will
    make it, in inches and points, never a setting name. Assumptions appear beneath the changes; **See every setting**
    opens the full list. Below it: rendered before/after pages for sample documents with their page counts, and
@@ -99,9 +103,10 @@ plain paragraphs with typed numbers in another. For such a batch the plan has on
 articles · 8 documents"), each with its own changes, assumptions and preview. One button still approves all of
 them. A document built differently from every layout the plan covers is left untouched with a sentence.
 
-Keep chatting to revise the result; each run's copies go into their own folder, so earlier copies remain. The
-conversation, your decisions, the attachments and the result locations are saved locally and come back when you
-reopen the app, with every attachment checked again.
+Keep chatting: the next thing you ask for is made on the copies the last run created, your originals stay as they
+are, and **Start over from the originals** is one tap away. Each run's copies go into their own folder, so earlier
+copies remain. The conversation, your decisions, the attachments, the working copies and the result locations are
+saved locally and come back when you reopen the app, with every attachment checked again.
 
 ![The plan in prose and before/after pages, with one action](docs/conversation-preview.png)
 
@@ -110,9 +115,10 @@ or a spreadsheet of project values to fill in; Claude is told about them and can
 beside your documents is ever looked for.
 
 Connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
-at high effort with room for its full 128,000-token answer. Instead, the status line shows the estimated spending
-as it accrues, **Stop now** cuts off the AI step that is running at once, and work pauses after every 48 AI
-steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a
+with room for its full 128,000-token answer (the conversation at the model's default effort, recovery and custom
+methods at high; every operation's settings ride the cached prompt, so a plan is one or two calls). Instead, the
+header shows the estimated spending as it accrues, **Stop now** cuts off the AI step that is running at once, and
+work pauses after every 48 AI steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a
 passing reason (an overloaded service, a dropped connection) is sent again automatically. Typed requests need
 the key; saved specifications run through the command line without one.
 
@@ -225,9 +231,11 @@ everyone else reuses it at the command line with no key at all.
 - Where Word's behaviour is uncertain, or Word and LibreOffice differ (shared list definitions, overridden levels,
   linked lists, hidden numbered paragraphs), the engine refuses rather than predicts; LibreOffice proofs can differ
   from Word there.
-- Conflicting operations are refused, not ordered: run them as a chain. Edits inside text boxes, replacements across
-  tabs or line breaks, tracked table or numbering changes, run and table-cell borders, and tab stops in styles are not
-  supported.
+- Operations that touch the same part of a file are never ordered by guess inside one specification: the window
+  composes them into ordered steps in the order they were listed, each step planned and verified on the one before
+  it; on the command line such a specification is refused and a chain runs them in order. Edits inside text boxes,
+  replacements across tabs or line breaks, tracked table or numbering changes, run and table-cell borders, and tab
+  stops in styles are not supported.
 - Header/footer templating pins the properties it models; conditional table-style formatting, east-Asian and
   complex-script fonts and sizes are not modelled. A toggle set at more than one style level is refused.
 - Custom transforms are plain formatting on text parts and the styles part, write edited copies only, and run in a
