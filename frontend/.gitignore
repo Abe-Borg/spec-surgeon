@@ -1,0 +1,11 @@
+# Dependencies
+node_modules/
+
+# Vite's own output when built without the package target, and its cache
+dist/
+.vite/
+
+# Playwright output: screenshots land here; the three README pictures go to ../docs on request
+screenshots/
+test-results/
+playwright-report/
