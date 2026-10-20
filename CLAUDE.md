@@ -29,7 +29,8 @@ lost or invented is the one failure that matters.
 
 ## Repository layout
 
-The desktop is one window, `ui/conversation_window.py`, coordinated by `document_task.py`:
+The desktop is one window — the page in `web/static/`, served by `web/server.py` and shown by
+`web/shell.py` — coordinated by `document_task.py`:
 explicit Word attachments, an optional template, explicitly attached pictures and tables for the
 edit to use (INPUT FILES; nothing beside them is discovered), and chat. `triage.py` checks every
 document the moment it arrives (deterministic, no model call) and refuses or notes it in one
@@ -72,23 +73,25 @@ for persistence, cost limits and review behavior.
   - `document_task.py` — the window's coordinator: attachments and triage, stages, the call ledger and its pause,
     Continue that resumes a stopped conversation turn, the journal;
     `review_display.py` — the plan as the window reads it (sentences, assumptions, layouts, targets).
-  - `cli.py`, `gui.py` (`Session`, no Qt), `ui/` (the Qt window: `app.py` (application, prompts, main),
-    `conversation_window.py`, `widgets.py`, `theme.py`, `update_ui.py`, `about_dialog.py`, `worker.py`),
-    `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
+  - `cli.py`, `gui.py` (`Session`, `main`), `web/` (the window: `server.py` (the FastAPI API over one
+    `DocumentTask`, contract `docs/WEB_API.md`), `shell.py` (pywebview/WebView2, the browser fallback),
+    `updates.py` (the headless update flow), `static/` (the page, built from `frontend/` with Node 22 and
+    committed), `icons/`), `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
   - `render/` — Word COM and LibreOffice renderers. `schemas/` — vendored ECMA-376 XSDs. `skill/` — the method
     (`SKILL.md`, `references/verification-checklist.md`). `examples/` — the installed copy of the worked examples.
 - `tests/` — pytest suite; `make_fixtures.py` builds the synthetic hard-case documents; `fake_claude.py` scripts
-  Claude; `conftest.py` seals keys, config dir and the model; `qt_support.py` is the only way a test lets go of a window;
-  `describe_cases/` holds the (select, params) cases `test_describe.py` checks for every op.
+  Claude; `conftest.py` seals keys, config dir and the model; `test_web_server.py` drives the window's server
+  in-process; `describe_cases/` holds the (select, params) cases `test_describe.py` checks for every op.
 - `examples/specs/`, `examples/templates/`, `examples/jobs/` — worked EditSpecs, template fixtures, job params.
 - `docs/` — design notes, `releases/`, `audits/`, `history/` (the previous CLAUDE.md and README.md).
-- `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests, screenshot script.
+- `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests, the icon generator.
 
 ## How to run
 
 ```sh
 pip install -e ".[dev,gui,agent]"            # Windows: py -3 -m pip install -e ".[dev,gui,agent,word]"
-QT_QPA_PLATFORM=offscreen python3 -m pytest -q    # Windows: py -3 -m pytest -q -s
+python3 -m pytest -q                          # Windows: py -3 -m pytest -q -s (installed editable: no PYTHONPATH needed)
+cd frontend && npm ci && npm run build        # rebuild the window's page (Node 22) into src/spec_surgeon/web/static; commit it
 python3 -m pytest -q tests/test_ops.py        # one module
 python3 tests/make_fixtures.py OUT            # fixtures; --rich, --template, --reference, --styles-template, --numbering-scheme, --dirty
 spec-surgeon ops --catalog

@@ -4,6 +4,7 @@ images are served only from the app's own folders, and settings, about and updat
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 import pytest
@@ -212,3 +213,58 @@ def test_a_chip_sent_by_the_page_is_never_approved_wording(tmp_path):
         done = frames(response)[-1]
     assert done["type"] == "done" and done["state"]["stage"] == "preview"
     assert chip in state.task.decisions and chip not in state.task.word_sources
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="SIGTERM on Windows ends a process without running its handlers")
+@pytest.mark.parametrize("why", ["absent", "no-backend"])
+def test_the_browser_fallback_serves_the_page_and_stops_on_a_termination_request(tmp_path, why):
+    """Without pywebview — or with it installed but no backend on this computer (Linux without GTK bindings: every
+    box with the ``gui`` extra and no desktop toolkit) — the window serves the page for the default browser
+    and waits for Ctrl+C. A job a script starts in the background inherits SIGINT ignored (Python then installs no
+    KeyboardInterrupt handler), so a termination request must stop it the same way: the server goes down and the
+    exit code is 0."""
+    import os
+    import re
+    import signal
+    import subprocess
+    import textwrap
+    import urllib.request
+    code = textwrap.dedent("""
+        import sys
+        import types
+        if sys.argv[2] == "absent":
+            sys.modules["webview"] = None                  # pywebview is not installed
+        else:                                              # installed, but no backend here (what pywebview raises)
+            fake, guilib = types.ModuleType("webview"), types.ModuleType("webview.guilib")
+            def initialize(forced_gui=None):
+                raise RuntimeError("You must have either QT or GTK with Python extensions installed in order to use pywebview.")
+            guilib.initialize, fake.guilib = initialize, guilib
+            sys.modules["webview"], sys.modules["webview.guilib"] = fake, guilib
+        from spec_surgeon.document_task import DocumentTask
+        from spec_surgeon.gui import Session
+        from spec_surgeon.settings import Settings
+        from spec_surgeon.web.server import WindowState, new_token
+        from spec_surgeon.web.shell import run_window
+        task = DocumentTask(Session(out_root=sys.argv[1]), render=False)
+        sys.exit(run_window(WindowState(task, Settings(out_root=sys.argv[1]), token=new_token())))
+    """)
+    env = {**os.environ, "BROWSER": "true", "SPEC_SURGEON_CONFIG_DIR": str(tmp_path / "config")}
+    proc = subprocess.Popen([sys.executable, "-c", code, str(tmp_path / "out"), why], env=env, text=True,
+                            stderr=subprocess.PIPE,
+                            preexec_fn=lambda: signal.signal(signal.SIGINT, signal.SIG_IGN))  # a shell's background job
+    try:
+        port = None
+        for _ in range(10):
+            line = proc.stderr.readline()
+            found = re.search(r"open in your browser at http://127\.0\.0\.1:(\d+)/", line)
+            if found:
+                port = found.group(1)
+                break
+        assert port, "the fallback never said where the page is"
+        with urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=5) as resp:   # noqa: S310 — loopback
+            assert resp.status == 200
+        proc.send_signal(signal.SIGTERM)
+        assert proc.wait(timeout=20) == 0
+    finally:
+        if proc.poll() is None:
+            proc.kill()

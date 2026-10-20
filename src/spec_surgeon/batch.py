@@ -294,7 +294,7 @@ def _process_pool(workers: int) -> ProcessPoolExecutor:
     """Spawn on every platform: pools can start from the desktop's background thread.
 
     The Windows frozen launcher calls freeze_support before opening UI. Using an
-    explicit context also keeps retries from inheriting a threaded Qt/native state.
+    explicit context also keeps retries from inheriting a threaded native (window) state.
     """
     return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
 

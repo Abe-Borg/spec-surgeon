@@ -21,6 +21,12 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          # 22+: `npm test` runs node --test over the .ts files and relies on Node's type stripping.
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - name: Check release version and notes
         run: |
           python - <<'PY'
@@ -43,14 +49,31 @@ jobs:
       - name: Install test and build dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y libreoffice-writer pandoc libegl1 libopengl0 libgl1 libxkbcommon0 libfontconfig1 libdbus-1-3
+          sudo apt-get install -y libreoffice-writer pandoc
           python -m pip install -e ".[dev,agent,gui]" build twine jsonschema
-      - name: Test with Qt (offscreen) and LibreOffice
-        env:
-          QT_QPA_PLATFORM: offscreen
-          SPEC_SURGEON_REQUIRE_QT: "1"
+      - name: Build the window's page
+        working-directory: frontend
         run: |
-          python -c "from PySide6.QtWidgets import QApplication; QApplication([]); from spec_surgeon.render.libreoffice import find_soffice; assert find_soffice()"
+          npm ci
+          npm run build
+      - name: Check the committed page is the one the source builds
+        # The wheel ships the built page from src/spec_surgeon/web/static, so it is committed. When this step fails,
+        # the committed page is not what frontend/ builds: run `npm ci` and `npm run build` in frontend/ (Node 22)
+        # and commit everything under src/spec_surgeon/web/static together with the frontend change.
+        run: |
+          git diff --exit-code --stat -- src/spec_surgeon/web/static
+          untracked="$(git ls-files --others --exclude-standard -- src/spec_surgeon/web/static)"
+          if [ -n "$untracked" ]; then
+            echo "Built files that are not committed:"
+            echo "$untracked"
+            exit 1
+          fi
+      - name: Test the page's rules
+        working-directory: frontend
+        run: npm test
+      - name: Test with LibreOffice
+        run: |
+          python -c "import spec_surgeon.web.server; from spec_surgeon.render.libreoffice import find_soffice; assert find_soffice()"
           python -m pytest -q -s --junitxml=release-tests.xml
       - name: Build and validate distributions
         run: |
@@ -63,9 +86,25 @@ jobs:
           /tmp/spec-surgeon-release-smoke/bin/spec-surgeon --help
           /tmp/spec-surgeon-release-smoke/bin/spec-surgeon ops --catalog > /tmp/spec-surgeon-catalog.json
           /tmp/spec-surgeon-release-smoke/bin/python "$GITHUB_WORKSPACE/packaging/installed_wheel_smoke.py" "$GITHUB_WORKSPACE/examples/specs" --expected-prompts /tmp/spec-surgeon-source-prompts.json
-          # without the gui extra the window explains how to get Qt instead of crashing
+          # without the gui extra the window says how to install it instead of crashing
           set +e; /tmp/spec-surgeon-release-smoke/bin/spec-surgeon-gui; code=$?; set -e
           test "$code" = 2
+          # with the gui extra but no pywebview (Linux): the wheel's page is served and the window falls back to the
+          # browser (BROWSER=true keeps the runner from launching one); the server must come up and the app must close
+          # cleanly when told to stop (SIGTERM: a background job in a non-interactive shell starts with SIGINT ignored).
+          wheel="$(ls "$GITHUB_WORKSPACE"/dist/*.whl)"
+          /tmp/spec-surgeon-release-smoke/bin/python -m pip install "spec-surgeon[gui] @ file://$wheel"
+          BROWSER=true SPEC_SURGEON_NO_UPDATE_CHECK=1 SPEC_SURGEON_CONFIG_DIR=/tmp/spec-surgeon-smoke-config \
+            /tmp/spec-surgeon-release-smoke/bin/spec-surgeon-gui 2> /tmp/spec-surgeon-gui.log &
+          pid=$!
+          for i in $(seq 1 60); do
+            grep -q "open in your browser at http://127.0.0.1:" /tmp/spec-surgeon-gui.log && break
+            sleep 0.5
+          done
+          cat /tmp/spec-surgeon-gui.log
+          grep -q "open in your browser at http://127.0.0.1:" /tmp/spec-surgeon-gui.log
+          kill -TERM "$pid"
+          wait "$pid"
       - name: Create checksums
         run: |
           cd dist

@@ -1,7 +1,8 @@
 """The window's server: one ``DocumentTask`` behind a local HTTP API (docs/WEB_API.md), the page that drives it,
 and the job stream — ``send``, ``choose`` and ``primary`` run on a worker thread and stream what happens as
-server-sent events until ``done`` or ``error``, the way the Qt window's Bridge delivered log lines, except that the
-model's words, its activity, the plan, the previews and the copies arrive the moment they exist.
+server-sent events until ``done`` or ``error``: the model's words, its activity, the plan, the previews and the
+copies arrive the moment they exist. The job thread carries the request's diagnostics context (session, action,
+span) with it, so a failure on the worker is journalled under the action that started it.
 
 Nothing here decides anything about documents: every rule lives in ``DocumentTask``, ``Session`` and the engine.
 The server binds 127.0.0.1 and refuses every ``/api`` request without the launch token.
@@ -17,6 +18,7 @@ import sys
 import threading
 import time
 import traceback
+from contextvars import copy_context
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -174,6 +176,8 @@ class WindowState:
             cancel = self.cancel
             task = self.task
             submitted = values.get("text", "")
+            context = copy_context()            # the request's session/action/span follow the job onto its thread
+            queued = time.perf_counter()
 
             def log(text):
                 diag.app_log().info(str(text))
@@ -195,7 +199,8 @@ class WindowState:
             def target():
                 terminal: Dict[str, Any]
                 try:
-                    with llm.cancellation_scope(cancel), llm.model_progress_scope(progress):
+                    with llm.cancellation_scope(cancel), llm.model_progress_scope(progress), \
+                            diag.span("web.job", action=action, queue_ms=round((time.perf_counter() - queued) * 1000, 3)):
                         task.perform(action, log=log, events=relay, **values)
                 except Exception as e:  # noqa: BLE001 — every outcome reaches the page
                     diag.app_log().error(traceback.format_exc())
@@ -222,7 +227,7 @@ class WindowState:
                     pass
                 self._last_view = dict(terminal["state"])
                 events.put(terminal)
-            self.thread = threading.Thread(target=target, daemon=False, name="spec-surgeon-job")
+            self.thread = threading.Thread(target=context.run, args=(target,), daemon=False, name="spec-surgeon-job")
             self.thread.start()
             return events
 

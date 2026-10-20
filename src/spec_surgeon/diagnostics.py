@@ -136,7 +136,9 @@ def environment(**extra: Any) -> Dict[str, Any]:
     except ImportError:  # pragma: no cover — lxml is a hard dependency
         env["lxml"] = None
     env["pymupdf"] = _dist_version("PyMuPDF", "pymupdf")
-    env["pyside6"] = _dist_version("PySide6-Essentials", "PySide6") or _dist_version("PySide6")
+    env["pywebview"] = _dist_version("pywebview", "webview")
+    env["fastapi"] = _dist_version("fastapi")
+    env["uvicorn"] = _dist_version("uvicorn")
     env["anthropic"] = _dist_version("anthropic")
     if sys.platform.startswith("win"):
         env["pywin32"] = _dist_version("pywin32", "win32api")
@@ -150,8 +152,8 @@ def environment_line(env: Dict[str, Any]) -> str:
             str(env.get("platform"))]
     if env.get("lxml"):
         bits.append(f"lxml {env['lxml']} (libxml2 {env.get('libxml2')})")
-    for key, label in (("pymupdf", "PyMuPDF"), ("pyside6", "Qt for Python"), ("anthropic", "anthropic"),
-                       ("pywin32", "pywin32")):
+    for key, label in (("pymupdf", "PyMuPDF"), ("pywebview", "pywebview"), ("fastapi", "FastAPI"),
+                       ("uvicorn", "uvicorn"), ("anthropic", "anthropic"), ("pywin32", "pywin32")):
         if env.get(key):
             bits.append(f"{label} {env[key]}")
     return " · ".join(bits)
@@ -640,8 +642,9 @@ _ACTIVE: List[Optional["CrashWatch"]] = [None]
 
 class CrashWatch:
     """The window's crash watch: ``start()`` points Python's fault handler at ``crash-<time>-<pid>.log`` (the stack of
-    a hard crash: a fault in Qt, lxml or PyMuPDF) and writes ``session-<pid>.json``; ``stop()`` — a clean exit —
-    removes the marker, and the crash log when nothing was written to it. A marker an earlier session left behind
+    a hard crash: a fault in the native window (pythonnet, WebView2), lxml or PyMuPDF) and writes
+    ``session-<pid>.json``; ``stop()`` — a clean exit — removes the marker, and the crash log when nothing was written
+    to it. A marker an earlier session left behind
     whose process is gone means that session ended without closing (a hard crash, a kill, a power cut): ``start()``
     returns it, with its crash log, so the window can say so once."""
 

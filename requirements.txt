@@ -2,8 +2,11 @@
 lxml>=5.0
 pymupdf>=1.24
 
-# The desktop window (spec-surgeon-gui): Qt 6 widgets
-PySide6-Essentials>=6.8,<7
+# The desktop window (spec-surgeon-gui): a local server and its page in a native WebView2 window
+fastapi>=0.115
+uvicorn>=0.32
+python-multipart>=0.0.9       # file uploads to the local server
+pywebview>=5.3                # the native window; on Windows it brings pythonnet (the WebView2 runtime ships with Windows 10/11)
 
 # Windows only: Word as renderer and accept/reject oracle (recommended)
 pywin32>=306; sys_platform == "win32"

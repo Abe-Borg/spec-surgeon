@@ -1,13 +1,15 @@
-"""Exercise the real installed app without an API key or a network.
+"""Exercise the real installed app without an API key, a network or a browser.
 
-``gui`` mode (default): the Qt window (native ``windows`` platform) previews and runs a spec through its buttons,
-the process pool and the isolated sandbox work, bundled resources are present, Credential Manager works, and the
-updater downloads and verifies an installer from a canned release (``file://`` assets) and refuses a tampered one.
+``gui`` mode (default): the window's server (``spec_surgeon.web``) is served on a free port from the installed
+executable and driven over HTTP the way the page drives it — attach, send, read the job stream to ``done``, create
+the copies, About, updates — with a scripted offline model; pywebview's Windows backend (pythonnet, WinForms, the
+WebView2 interop) loads and finds the WebView2 runtime; the built page is in the bundle; the process pool and the
+isolated sandbox work; bundled resources are present; Credential Manager works; and the updater downloads and
+verifies an installer from a canned release (``file://`` assets) and refuses a tampered one. No window is opened.
 
-``update`` mode: the real in-app update hand-off — the window starts the CI-built installer detached with the real
-switches (/SILENT … /RELAUNCH=1) and quits (Windows releases the app mutex as the process ends). validate_installer.ps1
-then checks that Setup
-waited, installed over this copy, and reopened the app.
+``update`` mode: the real in-app update hand-off — the update flow starts the CI-built installer detached with the
+real switches (/SILENT … /RELAUNCH=1) and quits (Windows releases the app mutex as the process ends).
+validate_installer.ps1 then checks that Setup waited, installed over this copy, and reopened the app.
 """
 import hashlib
 import json
@@ -16,6 +18,7 @@ from pathlib import Path
 import sys
 import tempfile
 import traceback
+import urllib.request
 
 
 def _check_schemas(folder, expected):
@@ -55,35 +58,83 @@ def _offline_client(spec):
     return NS(beta=NS(messages=NS(stream=stream)))
 
 
-def _conversation_run(window, sources):
-    """Exercise the installed default UI: attachments, chat, preview consent, verified copies."""
-    window.task.render = False
-    window.add_documents([str(p) for p in sources])
-    window.composer.setPlainText("remove all headers and footers")
-    window.send.click()
-    log = window._spec_surgeon["wait"](120)
-    assert window.task.stage == "preview", log
-    assert not window.task.results
-    assert window.primary.isEnabled(), log
-    window.primary.click()
-    log = window._spec_surgeon["wait"](180)
-    assert window.task.stage == "done", log
-    assert len(window.task.results) == len(sources), log
-    assert all(Path(p).is_file() for p in window.task.results.values())
+class _Api:
+    """The page's side of docs/WEB_API.md over urllib: JSON routes and the job stream."""
+
+    def __init__(self, port, token):
+        self.base = f"http://127.0.0.1:{port}"
+        self.token = token
+
+    def _request(self, route, body=None, timeout=30):
+        data = None if body is None else json.dumps(body).encode("utf-8")
+        req = urllib.request.Request(self.base + route, data=data, method="POST" if body is not None else "GET",
+                                     headers={"X-Spec-Surgeon-Token": self.token, "Content-Type": "application/json"})
+        return urllib.request.urlopen(req, timeout=timeout)  # noqa: S310 — our own loopback server
+
+    def get(self, route):
+        with self._request(route) as resp:
+            assert resp.status == 200, (route, resp.status)
+            return json.loads(resp.read().decode("utf-8"))
+
+    def post(self, route, body):
+        with self._request(route, body) as resp:
+            assert resp.status == 200, (route, resp.status)
+            return json.loads(resp.read().decode("utf-8"))
+
+    def stream(self, route, body, timeout):
+        """Every ``data:`` frame of a job stream, up to and including ``done`` or ``error``."""
+        events = []
+        with self._request(route, body, timeout=timeout) as resp:
+            assert resp.status == 200 and resp.headers.get("Content-Type", "").startswith("text/event-stream"), route
+            for raw in resp:
+                line = raw.decode("utf-8").rstrip("\r\n")
+                if line.startswith("data: "):
+                    event = json.loads(line[6:])
+                    events.append(event)
+                    if event["type"] in ("done", "error"):
+                        break
+        assert events and events[-1]["type"] in ("done", "error"), events[-1:]
+        return events
+
+
+def _conversation_run(api, sources, version):
+    """Exercise the installed window as the page does: attachments, chat, the job stream, approval, verified copies."""
+    view = api.get("/api/state")
+    assert view["version"] == version and view["stage"] == "empty" and view["busy"] is False, view
+    view = api.post("/api/attach", {"paths": [str(p) for p in sources]})
+    assert len(view["attachments"]) == len(sources), view["attachments"]
+    assert all(a["state"] in ("ok", "note") and a["kind"] == "document" for a in view["attachments"]), view["attachments"]
+    events = api.stream("/api/send", {"text": "remove all headers and footers"}, timeout=120)
+    assert events[-1]["type"] == "done", events[-1]
+    view = events[-1]["state"]
+    assert view["stage"] == "preview" and view["action"]["kind"] == "approve" and not view["results"], view
+    assert view["plan"] and view["plan"]["groups"], view["plan"]
+    events = api.stream("/api/primary", {"token": view["action"]["token"]}, timeout=180)
+    assert events[-1]["type"] == "done", events[-1]
+    view = events[-1]["state"]
+    assert view["stage"] == "done" and len(view["results"]) == len(sources), view
+    assert all(Path(r["output"]).is_file() for r in view["results"]), view["results"]
+    return view
 
 
 def _gui(request, result):
     import anthropic
+    import fastapi  # noqa: F401
     import pymupdf
     import pythoncom  # noqa: F401
+    import uvicorn  # noqa: F401
+    import webview
     import win32com.client  # noqa: F401
-    from PySide6.QtWidgets import QStyleFactory
+    from webview.guilib import initialize as initialize_gui
     from spec_surgeon import __version__, catalog, credentials, updater, winapp
     from spec_surgeon import SKILL_DIR
     from spec_surgeon.codegen import _examples, trial
-    from spec_surgeon.gui import Session, build_window
-    from spec_surgeon.ui.app import RecordingPrompts, qt_app
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.gui import Session
+    from spec_surgeon.settings import Settings
     from spec_surgeon.verify.xsd import SCHEMA_DIR
+    from spec_surgeon.web.server import STATIC, WindowState, new_token
+    from spec_surgeon.web.shell import free_port, serve
 
     assert getattr(sys, "frozen", False), "Test must run from the installed executable"
     schema_count = _check_schemas(SCHEMA_DIR, request["schemas"])
@@ -93,10 +144,13 @@ def _gui(request, result):
     examples = catalog.worked_examples()
     assert any(e["request"] == "remove all headers and footers" for e in examples)
     assert updater.is_installed_build(), "unins000.exe must sit beside the installed app"
+    assert (STATIC / "index.html").is_file(), f"the built page must ship in the bundle ({STATIC})"
 
-    app = qt_app()
-    assert app.platformName() == "windows", app.platformName()
-    assert "windows11" in [k.lower() for k in QStyleFactory.keys()], QStyleFactory.keys()
+    # pywebview's Windows backend without opening a window: importing it loads pythonnet, WinForms and the WebView2
+    # interop assemblies and reads the WebView2 runtime's version from the registry (``renderer``); ``initialize``
+    # then only sets the WinForms application defaults.
+    gui = initialize_gui()
+    assert gui.renderer == "edgechromium", f"pywebview would not use WebView2 here: {gui.renderer}"
     assert winapp.mutex_exists(), "the app mutex must be held"
     assert winapp.get_app_user_model_id() == winapp.AUMID
 
@@ -112,10 +166,25 @@ def _gui(request, result):
     before = {p: hashlib.sha256(p.read_bytes()).hexdigest() for p in sources}
     spec = json.loads((catalog.EXAMPLES_DIR / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
     session = Session(out_root=Path(request["output_dir"]), client=_offline_client(spec), visual_check=False)
-    w = build_window(session, prompts=RecordingPrompts())
-    w.show()
-    _conversation_run(w, sources)
-    w.grab().save(str(Path(request["report"]).with_name("gui-windows.png")))
+    task = DocumentTask(session, render=False)
+    state = WindowState(task, Settings(out_root=str(session.out_root)), token=new_token(), version=__version__)
+    port = free_port()
+    server = serve(state, port)
+    try:
+        api = _Api(port, state.token)
+        assert api.get("/api/health") == {"ok": True, "version": __version__}
+        _conversation_run(api, sources, __version__)
+        about = api.get("/api/about")
+        assert about["version"] == __version__ and "MIT License" in about["license"] and about["credits"], about
+        assert any("pywebview" in line for line in about["credits"]), about["credits"]
+        update = api.get("/api/update")
+        assert update["state"] == "none", update                  # no update flow is attached to the smoke's window
+        settings = api.get("/api/settings")
+        assert settings["can_remember"] is True and settings["out_root"] == str(session.out_root), settings
+    finally:
+        server.should_exit = True
+        if state.thread is not None:
+            state.thread.join(timeout=30)
     assert len(list((session.last_run_dir / "outputs").glob("*.docx"))) == 2
     record_files = list((session.last_run_dir / "records").glob("*.json"))
     assert len(record_files) == 2
@@ -123,8 +192,6 @@ def _gui(request, result):
         record = json.loads(path.read_text(encoding="utf-8"))
         assert not any(c["status"] == "FAIL" for c in record["checks"]), record
         assert any(c["id"] == "V5a" and c["status"] == "PASS" for c in record["checks"]), record
-    w.force_close = True
-    w.close()
 
     generated = trial(request["generated_source"], sources[0], {}, {"twips": 900},
                       Path(request["output_dir"]) / "Isolated generated operation")
@@ -135,14 +202,14 @@ def _gui(request, result):
     result.update({"ok": True, "version": __version__, "gui_preview_run": "PASS 2",
                    "process_pool": "PASS", "isolated_generated_op": "PASS",
                    "schemas": schema_count, "worked_examples": example_count,
-                   "sources_unchanged": True, "qt_style": app.style().name(),
+                   "sources_unchanged": True, "page_bundled": True,
+                   "window_backend": gui.renderer, "pywebview": getattr(webview, "__version__", "?"),
                    "updater_offline": "PASS", "credential_manager": "PASS",
                    "anthropic": anthropic.__version__, "pymupdf": pymupdf.VersionBind, "word_modules": True})
 
 
 def _updater_offline(updater):
     """Download + verify from a canned release served from local files; a tampered byte is refused."""
-    import urllib.request
     with tempfile.TemporaryDirectory() as tmp:
         tmp = Path(tmp)
         payload = os.urandom(1024 * 1024)
@@ -178,26 +245,25 @@ def _updater_offline(updater):
 
 
 def _update(request, result):
-    """Hand over to the real installer the way Install now does, then quit."""
+    """Hand over to the real installer the way Install does, then quit."""
     from spec_surgeon import updater
-    from spec_surgeon.gui import Session, build_window
-    from spec_surgeon.ui.app import RecordingPrompts
+    from spec_surgeon.settings import Settings
+    from spec_surgeon.web.updates import UpdateFlow
     installer = Path(request["installer"])
     dl = updater.DownloadedInstaller(installer, request["sha256"], request["version"])
-    w = build_window(Session(out_root=Path(request["output_dir"])), prompts=RecordingPrompts())
     started = []
 
     def launcher(dl, install_dir, log):
         proc = updater.launch_installer(dl, install_dir=install_dir, log=Path(request["install_log"]))
         started.append(proc.pid)
         return proc
-    w.updates.launcher = launcher
     quit_called = []
-    w.quit_for_update = lambda: quit_called.append(True)
-    assert w.updates.install_downloaded(dl), "the installer was not started"
-    assert quit_called and started
+    flow = UpdateFlow(Settings(out_root=request["output_dir"]), launcher=launcher,
+                      quit_app=lambda: quit_called.append(True))
+    assert flow.install_downloaded(dl), "the installer was not started"
+    assert quit_called and started and flow.state()["state"] == "installing"
     result.update({"ok": True, "installer_pid": started[0],
-                   "pending_update": w.settings.pending_update})
+                   "pending_update": flow.settings.pending_update})
 
 
 def main(request_path):
