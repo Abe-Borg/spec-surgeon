@@ -17,7 +17,7 @@ required capability is unavailable.
 Recovery runs inside the conversation and needs no setup. When **Create edited copies** leaves a
 file that did not pass, or a sample fails during the preview, the app investigates those files on
 copies in the same conversation. It uses the conversation's own allowance (the shared estimated
-$10 ledger, 48 calls, 16,000 output tokens per call), up to eight candidate attempts per problem
+$10 ledger, 48 calls, 64,000 output tokens per call), up to eight candidate attempts per problem
 group and high reasoning effort. The window has no budget, attempt or model controls; Settings
 holds only the API key.
 

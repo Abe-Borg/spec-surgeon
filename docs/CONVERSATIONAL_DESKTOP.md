@@ -154,7 +154,7 @@ configurable there. Without a key the composer keeps your draft, **Send** stays 
 "Connect your Anthropic API key in Settings to start." The command line runs saved specifications without a key.
 
 Each conversation has one allowance that covers every model call it makes: the conversation itself, custom
-methods, the visual check and recovery. It starts at an estimated $10, 48 calls, 16,000 output tokens per call
+methods, the visual check and recovery. It starts at an estimated $10, 48 calls, 64,000 output tokens per call
 and one million tokens in total. When it is reached, work pauses with its progress saved and the button reads
 **Allow another estimated $10**; accepting extends the same ledger by $10, 48 calls and one million tokens. The
 amounts are estimates from a built-in price table, not provider billing caps. Usage that could not be

@@ -18,6 +18,7 @@ from typing import Any, Dict, List, Optional
 from . import llm, review_display
 from .gui import Session
 from .recovery_state import atomic_json
+from .resources import DEFAULT_MAX_OUTPUT_TOKENS
 
 ALLOWANCE_USD = 10.0
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
@@ -89,7 +90,7 @@ class DocumentTask:
 
     @staticmethod
     def _new_budget():
-        return llm.CallBudget(max_cost_usd=ALLOWANCE_USD, max_calls=48, max_output_tokens=16000,
+        return llm.CallBudget(max_cost_usd=ALLOWANCE_USD, max_calls=48, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
                               max_total_tokens=1_000_000, effort="high")
 
     # ---- attachments ----
@@ -328,8 +329,8 @@ class DocumentTask:
     def _recovery_options(self):
         from .recovery import RecoveryOptions
         return RecoveryOptions(max_cost_usd=self._budget.max_cost_usd, max_calls=self._budget.max_calls, max_attempts=8,
-                               max_output_tokens=16000, max_total_tokens=self._budget.max_total_tokens, effort="high",
-                               render=self.render, visual_review=self.session.visual_check)
+                               max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_total_tokens=self._budget.max_total_tokens,
+                               effort="high", render=self.render, visual_review=self.session.visual_check)
 
     def action_token(self):
         s = self.session
@@ -600,7 +601,7 @@ class DocumentTask:
         self._budget = llm.CallBudget(max_cost_usd=budget.get("max_cost_usd", ALLOWANCE_USD),
                                       max_calls=budget.get("max_calls", 48),
                                       max_total_tokens=budget.get("max_total_tokens", 1_000_000),
-                                      max_output_tokens=16000, effort="high")
+                                      max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, effort="high")
         # Retain conservative accounting; never reset spending by reopening the app.
         self._budget.calls = int(budget.get("calls", 0))
         self._budget._reserved_tokens = int(budget.get("accounted_tokens", 0))

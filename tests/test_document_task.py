@@ -199,6 +199,21 @@ def test_interrupted_call_pauses_before_new_spending(tmp_path):
     assert restored.stage == "preview"
 
 
+def test_every_desktop_call_gets_the_full_output_cap_at_high_effort(tmp_path):
+    journal = tmp_path / "conversation.json"
+    task = task_for(tmp_path, journal=journal)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.perform("send", text=REQUEST)
+    request = task.session.client.requests[0]
+    assert request["max_tokens"] == 64000 and request["output_config"] == {"effort": "high"}
+    options = task._recovery_options()
+    assert (options.max_output_tokens, options.effort) == (64000, "high")
+    task.save()
+    restored = task_for(tmp_path, journal=journal)
+    assert restored.restore()
+    assert (restored._budget.max_output_tokens, restored._budget.effort) == (64000, "high")
+
+
 def test_budget_covers_all_conversation_turns(tmp_path):
     fake = FakeClient(resp(tool("ask_user", {"questions": ["Which title?"]})),
                       resp(tool("submit_editspec", {"spec": SPEC})))
