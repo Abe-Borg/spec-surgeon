@@ -752,10 +752,11 @@ def test_pictures_and_tables_attach_for_the_edit_to_use_and_reach_the_conversati
     with pytest.raises(ValueError, match="Word .docx"):
         task.attach([logo], template=True)
     task.perform("send", text=REQUEST)
-    first = json.dumps(task.session.client.requests[0]["messages"][0]["content"], ensure_ascii=False)
-    assert "INPUT FILES" in first and str(logo.resolve()) in first and str(sheet.resolve()) in first
-    assert "broken.png" not in first
+    first = task.session.client.requests[0]["messages"][0]["content"]
+    first = first if isinstance(first, str) else json.dumps(first, ensure_ascii=False)
+    assert "INPUT FILES" in first and "logo.png" in first and "PROJECT.xlsx" in first and "broken.png" not in first
     conversation = task.session.conversation
+    assert conversation.batch.inputs == [logo.resolve(), sheet.resolve()]
     assert task.session.conversation_matches(conversation.request)
     restored = task_for(tmp_path, journal=journal)
     assert restored.restore()

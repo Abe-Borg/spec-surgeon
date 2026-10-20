@@ -317,17 +317,21 @@ def _retry_delay(e: BaseException, attempt: int) -> float:
 
 
 def _sever(stream) -> None:
-    """Cut a running stream off under the read that waits on it. Closing a response from another thread does not wake
-    a blocked read on every platform; shutting its socket down does, and the provider sees the client gone and stops
-    writing. A stream without a reachable socket (a test's stand-in) is closed instead."""
+    """Cut a running stream off under the read that waits on it, and the provider sees the client gone and stops
+    writing. No one call wakes a blocked read everywhere: a shutdown does on Linux, closing the socket does on Windows,
+    so its socket gets both. A stream without a reachable socket (a test's stand-in) is closed instead."""
     try:
         network = getattr(getattr(stream, "response", None), "extensions", {}).get("network_stream")
         sock = network.get_extra_info("socket") if network is not None else None
-        if sock is not None:
-            sock.shutdown(socket.SHUT_RDWR)
-            return
-    except Exception:  # noqa: BLE001 — a socket already gone; closing the stream below is the fallback
-        pass
+    except Exception:  # noqa: BLE001 — no socket to reach; closing the stream below is the fallback
+        sock = None
+    if sock is not None:
+        for cut in (lambda: sock.shutdown(socket.SHUT_RDWR), sock.close):
+            try:
+                cut()
+            except OSError:                      # already shut down or closed by the other side
+                pass
+        return
     try:
         stream.close()
     except Exception:  # noqa: BLE001 — the read it interrupts reports the failure
