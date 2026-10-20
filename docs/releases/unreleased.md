@@ -1,28 +1,5 @@
 # Unreleased
 
-Changes since v1.4.0.
+Changes since v1.5.0.
 
-## What you see
-
-- **No spending limit.** The estimated $10 allowance is gone. Every AI step runs Claude Opus 5.5 at high
-  reasoning effort with room for its full answer: 128,000 output tokens per call, the most the model writes
-  (was 16,000 in the window and 64,000 on the command line).
-- **Stop now** is the kill switch while work runs. It cuts off the AI step that is running at once, so Claude
-  stops writing, and starts no other. The status line shows the estimated spending as it accrues and the footer
-  keeps the conversation's total; a step that is running is counted when it ends.
-- **Work pauses every 48 AI steps** until you press **Continue**. Continue, after a pause, a stop or a failed
-  call, now picks the conversation up where it stopped, with everything it had found, instead of starting the
-  request over.
-- **Pictures and tables.** Besides Word documents you can attach a picture (`.png`, `.jpg`, `.jpeg`, `.gif`) or a
-  table (`.xlsx`, `.csv`, `.json`) for the edit to use, with **Add a picture or table (optional)** or by
-  dropping it on the window: a new logo to put in place of the old one, a sheet of project values to fill in.
-  Claude is told about them (a picture's format and size, a table's columns) and can read the tables; nothing
-  beside your documents is looked for. The approval covers the exact file.
-- **Automatic retry.** A call that fails for a passing reason (an overloaded or rate-limited service, a server
-  error, a dropped connection, a response cut off in transit) is sent again up to twice, after 5 and 20 seconds
-  or when the service asks. A request the service refuses is never sent again.
-
-## Command line
-
-- The default `--max-output-tokens` is 128,000. Recovery options accept no spending or token ceiling (what the
-  window uses); the command line keeps its own spending and token defaults ($250 and 20 million tokens).
+No unreleased changes.
