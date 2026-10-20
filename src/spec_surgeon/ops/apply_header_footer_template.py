@@ -297,7 +297,7 @@ class ApplyHeaderFooterTemplate(Op):
         kind_words = _kind_words(params.get("kinds"))
         template = params.get("template")
         head = (f"Give every section the {kind_words} of "
-                + (f"the template {prose.quote(template)}" if template else "the project template"))
+                + (f"the template {prose.quote(Path(template).name)}" if template else "the project template"))
         ts = params.get("template_sections") if isinstance(params.get("template_sections"), dict) else {}
         uses: List[str] = []
         if isinstance(ts.get("all"), int):
