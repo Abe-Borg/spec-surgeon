@@ -110,6 +110,10 @@ def test_a_job_streams_its_events_and_ends_with_the_full_view(tmp_path):
     assert kinds[-1] == "done" and "text_delta" in kinds and "plan" in kinds and "samples" in kinds
     # A mid-job samples event carries the same URLs the state payload does, never a file path (the page would
     # request the path and get a 404 until the final view arrived).
+    said = [e["message"] for e in events if e["type"] == "message"]
+    assert said and all(isinstance(m.get("id"), str) for m in said)   # the page finalizes the bubble under this id
+    final = {m["id"]: m["text"] for m in events[-1]["state"]["messages"]}
+    assert all(final[m["id"]] == m["text"] for m in said)
     for event in (e for e in events if e["type"] == "samples"):
         assert event["samples"], "the previews are in"
         for sample in event["samples"]:
@@ -268,3 +272,78 @@ def test_the_browser_fallback_serves_the_page_and_stops_on_a_termination_request
     finally:
         if proc.poll() is None:
             proc.kill()
+
+
+# ---- the review's probes (PR #46): closing, the loopback probe, a download during work, a bad token --------------
+
+def test_closing_the_window_stops_the_job_and_nothing_outlives_it(tmp_path):
+    """The window's X while work runs cuts the running step off (its progress saved, as Stop now does) and the
+    shutdown waits for the job, so its last writes land now and never over a later launch's conversation."""
+    import threading as th
+    from spec_surgeon.web.shell import on_closing, shutdown
+    started, release = th.Event(), th.Event()
+
+    class Slow(FakeClient):
+        def _stream(self, **kw):
+            started.set()
+            release.wait(10)
+            return super()._stream(**kw)
+    state, client = window(tmp_path, Slow(resp(tool("submit_editspec", {"spec": SPEC}))))
+    client.post("/api/attach", json={"paths": [str(document(tmp_path / "Spec.docx"))]})
+    state.start_job("send", text=REQUEST)
+    assert started.wait(10) and state.busy
+    assert on_closing(state) is True and state.cancel is not None and state.cancel.is_set()
+    release.set()
+
+    class Server:
+        should_exit = False
+    server = Server()
+    shutdown(state, server, wait=30)
+    assert not state.busy and server.should_exit
+
+
+def test_the_loopback_probe_ignores_a_system_proxy(tmp_path, monkeypatch):
+    """A proxied machine (the Windows proxy, ``http_proxy``) cannot reach this computer's own server through the
+    proxy, and the launch token must never be sent to it: the probe goes straight to the loopback."""
+    from spec_surgeon.web.shell import free_port, serve
+    monkeypatch.setenv("http_proxy", "http://127.0.0.1:9/")
+    monkeypatch.setenv("HTTP_PROXY", "http://127.0.0.1:9/")
+    monkeypatch.delenv("no_proxy", raising=False)
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    state, _client = window(tmp_path, FakeClient())
+    server = serve(state, free_port())
+    try:
+        assert server is not None
+    finally:
+        server.should_exit = True
+
+
+def test_an_update_downloaded_during_work_waits_for_restart(tmp_path):
+    from types import SimpleNamespace
+    from spec_surgeon.settings import Settings
+    from spec_surgeon.web.updates import UpdateFlow
+    busy = [True]
+    launched, quit_calls = [], []
+    flow = UpdateFlow(Settings(out_root=str(tmp_path)), launcher=lambda dl, d, log: launched.append(dl),
+                      installed=lambda: True, quit_app=lambda: quit_calls.append(1), is_busy=lambda: busy[0])
+    dl = SimpleNamespace(version="9.9.9", path=tmp_path / "setup.exe")
+    assert flow.install_downloaded(dl) is False                 # work runs: nothing is launched, nothing quits
+    assert flow.state()["state"] == "ready" and flow.ready is dl and launched == [] and quit_calls == []
+    assert "Install the update once it has finished" in flow.install_ready()
+    busy[0] = False
+    assert flow.install_ready() == ""
+    assert launched == [dl] and quit_calls == [1] and flow.state()["state"] == "installing" and flow.ready is None
+    # the route: Restart to update installs the waiting download
+    state, client = window(tmp_path, FakeClient())
+    state.updates = UpdateFlow(Settings(out_root=str(tmp_path)), launcher=lambda dl, d, log: launched.append(dl),
+                               installed=lambda: True, quit_app=lambda: quit_calls.append(2), is_busy=lambda: False)
+    state.updates.ready = dl
+    assert client.post("/api/update/install").json()["state"] == "installing" and quit_calls[-1] == 2
+
+
+def test_a_non_ascii_token_is_refused_not_a_crash(tmp_path):
+    state, _client = window(tmp_path, FakeClient())
+    bare = TestClient(create_app(state))                        # no header: the query token is what is checked
+    assert bare.get("/api/state", params={"token": "é"}).status_code == 401
+    assert bare.get("/api/state", params={"token": "ééé" + TOKEN}).status_code == 401
+    assert bare.get("/api/state", params={"token": TOKEN}).status_code == 200

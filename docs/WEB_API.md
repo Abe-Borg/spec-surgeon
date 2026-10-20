@@ -47,8 +47,8 @@ that ends a job is authoritative.
   "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none"},
   "working": {"generation": 0, "from_originals": true, "can_start_over": false},
   "budget": {"paused": false, "steps_per_pause": 48},
-  "update": {"state": "none | available | downloading | ready | error", "version": "", "notes": "", "progress": 0,
-             "error": ""}
+  "update": {"state": "none | available | downloading | ready | installing | updated | failed | error",
+             "version": "", "notes": "", "progress": 0, "error": "", "text": "", "install_log": ""}
 }
 ```
 
@@ -91,7 +91,7 @@ Rules the page relies on:
 | GET | `/api/update` | | the `update` block |
 | POST | `/api/update/check` | | the `update` block (starts a background check) |
 | POST | `/api/update/download` | | the `update` block (starts the download; `progress` 0–100) |
-| POST | `/api/update/install` | | `{"ok": true}` then the app quits to install |
+| POST | `/api/update/install` | | the `update` block: `installing` and the app quits to install; a download that finished while work ran waits as `ready` for this (409 with the reason while work still runs) |
 | POST | `/api/logs` | | opens the diagnostic logs folder |
 | POST | `/api/quit` | | the shell closes the window (409 while busy) |
 
@@ -114,7 +114,7 @@ Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/50
 | `question` | `questions`, `choices`, `chips` | the model needs the user |
 | `cost` | `cost` | the running spend |
 | `done` | `state` | the job ended; `state` is the full view |
-| `error` | `message`, `state` | the job failed; `state` is the full view after the failure (safe to retry) |
+| `error` | `message`, `state`, `resend`? | the job failed; `state` is the full view after the failure (safe to retry); `resend` is the request's text when it was refused before it was recorded (no API key yet) — the composer takes it back |
 
 Order within a job: any number of `status`/`activity`/`thinking_delta`/`text_delta`, then `message` when a reply is
 complete, `plan`/`samples`/`results`/`question`/`cost` as they happen, then exactly one `done` or `error`.

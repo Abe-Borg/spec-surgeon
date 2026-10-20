@@ -113,7 +113,10 @@ export interface Budget {
   steps_per_pause: number;
 }
 
-export type UpdateState = "none" | "available" | "downloading" | "ready" | "error";
+/** none · available · downloading · ready (downloaded while work ran; Restart to update) · installing (Setup
+ * started; the app is closing) · updated (this start follows an update) · failed (an update that did not finish) ·
+ * error. */
+export type UpdateState = "none" | "available" | "downloading" | "ready" | "installing" | "updated" | "failed" | "error";
 
 export interface Update {
   state: UpdateState;
@@ -121,6 +124,10 @@ export interface Update {
   notes: string;
   progress: number;
   error: string;
+  /** One sentence beside the state: the download's progress, the ready note, the hint after an update. */
+  text?: string;
+  /** `failed`: the install log that says why. */
+  install_log?: string;
 }
 
 export interface View {
@@ -176,7 +183,8 @@ export type JobEvent =
   | { type: "question"; questions: string[]; choices: Choice[]; chips: string[] }
   | { type: "cost"; cost: Cost }
   | { type: "done"; state: View }
-  | { type: "error"; message: string; state: View };
+  /** `resend`: a request refused before it was recorded (no API key yet); the composer takes it back. */
+  | { type: "error"; message: string; state: View; resend?: string };
 
 export interface Settings {
   key_present: boolean;

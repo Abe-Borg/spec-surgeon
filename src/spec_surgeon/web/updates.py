@@ -20,9 +20,10 @@ def _mb(n: Optional[int]) -> str:
 
 
 class UpdateFlow:
-    """``state()`` is what the banner shows: ``none`` (nothing to say), ``available``, ``downloading``, ``installing``
-    (Setup was started; the app is closing), ``error``, ``updated`` (this start follows an update) or ``failed`` (an
-    update that did not finish). ``checker``, ``downloader``, ``launcher`` and ``installed`` are injectable."""
+    """``state()`` is what the banner shows: ``none`` (nothing to say), ``available``, ``downloading``, ``ready``
+    (downloaded and checked while work was running: Restart to update once it has finished), ``installing`` (Setup
+    was started; the app is closing), ``error``, ``updated`` (this start follows an update) or ``failed`` (an update
+    that did not finish). ``checker``, ``downloader``, ``launcher`` and ``installed`` are injectable."""
 
     def __init__(self, settings: Settings, *, checker: Optional[Callable] = None, downloader: Optional[Callable] = None,
                  launcher: Optional[Callable] = None, installed: Optional[Callable[[], bool]] = None,
@@ -42,6 +43,7 @@ class UpdateFlow:
         self.checking = False
         self.downloading = False
         self.cancel: Optional[threading.Event] = None
+        self.ready: Any = None                       # a checked download that waits for the work to finish
         self.last_message = ""
         self._lock = threading.Lock()
         self._state: Dict[str, Any] = {"state": "none", "version": "", "notes": "", "progress": 0, "error": "",
@@ -204,8 +206,15 @@ class UpdateFlow:
 
     def install_downloaded(self, dl) -> bool:
         """Hand over to Setup: remember the attempt, start it detached and quit. The app mutex is NOT released here:
-        Windows releases it when this process has really ended, which is what Setup waits for."""
+        Windows releases it when this process has really ended, which is what Setup waits for. Work that started
+        during the download is never cut off by it: the download waits as ``ready`` for Restart to update."""
         self.downloading = False
+        if self.is_busy():
+            self.ready = dl
+            self._set(state="ready", version=dl.version, progress=100, error="",
+                      text="Downloaded and checked. Finish or stop the current work, then press Restart to update.")
+            return False
+        self.ready = None
         install_dir = Path(sys.executable).resolve().parent
         log = updates_dir() / f"install-{dl.version}.log"
         self.settings.pending_update = {"version": dl.version, "log": str(log), "started": time.time()}
@@ -221,3 +230,14 @@ class UpdateFlow:
                   text=f"Closing to install {dl.version} — Spec Surgeon will reopen when it is done.")
         self.quit_app()
         return True
+
+    def install_ready(self) -> str:
+        """Restart to update: Setup starts from the download that waited for the work to finish. Returns "" when it
+        started, else one sentence why not."""
+        if self.ready is None:
+            return "There is no downloaded update to install."
+        if self.is_busy():
+            return "Work is in progress. Install the update once it has finished."
+        if self.install_downloaded(self.ready):
+            return ""
+        return self.state().get("error") or "The update could not be installed."

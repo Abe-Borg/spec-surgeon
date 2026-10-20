@@ -12,15 +12,16 @@ interface Props {
 
 /**
  * One strip above the panes, driven by the view's `update` block: available
- * (Download), downloading (progress), ready (Restart to update), error.
- * Nothing when there is nothing to say.
+ * (Download), downloading (progress), ready (Restart to update), installing
+ * (the app is closing), updated (this start follows an update), failed (the
+ * install did not finish), error. Nothing when there is nothing to say.
  */
 export default function UpdateBanner({ update, busy, onDownload, onInstall, onDismiss }: Props) {
   if (!update || update.state === "none") return null;
   const tone =
-    update.state === "error"
+    update.state === "error" || update.state === "failed"
       ? "border-err/40 bg-err/10"
-      : update.state === "ready"
+      : update.state === "ready" || update.state === "updated"
         ? "border-ok/40 bg-ok/10"
         : "border-accent/40 bg-accent/10";
   return (
@@ -49,8 +50,27 @@ export default function UpdateBanner({ update, busy, onDownload, onInstall, onDi
           <p className="text-ink">
             Spec Surgeon {update.version} is ready to install.
             <span className="ml-2 text-ink-dim">
-              The app closes to install it and reopens when it is done.
+              {update.text || "The app closes to install it and reopens when it is done."}
             </span>
+          </p>
+        )}
+        {update.state === "installing" && (
+          <p className="text-ink">
+            Closing to install Spec Surgeon {update.version}…
+            <span className="ml-2 text-ink-dim">{update.text || "It reopens when the update is done."}</span>
+          </p>
+        )}
+        {update.state === "updated" && (
+          <p className="text-ink">
+            Spec Surgeon was updated to {update.version}.
+            {update.text && <span className="ml-2 text-ink-dim">{update.text}</span>}
+          </p>
+        )}
+        {update.state === "failed" && (
+          <p className="text-err">
+            The update to {update.version} was not installed.
+            {update.text && <span className="ml-2 text-err/80">{update.text}</span>}
+            {update.install_log && <span className="ml-2 text-err/80">Log: {update.install_log}</span>}
           </p>
         )}
         {update.state === "error" && (
@@ -72,9 +92,9 @@ export default function UpdateBanner({ update, busy, onDownload, onInstall, onDi
           </button>
         </Tip>
       )}
-      {(update.state === "available" || update.state === "error") && (
+      {(update.state === "available" || update.state === "error" || update.state === "updated" || update.state === "failed") && (
         <button type="button" className={quietBtn} onClick={onDismiss} title="Hide this until the next check">
-          Not now
+          {update.state === "updated" || update.state === "failed" ? "OK" : "Not now"}
         </button>
       )}
     </div>

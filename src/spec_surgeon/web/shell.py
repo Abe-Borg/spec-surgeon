@@ -60,14 +60,44 @@ def serve(state: WindowState, port: int, *, dev: bool = False):
     thread.start()
     deadline = time.monotonic() + 15
     url = f"http://127.0.0.1:{port}/api/health?token={state.token}"
+    # straight to the loopback: a system or environment proxy (the Windows registry's, ``http_proxy``) would be
+    # handed this URL — and the launch token — and cannot reach this computer's own server
+    opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
     while time.monotonic() < deadline:
         try:
-            with urllib.request.urlopen(url, timeout=1) as resp:  # noqa: S310 — our own loopback server
+            with opener.open(url, timeout=1) as resp:  # noqa: S310 — our own loopback server
                 if resp.status == 200:
                     return server
         except Exception:  # noqa: BLE001 — not up yet
             time.sleep(0.05)
     raise RuntimeError("the window's server did not start")
+
+
+def on_closing(state: WindowState) -> bool:
+    """The window's X while work runs: the running AI step is cut off, as Stop now does (its progress is saved), a
+    download is cancelled, and the close goes ahead. True: pywebview closes the window."""
+    try:
+        if state.busy:
+            state.stop()
+        if state.updates is not None and state.updates.state().get("state") == "downloading":
+            state.updates.cancel_download()
+    except Exception:  # noqa: BLE001 — closing is never refused over bookkeeping
+        pass
+    return True
+
+
+def shutdown(state: WindowState, server, *, wait: float = 60.0) -> None:
+    """Nothing outlives the window: a job still running is told to stop and waited for, so its last writes (the
+    settings, the journal) land before the process ends and never after a later launch's; then the server stops."""
+    thread = state.thread
+    if thread is not None and thread.is_alive():
+        state.stop()
+        thread.join(wait)
+    try:
+        state.save_settings()
+    except Exception:  # noqa: BLE001
+        pass
+    server.should_exit = True
 
 
 def _stop_on_signals() -> None:
@@ -124,6 +154,7 @@ def run_window(state: WindowState, *, dev: bool = False, page_url: Optional[str]
                 pass
             shell.window = webview.create_window(about.APP_NAME, url, width=WINDOW_SIZE[0], height=WINDOW_SIZE[1],
                                                  min_size=MIN_SIZE, text_select=True)
+            shell.window.events.closing += lambda: on_closing(state)
             webview.start(debug=dev)
         else:
             diag.app_log().warning(f"{problem}; opening the page in the default browser")
@@ -136,9 +167,5 @@ def run_window(state: WindowState, *, dev: bool = False, page_url: Optional[str]
             except KeyboardInterrupt:
                 pass
     finally:
-        try:
-            state.save_settings()
-        except Exception:  # noqa: BLE001
-            pass
-        server.should_exit = True
+        shutdown(state, server)
     return 0

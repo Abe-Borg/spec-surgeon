@@ -8,6 +8,16 @@ import { liveHasContent } from "../lib/chat";
 import { splitStableTail, useSmoothText } from "../lib/useSmoothText";
 import StatusStrip from "./StatusStrip";
 
+/**
+ * A link in a reply (model text, so untrusted) opens in the system browser: in the native window a plain anchor
+ * would navigate the app's own page away, taking the job stream and the draft with it, with no way back.
+ */
+const MARKDOWN_COMPONENTS = {
+  a: ({ node: _node, ...props }: React.ComponentProps<"a"> & { node?: unknown }) => (
+    <a {...props} target="_blank" rel="noreferrer noopener" />
+  ),
+};
+
 /** One plugin array for every ReactMarkdown in this file: an inline `[remarkGfm]`
  *  is a fresh array per render, which reads as a changed prop to anything that
  *  compares it. */
@@ -17,7 +27,11 @@ const REMARK_PLUGINS = [remarkGfm];
  *  grows past another paragraph break, not on every animation frame. */
 const StablePrefix = memo(function StablePrefix({ text }: { text: string }) {
   if (!text) return null;
-  return <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{text}</ReactMarkdown>;
+  return (
+    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+      {text}
+    </ReactMarkdown>
+  );
 });
 
 /** Collapsible thinking summary, muted + italic, distinct from the answer.
@@ -159,7 +173,9 @@ function MessageBubble({ message, aside }: { message: Message; aside: Aside | nu
   if (message.role === "app") return <AppNote text={message.text} />;
   return (
     <div className="md text-[0.925rem]">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS}>{message.text || "…"}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
+        {message.text || "…"}
+      </ReactMarkdown>
       {aside && <AsideBlock aside={aside} />}
     </div>
   );

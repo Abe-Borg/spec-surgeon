@@ -280,7 +280,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     async def require_token(request: Request, call_next):
         if request.url.path.startswith("/api/"):
             given = request.headers.get(TOKEN_HEADER) or request.query_params.get("token") or ""
-            if not secrets.compare_digest(given, state.token):
+            # compared as bytes: compare_digest refuses non-ASCII text, and a malformed token is a 401, not a crash
+            if not secrets.compare_digest(given.encode("utf-8", "surrogateescape"), state.token.encode("utf-8")):
                 return JSONResponse({"error": "This window's session token is missing or wrong."}, status_code=401)
         return await call_next(request)
 
@@ -483,6 +484,9 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
 
     @app.post("/api/update/install")
     def update_install():
+        if state.updates and state.updates.ready is not None:      # downloaded while work ran: Restart to update
+            why = state.updates.install_ready()
+            return error(why, 409) if why else get_update()
         return update_download()
 
     @app.post("/api/update/releases")

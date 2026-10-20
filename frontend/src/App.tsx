@@ -85,16 +85,21 @@ export default function App() {
       busyRef.current = true;
       dispatch({ type: "job_started", userText });
       let terminal = false;
+      let resend = "";
       try {
         for await (const event of stream) {
           dispatch({ type: "event", event });
           if (event.type === "done" || event.type === "error") terminal = true;
+          // A request refused before it was recorded (no API key yet) comes back with the error; the
+          // composer takes it back so nothing the user typed is lost.
+          if (event.type === "error" && typeof event.resend === "string" && event.resend) resend = event.resend;
         }
         if (!terminal) dispatch({ type: "job_ended" });
       } catch (failure) {
         dispatch({ type: "job_failed", message: failureText(failure) });
       } finally {
         busyRef.current = false;
+        if (resend) setPrefill((p) => ({ text: resend, nonce: p.nonce + 1 }));
         // The view that ends a job is authoritative; the state route is the
         // same view, fetched once more in case the stream was cut short.
         void refresh();
@@ -120,8 +125,14 @@ export default function App() {
 
   // --- Attachments ---------------------------------------------------------
 
+  // A view answered while a job stream is attached (an upload that landed after Send) must not replace the
+  // streaming state with the pre-job view; the stream's own `done` carries the authoritative one.
   const applyView = useCallback((promise: Promise<View>) => {
-    promise.then((next) => dispatch({ type: "view", view: next })).catch((failure: unknown) => setNotice(failureText(failure)));
+    promise
+      .then((next) => {
+        if (!busyRef.current) dispatch({ type: "view", view: next });
+      })
+      .catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
 
   const uploadFiles = useCallback(
@@ -129,7 +140,8 @@ export default function App() {
       if (files.length === 0) return;
       setUploading(true);
       try {
-        dispatch({ type: "view", view: await api.upload(files, template) });
+        const next = await api.upload(files, template);
+        if (!busyRef.current) dispatch({ type: "view", view: next });
       } catch (failure) {
         setNotice(failureText(failure));
       } finally {

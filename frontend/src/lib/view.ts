@@ -158,7 +158,9 @@ export function reduce(state: UiState, action: UiAction): UiState {
       const live = view.busy ? (state.live ?? { ...emptyLive(), status: { kind: "working", text: "" } }) : null;
       // An empty conversation (a new one) carries no reply to keep an aside for.
       const asides = view.messages.length === 0 ? {} : state.asides;
-      return { ...state, view, loaded: true, live, asides };
+      // A stream cut mid-job left a failure note; the server says the job still runs, so the note was wrong.
+      const error = view.busy ? null : state.error;
+      return { ...state, view, loaded: true, live, asides, error };
     }
     case "job_started": {
       let messages = state.view.messages;
