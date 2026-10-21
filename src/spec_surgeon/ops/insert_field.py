@@ -28,7 +28,8 @@ again in verify/inserted_fields.py (kind ``inserted_fields``): keep the two iden
   paragraph's properties, or after its last child, with the properties of the run of the first (start) or last (end)
   character of the run text that is a ``w:t`` character, else the paragraph mark's (without its revision marks), never
   a ``w:rPrChange``; tracked, the four runs in one new ``w:ins``. Refused when that place lies inside a complex field
-  (a table of contents: the field's begin and end counted over the part, ``replace_text.field_start_depths``).
+  (a table of contents: ``field_depths`` counts each paragraph's own begin and end characters, deleted ones too, in
+  paragraph order over the part; an end never takes the depth below 0).
 * Refused anywhere: a paragraph in a text box (``textbox``). Scope: the body, headers, footers, footnotes, endnotes
   (default: the body, headers and footers). Tracked by default (``tracked: false`` on request).
 """
@@ -47,7 +48,7 @@ from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment, Touch
 from .docprops import CustomProps
 from .fields import fields_of
-from .replace_text import default_author, field_start_depths
+from .replace_text import default_author
 from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts
 from .slots import field_runs
 from .textedit import (Edit, RunText, accept_text_map, apply_tracked, apply_untracked, check_edits, nearest_p,
@@ -69,7 +70,7 @@ OWN_PARAMS = {"STYLEREF": ("style", "last_on_page", "paragraph_number"), "DOCPRO
 ARGUMENTS = ("format", "style", "last_on_page", "paragraph_number", "property", "path")
 PARAMS = set(ARGUMENTS) | {"field", "at_text", "position", "tracked", "author", "allow_missing", "date_convention"}
 MARK_REVISIONS = (W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "rPrChange")
-ONE = "￼"           # the one character the core places where a field goes; ``place`` replaces it at once
+ONE = "\uFFFC"      # the one character the core places where a field goes; ``place`` replaces it at once
 
 
 def _flag(params: Dict[str, Any], key: str, default: bool) -> bool:
@@ -93,7 +94,7 @@ def read_request(params: Dict[str, Any]) -> Dict[str, Any]:
         raise JobException(f"a {field} field takes no {stray}", "bad-params")
     if "format" in params:
         fmt = params["format"]
-        if field in NUMBERED and fmt not in NUMBER_FORMATS:
+        if field in NUMBERED and (not isinstance(fmt, str) or fmt not in NUMBER_FORMATS):
             raise JobException(f"format must be one of {list(NUMBER_FORMATS)} for a {field} field, got {fmt!r}",
                                "bad-params")
         if field in DATED and (not isinstance(fmt, str) or not DATE_PICTURE.fullmatch(fmt)
@@ -199,18 +200,21 @@ def markup(field: str, instr: str) -> List[Any]:
     return [begin, code, separate, end]
 
 
-def own_end_depth(p, start: int) -> int:
-    """The complex-field depth after the paragraph's own field characters (``field_start_depths``' count)."""
-    depth = start
-    for fc in p.iter(W + "fldChar"):
-        if nearest_p(fc) is not p:
-            continue
-        kind = fc.get(W + "fldCharType")
-        if kind == "begin":
-            depth += 1
-        elif kind == "end":
-            depth = max(0, depth - 1)
-    return depth
+def field_depths(pars: Sequence[Any]) -> List[Tuple[int, int]]:
+    """(complex-field depth at the start of each paragraph, at its end) — module docstring."""
+    out, depth = [], 0
+    for p in pars:
+        start = depth
+        for fc in p.iter(W + "fldChar"):
+            if nearest_p(fc) is not p:
+                continue
+            kind = fc.get(W + "fldCharType")
+            if kind == "begin":
+                depth += 1
+            elif kind == "end":
+                depth = max(0, depth - 1)
+        out.append((start, depth))
+    return out
 
 
 def edge_rpr(p, position: str) -> Optional[Any]:
@@ -381,7 +385,7 @@ class InsertField(Op):
             root = pkg.xml(part)
             pars = paragraphs(root)
             in_field = field_runs(root)
-            depths = field_start_depths(pars) if position else []
+            depths = field_depths(pars) if position else []
             fields = fields_of(root) if position else []
             for bi, p in enumerate(pars):
                 if pred is not None and not paragraph_selected(pred, p, bi, block_full_text(p), sheet, all_pars=pars):
@@ -406,8 +410,7 @@ class InsertField(Op):
                     count = len(edits)
                     blocks.setdefault(part, {})[str(bi)] = [[e.start, e.end] for e in edits]
                 else:
-                    edge = depths[bi] if position == "start" else own_end_depth(p, depths[bi])
-                    if edge:
+                    if depths[bi][0 if position == "start" else 1]:
                         raise JobException(f"{where}: its {position} lies inside a field that runs over several "
                                            f"paragraphs (a table of contents …); Word would replace the new field when "
                                            f"it updates that one", "field-result", {"where": where})

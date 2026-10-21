@@ -222,7 +222,7 @@ def test_a_file_without_the_placeholder(src):
     assert rec.passed and out == src and plan.property_assertions[0]["expected"] == {}
 
 
-# ---- a wrong output is caught ------------------------------------------------------------------------------------------
+# ---- a wrong output is caught ----------------------------------------------------------------------------------------
 
 def _date(src, tracked=True):
     return field(src, BODY, {"field": "DATE", "at_text": "{{DATE}}", "tracked": tracked})
@@ -301,7 +301,7 @@ def test_a_placeholder_left_behind_is_caught(src):
     _caught(src, plan, out, DOC, back, "not exactly the field")
 
 
-# ---- a wrong implementation shared by plan and apply is caught -------------------------------------------------------------
+# ---- a wrong implementation shared by plan and apply is caught -------------------------------------------------------
 
 def test_a_shared_wrong_instruction_is_caught(src, monkeypatch):
     real = ifm.instruction
@@ -327,15 +327,15 @@ def test_a_shared_dirty_rule_that_leaves_a_date_clean_is_caught(src, monkeypatch
 def test_a_shared_rule_that_skips_the_core_checks_is_caught(src, monkeypatch):
     """A tracked change in a hyperlink is the core's refusal; a plan and apply that skip it are caught by the verifier's
     own reading of the rules."""
-    monkeypatch.setattr(ifm, "check_edits", lambda rt, edits, tracked, in_field, where: sorted(edits, key=lambda e: e.start))
+    monkeypatch.setattr(ifm, "check_edits",
+                        lambda rt, edits, tracked, in_field, where: sorted(edits, key=lambda e: e.start))
     plan, out, rec = field(src, BODY, {"field": "FILENAME", "at_text": "{{FILENAME}}"})
     assert "V10" in failed(rec) and "the op must refuse" in v10(rec)
 
 
 def test_a_shared_field_depth_that_misses_a_table_of_contents_is_caught(monkeypatch):
     data = build_fields(toc=True)
-    monkeypatch.setattr(ifm, "field_start_depths", lambda pars: [0] * len(pars))
-    monkeypatch.setattr(ifm, "own_end_depth", lambda p, start: 0)
+    monkeypatch.setattr(ifm, "field_depths", lambda pars: [(0, 0)] * len(pars))
     plan, out, rec = field(data, {"scope": ["document"], "paragraphs": {"text_regex": "^ TOC"}},
                            {"field": "PAGE", "position": "end"})
     assert "V10" in failed(rec) and "inside a field" in v10(rec)
@@ -348,7 +348,7 @@ def test_a_shared_wrong_neighbour_is_caught(src, monkeypatch):
     assert "V10" in failed(rec) and "formatting or place" in v10(rec)
 
 
-# ---- refusals ------------------------------------------------------------------------------------------------------------
+# ---- refusals --------------------------------------------------------------------------------------------------------
 
 @pytest.mark.parametrize("data_kw, params, code", [
     ({}, {"field": "FILENAME", "at_text": "{{FILENAME}}"}, "nested-container"),        # a tracked change in a link
@@ -428,7 +428,7 @@ def test_every_refusal_code_is_explained():
     assert sorted(c for c in codes | {"structure", "nested-container", "ambiguous"} if c not in FAILURE_EXPLANATIONS) == []
 
 
-# ---- touches and conflicts (rule 9) ------------------------------------------------------------------------------------
+# ---- touches and conflicts (rule 9) ----------------------------------------------------------------------------------
 
 def _plan(data, *specs):
     pkg = DocxPackage(data)
@@ -483,7 +483,7 @@ def test_the_reads_of_a_style_and_a_custom_property(src):
     assert e.value.code == "conflict"
 
 
-# ---- catalog, pipeline, render ------------------------------------------------------------------------------------------
+# ---- catalog, pipeline, render ---------------------------------------------------------------------------------------
 
 def _spec(*ops):
     return {"request": "r", "summary": "s", "mode": "content", "ops": list(ops)}

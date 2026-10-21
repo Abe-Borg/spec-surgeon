@@ -29,7 +29,7 @@ each field goes and with what formatting, and its own expected paragraph, item b
   the properties of the run of the first (start) or last (end) character of the run text that is a ``w:t`` character —
   the paragraph mark's, without its revision marks, when there is none — without ``w:rPrChange``, no run attributes.
   Refused when that place lies inside a complex field (begin/end counted over the part in paragraph order, each
-  paragraph's own field characters, deleted ones too).
+  paragraph's own field characters, deleted ones too; an end never takes the depth below 0).
 * Refused anywhere: a paragraph in a text box. Every paragraph a field went into is registered in ``verified_blocks``.
 """
 from __future__ import annotations
@@ -60,7 +60,7 @@ _V_KEYS = {"field", "format", "style", "last_on_page", "paragraph_number", "prop
 _V_CUSTOM = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/custom-properties"
 _V_CU = "{http://schemas.openxmlformats.org/officeDocument/2006/custom-properties}"
 _V_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
-_V_ONE = "⁣"            # the one character the core places for a field (any character: it is replaced here)
+_V_ONE = "\u2063"       # the one character the core places for a field (any character: it is replaced here)
 _V_MARK_REVISIONS = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "rPrChange"}
 
 
@@ -131,7 +131,7 @@ def _v_instruction(pkg: VPackage, styles: Styles, params: Dict[str, Any]) -> str
     if "format" in params:
         fmt = params["format"]
         if field in _V_NUMBERED:
-            if fmt not in _V_NUMBER_WORD:
+            if not isinstance(fmt, str) or fmt not in _V_NUMBER_WORD:
                 raise ValueError(f"number format {fmt!r}")
             tokens += ["\\*", _V_NUMBER_WORD[fmt]]
         else:
@@ -226,7 +226,8 @@ def _inserted_fields(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     params = dict(a.get("params") or {})
     select = dict(a.get("select") or {})
     if set(params) - _V_KEYS or set(select) - {"scope", "paragraphs"}:
-        raise ValueError(f"unknown request keys {sorted(set(params) - _V_KEYS) + sorted(set(select) - {'scope', 'paragraphs'})}")
+        stray = sorted(set(params) - _V_KEYS) + sorted(set(select) - {"scope", "paragraphs"})
+        raise ValueError(f"unknown request keys {stray}")
     field = params.get("field")
     instruction = _v_instruction(ctx.src, ctx.src_styles, params)
     markup = _v_markup(field, instruction)

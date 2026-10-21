@@ -113,7 +113,7 @@ def _caught(src, plan, out, part, fn, needle=None, check="V10"):
         assert needle in v10(rec), v10(rec)
 
 
-# ---- replies ----------------------------------------------------------------------------------------------------------
+# ---- replies ---------------------------------------------------------------------------------------------------------
 
 def test_a_reply_to_every_thread_beside_its_marks(src):
     """Threads 0 (with reply 1), 2 (with reply 3), 4 (over two paragraphs), 5 and 6 (starting between paragraphs) each get
@@ -245,7 +245,7 @@ def test_an_entry_without_a_done_mark_is_open(src):
     assert entries(out)[2] == (para_id(2), None, "1")
 
 
-# ---- a wrong output is caught ------------------------------------------------------------------------------------------
+# ---- a wrong output is caught ----------------------------------------------------------------------------------------
 
 def test_a_wrong_reply_is_caught(src):
     plan, out, rec = reply(src, which="authors", authors=["Jack"])
@@ -286,7 +286,7 @@ def test_a_wrong_resolution_is_caught(src):
             "not the source with exactly those threads resolved")
 
 
-# ---- a wrong implementation shared by plan and apply is caught -------------------------------------------------------------
+# ---- a wrong implementation shared by plan and apply is caught -------------------------------------------------------
 
 def test_a_shared_choice_that_ignores_the_authors_is_caught(src, monkeypatch):
     real = ct.chosen_threads
@@ -330,7 +330,7 @@ def test_a_shared_choice_that_resolves_replies_is_caught(src, monkeypatch):
     assert "V10" in failed(rec) and "change here" in v10(rec)
 
 
-# ---- refusals ------------------------------------------------------------------------------------------------------------
+# ---- refusals --------------------------------------------------------------------------------------------------------
 
 def _refused(data, op, params, code):
     with pytest.raises(JobException) as e:
@@ -418,7 +418,7 @@ def test_every_refusal_code_is_explained():
     assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
 
 
-# ---- touches and conflicts (rule 9) ------------------------------------------------------------------------------------
+# ---- touches and conflicts (rule 9) ----------------------------------------------------------------------------------
 
 def _plan(data, *specs):
     pkg = DocxPackage(data)
