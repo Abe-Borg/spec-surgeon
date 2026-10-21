@@ -2531,6 +2531,8 @@ from .numberingconvert import CONVERT_KINDS  # noqa: E402
 from .typednumbers import TYPED_KINDS  # noqa: E402
 from .hygiene import HYGIENE_KINDS  # noqa: E402
 from .replacement import literal_replacement, paragraph_edits  # noqa: E402
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §5): pictures
+from .pictures import PICTURE_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -2556,3 +2558,4 @@ KINDS.update(FONT_NUMBERING_KINDS)
 KINDS.update(AUDIT_KINDS)
 KINDS.update(CONVERT_KINDS)
 KINDS.update(TYPED_KINDS)
+KINDS.update(PICTURE_KINDS)

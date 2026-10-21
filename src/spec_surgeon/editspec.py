@@ -138,6 +138,9 @@ INPUT_FILE_PARAMS: Dict[str, List[Tuple[str, ...]]] = {
     "fill_variables": [("table", "file")],
     "replace_table": [("pairs_table", "file")],
     "swap_image": [("image",), ("match", "image")],
+    "insert_image": [("image",)],                                     # built-in batch 6 (F4, pictures)
+    "remove_images": [("match", "image")],
+    "resize_images": [("match", "image")],
 }
 
 

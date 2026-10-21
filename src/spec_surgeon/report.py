@@ -56,8 +56,8 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "field-result": (
         "Target Inside a Word Field",
         "The matched text is inside a live field instruction or cached field result (such as a TOC or REF field) "
-        "and is skipped to avoid corrupting field codes — or text to remove is part of a field that is not removed as "
-        "a whole: Word would show the field's result again when it updates fields.",
+        "and is skipped to avoid corrupting field codes — or text (or a picture) to remove is part of a field that is "
+        "not removed as a whole: Word would show the field's result again when it updates fields.",
     ),
     "nested-container": (
         "Target Inside Nested Container",
@@ -94,8 +94,8 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "textbox": (
         "Target Inside a Text Box",
-        "The selected paragraph — or a comment mark, link or field to remove — lives inside a text box (Word keeps two "
-        "copies of a text box); the operation only edits body paragraphs. Change that one in Word.",
+        "The selected paragraph — or a comment mark, link, field or picture to change — lives inside a text box (Word "
+        "keeps two copies of a text box); the operation only edits body paragraphs. Change that one in Word.",
     ),
     "table-cell": (
         "Would Empty a Table Cell",
@@ -263,6 +263,18 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "image-changed": (
         "Your Picture File Changed During the Run",
         "The new (or old) logo picture was edited after the plan read it. Preview again, then run.",
+    ),
+    # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §5): pictures ----
+    "image-format": (
+        "The Picture Cannot Be Inserted",
+        "The attached picture is not a PNG, JPEG, GIF or BMP file Word shows as it is (the reason says what it is): an "
+        "SVG needs the PNG copy Word makes itself, and a photo turned by its camera setting must be saved upright. Save "
+        "it as a PNG and attach it again, or insert it once in Word.",
+    ),
+    "image-size": (
+        "The Picture's Size Cannot Be Worked Out Here",
+        "The picture's own size needs this file's page size and margins, which a section does not state — or the size "
+        "asked for rounds to nothing. Give the picture's width or height in inches.",
     ),
     # ---- built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md) ----
     "field-span": (
