@@ -192,8 +192,8 @@ what it does. Its label says what it does:
 - **Create edited copies**: approve the displayed plan and preview. The engine applies the specification to
   every document you did not set aside with the red X, verifies each one independently, and delivers only the
   files that pass every check. "(N set aside)" on the label counts the documents that go on the to-do list.
-- **Continue**: the documents or the plan changed, or a saved conversation was reopened; the documents are
-  checked against the request again before anything can be approved.
+- **Continue**: the documents or the plan changed; the documents are checked against the request again before
+  anything can be approved.
 - **Save N ready copies**: during recovery, save the copies that are already verified while a question about
   other files is still open.
 - **Continue** after a pause: the conversation has used 48 AI steps since you last said to go on, or the app
@@ -242,10 +242,12 @@ you accept it.
 
 ## Connection and resource use
 
-Typed requests need an Anthropic API key. **Settings** opens one dialog, **AI connection**: paste the key and
-tick **Remember securely on this computer** to keep it in Windows Credential Manager. Nothing else is
-configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer says
-"Connect your Anthropic API key in Settings to start."
+Typed requests need an Anthropic API key. **Settings** opens one dialog. **AI connection**: paste the key and
+tick **Remember securely on this computer** to keep it in Windows Credential Manager. **Appearance**: the window's
+colour scheme, one of Warm Clay (the default), Blueprint, Graphite & Teal, Carbon & Hi-Vis and Linen (the light
+one); a click recolours the window at once and `settings.json` keeps it, so the next start opens in it. Nothing
+else is configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer
+says "Connect your Anthropic API key in Settings to start."
 
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
@@ -272,24 +274,20 @@ connection or a response cut off in transit) is sent again automatically, up to 
 seconds (longer when the service asks for it). Every attempt counts as an AI step. A request the service
 refuses is never sent again.
 
-## Saved conversations
+## Conversations and a clean start
 
 The window writes `conversation.json` in its configuration folder (`%APPDATA%\Spec Surgeon` on Windows, or
-`SPEC_SURGEON_CONFIG_DIR` when set): the attachments with their triage state, the messages, your decisions and
-approved wording, the result locations, the working set (which copy stands for each original, and the changes
-already made to it), the to-do list and the pass over it, the spending ledger and the location of a recovery
-checkpoint. It can contain document
-text. It never contains the API key, an approval to deliver, or an acknowledgement of a visual finding; those
-belong to one displayed preview only. A reopened conversation whose copies can no longer be found says so and
-starts the next change from your originals.
+`SPEC_SURGEON_CONFIG_DIR` when set) as the conversation goes: the attachments with their triage state, the
+messages, your decisions and approved wording, the result locations, the working set (which copy stands for each
+original, and the changes already made to it), the to-do list and the pass over it, the spending ledger and the
+location of a recovery checkpoint. It can contain document text. It never contains the API key, an approval to
+deliver, or an acknowledgement of a visual finding; those belong to one displayed preview only.
 
-On reopening, the conversation and the result links come back. Every attachment is triaged again, since a file
-may have changed, moved or been fixed; a file that is gone is marked with where it used to be. The button
-reads **Continue**: the documents are checked against the request again before any new approval, and a
-recovery checkpoint is reloaded and revalidated. If the app closed in the middle of work, before the last
-step's usage was recorded, the conversation reopens paused and continuing needs your **Continue**. **New
-conversation** archives the current journal under
-`conversations\` and starts empty. An unsent draft is kept in `settings.json`.
+Every start of the app is a clean one: an empty conversation, nothing attached. The last conversation's journal
+is moved under `conversations\` (named by the time it was set aside) and never reopened; the edited copies stay
+in their run folders. **New conversation** does the same mid-session. After a crash the first message says the
+previous session ended unexpectedly, where Python's fault handler wrote what it saw, and where its conversation
+was archived.
 
 ## Capability and verification limits
 

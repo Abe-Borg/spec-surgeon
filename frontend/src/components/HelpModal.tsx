@@ -207,8 +207,8 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
             d: (
               <>
                 Ask for the next change and it is made on those copies. <Tag>Start over from the originals</Tag> is one
-                tap away, and <Tag>New conversation</Tag> in the top bar archives this one and starts empty. The
-                conversation, your decisions and the copies come back when you reopen the app.
+                tap away, and <Tag>New conversation</Tag> in the top bar archives this one and starts empty. The app
+                also starts empty each time you open it; the copies stay where they were saved.
               </>
             ),
           },
@@ -361,11 +361,11 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
       />
       <Recipe
         title="Stopped, paused or closed"
-        tagline="Your progress is saved every time."
+        tagline="Stop and pause keep your place; closing ends the conversation."
         steps={[
           "Stop now cuts off the running AI step at once; Continue picks up where it stopped.",
           `Work pauses after every ${stepsPerPause} AI steps until you press Continue.`,
-          "Close the app mid-work and the conversation reopens paused, with every attachment checked again. Press Continue: the documents are checked against the request before anything new can be approved.",
+          "Closing the app ends the conversation: the next start is a clean one. Copies already created stay in their folder.",
         ]}
       />
     </div>
@@ -413,8 +413,12 @@ function HowItWorks() {
             d: "Every AI step runs Claude Opus 5.5 with room for its full answer: the conversation at the model’s default effort, the harder recovery work at a higher one. A plan usually takes one or two calls.",
           },
           {
-            t: "Saved as you go",
-            d: "The conversation, your decisions and approved wording, the attachments, the working copies and the result locations are saved on this computer and come back when you reopen the app. Your API key and any approval to deliver are never saved with them.",
+            t: "A clean start every time",
+            d: "Each start opens an empty conversation. The last one is archived on this computer, in the conversations folder beside settings.json, and never reopened; your edited copies stay where they were saved. Your API key is never saved with it.",
+          },
+          {
+            t: "Five colour schemes",
+            d: "Settings → Appearance offers Warm Clay, Blueprint, Graphite & Teal, Carbon & Hi-Vis and Linen. The window changes at once and opens in your choice from then on.",
           },
           {
             t: "One window, no modes",
