@@ -216,7 +216,7 @@ def fill_spec(inputs_folder, **values):
 
 
 def test_a_typed_fill_value_must_be_the_users_and_a_table_value_needs_no_trace(inputs_folder):
-    batch = _Batch(sorted(inputs_folder.glob("*.docx")), None)
+    batch = _Batch(sorted(inputs_folder.glob("*.docx")), None, input_files=[inputs_folder / "PROJECT.xlsx"])
     assert check_submission(fill_spec(inputs_folder), batch, ["fill the VA3 site from PROJECT.xlsx"]) == []
     errs = check_submission(fill_spec(inputs_folder, SITE_NAME="Loudoun"), batch, ["fill the VA3 site"])
     assert errs and "never gave them verbatim" in errs[0] and "Loudoun" in errs[0]
