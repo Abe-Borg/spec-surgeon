@@ -243,7 +243,14 @@ control and page break before are set_properties: one op per selection carrying 
 itself); "all caps" is a display property — no letters are retyped. Format the selected paragraphs directly by default \
 (tracked when targeted, so the reviewer sees "Formatted: Bold"); change a style (select.styles) only when the user \
 speaks of the style or wants every paragraph of that style to follow — the profiles' styles_in_use show bold, italic, \
-caps and colour per style.
+caps and colour per style. set_properties.run also takes vertAlign (superscript | subscript | baseline), vanish (hidden \
+text: the characters stay in the file — hiding is not deleting), highlight (a Word highlighter name, or none), spacing \
+(character spacing in points; negative condenses, 0 is normal) and dstrike (double strikethrough, which replaces \
+single: never ask both on).
+- insert_paragraph takes exactly one of text, runs [{text, b?, i?, u?, vertAlign?}] (bold, italic, underlined or \
+superscript segments) or paragraphs [{text | runs, style?}] (several paragraphs in order at each anchor). A tab is \
+written \\t and a line break (Shift+Enter) \\n, in insert_paragraph and in replace_text.replace alike; every stretch of \
+words between them is still the user's verbatim wording.
 - "Each PART on a new page": paragraph pageBreakBefore on every PART heading AFTER the first — the PART pattern (or \
 style) plus after_heading_regex of the same pattern, e.g. {"text_regex": "^PART\\\\s+\\\\d", "after_heading_regex": \
 "^PART\\\\s+\\\\d"} — so PART 1 stays under the section title. "No stranded article titles": keepNext on the article \
@@ -297,6 +304,15 @@ repeat_header_rows n ("repeat the header row" is 1), cant_split true ("rows don'
 their own borders or margins keep them unless clear_cell_overrides. A table style for every table is \
 apply_table_style {style} (a style the file lacks comes from the template, like apply_style; direct_formatting "clear" \
 so the style shows). The profiles' tables show each pattern's tables, their styles and header rows. Never tracked.
+- Table structure: delete_tables {tables}; delete_table_rows {tables, rows}; insert_table_rows {rows: [[one text per \
+cell], …], position after / before the ONE row select.rows picks, or at_end}; insert_table {rows typed, or table: \
+{file, sheet | key} for an attached table file — never its cells retyped as rows —, select.paragraphs anchors in the \
+body, position, header_rows, style, column_widths in inches}. select.rows is "all" or {index_range [a, b] (0-based, \
+both included), text_regex (the row's cells joined by a tab), header true/false}; choose rows by their text (the tag in \
+the first cell) rather than by number. Never anchor a new table on a paragraph with a table right before it (before) \
+or right after it (after), nor on the document's last paragraph. Tracked by default (Word's tracked rows); typed cells \
+are the user's exact words. A table holding comments: remove_comments first in the same request. \
+resolve_tracked_changes resolves tracked row insertions and deletions.
 - Numbering. The profiles' lists show each list's levels (format, styles, the first number shown) and which \
 paragraphs the engine does not evaluate and why; numbered_styles show what a numbered style's first paragraph would \
 show ("PART 1 -", "1.1", "A."); lists.typed_numbers how many paragraphs start with a typed number. "Convert to our \
@@ -337,8 +353,8 @@ include_bounds: "start"}; bounds read the text without tabs (^1\\.3, not ^1\\.3\
 and an insertion where it goes) by default; a stretch with tables, fields, links, comments or pictures moves only \
 untracked (tracked false) — say so.
 - Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
-in fill_variables.table.file, replace_table.pairs_table.file or swap_image.image / match.image — what a table holds is \
-the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
+in fill_variables.table.file, replace_table.pairs_table.file, insert_table.table.file or swap_image.image / \
+match.image — what a table holds is the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
 END OF SECTION wording) must be the user's exact words, like any replacement.
 - Character hygiene: normalize_whitespace collapses ordinary spaces and trims trailing spaces; normalize_punctuation \
 needs explicit quotes (straight/curly), dash (en/em) and/or section_separator (space/hyphen/en/em); \

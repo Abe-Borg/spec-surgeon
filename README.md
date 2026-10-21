@@ -80,8 +80,8 @@ conversation** and Settings.
 2. **Read the note under each file.** The moment a file is attached, Spec Surgeon reads it (milliseconds, no model
    call) and says what it found in one line each: typed numbers instead of automatic list numbering, no paragraph
    styles, text boxes in the headers or footers, an older compatibility mode, editing restrictions, pending tracked
-   changes, comments, irregular spacing. A file that does not open as a Word package, or has no text in its body,
-   stays in the list greyed out with the reason and never enters a plan. A `.docm`, `.doc` or `~$` lock file is not
+   changes, comments, irregular spacing, an empty body. A file that does not open as a Word package, or has no
+   paragraph at all in its body, stays in the list greyed out with the reason and never enters a plan. A `.docm`, `.doc` or `~$` lock file is not
    attached; a notice asks for a `.docx`.
 3. **Optionally add a template.** One reference `.docx` for requests such as "Match the headers and fonts to this
    template. Keep our technical wording."

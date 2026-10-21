@@ -58,10 +58,11 @@ the file name it shows one of three states:
   copies keep the restriction); saved in an older compatibility mode; no paragraph styles in use, so changes
   pick paragraphs by appearance and text; numbers typed by hand, not automatic list numbering; text split into
   many small runs; text boxes in the headers or footers; how many tracked changes are pending; the file has
-  comments; irregular spacing (non-breaking or doubled spaces).
+  comments; irregular spacing (non-breaking or doubled spaces); nothing in the body yet (an empty document is
+  taken: a request can add to it, or change its headers, footers and page setup).
 - Refused, greyed out with the reason: the file cannot be opened as a Word package, is a Strict Open XML
-  document, is larger than the app opens, or has no text in its body. The reason says what to do, usually to
-  open the file in Word and save it again as `.docx`. A refused file never enters a plan.
+  document, is larger than the app opens, or has no paragraph at all in its body. The reason says what to do,
+  usually to open the file in Word and save it again as `.docx`. A refused file never enters a plan.
 
 A `.docm`, `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`. A template that would be
 refused is not attached either.

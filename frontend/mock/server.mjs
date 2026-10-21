@@ -49,7 +49,7 @@ const DOCS = [
 ];
 const REFUSED = {
   path: "C:/Specs/Riverside/21 00 00 Table of contents.docx",
-  reason: "This file has no text in its body. Open it in Word, check that it is the right file, and save it again as .docx.",
+  reason: "21 00 00 Table of contents.docx cannot be opened as a Word package; open it in Word and save it again as .docx.",
 };
 const TEMPLATE = { path: "C:/Specs/Templates/Office master 2026.docx" };
 const PICTURE = { path: "C:/Specs/Riverside/logo-2026.png", notes: ["A PNG picture, 600 × 200 pixels, for the edit to use."] };

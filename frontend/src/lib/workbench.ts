@@ -69,7 +69,7 @@ export function kindTag(attachment: Pick<Attachment, "kind" | "name">): string {
     case "template":
       return "Template";
     case "reference":
-      return /\.(png|jpe?g|gif)$/i.test(attachment.name) ? "Picture" : "Table";
+      return /\.(png|jpe?g|gif|bmp)$/i.test(attachment.name) ? "Picture" : "Table";
     default:
       return "";
   }
@@ -85,5 +85,5 @@ export function trayTitle(view: Pick<View, "attachments">): string {
 export const ACCEPT: Record<"documents" | "template" | "references", string> = {
   documents: ".docx",
   template: ".docx",
-  references: ".png,.jpg,.jpeg,.gif,.xlsx,.csv,.json",
+  references: ".png,.jpg,.jpeg,.gif,.bmp,.xlsx,.csv,.json",
 };

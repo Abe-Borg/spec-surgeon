@@ -233,6 +233,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
             ],
             ["Text boxes in the headers or footers", "Worth a look on the before-and-after pages."],
             ["Tracked changes pending, comments", "Told so you know; the file is still edited like any other."],
+            ["Nothing in the body yet", "An empty document is taken: ask to add to it, or to change its headers, footers and page setup."],
           ]}
         />
         <p className="mt-3 text-xs leading-relaxed text-ink-dim">
@@ -242,7 +243,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
         </p>
         <p className="mt-3 rounded-lg border-l-2 border-warn bg-warn/10 px-3 py-2 text-xs leading-relaxed text-ink-dim">
           <span className="font-medium text-warn">Refused, greyed out:</span> the file does not open as a Word
-          package, is a Strict Open XML document, is larger than the app opens, or has no text in its body. The reason
+          package, is a Strict Open XML document, is larger than the app opens, or has no paragraph at all in its body. The reason
           says what to do — usually open it in Word and save it again as <Tag>.docx</Tag>. A <Tag>.doc</Tag>,{" "}
           <Tag>.docm</Tag> or <Tag>~$</Tag> lock file is not attached at all.
         </p>
