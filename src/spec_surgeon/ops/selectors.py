@@ -9,12 +9,13 @@ Grammar:
                   style_in [styleId…]  (no pStyle → the default paragraph style)
                   text_regex "…"       (re.search on the block text: w:t + w:delText + w:instrText + … — CLAUDE.md)
                   in_table bool        (has a w:tc ancestor)
-                  is_empty bool        (block text == "")
+                  is_empty bool        (block text == "" and no picture, drawing, embedded object, text box or
+                                        field in it: ``holds_object``)
                   index_range [a, b]   (a ≤ block index < b, over the part's w:p in document order)
                   has_bold bool        (has a non-empty live run with effective bold on)
                   is_all_caps bool     (live display text is all uppercase letters or has w:caps on)
                   after_heading_regex "…" (comes after the first paragraph matching the regex)
-                  between_paragraphs {"start_regex": "…", "end_regex": "…", "include_bounds": bool}
+                  between_paragraphs {"start_regex": "…", "end_regex": "…", "include_bounds": bool | "start" | "end"}
 * ``runs``        "all" or a dict: has_direct_font bool | font_in [names] | not_in_revisions bool |
                   color_in [colours] (the run's EFFECTIVE colour — the nearest level setting w:color, set_properties'
                   rule — has one of the listed theme names or values: 6 hex digits or auto, case-insensitive)
@@ -33,7 +34,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 from lxml import etree
 
 from ..ooxml import block_full_text
-from ..package import W, DocxPackage, REL_TYPE_BASE
+from ..package import NS, W, DocxPackage, REL_TYPE_BASE
 from .base import JobException, Touch
 
 STYLES_REL = REL_TYPE_BASE + "styles"
@@ -50,6 +51,11 @@ DEFAULT_PRESERVE_FONTS = ["Symbol", "Wingdings", "Wingdings 2", "Wingdings 3", "
                           "ZapfDingbats", "Zapf Dingbats", "Bookshelf Symbol 7", "MS Reference Specialty",
                           "MS Outlook"]
 FONT_ATTRS = ("ascii", "hAnsi", "eastAsia", "cs", "asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme")
+# what a paragraph without text may still hold, which makes it not empty for ``is_empty``: a picture or drawing (DrawingML,
+# VML, an Office choice of the two), an embedded object, a text box, a field (simple, or any mark of a complex one) —
+# built-in batch 6 review: deleting "empty" paragraphs took logos, figures and tables of pictures with them
+CONTENT_OBJECTS = (W + "drawing", W + "pict", W + "object", "{%s}AlternateContent" % NS["mc"], W + "txbxContent",
+                   W + "fldSimple", W + "fldChar")
 
 
 def scope_parts(pkg: DocxPackage, scope) -> List[str]:
@@ -68,6 +74,11 @@ def scope_parts(pkg: DocxPackage, scope) -> List[str]:
             if p not in parts:
                 parts.append(p)
     return parts
+
+
+def holds_object(p: etree._Element) -> bool:
+    """The paragraph holds a picture, drawing, embedded object, text box or field (``CONTENT_OBJECTS``)."""
+    return next(p.iter(*CONTENT_OBJECTS), None) is not None
 
 
 def is_targeted(select: Dict[str, Any]) -> bool:
@@ -117,6 +128,10 @@ def check_paragraph_selector(pred) -> None:
         extra = set(bp) - {"start_regex", "end_regex", "include_bounds"}
         if extra:
             raise JobException(f"unknown between_paragraphs key(s) {sorted(extra)}", "bad-params")
+        bounds = bp.get("include_bounds", False)
+        if not (isinstance(bounds, bool) or bounds in BOUNDS):
+            raise JobException("between_paragraphs.include_bounds must be true, false, 'start' (the start paragraph "
+                               "included, the end one not) or 'end'", "bad-params")
         try:
             _selector_regex(bp["start_regex"], pred)
             if bp.get("end_regex") is not None:
@@ -464,7 +479,7 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
             cell = cell.getparent()
         if (cell is not None) != bool(pred["in_table"]):
             return False
-    if "is_empty" in pred and (text == "") != bool(pred["is_empty"]):
+    if "is_empty" in pred and (text == "" and not holds_object(p)) != bool(pred["is_empty"]):
         return False
     if "index_range" in pred:
         lo, hi = pred["index_range"]
@@ -494,13 +509,11 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
             ends = [i for i in range(s_idx + 1, len(texts)) if erx.search(texts[i])]
             if ends:
                 e_idx = ends[0]
-        inc = bool(bp.get("include_bounds", False))
-        if inc:
-            if not (s_idx <= index <= (e_idx if e_idx < len(texts) else len(texts) - 1)):
-                return False
-        else:
-            if not (s_idx < index < e_idx):
-                return False
+        inc = bp.get("include_bounds", False)
+        after_start = s_idx <= index if inc in (True, "start") else s_idx < index
+        before_end = index <= min(e_idx, len(texts) - 1) if inc in (True, "end") else index < e_idx
+        if not (after_start and before_end):
+            return False
     return True
 
 
@@ -552,13 +565,14 @@ def runs_by_paragraph(root: etree._Element, pars: List[etree._Element]) -> List[
 SECTION_KEYS = ("containing", "with_tables", "index_range")
 # paragraph predicates whose answer depends on the paragraphs' words (text_regex, the neighbours' text, emptiness, which
 # runs with text are bold or all caps) — a section chosen by them reads the main part's text (built-in batch 5)
+BOUNDS = ("start", "end")       # between_paragraphs.include_bounds: true (both), false (neither), or the one named
 TEXT_READING_KEYS = ("text_regex", "is_empty", "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs")
 
 
 def check_section_selector(sections) -> None:
-    """The content form of ``select.sections`` (built-in batch 5, set_page_setup only): a non-empty object of
-    ``containing`` (a non-empty paragraph predicate), ``with_tables`` (true/false), ``index_range`` ([a, b], inclusive,
-    0 ≤ a ≤ b) — every given key must hold."""
+    """The content form of ``select.sections`` (set_page_setup since built-in batch 5, remove_section_break since
+    batch 6): a non-empty object of ``containing`` (a non-empty paragraph predicate), ``with_tables`` (true/false),
+    ``index_range`` ([a, b], inclusive, 0 ≤ a ≤ b) — every given key must hold."""
     if not isinstance(sections, dict) or not sections:
         raise JobException(f"sections as an object needs at least one of {list(SECTION_KEYS)}, got {sections!r}",
                            "bad-params")

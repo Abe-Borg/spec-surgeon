@@ -44,8 +44,9 @@ a remove button. **Add a template (optional)** attaches one reference document; 
 and if one of the documents is a copy of the template the window says so and asks you to remove one of them.
 
 **Add a picture or table (optional)**, or dropping one, attaches a file for the edit to use: a picture
-(`.png`, `.jpg`, `.jpeg`, `.gif`), for example a new logo to put in place of the old one, or a table
-(`.xlsx`, `.csv`, `.json`), for example a sheet of project names and numbers to fill in. It is listed under the
+(`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`), for example a new logo to put in place of the old one or a detail to
+insert, or a table (`.xlsx`, `.csv`, `.json`), for example a sheet of project names and numbers to fill in, or a
+schedule to place in the documents as a table. It is listed under the
 template with one line saying what it is ("A PNG picture, 600 × 200 pixels, for the edit to use."); one that
 cannot be read or is larger than 20 MB is refused with the reason. Claude is told about each one (a picture's
 format and size, a table's sheets and columns) and can read the tables, but nothing beside your documents is
@@ -61,10 +62,11 @@ the file name it shows one of three states:
   copies keep the restriction); saved in an older compatibility mode; no paragraph styles in use, so changes
   pick paragraphs by appearance and text; numbers typed by hand, not automatic list numbering; text split into
   many small runs; text boxes in the headers or footers; how many tracked changes are pending; the file has
-  comments; irregular spacing (non-breaking or doubled spaces).
+  comments; irregular spacing (non-breaking or doubled spaces); nothing in the body yet (an empty document is
+  taken: a request can add to it, or change its headers, footers and page setup).
 - Refused, greyed out with the reason: the file cannot be opened as a Word package, is a Strict Open XML
-  document, is larger than the app opens, or has no text in its body. The reason says what to do, usually to
-  open the file in Word and save it again as `.docx`. A refused file never enters a plan.
+  document, is larger than the app opens, or has no paragraph at all in its body. The reason says what to do,
+  usually to open the file in Word and save it again as `.docx`. A refused file never enters a plan.
 
 A `.docm`, `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`. A template that would be
 refused is not attached either.

@@ -4,10 +4,10 @@ The moment a file is attached the app must know whether the engine can work with
 about it, before any plan and before any model call. ``triage_file`` answers with one of three states:
 
 * ``refused`` — the engine will not take the file: not a file, not a .docx (.docm, .doc), Word's ``~$`` lock file, a
-  package that does not open, or a body with no text at all. ``reason`` is one sentence naming the file and what to do.
+  package that does not open, or a body without a paragraph. ``reason`` is one sentence: the file and what to do.
 * ``note``    — the file opens and will be worked on; ``notes`` lists what the user should know, one plain sentence
-  each (protection, compatibility mode, Normal-only styling, typed numbers, fragmented runs, text-box headers,
-  pending revisions, comments, irregular spacing). ``ok`` — none of the above.
+  each (an empty body, protection, compatibility mode, Normal-only styling, typed numbers, fragmented runs, text-box
+  headers, pending revisions, comments, irregular spacing). ``ok`` — none of the above.
 
 ``facts`` carries the raw values the notes were read from (the fingerprint's pattern and regimes, the counts, the
 compatibility mode, the protection) so the planner plans with them instead of discovering them. Everything here reads
@@ -31,6 +31,7 @@ CURRENT_COMPAT_MODE = 15        # Word 2013 and later; below it Word shows "[Com
 FRAGMENTATION_LIMIT = 2.5       # runs per non-empty body paragraph beyond which the text reads as heavily edited
 
 # What the user hears — one plain sentence each, in the order the notes are given.
+NOTE_EMPTY_BODY = "The body has no text yet; a request can add to it or change its headers, footers and page setup."
 NOTE_PROTECTED = "Editing is restricted in Word; edited copies keep that restriction."
 NOTE_COMPAT_MODE = "Saved in an older Word compatibility mode; page layout can differ from current Word."
 NOTE_NORMAL_ONLY = "No paragraph styles are in use; changes will pick paragraphs by appearance and text."
@@ -168,16 +169,15 @@ def triage_file(path) -> Triage:
         "protection_edit": protection["edit"],
         "body_has_text": has_text,
     }
-    if not has_text:
-        return _refusal(path, f"{name} has no text in its body, so there is nothing to edit; check that this is the "
-                              f"right file.", pattern_id=details["pattern_id"], facts=facts)
-
-    notes: List[str] = []
+    if not has_text and doc.find(f"{W}body/{W}p") is None:          # Word always writes a paragraph to anchor on
+        return _refusal(path, f"{name} has no paragraph in its body to add to; open it in Word and save it again.",
+                        pattern_id=details["pattern_id"], facts=facts)
+    notes: List[str] = [] if has_text else [NOTE_EMPTY_BODY]
     if protection["enforced"]:
         notes.append(NOTE_PROTECTED)
     if compat is not None and compat < CURRENT_COMPAT_MODE:
         notes.append(NOTE_COMPAT_MODE)
-    if hygiene["style_regime"] == "normal_only":
+    if has_text and hygiene["style_regime"] == "normal_only":       # body styling notes say nothing of an empty body
         notes.append(NOTE_NORMAL_ONLY)
     if hygiene["numbering_regime"] == "manual_text":
         notes.append(NOTE_TYPED_NUMBERS)

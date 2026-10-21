@@ -28,12 +28,19 @@ The output paragraph's items must equal the expected items one for one; its ``w:
 (``v_check_edits``, ``expected_items``, ``check_edited_paragraph`` — off by default) a PURE deletion (no text placed) may
 also cover ``x`` items of a ``w:tab`` (never ``w:ptab``, a break or anything else). Untracked: those items vanish with the
 characters; tracked: each stays an ``x`` item (no longer a run-text position) whose chain gains the NEW ``w:del``.
+
+**Tabs and line breaks placed** (built-in batch 6, docs/BUILTIN_OPS_BATCH6_DESIGN.md §4.3; this module's own reading):
+with ``breaks=True`` (``v_check_edits``, ``expected_items``, ``check_edited_paragraph`` — off by default) ``text`` may
+hold ``\\t`` and ``\\n`` (no other control character): each is an ``x`` item of a bare ``w:tab`` / ``w:br`` where it stands
+among the new characters, in the same context as they are (``v_placed_items``).
 """
 from __future__ import annotations
 
 import copy
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Sequence, Set, Tuple
+
+from lxml import etree
 
 from .reader import W, M
 from .props import sig
@@ -151,11 +158,21 @@ def _v_tab_ok(it: Item, text: str, tabs: bool) -> bool:
     return tabs and not text and it.kind == "x" and it.tag == W + "tab"
 
 
+V_PLACED = {"\t": W + "tab", "\n": W + "br"}      # breaks=True: the characters a placed text shows as run children
+
+
+def v_placed_items(text: str, ctx: Tuple[Any, ...], chain_els: Tuple[Any, ...] = ()) -> List[Item]:
+    """The items a placed ``text`` brings, in ``ctx``: a ``t`` item per character, an ``x`` item of a bare ``w:tab`` /
+    ``w:br`` per tab / line break."""
+    return [Item("x", sig(etree.Element(V_PLACED[ch])), ctx, None, V_PLACED[ch], chain_els=chain_els)
+            if ch in V_PLACED else Item("t", ch, ctx, chain_els=chain_els) for ch in text]
+
+
 def v_check_edits(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str, bool]], tracked: bool,
                   in_field: Set[Any], tabs: bool = False,
-                  allow_tracked_format_split: bool = False) -> List[Tuple[int, int, str, bool]]:
+                  allow_tracked_format_split: bool = False, breaks: bool = False) -> List[Tuple[int, int, str, bool]]:
     """The edits sorted, after the rules; a ValueError says the plan should have refused. ``tabs``: a pure deletion may
-    cover w:tab items."""
+    cover w:tab items; ``breaks``: the new text may hold tabs and line breaks."""
     by_pos = {it.pos: k for k, it in enumerate(items) if it.pos is not None}
     out = sorted(edits, key=lambda e: (e[0], e[1]))
     for a, b in zip(out, out[1:]):
@@ -164,8 +181,9 @@ def v_check_edits(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str,
     for start, end, text, drop in out:
         if not 0 <= start < end or any(i not in by_pos for i in range(start, end)):
             raise ValueError(f"edit ({start}, {end}) lies outside the paragraph's run text")
-        if any(ord(c) < 32 or c == "\x7f" for c in text):
-            raise ValueError(f"edit text {text!r} holds a control character")
+        if any((ord(c) < 32 or c == "\x7f") and not (breaks and c in V_PLACED) for c in text):
+            raise ValueError(f"edit text {text!r} holds a control character"
+                             + (" other than a tab or a line break" if breaks else ""))
         ks = [by_pos[i] for i in range(start, end)]
         if any(items[k].kind != "t" and not _v_tab_ok(items[k], text, tabs) for k in ks):
             raise ValueError(f"edit ({start}, {end}) covers something other than plain text"
@@ -199,13 +217,15 @@ def v_check_edits(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str,
 
 
 def expected_items(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str, bool]], tracked: bool,
-                   author: Optional[str], tabs: bool = False) -> List[Item]:
+                   author: Optional[str], tabs: bool = False, breaks: bool = False) -> List[Item]:
     out = list(items)
     for start, end, text, drop in sorted(edits, key=lambda e: -e[0]):
         by_pos = {it.pos: k for k, it in enumerate(out) if it.pos is not None}
         ks = [by_pos[i] for i in range(start, end)]
         if any(out[k].kind != "t" and not _v_tab_ok(out[k], text, tabs) for k in ks):
             raise ValueError(f"edit ({start}, {end}) covers something other than plain text")
+        if not breaks and any(c in V_PLACED for c in text):
+            raise ValueError(f"edit text {text!r} holds a tab or a line break")
         first = next((out[k] for k in ks if out[k].kind == "t"), out[ks[0]])
         rs = _rpr_sig(first.run.find(W + "rPr"), drop_highlight=drop)
         base = (rs, first.ctx[1], first.ctx[2])
@@ -228,8 +248,7 @@ def expected_items(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str
             chain, els = base[2], first.chain_els
             if pending is not None:                       # the new text follows the pending insertion, not in it
                 chain, els = chain[:-1], els[:-1]
-            new = [Item("t", ch, (base[0], base[1], chain + (("NEW", W + "ins", author),)), chain_els=els + (None,))
-                   for ch in text]
+            new = v_placed_items(text, (base[0], base[1], chain + (("NEW", W + "ins", author),)), els + (None,))
             out[ks[-1] + 1:ks[-1] + 1] = new
             if pending is not None and text:
                 split = ("SPLIT", W + "ins", tuple(sorted((k, v) for k, v in pending.attrib.items() if k != W + "id")))
@@ -245,7 +264,7 @@ def expected_items(p, items: Sequence[Item], edits: Sequence[Tuple[int, int, str
         else:
             for k in sorted(ks, reverse=True):
                 del out[k]
-            out[ks[0]:ks[0]] = [Item("t", ch, base) for ch in text]
+            out[ks[0]:ks[0]] = v_placed_items(text, base)
     return out
 
 
@@ -366,16 +385,16 @@ def check_deleted_paragraph(src_p, out_p, author: Optional[str], old_ids: Set[st
 def check_edited_paragraph(src_p, out_p, edits: Sequence[Tuple[int, int, str, bool]], tracked: bool,
                            author: Optional[str], in_field: Set[Any], old_ids: Set[str], where: str,
                            errs: List[str], tabs: bool = False, ppr: bool = True, base=None,
-                           allow_tracked_format_split: bool = False) -> None:
+                           allow_tracked_format_split: bool = False, breaks: bool = False) -> None:
     """``out_p`` must be ``src_p`` with exactly ``edits`` (the verifier's own derivation), item for item.
-    ``tabs``: pure deletions may cover w:tab items (built-in batch 5). ``ppr=False``: the caller checks the paragraph's
-    ``w:pPr`` itself (an op that also restyles it). ``base``: a copy of ``src_p`` the caller changed in the run
-    properties its op also changes (cleared formatting) — the expected items are built from it; the rules are always
-    judged on ``src_p``."""
+    ``tabs``: pure deletions may cover w:tab items (built-in batch 5). ``breaks``: a new text may hold tabs and line
+    breaks (built-in batch 6). ``ppr=False``: the caller checks the paragraph's ``w:pPr`` itself (an op that also
+    restyles it). ``base``: a copy of ``src_p`` the caller changed in the run properties its op also changes (cleared
+    formatting) — the expected items are built from it; the rules are always judged on ``src_p``."""
     items = v_items(src_p)
     try:
         edits = v_check_edits(src_p, items, edits, tracked, in_field, tabs=tabs,
-                              allow_tracked_format_split=allow_tracked_format_split)
+                              allow_tracked_format_split=allow_tracked_format_split, breaks=breaks)
     except ValueError as e:
         errs.append(f"{where}: {e} — the op must refuse this paragraph")
         return
@@ -388,9 +407,9 @@ def check_edited_paragraph(src_p, out_p, edits: Sequence[Tuple[int, int, str, bo
         if [(it.kind, it.value, it.pos) for it in b_items] != [(it.kind, it.value, it.pos) for it in items]:
             errs.append(f"{where}: the expected base paragraph is not the source's content")
             return
-        expected = expected_items(base, b_items, edits, tracked, author, tabs=tabs)
+        expected = expected_items(base, b_items, edits, tracked, author, tabs=tabs, breaks=breaks)
     else:
-        expected = expected_items(src_p, items, edits, tracked, author, tabs=tabs)
+        expected = expected_items(src_p, items, edits, tracked, author, tabs=tabs, breaks=breaks)
     d = compare_items(expected, v_items(out_p), old_ids)
     if d:
         errs.append(f"{where}: not exactly the predicted change — {d}")

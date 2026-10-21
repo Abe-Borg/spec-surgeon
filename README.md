@@ -1,7 +1,8 @@
 # Spec Surgeon
 
 Surgical edits to Word (.docx) specification files, a few files or dozens at a time, with an independent check and a
-verification record for every file.
+verification record for every file: from one word or one property up to whole articles, tables, pictures and
+sections.
 
 Spec Surgeon is for people who maintain construction specifications: the engineer or designer who has to change the
 font, the header and footer, the issue stamp, the numbering or a defined term across a whole set of sections, and who
@@ -79,9 +80,9 @@ conversation** and Settings.
 2. **Read the note under each file.** The moment a file is attached, Spec Surgeon reads it (milliseconds, no model
    call) and says what it found in one line each: typed numbers instead of automatic list numbering, no paragraph
    styles, text boxes in the headers or footers, an older compatibility mode, editing restrictions, pending tracked
-   changes, comments, irregular spacing. A file that does not open as a Word package, or has no text in its body,
-   stays in the list greyed out with the reason and never enters a plan. A `.docm`, `.doc` or `~$` lock file is not
-   attached; a notice asks for a `.docx`.
+   changes, comments, irregular spacing, an empty body. A file that does not open as a Word package, or has no
+   paragraph at all in its body, stays in the list greyed out with the reason and never enters a plan. A `.docm`,
+   `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`.
 3. **Optionally add a template.** One reference `.docx` for requests such as "Match the headers and fonts to this
    template. Keep our technical wording."
 4. **Describe the result.** Type what you want and press **Send** (Ctrl+Enter). Spec Surgeon inspects the documents,
@@ -117,8 +118,8 @@ saved locally and come back when you reopen the app, with every attachment check
 
 ![The plan in prose and before/after pages, with one action](docs/conversation-preview.png)
 
-Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in
-or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
+Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
+insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
 beside your documents is ever looked for.
 
 Connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
@@ -190,14 +191,21 @@ A **layout plan** is several EditSpecs in one file (`"kind": "layouts"`, one spe
 planned on the files of its own pattern, and a file no layout covers is set aside.
 
 Operations cover fonts and sizes; header/footer templating from a template or an architect's spec; page numbering;
-tracked text replacement and replacement tables; placeholders and site variables; MasterSpec option groups; tagged
-paragraphs; issue stamps; END OF SECTION lines; output names; logo swaps; comments, highlighting, hidden text,
-specifier notes, blank paragraphs, hyperlinks, fields, watermarks, document properties, track changes and Mark as
-Final; bold, caps, colour and pagination flags; tab stops; borders and shading; style spacing, style application and
-style mapping from a template; clearing direct formatting; the proofing language; unused styles; numbering schemes,
-typed numbers, list levels and a numbering audit; table properties and table styles; page setup and sections chosen
-by content; character hygiene; and review comments with wording you supply. Every operation also describes itself
-in one plain sentence; that sentence is what the window's plan shows.
+tracked text replacement (new text may hold tabs and line breaks) and replacement tables; inserting paragraphs, with
+styles and bold, italic or superscript segments; deleting paragraphs, from one to the whole body, with the tables,
+fields, section breaks, comments and notes inside them; moving paragraphs and the tables between them; placeholders
+and site variables; MasterSpec option groups; tagged paragraphs; issue stamps; END OF SECTION lines; output names;
+inserting, removing, resizing and swapping pictures; inserting and deleting tables, rows and columns, cell shading,
+alignment and widths, and merged cells; comments (adding, replying, resolving, removing), highlighting, hidden text,
+specifier notes, footnotes and endnotes, blank paragraphs, hyperlinks, fields (inserting page numbers, dates, style
+references and properties, or unlinking them), watermarks, document properties, track changes and Mark as Final;
+bold, italic, caps, superscript and subscript, hidden text, highlight, character spacing, colour and pagination
+flags; tab stops; borders and shading; style spacing, style application and style mapping from a template; clearing
+direct formatting; the proofing language; unused styles; numbering schemes, typed numbers, list levels and a
+numbering audit; table properties and table styles; page setup, columns, line numbers and section breaks inserted or
+removed; character hygiene; and review comments with wording you supply. A large change is an edit like any other:
+deleting a whole PART, or everything, is planned, previewed and verified the same way.
+Every operation also describes itself in one plain sentence; that sentence is what the window's plan shows.
 
 ## Limits
 
@@ -213,9 +221,13 @@ in one plain sentence; that sentence is what the window's plan shows.
   from Word there.
 - Operations that touch the same part of a file are never ordered by guess inside one specification: the window
   composes them into ordered steps in the order they were listed, each step planned and verified on the one before
-  it. Edits inside text boxes,
-  replacements across tabs or line breaks, tracked table or numbering changes, run and table-cell borders, and tab
-  stops in styles are not supported.
+  it. Edits inside text boxes, finding text across tabs or line breaks, tracked cell-level table changes, tracked
+  numbering changes, run and table-cell borders, and tab stops in styles are not supported. Shapes, SmartArt, charts,
+  equations, embedded objects, data-bound content controls and the theme are out of reach by decision: an edit that
+  would touch one is refused with a reason, to be made in Word.
+- Column deletion, cell merges, cell properties, section breaks and picture sizes are never tracked (Word does not
+  track them as such); inserted fields carry no result until Word updates them (page numbers at once, other fields
+  when the file opens).
 - Header/footer templating pins the properties it models; conditional table-style formatting, east-Asian and
   complex-script fonts and sizes are not modelled. A toggle set at more than one style level is refused.
 - Custom transforms are plain formatting on text parts and the styles part, write edited copies only, and run in a
@@ -228,11 +240,12 @@ in one plain sentence; that sentence is what the window's plan shows.
 - [docs/CONVERSATIONAL_DESKTOP.md](docs/CONVERSATIONAL_DESKTOP.md) — the window guide.
 - [docs/releases/](docs/releases/) — release notes per version, what the update banner shows.
 - [docs/audits/](docs/audits/) — independent audits, sweeps and their responses.
-- [docs/history/](docs/history/) — the previous [CLAUDE.md](docs/history/CLAUDE-2026-10-18.md) and
-  [README.md](docs/history/README-2026-10-18.md), five days of design decisions, definitions and change notes, and
-  [the design and phased plan of the natural-language editor](docs/history/NL_SURGICAL_EDITOR_PLAN.md), and the
-  guides to the command-line features removed on 2026-10-21 (workspaces, workflows, office profiles, spec QA audits,
-  project evidence, evaluations). The current round's plan is `docs/PLAN-2026-10-20-one-conversation.md`.
+- [docs/history/](docs/history/) — the previous CLAUDE.md files ([2026-10-18](docs/history/CLAUDE-2026-10-18.md),
+  [2026-10-20](docs/history/CLAUDE-2026-10-20.md)) and [README.md](docs/history/README-2026-10-18.md), five days of
+  design decisions, definitions and change notes, [the design and phased plan of the natural-language
+  editor](docs/history/NL_SURGICAL_EDITOR_PLAN.md), and the guides to the command-line features removed on 2026-10-21
+  (workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations). The current round's plan is
+  `docs/PLAN-2026-10-21-full-control.md`.
 - [docs/RELIABILITY.md](docs/RELIABILITY.md) — the review flow, what PASS means and the remaining evidence limits;
   [docs/RECOVERY.md](docs/RECOVERY.md) — how files a run set aside are investigated;
   [docs/TEXT_HYGIENE.md](docs/TEXT_HYGIENE.md) — the character hygiene operations; the

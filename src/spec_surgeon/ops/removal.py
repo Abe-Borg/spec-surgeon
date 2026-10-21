@@ -26,7 +26,8 @@ HIDING = (W + "del", W + "moveFrom")
 
 
 def deletable(p, part: str, bi: int, tracked: bool) -> None:
-    """delete_paragraphs' refusals, for a paragraph an op would delete."""
+    """The batch-1/2 removal ops' refusals for a paragraph they would delete (delete_paragraphs' rules before batch 6,
+    which deletes over ops/deletion.py instead)."""
     where = f"{part} paragraph {bi}"
     if p.find(f"{W}pPr/{W}sectPr") is not None:
         raise JobException(f"{where} carries a section break; it is not deleted", "section-break", {"where": where})

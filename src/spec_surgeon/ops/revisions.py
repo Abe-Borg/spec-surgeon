@@ -8,8 +8,8 @@ whole.
 ``pPrChange``, ``sectPrChange``, ``tblPrChange``, ``trPrChange``, ``tcPrChange``, ``tblGridChange``, ``numberingChange``)
 and cell revision (``cellIns``, ``cellDel``, ``cellMerge``) that does not lie inside a property change (its snapshot is
 history, not a revision of its own). Where it sits decides what it is: ins/del/moveFrom/moveTo under a ``w:rPr`` are a
-paragraph mark's when that rPr is a ``w:pPr``'s (else an equation's: refused), under ``w:trPr`` a table row's and under
-``w:numPr`` a numbering marker's (both refused); anywhere else they wrap content.
+paragraph mark's when that rPr is a ``w:pPr``'s (else an equation's: refused), under ``w:trPr`` a table row's (ins/del;
+a moved row is refused) and under ``w:numPr`` a numbering marker's (refused); anywhere else they wrap content.
 
 **Selected**: the author listed (casefolded, whitespace collapsed) — or no list — and the wall-clock ``w:date`` (its
 date and time, before a ``Z`` or an offset; never shifted) on or after ``on_or_after`` and before ``before``; under a
@@ -19,7 +19,13 @@ moveFrom/moveTo piece belongs to the innermost open move range of its kind (``mo
 them, selected whole or refused (``partial-move``); its range marks go with it. A piece outside any range is a plain
 revision.
 
-**Resolution**, in this order: (1) content — accept unwraps ins/moveTo and removes del/moveFrom with their content,
+**Resolution**, in this order: (0) rows (built-in batch 6, docs/BUILTIN_OPS_BATCH6_DESIGN.md §6) — accepting a row's
+deletion or rejecting its insertion takes the row (a ``w:tr`` directly in its ``w:tbl``; one in a content control is
+refused, ``table-structure``) with everything in it, whatever is pending there; accepting an insertion or rejecting a
+deletion takes only the marker (an emptied ``w:trPr`` goes); a table every own row of which goes goes whole, unless that
+would leave its container without a closing paragraph or set two tables side by side (``table_edit``'s rule,
+``table-structure``); what a row that goes holds must take no anchor away, as removed content (below); (1) content —
+accept unwraps ins/moveTo and removes del/moveFrom with their content,
 reject removes ins/moveTo with their content and unwraps del/moveFrom (a revision inside removed content goes with it) —
 content that goes may hold no footnote, endnote or comment mark, no single end of a bookmark, permission or move range
 (Word's ``_GoBack`` bookmark goes whole instead) and no part of a complex field (``marks-in-change``); (2) every ``w:delText``/``w:delInstrText`` that was inside an unwrapped deletion and now lies in no ``w:del``/
@@ -49,6 +55,8 @@ from .base import BlockDiff, JobException, Op, PlanFragment
 from .fields import fields_of
 from .replace_table import resolve_scope
 from .selectors import SCOPE_KINDS, scope_parts
+from .table_edit import table_removal_problem
+from .table_select import own_rows
 
 CONTENT_TAGS = tuple(W + t for t in ("ins", "del", "moveFrom", "moveTo"))
 PROPERTY_CHANGE_TAGS = tuple(W + t for t in ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange",
@@ -73,7 +81,7 @@ LABEL = {("content", "ins"): "insertion", ("content", "del"): "deletion", ("cont
          ("mark", "del"): "deleted paragraph mark", ("mark", "moveFrom"): "moved paragraph mark (from)",
          ("mark", "moveTo"): "moved paragraph mark (to)", ("rPrChange", "rPrChange"): "formatting change",
          ("pPrChange", "pPrChange"): "paragraph formatting change"}
-WHAT = {"row": "a tracked table row insertion or deletion", "numbering": "a tracked numbering marker",
+WHAT = {"row": "a tracked move of a table row", "numbering": "a tracked numbering marker",
         "math": "a tracked change inside an equation", "cell": "a tracked table cell insertion, deletion or merge",
         "property": "a tracked change of section or table properties"}
 
@@ -209,11 +217,13 @@ class Resolution:
     markers: List[Any] = field(default_factory=list)          # paragraph-mark markers removed
     gone_paragraphs: List[Any] = field(default_factory=list)  # paragraphs removed (their mark accepted/rejected away)
     goback: List[Any] = field(default_factory=list)           # _GoBack bookmark ends removed with them
+    gone_rows: List[Any] = field(default_factory=list)        # rows (or whole tables) removed with everything in them
+    row_markers: List[Any] = field(default_factory=list)      # row markers removed (the row stays)
 
     @property
     def changes(self) -> bool:
         return bool(self.removed or self.unwrapped or self.range_marks or self.properties or self.markers
-                    or self.gone_paragraphs)
+                    or self.gone_paragraphs or self.gone_rows or self.row_markers)
 
     def selected(self) -> List[Revision]:
         return [r for r in self.revisions if r.selected]
@@ -325,6 +335,35 @@ def _marks_in_removed(root, part: str, action: str, gone, goback_ids: Set[str], 
                 refuse(f"part of a field ({f.type or 'field'}: some of its markers stay)")
 
 
+def _rows(res: Resolution, part: str, action: str) -> None:
+    """Step 0 (module docstring): the rows that go — the outermost ones; a table every own row of which goes, whole —
+    and the row markers that go."""
+    going = []
+    for r in res.revisions:
+        if not r.selected or r.cls != "row" or r.tag not in ("ins", "del"):
+            continue
+        tr = r.el.getparent().getparent()
+        if (r.tag == "del") == (action == "accept"):
+            going.append(tr)
+        else:
+            res.row_markers.append(r.el)
+    held = set(going)
+    going = [tr for tr in going if not any(a in held for a in tr.iterancestors())]
+    by_table: Dict[Any, List[Any]] = {}
+    for tr in going:
+        if tr.getparent() is None or tr.getparent().tag != W + "tbl":
+            raise JobException(f"{part}: a tracked row to {action} sits in a content control or custom XML — resolve "
+                               f"it in Word", "table-structure", {"part": part})
+        by_table.setdefault(tr.getparent(), []).append(tr)
+    whole = [tbl for tbl, trs in by_table.items() if len(trs) == len(own_rows(tbl))]
+    for container in {t.getparent() for t in whole}:
+        why = table_removal_problem(container, {t for t in whole if t.getparent() is container})
+        if why:
+            raise JobException(f"{part}: {action}ing its tracked rows would take a whole table away, and {why} — "
+                               f"resolve it in Word", "table-structure", {"part": part})
+    res.gone_rows = whole + [tr for tr in going if tr.getparent() not in whole]
+
+
 def analyze(root, part: str, action: str, sel: Selection) -> Resolution:
     """Every decision of resolving ``root`` (one part); JobException for what must be resolved in Word."""
     res = Resolution(part=part, action=action)
@@ -340,12 +379,14 @@ def analyze(root, part: str, action: str, sel: Selection) -> Resolution:
         if r.move is not None:
             r.selected = r.move in chosen
     accept = action == "accept"
+    _rows(res, part, action)
+    rows_gone = {id(e) for e in res.gone_rows}
     for r in res.revisions:
-        if not r.selected or r.cls != "content":
-            continue
+        if not r.selected or r.cls != "content" or any(id(a) in rows_gone for a in r.el.iterancestors()):
+            continue                                 # content in a row that goes goes with it
         keep = r.tag in ("ins", "moveTo") if accept else r.tag in ("del", "moveFrom")
         (res.unwrapped if keep else res.removed).append(r.el)
-    removed = {id(e) for e in res.removed}
+    removed = {id(e) for e in res.removed} | rows_gone
 
     def gone_by_content(el) -> bool:
         return id(el) in removed or any(id(a) in removed for a in el.iterancestors())
@@ -354,7 +395,7 @@ def analyze(root, part: str, action: str, sel: Selection) -> Resolution:
             res.del_texts += list(w.iter(W + "delText", W + "delInstrText"))
     goback_ids = {b.get(W + "id") or "" for b in root.iter(W + "bookmarkStart") if b.get(W + "name") == GOBACK}
     range_ids = {id(m) for m in res.range_marks}
-    if res.removed:
+    if res.removed or res.gone_rows:
         _marks_in_removed(root, part, action, gone_by_content, goback_ids, range_ids, res)
     for r in res.revisions:
         if not r.selected or r.cls != "mark" or gone_by_content(r.el):
@@ -393,9 +434,12 @@ def analyze(root, part: str, action: str, sel: Selection) -> Resolution:
     def gone(el) -> bool:
         return gone_by_content(el) or id(el) in gone_ps or any(id(a) in gone_ps for a in el.iterancestors())
     res.markers = [m for m in res.markers if not gone(m)]
+    res.row_markers = [m for m in res.row_markers if not gone(m)]
     for r in res.revisions:
         if not r.selected or gone(r.el):
             continue
+        if r.cls == "row" and r.tag in ("ins", "del"):
+            continue                                 # step 0 decided it
         if r.cls in WHAT and not (r.cls == "property" and accept):
             raise JobException(f"{part}: {WHAT[r.cls]} ({r.author}) — {action}ing it is done in Word", "revision-kind",
                                {"part": part, "kind": r.tag})
@@ -429,9 +473,9 @@ def gone_revisions(res: Resolution) -> Dict[int, str]:
             k = revision_kind(e)
             if k:
                 out[id(e)] = k
-    for el in res.removed + res.gone_paragraphs + res.properties:
+    for el in res.removed + res.gone_paragraphs + res.properties + res.gone_rows:
         subtree(el)
-    for el in res.unwrapped + res.markers:
+    for el in res.unwrapped + res.markers + res.row_markers:
         out[id(el)] = revision_kind(el)
     return out
 
@@ -439,7 +483,7 @@ def gone_revisions(res: Resolution) -> Dict[int, str]:
 def predict(frag: PlanFragment, root, res: Resolution) -> Dict[str, int]:
     """The part's block diffs (V2/V3) and revision delta (V4) into ``frag``; returns the delta of this part."""
     gone_ps = {id(p) for p in res.gone_paragraphs}
-    removed = {id(e) for e in res.removed}
+    removed = {id(e) for e in res.removed} | {id(e) for e in res.gone_rows}
     for bi, p in enumerate(paragraphs(root)):
         ancestors = [id(a) for a in p.iterancestors()]
         before = block_full_text(p)
@@ -476,6 +520,13 @@ def _in_deletion(el) -> bool:
 
 def resolve(root, res: Resolution) -> None:
     """Perform the resolution on ``root`` (the part as planned)."""
+    for el in res.gone_rows:                            # step 0: rows (and whole tables) go with what they hold
+        el.getparent().remove(el)
+    for m in res.row_markers:
+        trpr = m.getparent()
+        trpr.remove(m)
+        if len(trpr) == 0 and not trpr.attrib:
+            trpr.getparent().remove(trpr)
     removed = {id(e) for e in res.removed}
     unwrapped = {id(e) for e in res.unwrapped}          # the elements are held by ``res``: their ids stay theirs
     for el in [e for e in root.iter(*CONTENT_TAGS) if id(e) in removed or id(e) in unwrapped]:
@@ -577,9 +628,10 @@ class ResolveTrackedChanges(Op):
     mode = "untracked"
     description = ("Accept or reject tracked changes — all of them, or only those by the named authors and/or made in a "
                    "date range — in the body, headers, footers, notes and comments: insertions, deletions, moves, "
-                   "inserted/deleted paragraphs and formatting changes. Only when the user asks to accept or reject. "
-                   "Refused (left for Word): table row/cell changes, changes inside equations, rejecting section or "
-                   "table property changes, and an accept/reject that would join two paragraphs.")
+                   "inserted/deleted paragraphs, inserted/deleted table rows and formatting changes. Only when the user "
+                   "asks to accept or reject. Refused (left for Word): table cell changes, changes inside equations, "
+                   "rejecting section or table property changes, and an accept/reject that would join two "
+                   "paragraphs.")
     params_schema = {
         "type": "object",
         "properties": {
