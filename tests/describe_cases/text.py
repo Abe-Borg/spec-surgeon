@@ -12,6 +12,11 @@ CASES = {
           "in the headers and footers", "ignoring case", "without tracked changes"]),
         ({}, {"find": "DRAFT", "replace": "", "flexible_whitespace": True, "author": "Jane Doe", "allow_missing": True},
          ["Delete “DRAFT”", "allowing any spacing or dash", "tracked change by “Jane Doe”", "left unchanged"]),
+        # built-in batch 6 (F3): a tab and line breaks in the new text are named between its quoted stretches
+        ({}, {"find": "1.01 SUMMARY", "replace": "1.01\tSUMMARY"},
+         ["Replace “1.01 SUMMARY” with “1.01”, a tab and “SUMMARY”", "tracked change"]),
+        ({"scope": ["headers"]}, {"find": "PROJECT NAME", "replace": "LINCOLN HIGH SCHOOL\n\nMODERNIZATION", "tracked": False},
+         ["with “LINCOLN HIGH SCHOOL”, 2 line breaks and “MODERNIZATION”", "in the headers", "without tracked changes"]),
     ],
     "insert_paragraph": [
         ({"paragraphs": {"text_regex": "^END OF SECTION"}},
@@ -27,6 +32,19 @@ CASES = {
          {"text": "Not used.", "style": "PR1", "author": "Spec Team", "allow_missing": True},
          ["“Not used.”", "in the “PR1” style, otherwise formatted like that paragraph", "by “Spec Team”",
           "Files with no such paragraph are left unchanged"]),
+        # built-in batch 6 (F3): tabs and line breaks, segments, several paragraphs
+        ({"paragraphs": {"text_regex": "^1\\.01"}}, {"text": "A.\tProvide hangers.\nSee drawings."},
+         ["reading “A.”, a tab, “Provide hangers.”, a line break and “See drawings.”"]),
+        ({"paragraphs": {"text_regex": "^PART 2"}, "scope": ["document"]},
+         {"runs": [{"text": "NOTE: ", "b": True}, {"text": "Coordinate with Division 26"},
+                   {"text": "1", "vertAlign": "superscript"}], "position": "before", "tracked": False},
+         ["reading “NOTE: Coordinate with Division 261”", "(“NOTE: ” in bold; “1” in superscript)", "before each of",
+          "without tracked changes"]),
+        ({"paragraphs": {"text_regex": "^END OF SECTION"}},
+         {"paragraphs": [{"text": "A.\tFirst item."}, {"runs": [{"text": "B.\t"}, {"text": "Second", "u": "single"}]},
+                         {"text": "C.\tThird item.", "style": "PR2"}], "author": "Spec Team"},
+         ["Insert 3 new paragraphs after each of", "reading in this order: “A.”, a tab and “First item.”; then",
+          "(“Second” underlined)", "“Third item.” in the “PR2” style", "by “Spec Team”"]),
     ],
     "delete_paragraphs": [
         ({"paragraphs": {"is_empty": True, "in_table": False}}, {"author": "Spec Team"},

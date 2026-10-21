@@ -19,9 +19,9 @@ window shows that message, not the spec.
 A submitted spec is checked before it is accepted:
 * ``validate_spec`` (unknown keys/ops/params, mode, assertions) — open ``questions`` or ``unsupported`` are
   outcomes, not errors;
-* **traceable words**: every character an op would place (``replace_text.replace``, ``insert_paragraph.text``, a
-  ``literal`` template fill) must appear verbatim in the request or the user's answers — otherwise
-  the model must ask;
+* **traceable words**: every character an op would place (``replace_text.replace``, ``insert_paragraph``'s text,
+  segments and paragraphs, a ``literal`` template fill) must appear verbatim in the request or the user's answers —
+  otherwise the model must ask (the words between a tab or line break the text places trace each on their own);
 * a **dry plan** on one representative file per structure pattern: fatal spec-level failures (``spec``,
   ``spec-mode``, ``geometry``, ``conflict``, ``bad-params``, ``unknown-slot``, ``slot-overlap``, ``template-slot``)
   are always compile errors; every other refusal (``unfilled-slot``, ``expect``, ``not-found``, ``spans-runs``, ``tracked-format``,
@@ -576,8 +576,18 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
         op = o.get("op")
         if op == "replace_text" and isinstance(params.get("replace"), str) and params["replace"]:
             out.append(params["replace"])
-        if op == "insert_paragraph" and isinstance(params.get("text"), str) and params["text"]:
-            out.append(params["text"])
+        if op == "insert_paragraph":
+            # built-in batch 6: one text, a paragraph's segments, or several paragraphs of either — every text the
+            # user's (a segment is placed as typed, on its own)
+            paras = params.get("paragraphs") if isinstance(params.get("paragraphs"), list) else [params]
+            for para in paras:
+                if not isinstance(para, dict):
+                    continue
+                if isinstance(para.get("text"), str) and para["text"]:
+                    out.append(para["text"])
+                for seg in para.get("runs") if isinstance(para.get("runs"), list) else []:
+                    if isinstance(seg, dict) and isinstance(seg.get("text"), str) and seg["text"]:
+                        out.append(seg["text"])
         if op == "add_review_comments":
             for key in ("text", "source"):
                 if isinstance(params.get(key), str) and params[key]:
@@ -611,9 +621,17 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
 
 def untraceable(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
     """The words the spec would place that appear verbatim (whitespace-normalised) in none of the sources. Each source
-    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next."""
+    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next. A
+    phrase holding a tab or a line break (built-in batch 6: written as Word's own, layout rather than words) traces
+    when each stretch of words between them does — a request seldom spells the tab, and every word must still be the
+    user's."""
     hay = [_norm(s) for s in sources if s]
-    return [w for w in placed_words(spec) if not any(_norm(w) in h for h in hay)]
+
+    def traces(phrase: str) -> bool:
+        return any(_norm(phrase) in h for h in hay)
+    return [w for w in placed_words(spec)
+            if not traces(w) and not (re.search(r"[\t\n]", w)
+                                      and all(traces(s) for s in re.split(r"[\t\n]+", w) if s.strip()))]
 
 
 def file_labels(files: Sequence[Path]) -> Dict[str, str]:

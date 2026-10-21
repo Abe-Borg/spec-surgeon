@@ -84,6 +84,10 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "'each PART on a new page' puts a page break before every PART heading after the first, so PART 1 stays under "
         "the section title; widow/orphan control is on by default in Word, so turning it on changes only text that "
         "turned it off",
+        "superscript/subscript (vertAlign), hidden text (vanish: the characters stay in the file, Word hides them), "
+        "highlight (Word's highlighter colours, 'none' removes it), character spacing (points: positive expands, "
+        "negative condenses, 0 is normal) and double strikethrough follow the same rules; double strikethrough on "
+        "turns single strikethrough off where it shows, and the reverse, as Word does",
     ],
     "set_tab_stops": [
         "positions are measured from the left margin (1440 twips = 1 inch); 'right_margin' and 'center' are each file's "
@@ -342,7 +346,9 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "never tracked",
     ],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
-                     "tracked unless the user said otherwise"],
+                     "tracked unless the user said otherwise",
+                     "a tab (\\t) or a line break (\\n) in the replacement is written as Word's own tab or line break "
+                     "(Shift+Enter, the same paragraph), in the replaced text's formatting"],
     "delete_paragraphs": [
         "only paragraphs matching the targeted selector are deleted",
         "tracked deletion wraps runs in w:del and marks the paragraph mark unless untracked was requested",
@@ -355,6 +361,11 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "without a manual number when the anchor is auto-numbered; formatting 'none' copies only the style",
         "an explicit style replaces the inherited one",
         "tracked insertion unless untracked was requested",
+        "a tab (\\t) or a line break (\\n) in the text is written as Word's own tab or line break (Shift+Enter: the "
+        "same paragraph); several paragraphs (paragraphs) go in the order given at every anchor, each its own "
+        "paragraph that may name its own style",
+        "segments (runs) are the user's words in order; a segment's bold, italic, underline or superscript/subscript "
+        "is direct formatting over the formatting the paragraph inherits",
     ],
     "move_paragraphs": [
         "the paragraphs to move are one unbroken stretch in one place — the body, one table cell, a header, a footer "

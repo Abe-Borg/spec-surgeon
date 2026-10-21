@@ -18,6 +18,37 @@ def quote(text: Any) -> str:
     return f"“{text}”"
 
 
+BREAK_WORDS = {"\t": ("a tab", "tabs"), "\n": ("a line break", "line breaks")}
+
+
+def typed(text: Any) -> str:
+    """The user's exact text in curly quotes, its tabs and line breaks named between the quoted stretches (a plan line
+    holds neither): ``“1.01”, a tab and “SUMMARY”``; text without them is ``quote(text)``."""
+    text = str(text)
+    if not any(ch in BREAK_WORDS for ch in text):
+        return quote(text)
+    parts: List[str] = []
+    cur, k = "", 0
+    while k < len(text):
+        ch = text[k]
+        if ch not in BREAK_WORDS:
+            cur += ch
+            k += 1
+            continue
+        if cur:
+            parts.append(quote(cur))
+            cur = ""
+        n = 1
+        while k + n < len(text) and text[k + n] == ch:
+            n += 1
+        one, many = BREAK_WORDS[ch]
+        parts.append(one if n == 1 else f"{n} {many}")
+        k += n
+    if cur:
+        parts.append(quote(cur))
+    return join(parts)
+
+
 def join(items: Iterable[Any], conjunction: str = "and") -> str:
     """``a``, ``a and b``, ``a, b and c``."""
     parts = [str(x) for x in items]
