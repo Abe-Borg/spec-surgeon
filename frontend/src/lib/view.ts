@@ -76,7 +76,9 @@ export const EMPTY_VIEW: View = {
   warnings: [],
   blocking: false,
   results: [],
-  action: { label: "", token: "", kind: "none" },
+  action: { label: "", token: "", kind: "none", can_hold: false },
+  todo: [],
+  focus: [],
   working: { generation: 0, from_originals: true, can_start_over: false },
   budget: { paused: false, steps_per_pause: 48 },
   update: { state: "none", version: "", notes: "", progress: 0, error: "" },
@@ -130,6 +132,8 @@ export function normalizeView(raw: unknown): View {
     blocking: v.blocking === true,
     results: list(v.results),
     action: obj(v.action, EMPTY_VIEW.action),
+    todo: list(v.todo),
+    focus: list<string>(v.focus).filter((p) => typeof p === "string"),
     working: obj(v.working, EMPTY_VIEW.working),
     budget: obj(v.budget, EMPTY_VIEW.budget),
     update: obj(v.update, EMPTY_VIEW.update),
@@ -183,6 +187,9 @@ export function reduce(state: UiState, action: UiAction): UiState {
     case "job_started": {
       let messages = state.view.messages;
       let seq = state.localSeq;
+      // A message or a choice voids whatever plan and pages were on screen (the server sets the old outcome
+      // aside the moment it reads the reply); creating copies or continuing keeps them until the job's view.
+      const reply = action.userText !== null;
       if (action.userText !== null) {
         const [message, next] = localMessage(state, "user", action.userText);
         messages = [...messages, message];
@@ -201,6 +208,7 @@ export function reduce(state: UiState, action: UiAction): UiState {
           questions: [],
           choices: [],
           chips: [],
+          ...(reply ? { plan: null, samples: [], warnings: [], blocking: false } : {}),
         },
       };
     }
@@ -258,7 +266,8 @@ function reduceEvent(state: UiState, event: JobEvent): UiState {
       };
     }
     case "plan":
-      return { ...state, view: { ...state.view, plan: event.plan } };
+      // The pages on screen belong to the plan before this one; this plan's pages follow in `samples`.
+      return { ...state, view: { ...state.view, plan: event.plan, samples: [], warnings: [], blocking: false } };
     case "samples":
       return {
         ...state,

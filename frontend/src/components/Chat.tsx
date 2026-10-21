@@ -1,19 +1,27 @@
 // Adapted from Build-a-Spec's frontend/src/components/Chat.tsx (copy-based reuse).
 import { useEffect, useRef } from "react";
 import type { Choice } from "../types";
+import type { ActionButton } from "../lib/action";
 import { STARTERS, type ChatItem } from "../lib/chat";
 import MessageBubble, { ErrorBubble, LiveBubble } from "./MessageBubble";
+import ActionBar from "./ActionBar";
 import Composer from "./Composer";
 import Prompts from "./Prompts";
 import PauseCard from "./PauseCard";
+import TodoCard from "./TodoCard";
 
 interface Props {
   items: ChatItem[];
   busy: boolean;
   canSend: boolean;
   sendReason: string;
+  /** The one button (Create edited copies, Continue, Save ready copies); the pause card owns Continue while paused. */
+  button: ActionButton | null;
+  /** How many previews carry the red X. */
+  held: number;
   onSend: (text: string, chip?: boolean) => void;
   onChoose: (choice: Choice) => void;
+  onAct: (token: string) => void;
   onContinue: () => void;
   onStop: () => void;
   prefill?: { text: string; nonce: number };
@@ -26,8 +34,11 @@ export default function Chat({
   busy,
   canSend,
   sendReason,
+  button,
+  held,
   onSend,
   onChoose,
+  onAct,
   onContinue,
   onStop,
   prefill,
@@ -38,6 +49,7 @@ export default function Chat({
   const contentRef = useRef<HTMLDivElement>(null);
   const pinnedRef = useRef(true);
   const empty = items.length === 0;
+  const paused = items.some((item) => item.kind === "pause");
 
   // Stay pinned to the bottom on new items unless the user scrolled up.
   useEffect(() => {
@@ -134,6 +146,8 @@ export default function Chat({
                       onContinue={onContinue}
                     />
                   );
+                case "todo":
+                  return <TodoCard key="todo" names={item.names} busy={busy} onSend={onSend} />;
                 default:
                   return null;
               }
@@ -141,6 +155,7 @@ export default function Chat({
           </div>
         )}
       </div>
+      {!paused && <ActionBar button={button} held={held} onAct={onAct} />}
       <Composer
         busy={busy}
         canSend={canSend}

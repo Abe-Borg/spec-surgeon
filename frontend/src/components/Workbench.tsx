@@ -1,9 +1,10 @@
-import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import type { Attachment, View } from "../types";
-import type { ActionButton } from "../lib/action";
+import type { Mark, Reviews } from "../lib/review";
 import { planHasContent, runFolder } from "../lib/workbench";
 import DocumentsTray from "./DocumentsTray";
-import PlanCards, { ActionSpot, PaperCard } from "./PlanCards";
+import Markdown from "./Markdown";
+import PlanCards, { PaperCard } from "./PlanCards";
 import PreviewCard from "./PreviewCard";
 import Tip from "./Tip";
 
@@ -11,13 +12,13 @@ interface Props {
   view: View;
   busy: boolean;
   uploading: boolean;
-  button: ActionButton | null;
-  /** The pause card in the chat owns Continue; the workbench's spot stays empty. */
-  paused: boolean;
+  /** The user's marks on the previews, by sample source. */
+  reviews: Reviews;
+  /** The marks can be given right now (the plan awaits approval, nothing runs). */
+  canReview: boolean;
+  onMark: (source: string, mark: Mark) => void;
   onAdd: (kind: "documents" | "template" | "references") => void;
   onRemove: (attachment: Attachment) => void;
-  onAct: (token: string) => void;
-  onStop: () => void;
   onOpen: (path: string) => void;
   onStartOver: () => void;
   onZoom: (src: string, title: string) => void;
@@ -65,42 +66,24 @@ function PlanPlaceholder({
   );
 }
 
-function ActionBar({ kind, children }: { kind: ActionButton["kind"]; children: ReactNode }) {
-  const sentence =
-    kind === "stop"
-      ? "Working… the plan and the pages appear here as they are ready."
-      : kind === "continue"
-        ? "The documents are checked against your request again before anything can be approved."
-        : kind === "save"
-          ? "The copies that are already verified can be saved while a question is still open."
-          : "";
-  return (
-    <div className="flex items-center justify-between gap-4 rounded-xl border border-edge bg-surface px-4 py-2.5">
-      <p className="text-xs text-ink-dim">{sentence}</p>
-      <div className="shrink-0">{children}</div>
-    </div>
-  );
-}
-
 function Workbench({
   view,
   busy,
   uploading,
-  button,
-  paused,
+  reviews,
+  canReview,
+  onMark,
   onAdd,
   onRemove,
-  onAct,
-  onStop,
   onOpen,
   onStartOver,
   onZoom,
 }: Props) {
   const plan = view.plan;
   const showPlan = planHasContent(plan);
-  const spotButton = paused ? null : button;
   const folder = runFolder(view);
   const setAside = plan?.set_aside ?? [];
+  const todo = view.todo ?? [];
   const scrollRef = useRef<HTMLElement>(null);
   const planRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
@@ -126,6 +109,8 @@ function Workbench({
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-6 py-6">
         <DocumentsTray
           attachments={view.attachments}
+          todo={todo}
+          focus={view.focus ?? []}
           busy={busy}
           uploading={uploading}
           compact={showPlan || view.results.length > 0}
@@ -135,27 +120,33 @@ function Workbench({
 
         {showPlan && plan ? (
           <div ref={planRef} className="scroll-mt-6">
-            <PlanCards plan={plan} button={spotButton} onAct={onAct} onStop={onStop} />
+            <PlanCards plan={plan} />
           </div>
         ) : (
-          <>
-            {spotButton && (
-              <ActionBar kind={spotButton.kind}>
-                <ActionSpot button={spotButton} onAct={onAct} onStop={onStop} />
-              </ActionBar>
-            )}
-            {view.results.length === 0 && (
-              <PlanPlaceholder
-                working={busy}
-                started={view.messages.length > 0}
-                hasDocuments={view.attachments.length > 0}
-              />
-            )}
-          </>
+          view.results.length === 0 && (
+            <PlanPlaceholder
+              working={busy}
+              started={view.messages.length > 0}
+              hasDocuments={view.attachments.length > 0}
+            />
+          )
         )}
 
+        {view.samples.length > 0 && canReview && (
+          <p className="-mb-2 px-1 text-[12px] text-ink-faint">
+            Look at each preview. The green checkmark says it looks right; the red X sets that document aside for
+            more work after the others are created.
+          </p>
+        )}
         {view.samples.map((sample) => (
-          <PreviewCard key={sample.source || sample.name} sample={sample} onZoom={onZoom} />
+          <PreviewCard
+            key={sample.source || sample.name}
+            sample={sample}
+            mark={reviews[sample.source]}
+            canReview={canReview}
+            onMark={onMark}
+            onZoom={onZoom}
+          />
         ))}
 
         {view.warnings.length > 0 && (
@@ -174,7 +165,7 @@ function Workbench({
                   <span aria-hidden className={view.blocking ? "text-err" : "text-paper-dim"}>
                     •
                   </span>
-                  <span>{warning}</span>
+                  <Markdown text={warning} paper inline />
                 </li>
               ))}
             </ul>
@@ -187,7 +178,9 @@ function Workbench({
               {setAside.map((item, index) => (
                 <li key={`${index}-${item.name}`} className="py-2 first:pt-0 last:pb-0">
                   <p className="text-sm font-medium text-paper-ink">{item.name}</p>
-                  <p className="text-[12px] leading-relaxed text-paper-dim">{item.reason}</p>
+                  <p className="text-[12px] leading-relaxed text-paper-dim">
+                    <Markdown text={item.reason} paper inline />
+                  </p>
                 </li>
               ))}
             </ul>
@@ -236,6 +229,22 @@ function Workbench({
             </ul>
           </PaperCard>
           </div>
+        )}
+
+        {todo.length > 0 && (view.focus ?? []).length === 0 && (
+          <PaperCard
+            title="Set aside for more work"
+            subtitle="These documents got no copy yet. The conversation offers to work on them; the other copies stay as they are."
+            tone="muted"
+          >
+            <ul className="divide-y divide-paper-edge">
+              {todo.map((item) => (
+                <li key={item.path} className="py-2 text-sm text-paper-ink first:pt-0 last:pb-0" title={item.path}>
+                  {item.name}
+                </li>
+              ))}
+            </ul>
+          </PaperCard>
         )}
 
         {view.working?.generation > 0 && (

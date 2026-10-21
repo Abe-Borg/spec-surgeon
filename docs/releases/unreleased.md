@@ -2,6 +2,34 @@
 
 Changes since v1.6.0.
 
+## The window
+
+- **Old previews leave the window.** The pages shown are always those of the plan in front of you. A message
+  sent over a preview takes the old plan and pages away at once instead of leaving them up while the reply is
+  worked out, a new plan never sits above the pages of the one before it, and during recovery the pages and
+  visual-check findings of a document whose copy you already saved drop out while the conversation goes on
+  about the rest.
+- Every preview card carries a green checkmark (looks good) and a red X (needs more work). **Create edited
+  copies** runs the documents that look right; the X'd ones get no copy and wait on a to-do list ("Create edited
+  copies (2 set aside)"). Every file that runs is still held to the exact identity the user approved; a file
+  outside the approval never runs. Once the other copies are saved, the chat shows **Set aside for more work**
+  and offers **Work on them now**: the set-aside documents are planned alone, from the request they were set
+  aside from (one request at a time), with the assistant told that the user saw and set aside that plan and
+  shown it; the pass ends when their copies are created. The changes each copy carries are kept per document, so
+  a change some copies got and others did not is named per document in the next request. The list and the pass
+  survive a restart; Start over clears them.
+- The one button (**Create edited copies**, **Continue**, **Save N ready copies**) lives in the conversation,
+  above the box you type in, with one sentence on what it does. The plan card carries no button.
+- **Your documents** folds to one line (its count and a summary) once a plan exists and opens on a click; a
+  document on the to-do list is tagged **To do**, one in the pass **Working on**.
+- The **Hide plan** button is gone; the plan and the pages are always shown beside the conversation.
+- Markdown renders in both panes: the assistant's replies and questions, the choices, the plan's sentences and
+  settings, the assumptions, the findings and the reasons a file was left untouched.
+
+## The contract (`docs/WEB_API.md`)
+
+- `POST /api/primary` takes `hold`: the previewed documents to set aside. The view carries `action.can_hold`,
+  `todo` and `focus`. The reply "Work on the documents I set aside" begins the pass over the to-do list.
 ## The top bar matches Build-a-Spec's
 
 - **An in-app guide in the top bar.** **How to use**, **Workflows**, **How it works** and **About** open one help
@@ -17,6 +45,37 @@ Changes since v1.6.0.
   your copies".
 - **An update you set aside stays one click away.** After **Not now** on the update banner, the top bar keeps a
   "v1.7.0 available — install" pill (from 1280 px wide; About offers it at any width).
+
+## Full control: from one word to whole tables, sections and pictures
+
+Spec Surgeon now refuses only what it cannot predict, never what is large: deleting an article, a PART or the whole
+body is planned, previewed and verified like any other edit. Every new operation predicts its result before it runs
+and is checked by the independent verifier; content changes are tracked by default, as Word records them.
+
+- **Delete anything a selection covers.** "Delete article 2.3", "delete PART 3 to the end", "delete everything":
+  tables wholly inside the selection go with it, as do whole fields, comments and notes; a section break in it joins
+  the sections, as Word does. A selection can now run from a heading up to, not including, the next one. Footnotes
+  and endnotes can be removed, all or by their text.
+- **Move content.** A stretch of paragraphs, with the tables between them, goes before or after another paragraph:
+  untracked, or tracked as a deletion where it was and an insertion where it goes.
+- **Richer text.** New text may hold tabs and line breaks; one request inserts several paragraphs, each with its own
+  style, with bold, italic, underlined or superscript words. Superscript and subscript, hidden text, highlight,
+  character spacing and double strikethrough can be set on text or in styles.
+- **Tables.** Insert a table from an attached spreadsheet or CSV (or typed rows); add and delete rows; delete tables
+  and columns; shade cells, set their vertical alignment and column widths; merge cells. Tracked row insertions and
+  deletions can be accepted or rejected.
+- **Pictures.** Insert an attached picture (PNG, JPEG, GIF or BMP) in its own paragraph, remove pictures, resize them.
+- **Sections.** Insert and remove section breaks; set columns, line numbers, vertical alignment and how a section
+  starts.
+- **Fields and comments.** Insert page numbers ("Page X of Y"), dates, the file name, a style reference or a document
+  property, at your placeholder or at the end of a paragraph; Word fills in the result. Reply to comments with your
+  words and resolve or reopen threads.
+- **An empty document is taken** with a note instead of refused, so a blank shell can be built on.
+- Still out of reach by decision, and refused with a reason: shapes, SmartArt, charts, equations, embedded objects,
+  data-bound content controls, the theme, and edits inside text boxes.
+
+Not yet run in Word on real specifications: every new operation is tested on synthetic documents and rendered with
+LibreOffice; the first real runs are yours.
 
 Upgrading from 1.6.0 starts from 1.6.0's own window: the update banner's **Download**, or **Help ▾ → Check for
 updates** in its top bar.

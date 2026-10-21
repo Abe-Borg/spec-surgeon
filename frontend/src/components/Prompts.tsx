@@ -1,5 +1,6 @@
 // Adapted from Build-a-Spec's frontend/src/components/SuggestedPrompts.tsx (copy-based reuse).
 import type { Choice } from "../types";
+import Markdown from "./Markdown";
 
 interface Props {
   questions: string[];
@@ -16,7 +17,8 @@ interface Props {
  * The question block under the latest assistant message: the question(s),
  * the choices as buttons — a choice's exact wording shown beneath it — and
  * the one-tap reply chips. Everything here is cleared the moment the user
- * answers (the reducer drops it on `job_started`).
+ * answers (the reducer drops it on `job_started`). The questions and the
+ * choices' labels are the model's text, rendered as markdown.
  */
 export default function Prompts({ questions, choices, chips, busy, onChoose, onSend }: Props) {
   return (
@@ -27,9 +29,7 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
             One thing to clarify
           </p>
           {questions.map((q, index) => (
-            <p key={`${index}-${q}`} className="mt-1 text-[0.925rem] leading-relaxed text-ink">
-              {q}
-            </p>
+            <Markdown key={`${index}-${q}`} text={q} className="mt-1 text-[0.925rem] leading-relaxed text-ink" />
           ))}
         </div>
       )}
@@ -45,9 +45,11 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
                 className="prompt-chip-in w-full rounded-xl border border-edge bg-raised px-4 py-2.5 text-left text-sm text-ink transition-colors hover:border-accent/70 hover:bg-raised/80 disabled:pointer-events-none disabled:opacity-40"
               >
                 <span className="mr-2 text-ink-faint tabular-nums">{index + 1}.</span>
-                {choice.label}
+                <Markdown text={choice.label} inline />
                 {choice.detail && (
-                  <span className="mt-0.5 block text-[11px] text-ink-faint">{choice.detail}</span>
+                  <span className="mt-0.5 block text-[11px] text-ink-faint">
+                    <Markdown text={choice.detail} inline />
+                  </span>
                 )}
               </button>
               {choice.words.length > 0 && (

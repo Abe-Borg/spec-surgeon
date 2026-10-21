@@ -1,9 +1,10 @@
 """Input files beside the documents (built-in batch 1): the tables (``.json``, ``.csv``, ``.xlsx``) and pictures
-(``.png``, ``.jpg``, ``.jpeg``, ``.gif``) in the folders of the batch's files and of the attached template. The
+(``.png``, ``.jpg``, ``.jpeg``, ``.gif``, ``.bmp``) in the folders of the batch's files and of the attached template. The
 conversation lists them in its first message (``listing``: path, kind, and an overview — a table's sheets and column
 headers, a picture's format and size) and Claude reads one with ``read_input_file`` — only a listed file, by its exact
 path, never any other path. A spec names them by that path (``fill_variables.table.file``,
-``replace_table.pairs_table.file``, ``swap_image.image`` / ``match.image``); the ops pin them by md5 (rule 12).
+``replace_table.pairs_table.file``, ``insert_table.table.file``, ``swap_image.image`` / ``match.image``,
+``insert_image.image``, ``remove_images.match.image``, ``resize_images.match.image``); the ops pin them by md5 (rule 12).
 
 What a table holds is document content like the profiles' text: it goes to Claude only to write the spec. Values a
 table gives are the user's (they are not Claude's words — CLAUDE.md rule 13); typed values in a spec are traced as
@@ -17,11 +18,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 from .ops.base import JobException
-from .ops.images import sniff
+from .ops.images import read_picture
 from .ops.tables import Bad, csv_rows, xlsx_rows, xlsx_sheet_names
 
 KINDS = {".json": "table", ".csv": "table", ".xlsx": "table", ".png": "picture", ".jpg": "picture",
-         ".jpeg": "picture", ".gif": "picture"}
+         ".jpeg": "picture", ".gif": "picture", ".bmp": "picture"}
 MAX_BYTES = 20 * 1024 * 1024          # a bigger file is listed as too big, never read
 MAX_ROWS = 40                         # rows read_input_file shows of a sheet
 CELL_CHARS = 120
@@ -46,8 +47,8 @@ def overview(path: Path) -> Dict[str, Any]:
         data = path.read_bytes()
         suffix = path.suffix.lower()
         if kind == "picture":
-            fmt, w, h = sniff(data)
-            out.update(format=fmt, pixels=[w, h])
+            pic = read_picture(data)                # a BMP is a picture insert_image places (swap_image refuses it)
+            out.update(format=pic.format, pixels=[pic.width, pic.height])
         elif suffix == ".json":
             obj = json.loads(data.decode("utf-8-sig"))
             out["json"] = (f"an object with keys {list(obj)[:40]}" if isinstance(obj, dict)

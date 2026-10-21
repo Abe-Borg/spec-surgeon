@@ -17,7 +17,8 @@ EFFECT_NAMES = {
 }
 LABELS = {
     "b": "Bold", "i": "Italic", "caps": "All capitals", "smallCaps": "Small capitals",
-    "strike": "Strikethrough", "keepNext": "Keep with next paragraph", "keepLines": "Keep lines together",
+    "strike": "Strikethrough", "dstrike": "Double strikethrough", "vertAlign": "Superscript or subscript",
+    "vanish": "Hidden text", "highlight": "Highlight", "keepNext": "Keep with next paragraph", "keepLines": "Keep lines together",
     "widowControl": "Avoid isolated lines", "pageBreakBefore": "Page break before",
     "find": "Original wording", "replace": "Replacement wording", "text": "Exact wording",
     "run": "Text formatting", "paragraph": "Paragraph formatting", "params": "Settings",
@@ -38,6 +39,14 @@ EDIT_NAMES = {
     "remove_header_footer": "Remove headers or footers", "set_page_setup": "Change page layout",
     "apply_style": "Apply paragraph styles", "map_styles": "Match document styles",
     "set_output_name": "Name the edited copies",
+    # built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md): the window says "picture", never "image"
+    "insert_image": "Insert a picture", "remove_images": "Remove pictures", "resize_images": "Resize pictures",
+    "delete_tables": "Delete tables", "delete_table_rows": "Delete table rows", "insert_table_rows": "Add table rows",
+    "insert_table": "Insert a table", "delete_table_columns": "Delete table columns",
+    "set_table_cells": "Format table cells", "merge_table_cells": "Merge table cells",
+    "insert_section_break": "Insert section breaks", "remove_section_break": "Remove section breaks",
+    "insert_field": "Insert a field", "reply_to_comments": "Reply to comments", "resolve_comments": "Resolve comments",
+    "remove_footnotes": "Remove footnotes", "move_paragraphs": "Move paragraphs",
 }
 
 

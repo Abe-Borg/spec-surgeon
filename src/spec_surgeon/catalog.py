@@ -21,9 +21,10 @@ EXAMPLES_DIR = Path(__file__).resolve().parent / "examples" / "specs"
 
 # What a compiled spec usually has to state about each op (the user sees these in the preview and can veto them).
 # Request-only operations: accepting/rejecting tracked changes, editing
-# the document properties, changing the Track Changes setting / Mark as Final — never on a model's own initiative, only
-# when the user asks for exactly that. The advisor never adds one to a respec (advisor._respec_errors).
-REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_document_state", "add_review_comments")
+# the document properties, changing the Track Changes setting / Mark as Final, adding, answering or resolving comments
+# — never on a model's own initiative, only when the user asks for exactly that. The advisor never adds one to a respec (advisor._respec_errors).
+REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_document_state", "add_review_comments",
+                    "reply_to_comments", "resolve_comments")
 
 COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "normalize_whitespace": ["ordinary spaces only; tabs, line breaks and non-breaking spaces stay", "tracked unless clean copies requested"],
@@ -84,6 +85,12 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "'each PART on a new page' puts a page break before every PART heading after the first, so PART 1 stays under "
         "the section title; widow/orphan control is on by default in Word, so turning it on changes only text that "
         "turned it off",
+        "superscript/subscript (vertAlign), hidden text (vanish: the characters stay in the file, Word hides them; a "
+        "paragraph mark is hidden only with all of its paragraph's text, as Word joins a paragraph whose mark is "
+        "hidden to the next one — a mark left visible is flagged), highlight (Word's highlighter colours, 'none' "
+        "removes it; on text only, as Word shows no highlighting set in a style), character spacing (points: positive "
+        "expands, negative condenses, 0 is normal) and double strikethrough follow the same rules; double "
+        "strikethrough on turns single strikethrough off where it shows, and the reverse, as Word does",
     ],
     "set_tab_stops": [
         "positions are measured from the left margin (1440 twips = 1 inch); 'right_margin' and 'center' are each file's "
@@ -203,6 +210,80 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "no style definition (existing 'replace' included)",
         "a table in a text box is left alone (flagged); never tracked",
     ],
+    # built-in batch 6 (table rows and tables, docs/BUILTIN_OPS_BATCH6_DESIGN.md §6)
+    "delete_tables": [
+        "the tables are every table of the body unless a selection narrows them (position, table style, the first "
+        "row's text, any text in the table, nested or not); a table nested in a chosen one goes with it",
+        "tracked unless the user asked for it outright: every row and its text marked deleted, as Word records a "
+        "deleted table, so accepting removes it; untracked, the table is removed",
+        "a bookmark crossing the table's edge keeps its outside end (its inside end takes the table's place); one "
+        "wholly inside goes untracked (a cross-reference to it is flagged)",
+        "set aside for Word: a comment mark inside (remove the comments first, in the same request), a note mark when "
+        "untracked, a field crossing the edge, pending tracked changes inside a tracked deletion, or a deletion that "
+        "would join the tables around it",
+    ],
+    "delete_table_rows": [
+        "the rows are chosen by position (0-based in the spec, counted among the table's own rows, both ends "
+        "inclusive), by their text (cells joined by a tab) and/or as header rows; every given key must hold",
+        "a table losing every row is deleted whole; a table with no chosen row is left alone",
+        "tracked unless asked otherwise (rows and text marked deleted, as Word records it); untracked, the rows go",
+        "the first row of a cell merged down across rows cannot go without the rest of the merge (set aside); the "
+        "later rows of a merge can",
+        "comment marks, note marks (untracked) and fields crossing the edge set the file aside, as delete_tables",
+    ],
+    "insert_table_rows": [
+        "every cell text is the user's exact wording, one text per cell of the row the new rows copy ('' for an empty "
+        "cell); no tab or line break in a cell",
+        "the new rows go after (or before) the ONE row the row selection chooses in each table, or at_end after its "
+        "last row; a table where the selection chooses no row is left alone, several rows set it aside",
+        "each new row copies that row's formatting: row height and splitting, cell widths, shading, borders and "
+        "alignment, the first paragraph's style and the first text's font; it is never a repeating header row unless "
+        "repeat_header",
+        "Word repeats only the header rows that run on from a table's first row: rows placed before or among them must "
+        "be header rows too (repeat_header), and header rows must go at the top or right after them (set aside "
+        "otherwise)",
+        "a row with merged cells cannot be copied (set aside: place the rows by another row)",
+        "tracked unless asked otherwise (rows and text inserted, as Word records it)",
+    ],
+    "insert_table": [
+        "the table's text is the user's typed rows verbatim, or every row of the attached table file (a CSV, a sheet "
+        "of an Excel file, or a JSON list of rows) as it reads — empty trailing rows and columns left out",
+        "the table goes after (or before) each anchor paragraph of the body; one beside another table, inside a "
+        "table or after the document's last paragraph is set aside",
+        "full text width in equal columns unless column widths are given (inches); the style is a table style the "
+        "document has, else single-line borders around and between every cell; header_rows repeat at the top of each "
+        "page",
+        "the cells' paragraphs take the document's default paragraph style, one paragraph per cell",
+        "tracked unless asked otherwise (rows and text inserted)",
+    ],
+    # built-in batch 6 (table grid and cells, docs/BUILTIN_OPS_BATCH6_DESIGN.md §7)
+    "delete_table_columns": [
+        "the columns are grid columns, numbered from 0 in the spec, or chosen by the text of the first row's cell over "
+        "them (a header cell spanning several columns brings them all); every given key must hold",
+        "a cell over deleted columns only goes with its text; a cell spanning a deleted and a kept column stays, "
+        "narrower; a fixed table width shrinks by the deleted columns, a width in percent stays (Word widens the rest)",
+        "never tracked (Word cannot track a column deletion); deleting every column is refused — delete the table",
+        "set aside: a cell merged down whose parts would be split, Word's old horizontal merge, pending tracked "
+        "changes of the table's structure, a comment mark or a field crossing the deleted cells",
+    ],
+    "set_table_cells": [
+        "the cells are those of the chosen tables in the chosen rows (F5's row selector, every row by default) over "
+        "the chosen columns (every column by default); a cell spanning a chosen column counts",
+        "shading is the cell's fill (RRGGBB) or none; none leaves no shading where the table style shades the cells "
+        "(an explicit no-colour fill); vertical alignment top, center or bottom; no_wrap keeps the text on one line",
+        "width is in inches for the chosen columns and needs every row: the grid column and every cell's width over "
+        "it, spanning cells summed; a fixed table width follows, a width in percent stays (flagged)",
+        "never tracked; a cell already as asked is left alone",
+    ],
+    "merge_table_cells": [
+        "one block per chosen table: the chosen rows by the chosen columns, each an unbroken run (row and column "
+        "numbers from 0 in the spec, both ends inclusive for an index range)",
+        "the merged cell holds every cell's text in reading order (row by row, left to right), empty cells adding "
+        "nothing; it keeps the first cell's formatting, its width the cells' widths summed",
+        "never tracked (Word cannot track a merge); a block that is one cell already is left alone",
+        "set aside: a block that takes only part of a cell already merged or spanning, or a row of it inserted or "
+        "deleted as a tracked change",
+    ],
     # built-in batch 5 (list levels and the audit, docs/BUILTIN_OPS_BATCH5_DESIGN.md §3, §4)
     "set_list_level": [
         "the level is the one the named paragraph style numbers with (level names another level of the same list); "
@@ -271,13 +352,55 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "to change them); a header/footer shared with portrait pages is flagged",
         "sections can be chosen by what they contain: {containing: <paragraph predicate>, with_tables: true, "
         "index_range: [first, last]}; allow_missing true when not every file has such a section",
+        "columns {count, space (twips between them), separator: true for a line between}: always equal columns; count "
+        "1 is a single column (no space or separator then)",
+        "line_numbering {count_by (every Nth line), start (the first number shown), restart: new_page | new_section | "
+        "continuous, distance (twips from the text)} turns line numbers on; 'none' turns them off",
+        "vertical_alignment top | center | both | bottom; section_start next_page | continuous | even_page | odd_page is "
+        "how the section begins after the one before it (its section break); a setting already in effect is left alone",
+    ],
+    "insert_section_break": [
+        "the break goes before each matched top-level body paragraph (a targeted selector): the paragraph before it "
+        "ends the first part, and both parts keep the section's page setup, headers and footers",
+        "type next_page (default) | continuous | even_page | odd_page is how the new section starts; the split section's "
+        "own start and page-number restart stay with its first part, so the page numbers run on",
+        "refused: the document's first paragraph, a paragraph after a table or content control, one that already starts "
+        "a section, or one inside a table, text box or content control",
+        "a section with a different first page shows its first-page header again after each new break (flagged); never "
+        "tracked (Word cannot track a section break)",
+        "to change the new section's layout, run set_page_setup as a later step choosing it by content "
+        "({containing: …}): its index is not known before the break exists",
+    ],
+    "remove_section_break": [
+        "sections names those whose ENDING break goes: 'all' = every break (one section remains); the last section "
+        "ends the document at no break and cannot be chosen",
+        "the joined pages take the following section's page setup, headers and footers (flagged where they differ); "
+        "the joined section begins where the first joined one did, with its page-number restart",
+        "headers and footers that no section shows any more leave the file; the paragraph that held the break stays; "
+        "never tracked",
     ],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
-                     "tracked unless the user said otherwise"],
+                     "tracked unless the user said otherwise",
+                     "a tab (\\t) or a line break (\\n) in the replacement is written as Word's own tab or line break "
+                     "(Shift+Enter, the same paragraph), in the replaced text's formatting"],
     "delete_paragraphs": [
-        "only paragraphs matching the targeted selector are deleted",
-        "tracked deletion wraps runs in w:del and marks the paragraph mark unless untracked was requested",
-        "paragraphs carrying section breaks or fields are never deleted",
+        "the paragraphs the selector chooses are deleted — 'all' for every paragraph of the scope; the size of a "
+        "deletion is never a reason to refuse",
+        "a table all of whose paragraphs are chosen goes whole (its rows marked deleted when tracked); in a table only "
+        "partly chosen each cell keeps its last paragraph, emptied; the document, a header, a footnote or a comment "
+        "keeps a last paragraph too, and two tables are never left touching (the paragraph between them stays, "
+        "emptied) — each kept paragraph is flagged",
+        "fields, comments, footnotes and bookmarks lying wholly inside go with the paragraphs; a field or (untracked) a "
+        "comment that runs past the edge of the deletion sets the file aside, a bookmark that does keeps its outside "
+        "half; text boxes are refused",
+        "a section break in the deletion: untracked it goes and its pages join the next section, taking that section's "
+        "page setup, headers and footers (headers no section uses any more leave the file); tracked it stays until the "
+        "deletion is accepted — flagged either way",
+        "tracked (the default) wraps the text in deletions and marks the paragraph marks; it refuses paragraphs that "
+        "already hold pending tracked changes or a simple field (use tracked false, or resolve them first); "
+        "tracked false removes outright",
+        "beside another operation on the same part (untracked), or on the same table rows (tracked), it runs as its own "
+        "ordered step",
     ],
     "insert_paragraph": [
         "the inserted paragraph text is the user's exact approved wording verbatim",
@@ -286,6 +409,25 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "without a manual number when the anchor is auto-numbered; formatting 'none' copies only the style",
         "an explicit style replaces the inherited one",
         "tracked insertion unless untracked was requested",
+        "a tab (\\t) or a line break (\\n) in the text is written as Word's own tab or line break (Shift+Enter: the "
+        "same paragraph); several paragraphs (paragraphs) go in the order given at every anchor, each its own "
+        "paragraph that may name its own style",
+        "segments (runs) are the user's words in order; a segment's bold, italic, underline or superscript/subscript "
+        "is direct formatting over the formatting the paragraph inherits",
+    ],
+    "move_paragraphs": [
+        "the paragraphs to move are one unbroken stretch in one place — the body, one table cell, a header, a footer "
+        "or a note — and the tables between them move with them; a stretch with a gap, or in two places, sets the file "
+        "aside; a whole article is its heading through the paragraph before the next heading",
+        "they go right before or right after the one destination paragraph 'to' names, in the same place; no such "
+        "paragraph, or several, or a place inside a table of contents sets the file aside; a stretch already there "
+        "is left as it is",
+        "tracked by default: deleted where they were and inserted where they go (Word shows a deletion and an "
+        "insertion, not 'Moved'); tables, fields, hyperlinks, content controls, comments, pictures, note references or "
+        "pending tracked changes among them need an untracked move, which moves everything exactly as it is",
+        "automatic list and heading numbers and footnote numbers follow the new order (Word renumbers; no number is "
+        "retyped); a section break in the stretch sets the file aside; text landing in another section takes its page "
+        "setup and headers (flagged)",
     ],
     "fix_page_numbering": ["body page numbering restarts at 1 after the cover"],
     "replace_table": [
@@ -348,6 +490,38 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "the old picture's alt text stays as it was (flagged); a linked, SVG, cropped or turned picture sets the file "
         "aside, and so does a file without a matching picture unless allow_missing",
     ],
+    # built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §5): pictures
+    "insert_image": [
+        "the picture is the file the user attached (PNG, JPEG, GIF or BMP; an SVG is refused): its exact path in "
+        "'image'",
+        "it goes into a new paragraph of its own before or after each anchor paragraph — say which paragraphs; the "
+        "anchor's text and formatting are untouched",
+        "a width or height alone keeps the proportions; neither: the picture's own size at its resolution (96 dpi "
+        "when it has none), made smaller to fit between the margins across and down (in a table cell: the cell's "
+        "width); a size given is kept even when larger (noted)",
+        "the new paragraph has the document's default paragraph style unless a style is named (single line spacing "
+        "where that style's is exact, which would crop the picture), and the style's alignment unless align is given; "
+        "the alt text is the user's words verbatim, or none",
+        "tracked unless the user asked for clean copies",
+    ],
+    "remove_images": [
+        "the pictures are found by their file (its bytes), md5, name/alt text, or every picture in scope — say which; "
+        "the document body by default",
+        "the paragraph that held a picture stays (with its text); watermarks are left to remove_watermark",
+        "tracked: the picture is shown deleted until accepted; untracked: its file leaves the document when nothing "
+        "else shows it",
+        "a VML picture, a picture in a shape, group, text box or field, or one inside someone's pending change sets "
+        "the file aside",
+    ],
+    "resize_images": [
+        "the pictures are found by their file, md5, name/alt text, or every picture in scope — say which; the "
+        "document body by default",
+        "a width or height alone keeps each picture's present proportions; both set the size exactly; scale is a "
+        "percentage of the present size",
+        "the position, wrapping and crop stay as they were; a turned picture, or one sized relative to the page, sets "
+        "the file aside",
+        "Word cannot track a picture's size: the change is never tracked",
+    ],
     "make_values_agree": [
         "the place the user picked is the truth; a place whose value has the same letters and digits (any case or "
         "spacing: '211319' and '21 13 19') already agrees and is left as it is — nothing is converted",
@@ -366,6 +540,16 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "(firm, project, phase, logo, page numbers) is copied as it is",
         "a template spec's own number or title written another way in its headers/footers, or shown by a field, is "
         "refused rather than copied into every spec",
+    ],
+    # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §2) ----
+    "remove_footnotes": [
+        "'which' footnotes, endnotes or both (default both); text_regex keeps the removal to the notes whose own text "
+        "matches; scope is where references are looked for (default the document body)",
+        "the reference mark and the note go together; separators stay and Word renumbers the notes that stay; tracked "
+        "(the default) shows both as deleted, tracked false removes them outright with what only they held (a "
+        "picture, a link, a comment anchored in them)",
+        "a custom reference mark (a symbol instead of a number), a reference in a text box or a note referenced twice "
+        "sets the file aside; a file with no such note is left as it is (allow_missing false sets it aside)",
     ],
     # ---- built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md) ----
     "remove_comments": [
@@ -388,12 +572,12 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "authors are matched by the name Word shows on each change (case and spacing ignored); dates by Word's own clock "
         "on each change, on_or_after inclusive and before exclusive; under a date filter a change without a date stays "
         "(flagged)",
-        "accept: inserted and moved text stays as plain text, deleted text and paragraphs go, new formatting stays; "
-        "reject: inserted text and paragraphs go, deleted text comes back, moved text returns, the old formatting comes "
-        "back",
+        "accept: inserted and moved text stays as plain text, deleted text, paragraphs and table rows go, new "
+        "formatting stays; reject: inserted text, paragraphs and table rows go, deleted text comes back, moved text "
+        "returns, the old formatting comes back; a table whose every row goes goes whole",
         "the body, headers, footers, footnotes, endnotes and comments are covered (scope narrows it); tracked changes "
         "inside style or list definitions stay as they are",
-        "a file with no matching change is left as it is (allow_missing, the default); a table row/cell change, a change "
+        "a file with no matching change is left as it is (allow_missing, the default); a table cell change, a change "
         "in an equation, an accept that would join two paragraphs or take a footnote/comment anchor away sets the file "
         "aside",
         "it runs as its own ordered step: it changes the parts it touches as a whole",
@@ -468,6 +652,35 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "Mark as Final sets the custom property _MarkAsFinal and the Status 'Final', as Word does; unmarking removes both "
         "(another Status stays)",
     ],
+    # built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §9)
+    "insert_field": [
+        "the field is inserted empty: Word fills in page numbers as it lays out the pages and updates every other field "
+        "when it opens the file (it is marked so); the engine never writes a number or a date itself",
+        "at_text: every occurrence of the user's exact placeholder in scope (default the body, headers and footers) is "
+        "removed and the field takes its place and its formatting; whole words only — a placeholder inside a longer "
+        "word stays ('X' is never taken out of 'EXTERIOR', 'DATE' never out of 'UPDATE'); a page or section number "
+        "placed in the body is flagged (it belongs in a header or footer); a file without it is set aside "
+        "(allow_missing leaves it as it is)",
+        "position: the field goes at the start or end of each targeted paragraph, formatted like its first or last "
+        "word",
+        "tracked by default (the placeholder deleted, the field inserted); a placeholder in what a field shows, over a "
+        "tab or a picture, in a text box, or in a link (tracked) sets the file aside",
+        "STYLEREF and DOCPROPERTY name a style or property the file has (the built-in properties always exist)",
+    ],
+    "reply_to_comments": [
+        "only on the user's request, with the user's exact words: one reply per thread chosen, by the named author; a "
+        "reply to a reply goes to its thread, as Word threads replies",
+        "the reply is a comment, not a tracked change, and carries no date; the comments already there, their resolved "
+        "state and the document's text are unchanged",
+        "a file whose comment threads Word could not keep consistent, or a comment with no single place in the text, "
+        "is set aside; a file with no such thread too (allow_missing leaves it as it is)",
+    ],
+    "resolve_comments": [
+        "only on the user's request: 'resolve' marks the threads chosen resolved as Word's Resolve does, 'reopen' marks "
+        "them open; a thread's state is its first comment's, and its replies are left as they are",
+        "threads already as asked are left alone; the comments' words and the document's text are unchanged",
+        "a file with no such thread is left as it is (allow_missing false sets it aside)",
+    ],
 }
 
 # How a template slot gets its value (apply_header_footer_template.slot_fills). Transform: ops/slots.py; verifier:
@@ -530,16 +743,20 @@ REFERENCE_FILLS = {
 SELECTOR_GRAMMAR = {
     "scope": "part kinds: document | headers | footers | footnotes | endnotes | comments (resolved via rels)",
     "paragraphs": "'all' or AND of: style_in [styleIds] (no pStyle = default paragraph style), text_regex (Python "
-                  "re.search on the block text), in_table (bool), is_empty (bool), index_range [start, end), "
+                  "re.search on the block text), in_table (bool), is_empty (bool: no text and no picture, object, text "
+                  "box or field), index_range [start, end), "
                   "has_bold (bool), is_all_caps (bool), after_heading_regex (str), "
                   "case_insensitive (bool, default false), flexible_whitespace (bool, default false; literal whitespace "
                   "outside regex character classes matches one or more whitespace characters), "
-                  "between_paragraphs {start_regex, end_regex?, include_bounds?}",
+                  "between_paragraphs {start_regex, end_regex?, include_bounds?: true (both) | false (neither, the default) | "
+                  "'start' (the start paragraph included, the end one not: an article from its heading up to the next) "
+                  "| 'end'}",
     "runs": "'all' or {has_direct_font: bool, font_in: [names], not_in_revisions: bool, color_in: [colours]} — "
             "color_in: the run's effective colour (direct, else its character/paragraph style's) is one of the listed "
             "6-hex values, theme colour names (accent1, text2 …) or 'auto'",
-    "sections": "'all', [section indices] (0-based), or (set_page_setup) by content: {containing: <paragraph "
-                "predicate — a paragraph of the section matches>, with_tables: bool (the section holds a table), "
+    "sections": "'all', [section indices] (0-based), or (set_page_setup, remove_section_break) by content: "
+                "{containing: <paragraph predicate — a paragraph of the section matches>, with_tables: bool (the "
+                "section holds a table), "
                 "index_range: [first, last] (inclusive)} — every given key must hold",
     "styles": "'all' | 'all-paragraph-and-character' | {ids: [...]} | {types: [...]}",
     "symbol_runs": "never changed by font ops: a run whose explicit font (direct, character style or paragraph "

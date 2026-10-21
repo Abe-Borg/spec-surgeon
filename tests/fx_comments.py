@@ -5,7 +5,8 @@ commentsExtended / commentsIds / commentsExtensible side parts): Jeremy's commen
 thread); Jack's comment 2 with Jeremy's reply 3 (open); Jeremy's comment 4 spanning paragraphs C and D; Abe's comment 5
 whose text holds a pending tracked insertion; Jeremy's comment 6 whose range starts between two paragraphs (a body-level
 mark). ``side=False`` leaves the side parts out (Word 2010 or older); ``textbox=True`` puts a mark of comment 2 into a
-text box; ``duplicate=True`` gives comment 3 comment 2's id.
+text box; ``duplicate=True`` gives comment 3 comment 2's id. ``build_word_threads()`` moves the replies' marks where
+Word writes them; ``build_classic_comments()`` is Word 2007's (no paragraph ids, no side parts) — built-in batch 6.
 
 ``build_highlighted()`` — yellow, green and cyan runs, a darkYellow run, an explicit ``none``, a highlighted paragraph
 mark, a highlighted run in a header, inside a pending deletion and in a text box (both copies), bold highlighted text, a
@@ -134,6 +135,36 @@ def build_commented(side: bool = True, textbox: bool = False, duplicate: bool = 
                                     "word/commentsIds.xml": CT.format("commentsIds"),
                                     "word/commentsExtensible.xml": CT.format("commentsExtensible")})
     return data
+
+
+def build_word_threads(side: bool = True) -> bytes:
+    """``build_commented()`` with each reply's marks where Word writes them (built-in batch 6, §9): the reply's range
+    start right after its parent's, and its range end and reference after the parent's reference — start0 start1 text
+    end0 ref0 end1 ref1 (python-docx nests the reply inside its parent's marks instead)."""
+    def word_order(root):
+        for p in root.iter(W + "p"):
+            kids = list(p)
+            for parent, reply in (("0", "1"), ("2", "3")):
+                end = next((e for e in kids if e.tag == W + "commentRangeEnd" and e.get(W + "id") == reply), None)
+                if end is None:
+                    continue
+                ref = end.getnext()                                   # the reply's reference run
+                parent_ref = next(e for e in kids if e.tag == W + "r" and e.find(W + "commentReference") is not None
+                                  and e.find(W + "commentReference").get(W + "id") == parent)
+                p.remove(end)
+                p.remove(ref)
+                parent_ref.addnext(ref)
+                parent_ref.addnext(end)
+    return patch_docx(build_commented(side=side), {DOC: word_order})
+
+
+def build_classic_comments() -> bytes:
+    """Comments as Word 2007 writes them (built-in batch 6, §9): no paragraph ids, no side parts — the replies' threads
+    and the resolved state must be created with them."""
+    def no_ids(root):
+        for p in root.iter(W + "p"):
+            p.attrib.pop("{%s}paraId" % W14, None)
+    return patch_docx(build_commented(side=False), {COMMENTS: no_ids})
 
 
 def build_plain(text: str = "Nothing to remove here.") -> bytes:

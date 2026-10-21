@@ -20,12 +20,12 @@ from make_fixtures import DIRTY_KINDS, _drop_members, build, build_dirty, patch_
 from spec_surgeon import llm
 from spec_surgeon import triage as triage_module
 from spec_surgeon.batch import run_batch
-from spec_surgeon.package import DocxPackage, UnsupportedFormat
+from spec_surgeon.package import DocxPackage, UnsupportedFormat, W
 from spec_surgeon.planner import plan_file
 from spec_surgeon.report import explain_failure
-from spec_surgeon.triage import (NOTE_COMMENTS, NOTE_COMPAT_MODE, NOTE_FRAGMENTED, NOTE_NORMAL_ONLY, NOTE_PROTECTED,
-                                 NOTE_SPACING, NOTE_TEXTBOX_HF, NOTE_TYPED_NUMBERS, STATES, Triage, revisions_note,
-                                 triage_file, triage_files)
+from spec_surgeon.triage import (NOTE_COMMENTS, NOTE_COMPAT_MODE, NOTE_EMPTY_BODY, NOTE_FRAGMENTED, NOTE_NORMAL_ONLY,
+                                 NOTE_PROTECTED, NOTE_SPACING, NOTE_TEXTBOX_HF, NOTE_TYPED_NUMBERS, STATES, Triage,
+                                 revisions_note, triage_file, triage_files)
 
 CLEAN_BYTES = build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")
 
@@ -40,7 +40,7 @@ EXPECTED = {
     "many_revisions": ("note", {"320 tracked changes are pending."}),
     "protected": ("note", {NOTE_PROTECTED}),
     "libreoffice_like": ("note", {NOTE_TYPED_NUMBERS}),
-    "empty_body": ("refused", set()),
+    "empty_body": ("note", {NOTE_EMPTY_BODY}),
     "styled": ("ok", set()),
 }
 KINDS = tuple(EXPECTED)
@@ -106,8 +106,9 @@ def test_each_defect_is_named_only_where_it_is(results):
     revised = {kind for kind, found in results.items() if any(n.endswith("pending.") for n in found.notes)}
     assert revised == {"many_revisions", "clean"}
     noted = {kind for kind, (state, _) in EXPECTED.items() if state == "note"}
-    assert where(NOTE_NORMAL_ONLY) == noted - {"libreoffice_like"}             # LibreOffice styles its paragraphs
-    assert where(NOTE_TYPED_NUMBERS) == noted                                   # every noted kind types its numbers
+    assert where(NOTE_NORMAL_ONLY) == noted - {"libreoffice_like", "empty_body"}   # LibreOffice styles its paragraphs
+    assert where(NOTE_TYPED_NUMBERS) == noted - {"empty_body"}                  # every noted kind with text types its numbers
+    assert where(NOTE_EMPTY_BODY) == {"empty_body"}
 
 
 @pytest.mark.parametrize("kind", KINDS)
@@ -210,11 +211,25 @@ def test_words_lock_file_is_refused_whether_or_not_it_exists(tmp_path):
         assert "lock file" in found.reason and "attach the .docx itself" in found.reason
 
 
-def test_an_empty_body_is_refused_with_its_facts(files):
-    found = _refused(files["empty_body"], opened=True)
-    assert found.reason ==f"{files['empty_body'].name} has no text in its body, so there is nothing to edit; " \
-                           f"check that this is the right file."
+def test_an_empty_body_is_taken_with_a_note_and_its_facts(files):
+    """A document with nothing in its body is still a document the user may build on (paragraphs, tables, pictures)
+    or whose headers, footers and page setup they may change: noted, never refused (2026-10-21, full control)."""
+    found = triage_file(files["empty_body"])
+    assert found.state == "note" and found.notes == [NOTE_EMPTY_BODY] and not found.refused and found.reason == ""
     assert found.pattern_id and found.facts["body_has_text"] is False and found.facts["headers"]
+
+
+def test_a_body_without_a_paragraph_is_refused(files, tmp_path):
+    """A body of nothing but its sectPr (Word never writes one) has no paragraph an insertion could anchor on."""
+    def drop_paragraphs(root):
+        body = root.find(f"{W}body")
+        for p in body.findall(f"{W}p"):
+            body.remove(p)
+    path = tmp_path / "blockless.docx"
+    path.write_bytes(patch_docx(files["empty_body"].read_bytes(), {"word/document.xml": drop_paragraphs}))
+    found = _refused(path, opened=True)
+    assert found.reason == f"{path.name} has no paragraph in its body to add to; open it in Word and save it again."
+    assert found.facts["body_has_text"] is False
 
 
 # ---- the batch call, the record, and what the module never touches ------------------------------------------------
@@ -224,7 +239,7 @@ def test_triage_files_keeps_the_order_and_triages_each_on_its_own(files, tmp_pat
     paths = [files["styled"], missing, files["protected"], files["empty_body"]]
     found = triage_files(paths)
     assert [t.path for t in found] == paths
-    assert [t.state for t in found] == ["ok", "refused", "note", "refused"]
+    assert [t.state for t in found] == ["ok", "refused", "note", "note"]
     assert found == [triage_file(p) for p in paths]                           # deterministic, path by path
 
 
@@ -240,7 +255,7 @@ def test_no_model_call_and_no_verifier_import(files, monkeypatch):
     def boom(*a, **k):
         raise AssertionError("triage must never call a model")
     monkeypatch.setattr(llm, "call", boom)
-    assert [t.state for t in triage_files(files.values())].count("refused") == 1
+    assert [t.state for t in triage_files(files.values())].count("refused") == 0
     source = Path(triage_module.__file__).read_text(encoding="utf-8")
     assert len(source.splitlines()) < 200
     forbidden = ("verify", "llm", "compiler", "conversation", "codegen", "advisor", "preview", "gui", "ops",

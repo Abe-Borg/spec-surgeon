@@ -544,6 +544,7 @@ class UnlinkFields(Op):
         per_type: Dict[str, int] = {}
         for part in parts:
             frag.touches.append((part, "scope", "verify"))          # V10 re-derives the fields over every part in scope
+            frag.touches.append((part, "fields", "verify"))         # which fields there are: one inserted beside conflicts
             root = pkg.xml(part)
             pars = paragraphs(root)
             index = {id(p): i for i, p in enumerate(pars)}

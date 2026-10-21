@@ -1,36 +1,101 @@
 import type { Sample } from "../types";
 import { imageSrc } from "../lib/api";
+import type { Mark } from "../lib/review";
 import { pageCount } from "../lib/workbench";
 import { PaperCard } from "./PlanCards";
 
 interface Props {
   sample: Sample;
+  /** The user's mark on this preview: looks good, or needs more work (set aside). */
+  mark?: Mark;
+  /** The marks can be given: the plan awaits approval and nothing runs. */
+  canReview: boolean;
+  onMark: (source: string, mark: Mark) => void;
   onZoom: (src: string, title: string) => void;
+}
+
+function Check() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="m5 12 5 5L20 7" />
+    </svg>
+  );
+}
+
+function Cross() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden>
+      <path d="M6 6l12 12M18 6 6 18" />
+    </svg>
+  );
+}
+
+/** The two marks: a green checkmark (looks good) and a red X (needs more work; set aside). */
+function ReviewMarks({ name, mark, onMark }: { name: string; mark?: Mark; onMark: (mark: Mark) => void }) {
+  const base =
+    "flex h-7 w-7 items-center justify-center rounded-full border transition-colors disabled:pointer-events-none";
+  return (
+    <div role="group" aria-label={`Review ${name}`} className="flex items-center gap-1">
+      <button
+        type="button"
+        aria-pressed={mark === "good"}
+        aria-label={`Looks good · ${name}`}
+        title="Looks good: its copy is created with the others"
+        onClick={() => onMark("good")}
+        className={`${base} ${mark === "good" ? "border-ok bg-ok text-white" : "border-ok/50 bg-white/60 text-ok hover:bg-ok/15"}`}
+      >
+        <Check />
+      </button>
+      <button
+        type="button"
+        aria-pressed={mark === "hold"}
+        aria-label={`Needs more work · ${name}`}
+        title="Needs more work: set it aside; it goes on your to-do list after the others are created"
+        onClick={() => onMark("hold")}
+        className={`${base} ${mark === "hold" ? "border-err bg-err text-white" : "border-err/50 bg-white/60 text-err hover:bg-err/15"}`}
+      >
+        <Cross />
+      </button>
+    </div>
+  );
 }
 
 /**
  * "Preview · name": the page count before and after with the growth flag,
- * and the rendered before/after pages; a click opens the zoom.
+ * the rendered before/after pages (a click opens the zoom), and the two marks
+ * — the green checkmark says the pages look right, the red X sets the
+ * document aside for more work after the others are created.
  */
-export default function PreviewCard({ sample, onZoom }: Props) {
+export default function PreviewCard({ sample, mark, canReview, onMark, onZoom }: Props) {
   const pages = pageCount(sample);
-  const title = `Preview · ${sample.name || sample.source.split(/[\\/]/).pop() || ""}`;
+  const name = sample.name || sample.source.split(/[\\/]/).pop() || "";
+  const title = `Preview · ${name}`;
   return (
     <PaperCard
       title={title}
+      subtitle={
+        mark === "hold"
+          ? "Set aside: it goes on your to-do list; the other copies are created first."
+          : mark === "good"
+            ? "Looks good."
+            : undefined
+      }
       aside={
-        <span
-          className={`rounded-full border px-2 py-px text-[10px] font-medium tracking-wide uppercase ${
-            sample.passed ? "border-ok/50 text-ok" : "border-err/50 text-err"
-          }`}
-          title={
-            sample.passed
-              ? "This sample was applied and verified in memory; the source was not touched."
-              : "This sample did not pass every check; the plan needs another look."
-          }
-        >
-          {sample.passed ? "Checked" : "Did not pass"}
-        </span>
+        <div className="flex items-center gap-2">
+          <span
+            className={`rounded-full border px-2 py-px text-[10px] font-medium tracking-wide uppercase ${
+              sample.passed ? "border-ok/50 text-ok" : "border-err/50 text-err"
+            }`}
+            title={
+              sample.passed
+                ? "This sample was applied and verified in memory; the source was not touched."
+                : "This sample did not pass every check; the plan needs another look."
+            }
+          >
+            {sample.passed ? "Checked" : "Did not pass"}
+          </span>
+          {canReview && <ReviewMarks name={name} mark={mark} onMark={(m) => onMark(sample.source, m)} />}
+        </div>
       }
     >
       {pages.text && (
@@ -49,7 +114,7 @@ export default function PreviewCard({ sample, onZoom }: Props) {
         </p>
       )}
       {sample.images.length > 0 ? (
-        <div className="mt-2 flex flex-col gap-2">
+        <div className={`mt-2 flex flex-col gap-2 ${mark === "hold" ? "opacity-70" : ""}`}>
           {sample.images.map((url, index) => {
             const src = imageSrc(url);
             return (

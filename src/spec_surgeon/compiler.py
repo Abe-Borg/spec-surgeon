@@ -19,9 +19,9 @@ window shows that message, not the spec.
 A submitted spec is checked before it is accepted:
 * ``validate_spec`` (unknown keys/ops/params, mode, assertions) — open ``questions`` or ``unsupported`` are
   outcomes, not errors;
-* **traceable words**: every character an op would place (``replace_text.replace``, ``insert_paragraph.text``, a
-  ``literal`` template fill) must appear verbatim in the request or the user's answers — otherwise
-  the model must ask;
+* **traceable words**: every character an op would place (``replace_text.replace``, ``insert_paragraph``'s text,
+  segments and paragraphs, a ``literal`` template fill) must appear verbatim in the request or the user's answers —
+  otherwise the model must ask (the words between a tab or line break the text places trace each on their own);
 * a **dry plan** on one representative file per structure pattern: fatal spec-level failures (``spec``,
   ``spec-mode``, ``geometry``, ``conflict``, ``bad-params``, ``unknown-slot``, ``slot-overlap``, ``template-slot``)
   are always compile errors; every other refusal (``unfilled-slot``, ``expect``, ``not-found``, ``spans-runs``, ``tracked-format``,
@@ -243,7 +243,15 @@ control and page break before are set_properties: one op per selection carrying 
 itself); "all caps" is a display property — no letters are retyped. Format the selected paragraphs directly by default \
 (tracked when targeted, so the reviewer sees "Formatted: Bold"); change a style (select.styles) only when the user \
 speaks of the style or wants every paragraph of that style to follow — the profiles' styles_in_use show bold, italic, \
-caps and colour per style.
+caps and colour per style. set_properties.run also takes vertAlign (superscript | subscript | baseline), vanish (hidden \
+text: the characters stay in the file — hiding is not deleting; a paragraph mark is hidden only with its whole \
+paragraph), highlight (a Word highlighter name, or none — on text only: Word shows no highlight set in a style), spacing \
+(character spacing in points; negative condenses, 0 is normal) and dstrike (double strikethrough, which replaces \
+single: never ask both on).
+- insert_paragraph takes exactly one of text, runs [{text, b?, i?, u?, vertAlign?}] (bold, italic, underlined or \
+superscript segments) or paragraphs [{text | runs, style?}] (several paragraphs in order at each anchor). A tab is \
+written \\t and a line break (Shift+Enter) \\n, in insert_paragraph and in replace_text.replace alike; every stretch of \
+words between them is still the user's verbatim wording.
 - "Each PART on a new page": paragraph pageBreakBefore on every PART heading AFTER the first — the PART pattern (or \
 style) plus after_heading_regex of the same pattern, e.g. {"text_regex": "^PART\\\\s+\\\\d", "after_heading_regex": \
 "^PART\\\\s+\\\\d"} — so PART 1 stays under the section title. "No stranded article titles": keepNext on the article \
@@ -297,6 +305,22 @@ repeat_header_rows n ("repeat the header row" is 1), cant_split true ("rows don'
 their own borders or margins keep them unless clear_cell_overrides. A table style for every table is \
 apply_table_style {style} (a style the file lacks comes from the template, like apply_style; direct_formatting "clear" \
 so the style shows). The profiles' tables show each pattern's tables, their styles and header rows. Never tracked.
+- Table structure: delete_tables {tables}; delete_table_rows {tables, rows}; insert_table_rows {rows: [[one text per \
+cell], …], position after / before the ONE row select.rows picks, or at_end}; insert_table {rows typed, or table: \
+{file, sheet | key} for an attached table file — never its cells retyped as rows —, select.paragraphs anchors in the \
+body, position, header_rows, style, column_widths in inches}. select.rows is "all" or {index_range [a, b] (0-based, \
+both included), text_regex (the row's cells joined by a tab), header true/false}; choose rows by their text (the tag in \
+the first cell) rather than by number. Never anchor a new table on a paragraph with a table right before it (before) \
+or right after it (after), nor on the document's last paragraph. Tracked by default (Word's tracked rows); typed cells \
+are the user's exact words. A table holding comments: remove_comments first in the same request. \
+resolve_tracked_changes resolves tracked row insertions and deletions.
+- Table grid and cells: select.columns is "all" or {index: [grid columns, 0-based, a LIST — [1, 3] is columns 1 and 3], \
+header_regex: the first row's cell text}. delete_table_columns {tables, columns} (every column: use delete_tables); \
+set_table_cells {tables, rows?, columns?} sets shading (6 hex digits, or none), vertical_alignment (top | center | \
+bottom), no_wrap and width in inches (width only with every row) — "shade the header row" is rows {header: true}, \
+shading "D9D9D9"; merge_table_cells {tables, rows, columns} where rows and columns form one unbroken block (rows \
+{index_range: [0, 0]}, columns {index: [0, 1, 2]}), the cells' text kept in reading order. All three are never \
+tracked: a spec with delete_table_columns or merge_table_cells is mode untracked, set_table_cells formatting.
 - Numbering. The profiles' lists show each list's levels (format, styles, the first number shown) and which \
 paragraphs the engine does not evaluate and why; numbered_styles show what a numbered style's first paragraph would \
 show ("PART 1 -", "1.1", "A."); lists.typed_numbers how many paragraphs start with a typed number. "Convert to our \
@@ -320,12 +344,33 @@ tracked.
 margins.header / margins.footer), size, orientation, different_first_page true/false (a first page with its own \
 header/footer — the cover). Sections by index, or by what they contain: {"containing": {"text_regex": \
 "^SCHEDULE"}}, {"with_tables": true}, {"index_range": [a, b]} — "landscape pages for the schedules" is orientation \
-landscape on the sections containing them (only sections that exist: the engine never adds a section break — say so \
-when the schedule shares a section with other text); margins are not rotated unless given.
+landscape on the sections containing them; margins are not rotated unless given. Columns ({count, space, separator}), \
+line_numbering ({count_by, start, restart, distance} or "none"), vertical_alignment and section_start (how the section \
+begins) are set_page_setup too.
+- Section breaks: "start X on a new page / a section break before X" is insert_section_break with a targeted \
+paragraph selector (type next_page unless the user wants continuous, even_page or odd_page); a schedule that shares a \
+section with other text gets its own section this way, then a later set_page_setup chooses that section BY CONTENT \
+({"containing": {"text_regex": "^SCHEDULE"}}), never by index (the index does not exist before the break; the app runs \
+the two as ordered steps). "Remove the break after X / join X to the next section" is remove_section_break choosing \
+the section that ENDS with the break (never the last section); "one section for the whole document" is sections \
+"all". Section breaks are never tracked.
+- Moving content is move_paragraphs: select.paragraphs picks ONE unbroken stretch (tables inside it move too), \
+params.to names exactly one paragraph in the same place (body, cell, header), position before/after. A whole article \
+(its heading up to the next heading) is between_paragraphs {start_regex, end_regex: the next heading, \
+include_bounds: "start"}; bounds read the text without tabs (^1\\.3, not ^1\\.3\\t). To land after an article, name the next heading with position before. Tracked (a deletion where it was \
+and an insertion where it goes) by default; a stretch with tables, fields, links, comments or pictures moves only \
+untracked (tracked false) — say so.
 - Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
-in fill_variables.table.file, replace_table.pairs_table.file or swap_image.image / match.image — what a table holds is \
-the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
+in fill_variables.table.file, replace_table.pairs_table.file, insert_table.table.file, insert_image.image or \
+swap_image.image / match.image — what a table holds is the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
 END OF SECTION wording) must be the user's exact words, like any replacement.
+- Pictures: insert_image puts an attached picture (PNG, JPEG, GIF, BMP — its exact INPUT FILES path) in its own new \
+paragraph before/after targeted anchor paragraphs; width and/or height in inches only when the user names a size \
+(else its own size, made smaller to fit between the margins or in its table cell); description is the user's alt text verbatim. remove_images and \
+resize_images choose pictures with swap_image's match ({image: an attached picture}, {md5}, {name_regex} on the name or \
+alt text, or "all") in scope document (default), headers, footers; remove_images keeps the paragraph (tracked by \
+default); resize_images takes width/height in inches or scale in percent, never tracked. A header logo: swap_image to \
+replace it, remove_images {scope: ["headers"]} to delete it. Watermarks stay remove_watermark's.
 - Character hygiene: normalize_whitespace collapses ordinary spaces and trims trailing spaces; normalize_punctuation \
 needs explicit quotes (straight/curly), dash (en/em) and/or section_separator (space/hyphen/en/em); \
 protect_nonbreaking_spaces keeps numbers with units (default psi) and spaced section numbers together. No words \
@@ -336,6 +381,13 @@ pick authorizes that occurrence; copy only picked records into approvals. Capita
 defined-term capitalization request; never claim that the original request approves individual occurrences. \
 - Text-changing ops are tracked unless the user asks for clean copies (tracked false). name_output, and \
 make_values_agree with the file name among its places, rename the outputs: they write copies, never in place.
+- Deleting: delete_paragraphs takes select.paragraphs "all" or any predicate; a table every paragraph of which is \
+chosen goes whole, and a cell, the document or a note keeps one emptied paragraph. A request is never refused for \
+being large: deleting a whole PART, an article (between_paragraphs with include_bounds "start") or the whole body is \
+an edit like any other, shown in the preview. Wiping a document is delete_paragraphs "all", remove_header_footer, \
+remove_comments and remove_footnotes in one spec (the app orders them); there is no wipe op. On a file with pending \
+tracked changes a tracked deletion refuses: offer tracked false or resolve_tracked_changes first. remove_footnotes \
+{which: footnotes | endnotes | both, text_regex on the note's own text} removes notes and their marks.
 - Clean-up ops (remove_comments, remove_highlight, remove_hidden_text, remove_notes, remove_empty_paragraphs, \
 remove_hyperlinks, unlink_fields, remove_watermark, resolve_tracked_changes) place no words; a file with nothing to \
 remove is a no-op (allow_missing defaults true). The profiles' "markup" shows what a pattern carries: comments and \
@@ -349,6 +401,16 @@ words (ask when they did not give them).
 explicit author, to explicitly selected document paragraphs. Never invent a reason, citation, reviewer or comment. \
 List it after the requested edits, untracked; existing comments and pending revisions stay intact. \
 The reviewed outcome type is review_comments. Ask for missing wording and target choices.
+- Fields: "put the page number / date / file name where it says X" is insert_field {field, at_text: the placeholder \
+exactly as typed}; "add page numbers to the footer" is insert_field with position "end" (or "start"), a targeted \
+select.paragraphs and scope ["footers"]. Never write the number or date yourself: the field goes in empty and Word \
+fills it in. "Page X of Y" in the footer is two insert_field ops, PAGE then NUMPAGES, each with scope ["footers"] \
+(the app runs them as two steps); at_text matches whole words only, so name the placeholder as the footer types it \
+and always give the scope (a page number belongs in a header or footer, never the body). format is \
+arabic | roman | ROMAN | alphabetic | ALPHABETIC for the numbering fields, a Word date picture such as "MMMM d, yyyy" \
+for DATE/SAVEDATE; STYLEREF and DOCPROPERTY name a style or property the file has. Tracked by default.
+- reply_to_comments {text: the user's exact words, author: the name they give, which: all | authors | text_regex} and \
+resolve_comments {action: resolve | reopen, which} only when the user asks; neither is tracked.
 - remove_notes: build its rules from the profiles — the note style ids in styles_in_use, the colours in \
 styles_in_use / markup.run_colors, the words the notes begin with ("Retain", "Delete", "Specifier Note") — and state \
 them in assumptions. One rule per way a note is marked ({"style_in": ["CMT"]}, {"text_regex": "^(Retain|Delete)\\\\b", \
@@ -559,12 +621,25 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
         op = o.get("op")
         if op == "replace_text" and isinstance(params.get("replace"), str) and params["replace"]:
             out.append(params["replace"])
-        if op == "insert_paragraph" and isinstance(params.get("text"), str) and params["text"]:
-            out.append(params["text"])
+        if op == "insert_paragraph":
+            # built-in batch 6: one text, a paragraph's segments, or several paragraphs of either — every paragraph's
+            # text the user's, a paragraph of segments as it reads (its segments joined: never traced one by one)
+            paras = params.get("paragraphs") if isinstance(params.get("paragraphs"), list) else [params]
+            for para in paras:
+                if not isinstance(para, dict):
+                    continue
+                if isinstance(para.get("text"), str) and para["text"]:
+                    out.append(para["text"])
+                segments = [seg["text"] for seg in (para.get("runs") if isinstance(para.get("runs"), list) else [])
+                            if isinstance(seg, dict) and isinstance(seg.get("text"), str)]
+                if "".join(segments):
+                    out.append("".join(segments))
         if op == "add_review_comments":
             for key in ("text", "source"):
                 if isinstance(params.get(key), str) and params[key]:
                     out.append(params[key])
+        if op == "reply_to_comments" and isinstance(params.get("text"), str) and params["text"]:
+            out.append(params["text"])
         if op == "apply_header_footer_template":
             for rule in (params.get("slot_fills") or {}).values():
                 _extract_literal_rules(rule, out)
@@ -574,6 +649,9 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
                     out.append(pair["replace"])
         if op == "set_issue_stamp" and isinstance(params.get("text"), str) and params["text"]:
             out.append(params["text"])
+        # built-in batch 6: the cells of typed table rows (a table file's cells are the user's file)
+        if op in ("insert_table_rows", "insert_table") and isinstance(params.get("rows"), list):
+            out += [t for row in params["rows"] if isinstance(row, list) for t in row if isinstance(t, str) and t]
         if op == "fill_variables" and isinstance(params.get("values"), dict):
             out += [v for v in params["values"].values() if isinstance(v, str) and v]
         if op == "ensure_end_of_section":
@@ -586,12 +664,18 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
             for key in ("set", "custom"):
                 if isinstance(params.get(key), dict):
                     out += [v for v in params[key].values() if isinstance(v, str) and v]
+        # built-in batch 6: an inserted picture's alt text is the user's words
+        if op == "insert_image" and isinstance(params.get("description"), str) and params["description"]:
+            out.append(params["description"])
     return out
 
 
 def untraceable(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
     """The words the spec would place that appear verbatim (whitespace-normalised) in none of the sources. Each source
-    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next."""
+    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next, nor
+    from pieces of one source. A tab or a line break in a phrase (built-in batch 6) is whitespace like any other: the
+    phrase traces only as a whole, in order — wording the user described rather than typed ("then a tab") is offered
+    back to them as a choice's exact wording, and their pick approves it."""
     hay = [_norm(s) for s in sources if s]
     return [w for w in placed_words(spec) if not any(_norm(w) in h for h in hay)]
 
@@ -1245,11 +1329,14 @@ def check_submission(spec: Any, batch: _Batch, sources: Sequence[str],
 def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                    prior_failures: Optional[Sequence[Dict[str, Any]]] = None,
                    history: Optional[Sequence[str]] = None,
-                   fresh: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+                   fresh: Optional[Sequence[str]] = None, context: Optional[str] = None) -> List[Dict[str, Any]]:
     """The first user message: the request, the user's answers, the changes already made to these copies (a request
     that builds on a result), any prior pass's set-aside diagnostics, the attached template, the input files a spec
-    names, and the batch's profiles per structure pattern."""
+    names, and the batch's profiles per structure pattern. ``context`` is the app's own account of how these
+    documents come to be planned (set aside after a preview, say); it is never the user's words."""
     parts = [f"REQUEST:\n{request}"]
+    if context and context.strip():
+        parts.append(context.strip())
     if answers:
         parts.append("THE USER'S ANSWERS TO EARLIER QUESTIONS:\n" + "\n".join(f"- {a}" for a in answers))
     if history:

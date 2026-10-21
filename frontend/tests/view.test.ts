@@ -60,6 +60,40 @@ test("the primary action starts a job without a user bubble", () => {
   assert.ok(state.live);
 });
 
+const PLAN = { groups: [{ id: "", label: "", count: 1, files: [], changes: [{ title: "Bold", summary: "Bold the title.", details: [] }], assumptions: [] }], targets: [], set_aside: [], stages: 1 };
+const SAMPLE = { source: "a", name: "a.docx", images: ["/api/image?path=a"], pages_before: 1, pages_after: 1, passed: true };
+
+test("a message sent over a preview takes the old plan and pages off the workbench at once", () => {
+  const before = loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Advisory"], blocking: true });
+  const state = reduce(before, { type: "job_started", userText: "Also make it italic" });
+  assert.equal(state.view.plan, null);
+  assert.deepEqual(state.view.samples, []);
+  assert.deepEqual(state.view.warnings, []);
+  assert.equal(state.view.blocking, false);
+});
+
+test("creating copies keeps the approved plan and pages on screen until the job's view", () => {
+  const before = loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Advisory"] });
+  const state = reduce(before, { type: "job_started", userText: null });
+  assert.deepEqual(state.view.plan, PLAN);
+  assert.deepEqual(state.view.samples, [SAMPLE]);
+  assert.deepEqual(state.view.warnings, ["Advisory"]);
+});
+
+test("a new plan clears the pages of the plan before it; its own pages follow", () => {
+  const next = { ...PLAN, stages: 2 };
+  const fresh = { ...SAMPLE, source: "b", name: "b.docx" };
+  let state = reduce(loaded({ stage: "preview", plan: PLAN, samples: [SAMPLE], warnings: ["Old finding"], blocking: true }),
+    { type: "job_started", userText: null });
+  state = run(state, { type: "plan", plan: next });
+  assert.deepEqual(state.view.plan, next);
+  assert.deepEqual(state.view.samples, []);
+  assert.deepEqual(state.view.warnings, []);
+  assert.equal(state.view.blocking, false);
+  state = run(state, { type: "samples", samples: [fresh], warnings: [], blocking: false });
+  assert.deepEqual(state.view.samples, [fresh]);
+});
+
 test("local user bubbles never reuse an id", () => {
   let state = reduce(loaded(), { type: "job_started", userText: "one" });
   state = reduce(state, { type: "job_ended" });
@@ -263,4 +297,15 @@ test("a fresh view keeps the message objects already shown, so their bubbles are
   assert.equal(done.view.messages[1].text, edited.text);
   assert.deepEqual(done.view.messages[2], third);
   assert.equal(done.live, null);
+});
+
+test("a view without the to-do fields (an older server) normalizes to an empty list and no pass", () => {
+  const v = normalizeView({ version: "1.6.0", action: { label: "x", token: "t", kind: "approve" } });
+  assert.deepEqual(v.todo, []);
+  assert.deepEqual(v.focus, []);
+  assert.equal(v.action.can_hold, false);
+  const full = normalizeView({ todo: [{ path: "/a", name: "a.docx" }], focus: ["/a", 3], action: { label: "x", token: "t", kind: "approve", can_hold: true } });
+  assert.deepEqual(full.todo, [{ path: "/a", name: "a.docx" }]);
+  assert.deepEqual(full.focus, ["/a"]);
+  assert.equal(full.action.can_hold, true);
 });
