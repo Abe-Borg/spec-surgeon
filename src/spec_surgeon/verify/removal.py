@@ -22,7 +22,9 @@ residual's.
   proofing marks and runs of ``w:rPr``, ``w:lastRenderedPageBreak`` and ``w:t`` of spaces / no-break spaces.
 * **Keeps** (per container, over its blocks ``w:p``/``w:tbl``/``w:sdt``/``w:customXml``/``w:altChunk``): the first
   paragraph between two tables the deletions would join; the last block when tracked, or — untracked — when the rest
-  would leave the container empty or ending in a non-paragraph.
+  would leave the container empty or ending in a non-paragraph. Blank paragraphs, in the body: when every block after
+  the last section-break paragraph would go and none of them is kept, the last of them too (the last section keeps a
+  paragraph: ``verify/deletion._v_last_section``).
 * **Fields**: a run to remove inside a complex field's span goes only with the whole outermost field (local to the
   paragraph, every content run of its span chosen and live, no simple field in it); inside a simple field only with the
   whole simple field (untracked; tracked refused).
@@ -36,6 +38,7 @@ from .reader import W
 from .props import Ctx, Styles, _pstyle
 from .edits import (V_CONTAINERS, V_HIDING, V_REVISION_TAGS, check_deleted_paragraph, part_revision_ids, v_deletable,
                     v_items, v_paragraph_text)
+from .deletion import _v_last_section
 from .fields import v_fields
 from .markup import (check_paragraph, drop, tracked_delete, v_color, v_color_in, v_color_names, v_hidden,
                      v_mark_hidden)
@@ -488,6 +491,8 @@ def _v_blank_decisions(sv, styles: Styles, mode: str, tracked: bool) -> List[int
         else:
             chosen = [b for i, (b, e) in enumerate(zip(blocks, blank)) if e and i > 0 and blank[i - 1]]
         keep = _v_keep(blocks, chosen, tracked)
+        if c.tag == W + "body":
+            _v_last_section(blocks, set(chosen), keep)
         out += [at[id(b)] for b in chosen if all(b is not k for k in keep)]
     return sorted(out)
 

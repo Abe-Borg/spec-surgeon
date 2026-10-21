@@ -1,6 +1,7 @@
 """remove_empty_paragraphs (docs/BUILTIN_OPS_BATCH2_DESIGN.md §8): collapse and all, tracked and untracked (the whole
 suite must pass), what is not blank, the container rules (a cell, the document and a header keep a last paragraph; two
-tables are never joined), nothing-to-do files, and planted defects the verifier must catch."""
+tables are never joined; the last section keeps one), nothing-to-do files, and planted defects the verifier must
+catch."""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -8,7 +9,7 @@ from typing import Any, Dict, List
 import pytest
 from docx import Document
 
-from fx_removal import W, build_blank, save
+from fx_removal import W, build_blank, build_blank_last_section, save
 from spec_surgeon.editspec import apply_spec, plan_spec
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import empty_paragraphs as empty_module
@@ -50,6 +51,14 @@ def outline(data: bytes, part: str = DOC) -> List[str]:
 @pytest.fixture(scope="module")
 def blank() -> bytes:
     return build_blank()
+
+
+@pytest.fixture(scope="module")
+def last_section() -> bytes:
+    return build_blank_last_section()
+
+
+LAST_SECTION_FLAG = "the last section is now empty and shows a blank page"
 
 
 SOURCE = ["Para A", "·", "·", "·", "Para B", "·", "·", "Para C", "·", "·", "·", "·", "Para D", "\t", "·", "Para E",
@@ -142,6 +151,31 @@ def test_a_lone_blank_between_two_tables_stays_and_a_cell_keeps_its_paragraph():
     assert outline(out) == ["TBL", "·", "TBL", "·"]
 
 
+@pytest.mark.parametrize("tracked", [True, False])
+def test_the_last_section_keeps_its_last_blank_and_its_blank_page_is_flagged(last_section, blank, tracked):
+    """Every block of the last section (after the body's last section break) a blank paragraph: its last one stays —
+    not the break's paragraph alone at the end of the body, which Word shows as a blank page with nothing on it to
+    remove (docs/BUILTIN_OPS_BATCH6_DESIGN.md, F2 review fixes: keep rule 4)."""
+    assert outline(last_section) == ["Cover", "·", "Body text", "·", "·", "·", "·", "·"]
+    plan, out, rec = run_op(last_section, {"mode": "all", "tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"][DOC] == [3, 5, 6]     # the body's blank, two of the last section's
+    assert outline(out) == ["Cover", "·", "Body text", "·", "·"]           # the second break · the last section's blank
+    assert any(f.startswith(LAST_SECTION_FLAG) and f.endswith("remove the section break before it to drop the page")
+               for f in plan.flags)
+    body = DocxPackage(out).xml(DOC).find(W + "body")
+    if not tracked:
+        assert [c.tag for c in body][-3:] == [W + "p", W + "p", W + "sectPr"]
+        assert body[-3].find(f"{W}pPr/{W}sectPr") is not None and body[-2].find(f"{W}pPr/{W}sectPr") is None
+    # collapse: the last section's first blank stays anyway (tracked: the document's last paragraph too)
+    plan, out, rec = run_op(last_section, {"tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    assert outline(out) == ["Cover", "·", "Body text", "·", "·", "·"] + (["·"] if tracked else [])
+    assert not any(LAST_SECTION_FLAG in f for f in plan.flags)
+    plan, _, _ = run_op(blank, {"mode": "all", "tracked": tracked})           # the last section keeps text: no flag
+    assert not any(LAST_SECTION_FLAG in f for f in plan.flags)
+
+
 # ---- V2's pairing with predicted deletions (verify/textcheck.diff_blocks) ----------------------------------------
 
 def test_v2_a_predicted_deletion_that_did_not_happen_still_fails(blank):
@@ -211,7 +245,29 @@ def test_shared_defect_collapse_keeps_the_last_of_a_run(blank, monkeypatch):
             for i, b in enumerate(blocks):                               # … the LAST of each run instead of the first
                 if b in got["delete"] and (i + 1 == len(blocks) or blocks[i + 1] not in got["delete"]):
                     keep.append(b)
-        return {"delete": [p for p in got["delete"] if p not in keep], "kept": got["kept"]}
+        return {**got, "delete": [p for p in got["delete"] if p not in keep]}
     monkeypatch.setattr(empty_module, "blank_paragraphs", last_kept)
     plan, out, rec = run_op(blank, {"tracked": True})
     assert failed(rec) == ["V10"], rec.to_markdown()
+
+
+def test_defect_the_last_sections_blank_removed_too(last_section):
+    plan, out, rec = run_op(last_section, {"mode": "all", "tracked": False})
+
+    def empty_the_last_section(root):
+        body = root.find(W + "body")
+        assert body[-3].find(f"{W}pPr/{W}sectPr") is not None and not accepted_text(body[-2])
+        body.remove(body[-2])                                            # the break's paragraph now ends the body
+    rec = run_suite(last_section, mutate(out, DOC, empty_the_last_section), plan.to_dict(), "s", "o")
+    assert "V10" in failed(rec)
+    assert any("removed_empty_paragraphs" in e for e in v10_errors(rec))
+
+
+def test_shared_defect_the_last_section_emptied(last_section, monkeypatch):
+    monkeypatch.setattr(empty_module, "last_section_keep", lambda *a: [])
+    plan, out, rec = run_op(last_section, {"mode": "all", "tracked": False})
+    body = DocxPackage(out).xml(DOC).find(W + "body")
+    assert body[-2].find(f"{W}pPr/{W}sectPr") is not None                # emptied by plan and apply alike …
+    assert not any(LAST_SECTION_FLAG in f for f in plan.flags)
+    assert failed(rec) == ["V10"], rec.to_markdown()                       # … the verifier keeps the last blank
+    assert any("removed_empty_paragraphs" in e and "the plan predicted" in e for e in v10_errors(rec))

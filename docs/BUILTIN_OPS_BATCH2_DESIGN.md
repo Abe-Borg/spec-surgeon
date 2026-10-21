@@ -266,7 +266,9 @@ true); `scope` (default body); `allow_missing`.
   every empty paragraph; `collapse` → every one after the first of a run of adjacent empties. Then kept again: the
   container's last block when it would leave the container empty or ending in a table (untracked), or — tracked — the
   container's last block always (Word cannot delete the final paragraph mark); one paragraph between two tables (else
-  Word joins them).
+  Word joins them). In the body, the last section (after the last section-break paragraph) keeps its last blank
+  paragraph when all of it would go, flagged as a blank page (added 2026-10-21: batch 6's keep rule 4,
+  `ops/deletion.last_section_keep` ↔ `verify/deletion._v_last_section`).
 * Kind `removed_empty_paragraphs` re-derives all of it. Layout reference `none`.
 
 ## 9. `remove_hyperlinks` (item 18)

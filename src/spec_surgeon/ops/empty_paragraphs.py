@@ -14,7 +14,11 @@ over its blocks (``w:p``, ``w:tbl``, ``w:sdt``, ``w:customXml``, ``w:altChunk``)
 ``collapse`` (the default) — every empty paragraph whose previous block is an empty paragraph too (each run of blank
 lines keeps its first). Then ``ops/hidden.keep_rules`` keeps some: the first paragraph between two tables the deletions
 would join; the container's last block when tracked (Word cannot delete the final paragraph mark), or — untracked — when
-the rest would leave the container empty or ending in something other than a paragraph.
+the rest would leave the container empty or ending in something other than a paragraph. In the body,
+``ops/deletion.last_section_keep`` (its keep rule 4) keeps one more: when every block of the *last section* — the blocks
+after the last paragraph that carries a section break (``w:pPr/w:sectPr``) — would go, its last blank paragraph stays,
+flagged either way (the section shows a blank page; the break's paragraph alone at the end of the body would show one
+with nothing on it to remove).
 
 Deleted as a tracked change by default (every run in a ``w:del``, the mark deleted — ``ops/removal.py``), or untracked.
 """
@@ -26,6 +30,7 @@ from ..ooxml import RevisionStamp, count_revisions, file_uses_date_utc, max_revi
 from ..package import DocxPackage, W
 from . import prose, register
 from .base import JobException, Op, PlanFragment
+from .deletion import last_section_keep
 from .hidden import CLEANUP_PARAMS, blocks_of, keep_rules, nearest_p, scope_phrase, set_aside_remark, tracked_words
 from .removal import deletable, delete_paragraph, plan_paragraph_deletion
 from .replace_table import default_author, resolve_scope, tracked_of
@@ -85,7 +90,8 @@ def is_empty(p, sheet: StyleSheet) -> bool:
 
 
 def blank_paragraphs(root, sheet: StyleSheet, mode: str, tracked: bool) -> Dict[str, Any]:
-    """{"delete": [paragraph elements], "kept": n} — the module docstring's rules over every container of the part."""
+    """{"delete": [paragraph elements], "kept": n, "last_section": [the kept paragraph of an emptied last section]} — the
+    module docstring's rules over every container of the part."""
     containers: List[Any] = []
     seen = set()
     for p in paragraphs(root):
@@ -95,6 +101,7 @@ def blank_paragraphs(root, sheet: StyleSheet, mode: str, tracked: bool) -> Dict[
             containers.append(c)
     delete: List[Any] = []
     kept = 0
+    last_section: List[Any] = []
     for c in containers:
         blocks = blocks_of(c)
         empty = [b for b in blocks if b.tag == W + "p" and is_empty(b, sheet)]
@@ -104,9 +111,11 @@ def blank_paragraphs(root, sheet: StyleSheet, mode: str, tracked: bool) -> Dict[
         else:
             chosen = [b for i, b in enumerate(blocks) if b in es and i > 0 and blocks[i - 1] in es]
         keep = keep_rules(blocks, chosen, tracked)
+        if c.tag == W + "body":
+            last_section = last_section_keep(blocks, set(chosen), keep, "the document body")
         kept += len(keep)
         delete += [b for b in chosen if b not in keep]
-    return {"delete": delete, "kept": kept}
+    return {"delete": delete, "kept": kept, "last_section": last_section}
 
 
 @register
@@ -177,6 +186,10 @@ class RemoveEmptyParagraphs(Op):
             index = {id(p): bi for bi, p in enumerate(pars)}
             got = blank_paragraphs(root, sheet, mode, tracked)
             kept += got["kept"]
+            if got["last_section"]:
+                frag.flags.append(f"the last section is now empty and shows a blank page (blank paragraph "
+                                  f"{prose.join(str(index[id(p)]) for p in got['last_section'])} stays); remove the "
+                                  f"section break before it to drop the page")
             bis = sorted(index[id(p)] for p in got["delete"])
             for bi in bis:
                 deletable(pars[bi], part, bi, tracked)
@@ -207,8 +220,8 @@ class RemoveEmptyParagraphs(Op):
                                "date_convention": params.get("date_convention", "word-local-z")}
         frag.notes.append(f"remove_empty_paragraphs ({mode}, {'tracked' if tracked else 'untracked'}): {n} blank "
                           f"paragraph(s) deleted in {len(data)} part(s)"
-                          + (f"; {kept} kept (a cell, the document or a header ends with it, or it stands between two "
-                             f"tables)" if kept else "") + ".")
+                          + (f"; {kept} kept (a cell, the document or a header ends with it, it stands between two "
+                             f"tables, or the last section would be empty without it)" if kept else "") + ".")
         if not tracked:
             frag.flags.append(f"UNTRACKED deletion of {n} blank paragraph(s) at the user's request.")
         return frag
