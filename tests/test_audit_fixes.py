@@ -186,7 +186,7 @@ def test_noise_merge_keeps_complex_script_flag_and_untouched_proofing_markers():
 
 # ---- F7: tracked deletion with bookmarks and proofing markers -------------------------------------------------
 
-def test_tracked_delete_tolerates_bookmarks_and_proofing_markers_but_not_hyperlinks():
+def test_tracked_delete_tolerates_bookmarks_proofing_markers_and_hyperlinks_but_not_equations():
     def add_bookmark(root):
         for p in root.find(W + "body").findall(W + "p"):
             if any((t.text or "") == "GENERAL" for t in p.iter(W + "t")):
@@ -208,9 +208,22 @@ def test_tracked_delete_tolerates_bookmarks_and_proofing_markers_but_not_hyperli
                 h = etree.SubElement(p, W + "hyperlink"); h.set(W + "anchor", "top")
                 etree.SubElement(etree.SubElement(h, W + "r"), W + "t").text = "link"
                 return
-    with pytest.raises(JobException) as e:                  # the link's text joins the block text: anchor on the start only
-        get_op("delete_paragraphs").plan(DocxPackage(mutate_xml(build("21 05 00", "X"), "word/document.xml", add_hyperlink)),
-                                         {"paragraphs": {"text_regex": r"^GENERAL"}}, {"tracked": True, "author": AUTHOR})
+    # batch 6 (F2): a tracked deletion now goes through a hyperlink as Word records it — the link's run in a w:del of its
+    # own inside the w:hyperlink (the link's text joins the block text: anchor on the start only)
+    linked = mutate_xml(build("21 05 00", "X"), "word/document.xml", add_hyperlink)
+    plan, out, rec = run_op(linked, "delete_paragraphs", {"paragraphs": {"text_regex": r"^GENERAL"}},
+                            {"tracked": True, "author": AUTHOR})
+    assert rec.passed, rec.to_markdown()
+    p_out = next(p for p in doc_root(out).iter(W + "p") if p.find(W + "hyperlink") is not None)
+    assert p_out.find(f"{W}hyperlink/{W}del/{W}r/{W}delText").text == "link"
+
+    def add_math(root):                                    # content a tracked deletion is not written over: refused
+        p = next(p for p in root.find(W + "body").findall(W + "p")
+                 if any((t.text or "") == "GENERAL" for t in p.iter(W + "t")))
+        etree.SubElement(p, "{http://schemas.openxmlformats.org/officeDocument/2006/math}oMath")
+    with pytest.raises(JobException) as e:
+        get_op("delete_paragraphs").plan(DocxPackage(mutate_xml(build("21 05 00", "X"), "word/document.xml", add_math)),
+                                         {"paragraphs": {"text_regex": r"^GENERAL$"}}, {"tracked": True, "author": AUTHOR})
     assert e.value.code == "structure"
 
 

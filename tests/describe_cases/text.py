@@ -1,4 +1,4 @@
-"""Describe cases for the text family: replace_text, insert_paragraph, delete_paragraphs, replace_table,
+"""Describe cases for the text family: replace_text, insert_paragraph, replace_table,
 fill_variables and make_values_agree. Each case is (select, params, [expected substrings])."""
 
 CASES = {
@@ -45,14 +45,6 @@ CASES = {
                          {"text": "C.\tThird item.", "style": "PR2"}], "author": "Spec Team"},
          ["Insert 3 new paragraphs after each of", "reading in this order: “A.”, a tab and “First item.”; then",
           "(“Second” underlined)", "“Third item.” in the “PR2” style", "by “Spec Team”"]),
-    ],
-    "delete_paragraphs": [
-        ({"paragraphs": {"is_empty": True, "in_table": False}}, {"author": "Spec Team"},
-         ["Delete all empty paragraphs outside tables", "shown as tracked changes by “Spec Team”"]),
-        ({"paragraphs": {"text_regex": "^\\s*DRAFT", "case_insensitive": True}, "scope": ["headers"]},
-         {"tracked": False, "allow_missing": True},
-         ["Delete all paragraphs whose text matches the pattern “^\\s*DRAFT” (ignoring case) in the headers",
-          "without tracked changes", "Files with no such paragraph are left unchanged"]),
     ],
     "replace_table": [
         ({}, {"pairs": [{"find": "Owner", "replace": "Client"},
