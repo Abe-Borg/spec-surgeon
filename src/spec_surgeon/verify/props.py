@@ -1204,16 +1204,157 @@ def _v_ppr_sans_mark_ins(p):
     return c if (len(c) or c.attrib) else None
 
 
+# insert_paragraph's wording (built-in batch 6, docs/BUILTIN_OPS_BATCH6_DESIGN.md §4.1–4.2), this module's own
+# reading: exactly one of ``text`` (one paragraph, one run), ``runs`` ([{text, b?, i?, u?, vertAlign?}]: one paragraph,
+# a run per segment) or ``paragraphs`` ([{text | runs, style?}]: several, in order); a tab and a line break in a text
+# are a bare w:tab / w:br run child where they stand, the characters between them a w:t each (none for an empty
+# stretch); no other control character; every paragraph holds a visible character. A segment's run: the inherited run
+# properties with its own over them — b/i as their pairs, exactly the attributes ``_v_expected_attrs`` gives, a new
+# element where the bundled schema's CT_RPr puts it.
+
+_V_SEGMENT_PROPS = {"b", "i", "u", "vertAlign"}
+_V_SEGMENT_UNDERLINES = {"single", "double", "words", "dotted", "dash", "wave", "none"}
+_V_BREAK_TAGS = {"\t": W + "tab", "\n": W + "br"}
+_V_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+
+def _v_segments(src: Dict[str, Any], where: str) -> List[Tuple[str, Dict[str, Any]]]:
+    if "text" in src:
+        if not isinstance(src["text"], str):
+            raise ValueError(f"{where}text is not a string (the op must refuse)")
+        segs = [(src["text"], {})]
+    else:
+        runs = src["runs"]
+        if not isinstance(runs, list) or not runs:
+            raise ValueError(f"{where}runs is not a non-empty list (the op must refuse)")
+        segs = []
+        for s in runs:
+            if not isinstance(s, dict) or not isinstance(s.get("text"), str) or not s["text"] \
+                    or set(s) - _V_SEGMENT_PROPS - {"text"}:
+                raise ValueError(f"{where}runs holds {s!r}, not {{text, b?, i?, u?, vertAlign?}} (the op must refuse)")
+            props = {k: v for k, v in s.items() if k != "text"}
+            if any(k in props and type(props[k]) is not bool for k in ("b", "i")) \
+                    or props.get("u", "single") not in _V_SEGMENT_UNDERLINES \
+                    or props.get("vertAlign", "baseline") not in V_VERT_ALIGNS:
+                raise ValueError(f"{where}runs: bad segment properties {props!r} (the op must refuse)")
+            segs.append((s["text"], props))
+    whole = "".join(t for t, _ in segs)
+    if any((ord(c) < 32 or c == "\x7f") and c not in _V_BREAK_TAGS for c in whole):
+        raise ValueError(f"{where}text {whole!r} holds a control character other than a tab or a line break "
+                         f"(the op must refuse)")
+    if not whole.strip():
+        raise ValueError(f"{where}text {whole!r} has nothing to read (the op must refuse)")
+    return segs
+
+
+def _v_new_paragraphs(a: Dict[str, Any]) -> List[Tuple[List[Tuple[str, Dict[str, Any]]], Any]]:
+    """The paragraphs an ``inserted_paragraphs`` assertion places, from the user's words in it: [(segments, style)] —
+    a paragraph's own style when its ``paragraphs`` entry names one, else the assertion's."""
+    given = [k for k in ("text", "runs", "paragraphs") if k in a]
+    if len(given) != 1:
+        raise ValueError(f"inserted_paragraphs needs exactly one of text, runs and paragraphs, got {given}")
+    if given[0] != "paragraphs":
+        return [(_v_segments(a, ""), a.get("style"))]
+    entries = a["paragraphs"]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("inserted_paragraphs: paragraphs is not a non-empty list (the op must refuse)")
+    out = []
+    for k, e in enumerate(entries):
+        if not isinstance(e, dict) or set(e) - {"text", "runs", "style"} or ("text" in e) == ("runs" in e):
+            raise ValueError(f"inserted_paragraphs: paragraphs[{k}] is {e!r}, not {{text | runs, style?}}")
+        out.append((_v_segments(e, f"paragraphs[{k}]."), e["style"] if "style" in e else a.get("style")))
+    return out
+
+
+def _v_segment_rpr(base, props: Dict[str, Any]):
+    """The rPr a segment's run must carry: ``base`` (the inherited one, or none) with the segment's own properties."""
+    from .tableprops import v_insert, v_order        # verify/tableprops imports this module: imported when needed
+    asked = _v_run_elements(props)
+    if not asked:
+        return copy.deepcopy(base) if base is not None else None
+    rpr = copy.deepcopy(base) if base is not None else etree.Element(W + "rPr")
+    for e, v in asked.items():
+        old = rpr.find(W + e)
+        el = etree.Element(W + e)
+        for k, val in _v_expected_attrs(e, v, old).items():
+            el.set(k, val)
+        if old is not None:
+            rpr.replace(old, el)
+        else:
+            v_insert(rpr, el, v_order("CT_RPr"))
+    return rpr
+
+
+def _v_run_shape(run) -> Tuple[Any, ...]:
+    """A new run as compared: its attributes, its rPr, then each other child — (tag, text) for a w:t, (tag, attributes)
+    for anything else."""
+    return (tuple(sorted(run.attrib.items())), sig(run.find(W + "rPr")),
+            tuple((c.tag, c.text or "") if c.tag == W + "t" else (c.tag, tuple(sorted(c.attrib.items())))
+                  for c in run if isinstance(c.tag, str) and c.tag != W + "rPr"))
+
+
+def _local_tag(tag: str) -> str:
+    return tag[len(W):] if tag.startswith(W) else tag
+
+
+def _v_expected_shape(text: str, rpr) -> Tuple[Any, ...]:
+    kids: List[Tuple[str, Any]] = []
+    cur = ""
+    for ch in text:
+        if ch in _V_BREAK_TAGS:
+            if cur:
+                kids.append((W + "t", cur))
+            kids.append((_V_BREAK_TAGS[ch], ()))
+            cur = ""
+        else:
+            cur += ch
+    if cur:
+        kids.append((W + "t", cur))
+    return ((), sig(rpr), tuple(kids))
+
+
+def _v_check_new_runs(op, expected: List[Tuple[Any, ...]], tracked: bool, author, old_ids: Set[str],
+                      where: str, errs: List[str]) -> None:
+    """The new paragraph's content: tracked, exactly one NEW w:ins (author, date, an id no source revision has) holding
+    exactly the expected runs; untracked, exactly those runs — each of the expected shape, edge whitespace preserved."""
+    content = [c for c in op if isinstance(c.tag, str) and c.tag != W + "pPr"]
+    if tracked:
+        ins = content[0] if len(content) == 1 and content[0].tag == W + "ins" else None
+        if ins is None or ins.get(W + "id") is None or ins.get(W + "id") in old_ids \
+                or ins.get(W + "author") != author or not ins.get(W + "date"):
+            errs.append(f"{where}: body is not one new w:ins by {author!r}")
+            return
+        content = [c for c in ins if isinstance(c.tag, str)]
+    if [c.tag for c in content] != [W + "r"] * len(expected):
+        errs.append(f"{where}: holds {[_local(c) or c.tag for c in content]}, expected {len(expected)} run(s)")
+        return
+    for k, (r, want) in enumerate(zip(content, expected)):
+        got = _v_run_shape(r)
+        if got != want:
+            why = [w for w, bad in (("its content", got[2] != want[2]), ("its run properties", got[1] != want[1]),
+                                    ("its run attributes", got[0] != want[0])) if bad]
+            errs.append(f"{where} run {k}: not the segment's run — {' and '.join(why)} differ (expected content "
+                        f"{[(_local_tag(t), x) for t, x in want[2]]}, found {[(_local_tag(t), x) for t, x in got[2]]})")
+        for t in r.iter(W + "t"):
+            if (t.text or "") != (t.text or "").strip() and t.get(_V_SPACE) != "preserve":
+                errs.append(f"{where} run {k}: {t.text!r} loses its edge whitespace (no xml:space preserve)")
+            if set(t.attrib) - {_V_SPACE} or t.get(_V_SPACE, "preserve") != "preserve":
+                errs.append(f"{where} run {k}: a w:t carries attributes other than xml:space preserve")
+
+
 def _inserted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    from .edits import part_revision_ids
+
     parts = ctx.scope_parts(a.get("scope", ["document"]))
     pred = (a.get("select") or {}).get("paragraphs")
     pos = a.get("position", "after")
-    text = a.get("text", "")
     tracked = bool(a.get("tracked", True))
-    style = a.get("style")
     formatting = a.get("formatting", "inherit")
     if formatting not in ("inherit", "none"):
         raise ValueError(f"unknown formatting {formatting!r}")
+    news = _v_new_paragraphs(a)
+    count = len(news)
+    old_ids = set().union(*(part_revision_ids(ctx.src.xml(name)) for name in ctx.src_tp))
     n = 0
     for part in parts:
         if part not in ctx.both:
@@ -1223,55 +1364,55 @@ def _inserted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         matched = [bi for bi, p in enumerate(sv.pars) if para_matches(pred, p, bi, sv, ctx.src_styles)]
         n += len(matched)
         for k, bi in enumerate(matched):
-            oi = (bi + 1 + k) if pos == "after" else (bi + k)
-            if oi >= len(ov.pars):
-                errs.append(f"inserted_paragraphs: {part} output block {oi} out of range")
-                continue
-            ctx.inserted_out_blocks.setdefault(part, set()).add(oi)
-            op = ov.pars[oi]
-            if ov.texts[oi] != text:
-                errs.append(f"inserted_paragraphs: {part} output block {oi} text {ov.texts[oi]!r} ≠ {text!r}")
-            want_style = (_pstyle(sv.pars[bi]) if style in (None, "inherit") else style)
-            got_style = _pstyle(op)
-            if got_style != want_style:
-                errs.append(f"inserted_paragraphs: {part} output block {oi} style {got_style!r} ≠ {want_style!r}")
-            # formatting, re-derived here from the SOURCE anchor
             anchor = sv.pars[bi]
-            want_ppr = _v_inherit_ppr(anchor) if formatting == "inherit" else None
-            want_rpr = _v_inherit_rpr(anchor, sv.runs[bi]) if formatting == "inherit" else None
-            if want_style is not None:
-                if want_ppr is None:
-                    want_ppr = etree.Element(W + "pPr")
-                ps = want_ppr.find(W + "pStyle")
-                if ps is None:
-                    ps = etree.Element(W + "pStyle")
-                    want_ppr.insert(0, ps)
-                ps.set(W + "val", want_style)
-            got_ppr = _v_ppr_sans_mark_ins(op) if tracked else op.find(W + "pPr")
-            if sig(want_ppr) != sig(got_ppr):
-                errs.append(f"inserted_paragraphs: {part} output block {oi} paragraph properties are not the anchor's "
-                            f"({formatting}): {first_difference(want_ppr, got_ppr) or 'differ'}")
-            oruns = ov.runs[oi]
-            if len(oruns) != 1 or [c.tag for c in oruns[0] if c.tag != W + "rPr"] != [W + "t"]:
-                errs.append(f"inserted_paragraphs: {part} output block {oi} must hold exactly one run with one w:t, "
-                            f"has {len(oruns)} run(s)")
-            else:
-                got_rpr = oruns[0].find(W + "rPr")
-                if sig(want_rpr) != sig(got_rpr):
-                    errs.append(f"inserted_paragraphs: {part} output block {oi} run properties are not the anchor's "
-                                f"first text run's ({formatting}): {first_difference(want_rpr, got_rpr) or 'differ'}")
-            if tracked:
-                mrpr = op.find(W + "pPr/" + W + "rPr")
-                ins_m = mrpr.find(W + "ins") if mrpr is not None else None
-                ins_w = op.find(W + "ins")
-                if ins_m is None or ins_m.get(W + "id") is None or ins_m.get(W + "author") != a.get("author"):
-                    errs.append(f"inserted_paragraphs: {part} output block {oi} mark missing valid w:ins")
-                if ins_w is None or ins_w.get(W + "id") is None or ins_w.get(W + "author") != a.get("author"):
-                    errs.append(f"inserted_paragraphs: {part} output block {oi} body missing valid w:ins")
+            if pos == "after" and any(q is not anchor for q in anchor.iter(W + "p")):
+                errs.append(f"inserted_paragraphs: {part} block {bi} holds a text box — its own paragraphs would come "
+                            f"between it and the new ones (the op must refuse)")
+                continue
+            # formatting, re-derived here from the SOURCE anchor
+            base_ppr = _v_inherit_ppr(anchor) if formatting == "inherit" else None
+            base_rpr = _v_inherit_rpr(anchor, sv.runs[bi]) if formatting == "inherit" else None
+            for j, (segs, style) in enumerate(news):
+                oi = (bi + 1 + k * count + j) if pos == "after" else (bi + k * count + j)
+                where = f"inserted_paragraphs: {part} output block {oi}"
+                if oi >= len(ov.pars):
+                    errs.append(f"{where} out of range")
+                    continue
+                ctx.inserted_out_blocks.setdefault(part, set()).add(oi)
+                op = ov.pars[oi]
+                text = "".join(t for t, _ in segs)
+                shown = "".join(ch for ch in text if ch not in _V_BREAK_TAGS)
+                if ov.texts[oi] != shown:
+                    errs.append(f"{where} text {ov.texts[oi]!r} ≠ {shown!r}")
+                want_style = (_pstyle(anchor) if style in (None, "inherit") else style)
+                got_style = _pstyle(op)
+                if got_style != want_style:
+                    errs.append(f"{where} style {got_style!r} ≠ {want_style!r}")
+                want_ppr = copy.deepcopy(base_ppr) if base_ppr is not None else None
+                if want_style is not None:
+                    if want_ppr is None:
+                        want_ppr = etree.Element(W + "pPr")
+                    ps = want_ppr.find(W + "pStyle")
+                    if ps is None:
+                        ps = etree.Element(W + "pStyle")
+                        want_ppr.insert(0, ps)
+                    ps.set(W + "val", want_style)
+                got_ppr = _v_ppr_sans_mark_ins(op) if tracked else op.find(W + "pPr")
+                if sig(want_ppr) != sig(got_ppr):
+                    errs.append(f"{where} paragraph properties are not the anchor's ({formatting}): "
+                                f"{first_difference(want_ppr, got_ppr) or 'differ'}")
+                expected = [_v_expected_shape(t, _v_segment_rpr(base_rpr, props)) for t, props in segs]
+                _v_check_new_runs(op, expected, tracked, a.get("author"), old_ids, where, errs)
+                if tracked:
+                    mrpr = op.find(W + "pPr/" + W + "rPr")
+                    ins_m = mrpr.find(W + "ins") if mrpr is not None else None
+                    if ins_m is None or ins_m.get(W + "id") is None or ins_m.get(W + "id") in old_ids \
+                            or ins_m.get(W + "author") != a.get("author") or not ins_m.get(W + "date"):
+                        errs.append(f"{where} mark missing valid w:ins")
     if n != a.get("expected_anchors", -1):
         errs.append(f"inserted_paragraphs: {n} anchor(s) selected here, plan predicted {a.get('expected_anchors')}")
-    return (f"inserted_paragraphs: {n} paragraph(s) {pos} anchor ({'tracked' if tracked else 'untracked'}, "
-            f"formatting {formatting} re-derived from the anchor)")
+    return (f"inserted_paragraphs: {n * count} paragraph(s) ({count} per anchor) {pos} anchor "
+            f"({'tracked' if tracked else 'untracked'}, formatting {formatting} re-derived from the anchor)")
 
 
 def sect_prs(root) -> List[Any]:
@@ -1720,17 +1861,23 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
 
 # ---- set_properties: the V10 kind "properties" ------------------------------------------------------------------
-# This module's own reading of the op's definitions (docs/SET_PROPERTIES_DESIGN.md §3; transform side:
-# ops/effective.PropResolver and ops/set_properties.py — CLAUDE.md lists them among the definitions that must stay
-# identical on both sides). Nothing here is shared with the transform side.
+# This module's own reading of the op's definitions (docs/SET_PROPERTIES_DESIGN.md §3, docs/BUILTIN_OPS_BATCH6_DESIGN.md
+# §3; transform side: ops/effective.PropResolver and ops/set_properties.py — CLAUDE.md lists them among the definitions
+# that must stay identical on both sides). Nothing here is shared with the transform side. Double strikethrough is read
+# as a toggle (two style levels: ambiguous, set directly) and excludes single strikethrough, as in Word: one asked on
+# asks the other off unless the assertion asks it too.
 
 PROP_PAIRS = {"b": ("b", "bCs"), "i": ("i", "iCs"), "caps": ("caps",), "smallCaps": ("smallCaps",),
-              "strike": ("strike",)}
-RUN_TOGGLE_ELEMENTS = ("b", "bCs", "i", "iCs", "caps", "smallCaps", "strike")
+              "strike": ("strike",), "dstrike": ("dstrike",), "vanish": ("vanish",)}
+RUN_TOGGLE_ELEMENTS = ("b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "vanish")
 PARA_FLAGS = ("keepNext", "keepLines", "widowControl", "pageBreakBefore")
 PARA_FLAG_DEFAULTS = {"keepNext": False, "keepLines": False, "widowControl": True, "pageBreakBefore": False}
 CASE_ELEMENTS = {"caps", "smallCaps"}          # never on a symbol run: case-mapping a dingbat changes the glyph
 COLOR_DEFAULT = ("auto", None, None, None)
+V_VALUE_DEFAULTS = {"u": "none", "highlight": "none", "vertAlign": "baseline", "spacing": 0}
+V_VERT_ALIGNS = {"superscript", "subscript", "baseline"}
+V_HIGHLIGHTS = {"yellow", "green", "cyan", "magenta", "blue", "red", "darkBlue", "darkCyan", "darkGreen", "darkMagenta",
+                "darkRed", "darkYellow", "darkGray", "lightGray", "black", "white", "none"}
 
 
 def _v_on_off(el) -> Optional[bool]:
@@ -1740,19 +1887,37 @@ def _v_on_off(el) -> Optional[bool]:
 
 def _v_prop_read(element: str, el):
     """The value an element gives its property: on/off for toggles and paragraph flags, the (val, themeColor,
-    themeShade, themeTint) tuple for w:color, w:val for w:u (None when the attribute is missing — never "already")."""
+    themeShade, themeTint) tuple for w:color, w:val for w:u, w:vertAlign and w:highlight (None when the attribute is
+    missing — never "already"), w:spacing's w:val as a whole number of twentieths of a point (else its text)."""
     if el is None:
         return None
     if element == "color":
         return (el.get(W + "val"), el.get(W + "themeColor"), el.get(W + "themeShade"), el.get(W + "themeTint"))
-    if element == "u":
+    if element in ("u", "vertAlign", "highlight"):
         return el.get(W + "val")
+    if element == "spacing":
+        val = el.get(W + "val")
+        digits = val[1:] if val and val[0] == "-" else val
+        return int(val) if digits and digits.isascii() and digits.isdigit() else val
     return _v_on_off(el)
+
+
+def _v_twentieths(points) -> int:
+    """Character spacing in points → w:spacing's twentieths of a point; ValueError unless a multiple of 0.05 pt within
+    Word's ±1584 pt."""
+    if isinstance(points, bool) or not isinstance(points, (int, float)) or not abs(points) <= 1584:
+        raise ValueError(f"character spacing {points!r} is not a number of points within ±1584 (the op must refuse)")
+    n = round(points * 20)
+    if abs(points * 20 - n) > 1e-6:
+        raise ValueError(f"character spacing {points!r} pt is not a whole number of twentieths of a point")
+    return int(n)
 
 
 def _v_run_elements(run_set) -> Dict[str, Any]:
     """An assertion's user-facing run properties → the asked value per element: b/i expand to their complex-script
-    pairs (a w:cs run draws its weight and slant from w:bCs/w:iCs), color to the effective tuple, u to its w:val."""
+    pairs (a w:cs run draws its weight and slant from w:bCs/w:iCs), color to the effective tuple, u, vertAlign and
+    highlight to their w:val, spacing to twentieths of a point; strike or dstrike asked on brings the other off unless
+    the assertion asks it too."""
     out: Dict[str, Any] = {}
     for k, v in (run_set or {}).items():
         if k in PROP_PAIRS:
@@ -1762,10 +1927,27 @@ def _v_run_elements(run_set) -> Dict[str, Any]:
             out["color"] = (str(v), None, None, None)
         elif k == "u":
             out["u"] = str(v)
+        elif k == "vertAlign":
+            if v not in V_VERT_ALIGNS:
+                raise ValueError(f"vertAlign {v!r} is not superscript, subscript or baseline (the op must refuse)")
+            out[k] = v
+        elif k == "highlight":
+            if v not in V_HIGHLIGHTS:
+                raise ValueError(f"highlight {v!r} is not one of Word's highlight colours (the op must refuse)")
+            out[k] = v
+        elif k == "spacing":
+            out[k] = _v_twentieths(v)
         else:
             raise ValueError(f"unknown run property {k!r}")
     if out.get("caps") is True and out.get("smallCaps") is True:
         raise ValueError("caps and smallCaps both asked on — mutually exclusive in Word (the op must refuse)")
+    asked = set(run_set or {})
+    if out.get("strike") is True and out.get("dstrike") is True:
+        raise ValueError("strike and dstrike both asked on — Word draws one or the other (the op must refuse)")
+    if out.get("strike") is True and "dstrike" not in asked:
+        out["dstrike"] = False
+    if out.get("dstrike") is True and "strike" not in asked:
+        out["strike"] = False
     return out
 
 
@@ -1780,13 +1962,16 @@ def _v_para_elements(para_set) -> Dict[str, bool]:
 
 def _v_expected_attrs(element: str, asked, source_el) -> Dict[str, str]:
     """The attributes the output element must carry: toggles and flags on → none, off → val 0; color → exactly val
-    (the theme attributes gone); u → the source element's attributes with val replaced."""
+    (the theme attributes gone); u → the source element's attributes with val replaced; vertAlign, highlight and
+    spacing → exactly val."""
     if element == "color":
         return {W + "val": asked[0]}
     if element == "u":
         attrs = dict(source_el.attrib) if source_el is not None else {}
         attrs[W + "val"] = asked
         return attrs
+    if element in ("vertAlign", "highlight", "spacing"):
+        return {W + "val": str(asked)}
     return {} if asked else {W + "val": "0"}
 
 
@@ -1820,9 +2005,9 @@ def _v_para_levels(p, styles: Styles) -> List[Tuple[str, Any]]:
 
 def _v_resolve(levels: List[Tuple[str, Any]], direct, element: str) -> Tuple[Any, str]:
     """(value, provenance) of one property. Toggles: direct formatting wins; specified at exactly one style level →
-    that value; nowhere → off; more than one → (None, "ambiguous") — Word's XOR is not modelled. w:u, w:color and
-    the paragraph flags: the nearest level that specifies them, else the default. Provenance: "direct",
-    "style:<id>", "docDefaults" or "default"."""
+    that value; nowhere → off; more than one → (None, "ambiguous") — Word's XOR is not modelled. w:u, w:color,
+    w:vertAlign, w:highlight, w:spacing and the paragraph flags: the nearest level that specifies them, else the
+    default. Provenance: "direct", "style:<id>", "docDefaults" or "default"."""
     d = direct.find(W + element) if direct is not None else None
     if d is not None:
         return _v_prop_read(element, d), "direct"
@@ -1840,7 +2025,7 @@ def _v_resolve(levels: List[Tuple[str, Any]], direct, element: str) -> Tuple[Any
         return COLOR_DEFAULT, "default"
     if element in PARA_FLAGS:
         return PARA_FLAG_DEFAULTS[element], "default"
-    return "none", "default"
+    return V_VALUE_DEFAULTS.get(element, "none"), "default"
 
 
 def _v_run_prop(rpr, p, styles: Styles, element: str) -> Tuple[Any, str]:

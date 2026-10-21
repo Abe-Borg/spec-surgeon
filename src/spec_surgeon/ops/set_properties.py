@@ -1,8 +1,16 @@
-"""Op: set_properties — bold, italic, caps, small caps, strikethrough, underline and text colour on selected runs and
-their paragraph marks, or in style definitions; keep-with-next, keep lines together, widow control and page break
-before on selected paragraphs, or in paragraph styles. Design: docs/SET_PROPERTIES_DESIGN.md.
+"""Op: set_properties — bold, italic, caps, small caps, strikethrough, double strikethrough, underline, text colour,
+superscript/subscript, hidden text, highlight and character spacing on selected runs and their paragraph marks, or in
+style definitions; keep-with-next, keep lines together, widow control and page break before on selected paragraphs, or
+in paragraph styles. Design: docs/SET_PROPERTIES_DESIGN.md; the run properties of built-in batch 6 (vertAlign, vanish,
+highlight, spacing, dstrike): docs/BUILTIN_OPS_BATCH6_DESIGN.md §3.
 
-Formatting mode: zero text diffs — "all caps" is w:caps, a display property; the letters stay exactly as typed.
+Formatting mode: zero text diffs — "all caps" is w:caps, a display property; the letters stay exactly as typed. Hidden
+text (w:vanish) is a display property too: the characters stay in the file, Word hides them.
+
+Single and double strikethrough exclude each other, as in Word's Font dialog: ``strike`` on asks ``dstrike`` off and
+the reverse (``effective.run_elements``), unless the other is asked as well — both on is a bad parameter. The other
+one is an asked element like any: on text it is written off only where it would otherwise be in effect (the "already"
+rule below), in a style definition unless the style itself already says off.
 
 Two target families, one per op call:
 
@@ -42,19 +50,30 @@ from ..ooxml import (PPR_ORDER, RPR_ORDER, STYLE_ORDER, RevisionStamp, block_ful
                      mark_rpr, max_revision_id, paragraph_ppr, paragraphs, property_change, run_rpr)
 from . import prose, register
 from .base import JobException, Op, PlanFragment
-from .effective import (CASE_ELEMENTS, PARA_FLAGS, REFLOW_ELEMENTS, UNDERLINES, PropResolver, para_elements,
-                        run_elements)
+from .effective import (CASE_ELEMENTS, PARA_FLAGS, REFLOW_ELEMENTS, UNDERLINES, VERT_ALIGNS, PropResolver,
+                        para_elements, run_elements)
+from .highlight import COLORS as HIGHLIGHT_COLORS
 from .replace_text import default_author
 from .selectors import (DEFAULT_PRESERVE_FONTS, StyleSheet, chain_reads, check_paragraph_selector, check_run_selector,
                         in_revision, is_symbol_rpr, is_targeted, mark_in_revision, paragraph_selected, rpr_selected,
                         runs_by_paragraph, scope_parts, table_ordinals)
 from .set_font import formatting_extras, preserved_fonts_extra, style_definitions, tracked_phrase, two_sentences
 
-BOOL_RUN = ("b", "i", "caps", "smallCaps", "strike")
+BOOL_RUN = ("b", "i", "caps", "smallCaps", "strike", "dstrike", "vanish")
+VALUE_RUN = ("u", "color", "vertAlign", "highlight", "spacing")
+HIGHLIGHTS = HIGHLIGHT_COLORS + ("none",)
+MAX_SPACING_PT = 1584                  # Word's own limit for expanded and condensed character spacing
 # the plan's words for each property (describe): on / off
-RUN_WORDS = {"b": "bold", "i": "italic", "caps": "all capitals", "smallCaps": "small capitals", "strike": "strikethrough"}
+RUN_WORDS = {"b": "bold", "i": "italic", "caps": "all capitals", "smallCaps": "small capitals", "strike": "strikethrough",
+             "dstrike": "double strikethrough"}
 UNDERLINE_WORDS = {"single": "a single underline", "double": "a double underline", "words": "a words-only underline",
                    "dotted": "a dotted underline", "dash": "a dashed underline", "wave": "a wavy underline"}
+VERT_ALIGN_WORDS = {"superscript": "make the text superscript", "subscript": "make the text subscript",
+                    "baseline": "put the text back on the baseline (no superscript or subscript)"}
+# Word's highlighter colours as its menu names them
+HIGHLIGHT_WORDS = {"darkBlue": "dark blue", "darkCyan": "dark cyan", "darkGreen": "dark green",
+                   "darkMagenta": "dark magenta", "darkRed": "dark red", "darkYellow": "dark yellow",
+                   "darkGray": "dark grey", "lightGray": "light grey"}
 PARA_WORDS = {"keepNext": ("keep each paragraph on the same page as the next",
                            "stop keeping each paragraph on the same page as the next"),
               "keepLines": ("keep the lines of each paragraph on one page",
@@ -90,12 +109,31 @@ def clean_params(params: Dict[str, Any]) -> Tuple[Dict[str, Any], Dict[str, bool
                 if not isinstance(v, str) or not (v == "auto" or HEX_COLOR.fullmatch(v)):
                     raise JobException("run.color must be 6 hex digits (RRGGBB) or 'auto'", "bad-params")
                 run_out[k] = v if v == "auto" else v.upper()
+            elif k == "vertAlign":
+                if v not in VERT_ALIGNS:
+                    raise JobException(f"run.vertAlign must be one of {VERT_ALIGNS}", "bad-params")
+                run_out[k] = v
+            elif k == "highlight":
+                if v not in HIGHLIGHTS:
+                    raise JobException(f"run.highlight must be one of Word's highlight colours {list(HIGHLIGHTS)} "
+                                       f"('none' removes the highlight)", "bad-params")
+                run_out[k] = v
+            elif k == "spacing":
+                if isinstance(v, bool) or not isinstance(v, (int, float)) or not abs(v) <= MAX_SPACING_PT \
+                        or abs(v * 20 - round(v * 20)) > 1e-6:
+                    raise JobException(f"run.spacing is the character spacing in points (negative condenses, 0 is "
+                                       f"normal), a multiple of 0.05 pt within ±{MAX_SPACING_PT} pt; got {v!r}",
+                                       "bad-params")
+                run_out[k] = v
             else:
-                raise JobException(f"unknown run property {k!r}; known: {BOOL_RUN + ('u', 'color')}", "bad-params")
+                raise JobException(f"unknown run property {k!r}; known: {BOOL_RUN + VALUE_RUN}", "bad-params")
     if run_out.get("caps") and run_out.get("smallCaps"):
         raise JobException("run.caps and run.smallCaps are mutually exclusive — Word shows all caps and ignores small "
                            "caps when both are in effect; ask for one of them true (and the other false where it is in "
                            "effect)", "bad-params")
+    if run_out.get("strike") and run_out.get("dstrike"):
+        raise JobException("run.strike and run.dstrike are mutually exclusive — Word draws one strikethrough or the "
+                           "other; asking one on turns the other off", "bad-params")
     para_out: Dict[str, bool] = {}
     if para is not None:
         if not isinstance(para, dict) or not para:
@@ -126,7 +164,8 @@ CAPS_CONFLICT = ("w:caps and w:smallCaps would both be in effect — Word shows 
 
 def write_element(container, element: str, value, order: List[str]) -> None:
     """Set one property element (created in schema order when absent): toggles and flags on → no attributes, off →
-    w:val 0; w:color → exactly w:val (theme attributes gone); w:u → w:val set, its other attributes kept."""
+    w:val 0; w:color → exactly w:val (theme attributes gone); w:u → w:val set, its other attributes kept; w:vertAlign,
+    w:highlight and w:spacing (twentieths of a point) → exactly w:val."""
     el = get_or_add(container, element, order)
     if element == "u":
         el.set(W + "val", value)
@@ -134,6 +173,8 @@ def write_element(container, element: str, value, order: List[str]) -> None:
     el.attrib.clear()
     if element == "color":
         el.set(W + "val", value[0])
+    elif element in ("vertAlign", "highlight", "spacing"):
+        el.set(W + "val", str(value))
     elif not value:
         el.set(W + "val", "0")
 
@@ -164,21 +205,31 @@ def _describe(run_set: Dict[str, Any], para_set: Dict[str, bool]) -> str:
 class SetProperties(Op):
     name = "set_properties"
     mode = "formatting"
-    description = ("Set bold, italic, caps, small caps, strikethrough, underline and text colour on selected text (runs "
-                   "and their paragraph marks) or in style definitions, and keep-with-next, keep lines together, widow "
+    description = ("Set bold, italic, caps, small caps, strikethrough, double strikethrough, underline, text colour, "
+                   "superscript/subscript, hidden text, highlight and character spacing on selected text (runs and "
+                   "their paragraph marks) or in style definitions, and keep-with-next, keep lines together, widow "
                    "control and page break before on selected paragraphs or paragraph styles. Adds no characters (caps "
-                   "is a display property: the letters stay as typed); a target that already shows the asked value is "
-                   "left alone.")
+                   "and hidden are display properties: the letters stay as typed); a target that already shows the "
+                   "asked value is left alone.")
     params_schema = {"type": "object", "properties": {
         "run": {"type": "object",
-                "description": "text properties: b, i, caps, smallCaps, strike (true = on, false = explicitly off), "
-                               "u (single|double|words|dotted|dash|wave|none), color (RRGGBB hex or 'auto'). b and i "
-                               "are written as the pairs Word writes (w:b + w:bCs, w:i + w:iCs)",
+                "description": "text properties: b, i, caps, smallCaps, strike, dstrike (double strikethrough), "
+                               "vanish (hidden text) (true = on, false = explicitly off), u "
+                               "(single|double|words|dotted|dash|wave|none), color (RRGGBB hex or 'auto'), vertAlign "
+                               "(superscript|subscript|baseline), highlight (Word's highlighter colour or 'none'), "
+                               "spacing (character spacing in points: positive expands, negative condenses, 0 is "
+                               "normal). b and i are written as the pairs Word writes (w:b + w:bCs, w:i + w:iCs); "
+                               "strike on turns dstrike off and the reverse, as Word does",
                 "properties": {"b": {"type": "boolean"}, "i": {"type": "boolean"}, "caps": {"type": "boolean"},
                                "smallCaps": {"type": "boolean"}, "strike": {"type": "boolean"},
+                               "dstrike": {"type": "boolean"}, "vanish": {"type": "boolean"},
                                "u": {"type": "string", "enum": list(UNDERLINES)},
                                "color": {"type": "string", "description": "6 hex digits (RRGGBB) or 'auto'; theme "
-                                                                          "colour attributes are removed"}}},
+                                                                          "colour attributes are removed"},
+                               "vertAlign": {"type": "string", "enum": list(VERT_ALIGNS)},
+                               "highlight": {"type": "string", "enum": list(HIGHLIGHTS)},
+                               "spacing": {"type": "number", "description": "points, a multiple of 0.05 (e.g. 0.5 "
+                                                                            "expands, -0.5 condenses, 0 is normal)"}}},
         "paragraph": {"type": "object",
                       "description": "paragraph properties: keepNext, keepLines, widowControl, pageBreakBefore (true/false)",
                       "properties": {k: {"type": "boolean"} for k in PARA_FLAGS}},
@@ -209,8 +260,8 @@ class SetProperties(Op):
                "styles), counts matched, each target's whole rPr/pPr = source + exactly the asked elements, the "
                "asked value shown by every selected target — and by everything that uses a changed style — in the "
                "output; residual identical",
-        "V7": "none when bold/italic/caps or a paragraph flag is set (the text reflows); source for colour, underline "
-              "and strikethrough alone",
+        "V7": "none when bold/italic/caps, hidden, superscript/subscript, character spacing or a paragraph flag is set "
+              "(the text reflows); source for colour, underline, highlight and strikethrough alone",
     }
 
     # ---- describe ------------------------------------------------------------------------------------------------
@@ -223,12 +274,15 @@ class SetProperties(Op):
         off: List[str] = []
         for k, v in run.items():
             if k in RUN_WORDS and isinstance(v, bool):
-                (on if v else off).append(RUN_WORDS[k])
+                replaces = k == "dstrike" and v and "strike" not in run      # Word turns single strikethrough off
+                (on if v else off).append(RUN_WORDS[k] + (" (in place of any single strikethrough)" if replaces else ""))
             elif k == "u" and v is not None:
                 if v == "none":
                     off.append("underlining")
                 else:
                     on.append(UNDERLINE_WORDS.get(v, f"a {prose.quote(v)} underline"))
+            elif k == "highlight" and v == "none":
+                off.append("highlighting")
         clauses: List[str] = []
         if on:
             clauses.append("apply " + prose.join(on))
@@ -239,6 +293,19 @@ class SetProperties(Op):
             clauses.append("reset the text colour to automatic")
         elif isinstance(color, str) and color:
             clauses.append(f"colour the text {prose.colour(color)}")
+        if run.get("vertAlign") in VERT_ALIGN_WORDS:
+            clauses.append(VERT_ALIGN_WORDS[run["vertAlign"]])
+        if isinstance(run.get("vanish"), bool):
+            clauses.append("hide the text (hidden text: the characters stay in the file)" if run["vanish"]
+                           else "show hidden text again")
+        highlight = run.get("highlight")
+        if isinstance(highlight, str) and highlight and highlight != "none":
+            clauses.append(f"highlight the text {HIGHLIGHT_WORDS.get(highlight, highlight)}")
+        spacing = run.get("spacing")
+        if isinstance(spacing, (int, float)) and not isinstance(spacing, bool):
+            clauses.append("set the character spacing to normal" if spacing == 0 else
+                           f"{'expand' if spacing > 0 else 'condense'} the character spacing by "
+                           f"{prose.points(abs(spacing))}")
         clauses += [PARA_WORDS[k][0 if v else 1] for k, v in para.items() if k in PARA_WORDS and isinstance(v, bool)]
         if not clauses:
             clauses.append("change the text and paragraph properties")
