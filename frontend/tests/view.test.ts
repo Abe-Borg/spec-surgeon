@@ -245,3 +245,14 @@ test("a retrying status drops the abandoned attempt's words and thinking", () =>
   assert.equal(state.live?.thinking, "");
   assert.equal(state.live?.status, null); // the reply being written clears the strip, as always
 });
+
+test("a view without the to-do fields (an older server) normalizes to an empty list and no pass", () => {
+  const v = normalizeView({ version: "1.6.0", action: { label: "x", token: "t", kind: "approve" } });
+  assert.deepEqual(v.todo, []);
+  assert.deepEqual(v.focus, []);
+  assert.equal(v.action.can_hold, false);
+  const full = normalizeView({ todo: [{ path: "/a", name: "a.docx" }], focus: ["/a", 3], action: { label: "x", token: "t", kind: "approve", can_hold: true } });
+  assert.deepEqual(full.todo, [{ path: "/a", name: "a.docx" }]);
+  assert.deepEqual(full.focus, ["/a"]);
+  assert.equal(full.action.can_hold, true);
+});

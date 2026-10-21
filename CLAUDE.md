@@ -42,10 +42,13 @@ The desktop is one window: the page in `web/static/` (built from `frontend/`), s
 `document_task.DocumentTask` (contract `docs/WEB_API.md`) and shown by `web/shell.py`. The user attaches Word files, an
 optional template and pictures or tables for the edit to use; `triage.py` checks each on arrival without a model call.
 `layouts.py` gives a mixed batch one EditSpec per structural layout with one approval; `review_display.py` describes
-the previewed spec in the sentences each op writes for itself (`Op.describe`). Delivered copies are the working set the
-next request builds on. There is no command line (removed 2026-10-21 with the library, workspaces, workflows, office
-profiles, spec QA audits, project evidence, evaluations and the named v0.1.0 jobs). Details:
-`docs/CONVERSATIONAL_DESKTOP.md`.
+the previewed spec in the sentences each op writes for itself (`Op.describe`). The one button lives in the chat pane;
+each preview carries a checkmark and an X: X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
+every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
+request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document.
+Delivered copies are the working set the next request builds on. There is no command line (removed 2026-10-21 with the
+library, workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations and the named v0.1.0
+jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
 
 - `src/spec_surgeon/`
   - `package.py` (`DocxPackage`: zip, rels, sections, overlay, repack) · `ooxml.py` (transform-side XML helpers).

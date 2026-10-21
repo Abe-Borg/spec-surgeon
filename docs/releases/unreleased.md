@@ -2,6 +2,29 @@
 
 Changes since v1.6.0.
 
+## The window
+
+- Every preview card carries a green checkmark (looks good) and a red X (needs more work). **Create edited
+  copies** runs the documents that look right; the X'd ones get no copy and wait on a to-do list ("Create edited
+  copies (2 set aside)"). Every file that runs is still held to the exact identity the user approved; a file
+  outside the approval never runs. Once the other copies are saved, the chat shows **Set aside for more work**
+  and offers **Work on them now**: the set-aside documents are planned alone, from the request they were set
+  aside from (one request at a time), with the assistant told that the user saw and set aside that plan and
+  shown it; the pass ends when their copies are created. The changes each copy carries are kept per document, so
+  a change some copies got and others did not is named per document in the next request. The list and the pass
+  survive a restart; Start over clears them.
+- The one button (**Create edited copies**, **Continue**, **Save N ready copies**) lives in the conversation,
+  above the box you type in, with one sentence on what it does. The plan card carries no button.
+- **Your documents** folds to one line (its count and a summary) once a plan exists and opens on a click; a
+  document on the to-do list is tagged **To do**, one in the pass **Working on**.
+- The **Hide plan** button is gone; the plan and the pages are always shown beside the conversation.
+- Markdown renders in both panes: the assistant's replies and questions, the choices, the plan's sentences and
+  settings, the assumptions, the findings and the reasons a file was left untouched.
+
+## The contract (`docs/WEB_API.md`)
+
+- `POST /api/primary` takes `hold`: the previewed documents to set aside. The view carries `action.can_hold`,
+  `todo` and `focus`. The reply "Work on the documents I set aside" begins the pass over the to-do list.
 ## The top bar matches Build-a-Spec's
 
 - **An in-app guide in the top bar.** **How to use**, **Workflows**, **How it works** and **About** open one help
@@ -86,3 +109,13 @@ Pending on the owner's machine: the installed Windows app without `spec-surgeon.
   the cache-write price.
 - **The estimated spending prices one-hour cache writes at their own rate** (twice the input price), and each call's
   record in `conversation.json` and `compile.json` shows how many of its cache writes were for the hour.
+
+## Diagnostics
+
+- **The app log says how every job ended.** `spec-surgeon.log` gets one line at the end of each piece of work in the
+  window: what was asked for (send, choose or create copies), where it left the conversation (a plan to approve, a
+  question, finished copies, the 48-step pause, ready to continue), whether you stopped it, the type of the error
+  when it failed, the AI steps used so far, the estimated spending and how long it took. It never records your words
+  or the documents' text.
+- **The app log says when the window closed.** A clean exit writes `Spec Surgeon closed` again, as the Qt window did
+  before 1.6.0; a session that ends without it did not close cleanly.

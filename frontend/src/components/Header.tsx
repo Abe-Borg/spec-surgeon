@@ -8,11 +8,9 @@ import Tip from "./Tip";
 interface Props {
   view: View;
   busy: boolean;
-  workbenchOpen: boolean;
   /** "v1.7.0 available" for an update set aside with the banner's "Not now"; "" for none (lib/help.updatePill). */
   updatePill: string;
   onDownloadUpdate: () => void;
-  onToggleWorkbench: () => void;
   onNewConversation: () => void;
   onOpenSettings: () => void;
   onOpenHelp: (topic: HelpTopic) => void;
@@ -28,10 +26,8 @@ const ORIGIN_TIPS: Record<string, string> = {
 export default function Header({
   view,
   busy,
-  workbenchOpen,
   updatePill,
   onDownloadUpdate,
-  onToggleWorkbench,
   onNewConversation,
   onOpenSettings,
   onOpenHelp,
@@ -106,22 +102,6 @@ export default function Header({
           <span className={`h-2 w-2 rounded-full ${ready ? "bg-ok" : "bg-warn"}`} aria-hidden />
           {ready ? "Connected" : "Connect your API key"}
         </button>
-        <Tip
-          tip={
-            workbenchOpen
-              ? "Hide the plan and pages to give the conversation the whole window"
-              : "Show the documents, the plan and the pages"
-          }
-        >
-          <button
-            type="button"
-            onClick={onToggleWorkbench}
-            aria-pressed={workbenchOpen}
-            className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs whitespace-nowrap text-ink transition-colors hover:border-accent hover:text-accent"
-          >
-            {workbenchOpen ? "Hide plan ▸" : "◂ Show plan"}
-          </button>
-        </Tip>
         <Tip
           tip={
             busy

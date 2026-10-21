@@ -100,6 +100,14 @@ def approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
     return _approval_token_from_inputs(spec, approval_inputs(spec, files))
 
 
+def narrow_approval_inputs(inputs: Dict[str, Any], files: Sequence[Path]) -> Dict[str, Any]:
+    """The approval inputs restricted to ``files``, part of the approved batch: the same spec digest and template
+    pins, and only those files' pins. A run on part of an approved batch is held to this, so every file that runs
+    keeps the identity the user approved and nothing outside the approval runs."""
+    keep = {str(Path(f).resolve()) for f in files}
+    return {**inputs, "files": {p: pin for p, pin in (inputs.get("files") or {}).items() if p in keep}}
+
+
 def _approval_token_from_inputs(spec, inputs):
     """Bind a token to one captured identity snapshot, never to files re-read after the preview work."""
     h = hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8"))

@@ -161,3 +161,26 @@ def test_recovery_takes_the_layout_folders_whose_files_still_need_work(batch, tm
     pv = layouts.make_layout_preview(both, files, tmp_path / "preview3", do_render=False)
     layouts.run_layouts(files, both, tmp_path / "run3", do_render=False, approved_inputs=pv.token_inputs)
     assert layouts.layouts_needing_work(tmp_path / "run3") == [tmp_path / "run3" / "layout-A", tmp_path / "run3" / "layout-B"]
+
+
+def test_a_run_on_part_of_an_approved_layout_batch_is_held_to_the_approved_pins(batch, tmp_path):
+    """The user set some documents aside at approval: the run covers the rest, compared against the approved inputs
+    narrowed to them — exactly what approving those files alone would give while nothing changed — so a file that
+    runs still has to match its approved identity, and the layout's own scope check holds."""
+    typed, styled, other = batch
+    plan = plan_for(typed, styled)
+    whole = [typed, styled, other]
+    pv = layouts.make_layout_preview(plan, [str(f) for f in whole], tmp_path / "preview", do_render=False)
+    narrowed = layouts.narrow_layout_inputs(pv.token_inputs, [typed, other])
+    assert narrowed == layouts.layout_inputs(plan, [typed, other])
+    assert layouts.narrow_layout_inputs(pv.token_inputs, whole) == pv.token_inputs
+    result = layouts.run_layouts([str(typed), str(other)], plan, tmp_path / "run", do_render=False, approved_inputs=narrowed)
+    assert result.counts() == {"PASS": 1, "FAIL": 0, "EXCEPTION": 1, "PENDING": 0}
+    assert not (tmp_path / "run" / "layout-B").exists()                    # the set-aside document's layout never ran
+    # the whole approval against part of the batch is refused: the scope must be narrowed, never guessed
+    with pytest.raises(ValueError, match="changed since the preview"):
+        layouts.run_layouts([str(typed), str(other)], plan, tmp_path / "run2", do_render=False, approved_inputs=pv.token_inputs)
+    # a file that changed since the preview is refused through the narrowed pins too
+    typed.write_bytes(typed.read_bytes() + b" ")
+    with pytest.raises(ValueError, match="changed since the preview"):
+        layouts.run_layouts([str(typed), str(other)], plan, tmp_path / "run3", do_render=False, approved_inputs=narrowed)
