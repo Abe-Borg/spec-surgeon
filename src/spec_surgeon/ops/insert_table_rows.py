@@ -18,7 +18,11 @@ refused when named (``textbox``); rows in a content control or custom XML, a tab
 cells in a content control or a cell without a paragraph → ``table-structure``; no row chosen → the table is left alone
 (noted); more than one row chosen → ``ambiguous`` (say which one); a reference row with merged cells (a cell spanning
 columns, or merged across rows) or a typed row whose number of texts is not the reference row's number of cells →
-``table-shape``. Nothing to insert anywhere → ``not-found`` unless ``allow_missing``.
+``table-shape``; the **header rows** (``header-rows``) — Word and LibreOffice repeat only the header rows that run on
+from the table's first row (``table_rows.header_run``, h rows) — the new rows land after ``i`` own rows (before row r:
+r; after it: r + 1; at the end: every row): without ``repeat_header`` they may not land before or inside that run
+(i < h: they would split it), with it they must land at or inside it or right after its last row (i ≤ h: they join it;
+further down Word ignores the marking). Nothing to insert anywhere → ``not-found`` unless ``allow_missing``.
 
 Verified by V10's ``inserted_table_rows`` kind (verify/tablestructure.py), which builds the new rows itself from the
 source and compares each changed part whole.
@@ -35,8 +39,8 @@ from .delete_table_rows import row_words, table_place
 from .delete_tables import SCOPE_SCHEMA, TABLES_SCHEMA, TRACKING_PARAMS, tracking
 from .selectors import StyleSheet, scope_parts
 from .table_edit import cell_text, insertion_counts, new_row
-from .table_rows import (ROWS_SCHEMA, cell_paragraphs, check_row_selector, is_merged, row_selection_reads,
-                         selected_rows)
+from .table_rows import (ROWS_SCHEMA, cell_paragraphs, check_row_selector, header_run, is_merged,
+                         row_selection_reads, selected_rows)
 from .table_select import (cells_wrapped, check_table_selector, in_text_box, own_cells, own_rows, rows_wrapped,
                            selection_reads, selects_all, style_chain, style_chain_reads, table_selected)
 
@@ -210,6 +214,21 @@ class InsertTableRows(Op):
                     raise JobException(f"{where} row {r} has {len(cells)} cell(s); new row(s) {bad} give "
                                        f"{[len(texts[i - 1]) for i in bad]} text(s) — give one text per cell",
                                        "table-shape", {"table": where, "cells": len(cells)})
+                head = header_run(tbl, chain)                  # read: each row's marking down to the first body row
+                frag.touches += [(part, f"tr:{k}:{i}", "verify-props:tblHeader")
+                                 for i in range(min(head + 1, len(rows)))]
+                lands = r if position == "before" else r + 1   # own rows before the new ones
+                if not repeat and lands < head:
+                    raise JobException(f"{where}: the new rows would split the header rows that repeat on every page "
+                                       f"(its first {head} row(s)): ask for them as header rows (repeat_header), or "
+                                       f"put them after the header rows", "header-rows",
+                                       {"table": where, "header_rows": head})
+                if repeat and lands > head:
+                    top = f"its first {head} row(s)" if head else "it has none"
+                    raise JobException(f"{where}: the new rows would not join the header rows at the top of the table "
+                                       f"({top}), and Word repeats only those — put them at the top or right after the "
+                                       f"header rows, or leave repeat_header out", "header-rows",
+                                       {"table": where, "header_rows": head})
                 depth = sum(1 for _ in tbl.iterancestors(W + "tbl"))
                 before = insertion_point(index, ref, "before" if position == "before" else "after")
                 points.append((before, depth if position == "before" else -depth, k, r))

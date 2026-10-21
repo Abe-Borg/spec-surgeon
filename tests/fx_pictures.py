@@ -362,6 +362,57 @@ def svg_blip(name: str, rid: str) -> Callable:
     return fn
 
 
+def cell_setup(text: str, tcpr: Optional[str] = None, cell_mar: Optional[str] = None,
+               style: Optional[str] = None) -> Callable:
+    """The table cell holding the paragraph starting ``text``: its ``w:tcPr`` replaced by one holding ``tcpr`` (XML),
+    its table's ``w:tblCellMar`` set to hold ``cell_mar`` (XML) and its ``w:tblStyle`` to ``style``, each when given."""
+    def fn(root):
+        tc = next(paragraph_with(root, text).iterancestors(W + "tc"))
+        pr = next(tc.iterancestors(W + "tbl")).find(W + "tblPr")
+        if tcpr is not None:
+            if tc.find(W + "tcPr") is not None:
+                tc.remove(tc.find(W + "tcPr"))
+            tc.insert(0, etree.fromstring(f'<w:tcPr xmlns:w="{W_NS}">{tcpr}</w:tcPr>'))
+        if cell_mar is not None:                        # CT_TblPr: … tblW, …, tblCellMar, tblLook
+            pr.find(W + "tblLook").addprevious(etree.fromstring(f'<w:tblCellMar xmlns:w="{W_NS}">{cell_mar}'
+                                                                f'</w:tblCellMar>'))
+        if style is not None:
+            pr.insert(0, etree.fromstring(f'<w:tblStyle xmlns:w="{W_NS}" w:val="{style}"/>'))
+    return fn
+
+
+def section_attrs(section: int, element: str, **values: Optional[str]) -> Callable:
+    """Section ``section``'s ``w:pgSz`` or ``w:pgMar`` (``element``) gets the attributes ``values`` (None: removed)."""
+    def fn(root):
+        el = list(root.iter(W + "sectPr"))[section].find(W + element)
+        for k, v in values.items():
+            if v is None:
+                el.attrib.pop(W + k, None)
+            else:
+                el.set(W + k, v)
+    return fn
+
+
+def line_spacing(style: Optional[str], rule: str) -> Callable:
+    """styles.xml: the style ``style`` (None: the document defaults) gets the line spacing rule ``rule`` (its line 240,
+    its spacing before and after kept)."""
+    def fn(root):
+        holder = (root.find(f"{W}docDefaults/{W}pPrDefault") if style is None
+                  else next(s for s in root.iter(W + "style") if s.get(W + "styleId") == style))
+        ppr = holder.find(W + "pPr")
+        if ppr is None:                                 # CT_Style: … pPr, rPr, tblPr …
+            ppr = etree.Element(W + "pPr")
+            later = next((c for c in holder if c.tag in (W + "rPr", W + "tblPr", W + "trPr", W + "tcPr")), None)
+            later.addprevious(ppr) if later is not None else holder.append(ppr)
+        sp = ppr.find(W + "spacing")
+        if sp is None:                                  # before the fixture styles' w:jc
+            sp = etree.Element(W + "spacing")
+            ppr.insert(0, sp)
+        sp.set(W + "line", "240")
+        sp.set(W + "lineRule", rule)
+    return fn
+
+
 def no_page_size(root) -> None:
     """Every section without w:pgSz (its size is Word's default, which the engine does not assume)."""
     for sz in list(root.iter(W + "pgSz")):

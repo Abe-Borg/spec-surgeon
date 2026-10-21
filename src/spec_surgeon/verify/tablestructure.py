@@ -28,7 +28,9 @@ compares it whole with the output (``ctx.verified_parts``: the residual leaves t
   ``w:cellIns``, ``w:cellDel``, ``w:cellMerge``, ``w:tcPrChange``, and one paragraph: the cell's first paragraph's
   ``w:pPr`` less ``w:cnfStyle``, ``w:sectPr``, ``w:pPrChange`` and its mark's revision marks and ``w:rPrChange``; the run's
   ``w:rPr`` that paragraph's first live text run's less ``w:rPrChange`` (none when it has none) or, with no such run,
-  the cleaned mark's. No attributes; an emptied element is left out.
+  the cleaned mark's. No attributes; an emptied element is left out. The rows that repeat on each page are the header
+  rows from the first on (``tablerows.v_header_top``, h of them): new rows after i own rows may not land among them
+  unmarked (i < h), nor marked below the row after them (i > h) — the op must refuse (``header-rows``).
 * **A new table**: ``w:tblStyle``; ``w:tblW`` pct 5000 (or dxa, the widths' sum); without a style the six sides single
   4/0/auto; ``w:tblLook`` (header rows: firstRow 1, val 0420; else 0 and 0400; lastRow, firstColumn, lastColumn, noHBand
   0, noVBand 1); the grid (the widths, or the section's ``pgSz@w`` less ``pgMar@left`` and ``@right`` cut into n
@@ -57,7 +59,7 @@ from .markup import tree_difference
 from .props import Ctx, PartView, para_matches
 from .restyle import v_resolve_style
 from .styleimport import v_type
-from .tablerows import (v_cell_paragraphs, v_check_rows, v_cuts, v_merged, v_rows_chosen)
+from .tablerows import (v_cell_paragraphs, v_check_rows, v_cuts, v_header_top, v_merged, v_rows_chosen)
 from .tables import table_grid, table_md5
 from .tableprops import v_insert, v_order
 from .tableselect import (VTables, v_cells, v_cells_wrapped, v_check, v_in_text_box, v_rows, v_rows_wrapped,
@@ -522,6 +524,11 @@ def _inserted_table_rows(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             if any(v_merged(tc) for tc in cells) or any(len(row) != len(cells) for row in texts):
                 raise ValueError(f"{where} row {r}: merged cells, or rows of another length (the op must refuse: "
                                  f"table-shape)")
+            top, below = v_header_top(tbl, chain), (r if position == "before" else r + 1)
+            if (below < top and not repeat) or (below > top and repeat):
+                raise ValueError(f"{where}: new rows after {below} own row(s), the header rows that repeat being the "
+                                 f"first {top}, {'marked' if repeat else 'not marked'} as header rows (the op must "
+                                 f"refuse: header-rows)")
             work.append((k, r, rows[r], [_v_new_row(rows[r], row, chain, repeat, tracked, author) for row in texts]))
         if not work:
             continue

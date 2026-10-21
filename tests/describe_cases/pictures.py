@@ -7,7 +7,8 @@ CASES = {
         ({"paragraphs": {"text_regex": "^A\\.\\s+See the site plan"}}, {"image": "C:/Plans/site.png"},
          ["Insert the picture “C:/Plans/site.png” as its own paragraph after each of the paragraphs whose text "
           "matches the pattern “^A\\.\\s+See the site plan”",
-          "at its own size, made smaller to fit the text width when it is wider", "shown as a tracked change"]),
+          "at its own size, made smaller to fit between the margins (or in its table cell) when it is larger",
+          "shown as a tracked change"]),
         # a width (proportions kept), centred, with alt text, before the anchor, untracked
         ({"paragraphs": {"text_regex": "^PART 2"}},
          {"image": "C:/Logos/seal.png", "position": "before", "width": 2.5, "align": "center",

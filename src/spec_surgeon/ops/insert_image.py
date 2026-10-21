@@ -8,18 +8,32 @@ Definition (both sides; the picture file, its resolution and the placed size are
   default —, headers, footers). An anchor in a text box, or holding one (a paragraph inside it), is refused (``textbox``);
   so is ``after`` an anchor carrying a section break (``section-break``: the picture would open the next section).
 * **The new paragraph** is the anchor's sibling just ``before`` / ``after`` it: ``w:pPr`` holds ``w:pStyle`` when a
-  ``style`` is given (a paragraph style of the document — else none: the document's default paragraph style) and
-  ``w:jc`` for ``align`` (``left`` | ``center`` | ``right``); then one run, ``<w:rPr><w:noProof/></w:rPr>`` and the
-  picture's ``w:drawing``. Tracked (the default): the run inside a ``w:ins`` and the paragraph mark inserted
-  (``w:pPr/w:rPr/w:ins``), as Word records an inserted paragraph; ``tracked: false``: neither.
+  ``style`` is given (a paragraph style of the document — else none: the document's default paragraph style),
+  ``<w:spacing w:line="240" w:lineRule="auto"/>`` when its line spacing would otherwise be exact (flagged: an exact
+  line height crops an inline picture to one line) and ``w:jc`` for ``align`` (``left`` | ``center`` | ``right``); then
+  one run, ``<w:rPr><w:noProof/></w:rPr>`` and the picture's ``w:drawing``. Tracked (the default): the run inside a
+  ``w:ins`` and the paragraph mark inserted (``w:pPr/w:rPr/w:ins``), as Word records an inserted paragraph;
+  ``tracked: false``: neither.
+* **Its line spacing** (``line_rule``) is the ``w:spacing/@w:lineRule`` of the nearest level that states one —
+  effective.Resolver's levels for the new paragraph: its paragraph style chain (``style``, else the default paragraph
+  style), then, when the anchor lies in a table, that table's style chain (its ``w:tblStyle``, else the default table
+  style), then ``docDefaults``; none states one → ``auto``. ``exact`` gets the single spacing above (only ``w:line`` and
+  ``w:lineRule``: the space before and after keep coming from the style); ``atLeast`` and ``auto`` grow with the
+  picture.
 * **The drawing** is Word's inline picture (``build_drawing``): ``wp:extent`` and ``pic:spPr/a:xfrm/a:ext`` the placed
   size; ``wp:docPr`` id one above the highest ``wp:docPr`` id of every text part of the package, counting up through the
   anchors (parts in scope order, anchors in document order), named ``Picture <id>``, ``descr`` the user's
   ``description`` (the alt text, verbatim); ``a:blip r:embed`` the part's new relationship.
-* **The size** (``placed_size``): ``width`` / ``height`` in inches; neither → the picture's own size, shrunk to the text
-  width — ``pgSz`` w − ``pgMar`` left, right and gutter — of the anchor's section (a paragraph belongs to the section of
-  the first ``w:sectPr`` at or after it: the paragraphs carrying one, in document order, then the body's), or in a header
-  or footer the narrowest text width of every section. A section without a usable page size and margins refuses
+* **The size** (``placed_size``): ``width`` / ``height`` in inches, kept as given (flagged when larger than the text
+  area below); neither → the picture's own size, made smaller in proportion to fit the **text area**: the text width
+  — ``pgSz`` w − ``pgMar`` left, right and gutter — and the text height — ``pgSz`` h − ``pgMar`` top and bottom (a
+  negative margin counts its size) — of the anchor's section (a paragraph belongs to the section of the first
+  ``w:sectPr`` at or after it: the paragraphs carrying one, in document order, then the body's), or in a header or
+  footer the narrowest width and the shortest height of every section. An anchor in a **table cell** (its nearest
+  ``w:tc``) is fitted to the cell's width instead (``cell_width``) when its ``w:tcW`` is in twips (``w:type="dxa"``):
+  less its left and right margins, each the cell's ``w:tcMar``, else its table's ``w:tblCellMar``, else Word's 108
+  twips (``w:left`` or ``w:start``, ``w:right`` or ``w:end``; ``dxa`` or ``nil``); a width in percent, automatic,
+  absent or unreadable is flagged and the text width used. A section without a usable page size and margins refuses
   (``image-size``); one with several text columns is flagged (the picture fills the whole width).
 * **The package**: ONE new media member ``word/media/image<N>.<png|jpeg|gif|bmp>`` (``pictures.free_media_name``) with
   the file's bytes; ONE new ``image`` relationship per part that gets the picture, the next ``rId<n>`` of its rels (the
@@ -32,7 +46,7 @@ from __future__ import annotations
 
 import posixpath
 import re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 
@@ -41,6 +55,7 @@ from ..ooxml import (RPR_ORDER, RevisionStamp, block_full_text, file_uses_date_u
 from ..package import CT_PART, DocxPackage
 from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
+from .effective import Resolver
 from .images import (EMU_PER_TWIP, INSERT_TYPES, check_unchanged, length_param, load_picture, placed_size)
 from .insert_paragraph import default_author
 from .pictures import (add_default, ct_change, free_media_name, length_words, max_docpr_id, nearest_paragraph,
@@ -52,6 +67,7 @@ PARAMS = ("image", "position", "width", "height", "align", "description", "style
           "allow_missing", "date_convention")
 ALIGNS = ("left", "center", "right")
 PIC_URI = "http://schemas.openxmlformats.org/drawingml/2006/picture"
+CELL_MARGIN = 108                   # twips: Word's left and right cell margin when neither cell nor table sets one
 
 
 def text_width(sect_pr) -> Optional[int]:
@@ -66,6 +82,80 @@ def text_width(sect_pr) -> Optional[int]:
     page, left, right, gutter = (int(v) for v in values)
     twips = page - left - right - gutter
     return twips * EMU_PER_TWIP if twips > 0 else None
+
+
+def text_height(sect_pr) -> Optional[int]:
+    """The section's text height in EMU: page height − top − bottom margin (whole twips, a missing margin 0, a negative
+    one — text that stays put whatever the header's size — its size; × 635), None when the section states no page height
+    or margins, a value is not a whole number, or nothing is left."""
+    sz, mar = sect_pr.find(W + "pgSz"), sect_pr.find(W + "pgMar")
+    if sz is None or mar is None:
+        return None
+    values = [sz.get(W + "h"), mar.get(W + "top", "0"), mar.get(W + "bottom", "0")]
+    if not all(v is not None and re.fullmatch(r"-?[0-9]+", v) for v in values):
+        return None
+    page, top, bottom = (int(v) for v in values)
+    twips = page - abs(top) - abs(bottom)
+    return twips * EMU_PER_TWIP if twips > 0 else None
+
+
+def _cell_margin(holder, names) -> Tuple[bool, Optional[int]]:
+    """(stated, twips) of one side of a ``w:tcMar`` / ``w:tblCellMar``: the first of ``names`` it holds; ``nil`` is 0,
+    ``dxa`` its whole ``w:w``; another type or value cannot be read (None)."""
+    if holder is None:
+        return False, None
+    for name in names:
+        side = holder.find(W + name)
+        if side is None:
+            continue
+        kind, value = side.get(W + "type"), side.get(W + "w")
+        if kind == "nil":
+            return True, 0
+        if kind == "dxa" and value is not None and re.fullmatch(r"[0-9]+", value):
+            return True, int(value)
+        return True, None
+    return False, None
+
+
+def cell_width(tc) -> Optional[int]:
+    """The text width of table cell ``tc`` in EMU (module docstring), None when its width is not stated in twips, a
+    margin cannot be read, or nothing is left."""
+    tcw = tc.find(f"{W}tcPr/{W}tcW")
+    if tcw is None or tcw.get(W + "type") != "dxa" or not re.fullmatch(r"[0-9]+", tcw.get(W + "w") or ""):
+        return None
+    tbl = next(tc.iterancestors(W + "tbl"), None)
+    holders = (tc.find(f"{W}tcPr/{W}tcMar"), tbl.find(f"{W}tblPr/{W}tblCellMar") if tbl is not None else None)
+    twips = int(tcw.get(W + "w"))
+    for names in (("left", "start"), ("right", "end")):
+        margin = CELL_MARGIN
+        for holder in holders:
+            stated, value = _cell_margin(holder, names)
+            if stated:
+                if value is None:
+                    return None
+                margin = value
+                break
+        twips -= margin
+    return twips * EMU_PER_TWIP if twips > 0 else None
+
+
+def line_rule(res: Resolver, anchor, style: Optional[str]) -> Tuple[str, List[str]]:
+    """(the line spacing rule of a new paragraph of ``style`` beside ``anchor`` — module docstring —, the targets of the
+    styles part it read: ``docDefaults`` and ``style:<id>`` per style of the chains)."""
+    chains = []
+    tbl = next(anchor.iterancestors(W + "tbl"), None)
+    if tbl is not None:
+        ts = tbl.find(f"{W}tblPr/{W}tblStyle")
+        chains.append(res.chain(ts.get(W + "val") if ts is not None else res.defaults.get("table")))
+    chains.append(res.chain(style or res.defaults.get("paragraph")))
+    levels = [("docDefaults", res.dd_ppr)] + [(f"style:{st.get(W + 'styleId')}", st.find(W + "pPr"))
+                                             for chain in chains for st in chain]       # lowest first
+    rule = "auto"
+    for _target, ppr in levels:
+        spacing = ppr.find(W + "spacing") if ppr is not None else None
+        if spacing is not None and spacing.get(W + "lineRule") is not None:
+            rule = spacing.get(W + "lineRule")
+    return rule, [target for target, _ in levels]
 
 
 def columns(sect_pr) -> int:
@@ -127,13 +217,17 @@ def build_drawing(cx: int, cy: int, docpr: int, rid: str, description: Optional[
     return drawing
 
 
-def build_paragraph(drawing, style: Optional[str], align: Optional[str], tracked: bool, stamp, ids: List[int]):
-    """The new paragraph around the drawing (module docstring); ``ids`` hands out the revision ids."""
+def build_paragraph(drawing, style: Optional[str], align: Optional[str], single: bool, tracked: bool, stamp,
+                    ids: List[int]):
+    """The new paragraph around the drawing (module docstring), its line spacing single when ``single``; ``ids`` hands
+    out the revision ids."""
     p = etree.Element(W + "p")
-    if style or align:
-        ppr = etree.SubElement(p, W + "pPr")
+    if style or align or single:
+        ppr = etree.SubElement(p, W + "pPr")            # schema order: pStyle, spacing, jc (then the mark's rPr)
         if style:
             etree.SubElement(ppr, W + "pStyle").set(W + "val", style)
+        if single:
+            etree.SubElement(ppr, W + "spacing", {W + "line": "240", W + "lineRule": "auto"})
         if align:
             etree.SubElement(ppr, W + "jc").set(W + "val", align)
     holder = p
@@ -155,9 +249,10 @@ class InsertImage(Op):
     mode = "content"
     description = ("Insert an attached picture (PNG, JPEG, GIF or BMP) as its own new paragraph before or after each "
                    "anchor paragraph a targeted selector chooses, tracked (default) or untracked: 'width' and/or "
-                   "'height' in inches (one keeps the proportions; neither: the picture's own size, shrunk to the text "
-                   "width), 'align' left/center/right, 'description' the user's alt text, 'style' the new paragraph's "
-                   "style (default: the document's default paragraph style). SVG and other files are refused.")
+                   "'height' in inches (one keeps the proportions; neither: the picture's own size, shrunk to fit the "
+                   "text width and height, in a table cell the cell's width), 'align' left/center/right, 'description' "
+                   "the user's alt text, 'style' the new paragraph's style (default: the document's default paragraph "
+                   "style). SVG and other files are refused.")
     params_schema = {
         "type": "object",
         "properties": {
@@ -191,8 +286,9 @@ class InsertImage(Op):
         "V2": "one BlockDiff per new paragraph (before=None, after='' — a picture has no text)",
         "V4": "tracked: +1 ins and +1 ins_mark per picture; untracked: 0",
         "V10": "inserted_images re-derives the anchors, the picture's size (its own reader and resolution, the "
-               "section's text width), the drawing ids, and builds each new paragraph again with its own template; "
-               "the relationships, the media member and the content types are compared whole",
+               "section's text width and height, a table cell's width), the line spacing the style gives, the drawing "
+               "ids, and builds each new paragraph again with its own template; the relationships, the media member "
+               "and the content types are compared whole",
     }
 
     def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
@@ -214,7 +310,7 @@ class InsertImage(Op):
         elif number(height):
             size = f"{length_words(height)} high with its proportions kept"
         else:
-            size = "at its own size, made smaller to fit the text width when it is wider"
+            size = "at its own size, made smaller to fit between the margins (or in its table cell) when it is larger"
         clauses = [size]
         if params.get("align") in ALIGNS:
             clauses.append({"left": "aligned left", "center": "centred", "right": "aligned right"}[params["align"]])
@@ -276,7 +372,9 @@ class InsertImage(Op):
         main = pkg.main_part()
         secs = DocxPackage.sect_prs(pkg.xml(main))
         widths = [text_width(sp) for sp in secs]
+        heights = [text_height(sp) for sp in secs]
         main_sections = section_of(paragraphs(pkg.xml(main)))
+        resolver = Resolver(sheet, {})
         frag = self.fragment({"scope": scope, "paragraphs": pred},
                              {**params, "position": position, "tracked": tracked, "author": author},
                              mode="content" if tracked else "untracked")
@@ -286,6 +384,10 @@ class InsertImage(Op):
         docpr = max_docpr_id(pkg)
         planned: Dict[str, List[Dict[str, Any]]] = {}
         read_sections = set()
+        style_reads = set()
+        unfixed: List[str] = []                  # anchors in a cell whose width is not in twips (fitted to the page)
+        larger: List[str] = []                   # anchors whose given size is larger than their text area
+        exact: List[str] = []                    # anchors whose new paragraph would have exact line spacing
         for part in parts:
             frag.touches.append((part, "scope", "verify"))          # V10 re-resolves the anchors over every part in scope
             root = pkg.xml(part)
@@ -302,20 +404,34 @@ class InsertImage(Op):
                     raise JobException(f"{part} anchor paragraph {bi} carries a section break; insert 'before' it or "
                                        f"anchor on a paragraph of the next section", "section-break",
                                        {"part": part, "paragraph": bi})
-                limit = None
-                if width is None and height is None:
-                    shown = [main_sections[bi]] if part == main else list(range(len(secs)))
-                    if not shown or any(i >= len(secs) or widths[i] is None for i in shown):
-                        raise JobException(f"{part} paragraph {bi}: its section states no usable page size and margins "
-                                           f"to fit the picture in — give its width or height in inches",
-                                           "image-size", {"part": part, "paragraph": bi})
-                    limit = min(widths[i] for i in shown)
+                where = f"{part} paragraph {bi}"
+                shown = [main_sections[bi]] if part == main else list(range(len(secs)))
+                cell = next(p.iterancestors(W + "tc"), None)
+                fitted = cell_width(cell) if cell is not None else None
+                area = None
+                if shown and all(i < len(secs) and widths[i] is not None and heights[i] is not None for i in shown):
+                    area = (fitted if fitted is not None else min(widths[i] for i in shown),
+                            min(heights[i] for i in shown))
+                own = width is None and height is None
+                if own:
+                    if area is None:
+                        raise JobException(f"{where}: its section states no usable page size and margins to fit the "
+                                           f"picture in — give its width or height in inches", "image-size",
+                                           {"part": part, "paragraph": bi})
                     read_sections.update(shown)
-                cx, cy = placed_size(pic, width, height, limit)
+                    if cell is not None and fitted is None:
+                        unfixed.append(where)
+                cx, cy = placed_size(pic, width, height, area if own else None)
+                if not own and area is not None and (cx > area[0] or cy > area[1]):
+                    larger.append(where)
+                rule, reads = line_rule(resolver, p, style)
+                style_reads.update(reads)
+                if rule == "exact":
+                    exact.append(where)
                 k = len(items)
                 out = bi + k if position == "before" else bi + 1 + k
                 docpr += 1
-                items.append({"anchor": bi, "out": out, "docpr": docpr, "size": [cx, cy]})
+                items.append({"anchor": bi, "out": out, "docpr": docpr, "size": [cx, cy], "single": rule == "exact"})
             if items:
                 planned[part] = items
         total = sum(len(v) for v in planned.values())
@@ -368,8 +484,21 @@ class InsertImage(Op):
             frag.flags.append("insert_image: " + "; ".join(f"section {i + 1} has {n} columns" for i, n in many)
                               + " — a picture at its own size is fitted to the full text width, wider than one "
                                 "column; give its width in inches to fit a column")
+        if unfixed:
+            frag.flags.append(f"insert_image: {', '.join(unfixed)} lie(s) in a table cell whose width is not set in "
+                              f"fixed units (a percentage, automatic or none) — the picture at its own size is fitted "
+                              f"to the page's text width, which may be wider than the cell; give its width in inches to "
+                              f"fit the cell")
+        if larger:
+            frag.flags.append(f"insert_image: the size given is larger than the text area (or the table cell) at "
+                              f"{', '.join(larger)} — kept as asked")
+        if exact:
+            frag.flags.append(f"insert_image: the style sets exact line spacing, which would crop the picture; its "
+                              f"paragraph gets single line spacing ({', '.join(exact)})")
         if style and sheet.part:
             frag.touches.append((sheet.part, f"style:{style}", "verify"))
+        if sheet.part:                   # the line spacing read the style chains and the document defaults
+            frag.touches += [(sheet.part, target, "verify:pPr") for target in sorted(style_reads)]
         if tracked:
             frag.rev_delta["ins"] = frag.rev_delta.get("ins", 0) + total
             frag.rev_delta["ins_mark"] = frag.rev_delta.get("ins_mark", 0) + total
@@ -412,8 +541,8 @@ class InsertImage(Op):
             news = []
             for it in d["items"]:               # revision ids in document order; placed after, so indices hold
                 drawing = build_drawing(it["size"][0], it["size"][1], it["docpr"], d["rid"], td["description"])
-                news.append((pars[it["anchor"]], build_paragraph(drawing, td["style"], td["align"], td["tracked"],
-                                                                 stamp, ids)))
+                news.append((pars[it["anchor"]], build_paragraph(drawing, td["style"], td["align"], it["single"],
+                                                                 td["tracked"], stamp, ids)))
             for anchor, p in news:
                 if td["position"] == "after":
                     anchor.addnext(p)

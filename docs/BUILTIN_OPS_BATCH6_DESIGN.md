@@ -421,6 +421,10 @@ implementations, composition with `set_table_props`, the pipeline, LibreOffice) 
 (accepting the tracked output equals the untracked one, rejecting equals the source). Needs the owner's machine: a live
 request per op on real specifications, opened in Word (the tracked table and row markup above all).
 
+* 2026-10-21, review fix: `insert_table_rows` keeps the repeating header rows whole — the run of header rows from row 0
+  (`table_rows.header_run` ↔ `tablerows.v_header_top`); unmarked rows before or among them, or `repeat_header` rows that
+  would not join them, refuse with the new code `header-rows`.
+
 ### F3 — built (2026-10-21)
 
 `set_properties` takes `vertAlign`, `vanish`, `highlight`, `spacing` and `dstrike` on text and on style definitions
@@ -468,6 +472,15 @@ tracked and untracked, every match, inline and floating, body, headers and foote
 implementations caught; refusals; conflicts and composed steps; the batch pipeline; a LibreOffice render. Needs the
 owner's machine: a live request per op over real specifications, opened in Word (picture placement and the tracked
 deletion's look in the review pane).
+
+* 2026-10-21, review fix: a picture at its own size fits the text height too (page height less the top and bottom
+  margins; a header or footer: the shortest section), and in a table cell whose `w:tcW` is in twips the cell's width
+  less its margins (`tcMar`, else `tblCellMar`, else 108 twips; another width is flagged); a size given is kept,
+  flagged when larger.
+* 2026-10-21, review fix: a new picture paragraph whose style chain (with its table's and docDefaults) gives exact line
+  spacing gets `<w:spacing w:line="240" w:lineRule="auto"/>`, flagged (an exact line crops an inline picture).
+* 2026-10-21, review fix: an untracked removal that would empty a run carrying a pending `w:rPrChange` refuses
+  (`tracked-format`), as a tracked one that would split it does.
 
 ### F8 — built (2026-10-21)
 

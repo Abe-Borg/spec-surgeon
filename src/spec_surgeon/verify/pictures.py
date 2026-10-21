@@ -1,20 +1,24 @@
 """V10 kinds ``inserted_images``, ``removed_images`` and ``resized_images`` (built-in batch 6,
 docs/BUILTIN_OPS_BATCH6_DESIGN.md §5) — verifier side, independent of ops/ (rule 1): its own picture-file reader
 (verify/images.py), its own reading of the pictures of a part, the match, the refusals, the sizes, the sections' text
-widths, the relationships and the content types; a new picture's paragraph is built here again from this module's own
-template, written as XML text.
+widths and heights, table cells' widths, the style chains' line spacing, the relationships and the content types; a new
+picture's paragraph is built here again from this module's own template, written as XML text.
 
 * ``inserted_images``: the anchors re-resolved over the SOURCE (this package's paragraph selector), the placed size from
-  the picture file read here (its resolution, the section's text width), the drawing ids counted up from the source's
-  highest; each new paragraph must be the anchor's sibling and equal to the template (its revision marks new, by the
-  plan's author); the part's rels must be the source's plus exactly one image relationship to the one new media member,
-  which holds the file's bytes; ``[Content_Types].xml`` the source's plus exactly the Default (or Override) the extension
-  needs; the drawing ids unique in the output.
+  the picture file read here (its resolution; neither side given: shrunk in proportion to fit the section's text width
+  and height — a header or footer: every section's smallest — the width a table cell's when it states one in twips),
+  the line spacing (the nearest style level stating a ``w:lineRule``; ``exact`` → the template carries
+  ``<w:spacing w:line="240" w:lineRule="auto"/>``), the drawing ids counted up from the source's highest; each new
+  paragraph must be the anchor's sibling and equal to the template (its revision marks new, by the plan's author); the
+  part's rels must be the source's plus exactly one image relationship to the one new media member, which holds the
+  file's bytes; ``[Content_Types].xml`` the source's plus exactly the Default (or Override) the extension needs; the
+  drawing ids unique in the output.
 * ``removed_images``: the matches derived here; every paragraph holding a removed picture must be the source's with
   exactly those drawings gone (untracked) or inside a new ``w:del`` (tracked), item by item, and equal to the paragraph
-  built here from the source's by the rule (the runs cut, emptied runs gone); untracked, the rels must lose exactly the
-  relationships only removed drawings named, the package exactly the members nothing targets any more, and
-  ``[Content_Types].xml`` exactly their Overrides; tracked, nothing but the parts may change.
+  built here from the source's by the rule (the runs cut, emptied runs gone); a run carrying a pending formatting change
+  (``w:rPrChange``) that the removal would split (tracked) or empty (untracked) must have been refused; untracked, the
+  rels must lose exactly the relationships only removed drawings named, the package exactly the members nothing
+  targets any more, and ``[Content_Types].xml`` exactly their Overrides; tracked, nothing but the parts may change.
 * ``resized_images``: the matches and the new sizes derived here; every drawing of a part identical but for the resized
   pictures' two sizes, which the residual then masks.
 """
@@ -235,6 +239,74 @@ def _v_text_width(sp) -> Optional[int]:
     return left * _PER_TWIP if left > 0 else None
 
 
+def _v_text_height(sp) -> Optional[int]:
+    """EMU between the top and bottom margins: pgSz h − |pgMar top| − |pgMar bottom| (whole twips; a missing margin is
+    0, a negative one keeps the text where its size puts it)."""
+    size, mar = sp.find(W + "pgSz"), sp.find(W + "pgMar")
+    if size is None or mar is None:
+        return None
+    raw = [size.get(W + "h"), mar.get(W + "top", "0"), mar.get(W + "bottom", "0")]
+    if any(v is None or not re.fullmatch(r"-?[0-9]+", v) for v in raw):
+        return None
+    left = int(raw[0]) - abs(int(raw[1])) - abs(int(raw[2]))
+    return left * _PER_TWIP if left > 0 else None
+
+
+def _v_cell(p) -> Tuple[bool, Optional[int]]:
+    """(the paragraph lies in a table cell, that cell's text width in EMU or None): its w:tcW in twips (type dxa) less
+    a left and a right margin — each from the cell's w:tcMar, else the table's w:tblCellMar, else 108 twips; a side is
+    w:left or w:start (w:right or w:end), nil 0 or dxa its w:w — None for any other width, margin or nothing left."""
+    tc = _v_up(p, W + "tc")
+    if tc is None:
+        return False, None
+    pr = tc.find(W + "tcPr")
+    tcw = pr.find(W + "tcW") if pr is not None else None
+    if tcw is None or tcw.get(W + "type") != "dxa" or not re.fullmatch(r"[0-9]+", tcw.get(W + "w") or ""):
+        return True, None
+    tbl = _v_up(tc, W + "tbl")
+    sources = [pr.find(W + "tcMar"), tbl.find(f"{W}tblPr/{W}tblCellMar") if tbl is not None else None]
+    room = int(tcw.get(W + "w"))
+    for side in (("left", "start"), ("right", "end")):
+        found = next((m for src in sources if src is not None
+                      for m in [src.find(W + side[0]), src.find(W + side[1])] if m is not None), None)
+        if found is None:
+            room -= 108
+        elif found.get(W + "type") == "nil":
+            continue
+        elif found.get(W + "type") == "dxa" and re.fullmatch(r"[0-9]+", found.get(W + "w") or ""):
+            room -= int(found.get(W + "w"))
+        else:
+            return True, None
+    return True, (room * _PER_TWIP if room > 0 else None)
+
+
+_V_IGNORED_STYLES = ("NoList", "TableNormal", "DefaultParagraphFont")      # MS-OI29500 §2.1.242(a): no definitions
+
+
+def _v_line_rule(styles, anchor, style: Optional[str]) -> str:
+    """The w:lineRule a new paragraph of ``style`` (None: the default paragraph style) beside ``anchor`` takes: the
+    nearest level stating one — its paragraph style chain, the anchor's table's style chain (its tblStyle, else the
+    default table style), docDefaults — else auto."""
+    def pprs(sid):
+        out = []
+        for st in styles.chain(sid):
+            if st.get(W + "styleId") in _V_IGNORED_STYLES:
+                break
+            out.append(st.find(W + "pPr"))
+        return out
+    levels = pprs(style or styles.default.get("paragraph"))
+    tbl = _v_up(anchor, W + "tbl")
+    if tbl is not None:
+        ts = tbl.find(f"{W}tblPr/{W}tblStyle")
+        levels += pprs(ts.get(W + "val") if ts is not None else styles.default.get("table"))
+    levels.append(styles.doc_defaults_ppr())
+    for ppr in levels:
+        sp = ppr.find(W + "spacing") if ppr is not None else None
+        if sp is not None and sp.get(W + "lineRule") is not None:
+            return sp.get(W + "lineRule")
+    return "auto"
+
+
 def _v_section_index(main_root) -> List[int]:
     """Per paragraph of the main part, by index: the section it belongs to (the next sectPr at or after it)."""
     out, seen = [], 0
@@ -246,7 +318,8 @@ def _v_section_index(main_root) -> List[int]:
 
 
 def _v_placed(pw: int, ph: int, ex: Fraction, ey: Fraction, width: Any, height: Any,
-              limit: Optional[int]) -> Tuple[int, int]:
+              area: Optional[Tuple[int, int]]) -> Tuple[int, int]:
+    """The placed size; ``area`` (width, height of the room in EMU) only counts when neither side is given."""
     nw, nh = pw * ex, ph * ey
     if width is not None and height is not None:
         return _v_emu(width), _v_emu(height)
@@ -256,17 +329,21 @@ def _v_placed(pw: int, ph: int, ex: Fraction, ey: Fraction, width: Any, height: 
     if height is not None:
         h = _v_emu(height)
         return _v_round(h * nw / nh), h
-    if nw > limit:
-        return limit, _v_round(limit * nh / nw)
-    return _v_round(nw), _v_round(nh)
+    room_w, room_h = area
+    if nw <= room_w and nh <= room_h:
+        return _v_round(nw), _v_round(nh)
+    if Fraction(room_w, 1) / nw <= Fraction(room_h, 1) / nh:          # across is the tighter
+        return room_w, _v_round(room_w * nh / nw)
+    return _v_round(room_h * nw / nh), room_h
 
 
-def _v_new_paragraph(cx: int, cy: int, docpr: int, rid: str, a: Dict[str, Any]):
+def _v_new_paragraph(cx: int, cy: int, docpr: int, rid: str, a: Dict[str, Any], single: bool = False):
     style, align, tracked = a.get("style"), a.get("align"), bool(a.get("tracked", True))
     ppr = ""
-    if style or align or tracked:
-        ppr = ("<w:pPr>" + ('<w:pStyle w:val=""/>' if style else "") + ('<w:jc w:val=""/>' if align else "")
-               + ('<w:rPr><w:ins/></w:rPr>' if tracked else "") + "</w:pPr>")
+    if style or align or tracked or single:
+        ppr = ("<w:pPr>" + ('<w:pStyle w:val=""/>' if style else "")
+               + ('<w:spacing w:line="240" w:lineRule="auto"/>' if single else "")
+               + ('<w:jc w:val=""/>' if align else "") + ('<w:rPr><w:ins/></w:rPr>' if tracked else "") + "</w:pPr>")
     run = "<w:r><w:rPr><w:noProof/></w:rPr>" + _V_DRAWING.format(cx=cx, cy=cy, id=docpr, rid=rid) + "</w:r>"
     p = etree.fromstring(_V_PARAGRAPH.format(ppr=ppr, body=f"<w:ins>{run}</w:ins>" if tracked else run))
     if style:
@@ -315,6 +392,7 @@ def _inserted_images(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     main_root = ctx.src.xml(main)
     secs = sect_prs(main_root)
     widths = [_v_text_width(sp) for sp in secs]
+    heights = [_v_text_height(sp) for sp in secs]
     section = _v_section_index(main_root)
     old_ids = set().union(*(part_revision_ids(ctx.src.xml(t)) for t in ctx.src_tp))
     top = 0
@@ -339,22 +417,26 @@ def _inserted_images(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             if after and anchor.find(W + "pPr/" + W + "sectPr") is not None:
                 errs.append(f"{where}: carries a section break — the op must refuse 'after'")
                 continue
-            limit = None
+            area = None
             if width is None and height is None:
                 if part == main:
-                    ws = [widths[section[bi]] if section[bi] < len(widths) else None]
+                    at = [section[bi]] if section[bi] < len(secs) else [None]
                 else:                                   # a header or footer: every section's
-                    ws = list(widths)
-                if not ws or any(w is None for w in ws):
+                    at = list(range(len(secs)))
+                ws = [widths[i] if i is not None else None for i in at]
+                hs = [heights[i] if i is not None else None for i in at]
+                if not at or any(v is None for v in ws + hs):
                     errs.append(f"{where}: no usable page size to fit the picture in — the op must refuse")
                     continue
-                limit = min(ws)
-            cx, cy = _v_placed(pw, ph, ex, ey, width, height, limit)
+                _, cell_w = _v_cell(anchor)
+                area = (cell_w if cell_w is not None else min(ws), min(hs))
+            cx, cy = _v_placed(pw, ph, ex, ey, width, height, area)
             if not _v_fits((cx, cy)):
                 errs.append(f"{where}: the picture would be {cx} × {cy} EMU — the op must refuse")
                 continue
             top += 1
-            rows.append({"anchor": bi, "out": bi + 1 + k if after else bi + k, "docpr": top, "size": [cx, cy]})
+            rows.append({"anchor": bi, "out": bi + 1 + k if after else bi + k, "docpr": top, "size": [cx, cy],
+                         "single": _v_line_rule(ctx.src_styles, anchor, a.get("style")) == "exact"})
         if rows:
             derived[part] = rows
     planned = a.get("expected") or {}
@@ -413,7 +495,7 @@ def _inserted_images(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             beside = op.getprevious() if after else op.getnext()
             if ai is None or ai >= len(ov.pars) or beside is not ov.pars[ai]:
                 errs.append(f"{where}: the new paragraph is not right {'after' if after else 'before'} its anchor")
-            want_p = _v_new_paragraph(row["size"][0], row["size"][1], row["docpr"], rid or "", a)
+            want_p = _v_new_paragraph(row["size"][0], row["size"][1], row["docpr"], rid or "", a, row["single"])
             got_p = _v_strip_marks(op, a.get("author"), old_ids, where, errs)
             if sig(want_p) != sig(got_p):
                 errs.append(f"{where}: not the expected picture paragraph: "
@@ -540,9 +622,15 @@ def _removed_images(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                             if it.el in gone else it for it in items]
             else:
                 expected = drop(items, elements=ds)
-            if tracked and any(len(_v_cuts(r, gone)) > 1 and r.find(f"{W}rPr/{W}rPrChange") is not None
-                               for r in dict.fromkeys(d.getparent() for d in ds)):
-                errs.append(f"{where}: a run to split carries a pending formatting change — the op must refuse")
+            for r in dict.fromkeys(d.getparent() for d in ds):
+                if r.find(f"{W}rPr/{W}rPrChange") is None:
+                    continue
+                cuts = _v_cuts(r, gone)
+                if tracked and len(cuts) > 1:
+                    errs.append(f"{where}: a run to split carries a pending formatting change — the op must refuse")
+                elif not tracked and all(hit for hit, _ in cuts):
+                    errs.append(f"{where}: a run the removal empties carries a pending formatting change, which would "
+                                f"go with it — the op must refuse")
             check_paragraph(p, ov.pars[oi], expected, old_ids, where, errs)
             want_p = _v_without(p, ds, tracked, author)
             got_p = _v_unstamped(ov.pars[oi], author, old_ids, where, errs) if tracked else ov.pars[oi]

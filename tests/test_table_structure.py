@@ -166,6 +166,7 @@ def test_the_two_sides_of_the_row_selector_agree_on_every_row(src):
             for pred in ROW_PREDICATES:
                 assert table_rows.selected_rows(tbl, pred, chain) == vtr.v_rows_chosen(vtbl, pred, vchain, vt.text), pred
             assert table_rows.merge_groups(tbl) == vtr.v_merges(vtbl)
+            assert table_rows.header_run(tbl, chain) == vtr.v_header_top(vtbl, vchain)
             n = len(own_rows(tbl))
             for k in range(n + 1):
                 for gone in itertools.combinations(range(n), k):
@@ -465,12 +466,14 @@ def test_a_new_row_copies_its_reference_row(src):
 
 
 def test_header_rows_are_copied_without_their_marking_unless_asked(src):
-    for repeat in (False, True):
+    # unmarked, a copy of the header row goes after it (before it, it would split the repeating header rows: refused —
+    # test_new_rows_keep_the_repeating_header_rows_whole); marked, it joins them at the top
+    for repeat, position, at in ((False, "after", 1), (True, "before", 0)):
         plan, out, rec = run(src, "insert_table_rows", {"tables": SCHEDULE, "rows": {"index_range": [0, 0]}},
-                             {"rows": [["SCHEDULE", "", ""]], "position": "before", "repeat_header": repeat,
+                             {"rows": [["SCHEDULE", "", ""]], "position": position, "repeat_header": repeat,
                               "tracked": False})
         assert rec.passed, rec.to_markdown()
-        new = rows(tables(out)[0])[0]
+        new = rows(tables(out)[0])[at]
         assert kids(new.find(W + "trPr")) == (["cantSplit", "tblHeader"] if repeat else ["cantSplit"])
         assert new.find(f".//{W}b") is not None and new.find(f".//{W}shd").get(W + "fill") == "D9D9D9"
         assert [len(list(tc.iter(W + "r"))) for tc in cells(new)] == [1, 0, 0]     # an empty text is an empty cell
@@ -525,6 +528,93 @@ def test_a_table_with_no_chosen_row_is_left_alone(src):
                          {"rows": [["FP-9", "Spare", "-"]]})
     assert rec.passed and any("no row chosen, left alone" in n for n in plan.notes)
     assert plan.property_assertions[0]["changed"] == {MAIN: [[0, 2]]}
+
+
+# ---- the repeating header rows: Word repeats only those that run on from the first row ------------------------------
+
+def header_at(table: int, row: int, val: str = None):
+    """Row ``row`` of body table ``table`` gets its own ``w:tblHeader`` (``w:val`` when given)."""
+    def fn(root):
+        tr = rows(tbls(root)[table])[row]
+        pr = tr.find(W + "trPr")
+        if pr is None:
+            pr = etree.Element(W + "trPr")
+            tr.insert(0, pr)
+        head = etree.SubElement(pr, W + "tblHeader")
+        if val is not None:
+            head.set(W + "val", val)
+    return fn
+
+
+def heads(data: bytes, k: int) -> List[bool]:
+    """Which own rows of body table ``k`` are header rows (the row's own marking, else its style's)."""
+    pkg = DocxPackage(data)
+    tbl = tbls(pkg.xml(MAIN))[k]
+    chain, _ = style_chain(tbl, StyleSheet(pkg))
+    return [table_rows.is_header_row(tr, chain) for tr in own_rows(tbl)]
+
+
+def test_the_header_run_on_both_sides(src):
+    for damage, k, want in ((None, 0, 1), (None, 4, 2), (None, 5, 0), (header_at(0, 1), 0, 2), (header_at(0, 2), 0, 1),
+                            (header_at(4, 0, "0"), 4, 0), (header_at(4, 1, "false"), 4, 1)):
+        data = mutate(src, MAIN, damage) if damage else src
+        pkg, vpkg = DocxPackage(data), VPackage(data)
+        tbl, vtbl = tbls(pkg.xml(MAIN))[k], VTables(vpkg.xml(MAIN)).tables[k]
+        chain, _ = style_chain(tbl, StyleSheet(pkg))
+        vchain = v_style_chain(vtbl, Styles(vpkg.xml("word/styles.xml")))
+        assert table_rows.header_run(tbl, chain) == vtr.v_header_top(vtbl, vchain) == want, (k, want)
+
+
+HEADER_REFUSALS = [
+    (None, {"tables": SCHEDULE, "rows": {"index_range": [0, 0]}}, {"position": "before"}, 3),   # above the header row
+    (header_at(0, 1), {"tables": SCHEDULE, "rows": {"index_range": [0, 0]}}, {}, 3),           # between two of them
+    (None, {"tables": REFS, "rows": {"index_range": [1, 1]}}, {"position": "before"}, 2),     # among its style's
+    (None, {"tables": SCHEDULE}, {"position": "at_end", "repeat_header": True}, 3),           # marked, far below them
+    (None, {"tables": SCHEDULE, "rows": {"text_regex": "^FP-1"}}, {"repeat_header": True}, 3),  # marked, a row below
+    (None, {"tables": ITEMS, "rows": {"index_range": [0, 0]}}, {"repeat_header": True}, 2),   # none: only at the top
+    (header_at(4, 0, "0"), {"tables": REFS}, {"position": "at_end", "repeat_header": True}, 2),  # row 0 breaks the run
+]
+
+
+@pytest.mark.parametrize("damage,select,params,n", HEADER_REFUSALS)
+@pytest.mark.parametrize("tracked", [True, False])
+def test_new_rows_keep_the_repeating_header_rows_whole(src, damage, select, params, n, tracked, monkeypatch):
+    data = mutate(src, MAIN, damage) if damage else src
+    params = {"rows": [["X"] * n], "tracked": tracked, **params}
+    refused(data, "insert_table_rows", select, params, "header-rows")
+    assert "header-rows" in FAILURE_EXPLANATIONS
+    # a header rule shared by plan and apply that lets it through is caught: the verifier refuses on its own reading
+    import spec_surgeon.ops.insert_table_rows as itr
+    monkeypatch.setattr(itr, "header_run", lambda tbl, chain: 99 if params.get("repeat_header") else 0)
+    plan, out, rec = run(data, "insert_table_rows", select, params)
+    assert "V10" in failed(rec) and "header-rows" in v10(rec), v10(rec)
+
+
+def test_header_rows_join_the_repeating_rows_at_the_top(src):
+    sel = {"tables": SCHEDULE, "rows": {"index_range": [0, 0]}}
+    plan, out, rec = run(src, "insert_table_rows", sel, {"rows": [["Tag", "Equipment", "Rating"]],
+                                                         "repeat_header": True})
+    assert rec.passed, rec.to_markdown()                       # right after the header row: it joins it
+    assert heads(out, 0) == [True, True, False, False, False]
+    two = mutate(src, MAIN, header_at(0, 1))
+    plan, out, rec = run(two, "insert_table_rows", sel, {"rows": [["a", "b", "c"]], "repeat_header": True,
+                                                         "tracked": False})
+    assert rec.passed, rec.to_markdown()                       # between two header rows, as one of them
+    assert heads(out, 0) == [True, True, True, False, False]
+    for select, params, k, want in (
+            ({"tables": ITEMS, "rows": {"index_range": [0, 0]}}, {"position": "before", "repeat_header": True}, 5,
+             [True, False, False]),                             # a table without header rows: a new one at its top
+            ({"tables": REFS, "rows": {"index_range": [1, 1]}}, {"position": "before", "repeat_header": True}, 4,
+             [True, True, True]),                               # among the rows its style repeats, as one of them
+            ({"tables": REFS}, {"position": "at_end"}, 4, [True, True, False])):    # unmarked after them (w:val 0)
+        plan, out, rec = run(src, "insert_table_rows", select, {"rows": [["a", "b"]], **params})
+        assert rec.passed, rec.to_markdown()
+        assert heads(out, k) == want, (select, params)
+    # unmarked right after the header row; a wrong output that puts it above the header row is caught
+    plan, out, rec = run(src, "insert_table_rows", sel, {"rows": [["a", "b", "c"]], "tracked": False})
+    assert rec.passed and heads(out, 0) == [True, False, False, False, False]
+    _caught(src, plan, out, MAIN, lambda r: rows(tbls(r)[0])[0].addprevious(rows(tbls(r)[0])[1]),
+            "is not the source with")
 
 
 # ---- insert_table -------------------------------------------------------------------------------------------------------
