@@ -17,9 +17,10 @@ from fx_comments import build_commented
 from make_fixtures import DIRTY_KINDS, _drop_members, build, build_dirty, patch_docx
 from spec_surgeon import llm
 from spec_surgeon import triage as triage_module
-from spec_surgeon.triage import (NOTE_COMMENTS, NOTE_COMPAT_MODE, NOTE_EMPTY_BODY, NOTE_FRAGMENTED, NOTE_NORMAL_ONLY, NOTE_PROTECTED,
-                                 NOTE_SPACING, NOTE_TEXTBOX_HF, NOTE_TYPED_NUMBERS, STATES, Triage, revisions_note,
-                                 triage_file, triage_files)
+from spec_surgeon.package import W
+from spec_surgeon.triage import (NOTE_COMMENTS, NOTE_COMPAT_MODE, NOTE_EMPTY_BODY, NOTE_FRAGMENTED, NOTE_NORMAL_ONLY,
+                                 NOTE_PROTECTED, NOTE_SPACING, NOTE_TEXTBOX_HF, NOTE_TYPED_NUMBERS, STATES, Triage,
+                                 revisions_note, triage_file, triage_files)
 
 CLEAN_BYTES = build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")
 
@@ -211,6 +212,19 @@ def test_an_empty_body_is_taken_with_a_note_and_its_facts(files):
     found = triage_file(files["empty_body"])
     assert found.state == "note" and found.notes == [NOTE_EMPTY_BODY] and not found.refused and found.reason == ""
     assert found.pattern_id and found.facts["body_has_text"] is False and found.facts["headers"]
+
+
+def test_a_body_without_a_paragraph_is_refused(files, tmp_path):
+    """A body of nothing but its sectPr (Word never writes one) has no paragraph an insertion could anchor on."""
+    def drop_paragraphs(root):
+        body = root.find(f"{W}body")
+        for p in body.findall(f"{W}p"):
+            body.remove(p)
+    path = tmp_path / "blockless.docx"
+    path.write_bytes(patch_docx(files["empty_body"].read_bytes(), {"word/document.xml": drop_paragraphs}))
+    found = _refused(path, opened=True)
+    assert found.reason == f"{path.name} has no paragraph in its body to add to; open it in Word and save it again."
+    assert found.facts["body_has_text"] is False
 
 
 # ---- the batch call, the record, and what the module never touches ------------------------------------------------

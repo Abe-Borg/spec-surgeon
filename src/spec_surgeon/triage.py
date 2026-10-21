@@ -3,8 +3,8 @@
 The moment a file is attached the app must know whether the engine can work with it and what the user should hear
 about it, before any plan and before any model call. ``triage_file`` answers with one of three states:
 
-* ``refused`` — the engine will not take the file: not a file, not a .docx (.docm, .doc), Word's ``~$`` lock file, or a
-  package that does not open. ``reason`` is one sentence naming the file and what to do.
+* ``refused`` — the engine will not take the file: not a file, not a .docx (.docm, .doc), Word's ``~$`` lock file, a
+  package that does not open, or a body without a paragraph. ``reason`` is one sentence: the file and what to do.
 * ``note``    — the file opens and will be worked on; ``notes`` lists what the user should know, one plain sentence
   each (an empty body, protection, compatibility mode, Normal-only styling, typed numbers, fragmented runs, text-box
   headers, pending revisions, comments, irregular spacing). ``ok`` — none of the above.
@@ -169,6 +169,9 @@ def triage_file(path) -> Triage:
         "protection_edit": protection["edit"],
         "body_has_text": has_text,
     }
+    if not has_text and doc.find(f"{W}body/{W}p") is None:          # Word always writes a paragraph to anchor on
+        return _refusal(path, f"{name} has no paragraph in its body to add to; open it in Word and save it again.",
+                        pattern_id=details["pattern_id"], facts=facts)
     notes: List[str] = [] if has_text else [NOTE_EMPTY_BODY]
     if protection["enforced"]:
         notes.append(NOTE_PROTECTED)
