@@ -67,6 +67,27 @@ def frames(response):
     return out
 
 
+@pytest.fixture
+def job_log(tmp_path):
+    """The window's app log (``spec-surgeon.log``) as ``gui.main`` sets it up, redacting formatter included; the
+    fixture returns the lines that say how a job ended."""
+    import logging
+    from spec_surgeon import diagnostics as diag
+    path = diag.setup_app_logging(tmp_path / "logs")
+    logger = logging.getLogger("spec_surgeon")
+
+    def ended():
+        for h in logger.handlers:
+            h.flush()
+        return [line for line in path.read_text(encoding="utf-8").splitlines() if " Job " in line]
+    try:
+        yield ended
+    finally:
+        for h in [h for h in logger.handlers if isinstance(h, logging.FileHandler)]:
+            logger.removeHandler(h)
+            h.close()
+
+
 def test_every_api_route_needs_the_launch_token(tmp_path):
     state, client = window(tmp_path)
     bare = TestClient(create_app(state))
@@ -300,6 +321,78 @@ def test_closing_the_window_stops_the_job_and_nothing_outlives_it(tmp_path):
     server = Server()
     shutdown(state, server, wait=30)
     assert not state.busy and server.should_exit
+
+
+# ---- the app log says how every job ended (spec-surgeon.log) ----------------------------------------------------
+
+def test_the_app_log_says_a_job_ended_at_the_preview_and_then_done(tmp_path, job_log):
+    state, client = window(tmp_path)
+    client.post("/api/attach", json={"paths": [str(document(tmp_path / "Spec.docx"))]})
+    with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
+        done = frames(response)[-1]
+    assert done["state"]["stage"] == "preview"
+    with client.stream("POST", "/api/primary", json={"token": done["state"]["action"]["token"]}) as response:
+        assert frames(response)[-1]["state"]["stage"] == "done"
+    lines = job_log()
+    assert len(lines) == 2 and all(" INFO " in line for line in lines)
+    assert "Job send ended: stage preview; stopped no; 1 model call so far; estimated cost " in lines[0]
+    assert "Job primary ended: stage done; stopped no; 1 model call so far; estimated cost " in lines[1]
+    assert not any("failed" in line or REQUEST in line or "FIRE SUPPRESSION" in line for line in lines)
+
+
+def test_the_app_log_says_a_job_ended_on_a_question(tmp_path, job_log):
+    question = "Only the body text, or everything?"
+    state, client = window(tmp_path, FakeClient(resp(tool("ask_user", {"message": question,
+                                                                       "questions": [question]}))))
+    client.post("/api/attach", json={"paths": [str(document(tmp_path / "Spec.docx"))]})
+    with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
+        assert frames(response)[-1]["state"]["stage"] == "question"
+    [line] = job_log()
+    assert "Job send ended: stage question; stopped no; 1 model call so far; estimated cost " in line
+    assert question not in line and REQUEST not in line
+
+
+def test_the_app_log_says_a_job_paused_at_the_call_allowance(tmp_path, job_log):
+    fake = FakeClient(resp(tool("ask_user", {"questions": ["Which title?"]})),
+                      resp(tool("submit_editspec", {"spec": SPEC})))
+    state, client = window(tmp_path, fake)
+    client.post("/api/attach", json={"paths": [str(document(tmp_path / "Spec.docx"))]})
+    state.task._budget.max_calls = 1
+    with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
+        assert frames(response)[-1]["state"]["stage"] == "question"
+    with client.stream("POST", "/api/send", json={"text": "FIRE SUPPRESSION"}) as response:
+        done = frames(response)[-1]
+    assert done["type"] == "done" and done["state"]["stage"] == "budget" and done["state"]["budget"]["paused"]
+    first, paused = job_log()
+    assert "Job send ended: stage question; stopped no" in first
+    assert "Job send ended: stage budget; stopped no; 1 model call so far; estimated cost " in paused
+
+
+def test_the_app_log_says_a_job_failed_or_was_stopped(tmp_path, job_log):
+    import threading as th
+    state, client = window(tmp_path, FakeClient())           # nothing scripted: the job fails
+    client.post("/api/attach", json={"paths": [str(document(tmp_path / "Spec.docx"))]})
+    with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
+        assert frames(response)[-1]["type"] == "error"
+    [failed] = job_log()
+    assert "Job send ended: stage " in failed and "; stopped no; failed (" in failed and " INFO " in failed
+    started, release = th.Event(), th.Event()
+
+    class Slow(FakeClient):
+        def _stream(self, **kw):
+            started.set()
+            release.wait(10)
+            return super()._stream(**kw)
+    state, client = window(tmp_path, Slow(resp(tool("submit_editspec", {"spec": SPEC})), live=True))
+    client.post("/api/attach", json={"paths": [str(document(tmp_path / "Spec2.docx"))]})
+    events = state.start_job("send", text=REQUEST)
+    assert started.wait(10) and client.post("/api/stop").json() == {"ok": True}
+    release.set()
+    while events.get(timeout=30)["type"] not in ("done", "error"):
+        pass
+    state.thread.join(10)
+    stopped = job_log()[-1]
+    assert "Job send ended: stage " in stopped and "; stopped yes; " in stopped and "failed" not in stopped
 
 
 def test_the_loopback_probe_ignores_a_system_proxy(tmp_path, monkeypatch):
