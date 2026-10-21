@@ -24,7 +24,13 @@ cell, header, footer, note, comment, block content control — over its blocks `
 stays), delete the container's last block when tracked (Word cannot delete the final paragraph mark), or — untracked —
 leave the container empty or ending in something other than a paragraph. A paragraph such a rule keeps, or (hidden
 text only) one ``deletable`` will not delete for another reason than a text box, loses its content runs instead (its
-hidden ones / all of them) and keeps its mark (flagged). A note paragraph ``deletable`` refuses is refused.
+hidden ones / all of them) and keeps its mark (flagged). In the body, once those are known, the *last section* — the
+blocks after the last paragraph that carries a section break (``w:pPr/w:sectPr``) and stays (a hidden one kept because
+``deletable`` will not delete it counts) — keeps a paragraph (``ops/deletion.last_section_keep``, batch 6's keep rule
+4): when every one of its blocks is chosen and none of them kept, its last chosen paragraph is kept too, demoted the
+same way, flagged either way (the section shows a blank page; the break's paragraph alone at the end of the body would
+show one with nothing on it to remove). A note paragraph ``deletable`` refuses is refused — unless it is the one the
+last section keeps (it is not deleted).
 
 **Runs in fields.** A selected run inside a complex field's span (begin to end, document order over the part) goes only
 when the outermost such field lies in this paragraph and every content run of its span is selected and live — then all
@@ -45,6 +51,7 @@ from ..ooxml import RevisionStamp, file_uses_date_utc, max_revision_id, paragrap
 from ..package import DocxPackage, W
 from . import prose, register
 from .base import JobException, Op, PlanFragment
+from .deletion import last_section_keep
 from .fields import fields_of
 from .markup import Look, color_in, color_names, valid_color
 from .removal import (deletable, delete_paragraph, has_content, live, plan_paragraph_deletion, plan_run_removal,
@@ -420,6 +427,7 @@ class _Removing(Op):
         for c, chosen in by_container.values():
             for p in keep_rules(blocks_of(c), chosen, tracked):
                 kept[index[id(p)]] = "it ends its cell, document or header — or stands between two tables"
+        refused: List[Tuple[int, JobException]] = []
         for bi in chosen_p:
             if bi in kept:
                 continue
@@ -431,14 +439,33 @@ class _Removing(Op):
                 deletable(p, part, bi, tracked)
             except JobException as e:
                 if self.undeletable == "refuse":
-                    raise
-                kept[bi] = KEPT_BECAUSE.get(e.code, e.code)
+                    refused.append((bi, e))
+                else:
+                    kept[bi] = KEPT_BECAUSE.get(e.code, e.code)
+        # the last section keeps a paragraph: after the paragraphs that stay as undeletable (a hidden section break
+        # among them), before the refusals (the paragraph it keeps is not deleted)
+        last_section: List[int] = []
+        body = next((c for c, _ in by_container.values() if c.tag == W + "body"), None)
+        if body is not None:
+            keep = [pars[bi] for bi in kept]
+            last_section = [index[id(p)] for p in last_section_keep(blocks_of(body), {pars[bi] for bi in chosen_p},
+                                                                     keep, f"{part}: the document body")]
+            for bi in last_section:
+                kept.setdefault(bi, "the last section would be empty without it")
+        for bi, e in refused:
+            if bi not in kept:
+                raise e
         delete = [bi for bi in chosen_p if bi not in kept]
         for bi, why in kept.items():
             runs = self.demoted_runs(pars[bi], look)
             if runs:
                 runs_of[bi] = runs
             frag.flags.append(f"{part} paragraph {bi}: kept its paragraph mark ({why}); its {self.what} is removed")
+        if last_section:
+            stays = (f"paragraph {last_section[0]} stays" if len(last_section) == 1 else
+                     f"paragraphs {prose.join(str(bi) for bi in last_section)} stay")
+            frag.flags.append(f"the last section is now empty and shows a blank page ({stays}); remove the section "
+                              f"break before it to drop the page")
         spans = FieldSpans(root)
         out: Dict[str, Any] = {"delete": sorted(delete), "runs": {}, "simple": {}}
         untracked_deletion = False

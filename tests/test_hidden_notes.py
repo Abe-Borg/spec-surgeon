@@ -1,13 +1,15 @@
 """remove_hidden_text and remove_notes (docs/BUILTIN_OPS_BATCH2_DESIGN.md §5, §6): end to end tracked and untracked (the
-whole suite must pass), every refusal, the container and field rules, nothing-to-do files, and planted defects the
-verifier must catch — a wrong output, and a wrong rule shared by plan and apply."""
+whole suite must pass), every refusal, the container rules (the last section keeps a paragraph too) and the field
+rules, nothing-to-do files, and planted defects the verifier must catch — a wrong output, and a wrong rule shared by
+plan and apply."""
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
 import pytest
+from lxml import etree
 
-from fx_removal import W, build_hidden, build_hidden_case, build_notes
+from fx_removal import W, build_hidden, build_hidden_case, build_last_section, build_notes
 from spec_surgeon.editspec import apply_spec, plan_spec
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import hidden as hidden_module
@@ -356,3 +358,156 @@ def test_defect_an_extra_paragraph_deleted(notes_doc):
         raise AssertionError("no A.")
     rec = run_suite(notes_doc, mutate(out, DOC, drop), plan.to_dict(), "s", "o")
     assert "V2" in failed(rec) and "V10" in failed(rec)
+
+
+# ---- both: the last section keeps a paragraph (batch 6's keep rule 4) ---------------------------------------------
+
+NOTE_TEXT = {"rules": [{"text_regex": "^NOTE"}]}
+LAST_SECTION = [("remove_notes", "notes", NOTE_TEXT), ("remove_hidden_text", "hidden", {})]
+LAST_SECTION_FLAG = "the last section is now empty and shows a blank page"
+DROP_THE_PAGE = "remove the section break before it to drop the page"
+
+
+def outline(data: bytes) -> List[str]:
+    """The body as a reader sees it with every change accepted, paragraph by paragraph: "§" for one carrying a section
+    break, "·" for an empty one, else its text; a tracked-deleted paragraph gone."""
+    out = []
+    for p in DocxPackage(data).xml(DOC).find(W + "body").iter(W + "p"):
+        t = accepted_text(p)
+        if p.find(f"{W}pPr/{W}rPr/{W}del") is not None and not t:
+            continue
+        out.append("§" if p.find(f"{W}pPr/{W}sectPr") is not None else t or "·")
+    return out
+
+
+def last_section_flags(plan) -> List[str]:
+    return [f for f in plan.flags if f.startswith(LAST_SECTION_FLAG) and f.endswith(DROP_THE_PAGE)]
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+@pytest.mark.parametrize("name,kind,params", LAST_SECTION)
+def test_the_last_section_keeps_its_last_paragraph_demoted_and_flagged(name, kind, params, tracked):
+    """Every paragraph after the body's last section break a note (a hidden paragraph): the last one stays, emptied —
+    not the break's paragraph alone at the end of the body, which Word shows as a blank page with nothing on it to
+    remove. Tracked, the document's last paragraph stayed already; the blank page is flagged either way."""
+    src = build_last_section(kind)
+    assert outline(src) == ["Cover", "§", "Body text", "§", "NOTE: one", "NOTE: two"]
+    plan, out, rec = run_op(name, src, {**params, "tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"][DOC] == {"delete": [4], "runs": {"5": [0]}, "simple": {}}
+    assert outline(out) == ["Cover", "§", "Body text", "§", "·"]
+    body = DocxPackage(out).xml(DOC).find(W + "body")
+    kept = body[-2]
+    assert body[-1].tag == W + "sectPr" and kept.find(f"{W}pPr/{W}sectPr") is None
+    assert kept.find(f"{W}pPr/{W}rPr/{W}del") is None                          # its mark stays …
+    assert (kept.find(f"{W}pPr/{W}rPr/{W}vanish") is not None) == (kind == "hidden")   # … as it was
+    assert last_section_flags(plan) == [f"{LAST_SECTION_FLAG} (paragraph 5 stays); {DROP_THE_PAGE}"]
+    assert any(f.startswith(f"{DOC} paragraph 5: kept its paragraph mark") for f in plan.flags)
+
+
+@pytest.mark.parametrize("name,build,params", [("remove_notes", build_notes, NOTE_RULES),
+                                               ("remove_hidden_text", build_hidden, {})])
+def test_a_last_section_that_keeps_text_is_not_flagged(name, build, params):
+    plan, out, rec = run_op(name, build(), {**params, "tracked": False})
+    assert rec.passed and not last_section_flags(plan)
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_a_hidden_section_break_that_stays_still_ends_the_section_before_the_last(tracked):
+    """The second break's paragraph is hidden too: it cannot be deleted (it carries the break), so it stays, emptied —
+    and the last section after it still keeps its last paragraph: the rule runs once the paragraphs that cannot be
+    deleted are kept, not before (then the break would not count, and the last section would seem to start earlier)."""
+    plan, out, rec = run_op("remove_hidden_text", build_last_section("hidden", hidden_break=True), {"tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"][DOC]["delete"] == [4]
+    assert outline(out) == ["Cover", "§", "Body text", "§", "·"]
+    assert any(f.startswith(f"{DOC} paragraph 3: kept its paragraph mark (it carries a section break)")
+               for f in plan.flags)
+    assert last_section_flags(plan) == [f"{LAST_SECTION_FLAG} (paragraph 5 stays); {DROP_THE_PAGE}"]
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_a_hidden_paragraph_that_cannot_be_deleted_is_what_the_last_section_keeps(tracked):
+    """The hidden "NOTE: one" holds a field: it cannot be deleted, so it stays, emptied; the last section keeps a
+    paragraph already and "NOTE: two" goes untracked — tracked, the document's last paragraph stays too."""
+    plan, out, rec = run_op("remove_hidden_text", build_last_section("hidden", field_in="one"), {"tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"][DOC]["delete"] == ([] if tracked else [5])
+    assert outline(out) == ["Cover", "§", "Body text", "§", "·"] + (["·"] if tracked else [])
+    stays = "paragraphs 4 and 5 stay" if tracked else "paragraph 4 stays"
+    assert last_section_flags(plan) == [f"{LAST_SECTION_FLAG} ({stays}); {DROP_THE_PAGE}"]
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_the_note_the_last_section_keeps_is_emptied_not_refused(tracked):
+    """remove_notes refuses a note paragraph it cannot delete (here: one holding a field) — but not the one the last
+    section keeps, which is not deleted: it loses its runs (the field whole) and keeps its mark. Any other such note in
+    that section still sets the file aside."""
+    plan, out, rec = run_op("remove_notes", build_last_section("notes", field_in="two"),
+                            {**NOTE_TEXT, "tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    assert outline(out) == ["Cover", "§", "Body text", "§", "·"]
+    assert "«NOTE: two{REF _Ref9 \\h}21 10 00»" in " ".join(plan.flags)
+    assert last_section_flags(plan) == [f"{LAST_SECTION_FLAG} (paragraph 5 stays); {DROP_THE_PAGE}"]
+    with pytest.raises(JobException) as e:
+        run_op("remove_notes", build_last_section("notes", field_in="one"), {**NOTE_TEXT, "tracked": tracked})
+    assert e.value.code == "field-result"
+
+
+# ---- planted defects: the last section ---------------------------------------------------------------------------
+
+def _drop_the_kept_paragraph(root):
+    body = root.find(W + "body")
+    kept = body[-2]
+    assert kept.tag == W + "p" and kept.find(f"{W}pPr/{W}sectPr") is None
+    body.remove(kept)
+
+
+def _delete_the_kept_mark(root):
+    p = root.find(W + "body")[-2]
+    ppr = p.find(W + "pPr")
+    if ppr is None:
+        ppr = etree.Element(W + "pPr")
+        p.insert(0, ppr)
+    rpr = ppr.find(W + "rPr")
+    if rpr is None:
+        rpr = etree.SubElement(ppr, W + "rPr")
+    mark = etree.SubElement(rpr, W + "del")
+    mark.set(W + "id", "9999")
+    mark.set(W + "author", AUTHOR)
+    mark.set(W + "date", "2026-10-21T00:00:00Z")
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+@pytest.mark.parametrize("name,kind,params", LAST_SECTION)
+def test_defect_the_last_sections_kept_paragraph_removed_too(name, kind, params, tracked):
+    src = build_last_section(kind)
+    plan, out, rec = run_op(name, src, {**params, "tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    wrong = mutate(out, DOC, _delete_the_kept_mark if tracked else _drop_the_kept_paragraph)
+    assert outline(wrong) == ["Cover", "§", "Body text", "§"]                   # the last section is empty
+    rec = run_suite(src, wrong, plan.to_dict(), "s", "o")
+    assert "V10" in failed(rec), rec.to_markdown()
+    assert any(f"removed_{'notes' if kind == 'notes' else 'hidden_text'}" in e for e in v10_errors(rec))
+
+
+@pytest.mark.parametrize("name,kind,params", LAST_SECTION)
+def test_shared_defect_the_last_section_emptied(name, kind, params, monkeypatch):
+    monkeypatch.setattr(hidden_module, "last_section_keep", lambda blocks, chosen, keep, where: [])
+    src = build_last_section(kind)
+    plan, out, rec = run_op(name, src, {**params, "tracked": False})
+    assert outline(out) == ["Cover", "§", "Body text", "§"]                     # plan and apply agree …
+    assert not last_section_flags(plan)
+    assert failed(rec) == ["V10"], rec.to_markdown()                           # … the verifier does not
+    assert any("the plan predicted" in e for e in v10_errors(rec))
+
+
+def test_shared_defect_the_last_section_measured_before_the_undeletable_are_kept(monkeypatch):
+    real = hidden_module.last_section_keep
+    monkeypatch.setattr(hidden_module, "last_section_keep",
+                        lambda blocks, chosen, keep, where: real(blocks, chosen, [], where))
+    src = build_last_section("hidden", hidden_break=True)
+    plan, out, rec = run_op("remove_hidden_text", src, {"tracked": False})
+    assert outline(out) == ["Cover", "§", "Body text", "§"]                     # the kept break did not count
+    assert failed(rec) == ["V10"], rec.to_markdown()
+    assert any("removed_hidden_text" in e and "the plan predicted" in e for e in v10_errors(rec))

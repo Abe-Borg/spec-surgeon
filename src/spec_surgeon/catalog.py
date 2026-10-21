@@ -585,8 +585,9 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "remove_hidden_text": [
         "hidden text is text with Word's Hidden font setting (directly or by a style) — white or tiny text is not hidden",
         "the body, headers, footers, footnotes and endnotes are searched; every removed piece is listed in the preview",
-        "a paragraph whose words and mark are all hidden is deleted; one that must stay (the last of a cell or of the "
-        "document, between two tables, with a section break) keeps its mark and loses its hidden words",
+        "a paragraph whose words and mark are all hidden is deleted; one that must stay (the last of a cell, of the "
+        "document or of a last section that would be left empty, between two tables, with a section break) keeps its "
+        "mark and loses its hidden words",
         "a hidden field goes whole; hidden text inside a field that is otherwise shown, or in a text box, sets the file "
         "aside",
         "tracked unless the user asked for clean copies; a file with no hidden text is left as it is",
@@ -597,6 +598,8 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "inline notes are runs of the note colour inside paragraphs that stay; hyperlink text and pictures are never "
         "taken",
         "a note that is a table cell's only paragraph leaves the cell empty",
+        "when the document's last section holds nothing but notes, its last note stays as an empty paragraph (a blank "
+        "page, flagged)",
         "a note paragraph with a section break, a field or a text box sets the file aside",
         "tracked unless the user asked for clean copies; a file without notes is left as it is",
     ],

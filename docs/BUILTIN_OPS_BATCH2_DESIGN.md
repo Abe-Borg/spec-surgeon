@@ -374,7 +374,10 @@ V4 delta).
 
 **§5–§6, §8 Hidden text, notes, blank paragraphs:** the keep rules apply to hidden text and notes too (a kept paragraph
 loses its content and keeps its mark, flagged); a hidden paragraph that cannot be deleted for any reason but a text box
-is handled the same way (notes still refuse); an empty paragraph whose mark is hidden is a hidden paragraph; inline notes
+is handled the same way (notes still refuse); in the body, once those are kept, the last section (after the last
+section-break paragraph that stays) keeps its last chosen paragraph when all of it would go, flagged as a blank page, and
+a note it keeps is emptied, not refused (added 2026-10-21: batch 6's keep rule 4, `ops/deletion.last_section_keep` ↔
+`verify/deletion._v_last_section`); an empty paragraph whose mark is hidden is a hidden paragraph; inline notes
 never take a run holding a picture; within `color_in` space-only runs are ignored; every removed piece is a flag. V2's
 pairing changed (CLAUDE.md "V2's plan-assisted pairing"): the predicted untracked deletions/insertions are set aside
 before the alignment, so a deleted blank paragraph cannot pair with another blank far away.
