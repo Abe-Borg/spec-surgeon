@@ -438,6 +438,42 @@ def test_a_reply_beside_another_change_of_its_comments_conflicts(src, other):
     assert e.value.code == "conflict"
 
 
+def test_reply_then_resolve_in_one_request_run_as_two_verified_steps(src, tmp_path):
+    """"Answer Jack's comments and resolve them": the two ops change the same threads, so the engine cuts the spec into
+    two steps in the user's order, the second planned on the first one's output, each verified."""
+    from spec_surgeon.chain import run_chain
+    from spec_surgeon.editspec import split_into_stages, stage_cuts
+    jack = {"which": "authors", "authors": ["Jack"]}
+    spec = {"request": "r", "summary": "s", "mode": "untracked",
+            "ops": [{"op": "reply_to_comments", "params": {**REPLY, **jack}},
+                    {"op": "resolve_comments", "params": jack}]}
+    pkg = DocxPackage(src, name="x.docx")
+    assert stage_cuts(pkg, spec) == [1, 1]
+    folder = tmp_path / "in"
+    folder.mkdir()
+    (folder / "21 13 13 – WET-PIPE SPRINKLER SYSTEMS.docx").write_bytes(src)
+    r = run_chain([str(folder)], split_into_stages(pkg, spec), tmp_path / "run", workers=1, renderer="none",
+                  do_render=False)
+    assert r.counts()["PASS"] == 1, [(f.status, f.reason) for f in r.files]
+    out = next((tmp_path / "run" / "outputs").glob("*.docx")).read_bytes()
+    assert comments(out)[-2:] == [("7", "Abe Borg", REPLY["text"]), ("8", "Abe Borg", REPLY["text"])]
+    assert entries(out)[2] == (para_id(2), None, "1") and entries(out)[-1][2] == "0"      # thread 2 resolved
+
+
+def test_remove_comments_reads_the_threads_these_ops_write():
+    """The replies are threaded and the resolved marks read as remove_comments reads them: removing the replier's
+    comments takes the replies alone; removing resolved threads takes the threads resolved here, replies and all."""
+    data = build_classic_comments()
+    _, replied, rec = reply(data, which="authors", authors=["Jack"])
+    assert rec.passed
+    _, resolved, rec = resolve(replied, which="authors", authors=["Abe Borg"])
+    assert rec.passed, rec.to_markdown()
+    _, out, rec = run_ops(resolved, [("remove_comments", {}, {"which": "authors", "authors": ["abe borg"]})])
+    assert rec.passed and [c[0] for c in comments(out)] == ["0", "1", "2", "3", "4", "5", "6"]
+    _, out, rec = run_ops(resolved, [("remove_comments", {}, {"which": "resolved"})])
+    assert rec.passed and [c[0] for c in comments(out)] == ["0", "3", "4", "5", "6"]
+
+
 def test_resolving_beside_a_removal_conflicts_and_beside_an_edit_runs(src):
     with pytest.raises(JobException) as e:
         _plan(src, ("resolve_comments", {}, {}), ("remove_comments", {}, {"which": "authors", "authors": ["Abe"]}))

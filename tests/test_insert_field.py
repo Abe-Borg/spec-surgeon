@@ -469,6 +469,27 @@ def test_two_fields_in_one_paragraph_conflict_and_compose_in_order(src):
     assert [f["code"] for f in fields_in(xml(second, FOOTER).find(W + "p"))] == [" PAGE ", " NUMPAGES "]
 
 
+def test_page_and_count_in_one_request_run_as_two_verified_steps(src, tmp_path):
+    """"Page {{PAGE}} of {{NUMPAGES}}" asked in one spec: the two fields share a paragraph, so the engine cuts the spec
+    into two steps in the user's order, the second planned on the first one's output, each verified."""
+    from spec_surgeon.chain import run_chain
+    from spec_surgeon.editspec import split_into_stages, stage_cuts
+    spec = _spec({"op": "insert_field", "select": {"scope": ["footers"]},
+                  "params": {"field": "PAGE", "at_text": "{{PAGE}}", "author": "Abe"}},
+                 {"op": "insert_field", "select": {"scope": ["footers"]},
+                  "params": {"field": "NUMPAGES", "at_text": "{{NUMPAGES}}", "author": "Abe"}})
+    pkg = DocxPackage(src, name="x.docx")
+    assert stage_cuts(pkg, spec) == [1, 1]
+    folder = tmp_path / "in"
+    folder.mkdir()
+    (folder / "21 13 13 – WET-PIPE SPRINKLER SYSTEMS.docx").write_bytes(src)
+    r = run_chain([str(folder)], split_into_stages(pkg, spec), tmp_path / "run", workers=1, renderer="none",
+                  do_render=False)
+    assert r.counts()["PASS"] == 1, [(f.status, f.reason) for f in r.files]
+    out = next((tmp_path / "run" / "outputs").glob("*.docx")).read_bytes()
+    assert [f["code"] for f in fields_in(xml(out, FOOTER).find(W + "p"))] == [" PAGE ", " NUMPAGES "]
+
+
 def test_the_reads_of_a_style_and_a_custom_property(src):
     t = set(get_op("insert_field").plan(DocxPackage(src), {"scope": ["headers"]},
                                         {"field": "STYLEREF", "style": "heading 1", "at_text": "{{TITLE}}"}).touches)
