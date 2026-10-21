@@ -33,7 +33,7 @@ export function PaperCard({
   children?: ReactNode;
 }) {
   const toneClass =
-    tone === "error" ? "border-err/50 bg-[#fbeeec]" : tone === "muted" ? "" : "";
+    tone === "error" ? "border-err/50 bg-err-tint" : tone === "muted" ? "" : "";
   return (
     <section
       className={`paper card-in px-5 py-4 ${toneClass} ${flash ? "changed-block" : ""}`}
