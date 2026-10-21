@@ -433,6 +433,42 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "changed. Simplify the list in Word (Restart / Continue Numbering, Define New Multilevel List), or run the "
         "numbering audit to see where, then run again.",
     ),
+    # built-in batch 6, F9 (move_paragraphs)
+    "move-gap": (
+        "Paragraphs to Move Are Not One Stretch",
+        "The paragraphs chosen to move do not follow one another: a paragraph between them is not chosen, or a chosen "
+        "paragraph sits in a table outside the stretch. Choose one unbroken stretch (from a start paragraph through an "
+        "end paragraph) and move other paragraphs in a step of their own.",
+    ),
+    "move-container": (
+        "Paragraphs to Move Are in More Than One Place",
+        "The paragraphs chosen to move are not all in one place — the body, one table cell, one header, footer, note or "
+        "comment — or they start inside a content control. Move each stretch on its own, or move that content in Word.",
+    ),
+    "move-anchor": (
+        "Destination Paragraph Cannot Take the Move",
+        "The paragraph the move should go before or after is one of the paragraphs being moved, or it is not in the "
+        "same place as them (it is in a table cell, a text box or another container while they are not). Name a "
+        "destination paragraph beside them — for a place after a table, the paragraph after the table, 'before'.",
+    ),
+    "move-table-edge": (
+        "Moving Would Leave Two Tables Touching",
+        "Once the paragraphs leave, the table before them would touch the table after them, or the table cell or "
+        "document would end in a table, which Word cannot show as it is. Include one of the tables in the move, or "
+        "leave a paragraph beside it.",
+    ),
+    "move-split-range": (
+        "Moving Would Cut a Bookmark, Comment or Permission",
+        "A bookmark, comment or editing-permission range starts among the paragraphs to move and ends outside them (or "
+        "the reverse); moving them would cut it in two. Widen or narrow the stretch to take it whole, or remove it in "
+        "Word first.",
+    ),
+    "move-tracked-content": (
+        "Content a Tracked Move Cannot Copy",
+        "A tracked move deletes the paragraphs where they are and inserts a copy where they go; a table, field, "
+        "hyperlink, content control, comment, picture or footnote reference among them cannot be copied that way. "
+        "Move them untracked (they move exactly as they are), or move them in Word.",
+    ),
 }
 
 
