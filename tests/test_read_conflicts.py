@@ -14,15 +14,17 @@ with it, two ops verifying one part).
 from __future__ import annotations
 
 import copy
+import io
 from pathlib import Path
+import zipfile
 
 import pytest
 from lxml import etree
 
-from make_fixtures import build, build_rich
+from make_fixtures import build, build_rich, build_style_template, build_styles
 from spec_surgeon.compiler import _Batch, check_submission
 from spec_surgeon.editspec import apply_spec, load_spec, plan_spec
-from spec_surgeon.ops import OPS, JobException
+from spec_surgeon.ops import JobException, OPS, get_op
 from spec_surgeon.ops.base import verify_family
 from spec_surgeon.ops.hf_common import effective_refs
 from spec_surgeon.package import DocxPackage, W
@@ -286,3 +288,285 @@ def test_cover_unnumbered_with_a_template_that_keeps_the_title_page_setting_stil
     with pytest.raises(JobException) as e:
         plan_spec(pkg, _spec([unnumber, _hf()]))
     assert e.value.code == "conflict" and "replaces, removes or restructures it as a whole" in e.value.reason
+
+
+@pytest.mark.parametrize("op", [
+    {"op": "remove_highlight"},
+    {"op": "resolve_tracked_changes", "params": {"action": "accept", "authors": ["Nobody"]}},
+    {"op": "remove_hidden_text", "params": {"tracked": False}},
+    {"op": "remove_notes", "params": {"rules": [{"style_in": ["NoSuchStyle"]}], "tracked": False},
+     "select": {"scope": ["headers"]}},
+    {"op": "remove_empty_paragraphs", "params": {"tracked": False}, "select": {"scope": ["headers"]}},
+    {"op": "remove_hyperlinks"},
+    {"op": "unlink_fields", "params": {"types": ["DOCPROPERTY"]}},
+], ids=lambda o: o["op"])
+def test_a_clean_up_op_beside_a_header_removal_is_a_plan_time_conflict(op):
+    """Rule 9: each of these re-derives its decisions over every part in scope, so it declares (part, "scope",
+    "verify") — beside an op that removes a header part it is refused at plan time, even when it has nothing to do in
+    that header (it used to plan, and its V10 kind then failed on the missing part after apply)."""
+    pkg = DocxPackage(build_rich())
+    spec = {"request": "r", "summary": "s", "mode": "untracked" if op["op"] in (
+        "resolve_tracked_changes", "remove_hidden_text", "remove_notes", "remove_empty_paragraphs") else "formatting",
+        "ops": [{"op": "remove_header_footer", "select": {"sections": "all", "kinds": ["header"]}}, op]}
+    with pytest.raises(JobException) as e:
+        plan_spec(pkg, spec)
+    assert e.value.code == "conflict" and "remove_header_footer" in str(e.value)
+    alone = {**spec, "ops": [op]}
+    plan, frags = plan_spec(pkg, alone)                    # on its own the op plans (a no-op where nothing matches)
+    out = apply_spec(pkg, frags).output_bytes()
+    rec = run_suite(pkg.data, out, plan.to_dict(), "src.docx", "out.docx")
+    assert [c.id for c in rec.checks if c.status == "FAIL"] == []
+
+
+# ---- reads through style chains, table styles and the set of styles (built-in batch 4) -------------------------------
+
+STYLES = "word/styles.xml"
+
+
+@pytest.fixture(scope="module")
+def src() -> bytes:
+    return build_styles()
+
+
+@pytest.fixture(scope="module")
+def tpl(tmp_path_factory) -> str:
+    path = tmp_path_factory.mktemp("tpl") / "OFFICE STYLES.docx"
+    path.write_bytes(build_style_template())
+    return str(path)
+
+
+def _spec_of(*ops, mode="formatting"):
+    return {"request": "r", "summary": "s", "mode": mode, "ops": list(ops)}
+
+
+def _conflict(data, *ops, mode="formatting"):
+    for order in (ops, tuple(reversed(ops))):
+        with pytest.raises(JobException) as e:
+            plan_spec(DocxPackage(data), _spec_of(*order, mode=mode))
+        assert e.value.code == "conflict", (order, e.value.code, str(e.value))
+    return str(e.value)
+
+
+def _passes(data, *ops, mode="formatting"):
+    for order in (ops, tuple(reversed(ops))):
+        pkg = DocxPackage(data)
+        plan, frags = plan_spec(pkg, _spec_of(*order, mode=mode))
+        out = apply_spec(DocxPackage(data), frags).output_bytes()
+        rec = run_suite(data, out, plan.to_dict(), "src.docx", "out.docx")
+        assert rec.passed, rec.to_markdown()
+
+
+def _with_part(data: bytes, name: str, edit) -> bytes:
+    zin = zipfile.ZipFile(io.BytesIO(data))
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            raw = zin.read(item.filename)
+            if item.filename == name:
+                raw = edit(raw)
+            zout.writestr(item, raw)
+    return buf.getvalue()
+
+
+def test_set_properties_beside_an_in_paragraph_text_edit_plans_and_verifies_again(src):
+    """Review D4: set_properties' new reads of the runs it finds already as asked refused any text edit of the same
+    paragraph (it planned and passed before batch 4). The reads are soft now: the text edit plans beside it."""
+    widow = {"op": "set_properties", "params": {"paragraph": {"widowControl": True}}}
+    no_italics = {"op": "set_properties", "params": {"run": {"i": False}}}
+    edit = {"op": "replace_text", "params": {"find": "fire alarm", "replace": "fire-alarm"}}
+    for sp in (widow, no_italics):
+        _passes(src, sp, edit, mode="content")
+    # a change of what it read (the runs' properties) is still refused
+    _conflict(src, no_italics, {"op": "clear_direct_formatting", "params": {"paragraph": False}})
+
+
+def test_a_remapped_table_style_beside_ops_reading_the_cell_paragraphs_conflicts(src, tpl):
+    """Review A1/F3: the effective values of a paragraph in a table come through the table's style too."""
+    cells = {"paragraphs": {"in_table": True}}
+    remap = {"op": "map_styles", "params": {"map": [{"from": "ArchTable", "to": "Tbl Mine"}], "template": tpl}}
+    for other in ({"op": "set_properties", "select": cells, "params": {"run": {"b": False}}},
+                  {"op": "set_properties", "select": cells, "params": {"paragraph": {"keepNext": False}}},
+                  {"op": "set_tab_stops", "select": cells, "params": {"clear": [1440]}},
+                  {"op": "set_borders_shading", "select": cells, "params": {"shading": "none"}},
+                  {"op": "set_paragraph_props", "select": cells, "params": {"spacing": {"before": 120}}}):
+        assert "tbl:0" in _conflict(src, remap, other), other
+
+
+def test_a_style_the_file_lacks_imported_beside_a_paragraph_naming_it_conflicts(src, tpl):
+    """Review A1: a paragraph names a style the file does not define (it falls back to nothing); an import adding that
+    style in the same spec changes the paragraph's chain underneath an op reading it."""
+    def dangle(raw):
+        root = etree.fromstring(raw)
+        p = list(root.iter(W + "p"))[7]                      # "Coordinate with …", no pStyle
+        ppr = p.find(W + "pPr")
+        if ppr is None:
+            ppr = etree.SubElement(p, W + "pPr")
+            p.insert(0, ppr)
+        ps = etree.Element(W + "pStyle")
+        ps.set(W + "val", "SpecNote")
+        ppr.insert(0, ps)
+        return etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+    data = _with_part(src, "word/document.xml", dangle)
+    coord = {"paragraphs": {"text_regex": "^Coordinate"}}
+    importing = {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^NOTE TO"}},
+                 "params": {"style": "Spec Note", "template": tpl}}
+    frag = get_op("set_borders_shading").plan(DocxPackage(data), coord, {"shading": {"fill": "D9D9D9"}})
+    assert (STYLES, "style:SpecNote", "verify:add") in frag.touches
+    for other in ({"op": "set_borders_shading", "select": coord, "params": {"shading": {"fill": "D9D9D9"}}},
+                  {"op": "set_properties", "select": coord, "params": {"run": {"b": True}}},
+                  {"op": "set_tab_stops", "select": coord, "params": {"set": [{"pos": 720}]}}):
+        assert "SpecNote" in _conflict(data, importing, other), other
+
+
+def test_a_replaced_style_beside_set_properties_on_its_paragraphs_conflicts(src, tpl):
+    """Review C4: existing 'replace' swaps Heading1's definition (the template's is italic) while set_properties finds
+    the PART paragraphs already as asked (no italics) — it used to plan cleanly and fail V10 after apply."""
+    applying = {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^PART 2"}},
+                "params": {"style": "Heading 1", "template": tpl, "existing": "replace"}}
+    parts1 = {"paragraphs": {"text_regex": "^PART 1"}}
+    assert "Heading1" in _conflict(src, applying, {"op": "set_properties", "select": parts1,
+                                                   "params": {"run": {"i": False}}})
+    mapping = {"op": "map_styles", "params": {"map": [{"from": "ArchLines", "to": "Heading 1"}], "template": tpl,
+                                              "existing": "replace"}}
+    _conflict(src, mapping, {"op": "set_tab_stops", "select": parts1, "params": {"set": [{"pos": 720}]}})
+
+
+def test_set_properties_on_a_style_beside_set_properties_on_its_paragraphs_conflicts(src):
+    """Review D5 (was open before batch 4): direct 'b off' on Arch Para paragraphs judges them by the effective value
+    through ArchPara; 'b on' in the ArchPara definition beside it planned in both orders and failed V10. set_properties
+    on a style now declares its own family (props) and the direct op reads it through the chains; a font change of the
+    same style (set_style_font) still plans beside it — fonts are not set_properties' families."""
+    paras = {"paragraphs": {"style_in": ["ArchPara"]}}
+    direct = {"op": "set_properties", "select": paras, "params": {"run": {"b": False}}}
+    _conflict(src, direct, {"op": "set_properties", "select": {"styles": {"ids": ["ArchPara"]}},
+                            "params": {"run": {"b": True}}})
+    _passes(src, direct, {"op": "set_style_font", "select": {"styles": {"ids": ["ArchPara"]}},
+                          "params": {"font": "Arial"}})
+    _passes(src, direct, {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": "Arial"}})
+
+
+def test_mapping_and_applying_styles_whose_uses_meet_conflicts(src, tpl):
+    """Review C3: the outcome depended on the order the ops happened to run in."""
+    # a chain of mappings across two ops (in one op the pairs are refused as order-dependent already)
+    _conflict(src, {"op": "map_styles", "params": {"map": [{"from": "ArchArticle", "to": "ArchPara"}]}},
+              {"op": "map_styles", "params": {"map": [{"from": "ArchPara", "to": "ArchNote"}]}})
+    # applying a style beside mapping it away
+    _conflict(src, {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^PART 2"}},
+                    "params": {"style": "Heading1"}},
+              {"op": "map_styles", "params": {"map": [{"from": "Heading 1", "to": "Heading 2"}]}})
+    # applying a style beside an op selecting by it
+    _conflict(src, {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^PART 2"}},
+                    "params": {"style": "Heading1"}},
+              {"op": "apply_style", "select": {"paragraphs": {"style_in": ["Heading1"]}},
+               "params": {"style": "Heading2"}})
+
+
+def test_ops_whose_uses_commute_still_plan_and_verify(src):
+    """Two mappings into one style, two applications of one style to different paragraphs: same file in either
+    order."""
+    _passes(src, {"op": "map_styles", "params": {"map": [{"from": "ArchLines", "to": "ArchPara"}]}},
+            {"op": "map_styles", "params": {"map": [{"from": "ArchAuto", "to": "ArchPara"}]}})
+    _passes(src, {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^PART 2"}},
+                  "params": {"style": "Heading1"}},
+            {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^Manual list"}},
+             "params": {"style": "Heading1"}})
+
+
+def test_a_selection_by_appearance_or_colour_beside_a_restyle_conflicts(src):
+    """A selection by has_bold / is_all_caps / style_in / runs.color_in reads every paragraph's chain; a restyle anywhere
+    in scope could change what it chooses. remove_hidden_text judges effective hidden through the chains too."""
+    restyle = {"op": "apply_style", "select": {"paragraphs": {"text_regex": "^Manual list"}},
+               "params": {"style": "ArchNote"}}
+    plain = {"font": "Arial", "tracked": False}
+    for other in ({"op": "set_font", "select": {"paragraphs": {"has_bold": True}}, "params": plain},
+                  {"op": "set_font", "select": {"paragraphs": {"style_in": ["ArchPara"]}}, "params": plain},
+                  {"op": "set_font", "select": {"runs": {"color_in": ["0000FF"]}}, "params": plain},
+                  {"op": "remove_hidden_text", "params": {"tracked": False}}):
+        mode = "untracked" if other["op"] == "remove_hidden_text" else "formatting"
+        with pytest.raises(JobException) as e:
+            plan_spec(DocxPackage(src), _spec_of(restyle, other, mode=mode))
+        assert e.value.code == "conflict" and "of every target in it" in e.value.reason, other
+    # a selection by text alone reads no chain: it plans beside the restyle
+    _passes(src, restyle, {"op": "set_font", "select": {"paragraphs": {"text_regex": "^PART"}}, "params": plain})
+
+
+def test_an_import_beside_set_style_font_on_every_style_conflicts(src, tpl):
+    """Review C3: the imported CMT kept Times New Roman while every other style became Arial."""
+    importing = {"op": "map_styles", "params": {"map": [{"from": "ArchLines", "to": "CMT"}], "template": tpl}}
+    _conflict(src, importing, {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": "Arial"}})
+    _conflict(src, importing, {"op": "set_style_font", "select": {"styles": {"types": ["paragraph"]}},
+                               "params": {"font": "Arial"}})
+    # by id, on styles the import neither adds nor replaces: one spec
+    _passes(src, importing, {"op": "set_style_font", "select": {"styles": {"ids": ["Heading2"]}},
+                             "params": {"font": "Arial"}})
+
+
+def _spec_in_mode(*ops, mode="formatting"):
+    return {"request": "r", "summary": "r", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": list(ops)}
+
+
+def test_removing_first_page_parts_beside_a_different_first_page_is_a_plan_time_conflict():
+    """It used to plan and PASS with section 1's first page showing no header or footer at all, while set_page_setup's
+    note said it showed header1 — which the same spec removed."""
+    remove = {"op": "remove_header_footer", "select": {"sections": [0], "types": ["first"]}, "params": {}}
+    first = {"op": "set_page_setup", "select": {"sections": [1]}, "params": {"different_first_page": True}}
+    for ops in ((remove, first), (first, remove)):
+        with pytest.raises(JobException) as e:
+            plan_spec(DocxPackage(build_rich()), _spec_in_mode(*ops))
+        assert e.value.code == "conflict" and "titlePg" in e.value.reason
+    # alone, each still plans
+    plan_spec(DocxPackage(build_rich()), _spec_in_mode(remove))
+    plan_spec(DocxPackage(build_rich()), _spec_in_mode(first))
+
+
+# ---- an op that verifies a part another op removes -------------------------------------------------------------------
+
+ALL = ["document", "headers", "footers", "footnotes", "endnotes"]
+
+
+def _spec_full(request, mode, ops, **extra):
+    return {"request": request, "summary": request, "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": ops, **extra}
+
+
+def test_font_change_over_headers_that_are_being_removed_is_refused_as_a_conflict():
+    pkg = DocxPackage(build_rich())
+    # the compiler's usual "change all fonts": direct-font runs only — the headers hold none, so the font op would
+    # only VERIFY them; before the sweep that planned cleanly and failed V10 ("header1.xml missing from the output")
+    ops = [{"op": "remove_header_footer", "select": {"sections": "all"}, "params": {}},
+           {"op": "set_font", "select": {"scope": ALL, "runs": {"has_direct_font": True}}, "params": {"font": "Arial"}},
+           {"op": "set_style_font", "select": {"styles": "all"}, "params": {"font": "Arial"}},
+           {"op": "set_doc_defaults_font", "params": {"font": "Arial"}}]
+    with pytest.raises(JobException) as e:
+        plan_spec(pkg, _spec_full("remove all headers and footers and change all fonts to Arial", "formatting", ops))
+    assert e.value.code == "conflict"
+    assert "remove_header_footer" in e.value.reason and "set_font" in e.value.reason
+    assert "would verify word/header1.xml without changing it" in e.value.reason and "narrow its scope" in e.value.reason
+    # a font op that also changes runs in the removed part is the same conflict (the general wording)
+    ops[1]["select"]["runs"] = "all"
+    with pytest.raises(JobException) as e:
+        plan_spec(pkg, _spec_full("x", "formatting", ops))
+    assert e.value.code == "conflict" and "narrow their selectors" in e.value.reason
+    # the same with the font change kept to the body plans, applies and verifies
+    ops[1]["select"]["scope"] = ["document"]
+    spec = _spec_full("remove all headers and footers and change all fonts to Arial", "formatting", ops)
+    plan, frags = plan_spec(pkg, spec)
+    out = apply_spec(pkg, frags).output_bytes()
+    rec = run_suite(pkg.data, out, plan.to_dict(), "src.docx", "out.docx")
+    assert rec.passed, rec.to_markdown()
+
+
+def test_paragraph_props_over_a_removed_footer_is_refused_and_two_verifiers_of_one_part_are_not():
+    pkg = DocxPackage(build_rich())
+    with pytest.raises(JobException) as e:
+        plan_spec(pkg, _spec_full("x", "formatting", [
+            {"op": "remove_header_footer", "select": {"sections": "all", "kinds": ["footer"]}, "params": {}},
+            {"op": "set_paragraph_props", "select": {"scope": ["footers"], "paragraphs": "all"}, "params": {"jc": "right"}}]))
+    assert e.value.code == "conflict"
+    # two ops that both verify word/document.xml and change different things in it merge as before
+    plan, _ = plan_spec(pkg, _spec_full("x", "formatting", [
+        {"op": "set_paragraph_props", "select": {"paragraphs": {"style_in": ["Heading1"]}}, "params": {"jc": "center"}},
+        {"op": "set_font", "select": {"scope": ["document"], "paragraphs": {"style_in": ["SpecNote"]}, "runs": "all"},
+         "params": {"font": "Arial"}}]))
+    assert {o["op"] for o in plan.ops} == {"set_paragraph_props", "set_font"}

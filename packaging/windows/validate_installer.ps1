@@ -26,9 +26,8 @@ function Run-Checked([string]$File, [string[]]$Arguments, [int]$TimeoutSeconds =
 Run-Checked $Installer @("/VERYSILENT", "/SUPPRESSMSGBOXES", "/NORESTART", "/SP-",
                         "/CURRENTUSER", "/DIR=`"$installDir`"", "/LOG=`"$work\install.log`"")
 $gui = Join-Path $installDir "SpecSurgeon.exe"
-$cli = Join-Path $installDir "spec-surgeon.exe"
 $uninstaller = Join-Path $installDir "unins000.exe"
-foreach ($file in @($gui, $cli, $uninstaller)) {
+foreach ($file in @($gui, $uninstaller)) {
     if (-not (Test-Path $file)) { throw "Installer did not create $file" }
 }
 $shortcut = Join-Path ([Environment]::GetFolderPath("Programs")) "Spec Surgeon\Spec Surgeon.lnk"
@@ -40,8 +39,6 @@ $savedPythonPath = $env:PYTHONPATH
 try {
     $env:PATH = "$env:SystemRoot\System32;$env:SystemRoot"
     $env:PYTHONPATH = $null
-    $help = & $cli --help
-    if ($LASTEXITCODE -ne 0 -or -not ($help -match "Spec Surgeon")) { throw "Installed CLI failed" }
     $reportPath = Join-Path $work "smoke-result.json"
     try { Run-Checked $gui @("--installer-smoke-test", "`"$work\request.json`"") }
     finally { Show-File $reportPath }

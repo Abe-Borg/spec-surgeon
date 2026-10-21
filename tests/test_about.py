@@ -52,6 +52,9 @@ def test_the_installer_shows_the_license_the_copyright_and_the_links():
     assert "MIT License" in ISS and about.COPYRIGHT in re.search(r"^BeveledLabel=(.*)$", ISS, re.M).group(1)
     assert 'DestName: "LICENSE.txt"' in ISS                                 # the license ships with the app
     assert "/issues" not in ISS                                              # no "report a problem" anywhere
+    assert "procedure InitializeWizard" in ISS and ISS.count("AddLink(") == 3     # the definition and two links
+    assert "WelcomeLabel2=" in ISS
+    assert "CloseApplications=yes" in ISS and "SetupLogging=yes" in ISS      # unchanged by the welcome page
     assert "LegalCopyright" in SPEC and about.COPYRIGHT in SPEC
 
 

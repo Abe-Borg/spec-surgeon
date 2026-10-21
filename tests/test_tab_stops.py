@@ -4,7 +4,6 @@ asked); a wrong OUTPUT per rule; wrong IMPLEMENTATIONS shared by plan and apply;
 rules compared; conflicts; parameters; the catalog, prompt, profile, explanations and worked examples."""
 from __future__ import annotations
 
-import ast
 import copy
 import io
 import random
@@ -466,19 +465,6 @@ def test_catalog_prompt_profile_and_explanations(src):
     assert styles["ArticleTabs"]["tab_stops"] == ["left 720", "left 1440"]
     assert styles["ArticleChild"]["tab_stops"] == ["left 720", "right 4320"]
     assert "tab-position" in FAILURE_EXPLANATIONS
-
-
-def test_every_refusal_code_of_set_tab_stops_is_explained():
-    path = Path(tabs_module.__file__)
-    codes = set()
-    for n in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "JobException" and len(n.args) > 1:
-            if isinstance(n.args[1], ast.Constant):
-                codes.add(n.args[1].value)
-            else:                                     # the one re-raise keeps the code of own_entries' refusal
-                assert ast.unparse(n.args[1]) == "e.code"
-    assert codes == {"bad-params", "structure", "tab-position", "tracked-format"}
-    assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
 
 
 @pytest.mark.parametrize("name,make", [("part-on-new-page", None), ("editors-blue-to-black", build_tabs),

@@ -27,7 +27,7 @@ What makes it safe:
   engine picks the operations itself and the user is asked only about the outcome.
 
 ``mode="compile"`` is the one-shot behaviour ``compiler.compile_request`` keeps (a plain-text answer gets one nudge,
-then fails); ``mode="chat"`` (the window, the interactive command line) treats Claude's plain text as a message to the
+then fails); ``mode="chat"`` (the window) treats Claude's plain text as a message to the
 user and offers the ``view_pages`` tool.
 
 Two records, never read back to rebuild the history: ``entries`` is what the user saw (the chat); ``exchange`` is the
@@ -92,7 +92,7 @@ class Choice:
         return ", ".join(f"«{w}»" for w in self.words)
 
     def describe(self) -> str:
-        """The choice as the command line and CompileResult show it — the exact words included."""
+        """The choice as CompileResult shows it — the exact words included."""
         return self.label + (f" — exact words: {self.exact_words()}" if self.words else "")
 
 
@@ -250,7 +250,7 @@ class Conversation:
                  stall_repetitions: int = DEFAULT_STALL_REPETITIONS, max_image_tokens: Optional[int] = None,
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
                  continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = (),
-                 history: Sequence[str] = (), fresh: Sequence[str] = ()):
+                 history: Sequence[str] = (), fresh: Sequence[str] = (), context: str = ""):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -281,6 +281,7 @@ class Conversation:
         self.answers = list(answers)
         self.history = [str(h) for h in history if str(h).strip()]   # changes already made to the files (continue-on-result)
         self.fresh: List[str] = list(fresh)
+        self.context = str(context or "")          # the app's account of how these documents come to be planned
         self.prior_failures = list(prior_failures or [])
         # The words a spec may place: the request, the user's answers, and (on a replay of a saved conversation) the
         # words the user actually typed or accepted — never a choice's label; never an empty source.
@@ -319,7 +320,7 @@ class Conversation:
         self.started = True
         self.messages = compiler.build_messages(self.request, self.batch, self.answers,
                                                 prior_failures=self.prior_failures or None, history=self.history or None,
-                                                fresh=self.fresh or None)
+                                                fresh=self.fresh or None, context=self.context or None)
         self.entries.append(Entry("user", self.request))
         self.exchange.append({"turn": 0, "role": "user", "content": self.messages[0]["content"],
                               "files": [str(f) for f in self.files],
@@ -455,7 +456,7 @@ class Conversation:
         return path
 
     def compile_result(self, turn: Turn) -> "compiler.CompileResult":
-        """The one-shot view of a turn (``compiler.compile_request``, the command line without a terminal)."""
+        """The one-shot view of a turn (``compiler.compile_request``)."""
         qs = list(turn.questions)
         if turn.status == "questions":
             if turn.message and turn.message not in qs:
@@ -463,7 +464,7 @@ class Conversation:
             qs += [f"[choice] {c.describe()}" for c in turn.choices]
         status = turn.status
         res = compiler.CompileResult(status=status, spec=turn.spec, questions=qs, errors=list(turn.errors),
-                                     tool_calls=list(self.tool_calls), model=self.model, usage=self.usage.as_dict(),
+                                     tool_calls=list(self.tool_calls), model=self.model, usage=self.usage.as_record(),
                                      served_models=sorted(set(self.usage.served)),
                                      custom_transform=turn.custom_transform,
                                      custom_transform_reason=turn.custom_transform_reason,

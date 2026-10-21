@@ -1,9 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import type { Change, Plan, PlanGroup, Target } from "../types";
-import type { ActionButton } from "../lib/action";
 import { groupTitle, stagesNote } from "../lib/workbench";
-import { primaryBtn } from "./ModalShell";
-import Tip from "./Tip";
+import Markdown from "./Markdown";
 
 /** True for 600 ms after `key` changes: the changed-block tint, then it settles. */
 export function useFlash(key: unknown): boolean {
@@ -17,41 +15,6 @@ export function useFlash(key: unknown): boolean {
   return flash;
 }
 
-/** The one button of the workbench, in the plan card's top right (or the
- *  action bar when no plan card exists). "Stop now" takes its place while busy. */
-export function ActionSpot({
-  button,
-  onAct,
-  onStop,
-}: {
-  button: ActionButton | null;
-  onAct: (token: string) => void;
-  onStop: () => void;
-}) {
-  if (!button) return null;
-  if (button.kind === "stop") {
-    return (
-      <Tip tip={button.tip}>
-        <button type="button" className={primaryBtn} onClick={onStop}>
-          {button.label}
-        </button>
-      </Tip>
-    );
-  }
-  return (
-    <Tip tip={button.tip}>
-      <button
-        type="button"
-        className={primaryBtn}
-        disabled={button.disabled}
-        onClick={() => onAct(button.token)}
-      >
-        {button.label}
-      </button>
-    </Tip>
-  );
-}
-
 /** A paper card: the workbench's content surface. */
 export function PaperCard({
   title,
@@ -63,7 +26,7 @@ export function PaperCard({
 }: {
   title: string;
   subtitle?: string;
-  /** What sits at the card's top right (the action button). */
+  /** What sits at the card's top right (a pill, the review marks). */
   aside?: ReactNode;
   tone?: "error" | "muted";
   flash?: boolean;
@@ -101,7 +64,7 @@ function ChangeRow({ change }: { change: Change }) {
       {change.title && (
         <p className="text-[11px] font-medium tracking-wide text-paper-dim uppercase">{change.title}</p>
       )}
-      <p className="mt-0.5 text-[0.925rem] leading-relaxed text-paper-ink">{change.summary}</p>
+      <Markdown text={change.summary} paper className="mt-0.5 text-[0.925rem] leading-relaxed text-paper-ink" />
       {details.length > 0 && (
         <details className="group mt-1">
           <summary className="cursor-pointer list-none text-[11px] text-paper-dim transition-colors hover:text-accent">
@@ -110,7 +73,9 @@ function ChangeRow({ change }: { change: Change }) {
           </summary>
           <ul className="mt-1 ml-3 space-y-0.5 border-l-2 border-paper-edge pl-3 text-[12px] leading-relaxed text-paper-dim">
             {details.map((line, index) => (
-              <li key={`${index}-${line}`}>{line}</li>
+              <li key={`${index}-${line}`}>
+                <Markdown text={line} paper inline />
+              </li>
             ))}
           </ul>
         </details>
@@ -136,7 +101,7 @@ function GroupBody({ group, several }: { group: PlanGroup; several: boolean }) {
         <ul className="mt-3 space-y-1">
           {group.assumptions.map((assumption, index) => (
             <li key={`${index}-${assumption}`} className="text-[12px] leading-relaxed text-paper-dim">
-              <span className="font-medium">Assuming:</span> {assumption}
+              <span className="font-medium">Assuming:</span> <Markdown text={assumption} paper inline />
             </li>
           ))}
         </ul>
@@ -160,6 +125,25 @@ function GroupBody({ group, several }: { group: PlanGroup; several: boolean }) {
   );
 }
 
+function TargetList({ targets }: { targets: Target[] }) {
+  return (
+    <ul className="mt-2 space-y-2">
+      {targets.map((target, index) => (
+        <li key={`${index}-${target.title}`} className="text-[12px] leading-relaxed">
+          <p className="font-medium text-paper-ink">
+            <Markdown text={target.title} paper inline />
+          </p>
+          {target.details?.map((line, i) => (
+            <p key={`${i}-${line}`} className="text-paper-dim">
+              <Markdown text={line} paper inline />
+            </p>
+          ))}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
 function Targets({ targets }: { targets: Target[] }) {
   if (targets.length === 0) return null;
   return (
@@ -169,36 +153,21 @@ function Targets({ targets }: { targets: Target[] }) {
         Where exactly
         <span className="ml-1 text-paper-faint">— the passages each document contributes</span>
       </summary>
-      <ul className="mt-2 space-y-2">
-        {targets.map((target, index) => (
-          <li key={`${index}-${target.title}`} className="text-[12px] leading-relaxed">
-            <p className="font-medium text-paper-ink">{target.title}</p>
-            {target.details?.map((line, i) => (
-              <p key={`${i}-${line}`} className="text-paper-dim">
-                {line}
-              </p>
-            ))}
-          </li>
-        ))}
-      </ul>
+      <TargetList targets={targets} />
     </details>
   );
 }
 
 interface Props {
   plan: Plan;
-  button: ActionButton | null;
-  onAct: (token: string) => void;
-  onStop: () => void;
 }
 
 /**
  * "Here's what will change": one sentence per change, every setting on
- * demand, the assumptions beneath, and the ONE filled button at the top
- * right. A mixed batch shows one card per layout, with the button on the
- * line that introduces them.
+ * demand, the assumptions beneath. A mixed batch shows one card per layout.
+ * The one button lives in the conversation pane, not here.
  */
-export default function PlanCards({ plan, button, onAct, onStop }: Props) {
+export default function PlanCards({ plan }: Props) {
   // Keyed by content, not identity: the view that ends a job and the state
   // fetched after it carry the same plan as new objects.
   const planKey = useMemo(() => JSON.stringify(plan), [plan]);
@@ -206,11 +175,10 @@ export default function PlanCards({ plan, button, onAct, onStop }: Props) {
   const groups = plan.groups ?? [];
   const several = groups.length > 1;
   const note = stagesNote(plan);
-  const spot = <ActionSpot button={button} onAct={onAct} onStop={onStop} />;
 
   if (groups.length === 0) {
     return (
-      <PaperCard title="Here’s what will change" aside={spot} flash={flash}>
+      <PaperCard title="Here’s what will change" flash={flash}>
         <p className="text-sm text-paper-dim">The plan has no changes yet.</p>
         <Targets targets={plan.targets ?? []} />
       </PaperCard>
@@ -219,12 +187,7 @@ export default function PlanCards({ plan, button, onAct, onStop }: Props) {
 
   if (!several) {
     return (
-      <PaperCard
-        title={groupTitle(groups[0], false)}
-        subtitle={note || undefined}
-        aside={spot}
-        flash={flash}
-      >
+      <PaperCard title={groupTitle(groups[0], false)} subtitle={note || undefined} flash={flash}>
         <GroupBody group={groups[0]} several={false} />
         <Targets targets={plan.targets ?? []} />
       </PaperCard>
@@ -233,15 +196,12 @@ export default function PlanCards({ plan, button, onAct, onStop }: Props) {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="flex items-start justify-between gap-4 px-1">
-        <div>
-          <h2 className="font-[family-name:var(--font-display)] text-[1.05rem] font-semibold text-ink">
-            Your documents use {groups.length} layouts
-          </h2>
-          <p className="mt-0.5 text-xs text-ink-dim">Each layout gets its own plan; one decision covers them all.</p>
-          {note && <p className="mt-0.5 text-[11px] text-ink-faint">{note}</p>}
-        </div>
-        <div className="shrink-0">{spot}</div>
+      <div className="px-1">
+        <h2 className="font-[family-name:var(--font-display)] text-[1.05rem] font-semibold text-ink">
+          Your documents use {groups.length} layouts
+        </h2>
+        <p className="mt-0.5 text-xs text-ink-dim">Each layout gets its own plan; one decision covers them all.</p>
+        {note && <p className="mt-0.5 text-[11px] text-ink-faint">{note}</p>}
       </div>
       {groups.map((group, index) => (
         <PaperCard key={group.id || `${index}-${group.label}`} title={groupTitle(group, true)} flash={flash}>
@@ -250,18 +210,7 @@ export default function PlanCards({ plan, button, onAct, onStop }: Props) {
       ))}
       {(plan.targets?.length ?? 0) > 0 && (
         <PaperCard title="Where exactly" subtitle="The passages each document contributes.">
-          <ul className="space-y-2">
-            {plan.targets.map((target, index) => (
-              <li key={`${index}-${target.title}`} className="text-[12px] leading-relaxed">
-                <p className="font-medium text-paper-ink">{target.title}</p>
-                {target.details?.map((line, i) => (
-                  <p key={`${i}-${line}`} className="text-paper-dim">
-                    {line}
-                  </p>
-                ))}
-              </li>
-            ))}
-          </ul>
+          <TargetList targets={plan.targets} />
         </PaperCard>
       )}
     </div>

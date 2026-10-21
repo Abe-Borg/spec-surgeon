@@ -34,6 +34,7 @@ STEPS_PER_PAUSE = 48    # model calls between the pauses where the user says to 
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
 START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
+WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
 
@@ -137,6 +138,14 @@ class DocumentTask:
         self.working: Dict[str, str] = {}
         self.generation = 0
         self.history: List[str] = []
+        # the changes each copy carries, by attached original: a run on part of the batch (the user set documents
+        # aside) gives its copies changes the others never got, and the model is told per document
+        self.applied: Dict[str, List[str]] = {}
+        # the to-do list: documents the user set aside at approval (the preview did not look right for them), keyed
+        # by the attached original — with the decisions they were set aside from and the plan they saw; and the
+        # focus: the pass over them, once the user begins it (its documents, the plan they saw)
+        self.todo: Dict[str, Dict[str, Any]] = {}
+        self.focus: Optional[Dict[str, Any]] = None
         self._events = None                 # the window's live channel for the job that is running (perform)
         self._talking = False               # inside a call of the conversation itself: its words are the reply
         self._seen = 0
@@ -167,8 +176,17 @@ class DocumentTask:
 
     # ---- attachments ----
     def documents(self) -> List[Path]:
-        """The documents the next request works on: each attached document, or the copy the last run made of it."""
-        return [self.current_of(a.path) for a in self.attachments if not a.template and not a.reference and not a.refused]
+        """The documents the next request works on: each attached document, or the copy the last run made of it —
+        without the documents on the to-do list, or only the set-aside documents while the user works on them."""
+        return [self.current_of(a.path) for a in self.attachments if self._in_scope(a)]
+
+    def _in_scope(self, attachment) -> bool:
+        if attachment.template or attachment.reference or attachment.refused:
+            return False
+        key = str(attachment.path)
+        if self.focus:
+            return key in self.focus["documents"]
+        return key not in self.todo
 
     def current_of(self, original) -> Path:
         return Path(self.working.get(str(Path(original)), str(Path(original))))
@@ -286,6 +304,8 @@ class DocumentTask:
                 self.attachments.append(triage(path) if path.suffix.lower() == ".docx" else triage_reference(path))
                 if self.working and path.suffix.lower() == ".docx":
                     fresh.append(path.name)
+                if self.focus and path.suffix.lower() == ".docx":
+                    self.focus["documents"].append(str(path))      # attached during the pass: it joins the pass
         self._sync()
         if before != (self.documents(), self.template(), self.references()):
             self._invalidate()
@@ -302,12 +322,23 @@ class DocumentTask:
         self.attachments = [a for a in self.attachments if not (a.path == path and a.template == template)]
         had_copies = bool(self.working)
         self.working.pop(str(path), None)
+        self.applied.pop(str(path), None)
+        self.todo.pop(str(path), None)
+        pass_over = False
+        if self.focus:
+            self.focus["documents"] = [d for d in self.focus["documents"] if d != str(path)]
+            if not self.focus["documents"]:
+                # the pass is over with its last document: its request leaves with it, the other documents are back
+                self.focus, self.decisions, pass_over = None, [], True
         self._sync()
         self._invalidate()
+        if pass_over:
+            self.say("The document you were working on is no longer attached, so that pass is over; the other copies "
+                     "are back as they are.")
         if had_copies and not self.working:
             # the last working copy left with its original: the attached documents are originals again, and the
             # changes the history lists are in none of them
-            self.history, self.generation, self.results = [], 0, {}
+            self.history, self.generation, self.results, self.applied = [], 0, {}, {}
             self.stage = "resume" if self.decisions else "empty"
             self.say("No edited copy is attached any more, so the next change starts from your originals.")
         self.save()
@@ -323,24 +354,60 @@ class DocumentTask:
         self.session.replay_word_sources = list(self.word_sources)
         self._emit({"type": "status", "kind": "reading", "text": "Reading your documents…"})
         with self._conversation():
-            self.session.compile(self._request(), log, history=list(self.history), fresh=self._fresh_documents())
+            self.session.compile(self._request(), log, history=self._history_in_scope(), fresh=self._fresh_documents(),
+                                 context=self._focus_context())
+
+    def _history_in_scope(self) -> List[str]:
+        """The changes the copies in scope carry, one line each, in the order they were made: a change every copy
+        carries reads as it is; one that some copies got and others did not (a run on part of the batch) says which,
+        so the model never plans from a state a document is not in. A document with no copy yet (an original among
+        the copies, a set-aside document) carries nothing; the compiler tells those apart itself (``fresh``)."""
+        docs = [str(a.path) for a in self.attachments if self._in_scope(a) and str(a.path) in self.working]
+        lines: List[str] = []
+        for summary in dict.fromkeys(self.history):
+            carrying = [d for d in docs if summary in self.applied.get(d, [])]
+            if not carrying:
+                continue
+            if len(carrying) == len(docs):
+                lines.append(summary)
+                continue
+            missing = [Path(d).name for d in docs if d not in carrying]
+            lines.append(f"{summary} (not in {', '.join(missing)})" if len(missing) <= len(carrying) else
+                         f"{summary} (only in {', '.join(Path(d).name for d in carrying)})")
+        return lines
+
+    def _focus_context(self) -> str:
+        """What the model is told about a pass over set-aside documents: why they are planned alone, and the plan the
+        user saw and set aside (the changes the other copies got). The app's account, never the user's words."""
+        if not self.focus:
+            return ""
+        seen = self.focus.get("seen", [])
+        return ("SET ASIDE AFTER A PREVIEW: the user looked at the before/after pages of the plan below for these "
+                "documents and said they need more work. Their request stands; their latest words say what should be "
+                "different. Plan for these documents only." +
+                ("\nTHE PLAN THEY SAW:\n" + "\n".join(f"- {s}" for s in seen) if seen else ""))
 
     # ---- continue on the result ----
     def _advance_generation(self) -> None:
         """The delivered copies become the working set: the next request builds on them, the originals stay as they
         are, and the model is told what was already done. The conversation that led here is over (its files are
         not the next request's)."""
-        moved = False
+        moved: List[str] = []                                     # the originals whose copy this run delivered
         for original, output in self.results.items():
             if Path(output).is_file():
-                self.working[str(Path(original))] = str(Path(output).resolve())
-                moved = True
+                key, copy_path = str(Path(original)), str(Path(output).resolve())
+                if self.working.get(key) != copy_path:
+                    moved.append(key)
+                self.working[key] = copy_path
         if not moved:
             return
-        done = [c["summary"] for g in self._groups() for c in g["changes"]]
-        self.history.extend(done or self.decisions[:1])
+        done = [c["summary"] for g in self._groups() for c in g["changes"]] or self.decisions[:1]
+        self.history.extend(done)
+        for key in moved:
+            self.applied.setdefault(key, []).extend(done)         # these copies carry the change; no other copy does
         self.generation += 1
         self.decisions = []
+        self.focus = None                                         # a pass over set-aside documents ends with its copies
         self._sync()
         self.session._set_outcome()
         self.session.end_conversation()
@@ -350,16 +417,16 @@ class DocumentTask:
         history lists (the model is told; the user was told when they attached them)."""
         if not self.working:
             return []
-        return [a.path.name for a in self.attachments
-                if not a.template and not a.reference and not a.refused and str(a.path) not in self.working]
+        return [a.path.name for a in self.attachments if self._in_scope(a) and str(a.path) not in self.working]
 
     def start_over(self) -> None:
         """Back to the attached originals: the working copies are set aside (the files stay where they are), the
         plan is void, and the next request starts from the originals."""
-        if not self.working and not self.history:
+        if not self.working and not self.history and not self.todo and not self.focus:
             return
         self.working, self.generation, self.history, self.decisions = {}, 0, [], []
         self.results = {}
+        self.applied, self.todo, self.focus = {}, {}, None
         self._sync()
         self._invalidate()
         self.stage = "empty"
@@ -386,10 +453,12 @@ class DocumentTask:
                                 "Reply with the number, or numbers separated by commas."}
         return None
 
-    def perform(self, action, *, text="", token="", choice_id="", chip=False, log=lambda _: None, events=None):
+    def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), log=lambda _: None,
+                events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
-        question, cost); without one the job runs silently and the view says everything at the end."""
+        question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
+        primary action) names the previewed documents the user set aside: they go on the to-do list, the others run."""
         self.problem = ""
         self._events = events
         self.save(in_progress=True)
@@ -407,7 +476,7 @@ class DocumentTask:
                 elif action == "choose":
                     self._choose(choice_id, checkpointed_log)
                 elif action == "primary":
-                    self._primary(token, checkpointed_log)
+                    self._primary(token, checkpointed_log, hold=hold)
                 else:
                     raise ValueError("Unknown task action")
         except llm.BudgetExceeded:
@@ -446,6 +515,13 @@ class DocumentTask:
         if text.casefold() == START_OVER.casefold():
             self.say(text, "user")
             self.start_over()
+            return
+        if text.casefold() == WORK_TODO.casefold():
+            self.say(text, "user")
+            if self.todo:
+                self.start_todo()
+            else:
+                self.say("Nothing is set aside right now; every document is in the plan.")
             return
         self._ready_to_talk()
         question = self._target_question()
@@ -571,11 +647,70 @@ class DocumentTask:
         visual = getattr(preview, "review", None)
         return _fingerprint({"revision": self._revision, "stage": self.stage,
                              "documents": s.documents, "template": s.template, "inputs": s.inputs, "spec": s.spec,
+                             "todo": sorted(self.todo), "focus": sorted(self.focus["documents"]) if self.focus else None,
                              "preview": outcome.token,
                              "visual_findings": visual.to_dict() if visual else None,
                              "warnings": getattr(preview, "warnings", [])})
 
-    def _primary(self, token, log):
+    def _held(self, hold) -> List[Path]:
+        """The previewed documents the user set aside, as the files they are now; a path that is not one of the
+        documents in the plan means the page is out of date, and is refused, never guessed."""
+        if not hold:
+            return []
+        files = self.session.files()
+        held: List[Path] = []
+        for value in hold:
+            path = Path(str(value)).resolve()
+            if path not in files:
+                raise ValueError("The documents or plan changed. Review the updated plan first.")
+            if path not in held:
+                held.append(path)
+        return held
+
+    def _set_aside(self, current: Path, seen: List[str]) -> None:
+        """A previewed document the user marked as needing more work: on the to-do list, with the decisions it was
+        set aside from and the plan the user looked at (``seen``), until the user works on it (``start_todo``)."""
+        origin = str(self.origin_of(current))
+        self.todo[origin] = {"name": Path(origin).name, "decisions": list(self.decisions), "seen": list(seen)}
+
+    def start_todo(self) -> None:
+        """The pass over the to-do list, one request at a time: the documents set aside from the same decisions (the
+        oldest first) become the only documents in scope, those decisions are the request again, and the model is
+        told what each copy carries and what the user saw. Documents set aside from another request stay on the
+        list for the next pass. The other documents' copies stay as they are and come back when this pass delivers
+        its copies."""
+        if not self.todo:
+            return
+        decisions = list(next(iter(self.todo.values())).get("decisions") or [])
+        group = {k: v for k, v in self.todo.items() if list(v.get("decisions") or []) == decisions}
+        rest = {k: v for k, v in self.todo.items() if k not in group}
+        entries = list(group.values())
+        self.focus = {"documents": list(group),
+                      "seen": list(dict.fromkeys(s for e in entries for s in e.get("seen", [])))}
+        self.decisions = decisions
+        self.todo = rest
+        self._sync()
+        self._invalidate()
+        names = ", ".join(e["name"] for e in entries)
+        several = len(entries) > 1
+        waiting = ", ".join(e["name"] for e in rest.values())
+        self.say((f"Working on the {len(entries)} documents you set aside: {names}. " if several else
+                  f"Working on {names}, which you set aside. ") +
+                 f"Tell me what should be different for {'them' if several else 'it'}, or continue to plan "
+                 f"{'them' if several else 'it'} again as before. The other copies stay as they are." +
+                 (f" {waiting}: set aside from a different request; {'they wait' if len(rest) > 1 else 'it waits'} "
+                  f"for the next pass." if rest else ""))
+        self.save()
+
+    def _offer_todo(self) -> None:
+        if not self.todo:
+            return
+        names = ", ".join(e["name"] for e in self.todo.values())
+        several = len(self.todo) > 1
+        self.say(f"On your to-do list: {names}. When you’re ready to work on {'them' if several else 'it'}, say "
+                 f"“{WORK_TODO}” and tell me what should be different.")
+
+    def _primary(self, token, log, hold=()):
         if token != self.action_token():
             raise ValueError("The documents or plan changed. Review the updated plan first.")
         s = self.session
@@ -585,7 +720,7 @@ class DocumentTask:
             self._budget.exhausted_reason = None
             self.stage = "resume"
             self.say(f"Continuing for up to {STEPS_PER_PAUSE} more AI steps.")
-            self._primary(self.action_token(), log)
+            self._primary(self.action_token(), log, hold=hold)
             return
         if self.stage == "resume":
             self._resume(log)
@@ -596,11 +731,27 @@ class DocumentTask:
             raise ValueError("Answer the open question before continuing.")
         if outcome.kind != "preview" and not partial:
             raise ValueError("The documents or plan changed. Review the updated plan first.")
+        held = self._held(hold)
+        if held and s.recovery is not None:
+            raise ValueError("A document cannot be set aside while files are being checked again; save the ready "
+                             "copies first.")
+        remaining = None
+        if held:
+            remaining = [f for f in s.files() if f not in held]
+            seen = [c["summary"] for g in self._groups() for c in g["changes"]]   # the plan the user looked at
+            for path in held:
+                self._set_aside(path, seen)
+            if not remaining:
+                # every previewed document set aside: nothing to create; the pass over them begins at once
+                self.say("You set every document aside, so no copy was created. Tell me what should be different, "
+                         "and I’ll plan them again.")
+                self.start_todo()
+                return
         if outcome.blocking:
             # A blocking visual finding is a separate, explicitly labelled decision on the displayed preview.
             s.acknowledge_review(outcome.token)
         log("Creating and checking your edited copies…")
-        s.run(False, self.render, log)
+        s.run(False, self.render, log, only=remaining)
         self._collect_results()
         self._emit({"type": "results", "results": self._results_view()})
         if s.last_batch is not None and any(f.status != "PASS" for f in s.last_batch.files):
@@ -638,6 +789,7 @@ class DocumentTask:
         self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. You can open them, describe another "
                  f"change to make on top of them, or start over from the originals.")
         self._advance_generation()
+        self._offer_todo()
 
     def _resume(self, log):
         s = self.session
@@ -835,13 +987,20 @@ class DocumentTask:
         else:
             stages = len(s.spec.get("stages") or []) if is_chain(s.spec) else 1
         chips = list(outcome.chips) if not question else []
-        if (self.working or self.history) and self.stage in {"done", "empty", "resume"} and START_OVER not in chips:
+        resting = self.stage in {"done", "empty", "resume"}
+        if self.todo and not self.focus and resting and WORK_TODO not in chips:
+            chips.insert(0, WORK_TODO)
+        can_start_over = bool(self.working or self.history or self.todo or self.focus)
+        if can_start_over and resting and START_OVER not in chips:
             chips.append(START_OVER)
         return {"stage": self.stage, "messages": list(self.messages),
                 "stages": stages if groups else 0,
                 "chips": chips,
                 "working": {"generation": self.generation, "from_originals": not self.working,
-                            "can_start_over": bool(self.working or self.history)},
+                            "can_start_over": can_start_over},
+                "todo": [{"path": path, "name": entry["name"]} for path, entry in self.todo.items()],
+                "focus": list(self.focus["documents"]) if self.focus else [],
+                "can_hold": self.stage == "preview" and s.recovery is None,
                 "attachments": [{**a.to_dict(), "current": str(self.current_of(a.path))} for a in self.attachments],
                 "groups": groups,
                 "effects": [c for g in groups for c in g["changes"]],
@@ -870,7 +1029,34 @@ class DocumentTask:
                         str(self.session.recovery_checkpoint) if self.session.recovery_checkpoint else self._resume_recovery,
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
             "working": dict(self.working), "generation": self.generation, "history": list(self.history),
+            "applied": self.applied, "todo": self.todo, "focus": self.focus,
             "budget": self._budget.to_dict(), "in_progress": in_progress})
+
+    def _restore_todo(self, data) -> None:
+        """The changes each copy carries, the to-do list and the pass over it, for the documents still attached; a
+        malformed record is refused. A journal from before per-copy histories had every copy carry every change."""
+        strings = lambda value: isinstance(value, list) and all(isinstance(x, str) for x in value)  # noqa: E731
+        applied = data.get("applied")
+        if applied is None:
+            self.applied = {k: list(self.history) for k in self.working}
+        elif isinstance(applied, dict) and all(isinstance(k, str) and strings(v) for k, v in applied.items()):
+            self.applied = {k: list(v) for k, v in applied.items() if k in self.working}
+        else:
+            raise ValueError("The saved conversation could not be read.")
+        todo = data.get("todo", {})
+        focus = data.get("focus")
+        if not (isinstance(todo, dict)
+                and all(isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("name"), str)
+                        and strings(v.get("decisions", [])) and strings(v.get("seen", [])) for k, v in todo.items())):
+            raise ValueError("The saved conversation could not be read.")
+        if focus is not None and not (isinstance(focus, dict) and strings(focus.get("documents"))
+                                      and strings(focus.get("seen", []))):
+            raise ValueError("The saved conversation could not be read.")
+        known = {str(a.path) for a in self.attachments if not a.template and not a.reference}
+        self.todo = {k: {"name": v["name"], "decisions": list(v.get("decisions", [])), "seen": list(v.get("seen", []))}
+                     for k, v in todo.items() if k in known}
+        documents = [d for d in (focus or {}).get("documents", []) if d in known]
+        self.focus = {"documents": documents, "seen": list(focus.get("seen", []))} if focus and documents else None
 
     def restore(self):
         if not self.journal or not self.journal.is_file():
@@ -935,6 +1121,7 @@ class DocumentTask:
             if lost:
                 self.say("The edited copies from your last run could not be found where they were saved, so the next "
                          "change starts from your originals.")
+        self._restore_todo(data)
         self._sync()
         self._resume_recovery = data.get("recovery")
         layouts = data.get("pending_layouts", [])

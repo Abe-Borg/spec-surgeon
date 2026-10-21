@@ -6,7 +6,6 @@ import json
 import logging
 import sys
 import threading
-import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
@@ -165,20 +164,17 @@ def test_readable_logs_also_scrub_credentials(tmp_path):
     assert "private-key" not in (tmp_path / "run.log").read_text()
 
 
-def test_application_journal_rotates_and_bundle_contains_all_retained_events(tmp_path):
+def test_application_journal_rotates_and_keeps_every_retained_event(tmp_path):
     logs = tmp_path / "logs"
     diag.setup_app_logging(logs)
     handler = next(h for h in telemetry._LOGGER.handlers if isinstance(h, telemetry.SafeRotatingHandler))
     handler.maxBytes = 1200
     for i in range(10):
         diag.event("application.checkpoint", number=i)
-    assert Path(str(telemetry.app_events_path(logs)) + ".1").exists()
-    with zipfile.ZipFile(diag.make_bundle(tmp_path / "bundle.zip", app_logs=logs)["path"]) as bundle:
-        assert "app-logs/" + telemetry.app_events_path(logs).name in bundle.namelist()
-        assert "app-logs/" + telemetry.app_events_path(logs).name + ".1" in bundle.namelist()
-        for name in bundle.namelist():
-            if "jsonl" in name:
-                assert all(json.loads(line)["schema_version"] == 1 for line in bundle.read(name).splitlines())
+    current = telemetry.app_events_path(logs)
+    for path in (current, Path(str(current) + ".1")):
+        assert path.exists()
+        assert all(json.loads(line)["schema_version"] == 1 for line in path.read_text(encoding="utf-8").splitlines())
 
 
 def test_switching_app_logs_does_not_keep_writing_to_old_sessions(tmp_path):

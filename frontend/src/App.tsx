@@ -1,18 +1,20 @@
 // Adapted from Build-a-Spec's frontend/src/App.tsx (copy-based reuse): the
 // layout and the one place the job stream's events dispatch.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Attachment, Choice, JobEvent, View } from "./types";
+import type { Attachment, Choice, JobEvent, Update, View } from "./types";
 import * as api from "./lib/api";
 import { actionButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
+import { canReview, heldSources, reviewKey, setMark, type Mark, type Reviews } from "./lib/review";
 import { INITIAL_STATE, reduce } from "./lib/view";
 import { ACCEPT } from "./lib/workbench";
+import { checkSettled, updatePill, type HelpTopic } from "./lib/help";
 import Header from "./components/Header";
 import Chat from "./components/Chat";
 import Workbench from "./components/Workbench";
 import UpdateBanner from "./components/UpdateBanner";
 import SettingsModal from "./components/SettingsModal";
-import AboutModal from "./components/AboutModal";
+import HelpModal from "./components/HelpModal";
 import ZoomModal from "./components/ZoomModal";
 
 type PickKind = "documents" | "template" | "references";
@@ -31,9 +33,11 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [draft, setDraft] = useState(false);
   const [prefill, setPrefill] = useState({ text: "", nonce: 0 });
-  const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
+  const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
+  // About asked for a check while this window was open: its answer stays on About, closed and reopened or not.
+  const [updateAsked, setUpdateAsked] = useState(false);
   const [zoom, setZoom] = useState<{ src: string; title: string } | null>(null);
   const [dismissedUpdate, setDismissedUpdate] = useState("");
   const [dragDepth, setDragDepth] = useState(0);
@@ -113,15 +117,33 @@ export default function App() {
     (choice: Choice) => void runJob(api.choose(choice.id), choice.label),
     [runJob],
   );
-  const onAct = useCallback((token: string) => void runJob(api.primary(token), null), [runJob]);
   const onStop = useCallback(() => {
     api.stop().catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
 
-  const button = useMemo(() => actionButton(view, busy, draft), [view, busy, draft]);
+  // --- The review of the previews ------------------------------------------
+  // A green checkmark or a red X per preview; the marks belong to one set of
+  // previews and start over when a new plan or preview arrives.
+  const [reviews, setReviews] = useState<Reviews>({});
+  const key = reviewKey(view);
+  const keyRef = useRef(key);
+  useEffect(() => {
+    if (keyRef.current === key) return;
+    keyRef.current = key;
+    setReviews({});
+  }, [key]);
+  const onMark = useCallback((source: string, mark: Mark) => setReviews((r) => setMark(r, source, mark)), []);
+  const reviewing = canReview(view, busy);
+  const held = useMemo(() => (reviewing ? heldSources(reviews, view.samples) : []), [reviewing, reviews, view.samples]);
+
+  const onAct = useCallback(
+    (token: string) => void runJob(api.primary(token, view.action.kind === "approve" ? held : []), null),
+    [runJob, view.action.kind, held],
+  );
+
+  const button = useMemo(() => actionButton(view, busy, draft, held.length), [view, busy, draft, held.length]);
   const items = useMemo(() => transcript(state), [state]);
   const composer = useMemo(() => composerState(view), [view]);
-  const paused = items.some((item) => item.kind === "pause");
 
   // --- Attachments ---------------------------------------------------------
 
@@ -246,42 +268,55 @@ export default function App() {
 
   const onPrefill = useCallback((text: string) => setPrefill((p) => ({ text, nonce: p.nonce + 1 })), []);
 
-  // --- Help: logs, updates, about ------------------------------------------
+  // --- About: logs, updates -------------------------------------------------
 
   const onOpenLogs = useCallback(() => {
     api.openLogs().catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
 
-  /** Follow the update block every 2 s for up to `tries` polls, or until it
-   *  settles (anything but "none" or "downloading"). Returns the stop. */
-  const pollUpdate = useCallback((tries: number) => {
+  /** Follow the update block every 2 s for up to `tries` polls, or until
+   *  `settled` says so. `done` runs once when it stops, however it stops.
+   *  Returns the stop. */
+  const pollUpdate = useCallback((tries: number, settled: (update: Update) => boolean, done?: () => void) => {
     let left = tries;
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      window.clearInterval(timer);
+      done?.();
+    };
     const timer = window.setInterval(() => {
       left -= 1;
       api
         .getUpdate()
         .then((update) => {
           dispatch({ type: "update", update });
-          if (update.state !== "downloading" && (update.state !== "none" || left <= 0)) {
-            window.clearInterval(timer);
-          }
+          if (settled(update)) stop();
         })
-        .catch(() => window.clearInterval(timer));
-      if (left <= 0) window.clearInterval(timer);
+        .catch(stop);
+      if (left <= 0) stop();
     }, 2000);
-    return () => window.clearInterval(timer);
+    return stop;
   }, []);
 
+  // About's Check for updates: the page says "Checking…" until the server
+  // writes this check's answer or finds an update (lib/help.checkSettled).
   const onCheckUpdates = useCallback(() => {
     setDismissedUpdate("");
+    setUpdateAsked(true);
+    setCheckingUpdate(true);
     api
       .checkUpdate()
       .then((update) => {
         dispatch({ type: "update", update });
-        setNotice("Checking for updates…");
-        pollUpdate(15);
+        if (checkSettled(update)) setCheckingUpdate(false);
+        else pollUpdate(15, checkSettled, () => setCheckingUpdate(false));
       })
-      .catch((failure: unknown) => setNotice(failureText(failure)));
+      .catch((failure: unknown) => {
+        setCheckingUpdate(false);
+        setNotice(failureText(failure));
+      });
   }, [pollUpdate]);
 
   // The download is followed by the effect below, which starts polling the
@@ -301,11 +336,11 @@ export default function App() {
   const downloading = view.update?.state === "downloading";
   useEffect(() => {
     if (!downloading) return;
-    return pollUpdate(600);
+    return pollUpdate(600, (update) => update.state !== "downloading");
   }, [downloading, pollUpdate]);
 
   const updateShown =
-    view.update &&
+    !!view.update &&
     view.update.state !== "none" &&
     !(dismissedUpdate && dismissedUpdate === `${view.update.state}:${view.update.version}`);
 
@@ -314,13 +349,11 @@ export default function App() {
       <Header
         view={view}
         busy={busy}
-        workbenchOpen={workbenchOpen}
-        onToggleWorkbench={() => setWorkbenchOpen((o) => !o)}
+        updatePill={updatePill(view.update, updateShown)}
+        onDownloadUpdate={onDownloadUpdate}
         onNewConversation={onNewConversation}
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenAbout={() => setAboutOpen(true)}
-        onOpenLogs={onOpenLogs}
-        onCheckUpdates={onCheckUpdates}
+        onOpenHelp={setHelpTopic}
       />
       {updateShown && (
         <UpdateBanner
@@ -350,8 +383,11 @@ export default function App() {
           busy={busy}
           canSend={composer.canSend}
           sendReason={composer.reason}
+          button={button}
+          held={held.length}
           onSend={onSend}
           onChoose={onChoose}
+          onAct={onAct}
           onContinue={() => {
             if (view.action?.token) onAct(view.action.token);
           }}
@@ -360,22 +396,19 @@ export default function App() {
           onPrefill={onPrefill}
           onDraftChange={setDraft}
         />
-        {workbenchOpen && (
-          <Workbench
-            view={view}
-            busy={busy}
-            uploading={uploading}
-            button={button}
-            paused={paused}
-            onAdd={(kind) => void onAdd(kind)}
-            onRemove={onRemove}
-            onAct={onAct}
-            onStop={onStop}
-            onOpen={onOpen}
-            onStartOver={onStartOver}
-            onZoom={(src, title) => setZoom({ src, title })}
-          />
-        )}
+        <Workbench
+          view={view}
+          busy={busy}
+          uploading={uploading}
+          reviews={reviews}
+          canReview={reviewing}
+          onMark={onMark}
+          onAdd={(kind) => void onAdd(kind)}
+          onRemove={onRemove}
+          onOpen={onOpen}
+          onStartOver={onStartOver}
+          onZoom={(src, title) => setZoom({ src, title })}
+        />
       </main>
       <input
         ref={fileInputRef}
@@ -392,7 +425,21 @@ export default function App() {
           onSaved={() => void refresh()}
         />
       )}
-      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} fallbackVersion={view.version} />}
+      <HelpModal
+        topic={helpTopic}
+        onClose={() => setHelpTopic(null)}
+        onNavigate={setHelpTopic}
+        version={view.version}
+        stepsPerPause={view.budget?.steps_per_pause ?? 48}
+        busy={busy}
+        update={view.update}
+        updateAsked={updateAsked}
+        checkingUpdate={checkingUpdate}
+        onCheckUpdate={onCheckUpdates}
+        onDownloadUpdate={onDownloadUpdate}
+        onInstallUpdate={onInstallUpdate}
+        onOpenLogs={onOpenLogs}
+      />
       {zoom && <ZoomModal src={zoom.src} title={zoom.title} onClose={() => setZoom(null)} />}
     </div>
   );

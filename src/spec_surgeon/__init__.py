@@ -3,10 +3,10 @@
 Architecture (see README):
   Tier 1  deterministic engine (this package): fingerprint → plan → apply → verify → render → guard
   Tier 2  natural-language requests compiled by Claude into EditSpecs (compiler, conversation), exceptions
-          routed to a human or to Claude's advice (advisor)
-  Tier 3  new job types developed with the docx-surgical-edit skill, then promoted into jobs/
+          routed to a human or to recovery
+  Tier 3  new operations developed with the docx-surgical-edit skill, then promoted into ops/
 
-Rule enforced by CLAUDE.md: ``spec_surgeon.verify`` shares no helper code with ``spec_surgeon.jobs``
+Rule enforced by CLAUDE.md: ``spec_surgeon.verify`` shares no helper code with ``spec_surgeon.ops``
 or ``spec_surgeon.ooxml`` — the verifier reads only the before/after packages, so a bug in the
 transform cannot hide behind the same bug in the check.
 """

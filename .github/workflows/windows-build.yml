@@ -2,6 +2,11 @@ name: Build Windows installer
 
 on:
   workflow_call:
+    inputs:
+      run_tests:
+        description: Run the full test suite on Windows before bundling (off when the caller already ran it there)
+        type: boolean
+        default: true
     outputs:
       version:
         description: Application version bundled in the installer
@@ -64,8 +69,9 @@ jobs:
         working-directory: frontend
         run: npm test
       - name: Run Windows tests
+        if: inputs.run_tests
         run: python -m pytest -q --junitxml=windows-tests.xml
-      - name: Bundle the desktop app and CLI
+      - name: Bundle the desktop app
         shell: pwsh
         run: |
           python -m PyInstaller --clean --noconfirm packaging/windows/app.spec

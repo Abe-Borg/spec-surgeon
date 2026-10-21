@@ -83,12 +83,20 @@ export interface Result {
   name: string;
 }
 
+/** A document the user set aside at approval (the red X on its preview): it waits on the to-do list. */
+export interface TodoItem {
+  path: string;
+  name: string;
+}
+
 export type ActionKind = "approve" | "continue" | "save" | "none";
 
 export interface Action {
   label: string;
   token: string;
   kind: ActionKind;
+  /** The previews can be marked: a document marked with the red X is set aside when the copies are created. */
+  can_hold?: boolean;
 }
 
 export interface Cost {
@@ -128,6 +136,9 @@ export interface Update {
   text?: string;
   /** `failed`: the install log that says why. */
   install_log?: string;
+  /** The answer to the last check you asked for ("You're up to date — …", or why it could not check); "" while that
+   *  check runs and after one that found an update, which `state` shows instead. */
+  manual_result?: string;
 }
 
 export interface View {
@@ -147,6 +158,10 @@ export interface View {
   blocking: boolean;
   results: Result[];
   action: Action;
+  /** Documents set aside for more work, waiting on the to-do list (attached originals). */
+  todo: TodoItem[];
+  /** The documents of the pass over the to-do list, while the user works on them (attached originals); else empty. */
+  focus: string[];
   working: Working;
   budget: Budget;
   update: Update;
@@ -195,9 +210,29 @@ export interface Settings {
   logs_dir: string;
 }
 
+export interface Component {
+  name: string;
+  license: string;
+  url: string;
+}
+
+/** GET /api/about. Everything but `version`, `license`, `release_notes` and `credits` came later: a server that
+ *  predates a field leaves it out, and the About page reads what is there. */
 export interface About {
   version: string;
   license: string;
   release_notes: string;
   credits: string[];
+  name?: string;
+  tagline?: string;
+  github?: string;
+  author?: string;
+  email?: string;
+  linkedin?: string;
+  copyright?: string;
+  license_name?: string;
+  license_summary?: string[];
+  /** The model id every AI step uses. */
+  model?: string;
+  components?: Component[];
 }

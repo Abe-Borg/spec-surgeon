@@ -1,19 +1,19 @@
-// Adapted from Build-a-Spec's frontend/src/components/Header.tsx (copy-based reuse).
-import { useEffect, useRef, useState } from "react";
+// Adapted from Build-a-Spec's frontend/src/components/Header.tsx (copy-based reuse): the title with its context
+// line, the help topics beside it, then the pills and the buttons on the right.
 import type { View } from "../types";
 import { costPill } from "../lib/chat";
+import { HELP_TOPICS, sessionHeading, type HelpTopic } from "../lib/help";
 import Tip from "./Tip";
 
 interface Props {
   view: View;
   busy: boolean;
-  workbenchOpen: boolean;
-  onToggleWorkbench: () => void;
+  /** "v1.7.0 available" for an update set aside with the banner's "Not now"; "" for none (lib/help.updatePill). */
+  updatePill: string;
+  onDownloadUpdate: () => void;
   onNewConversation: () => void;
   onOpenSettings: () => void;
-  onOpenAbout: () => void;
-  onOpenLogs: () => void;
-  onCheckUpdates: () => void;
+  onOpenHelp: (topic: HelpTopic) => void;
 }
 
 const ORIGIN_TIPS: Record<string, string> = {
@@ -26,78 +26,82 @@ const ORIGIN_TIPS: Record<string, string> = {
 export default function Header({
   view,
   busy,
-  workbenchOpen,
-  onToggleWorkbench,
+  updatePill,
+  onDownloadUpdate,
   onNewConversation,
   onOpenSettings,
-  onOpenAbout,
-  onOpenLogs,
-  onCheckUpdates,
+  onOpenHelp,
 }: Props) {
-  const [helpOpen, setHelpOpen] = useState(false);
-  const helpRef = useRef<HTMLDivElement>(null);
   const ready = !!view.connection?.ready;
   const calls = view.cost?.calls ?? 0;
-
-  // The Help menu closes on a click anywhere else and on Escape.
-  useEffect(() => {
-    if (!helpOpen) return;
-    const onDown = (e: MouseEvent) => {
-      if (!helpRef.current?.contains(e.target as Node)) setHelpOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setHelpOpen(false);
-    };
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [helpOpen]);
-
-  const menuItem =
-    "block w-full px-3 py-1.5 text-left text-xs text-ink-dim transition-colors hover:bg-surface hover:text-ink";
+  // The context line steps aside for the update pill: both only fit from 1280 px, and not together.
+  const heading = updatePill ? "" : sessionHeading(view);
 
   return (
-    <header className="flex items-center gap-3 border-b border-edge bg-surface px-5 py-2.5">
-      <h1 className="font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight">
-        Spec Surgeon
-      </h1>
+    <header className="flex items-center gap-4 border-b border-edge bg-surface px-5 py-3">
+      {/* The one block that gives way on a narrow window: the context line truncates. */}
+      <div className="flex min-w-0 items-baseline gap-3">
+        <h1 className="flex-none font-[family-name:var(--font-display)] text-lg font-semibold tracking-tight whitespace-nowrap">
+          Spec Surgeon
+        </h1>
+        {heading && (
+          <span className="hidden max-w-[22rem] min-w-0 truncate text-xs text-ink-dim xl:inline" title={heading}>
+            {heading}
+          </span>
+        )}
+      </div>
+      <span className="h-5 w-px flex-none bg-edge" aria-hidden="true" />
+      <nav className="flex flex-none items-center gap-0.5" aria-label="Help">
+        {HELP_TOPICS.map((t) => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => onOpenHelp(t.id)}
+            className="rounded-md px-2 py-1 text-xs whitespace-nowrap text-ink-dim transition-colors hover:bg-raised hover:text-ink lg:px-2.5"
+          >
+            {t.label}
+          </button>
+        ))}
+      </nav>
       <div className="flex-1" />
-      <div className="flex flex-none items-center gap-2">
+      <div className="flex flex-none items-center gap-2 lg:gap-3">
+        {/* From 1280 px; below that About offers the same update. */}
+        {updatePill && (
+          <span className="hidden xl:inline-flex">
+          <Tip
+            tip={
+              busy
+                ? "Finish or stop the current work first — the installer closes the app"
+                : "Downloads the update, checks it against the release’s SHA-256 checksums, then closes Spec Surgeon to install it; it reopens when it is done."
+            }
+          >
+            <button
+              type="button"
+              onClick={onDownloadUpdate}
+              disabled={busy}
+              className="rounded-full border border-accent/60 bg-accent/15 px-3 py-1 text-xs whitespace-nowrap text-accent transition-colors hover:bg-accent/25 disabled:pointer-events-none disabled:opacity-60"
+            >
+              {updatePill} — install
+            </button>
+          </Tip>
+          </span>
+        )}
         <span
-          title={`An estimate from a built-in price table, never a bill. ${calls} AI ${calls === 1 ? "step" : "steps"} so far in this conversation.`}
-          className="rounded-full border border-edge bg-raised px-3 py-1 text-xs text-ink-dim tabular-nums"
+          title={`Estimated spending in this conversation — an estimate from a built-in price table, never a bill. ${calls} AI ${calls === 1 ? "step" : "steps"} so far.`}
+          className="rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap text-ink-dim tabular-nums"
         >
           {costPill(view.cost)}
-          <span className="ml-1 text-ink-faint">this conversation</span>
+          <span className="ml-1 hidden text-ink-faint xl:inline">this conversation</span>
         </span>
         <button
           type="button"
           onClick={onOpenSettings}
           title={ORIGIN_TIPS[view.connection?.origin ?? "none"] ?? ORIGIN_TIPS.none}
-          className="flex items-center gap-2 rounded-full border border-edge bg-raised px-3 py-1 text-xs text-ink-dim transition-colors hover:border-accent hover:text-accent"
+          className="flex items-center gap-2 rounded-full border border-edge bg-raised px-3 py-1 text-xs whitespace-nowrap text-ink-dim transition-colors hover:border-accent hover:text-accent"
         >
           <span className={`h-2 w-2 rounded-full ${ready ? "bg-ok" : "bg-warn"}`} aria-hidden />
           {ready ? "Connected" : "Connect your API key"}
         </button>
-        <Tip
-          tip={
-            workbenchOpen
-              ? "Hide the plan and pages to give the conversation the whole window"
-              : "Show the documents, the plan and the pages"
-          }
-        >
-          <button
-            type="button"
-            onClick={onToggleWorkbench}
-            aria-pressed={workbenchOpen}
-            className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs text-ink transition-colors hover:border-accent hover:text-accent"
-          >
-            {workbenchOpen ? "Hide plan ▸" : "◂ Show plan"}
-          </button>
-        </Tip>
         <Tip
           tip={
             busy
@@ -109,45 +113,17 @@ export default function Header({
             type="button"
             onClick={onNewConversation}
             disabled={busy}
-            className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
+            className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs whitespace-nowrap text-ink transition-colors hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-40"
           >
             New conversation
           </button>
         </Tip>
-        <div className="relative" ref={helpRef}>
-          <button
-            type="button"
-            onClick={() => setHelpOpen((o) => !o)}
-            aria-haspopup="menu"
-            aria-expanded={helpOpen}
-            className="rounded-lg border border-edge bg-raised px-3 py-1.5 text-xs text-ink transition-colors hover:border-accent hover:text-accent"
-          >
-            Help ▾
-          </button>
-          {helpOpen && (
-            <div
-              role="menu"
-              className="absolute right-0 z-30 mt-1 w-52 rounded-md border border-edge bg-raised py-1 shadow-lg"
-            >
-              <button type="button" role="menuitem" className={menuItem} onClick={() => { setHelpOpen(false); onCheckUpdates(); }}>
-                Check for updates
-              </button>
-              <button type="button" role="menuitem" className={menuItem} onClick={() => { setHelpOpen(false); onOpenLogs(); }}>
-                Open diagnostic logs
-              </button>
-              <div className="my-1 border-t border-edge/60" />
-              <button type="button" role="menuitem" className={menuItem} onClick={() => { setHelpOpen(false); onOpenAbout(); }}>
-                About Spec Surgeon
-              </button>
-            </div>
-          )}
-        </div>
         <button
           type="button"
           onClick={onOpenSettings}
           title="Settings — your AI connection"
           aria-label="Settings"
-          className="flex h-8 w-8 items-center justify-center rounded-lg border border-edge bg-raised text-ink-dim transition-colors hover:border-accent hover:text-accent"
+          className="flex h-8 w-8 flex-none items-center justify-center rounded-lg border border-edge bg-raised text-ink-dim transition-colors hover:border-accent hover:text-accent"
         >
           <svg
             width="16"

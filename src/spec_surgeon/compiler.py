@@ -40,7 +40,7 @@ tool result and rejection with its reasons, each call's stop reason, serving mod
 images never go in. An API call that fails (no network, a bad key, an overloaded service, Claude not installed) ends
 the TURN as ``failed`` with the error, its HTTP status and request id, and the exchange so far; anything else is a
 defect and propagates (``llm.is_api_error`` decides; ``is_api_error``, ``api_error_text`` and ``block_dict`` are
-re-exported here). ``spec-surgeon do`` and the window write it to ``compile.json``.
+re-exported here). The window writes it to ``compile.json``.
 """
 from __future__ import annotations
 
@@ -66,7 +66,7 @@ from .resources import DEFAULT_MAX_CALLS, positive_integer
 
 from . import diagnostics as diag
 from . import llm
-from .llm import DEFAULT_MODEL, FALLBACK_BETA  # noqa: F401 — re-exported (cli, codegen, advisor, tests)
+from .llm import DEFAULT_MODEL, FALLBACK_BETA  # noqa: F401 — re-exported (codegen, tests)
 from .llm import api_error_text, block_dict, is_api_error  # noqa: F401 — re-exported (master's diagnostics names)
 
 MAX_TURNS = DEFAULT_MAX_CALLS
@@ -334,9 +334,6 @@ Defined-term capitalization is capitalize_defined_terms: in chat, call propose_d
 contexts, and offer each desired change separately as ask_user kind capitalization with its proposal_id. Only a user \
 pick authorizes that occurrence; copy only picked records into approvals. Capitalization is listed first. Never use replace_table for a broad \
 defined-term capitalization request; never claim that the original request approves individual occurrences. \
-Spec QA audits (placeholders, cross-references, standards, readiness and project identity) are report-only via \
-the Spec QA audits window or spec-surgeon audit. Do not submit edits to satisfy an audit. A standards audit records \
-editions as found; an explicit subsequent replacement request chooses the published or AHJ-adopted edition. \
 - Text-changing ops are tracked unless the user asks for clean copies (tracked false). name_output, and \
 make_values_agree with the file name among its places, rename the outputs: they write copies, never in place.
 - Clean-up ops (remove_comments, remove_highlight, remove_hidden_text, remove_notes, remove_empty_paragraphs, \
@@ -1248,11 +1245,14 @@ def check_submission(spec: Any, batch: _Batch, sources: Sequence[str],
 def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                    prior_failures: Optional[Sequence[Dict[str, Any]]] = None,
                    history: Optional[Sequence[str]] = None,
-                   fresh: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+                   fresh: Optional[Sequence[str]] = None, context: Optional[str] = None) -> List[Dict[str, Any]]:
     """The first user message: the request, the user's answers, the changes already made to these copies (a request
     that builds on a result), any prior pass's set-aside diagnostics, the attached template, the input files a spec
-    names, and the batch's profiles per structure pattern."""
+    names, and the batch's profiles per structure pattern. ``context`` is the app's own account of how these
+    documents come to be planned (set aside after a preview, say); it is never the user's words."""
     parts = [f"REQUEST:\n{request}"]
+    if context and context.strip():
+        parts.append(context.strip())
     if answers:
         parts.append("THE USER'S ANSWERS TO EARLIER QUESTIONS:\n" + "\n".join(f"- {a}" for a in answers))
     if history:
@@ -1287,7 +1287,7 @@ def compile_request(request: str, files: Sequence[Path], template: Optional[Path
                     max_calls: Optional[int] = None, max_attempts: Optional[int] = None,
                     max_output_tokens: Optional[int] = None, effort: Optional[str] = None,
                     max_context_tokens: Optional[int] = None, analysis_limits=None) -> CompileResult:
-    """Request + batch → CompileResult, in one go (the command line without a terminal, the tests). ``status`` is
+    """Request + batch → CompileResult, in one go (the tests). ``status`` is
     ``ok`` (a validated, dry-planned spec), ``questions`` (ask the user, then call again with ``answers``),
     ``unsupported`` (no op fits; see spec["proposal"]) or ``failed``. The loop itself is conversation.Conversation."""
     from .conversation import Conversation

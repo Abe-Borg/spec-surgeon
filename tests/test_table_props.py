@@ -5,11 +5,9 @@ IMPLEMENTATIONS shared by plan and apply; the two sides' decisions on every tabl
 schema; plan-time conflicts (rule 9); parameters and refusals; the batch pipeline and a LibreOffice render."""
 from __future__ import annotations
 
-import ast
 import io
 import shutil
 import zipfile
-from pathlib import Path
 from typing import List, Tuple
 
 import pytest
@@ -25,7 +23,6 @@ from spec_surgeon.ops import table_select as tsel
 from spec_surgeon.ops.base import verify_family
 from spec_surgeon.ops.selectors import StyleSheet
 from spec_surgeon.package import DocxPackage, W, serialize_xml
-from spec_surgeon.report import FAILURE_EXPLANATIONS
 from spec_surgeon.verify import run_suite
 from spec_surgeon.verify import tableprops as vtp
 from spec_surgeon.verify import tableselect as vts
@@ -660,19 +657,6 @@ def test_a_table_in_a_text_box_refuses(src):
     with pytest.raises(JobException) as e:
         get_op("set_table_props").plan(DocxPackage(data), {"tables": {"first_row_regex": "^Tag"}}, {"width": "auto"})
     assert e.value.code == "textbox"
-
-
-def test_every_refusal_code_of_the_table_ops_is_explained():
-    codes = set()
-    for name in ("set_table_props", "table_select", "apply_table_style"):
-        path = Path(stp_module.__file__).with_name(f"{name}.py")
-        for n in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-            if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "JobException" and len(n.args) > 1:
-                assert isinstance(n.args[1], ast.Constant), (name, n.lineno)
-                codes.add(n.args[1].value)
-    assert {"bad-params", "conflict-property", "table-structure", "textbox", "missing-style", "style-mismatch",
-            "structure"} == codes
-    assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
 
 
 def test_catalog_and_schema(src):

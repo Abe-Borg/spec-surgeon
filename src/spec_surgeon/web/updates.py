@@ -1,4 +1,4 @@
-"""Updates without a toolkit: the once-a-day check, Help → Check for updates, the download with its progress, and the
+"""Updates without a toolkit: the once-a-day check, About → Check for updates, the download with its progress, and the
 one-click install (download → verify → start Setup → quit; Setup reopens the app). Every decision about what may be
 downloaded or started lives in ``spec_surgeon.updater``; this drives it and keeps the state the window's banner
 shows (docs/WEB_API.md: ``update``)."""
@@ -104,6 +104,9 @@ class UpdateFlow:
         if self.checking or self.downloading:
             return False
         self.checking = True
+        if manual:
+            # The About page shows this answer once it lands; the previous one must not pass for it meanwhile.
+            self._set(manual_result="")
         skipped = self.settings.skipped_version
 
         def target():

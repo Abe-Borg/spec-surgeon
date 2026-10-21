@@ -4,16 +4,20 @@ from __future__ import annotations
 import json
 import os
 import copy
+import hashlib
 from pathlib import Path
 
 import pytest
+from docx import Document
 
-from make_fixtures import build_batch1, build_sized, build_style_template, build_styles, png
-from spec_surgeon import batch as batch_module, preview, verify
-from spec_surgeon.batch import run_batch
+from make_fixtures import build, build_batch1, build_sized, build_style_template, build_styles, png
+from spec_surgeon import batch as batch_mod, batch as batch_module, guard, preview, verify
+from spec_surgeon.batch import FileResult, check_inputs_outside, load_set_aside, output_names, run_batch, verified_bytes
 from spec_surgeon.chain import DRIFT_CODE, chain_from_specs, chain_key, run_chain
 from spec_surgeon.goals import resolve_goal
+from spec_surgeon.ooxml import block_full_text, paragraphs
 from spec_surgeon.package import DocxPackage, W
+from spec_surgeon.verify import CheckResult
 
 
 def font(name="Courier New"):
@@ -587,3 +591,204 @@ def test_approved_inputs_close_frontend_handoff_before_any_delivery_cleanup(tmp_
         else:
             run_chain(inputs, chain, out, workers=1, do_render=False, approved_inputs=approved)
     assert previous.read_bytes() == b"previous delivery must remain intact when approval is refused"
+
+
+# ---- an outcome contract is advisory unless a governed caller enforces it ---------------------------------------------
+
+TITLE_REQUEST = "Make the FIRE SUPPRESSION section title bold in every document."
+TITLE_CONTRACT = {"kind": "document_effects", "effects": [{"id": "title", "type": "format",
+    "target": {"locators": [{"exact_text": "FIRE SUPPRESSION"}], "cardinality": 1}, "run": {"b": True}}]}
+
+
+def document(path, *, title_style="Normal", body_style="Normal", duplicate=False):
+    doc = Document()
+    doc.add_paragraph("SECTION 21 13 13")
+    title = doc.add_paragraph("FIRE SUPPRESSION", style=title_style)
+    title.runs[0].bold = False
+    if duplicate:
+        doc.add_paragraph("FIRE SUPPRESSION")
+    body = doc.add_paragraph("Owner shall retain all content.", style=body_style)
+    body.runs[0].bold = False
+    doc.save(path)
+    return path
+
+
+def recipe(predicate):
+    return {"request": TITLE_REQUEST, "summary": "Bold the requested section titles", "mode": "formatting",
+        "ops": [{"op": "set_properties", "select": {"paragraphs": predicate},
+                 "params": {"run": {"b": True}, "tracked": False}}]}
+
+
+@pytest.mark.parametrize("chain,in_place", [(False, False), (False, True), (True, False), (True, True)])
+def test_an_unenforced_outcome_contract_cannot_withhold_verified_delivery(tmp_path, chain, in_place):
+    source = document(tmp_path / "spec.docx")
+    spec = recipe({"text_regex": "^Owner"})
+    out = tmp_path / "run"
+    kwargs = dict(workers=1, do_render=False, in_place=in_place,
+                  goal_contract=TITLE_CONTRACT, goal_bindings={})  # even missing bindings cannot create a gate
+    result = (run_chain([str(source)], chain_from_specs([("bold", spec)]), out, **kwargs) if chain else
+              run_batch([str(source)], "edit-spec", {}, out, spec=spec, **kwargs))
+    assert result.counts() == {"PASS": 1, "FAIL": 0, "EXCEPTION": 0, "PENDING": 0}
+    assert result.goal_contract == TITLE_CONTRACT
+    assert result.files[0].delivered_to
+    record = result.files[0].results[-1].record if chain else result.files[0].record
+    assert record.get("GOAL") is None
+
+
+# ---- failed outputs never sit beside verified ones -------------------------------------------------------------------
+
+AUTHOR = "Abraham Borg"
+
+
+def test_failed_outputs_are_quarantined_and_explained(tmp_path, monkeypatch):
+    real = batch_module.run_suite
+
+    def planted_v2_failure(src, out, plan, s, o):
+        rec = real(src, out, plan, s, o)
+        rec.set(CheckResult("V2", "Text preservation", "FAIL", "planted"))
+        return rec
+    monkeypatch.setattr(batch_module, "run_suite", planted_v2_failure)
+    d = tmp_path / "in"; d.mkdir()
+    (d / "21 05 00 – CLEAN.docx").write_bytes(build("21 05 00", "COMMON WORK RESULTS"))
+    spec = {"request": "replace FM Global with GRC", "summary": "s", "mode": "content",
+            "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
+                     "params": {"find": "FM Global", "replace": "GRC", "author": AUTHOR}}]}
+    out = tmp_path / "out"
+    b = run_batch([str(d)], "edit-spec", {}, out, workers=1, renderer="none", do_render=False, spec=spec)
+    assert b.counts()["FAIL"] == 1
+    assert not list((out / "outputs").iterdir())
+    assert [p.name for p in (out / "failed").iterdir()] == ["21 05 00 – CLEAN.docx"]
+    f = b.files[0]
+    assert f.output == out / "failed" / "21 05 00 – CLEAN.docx" and f.record.output == str(f.output)
+    assert f.record.get("V9").status == "NA" and "failed/" in f.record.get("V9").summary
+    item = load_set_aside(out)["files"][0]
+    assert item["code"] == "verify-fail" and item["category"] == "Failed Verification (Not Delivered)"
+    assert "failed/" in (out / "BATCH_REPORT.md").read_text(encoding="utf-8")
+
+
+def test_v9_guard_failures_are_quarantined_too(tmp_path, monkeypatch):
+    """Codex review on the v0.3.1 PR: V9 runs after the first quarantine check, so a drifted source or a refused
+    in-place write-back used to leave a stale output in outputs/ (and record it as delivered)."""
+    spec = {"request": "replace FM Global with GRC", "summary": "s", "mode": "content",
+            "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
+                     "params": {"find": "FM Global", "replace": "GRC", "author": AUTHOR}}]}
+    # non-in-place: the source drifts while the batch runs
+    d = tmp_path / "drift"; d.mkdir()
+    (d / "21 05 00 – A.docx").write_bytes(build("21 05 00", "A"))
+    monkeypatch.setattr(batch_module.guard, "drifted", lambda identity: "mtime moved during the run")
+    out = tmp_path / "out1"
+    b = run_batch([str(d)], "edit-spec", {}, out, workers=1, renderer="none", do_render=False, spec=spec)
+    f = b.files[0]
+    assert f.status == "FAIL" and f.record.get("V9").status == "FAIL" and f.delivered_to is None
+    assert not list((out / "outputs").iterdir()) and [p.name for p in (out / "failed").iterdir()] == ["21 05 00 – A.docx"]
+    assert f.output == out / "failed" / "21 05 00 – A.docx"
+    monkeypatch.undo()
+    # in place: the guard refuses the write-back (file open in Word / drifted)
+    d2 = tmp_path / "locked"; d2.mkdir()
+    src = d2 / "21 05 00 – B.docx"; src.write_bytes(build("21 05 00", "B")); before = src.read_bytes()
+
+    def refuse(identity, data):
+        raise batch_module.guard.GuardError("Word lock file present: the document is open")
+    monkeypatch.setattr(batch_module.guard, "write_back", refuse)
+    out2 = tmp_path / "out2"
+    b2 = run_batch([str(d2)], "edit-spec", {}, out2, workers=1, renderer="none", do_render=False, spec=spec, in_place=True)
+    f2 = b2.files[0]
+    assert f2.status == "FAIL" and f2.record.get("V9").status == "FAIL" and f2.delivered_to is None
+    assert src.read_bytes() == before
+    assert not list((out2 / "outputs").iterdir()) and [p.name for p in (out2 / "failed").iterdir()] == ["21 05 00 – B.docx"]
+    assert "failed/" in f2.record.get("V9").summary and "failed/" in (out2 / "BATCH_REPORT.md").read_text(encoding="utf-8")
+
+
+# ---- inputs that share a name or sit in the results; delivery bound to verified bytes --------------------------------
+
+def _spec(mode, ops):
+    return {"request": "x", "summary": "x", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": ops}
+
+
+REPLACE = _spec("content", [{"op": "replace_text", "params": {"find": "FM Global", "replace": "FM Approved"}}])
+
+
+def _title(path: Path) -> str:
+    return block_full_text(paragraphs(DocxPackage.from_path(path).xml("word/document.xml"))[1])
+
+
+def test_outputs_and_records_stay_distinct_when_inputs_share_a_name(tmp_path):
+    files = []
+    for folder, num, title in (("a", "21 00 01", "ALPHA"), ("b", "21 00 02", "BRAVO")):
+        d = tmp_path / folder
+        d.mkdir()
+        (d / "Spec.docx").write_bytes(build(num, title))
+        files.append(d / "Spec.docx")
+    (tmp_path / "c").mkdir()
+    files.append(tmp_path / "c" / "Spec (1).docx")
+    files[-1].write_bytes(build("21 00 03", "CHARLIE"))
+    # a name an input really has is never handed to another input; the first keeps its own, the next gets a free one
+    assert [output_names(files)[str(f)] for f in files] == ["Spec.docx", "Spec (2).docx", "Spec (1).docx"]
+    assert list(output_names([Path("x/SPEC.docx"), Path("y/spec.docx")]).values()) == ["SPEC.docx", "spec (1).docx"]
+    before = {f: _title(f) for f in files}
+    b = run_batch([str(f) for f in files], "edit-spec", {}, tmp_path / "out", workers=1, renderer="none",
+                  do_render=False, in_place=True, spec=REPLACE)
+    assert [f.status for f in b.files] == ["PASS"] * 3
+    assert [f.out_name for f in b.files] == ["Spec.docx", "Spec (2).docx", "Spec (1).docx"]
+    assert [f.delivered_to for f in b.files] == [str(f) for f in files]
+    assert {f: _title(f) for f in files} == before                 # every original is still its own document
+    assert sorted(p.name for p in (tmp_path / "out" / "records").glob("*.record.json")) == \
+        ["Spec (1).record.json", "Spec (2).record.json", "Spec.record.json"]
+    assert len(list((tmp_path / "out" / "plans").glob("*.plan.json"))) == 3
+
+
+def test_an_input_inside_the_results_folder_is_refused_before_anything_is_written(tmp_path):
+    results = tmp_path / "results"
+    src = results / "outputs" / "Spec.docx"
+    src.parent.mkdir(parents=True)
+    src.write_bytes(build("21 00 04", "DELTA"))
+    md5 = hashlib.md5(src.read_bytes()).hexdigest()
+    with pytest.raises(ValueError, match="inside the results folder"):
+        run_batch([str(src)], "edit-spec", {}, results, workers=1, renderer="none", do_render=False, spec=REPLACE)
+    assert hashlib.md5(src.read_bytes()).hexdigest() == md5
+    assert sorted(p.name for p in results.iterdir()) == ["outputs"]       # nothing created
+    check_inputs_outside([tmp_path / "in" / "x.docx"], results)             # outside: fine
+    with pytest.raises(ValueError):
+        check_inputs_outside([results / "deeper" / "x.docx"], results)
+
+
+def test_a_verifier_crash_leaves_nothing_in_outputs(tmp_path, monkeypatch):
+    f = tmp_path / "A.docx"
+    f.write_bytes(build("21 00 05", "ECHO"))
+
+    def boom(*a, **k):
+        raise RuntimeError("injected verifier crash")
+    monkeypatch.setattr(batch_mod, "run_suite", boom)
+    b = run_batch([str(f)], "edit-spec", {}, tmp_path / "out", workers=1, renderer="none", do_render=False, spec=REPLACE)
+    fr = b.files[0]
+    # the engine's own failure, said as such (never "a corrupt file"): the stage, the line of code, the traceback
+    assert fr.status == "EXCEPTION" and fr.exception["code"] == "internal-error" and "injected" in fr.exception["reason"]
+    assert fr.exception["kind"] == "internal-error" and fr.exception["stage"] == "verify"
+    assert "injected verifier crash" in fr.exception["traceback"] and fr.exception["where"].startswith("batch.py:")
+    assert not list((tmp_path / "out" / "outputs").iterdir()) and not (tmp_path / "out" / "failed").exists()
+
+
+def test_delivery_is_bound_to_the_bytes_the_suite_verified(tmp_path, monkeypatch):
+    f = tmp_path / "A.docx"
+    f.write_bytes(build("21 00 06", "FOXTROT"))
+    md5 = hashlib.md5(f.read_bytes()).hexdigest()
+    real = batch_mod._process_one
+
+    def tampered(*a, **k):
+        r = real(*a, **k)
+        Path(r["output"]).write_bytes(build("99 99 99", "SOMETHING ELSE"))  # replaced after verification
+        return r
+    monkeypatch.setattr(batch_mod, "_process_one", tampered)
+    for in_place in (True, False):
+        out = tmp_path / ("in_place" if in_place else "copies")
+        b = run_batch([str(f)], "edit-spec", {}, out, workers=1, renderer="none", do_render=False,
+                      in_place=in_place, spec=REPLACE)
+        fr = b.files[0]
+        v9 = fr.record.get("V9")
+        assert fr.status == "FAIL" and v9.status == "FAIL" and "not the one the suite verified" in v9.summary
+        assert fr.delivered_to is None and (out / "failed" / "A.docx").is_file() and not (out / "outputs" / "A.docx").exists()
+        assert hashlib.md5(f.read_bytes()).hexdigest() == md5                 # the original untouched
+    fr2 = FileResult(source=f, output=f, output_md5="0" * 32)
+    with pytest.raises(guard.GuardError, match="not the one the suite verified"):
+        verified_bytes(fr2)

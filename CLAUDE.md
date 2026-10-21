@@ -13,7 +13,7 @@ lost or invented is the one failure that matters.
 1. **Predict first.** `Op.plan()` computes every prediction (diffs, parts, members, revision deltas, assertions and
    their target counts) from the SOURCE, analytically; never by running the transform on a copy and reading off what changed.
 2. **The verifier shares no code with the transforms.** `src/spec_surgeon/verify/` imports nothing from `ops/`,
-   `jobs/`, `editspec.py`, `ooxml.py`, `package.py`, `goals.py`, `goal_contracts.py` or the Claude layer
+   `editspec.py`, `ooxml.py`, `package.py`, `goals.py`, `goal_contracts.py` or the Claude layer
    (`tests/test_independence.py`); it has its own readers, text extraction, selectors, style chains and definitions.
    Do not deduplicate the twin implementations: the duplication is the point.
 3. **Repack by member substitution.** `DocxPackage.repack` keeps every untouched member byte-identical, in source
@@ -44,14 +44,20 @@ calls (`STEPS_PER_PAUSE`), and **Stop now** closes the running stream (`llm.canc
 `llm.call` re-sends transient failures and relays each call's stream to the window
 (`llm.stream_observer_scope`). After a run the delivered copies are the working set the next
 request builds on (`DocumentTask.working`, `history`, `START_OVER`); the model's
-`suggested_replies` are the chat's tap-to-reply chips.
+`suggested_replies` are the chat's tap-to-reply chips. The one button lives in the chat pane; each
+preview carries a green checkmark and a red X: X'd documents are `hold` on the primary action, run
+on nothing (`Session.run(only=)` keeps every approved pin), wait on `DocumentTask.todo`, and the
+reply `WORK_TODO` begins a pass over them alone (`focus`, one request at a time), planned from the
+request they were set aside from; `applied` keeps the changes each copy carries, so the history the
+model hears is per document.
 `layouts.py` gives a mixed batch one EditSpec per structural layout, each planned, previewed
 and verified on its own documents, with one approval. `review_display.py` describes the actual
 previewed EditSpec in the sentences each operation writes for itself (`Op.describe`,
 `ops/prose.py`); ordinary requests never invoke a second outcome planner. Keep operations,
-recipes, model knobs and recovery workspaces out of this interface. There is no legacy window
-and no other mode; those features are command-line only. See `docs/CONVERSATIONAL_DESKTOP.md`
-for persistence, cost limits and review behavior.
+model knobs and recovery internals out of this interface. There is no legacy window, no other
+mode and no command line (removed 2026-10-21 with the library, workspaces, workflows, office
+profiles, spec QA audits, project evidence, evaluations and the named v0.1.0 jobs). See
+`docs/CONVERSATIONAL_DESKTOP.md` for persistence, cost limits and review behavior.
 
 - `src/spec_surgeon/` — the package.
   - `package.py` — `DocxPackage`: zip, rels, sections, working overlay, repack by substitution.
@@ -61,7 +67,6 @@ for persistence, cost limits and review behavior.
     cores (`textedit.py`, `slots.py`, `effective.py`, `lists.py`, `style_import.py`).
   - `verify/` — the INDEPENDENT verifier: `suite.py` (V1–V10 as a `VerificationRecord`), `props.py` (V10 assertion
     kinds and the residual), `textcheck.py`, `reader.py`, `xsd.py`, `geometry.py`, `explain.py`, one module per family.
-  - `jobs/` — the two v0.1.0 CLI jobs, aliases over ops.
   - `editspec.py` — EditSpec load, validate, plan every op, merge, apply; composition (`stage_cuts`, `compose_chain`,
     `merge_cuts`, `plan_chain`): a spec whose ops overlap becomes a chain of ordered steps, each planned on the
     step before it.
@@ -73,20 +78,21 @@ for persistence, cost limits and review behavior.
     dry runs, the op catalog and EditSpec schema.
   - `triage.py` — attach-time triage: refused, noted or ok, with the facts the planner reads.
   - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec with Claude; `llm.call` is the one
-    call site. `compiler.compose_submission` is the one gate a submission passes (a spec, the model's own stages, a
+    call site: the system prompt carries its own 1-hour cache breakpoint (shared by every conversation), the history
+    the automatic 5-minute one, and a `one_shot` call (visual check, critic) caches nothing after the system prompt;
+    keep system prompts and tools byte-stable. `compiler.compose_submission` is the one gate a submission passes (a spec, the model's own stages, a
     layout plan — composed into a chain when its ops overlap); the op sheet (`catalog.op_sheet`) rides the cached
     system prompt.
   - `preview.py` — samples applied and verified in memory, before/after pages, the approval token.
   - `codegen.py`, `sandbox_runner.py` — custom transforms: AST whitelist, isolated process, hard limits.
-  - `advisor.py` — a recommendation or re-compiled spec per exception; writes, never applies.
-  - `library.py` — recipes, chains, operations and snippets under the config folder (command line only).
-  - `workflows.py`, `goals.py`, `goal_contracts.py`, `goal_operations.py` — named workflows and reviewed outcome
-    contracts; `recovery*.py`, `campaign*.py`, `inventory.py` — bounded investigation and workspaces.
-  - `office_profiles.py`, `structure.py`, `spec_qa.py`, `project_evidence.py` — office standards, structure analysis, QA audits.
+  - `goals.py`, `goal_contracts.py`, `goal_operations.py` — reviewed outcome contracts; `recovery*.py`,
+    `continuous_recovery.py`, `campaign_planner.py` — bounded investigation of set-aside files and outcome planning;
+    `inventory.py` — the content digest that pins a file.
+  - `structure.py` — structure analysis (paragraph roles, the planner's role evidence).
   - `document_task.py` — the window's coordinator: attachments and triage, stages, the call ledger and its pause,
     Continue that resumes a stopped conversation turn, the journal;
     `review_display.py` — the plan as the window reads it (sentences, assumptions, layouts, targets).
-  - `cli.py`, `gui.py` (`Session`, `main`), `web/` (the window: `server.py` (the FastAPI API over one
+  - `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/` (the window: `server.py` (the FastAPI API over one
     `DocumentTask`, contract `docs/WEB_API.md`), `shell.py` (pywebview/WebView2, the browser fallback),
     `updates.py` (the headless update flow), `static/` (the page, built from `frontend/` with Node 22 and
     committed), `icons/`), `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
@@ -95,7 +101,7 @@ for persistence, cost limits and review behavior.
 - `tests/` — pytest suite; `make_fixtures.py` builds the synthetic hard-case documents; `fake_claude.py` scripts
   Claude; `conftest.py` seals keys, config dir and the model; `test_web_server.py` drives the window's server
   in-process; `describe_cases/` holds the (select, params) cases `test_describe.py` checks for every op.
-- `examples/specs/`, `examples/templates/`, `examples/jobs/` — worked EditSpecs, template fixtures, job params.
+- `examples/specs/`, `examples/templates/` — worked EditSpecs and template fixtures.
 - `docs/` — design notes, `releases/`, `audits/`, `history/` (the previous CLAUDE.md and README.md).
 - `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests, the icon generator.
 
@@ -107,14 +113,13 @@ python3 -m pytest -q                          # Windows: py -3 -m pytest -q -s (
 cd frontend && npm ci && npm run build        # rebuild the window's page (Node 22) into src/spec_surgeon/web/static; commit it
 python3 -m pytest -q tests/test_ops.py        # one module
 python3 tests/make_fixtures.py OUT            # fixtures; --rich, --template, --reference, --styles-template, --numbering-scheme, --dirty
-spec-surgeon ops --catalog
-spec-surgeon plan-spec examples/specs/change-all-font-arial.json FILES...
-spec-surgeon run-spec examples/specs/change-all-font-arial.json FILES... --out OUT
-spec-surgeon verify SOURCE.docx OUTPUT.docx --plan OUT/plans/NAME.plan.json
-spec-surgeon diagnose OUT
-spec-surgeon do "change all fonts to Arial" FILES... --out OUT
-spec-surgeon-gui                              # or: spec-surgeon gui
+spec-surgeon-gui                              # the window; or: python3 -m spec_surgeon
 ```
+
+There is no command line. Check a change with the test suite; to run the engine by hand, call it from Python:
+`batch.run_batch(files, "edit-spec", {}, out_dir, spec=editspec.load_spec(path))` for a batch, `verify.run_suite`
+for one pair, `gui.Session` for the window's steps with a scripted client (`tests/fake_claude.py`). A run's
+`DIAGNOSTICS.md`, `records/` and `logs/` say why a file did not pass.
 
 ## How to add an op
 

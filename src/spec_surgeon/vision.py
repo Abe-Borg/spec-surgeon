@@ -346,7 +346,7 @@ def review_samples(intent: str, samples: Sequence[Any], work_dir: Path, client_f
     try:
         resp = llm.call(client, model=model, system=REVIEW_SYSTEM, tools=REVIEW_TOOLS,
                         messages=[{"role": "user", "content": content}],
-                        max_output_tokens=max_output_tokens, effort=effort)
+                        max_output_tokens=max_output_tokens, effort=effort, one_shot=True)
     except Exception as e:  # noqa: BLE001 — advisory: never raises (rule 15); a defect keeps its traceback
         rv.seconds = time.perf_counter() - t
         _skip_for(rv, e, 1, "the request to Claude failed", rv.seconds)

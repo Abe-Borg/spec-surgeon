@@ -12,8 +12,8 @@ from typing import List, Tuple
 import pytest
 from lxml import etree
 
-from make_fixtures import build_styles
-from spec_surgeon.editspec import SpecError, plan_spec, validate_spec
+from make_fixtures import build, build_styles
+from spec_surgeon.editspec import SpecError, apply_spec, plan_spec, validate_spec
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import set_paragraph_props as spp_module
 from spec_surgeon.ops.base import verify_family
@@ -531,3 +531,52 @@ def test_a_spec_runs_through_the_batch_pipeline(src, tmp_path):
                       spec=spec)
     f = batch.files[0]
     assert f.status == "PASS", f.record.to_markdown() if f.record else f.exception
+
+
+def _spec_with_mode(mode, ops):
+    return {"request": "x", "summary": "x", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": ops}
+
+
+def _rewrite(data: bytes, part: str, fn) -> bytes:
+    """``data`` with ``fn(root)`` applied to the XML of ``part``."""
+    zin = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            b = zin.read(info.filename)
+            if info.filename == part:
+                root = etree.fromstring(b)
+                fn(root)
+                b = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            zout.writestr(info, b)
+    return out.getvalue()
+
+
+def test_spacing_given_in_lines_refuses_a_point_value():
+    def after_lines(root):
+        p = list(root.iter(W + "p"))[6]
+        ppr = p.find(W + "pPr")
+        if ppr is None:
+            ppr = etree.Element(W + "pPr"); p.insert(0, ppr)
+        etree.SubElement(ppr, W + "spacing").set(W + "afterLines", "200")
+    pkg = DocxPackage(_rewrite(build("21 00 12", "GOLF"), "word/document.xml", after_lines))
+    op = lambda spacing: _spec_with_mode("formatting", [{"op": "set_paragraph_props", "select": {"scope": ["document"]},
+                                               "params": {"spacing": spacing, "tracked": False}}])
+    with pytest.raises(JobException) as e:
+        plan_spec(pkg, op({"after": 120}))
+    assert e.value.code == "conflict-property" and "afterLines=200" in e.value.reason
+    plan, frags = plan_spec(pkg, op({"after": 120, "afterLines": 0}))        # the spec says what the lines become
+    assert run_suite(pkg.data, apply_spec(pkg, frags).output_bytes(), plan.to_dict(), "a.docx", "b.docx").passed
+
+    def style_lines(root):
+        for st in root.iter(W + "style"):
+            if st.get(W + "styleId") == "Normal":
+                ppr = st.find(W + "pPr")
+                if ppr is None:
+                    ppr = etree.SubElement(st, W + "pPr")
+                etree.SubElement(ppr, W + "spacing").set(W + "beforeLines", "100")
+    pkg = DocxPackage(_rewrite(build("21 00 12", "GOLF"), "word/styles.xml", style_lines))
+    with pytest.raises(JobException) as e:
+        plan_spec(pkg, op({"before": 120}))
+    assert e.value.code == "conflict-property" and "style 'Normal'" in e.value.reason

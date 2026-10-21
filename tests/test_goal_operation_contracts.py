@@ -1,17 +1,14 @@
-"""Approved workspace effects reach existing operations without weakening final proof."""
+"""Approved outcome effects reach existing operations without weakening final proof."""
 import copy
 import hashlib
 
 import pytest
 from docx import Document
 
-from fake_claude import FakeClient, resp, tool
 from make_fixtures import SCHEME_LEVELS, build_numbering, build_scheme_example, build_typed
-from spec_surgeon.campaign import create_campaign, load_campaign
 from spec_surgeon.campaign_planner import inspect_goal_effect
 from spec_surgeon.goals import (GoalError, NeedsInput, choose_goal, compile_goal_candidate,
                                 goal_catalog, goal_templates, resolve_goal, validate_contract, verify_goal)
-from spec_surgeon.recovery import RecoveryOptions
 from test_goal_contracts import contract, execute
 
 
@@ -181,42 +178,3 @@ def test_planner_count_inspection_is_read_only_scoped_and_source_pinned(tmp_path
     source_doc(source, 4)
     with pytest.raises(ValueError, match="source changed"):
         inspect_goal_effect([document], "doc1", effect("proofing_language", {"language": "en-US"}))
-
-
-def test_mixed_count_workspace_plan_reload_and_execute_without_model(tmp_path):
-    folder = tmp_path / "project"
-    folder.mkdir()
-    first = source_doc(folder / "21 13 13.docx", 2)
-    second = source_doc(folder / "21 13 16.docx", 4)
-    campaign = create_campaign([str(folder)], tmp_path / "workspace")
-    pid = next(iter(campaign.projects))
-    goal = contract(effect("paragraph_style", {"style": "Heading 1", "tracked": False},
-                           {"paragraphs": {"text_regex": "^REQUIREMENT"}}))
-    client = FakeClient(resp(tool("propose_plan", {"contract": goal,
-                       "rationale": "Apply the approved heading style to each original REQUIREMENT paragraph."})))
-    options = RecoveryOptions(render=False, use_memory=False)
-    campaign.plan(pid, "Style the requirement headings", options=options, client=client)
-    assert campaign.projects[pid]["proposed_plan"]["status"] == "PROPOSED"
-    campaign.approve_plan(pid, campaign.projects[pid]["proposed_plan"]["id"])
-    loaded = load_campaign(campaign.out_dir)
-    no_model = FakeClient()
-    loaded.run(options=options, client=no_model)
-    assert not no_model.requests
-    assert all(d["status"] == "READY" for d in loaded.documents.values()), loaded.to_text()
-    assert first.exists() and second.exists()
-
-
-def test_planning_tool_inspects_original_count_before_draft_without_editing(tmp_path):
-    source = source_doc(tmp_path / "21 13 13.docx", 3)
-    before = source.read_bytes()
-    campaign = create_campaign([str(source)], tmp_path / "workspace")
-    pid, document_id = next(iter(campaign.projects)), next(iter(campaign.documents))
-    proposed = effect("paragraph_style", {"style": "Heading 1"}, {"paragraphs": {"text_regex": "^REQUIREMENT"}})
-    client = FakeClient(resp(tool("inspect_goal_effect", {"document_id": document_id, "effect": proposed})),
-                        resp(tool("propose_plan", {"contract": contract(proposed),
-                             "rationale": "Three inspected original requirement headings receive the approved style."})))
-    campaign.plan(pid, "Style requirement headings", options=RecoveryOptions(render=False, use_memory=False), client=client)
-    assert campaign.projects[pid]["proposed_plan"]["status"] == "PROPOSED"
-    assert source.read_bytes() == before and not campaign.projects[pid]["runs"]
-    import json
-    assert '"source_count": 3' in json.dumps(client.requests[-1]["messages"]).replace('\\"', '"')
