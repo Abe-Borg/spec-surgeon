@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import ast
 import io
-import re
 import shutil
 import zipfile
 from pathlib import Path
@@ -240,6 +239,20 @@ def test_paragraphs_move_to_the_very_start_and_the_very_end(src, tracked):
     body = DocxPackage(out).xml(MAIN).find(W + "body")
     assert body[-1].tag == W + "sectPr" and body[-2].tag == W + "p"       # the body's last section stays last
     assert any("land at the end of their body" in f for f in plan.flags) == tracked
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_after_an_anchor_holding_a_text_box_the_paragraphs_land_after_its_box(tracked):
+    """The text box's two paragraphs (both copies of its text) follow their paragraph in document order: the moved
+    paragraphs' indices come after them."""
+    data = build_moving(textbox=True)
+    plan, out, rec = move(data, {"paragraphs": A13}, to("^A\\.\\tSchedule 40", "after", tracked=tracked))
+    assert rec.passed, rec.to_markdown()
+    shown = accepted(out) if tracked else texts(out)
+    at = shown.index("A.Schedule 40 black steel.")
+    assert shown[at + 1:at + 6] == ["Boxed note", "Boxed note"] + SUBMITTALS
+    at = texts(out).index("A.Schedule 40 black steel.")                  # in the output, originals included
+    assert [d.block_index for d in plan.diffs if d.before is None] == [at + 3, at + 4, at + 5]
 
 
 def test_a_tracked_move_flags_what_word_keeps_at_a_containers_end(src):
