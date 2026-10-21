@@ -275,9 +275,23 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
                      "tracked unless the user said otherwise"],
     "delete_paragraphs": [
-        "only paragraphs matching the targeted selector are deleted",
-        "tracked deletion wraps runs in w:del and marks the paragraph mark unless untracked was requested",
-        "paragraphs carrying section breaks or fields are never deleted",
+        "the paragraphs the selector chooses are deleted — 'all' for every paragraph of the scope; the size of a "
+        "deletion is never a reason to refuse",
+        "a table all of whose paragraphs are chosen goes whole (its rows marked deleted when tracked); in a table only "
+        "partly chosen each cell keeps its last paragraph, emptied; the document, a header, a footnote or a comment "
+        "keeps a last paragraph too, and two tables are never left touching (the paragraph between them stays, "
+        "emptied) — each kept paragraph is flagged",
+        "fields, comments, footnotes and bookmarks lying wholly inside go with the paragraphs; a field or (untracked) a "
+        "comment that runs past the edge of the deletion sets the file aside, a bookmark that does keeps its outside "
+        "half; text boxes are refused",
+        "a section break in the deletion: untracked it goes and its pages join the next section, taking that section's "
+        "page setup, headers and footers (headers no section uses any more leave the file); tracked it stays until the "
+        "deletion is accepted — flagged either way",
+        "tracked (the default) wraps the text in deletions and marks the paragraph marks; it refuses paragraphs that "
+        "already hold pending tracked changes or a simple field (use tracked false, or resolve them first); "
+        "tracked false removes outright",
+        "beside another operation on the same part (untracked), or on the same table rows (tracked), it runs as its own "
+        "ordered step",
     ],
     "insert_paragraph": [
         "the inserted paragraph text is the user's exact approved wording verbatim",
@@ -366,6 +380,16 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "(firm, project, phase, logo, page numbers) is copied as it is",
         "a template spec's own number or title written another way in its headers/footers, or shown by a field, is "
         "refused rather than copied into every spec",
+    ],
+    # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §2) ----
+    "remove_footnotes": [
+        "'which' footnotes, endnotes or both (default both); text_regex keeps the removal to the notes whose own text "
+        "matches; scope is where references are looked for (default the document body)",
+        "the reference mark and the note go together; separators stay and Word renumbers the notes that stay; tracked "
+        "(the default) shows both as deleted, tracked false removes them outright with what only they held (a "
+        "picture, a link, a comment anchored in them)",
+        "a custom reference mark (a symbol instead of a number), a reference in a text box or a note referenced twice "
+        "sets the file aside; a file with no such note is left as it is (allow_missing false sets it aside)",
     ],
     # ---- built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md) ----
     "remove_comments": [

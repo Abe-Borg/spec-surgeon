@@ -433,6 +433,39 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "changed. Simplify the list in Word (Restart / Continue Numbering, Define New Multilevel List), or run the "
         "numbering audit to see where, then run again.",
     ),
+    # built-in batch 6 (deletion)
+    "tables-join": (
+        "Two Tables Would Touch",
+        "The deletion would leave two tables with nothing between them (Word would join them into one), and no "
+        "paragraph between them can stay to keep them apart. Nothing was changed. Keep one paragraph between them, or "
+        "delete one of the tables too, then run again.",
+    ),
+    "field-crossing": (
+        "A Field Runs Past the Edge of the Deletion",
+        "The paragraphs to delete hold part of a field that goes on outside them — a table of contents, an index, or "
+        "another field over several paragraphs — so deleting only part of it would break the field. Nothing was "
+        "changed. Choose every paragraph the field covers, or none of them (or update or remove the field in Word), "
+        "then run again.",
+    ),
+    "comment-crossing": (
+        "A Comment Runs Past the Edge of the Deletion",
+        "A comment's marked text lies partly inside the paragraphs to delete and partly outside them (or a reply to a "
+        "comment that goes is anchored outside them), so removing the text outright would cut the comment's anchor. "
+        "Nothing was changed. Remove that comment first, choose all of its text, or delete with tracked changes, then "
+        "run again.",
+    ),
+    "embedded-object": (
+        "The Deletion Holds a Chart, Diagram or Embedded Object",
+        "The content to delete holds a chart, a SmartArt diagram, an embedded object or a control, which lives in its "
+        "own part of the file; removing it outright cleanly is done in Word. Nothing was changed. Delete that object in "
+        "Word (or delete with tracked changes), then run again.",
+    ),
+    "custom-mark": (
+        "A Footnote Uses a Custom Mark",
+        "The footnote or endnote to remove is marked with a symbol typed in place of its number (a custom mark), which "
+        "the engine cannot remove together with the note safely. Nothing was changed. Remove that note in Word, or "
+        "narrow the removal with a text pattern, then run again.",
+    ),
 }
 
 

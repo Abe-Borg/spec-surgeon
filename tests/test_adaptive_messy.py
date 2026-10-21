@@ -392,9 +392,19 @@ def test_chunk4_delete_paragraphs_tracked_and_untracked_and_planted_defects():
     assert rec_u.passed, rec_u.to_markdown()
     assert len(plan_u.diffs) == 1 and plan_u.diffs[0].after is None
 
-    # Refuses deleting all paragraphs without a targeted selector
+    # "all" is a selection like any other (batch 6, F2): the size of a deletion is never a refusal. This file holds
+    # pending tracked changes, so only a tracked deletion of everything is refused — for them; untracked it plans
     with pytest.raises(JobException) as e:
         get_op("delete_paragraphs").plan(pkg, {"paragraphs": "all"}, {})
+    assert e.value.code == "existing-revisions"
+    frag_a = get_op("delete_paragraphs").plan(pkg, {"paragraphs": "all"}, {"tracked": False})
+    work_a = pkg.copy()
+    get_op("delete_paragraphs").apply(work_a, frag_a)
+    rec_a = run_suite(src, work_a.output_bytes(), merge_fragments([frag_a]).to_dict(), "src.docx", "out.docx")
+    assert rec_a.passed, rec_a.to_markdown()
+    # without a selector at all it is still refused: a deletion names what it deletes
+    with pytest.raises(JobException) as e:
+        get_op("delete_paragraphs").plan(pkg, {}, {})
     assert e.value.code == "bad-params"
 
 

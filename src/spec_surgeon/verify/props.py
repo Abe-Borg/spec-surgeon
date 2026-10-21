@@ -5,9 +5,9 @@ this module's OWN selector resolution, style-chain walking and theme lookup (not
 ooxml.py — a selector bug on the transform side must not be able to hide behind the same bug here):
 
 1. **Assertions.** Each ``plan["property_assertions"]`` entry names a kind (run_fonts, style_fonts,
-   doc_defaults_fonts, paragraph_props, section_props, section_hf_refs, effective_font, deleted_paragraphs,
-   inserted_paragraphs, properties), a selector, the property values and the predicted target count. The selection is
-   re-resolved here; the count must match the plan, and every selected target must carry exactly the asserted
+   doc_defaults_fonts, paragraph_props, section_props, section_hf_refs, effective_font, inserted_paragraphs,
+   properties — the op families' kinds in their own modules, imported at the end), a selector, the property values
+   and the predicted target count. The selection is re-resolved here; the count must match the plan, and every selected target must carry exactly the asserted
    change — no more (every other child and attribute identical to the source) and, for tracked changes, a
    w:rPrChange / w:pPrChange whose snapshot is the source's properties.
 
@@ -547,7 +547,7 @@ class Ctx:
         self.strip_styles: Set[str] = set()
         self.strip_doc_defaults = False
         self.added_styles: Set[str] = set()       # new styles a styles_added assertion accounted for
-        self.deleted_src_blocks: Dict[str, Set[int]] = {}   # untracked deleted blocks verified by deleted_paragraphs
+        self.deleted_src_blocks: Dict[str, Set[int]] = {}   # untracked deleted blocks a removal kind verified
         self.inserted_out_blocks: Dict[str, Set[int]] = {}  # inserted output blocks verified by inserted_paragraphs
         self.strip_style_ppr: Dict[str, Set[str]] = {}      # style id → pPr children a properties assertion checked
         # source block → output block of every paragraph an edit kind checked item by item (verify/edits.py): the
@@ -1106,47 +1106,6 @@ def _paragraph_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     if n != a.get("expected_paragraphs", -1):
         errs.append(f"paragraph_props: {n} paragraph(s) selected here, plan predicted {a.get('expected_paragraphs')}")
     return f"paragraph_props: {n} paragraph(s) → {setv}" + (" (tracked)" if tracked else "")
-
-
-def _deleted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
-    from .edits import check_deleted_paragraph, part_revision_ids
-
-    parts = ctx.scope_parts(a.get("scope", ["document"]))
-    pred = (a.get("select") or {}).get("paragraphs")
-    tracked = bool(a.get("tracked", True))
-    old_ids = set().union(*(part_revision_ids(ctx.src.xml(name)) for name in ctx.src_tp))
-    n = 0
-    for part in parts:
-        if part not in ctx.both:
-            errs.append(f"deleted_paragraphs: {part} missing from the output")
-            continue
-        sv, ov = ctx.view(part)
-        for bi, p in enumerate(sv.pars):
-            if not para_matches(pred, p, bi, sv, ctx.src_styles):
-                continue
-            n += 1
-            if not tracked:
-                ctx.deleted_src_blocks.setdefault(part, set()).add(bi)
-            else:
-                oi = ctx.maps[part].get(bi)
-                if oi is None or oi >= len(ov.pars):
-                    errs.append(f"deleted_paragraphs: {part} block {bi} missing in tracked output")
-                    continue
-                op = ov.pars[oi]
-                check_deleted_paragraph(p, op, a.get("author"), old_ids,
-                                        f"deleted_paragraphs {part} block {bi}", errs)
-                from .effects import _check_edit_envelope
-                _check_edit_envelope(p, op, old_ids, f"deleted_paragraphs {part} block {bi}", errs,
-                                     deleting=True)
-                ctx.verified_blocks.setdefault(part, {})[bi] = oi
-                if a.get("mark_deleted", True):
-                    mrpr = op.find(W + "pPr/" + W + "rPr")
-                    d_el = mrpr.find(W + "del") if mrpr is not None else None
-                    if d_el is None or d_el.get(W + "id") is None or d_el.get(W + "author") != a.get("author"):
-                        errs.append(f"deleted_paragraphs: {part} block {bi} paragraph mark missing valid w:del")
-    if n != a.get("expected_paragraphs", -1):
-        errs.append(f"deleted_paragraphs: {n} paragraph(s) selected here, plan predicted {a.get('expected_paragraphs')}")
-    return f"deleted_paragraphs: {n} paragraph(s) ({'tracked' if tracked else 'untracked'})"
 
 
 _V_MARK_REVS = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "rPrChange"}
@@ -2147,7 +2106,6 @@ KINDS = {
     "section_hf_refs": _section_hf_refs,
     "cover_unnumbered": _cover_unnumbered,
     "effective_font": _effective_font,
-    "deleted_paragraphs": _deleted_paragraphs,
     "inserted_paragraphs": _inserted_paragraphs,
     "properties": _properties,
 }
@@ -2530,6 +2488,9 @@ from .numberingaudit import AUDIT_KINDS  # noqa: E402
 from .numberingconvert import CONVERT_KINDS  # noqa: E402
 from .typednumbers import TYPED_KINDS  # noqa: E402
 from .hygiene import HYGIENE_KINDS  # noqa: E402
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §1, §2): deletion
+from .deletion import DELETION_KINDS  # noqa: E402
+from .footnotes import FOOTNOTE_KINDS  # noqa: E402
 from .replacement import literal_replacement, paragraph_edits  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
@@ -2556,3 +2517,5 @@ KINDS.update(FONT_NUMBERING_KINDS)
 KINDS.update(AUDIT_KINDS)
 KINDS.update(CONVERT_KINDS)
 KINDS.update(TYPED_KINDS)
+KINDS.update(DELETION_KINDS)
+KINDS.update(FOOTNOTE_KINDS)
