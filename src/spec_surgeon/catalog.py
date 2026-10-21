@@ -251,6 +251,34 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "the cells' paragraphs take the document's default paragraph style, one paragraph per cell",
         "tracked unless asked otherwise (rows and text inserted)",
     ],
+    # built-in batch 6 (table grid and cells, docs/BUILTIN_OPS_BATCH6_DESIGN.md §7)
+    "delete_table_columns": [
+        "the columns are grid columns, numbered from 0 in the spec, or chosen by the text of the first row's cell over "
+        "them (a header cell spanning several columns brings them all); every given key must hold",
+        "a cell over deleted columns only goes with its text; a cell spanning a deleted and a kept column stays, "
+        "narrower; a fixed table width shrinks by the deleted columns, a width in percent stays (Word widens the rest)",
+        "never tracked (Word cannot track a column deletion); deleting every column is refused — delete the table",
+        "set aside: a cell merged down whose parts would be split, Word's old horizontal merge, pending tracked "
+        "changes of the table's structure, a comment mark or a field crossing the deleted cells",
+    ],
+    "set_table_cells": [
+        "the cells are those of the chosen tables in the chosen rows (F5's row selector, every row by default) over "
+        "the chosen columns (every column by default); a cell spanning a chosen column counts",
+        "shading is the cell's fill (RRGGBB) or none; none leaves no shading where the table style shades the cells "
+        "(an explicit no-colour fill); vertical alignment top, center or bottom; no_wrap keeps the text on one line",
+        "width is in inches for the chosen columns and needs every row: the grid column and every cell's width over "
+        "it, spanning cells summed; a fixed table width follows, a width in percent stays (flagged)",
+        "never tracked; a cell already as asked is left alone",
+    ],
+    "merge_table_cells": [
+        "one block per chosen table: the chosen rows by the chosen columns, each an unbroken run (row and column "
+        "numbers from 0 in the spec, both ends inclusive for an index range)",
+        "the merged cell holds every cell's text in reading order (row by row, left to right), empty cells adding "
+        "nothing; it keeps the first cell's formatting, its width the cells' widths summed",
+        "never tracked (Word cannot track a merge); a block that is one cell already is left alone",
+        "set aside: a block that takes only part of a cell already merged or spanning, or a row of it inserted or "
+        "deleted as a tracked change",
+    ],
     # built-in batch 5 (list levels and the audit, docs/BUILTIN_OPS_BATCH5_DESIGN.md §3, §4)
     "set_list_level": [
         "the level is the one the named paragraph style numbers with (level names another level of the same list); "

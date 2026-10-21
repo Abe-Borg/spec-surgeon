@@ -572,6 +572,7 @@ class Ctx:
         self.strip_tr: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}     # part → {(ordinal, row): trPr child names}
         self.strip_tc: Dict[str, Dict[Tuple[int, int, int], Set[str]]] = {}   # part → {(ordinal, row, cell): tcPr …}
         self.strip_tblprex: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}  # part → {(ordinal, row): tblPrEx …}
+        self.strip_grid: Dict[str, Set[int]] = {}           # part → ordinals of tables whose w:tblGrid a kind checked
 
     def view(self, part):
         if part not in self.views:
@@ -2482,12 +2483,14 @@ def mask_picture_sizes(drawing) -> None:
 def _strip_table_props(ctx: Ctx, part: str, s_root, o_root) -> None:
     """Built-in batch 5: the table, row and cell property elements a kind checked (``strip_tbl``/``strip_tr``/
     ``strip_tc``/``strip_tblprex``) leave both sides; a row's ``w:trPr`` or ``w:tblPrEx`` or a cell's ``w:tcPr`` left
-    empty by that goes on both sides."""
+    empty by that goes on both sides. Built-in batch 6 (F6): a table's ``w:tblGrid`` a kind compared whole
+    (``strip_grid``) leaves both sides."""
     by_tbl = ctx.strip_tbl.get(part, {})
     by_tr = ctx.strip_tr.get(part, {})
     by_tc = ctx.strip_tc.get(part, {})
     by_ex = ctx.strip_tblprex.get(part, {})
-    if not (by_tbl or by_tr or by_tc or by_ex):
+    by_grid = ctx.strip_grid.get(part, set())
+    if not (by_tbl or by_tr or by_tc or by_ex or by_grid):
         return
 
     def strip(holder, names: Set[str]) -> None:
@@ -2521,6 +2524,9 @@ def _strip_table_props(ctx: Ctx, part: str, s_root, o_root) -> None:
             tcs = [x for x in trs[r] if x.tag == W + "tc"] if r < len(trs) else []
             if c < len(tcs):
                 strip(tcs[c].find(W + "tcPr"), names)
+        for k in by_grid:
+            for grid in (tables[k].findall(W + "tblGrid") if k < len(tables) else []):
+                tables[k].remove(grid)
 
 
 def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
@@ -2841,6 +2847,9 @@ KINDS.update(MOVE_KINDS)
 # built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §6): table rows and tables
 from .tablestructure import TABLE_STRUCTURE_KINDS  # noqa: E402
 KINDS.update(TABLE_STRUCTURE_KINDS)
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §7): table grid and cells
+from .tablegrid import TABLE_GRID_KINDS  # noqa: E402
+KINDS.update(TABLE_GRID_KINDS)
 KINDS.update(PICTURE_KINDS)
 KINDS.update(FIELD_INSERT_KINDS)
 KINDS.update(COMMENT_THREAD_KINDS)
