@@ -71,6 +71,10 @@ and is checked by the independent verifier; content changes are tracked by defau
   property, at your placeholder or at the end of a paragraph; Word fills in the result. Reply to comments with your
   words and resolve or reopen threads.
 - **An empty document is taken** with a note instead of refused, so a blank shell can be built on.
+- **Removing notes or hidden text keeps the last section's last paragraph.** When the document's last section holds
+  nothing but notes (or hidden paragraphs), its last one stays as an empty paragraph and the preview flags the blank
+  page, instead of leaving the section break alone at the end of the document: a blank page with nothing on it to
+  remove.
 - Still out of reach by decision, and refused with a reason: shapes, SmartArt, charts, equations, embedded objects,
   data-bound content controls, the theme, and edits inside text boxes.
 

@@ -576,7 +576,11 @@ Review fixes (2026-10-21), both sides each:
   the deleted paragraphs"; tracked: "are deleted with the paragraphs").
 * **The last section** (keep rule 4): in the body, when every block after the last staying section-break paragraph is
   chosen, its last chosen paragraph stays, emptied (tracked: runs deleted, mark kept), flagged "the last section is now
-  empty and shows a blank page; remove the section break before it to drop the page".
+  empty and shows a blank page; remove the section break before it to drop the page". `remove_notes` and
+  `remove_hidden_text` keep the same rule (`ops/hidden._Removing._plan_part` calls `last_section_keep`,
+  `verify/removal._v_decide` calls `_v_last_section`): after the hidden paragraphs that cannot be deleted are kept (a
+  hidden section-break paragraph that stays counts as a break) and before a note that cannot be deleted is refused (the
+  one it keeps is emptied instead).
 * **Printer settings**: a printer-settings relationship only removed sectPrs named goes like a header's (the part, with
   its content-type entry, when nothing else targets it) instead of refusing the deletion as `embedded-object`.
 * **Comment threads**: deleting the last paragraph of a comment a commentsExtended or commentsIds entry names, while the

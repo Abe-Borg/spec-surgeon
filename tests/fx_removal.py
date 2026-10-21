@@ -6,6 +6,7 @@ import copy
 import io
 
 from docx import Document
+from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -254,6 +255,30 @@ def build_notes(*, cell_note: bool = True, field_note: bool = False) -> bytes:
         p = doc.add_paragraph("Retain with ", style="CMT")
         field(p, " REF _Ref9 \\h ", "21 10 00")
     doc.add_paragraph("END OF SECTION")
+    return save(doc)
+
+
+def build_last_section(kind: str, *, hidden_break: bool = False, field_in: str = "") -> bytes:
+    """Three sections, each break on a paragraph of its own (empty, as Word and python-docx write it): "Cover", a break;
+    "Body text", a break; then the last section — "NOTE: one" and "NOTE: two" and nothing else. ``kind`` "notes": plain
+    paragraphs (notes by the text rule ``^NOTE``); "hidden": their runs and marks hidden (hidden paragraphs).
+    ``hidden_break``: the second break's paragraph has a hidden mark too — a hidden paragraph that carries a section
+    break, which stays. ``field_in`` ("one" or "two"): that paragraph ends with a REF field (it cannot be deleted)."""
+    doc = Document()
+    doc.add_paragraph("Cover")
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    doc.add_paragraph("Body text")
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    if hidden_break:
+        ppr = doc.paragraphs[-1]._p.get_or_add_pPr()
+        ppr.find(qn("w:sectPr")).addprevious(_vanish_rpr())            # w:rPr before w:sectPr (CT_PPr's order)
+    for word in ("one", "two"):
+        p = doc.add_paragraph(f"NOTE: {word}")
+        if field_in == word:
+            field(p, " REF _Ref9 \\h ", "21 10 00", rpr_hidden_all=kind == "hidden")
+        if kind == "hidden":
+            hide(p.runs[0])
+            hide_mark(p)
     return save(doc)
 
 

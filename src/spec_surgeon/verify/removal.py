@@ -22,7 +22,10 @@ residual's.
   proofing marks and runs of ``w:rPr``, ``w:lastRenderedPageBreak`` and ``w:t`` of spaces / no-break spaces.
 * **Keeps** (per container, over its blocks ``w:p``/``w:tbl``/``w:sdt``/``w:customXml``/``w:altChunk``): the first
   paragraph between two tables the deletions would join; the last block when tracked, or — untracked — when the rest
-  would leave the container empty or ending in a non-paragraph.
+  would leave the container empty or ending in a non-paragraph. Hidden text and notes, in the body, once the hidden
+  paragraphs that cannot be deleted are kept: when every block after the last section-break paragraph that stays is
+  chosen and none of them kept, the last of them too (the last section keeps a paragraph:
+  ``verify/deletion._v_last_section``); only then is a note that cannot be deleted refused, unless that is the one kept.
 * **Fields**: a run to remove inside a complex field's span goes only with the whole outermost field (local to the
   paragraph, every content run of its span chosen and live, no simple field in it); inside a simple field only with the
   whole simple field (untracked; tracked refused).
@@ -36,6 +39,7 @@ from .reader import W
 from .props import Ctx, Styles, _pstyle
 from .edits import (V_CONTAINERS, V_HIDING, V_REVISION_TAGS, check_deleted_paragraph, part_revision_ids, v_deletable,
                     v_items, v_paragraph_text)
+from .deletion import _v_last_section
 from .fields import v_fields
 from .markup import (check_paragraph, drop, tracked_delete, v_color, v_color_in, v_color_names, v_hidden,
                      v_mark_hidden)
@@ -282,6 +286,7 @@ def _v_decide(sv, styles: Styles, tracked: bool, choose, demote, args, refuse_un
     kept: List[int] = []
     for c, chosen in groups:
         kept += [at[id(p)] for p in _v_keep(_v_blocks(c), chosen, tracked)]
+    undeletable: List[Tuple[int, str]] = []
     for bi in whole:
         if bi in kept:
             continue
@@ -291,8 +296,17 @@ def _v_decide(sv, styles: Styles, tracked: bool, choose, demote, args, refuse_un
         why = v_deletable(p, tracked)
         if why:
             if refuse_undeletable:
-                raise _VRefuse("not-deletable", f"paragraph {bi}: {why}")
-            kept.append(bi)
+                undeletable.append((bi, why))
+            else:
+                kept.append(bi)
+    for c, chosen in groups:
+        if c.tag == W + "body":
+            keep = [pars[bi] for bi in kept]
+            _v_last_section(_v_blocks(c), set(chosen), keep)
+            kept += [at[id(p)] for p in keep if at[id(p)] not in kept]
+    for bi, why in undeletable:
+        if bi not in kept:
+            raise _VRefuse("not-deletable", f"paragraph {bi}: {why}")
     delete = sorted(bi for bi in whole if bi not in kept)
     for bi in kept:
         runs = demote(pars[bi], styles, args)
