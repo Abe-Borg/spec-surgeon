@@ -87,3 +87,31 @@ export const ACCEPT: Record<"documents" | "template" | "references", string> = {
   template: ".docx",
   references: ".png,.jpg,.jpeg,.gif,.xlsx,.csv,.json",
 };
+
+/** The scope tag beside a document's name: waiting on the to-do list, or in the pass over it. */
+export function scopeTag(
+  attachment: Pick<Attachment, "path" | "kind">,
+  view: Pick<View, "todo" | "focus">,
+): "" | "To do" | "Working on" {
+  if (attachment.kind !== "document") return "";
+  if ((view.focus ?? []).includes(attachment.path)) return "Working on";
+  if ((view.todo ?? []).some((item) => item.path === attachment.path)) return "To do";
+  return "";
+}
+
+/** The one line the collapsed tray shows: "3 documents · a template · 1 picture · 1 left out · 1 to do". */
+export function traySummary(view: Pick<View, "attachments" | "todo" | "focus">): string {
+  const documents = view.attachments.filter((a) => a.kind === "document" && a.state !== "refused").length;
+  const refused = view.attachments.filter((a) => a.state === "refused").length;
+  const pictures = view.attachments.filter((a) => a.kind === "reference" && kindTag(a) === "Picture").length;
+  const tables = view.attachments.filter((a) => a.kind === "reference" && kindTag(a) === "Table").length;
+  const parts: string[] = [];
+  if (documents > 0) parts.push(`${documents} ${documents === 1 ? "document" : "documents"}`);
+  if (view.attachments.some((a) => a.kind === "template")) parts.push("a template");
+  if (pictures > 0) parts.push(`${pictures} ${pictures === 1 ? "picture" : "pictures"}`);
+  if (tables > 0) parts.push(`${tables} ${tables === 1 ? "table" : "tables"}`);
+  if (refused > 0) parts.push(`${refused} left out`);
+  if ((view.focus ?? []).length > 0) parts.push(`working on ${view.focus.length}`);
+  else if ((view.todo ?? []).length > 0) parts.push(`${view.todo.length} to do`);
+  return parts.join(" · ");
+}

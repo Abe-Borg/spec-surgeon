@@ -14,7 +14,7 @@
  *
  * Mock-only routes (never in the real server): POST /mock/scenario {name}
  * sets the view to a canned scenario (empty, attached, question, preview,
- * done, paused, update-available, update-ready, no-key); POST /mock/reset.
+ * layouts, done, todo, paused, update-available, update-ready, no-key); POST /mock/reset.
  *
  * No dependencies: http, fs, path, zlib. Preview images are PNGs drawn here.
  */
@@ -203,12 +203,17 @@ function emptyView() {
     warnings: [],
     blocking: false,
     results: [],
-    action: { label: "", token: "", kind: "none" },
+    action: { label: "", token: "", kind: "none", can_hold: false },
+    todo: [],
+    focus: [],
     working: { generation: 0, from_originals: true, can_start_over: false },
     budget: { paused: false, steps_per_pause: 48 },
     update: { state: "none", version: "", notes: "", progress: 0, error: "" },
   };
 }
+
+/** The reply that begins the pass over the to-do list; the real server recognises these exact words. */
+const WORK_TODO = "Work on the documents I set aside";
 
 const SCENARIOS = {
   empty: () => emptyView(),
@@ -263,7 +268,7 @@ const SCENARIOS = {
     v.plan = PLAN;
     v.samples = samples();
     v.warnings = WARNINGS;
-    v.action = { label: "Create edited copies", token: "tok-approve-1", kind: "approve" };
+    v.action = { label: "Create edited copies", token: "tok-approve-1", kind: "approve", can_hold: true };
     return v;
   },
   layouts: () => {
@@ -277,11 +282,23 @@ const SCENARIOS = {
     v.cost = { usd: 0.34, text: "about $0.34", calls: 8 };
     v.messages = [...v.messages, msg("app", "3 edited copies created and verified · 14:35")];
     v.results = results();
-    v.action = { label: "", token: "", kind: "none" };
+    v.action = { label: "", token: "", kind: "none", can_hold: false };
     v.working = { generation: 1, from_originals: false, can_start_over: true };
     v.attachments = v.attachments.map((a) =>
       a.kind === "document" && a.state !== "refused" ? { ...a, current: `${RUN_DIR}/${a.name}` } : a,
     );
+    return v;
+  },
+  todo: () => {
+    const v = SCENARIOS.done();
+    const aside = DOCS[1];
+    v.results = v.results.filter((r) => r.source !== aside.path);
+    v.todo = [{ path: aside.path, name: name(aside.path) }];
+    v.attachments = v.attachments.map((a) => (a.path === aside.path ? { ...a, current: a.path } : a));
+    v.messages = [
+      ...v.messages,
+      msg("app", `On your to-do list: ${name(aside.path)}. When you’re ready to work on it, say “${WORK_TODO}” and tell me what should be different.`),
+    ];
     return v;
   },
   paused: () => {
@@ -290,7 +307,7 @@ const SCENARIOS = {
     v.budget = { paused: true, steps_per_pause: 48 };
     v.cost = { usd: 2.41, text: "about $2.41", calls: 48 };
     v.messages = [...v.messages, msg("app", "Work paused after 48 AI steps; your progress is saved.")];
-    v.action = { label: "Continue", token: "tok-continue-1", kind: "continue" };
+    v.action = { label: "Continue", token: "tok-continue-1", kind: "continue", can_hold: false };
     return v;
   },
   "update-available": () => {
@@ -566,8 +583,32 @@ async function planJob(res, userText, layouts = false) {
   view.blocking = false;
   await s.emit({ type: "samples", samples: view.samples, warnings: view.warnings, blocking: view.blocking });
   view.stage = "preview";
-  view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve" };
+  view.action = { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true };
   await s.emit({ type: "cost", cost: spend(0.14, 3) });
+  s.end();
+}
+
+/** “Work on the documents I set aside”: the pass over the to-do list begins — those documents alone, the request
+ *  they were set aside from, Continue to plan them again as before or a message saying what should differ. */
+async function todoJob(res, userText) {
+  const s = startStream(res);
+  view.messages.push(msg("user", userText));
+  const names = view.todo.map((item) => item.name);
+  view.focus = view.todo.map((item) => item.path);
+  view.todo = [];
+  view.plan = null;
+  view.samples = [];
+  view.warnings = [];
+  const several = names.length > 1;
+  const note = msg(
+    "app",
+    (several ? `Working on the ${names.length} documents you set aside: ${names.join(", ")}. ` : `Working on ${names[0]}, which you set aside. `) +
+      `Tell me what should be different for ${several ? "them" : "it"}, or continue to plan ${several ? "them" : "it"} again as before. The other copies stay as they are.`,
+  );
+  view.messages.push(note);
+  await s.emit({ type: "message", message: note });
+  view.stage = "resume";
+  view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue", can_hold: false };
   s.end();
 }
 
@@ -594,12 +635,12 @@ async function pauseJob(res, userText) {
   await s.emit({ type: "message", message: note });
   view.stage = "budget";
   view.budget = { paused: true, steps_per_pause: 48 };
-  view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue" };
+  view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue", can_hold: false };
   await s.emit({ type: "cost", cost: spend(1.9, 48) });
   s.end();
 }
 
-async function primaryJob(res, token) {
+async function primaryJob(res, token, hold = []) {
   const s = startStream(res);
   if (view.action.kind === "continue") {
     view.budget = { paused: false, steps_per_pause: 48 };
@@ -609,9 +650,31 @@ async function primaryJob(res, token) {
     await s.emit({ type: "message", message: note });
     view.stage = view.plan ? "preview" : "empty";
     view.action = view.plan
-      ? { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve" }
-      : { label: "", token: "", kind: "none" };
+      ? { label: "Create edited copies", token: `tok-approve-${++seq}`, kind: "approve", can_hold: true }
+      : { label: "", token: "", kind: "none", can_hold: false };
     await s.emit({ type: "cost", cost: spend(0.02, 1) });
+    return s.end();
+  }
+  // The documents marked with the red X: on the to-do list, no copy; the others run. The pass over the to-do list
+  // (`focus`) ends with its copies.
+  const inScope = view.attachments.filter(
+    (a) => a.kind === "document" && a.state !== "refused" && (view.focus.length ? view.focus.includes(a.path) : !view.todo.some((t) => t.path === a.path)),
+  );
+  const held = inScope.filter((a) => hold.includes(a.current) || hold.includes(a.path));
+  const running = inScope.filter((a) => !held.includes(a));
+  for (const a of held) if (!view.todo.some((t) => t.path === a.path)) view.todo.push({ path: a.path, name: a.name });
+  view.focus = [];
+  if (running.length === 0) {
+    const note = msg("app", "You set every document aside, so no copy was created. Tell me what should be different, and I’ll plan them again.");
+    view.messages.push(note);
+    await s.emit({ type: "message", message: note });
+    view.plan = null;
+    view.samples = [];
+    view.warnings = [];
+    view.focus = view.todo.map((item) => item.path);
+    view.todo = [];
+    view.stage = "resume";
+    view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue", can_hold: false };
     return s.end();
   }
   await s.emit({ type: "status", kind: "creating", text: "" });
@@ -621,21 +684,31 @@ async function primaryJob(res, token) {
     view.messages.push(msg("app", "Stopped. The copies that were already verified are kept."));
     return s.end();
   }
-  view.results = results();
+  const fresh = results().filter((r) => running.some((a) => a.path === r.source));
+  view.results = [...view.results.filter((r) => !fresh.some((f) => f.source === r.source)), ...fresh];
   await s.emit({ type: "results", results: view.results });
-  const note = msg("app", `${view.results.length} edited copies created and verified`);
+  const note = msg("app", `${fresh.length} edited ${fresh.length === 1 ? "copy" : "copies"} created and verified`);
   view.messages.push(note);
   await s.emit({ type: "message", message: note });
-  const reply = "Done. All three copies passed every check and are in the run folder; your originals were not touched. Your next request builds on these copies.";
+  const reply = held.length
+    ? `Done. The ${fresh.length === 1 ? "copy" : `${fresh.length} copies`} passed every check; your originals were not touched. The ${held.length === 1 ? "document" : "documents"} you set aside got no copy yet.`
+    : "Done. All three copies passed every check and are in the run folder; your originals were not touched. Your next request builds on these copies.";
   await s.text(reply);
   const m = msg("assistant", reply);
   view.messages.push(m);
   await s.emit({ type: "message", message: m });
+  if (view.todo.length) {
+    const names = view.todo.map((item) => item.name).join(", ");
+    const several = view.todo.length > 1;
+    const offer = msg("app", `On your to-do list: ${names}. When you’re ready to work on ${several ? "them" : "it"}, say “${WORK_TODO}” and tell me what should be different.`);
+    view.messages.push(offer);
+    await s.emit({ type: "message", message: offer });
+  }
   view.stage = "done";
-  view.action = { label: "", token: "", kind: "none" };
+  view.action = { label: "", token: "", kind: "none", can_hold: false };
   view.working = { generation: view.working.generation + 1, from_originals: false, can_start_over: true };
   view.attachments = view.attachments.map((a) =>
-    a.kind === "document" && a.state !== "refused" ? { ...a, current: `${RUN_DIR}/${a.name}` } : a,
+    running.some((r) => r.path === a.path) ? { ...a, current: `${RUN_DIR}/${a.name}` } : a,
   );
   await s.emit({ type: "cost", cost: spend(0.12, 2) });
   void token;
@@ -646,7 +719,7 @@ async function primaryJob(res, token) {
  *  button reads Continue until the documents are checked again. */
 function voidPlan() {
   if (!view.plan) return;
-  view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue" };
+  view.action = { label: "Continue", token: `tok-continue-${++seq}`, kind: "continue", can_hold: false };
   view.messages.push(msg("app", "The documents changed. Review the updated plan first."));
 }
 
@@ -769,6 +842,7 @@ async function handle(req, res) {
       const body = await readJson(req);
       const text = String(body.text || "");
       const key = text.toLowerCase();
+      if (key === WORK_TODO.toLowerCase() && view.todo.length) return todoJob(res, text);
       if (key.includes("question")) return questionJob(res, text);
       if (key.includes("fail")) return failJob(res, text);
       if (key.includes("pause")) return pauseJob(res, text);
@@ -787,7 +861,9 @@ async function handle(req, res) {
       if (!body.token || body.token !== view.action.token) {
         return json(res, 409, { error: "The documents or plan changed. Review the updated plan first." });
       }
-      return primaryJob(res, body.token);
+      const hold = Array.isArray(body.hold) ? body.hold.filter((p) => typeof p === "string") : [];
+      if (hold.length && !view.action.can_hold) return json(res, 409, { error: "A document cannot be set aside right now." });
+      return primaryJob(res, body.token, hold);
     }
     case "POST /api/stop":
       if (!running) return json(res, 409, { error: "Nothing is running." });
@@ -800,7 +876,9 @@ async function handle(req, res) {
       view.samples = [];
       view.warnings = [];
       view.results = [];
-      view.action = { label: "", token: "", kind: "none" };
+      view.todo = [];
+      view.focus = [];
+      view.action = { label: "", token: "", kind: "none", can_hold: false };
       view.stage = view.messages.length ? "resume" : "empty";
       view.attachments = view.attachments.map((a) => ({ ...a, current: a.path }));
       view.messages.push(msg("app", "Starting over from the originals. The plan is void."));

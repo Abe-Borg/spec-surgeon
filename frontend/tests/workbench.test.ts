@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import type { Plan, PlanGroup } from "../src/types.ts";
+import type { Attachment, Plan, PlanGroup } from "../src/types.ts";
 import {
   ACCEPT,
   groupTitle,
@@ -14,7 +14,9 @@ import {
   parentFolder,
   planHasContent,
   runFolder,
+  scopeTag,
   stagesNote,
+  traySummary,
   trayTitle,
 } from "../src/lib/workbench.ts";
 
@@ -92,4 +94,27 @@ test("the browser fallback filters match what the app accepts", () => {
   assert.equal(ACCEPT.documents, ".docx");
   assert.equal(ACCEPT.template, ".docx");
   for (const ext of ["png", "jpg", "jpeg", "gif", "xlsx", "csv", "json"]) assert.ok(ACCEPT.references.includes(`.${ext}`));
+});
+
+test("the scope tag says a document waits on the to-do list or is in the pass over it", () => {
+  const scope = { todo: [{ path: "/b", name: "b.docx" }], focus: [] as string[] };
+  assert.equal(scopeTag({ path: "/a", kind: "document" }, scope), "");
+  assert.equal(scopeTag({ path: "/b", kind: "document" }, scope), "To do");
+  assert.equal(scopeTag({ path: "/b", kind: "template" }, scope), "");
+  assert.equal(scopeTag({ path: "/b", kind: "document" }, { todo: [], focus: ["/b"] }), "Working on");
+  assert.equal(scopeTag({ path: "/b", kind: "document" }, { todo: scope.todo, focus: ["/b"] }), "Working on");
+});
+
+test("the folded tray sums the attachments up in one line", () => {
+  const doc = (path: string, extra: Partial<Attachment> = {}): Attachment => ({
+    path, name: path.split("/").pop() ?? path, kind: "document", state: "ok", notes: [], reason: "", current: path, ...extra,
+  });
+  const attachments = [
+    doc("/a.docx"), doc("/b.docx"), doc("/c.docx", { state: "refused" }),
+    doc("/t.docx", { kind: "template" }), doc("/logo.png", { kind: "reference" }), doc("/values.xlsx", { kind: "reference" }),
+  ];
+  assert.equal(traySummary({ attachments, todo: [], focus: [] }), "2 documents · a template · 1 picture · 1 table · 1 left out");
+  assert.equal(traySummary({ attachments: [doc("/a.docx")], todo: [{ path: "/a.docx", name: "a.docx" }], focus: [] }), "1 document · 1 to do");
+  assert.equal(traySummary({ attachments: [doc("/a.docx")], todo: [], focus: ["/a.docx"] }), "1 document · working on 1");
+  assert.equal(traySummary({ attachments: [], todo: [], focus: [] }), "");
 });

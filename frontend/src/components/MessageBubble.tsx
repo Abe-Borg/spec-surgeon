@@ -1,38 +1,11 @@
 // Adapted from Build-a-Spec's frontend/src/components/MessageBubble.tsx (copy-based reuse).
 import { memo, useEffect, useRef, useState } from "react";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
 import type { Message } from "../types";
 import type { Aside, LiveReply } from "../lib/view";
 import { liveHasContent } from "../lib/chat";
 import { splitStableTail, useSmoothText } from "../lib/useSmoothText";
+import Markdown from "./Markdown";
 import StatusStrip from "./StatusStrip";
-
-/**
- * A link in a reply (model text, so untrusted) opens in the system browser: in the native window a plain anchor
- * would navigate the app's own page away, taking the job stream and the draft with it, with no way back.
- */
-const MARKDOWN_COMPONENTS = {
-  a: ({ node: _node, ...props }: React.ComponentProps<"a"> & { node?: unknown }) => (
-    <a {...props} target="_blank" rel="noreferrer noopener" />
-  ),
-};
-
-/** One plugin array for every ReactMarkdown in this file: an inline `[remarkGfm]`
- *  is a fresh array per render, which reads as a changed prop to anything that
- *  compares it. */
-const REMARK_PLUGINS = [remarkGfm];
-
-/** Memoized markdown for the settled prefix — re-parses only when the prefix
- *  grows past another paragraph break, not on every animation frame. */
-const StablePrefix = memo(function StablePrefix({ text }: { text: string }) {
-  if (!text) return null;
-  return (
-    <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
-      {text}
-    </ReactMarkdown>
-  );
-});
 
 /** Collapsible thinking summary, muted + italic, distinct from the answer.
  *  Auto-expands while the model thinks with nothing written yet, then
@@ -130,7 +103,7 @@ export function AppNote({ text }: { text: string }) {
   return (
     <div className="flex justify-center">
       <span className="max-w-[90%] rounded-full border border-edge bg-surface/50 px-3 py-1 text-center text-[11px] text-ink-faint">
-        {text}
+        <Markdown text={text} inline />
       </span>
     </div>
   );
@@ -154,11 +127,12 @@ export function LiveBubble({ live }: { live: LiveReply }) {
   const [prefix, tail] = splitStableTail(smoothed);
   const hasBody = smoothed.length > 0;
   return (
-    <div className="md text-[0.925rem]">
+    <div className="text-[0.925rem] leading-[1.65]">
       {live.thinking && <ThinkingBlock text={live.thinking} autoExpand={!hasBody} />}
       {live.status && <StatusStrip status={live.status} />}
       <ActivityLines lines={live.activities} />
-      <StablePrefix text={prefix} />
+      {/* The settled prefix is parsed once per paragraph break (Markdown is memoized), not on every frame. */}
+      <Markdown text={prefix} />
       {tail ? (
         <span className="streaming-caret whitespace-pre-wrap">{tail}</span>
       ) : (
@@ -172,10 +146,8 @@ function MessageBubble({ message, aside }: { message: Message; aside: Aside | nu
   if (message.role === "user") return <UserBubble text={message.text} />;
   if (message.role === "app") return <AppNote text={message.text} />;
   return (
-    <div className="md text-[0.925rem]">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={MARKDOWN_COMPONENTS}>
-        {message.text || "…"}
-      </ReactMarkdown>
+    <div className="text-[0.925rem]">
+      <Markdown text={message.text || "…"} />
       {aside && <AsideBlock aside={aside} />}
     </div>
   );

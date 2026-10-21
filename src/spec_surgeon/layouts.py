@@ -212,6 +212,21 @@ def layout_token(plan: Dict[str, Any], files: Sequence[Path]) -> str:
     return _token_from_inputs(layout_inputs(plan, files))
 
 
+def narrow_layout_inputs(inputs: Dict[str, Any], files: Sequence[Path]) -> Dict[str, Any]:
+    """The approved inputs restricted to ``files``, part of the approved batch, each file with the pin the user
+    approved: exactly what ``layout_inputs`` gives for those files alone while none of them changed. A run on part
+    of an approved batch (the user set the other documents aside) is compared against this, so every file that
+    runs is still held to its approved identity and a file outside the approval never gets in."""
+    keep = {str(Path(f).resolve()) for f in files}
+    out = {"kind": inputs.get("kind", "layouts"), "layouts": {},
+           "unassigned": [p for p in inputs.get("unassigned", []) if p in keep],
+           "unreadable": [p for p in inputs.get("unreadable", []) if p in keep],
+           "files": {p: pin for p, pin in (inputs.get("files") or {}).items() if p in keep}}
+    for layout_id, own in (inputs.get("layouts") or {}).items():
+        out["layouts"][layout_id] = {**own, "files": {p: pin for p, pin in (own.get("files") or {}).items() if p in keep}}
+    return out
+
+
 def _token_from_inputs(inputs: Dict[str, Any]) -> str:
     return hashlib.sha256(json.dumps(inputs, sort_keys=True, ensure_ascii=False, default=str).encode()).hexdigest()
 

@@ -13,7 +13,22 @@ export type ChatItem =
   | { kind: "live"; live: LiveReply }
   | { kind: "error"; text: string }
   | { kind: "prompts"; questions: string[]; choices: Choice[]; chips: string[] }
-  | { kind: "pause"; stepsPerPause: number; costText: string; canContinue: boolean };
+  | { kind: "pause"; stepsPerPause: number; costText: string; canContinue: boolean }
+  | { kind: "todo"; names: string[] };
+
+/** The reply that begins the pass over the to-do list; the server recognises these exact words
+ *  (`document_task.WORK_TODO`). Sent as a chip: the user's decision, never their wording. */
+export const WORK_TODO = "Work on the documents I set aside";
+
+/** The to-do card: documents set aside at approval wait; once the other copies are saved (or whenever
+ *  nothing runs and no pass is under way) the card offers to begin the pass over them. */
+export function todoFor(state: UiState): ChatItem | null {
+  const { view } = state;
+  if (view.busy || state.live) return null;
+  if ((view.todo ?? []).length === 0 || (view.focus ?? []).length > 0) return null;
+  if (view.stage !== "done" && view.stage !== "empty" && view.stage !== "resume") return null;
+  return { kind: "todo", names: view.todo.map((item) => item.name) };
+}
 
 /** The choices and chips to offer right now, or null when none apply. */
 export function promptsFor(state: UiState): ChatItem | null {
@@ -57,6 +72,8 @@ export function transcript(state: UiState): ChatItem[] {
   if (prompts) items.push(prompts);
   const pause = pauseFor(state);
   if (pause) items.push(pause);
+  const todo = todoFor(state);
+  if (todo) items.push(todo);
   return items;
 }
 

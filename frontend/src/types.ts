@@ -83,12 +83,20 @@ export interface Result {
   name: string;
 }
 
+/** A document the user set aside at approval (the red X on its preview): it waits on the to-do list. */
+export interface TodoItem {
+  path: string;
+  name: string;
+}
+
 export type ActionKind = "approve" | "continue" | "save" | "none";
 
 export interface Action {
   label: string;
   token: string;
   kind: ActionKind;
+  /** The previews can be marked: a document marked with the red X is set aside when the copies are created. */
+  can_hold?: boolean;
 }
 
 export interface Cost {
@@ -147,6 +155,10 @@ export interface View {
   blocking: boolean;
   results: Result[];
   action: Action;
+  /** Documents set aside for more work, waiting on the to-do list (attached originals). */
+  todo: TodoItem[];
+  /** The documents of the pass over the to-do list, while the user works on them (attached originals); else empty. */
+  focus: string[];
   working: Working;
   budget: Budget;
   update: Update;

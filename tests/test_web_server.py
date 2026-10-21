@@ -347,3 +347,29 @@ def test_a_non_ascii_token_is_refused_not_a_crash(tmp_path):
     assert bare.get("/api/state", params={"token": "é"}).status_code == 401
     assert bare.get("/api/state", params={"token": "ééé" + TOKEN}).status_code == 401
     assert bare.get("/api/state", params={"token": TOKEN}).status_code == 200
+
+
+def test_the_primary_action_takes_the_documents_the_user_set_aside(tmp_path):
+    """The page sends ``hold``: the previewed documents marked with the red X. They go on the to-do list, the others
+    get copies, the view says which and offers the reply that begins the pass over them."""
+    from spec_surgeon.document_task import WORK_TODO
+    state, client = window(tmp_path, FakeClient(resp(tool("submit_editspec", {"spec": SPEC})),
+                                                resp(tool("submit_editspec", {"spec": SPEC}))))
+    first, second = document(tmp_path / "A.docx"), document(tmp_path / "B.docx")
+    client.post("/api/attach", json={"paths": [str(first), str(second)]})
+    with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
+        done = frames(response)[-1]["state"]
+    assert done["action"]["kind"] == "approve" and done["action"]["can_hold"] is True
+    assert done["todo"] == [] and done["focus"] == []
+    bad = client.post("/api/primary", json={"token": done["action"]["token"], "hold": "B.docx"})
+    assert bad.status_code == 400
+    held = next(s["source"] for s in done["samples"] if s["name"] == "B.docx")
+    with client.stream("POST", "/api/primary", json={"token": done["action"]["token"], "hold": [held]}) as response:
+        done = frames(response)[-1]["state"]
+    assert done["stage"] == "done" and [r["name"] for r in done["results"]] == ["A.docx"]
+    assert done["todo"] == [{"path": str(second), "name": "B.docx"}] and done["action"]["can_hold"] is False
+    assert done["chips"][0] == WORK_TODO
+    with client.stream("POST", "/api/send", json={"text": WORK_TODO, "chip": True}) as response:
+        done = frames(response)[-1]["state"]
+    assert done["focus"] == [str(second)] and done["todo"] == [] and done["action"]["kind"] == "continue"
+    assert "Working on B.docx" in done["messages"][-1]["text"]

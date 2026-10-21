@@ -44,7 +44,10 @@ that ends a job is authoritative.
                "pages_before": 12, "pages_after": 12, "passed": true}],
   "warnings": ["…"], "blocking": false,
   "results": [{"source": "…", "output": "…", "name": "21 13 13.docx"}],
-  "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none"},
+  "action": {"label": "Create edited copies", "token": "…", "kind": "approve | continue | save | none",
+             "can_hold": true},
+  "todo": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx"}],
+  "focus": [],
   "working": {"generation": 0, "from_originals": true, "can_start_over": false},
   "budget": {"paused": false, "steps_per_pause": 48},
   "update": {"state": "none | available | downloading | ready | installing | updated | failed | error",
@@ -62,9 +65,18 @@ Rules the page relies on:
   number of ordered steps the engine composed internally — shown as a quiet "in N ordered steps" note, never as a
   procedure the user performs.
 - `samples[].images` are URLs served by `GET /api/image?path=…&token=…` (PNG side-by-side before/after pages).
-- `action.kind`: `approve` → the big button "Create edited copies" (or "I reviewed the flagged pages — create
-  copies" when `blocking`), `continue` → "Continue", `save` → "Save N ready copies", `none` → no button. While
-  `busy` the same spot shows "Stop now".
+- `action.kind`: `approve` → the one button "Create edited copies" (or "I reviewed the flagged pages — create
+  copies" when `blocking`), `continue` → "Continue", `save` → "Save N ready copies", `none` → no button. The button
+  lives in the conversation pane, above the composer; while `busy` the composer shows "Stop now" instead.
+  `action.can_hold` is true when the previews can be marked: each preview card then carries a green checkmark
+  (looks good) and a red X (needs more work). The page sends the X'd previews' `source` paths as `hold` with the
+  primary action: those documents go on the to-do list and the others get their copies. It is false during a
+  recovery's "Save N ready copies".
+- `todo` lists the documents set aside this way (attached originals), waiting; while it is non-empty and no pass is
+  under way, the page shows a to-do card whose button sends the reply "Work on the documents I set aside" (as a
+  chip). `focus` lists the documents of that pass while it runs: they are the only documents in scope, the plan is
+  made for them alone, and the pass ends when their copies are created. Documents on the to-do list are out of
+  scope until the pass begins; the server also offers the same reply in `chips` outside the question stage.
 - `results` lists the edited copies of the latest run; `working.generation` > 0 means the next request builds on
   those copies, and `can_start_over` shows the "Start over from the originals" chip.
 
@@ -79,7 +91,7 @@ Rules the page relies on:
 | POST | `/api/remove` | `{"path": "...", "template": false}` | the view |
 | POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
 | POST | `/api/choose` | `{"choice_id": "c1"}` | SSE stream |
-| POST | `/api/primary` | `{"token": "..."}` | SSE stream |
+| POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
 | POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done` |
 | POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void) |
 | POST | `/api/new-conversation` | | the view (archives the journal, starts empty) |

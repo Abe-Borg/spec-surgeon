@@ -147,7 +147,10 @@ class WindowState:
                 "cost": task._cost(), "attachments": attachments, "messages": messages, "plan": plan,
                 "questions": list(raw["questions"]), "choices": list(raw["choices"]), "chips": list(raw["chips"]),
                 "samples": samples, "warnings": list(raw["warnings"]), "blocking": bool(raw["blocking"]),
-                "results": results, "action": {"label": label, "token": raw["token"], "kind": kind},
+                "results": results,
+                "action": {"label": label, "token": raw["token"], "kind": kind,
+                           "can_hold": kind == "approve" and bool(raw.get("can_hold"))},
+                "todo": [dict(item) for item in raw.get("todo", [])], "focus": list(raw.get("focus", [])),
                 "working": raw["working"], "budget": {"paused": bool(raw["budget_paused"]),
                                                       "steps_per_pause": STEPS_PER_PAUSE},
                 "update": self.updates.state() if self.updates else _no_update()}
@@ -381,7 +384,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     @app.post("/api/primary")
     async def primary(request: Request):
         body = await request.json()
-        return stream("primary", token=str(body.get("token") or ""))
+        hold = body.get("hold") or []
+        if not isinstance(hold, list) or not all(isinstance(p, str) for p in hold):
+            return error("hold must list the documents to set aside, by path.")
+        return stream("primary", token=str(body.get("token") or ""), hold=hold)
 
     @app.post("/api/stop")
     def stop():

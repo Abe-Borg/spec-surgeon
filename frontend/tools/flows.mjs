@@ -4,7 +4,9 @@
  * browser — the paths the screenshots do not show: a failed job, a pause
  * and its Continue, Stop now mid-job, typing ahead, a chip click, the
  * draft hold on the action button, the file-chooser fallback, a drop,
- * remove, no key → Settings, About, the update banner, start over.
+ * remove, no key → Settings, About, the update banner, start over, the
+ * button's home in the conversation, the folding documents tray, and the
+ * red X on a preview → the to-do list → the pass over it.
  *
  *   npm run build
  *   node tools/flows.mjs
@@ -93,7 +95,12 @@ try {
   await page.waitForTimeout(100);
   check("clearing the draft re-enables it", await create.isEnabled());
 
-  // 6. Add Word documents → 501 → the browser's file input → upload; the plan is void.
+  // 6. Add Word documents → 501 → the browser's file input → upload; the plan is void. The tray folded itself
+  //    when the plan arrived; open it first.
+  const trayToggle = page.getByRole("button", { name: /^Your documents/ });
+  check("the documents tray folds to its title once a plan exists", (await trayToggle.getAttribute("aria-expanded")) === "false");
+  await trayToggle.click();
+  check("…and opens on a click", (await trayToggle.getAttribute("aria-expanded")) === "true");
   const [chooser] = await Promise.all([page.waitForEvent("filechooser"), page.getByRole("button", { name: "Add Word documents" }).click()]);
   check("a 501 from /api/pick falls back to a file chooser", chooser.isMultiple());
   const extra = join(scratch, "Extra spec.docx");
@@ -166,6 +173,42 @@ try {
   await page.getByRole("button", { name: "Start over from the originals" }).click();
   await page.waitForTimeout(400);
   check("Start over clears the copies", (await page.getByText("Your edited copies").count()) === 0);
+
+  // 13. The one button lives in the conversation pane; the plan card carries none; there is no Hide plan button.
+  await scenario("preview");
+  await page.reload();
+  const createBtn = page.getByRole("button", { name: "Create edited copies" });
+  await createBtn.waitFor();
+  check("no Hide plan button", (await page.getByRole("button", { name: /Hide plan|Show plan/ }).count()) === 0);
+  check("the action button is in the conversation pane", (await page.locator("section[aria-label='Conversation']").getByRole("button", { name: "Create edited copies" }).count()) === 1);
+  check("the plan card has no button", (await page.locator("section[aria-label='Your documents, the plan and the pages']").getByRole("button", { name: "Create edited copies" }).count()) === 0);
+
+  // 14. Markdown renders in both panes (the chat's reply and the plan's sentences).
+  check("the chat renders markdown", (await page.locator("section[aria-label='Conversation'] .md").count()) > 0);
+  check("the plan renders markdown", (await page.locator(".paper .md").count()) > 0);
+
+  // 15. The red X on a preview counts on the button; approving sets that document aside; the to-do card offers the pass.
+  const holdBtn = page.getByRole("button", { name: /Needs more work · 21 05 00/ });
+  await holdBtn.click();
+  check("the X marks the preview", (await holdBtn.getAttribute("aria-pressed")) === "true");
+  check("…and the button counts it", await page.getByRole("button", { name: "Create edited copies (1 set aside)" }).isVisible());
+  await page.getByRole("button", { name: /Looks good · 21 13 13/ }).click();
+  check("the checkmark marks the other", (await page.getByRole("button", { name: /Looks good · 21 13 13/ }).getAttribute("aria-pressed")) === "true");
+  await page.getByRole("button", { name: "Create edited copies (1 set aside)" }).click();
+  await page.getByText("Your edited copies").waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: "Work on it now" }).waitFor({ timeout: 20000 });   // the job's final view
+  const todoCard = page.locator("[aria-label='Your to-do list']");
+  check("the set-aside document is on the to-do card", (await todoCard.getByText("21 05 00 Common Work Results for Fire Suppression.docx", { exact: true }).count()) === 1);
+  check("…and under the copies", (await page.locator("section[aria-label='Set aside for more work']").getByText("21 05 00", { exact: false }).count()) === 1);
+  check("the copy that looked right is listed", (await page.locator("section[aria-label='Your edited copies']").getByText("21 13 13", { exact: false }).count()) === 1);
+  check("the set-aside document got no copy", (await page.locator("section[aria-label='Your edited copies']").getByText("21 05 00", { exact: false }).count()) === 0);
+  if ((await trayToggle.getAttribute("aria-expanded")) === "false") await trayToggle.click();
+  check("the tray tags it", await page.getByText("To do", { exact: true }).first().isVisible());
+  await page.getByRole("button", { name: "Work on it now" }).click();
+  await page.getByText(/Working on 21 05 00/).waitFor({ timeout: 20000 });
+  await page.waitForTimeout(300);
+  check("the pass over the set-aside document begins with Continue", await page.getByRole("button", { name: "Continue" }).first().isVisible());
+  check("the to-do card is gone during the pass", (await page.getByRole("button", { name: "Work on it now" }).count()) === 0);
 
   check("no page errors", errors.length === 0, errors.join(" | ").slice(0, 300));
   await browser.close();

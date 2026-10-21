@@ -316,3 +316,64 @@ body {
     transition: none;
   }
 }
+
+/* Markdown on the paper cards (the plan's sentences, assumptions, findings,
+   reasons): the same rules in the paper's tones. */
+.md-paper h1,
+.md-paper h2,
+.md-paper h3,
+.md-paper h4 {
+  color: var(--color-paper-ink);
+}
+.md-paper code {
+  background: rgba(44, 43, 39, 0.06);
+  border-color: var(--color-paper-edge);
+}
+.md-paper pre {
+  background: #ffffff;
+}
+.md-paper blockquote {
+  border-left-color: var(--color-paper-edge);
+  color: var(--color-paper-dim);
+}
+.md-paper th,
+.md-paper td {
+  border-color: var(--color-paper-edge);
+}
+.md-paper hr {
+  border-top-color: var(--color-paper-edge);
+}
+
+/* The rules every markdown block shares, whichever tone. */
+.md strong {
+  font-weight: 600;
+}
+.md hr {
+  border: 0;
+  border-top: 1px solid var(--color-edge);
+  margin: 0.8em 0;
+}
+.md li > p {
+  margin: 0;
+}
+.md li > p + p,
+.md li > ul,
+.md li > ol {
+  margin-top: 0.25em;
+}
+.md img {
+  max-width: 100%;
+}
+.md input[type="checkbox"] {
+  margin-right: 0.4em;
+  vertical-align: middle;
+}
+
+/* A sentence rendered inside a line (a list item, a label, a pill): no
+   paragraph blocks, no vertical rhythm of its own. */
+.md-inline {
+  display: inline;
+}
+.md-inline > * + * {
+  margin-top: 0;
+}
