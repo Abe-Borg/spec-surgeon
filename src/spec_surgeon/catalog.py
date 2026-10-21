@@ -85,10 +85,12 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "'each PART on a new page' puts a page break before every PART heading after the first, so PART 1 stays under "
         "the section title; widow/orphan control is on by default in Word, so turning it on changes only text that "
         "turned it off",
-        "superscript/subscript (vertAlign), hidden text (vanish: the characters stay in the file, Word hides them), "
-        "highlight (Word's highlighter colours, 'none' removes it), character spacing (points: positive expands, "
-        "negative condenses, 0 is normal) and double strikethrough follow the same rules; double strikethrough on "
-        "turns single strikethrough off where it shows, and the reverse, as Word does",
+        "superscript/subscript (vertAlign), hidden text (vanish: the characters stay in the file, Word hides them; a "
+        "paragraph mark is hidden only with all of its paragraph's text, as Word joins a paragraph whose mark is "
+        "hidden to the next one — a mark left visible is flagged), highlight (Word's highlighter colours, 'none' "
+        "removes it; on text only, as Word shows no highlighting set in a style), character spacing (points: positive "
+        "expands, negative condenses, 0 is normal) and double strikethrough follow the same rules; double "
+        "strikethrough on turns single strikethrough off where it shows, and the reverse, as Word does",
     ],
     "set_tab_stops": [
         "positions are measured from the left margin (1440 twips = 1 inch); 'right_margin' and 'center' are each file's "
@@ -622,8 +624,10 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "the field is inserted empty: Word fills in page numbers as it lays out the pages and updates every other field "
         "when it opens the file (it is marked so); the engine never writes a number or a date itself",
         "at_text: every occurrence of the user's exact placeholder in scope (default the body, headers and footers) is "
-        "removed and the field takes its place and its formatting; a file without it is set aside (allow_missing "
-        "leaves it as it is)",
+        "removed and the field takes its place and its formatting; whole words only — a placeholder inside a longer "
+        "word stays ('X' is never taken out of 'EXTERIOR', 'DATE' never out of 'UPDATE'); a page or section number "
+        "placed in the body is flagged (it belongs in a header or footer); a file without it is set aside "
+        "(allow_missing leaves it as it is)",
         "position: the field goes at the start or end of each targeted paragraph, formatted like its first or last "
         "word",
         "tracked by default (the placeholder deleted, the field inserted); a placeholder in what a field shows, over a "

@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import ast
 import io
+import re
 import shutil
 import subprocess
 import zipfile
@@ -16,12 +17,13 @@ from typing import List, Tuple
 import pytest
 from lxml import etree
 
-from fx_fields import CUSTOM, DOC, FOOTER, FOOTNOTES, HEADER, build_fields
+from fx_fields import CUSTOM, DOC, FOOTER, FOOTNOTES, HEADER, build_fields, build_placeholders
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, op_catalog
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import insert_field as ifm
 from spec_surgeon.package import DocxPackage, W, serialize_xml
 from spec_surgeon.report import FAILURE_EXPLANATIONS
+from spec_surgeon.verify import inserted_fields as vif
 from spec_surgeon.verify import run_suite
 
 SPACE = "{http://www.w3.org/XML/1998/namespace}space"
@@ -31,6 +33,11 @@ BODY = {"scope": ["document"]}
 @pytest.fixture(scope="module")
 def src() -> bytes:
     return build_fields()
+
+
+@pytest.fixture(scope="module")
+def letters() -> bytes:
+    return build_placeholders()
 
 
 def run_ops(data: bytes, specs: List[Tuple[str, dict, dict]]):
@@ -222,6 +229,62 @@ def test_a_file_without_the_placeholder(src):
     assert rec.passed and out == src and plan.property_assertions[0]["expected"] == {}
 
 
+@pytest.mark.parametrize("tracked", [True, False])
+def test_a_placeholder_inside_a_longer_word_is_left_alone(letters, tracked):
+    """"Page X of Y" with the user's X and Y: only a whole X or Y is a placeholder — never the X of "FLEXIBLE",
+    "EXTERIOR" (over two runs), "MAXIMUM", "X2" or "X_RAY", nor the Y of "SYSTEMS"; the body's whole X ("Detail X") is
+    one when the scope reaches the body. A word placeholder the same: "DATE" never out of "UPDATE", "VALIDATE" or
+    "CANDIDATE"."""
+    footers = {"scope": ["footers"]}
+    _, first, rec = field(letters, footers, {"field": "PAGE", "at_text": "X", "tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    _, out, rec = field(first, footers, {"field": "NUMPAGES", "at_text": "Y", "tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    p = xml(out, FOOTER).find(W + "p")
+    assert shown(p) == "Page  of " and [f["code"] for f in fields_in(p)] == [" PAGE ", " NUMPAGES "]
+    assert [shown(q) for q in body(xml(out, DOC))] == [shown(q) for q in body(xml(letters, DOC))]
+    plan, out, rec = field(letters, {}, {"field": "PAGE", "at_text": "X", "tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"] == {DOC: {"2": 1}, FOOTER: {"0": 1}}
+    pars = body(xml(out, DOC))
+    assert shown(pars[1]) == "A.Provide FLEXIBLE couplings at EXTERIOR walls; MAXIMUM spacing per NFPA 13."
+    assert shown(pars[2]) == "B.See Detail  on sheet X2 for the X_RAY room." and len(fields_in(pars[2])) == 1
+    plan, out, rec = field(letters, BODY, {"field": "DATE", "at_text": "DATE", "tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"] == {DOC: {"3": 1}}
+    assert shown(body(xml(out, DOC))[3]) == "C.UPDATE the schedule and VALIDATE the CANDIDATE products by ."
+
+
+def test_a_page_number_placed_in_the_body_is_flagged(letters):
+    """A page or section number belongs in a header or footer: one put at a placeholder in the body is flagged with the
+    paragraphs it goes into; none in the footers, none for a date, none at a paragraph's end the user named."""
+    for name in ("PAGE", "NUMPAGES", "SECTIONPAGES", "SECTION"):
+        frag = get_op("insert_field").plan(DocxPackage(letters), {}, {"field": name, "at_text": "X"})
+        flags = [f for f in frag.flags if "document body" in f]
+        assert len(flags) == 1 and flags[0].startswith(f"1 {name} field(s) go into the document body"), frag.flags
+        assert "header or footer" in flags[0] and "‘B. See Detail X on sheet X2" in flags[0], flags[0]
+    for select, params in (({"scope": ["footers"]}, {"field": "PAGE", "at_text": "X"}),
+                           (BODY, {"field": "DATE", "at_text": "DATE"}),
+                           ({"scope": ["document"], "paragraphs": {"text_regex": "^B"}},
+                            {"field": "PAGE", "position": "end"})):
+        frag = get_op("insert_field").plan(DocxPackage(letters), select, params)
+        assert not any("document body" in f for f in frag.flags), (select, params, frag.flags)
+
+
+def test_the_two_readings_of_a_whole_placeholder_agree():
+    """The op's pattern and the verifier's own search find the same places: letters and digits of any script and the
+    underscore are word characters, every other character (a tab, a field mark, punctuation) is not."""
+    texts = ["Page X of Y", "EXTERIOR X X2 X_RAY (X) X. _X", "UPDATE DATE DATED date DATE:DATE", "été Xé ΧX X٣",
+             "{{PAGE}}x{{PAGE}} {{PAGE}}", "A A A", "XX X XXX", "", "x\tX\x00X", "#1 #a a# ##"]
+    checked = 0
+    for text in texts:
+        for at_text in ("X", "Y", "DATE", "{{PAGE}}", "A A", "XX", "é", "#", "X.", "(X)"):
+            ours = [(m.start(), m.end()) for m in ifm.placeholder_pattern(at_text).finditer(text)]
+            assert ours == vif._v_whole_words(text, at_text), (text, at_text)
+            checked += len(ours)
+    assert checked > 20
+
+
 # ---- a wrong output is caught ----------------------------------------------------------------------------------------
 
 def _date(src, tracked=True):
@@ -301,6 +364,24 @@ def test_a_placeholder_left_behind_is_caught(src):
     _caught(src, plan, out, DOC, back, "not exactly the field")
 
 
+def _substring_search(monkeypatch):
+    """The search the op made before whole-word matching: every occurrence of the text, words around it or not."""
+    monkeypatch.setattr(ifm, "placeholder_pattern", lambda at_text: re.compile(re.escape(at_text)))
+
+
+def test_a_field_placed_inside_a_word_is_caught(letters, monkeypatch):
+    """The plan puts a page number at the body's whole X only; an output with fields in "FLEXIBLE", "EXTERIOR",
+    "MAXIMUM", "X2" and "X_RAY" as well is caught."""
+    pkg, op = DocxPackage(letters), get_op("insert_field")
+    params = {"field": "PAGE", "at_text": "X", "tracked": False, "author": "Abe"}
+    plan = merge_fragments([op.plan(pkg, BODY, params)])
+    _substring_search(monkeypatch)
+    work = pkg.copy()
+    op.apply(work, op.plan(pkg, BODY, params))
+    rec = run_suite(letters, work.output_bytes(), plan.to_dict(), "src.docx", "out.docx")
+    assert "V10" in failed(rec) and "not exactly the field" in v10(rec)
+
+
 # ---- a wrong implementation shared by plan and apply is caught -------------------------------------------------------
 
 def test_a_shared_wrong_instruction_is_caught(src, monkeypatch):
@@ -339,6 +420,17 @@ def test_a_shared_field_depth_that_misses_a_table_of_contents_is_caught(monkeypa
     plan, out, rec = field(data, {"scope": ["document"], "paragraphs": {"text_regex": "^ TOC"}},
                            {"field": "PAGE", "position": "end"})
     assert "V10" in failed(rec) and "inside a field" in v10(rec)
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_a_shared_substring_search_is_caught(letters, monkeypatch, tracked):
+    """Plan and apply both take the X out of "FLEXIBLE", "EXTERIOR", "MAXIMUM", "X2" and "X_RAY" — they agree with each
+    other; V10's own reading of a whole placeholder does not."""
+    _substring_search(monkeypatch)
+    plan, out, rec = field(letters, BODY, {"field": "PAGE", "at_text": "X", "tracked": tracked})
+    assert plan.property_assertions[0]["expected"] == {DOC: {"1": 3, "2": 3}}
+    assert "V2" not in failed(rec)
+    assert "V10" in failed(rec) and "the plan predicted" in v10(rec)
 
 
 def test_a_shared_wrong_neighbour_is_caught(src, monkeypatch):

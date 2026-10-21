@@ -16,7 +16,7 @@ from typing import List, Tuple
 import pytest
 from lxml import etree
 
-from fx_text import LITERAL_TAB_TEXT, build_text
+from fx_text import LITERAL_TAB_TEXT, build_notes, build_text
 from make_fixtures import build_formatted, build_rich
 from spec_surgeon import compiler, ooxml
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, op_catalog
@@ -45,6 +45,14 @@ STYLES = "word/styles.xml"
 @pytest.fixture(scope="module")
 def src() -> bytes:
     return build_text()
+
+
+@pytest.fixture(scope="module")
+def notes() -> bytes:
+    return build_notes()
+
+
+RED_NOTES = {"runs": {"color_in": ["FF0000"]}}
 
 
 def run_ops(data: bytes, specs: List[Tuple[str, dict, dict]]):
@@ -139,6 +147,15 @@ def counts(plan) -> Tuple[int, int]:
     return a["expected_runs"], a["expected_marks"]
 
 
+def mark_hidden(p) -> bool:
+    v = p.find(f"{W}pPr/{W}rPr/{W}vanish")
+    return v is not None and v.get(W + "val") not in ("0", "false", "off")
+
+
+def empty_paragraph(root):
+    return next(p for p in root.iter(W + "p") if not shown(p))
+
+
 # ==== §3 set_properties: the new run properties ===========================================================================
 
 def test_superscript_where_it_is_not_already_and_back_to_the_baseline(src):
@@ -187,6 +204,37 @@ def test_hidden_text_on_and_off_and_the_toggle_rule(src):
     assert e.value.code == "toggle-ambiguous"
 
 
+@pytest.mark.parametrize("tracked", [True, False])
+def test_a_paragraph_mark_is_hidden_only_with_all_of_its_text(notes, tracked):
+    """Hiding the red notes: Word joins a paragraph whose mark is hidden to the next one, so a red mark is hidden only
+    where every content run of its paragraph is hidden after the change — the note paragraph, the one whose other
+    sentence was hidden already, the empty one; "A." and "B." keep visible text and keep their mark (flagged); "D."'s
+    mark was hidden already and is left as it is."""
+    plan, out, rec = props(notes, RED_NOTES, {"vanish": True}, tracked=tracked)
+    assert rec.passed, rec.to_markdown()
+    root = root_of(out)
+    for text in ("[Note: verify…", "[Note: delete…", "[Note: retain…", "[Note: two sets.]"):
+        assert val(run_with(root, text), "vanish") == {}, text
+    assert val(run_with(root, "A.\tProvide shop drawings. "), "vanish") is None
+    assert not mark_hidden(para_with(root, "A.")) and not mark_hidden(para_with(root, "B."))
+    assert mark_hidden(para_with(root, "[Note: delete")) and mark_hidden(para_with(root, "Superseded"))
+    assert mark_hidden(empty_paragraph(root)) and mark_hidden(para_with(root, "D."))
+    assert kids(para_with(root, "A.").find(f"{W}pPr/{W}rPr")) == ["color"]          # left exactly as it was
+    assert counts(plan) == (4, 3) and plan.property_assertions[0]["expected_shown_marks"] == 2
+    assert plan.rev_delta.get("rPrChange", 0) == (7 if tracked else 0)
+    flag = next(f for f in plan.flags if "paragraph mark(s) left visible" in f)
+    assert flag.startswith("2 ") and "‘A. Provide shop drawings." in flag and "‘B. Provide product data.’" in flag
+    assert any("already as asked, left alone: 1 marks" in n for n in plan.notes)
+    assert "mark(s) left visible beside visible text" in rec.get("V10").summary
+    # the whole of "A." selected: its mark goes hidden with its text, nothing is flagged
+    plan, out, rec = props(notes, para_sel(r"^A\."), {"vanish": True}, tracked=tracked)
+    assert rec.passed and counts(plan) == (2, 1) and mark_hidden(para_with(root_of(out), "A."))
+    assert not any("left visible" in f for f in plan.flags)
+    # showing the notes again touches the marks as before: off where hidden
+    plan, out, rec = props(notes, RED_NOTES, {"vanish": False}, tracked=tracked)
+    assert rec.passed and counts(plan) == (0, 1) and not mark_hidden(para_with(root_of(out), "D."))
+
+
 def test_highlight_a_colour_and_none(src):
     plan, out, rec = props(src, para_sel(r"^B\."), {"highlight": "yellow"})
     assert rec.passed, rec.to_markdown()
@@ -201,6 +249,21 @@ def test_highlight_a_colour_and_none(src):
         {"val": "none"}
     assert val(run_with(root, "PART 3 - EXECUTION"), "highlight") == {"val": "none"}   # over SpecPartLow's grey
     assert counts(plan) == (3, 1)
+
+
+def test_highlight_is_refused_in_a_style_and_set_on_its_text(src):
+    """Word does not show highlighting set in a style (its style dialogs offer none; LibreOffice writes a style's
+    background as shading): asked of a paragraph or character style it is a bad parameter, with the way to do it —
+    highlighting the style's text directly works and is verified."""
+    for ids in (["SpecPart"], ["SpecSuper"], ["SpecPart", "SpecSpaced"]):
+        for run in ({"highlight": "yellow"}, {"highlight": "none"}, {"highlight": "cyan", "b": True}):
+            with pytest.raises(JobException) as e:
+                get_op("set_properties").plan(DocxPackage(src), {"styles": {"ids": ids}}, {"run": run})
+            assert e.value.code == "bad-params" and "highlight the text directly" in e.value.reason, (ids, run)
+    plan, out, rec = props(src, {"paragraphs": {"style_in": ["SpecPart"]}}, {"highlight": "yellow"})
+    assert rec.passed, rec.to_markdown()
+    assert val(run_with(root_of(out), "PART 2 - PRODUCTS"), "highlight") == {"val": "yellow"}
+    assert plan.intended_parts == [MAIN] and counts(plan) == (2, 2)
 
 
 def test_character_spacing_in_points(src):
@@ -256,18 +319,18 @@ def test_symbol_runs_take_the_new_properties(src):
 
 
 def test_style_definitions_take_the_new_properties(src):
-    """On style definitions (styles.xml only, never tracked): SpecPart gets them all — double strikethrough with single
-    off, as Word writes it in a style; SpecPartLow (based on it) keeps its own baseline and highlight (noted);
-    SpecSpaced's own 20 becomes 0. A style whose text carries a disagreeing direct value refuses."""
-    plan, out, rec = props(src, {"styles": {"ids": ["SpecPart"]}}, {"vertAlign": "subscript", "highlight": "red",
-                                                                   "spacing": 0.5, "dstrike": True, "vanish": False})
+    """On style definitions (styles.xml only, never tracked): SpecPart gets them all but highlight (refused in a style:
+    see below) — double strikethrough with single off, as Word writes it in a style; SpecPartLow (based on it) keeps its
+    own baseline (noted); SpecSpaced's own 20 becomes 0. A style whose text carries a disagreeing direct value
+    refuses."""
+    plan, out, rec = props(src, {"styles": {"ids": ["SpecPart"]}}, {"vertAlign": "subscript", "spacing": 0.5,
+                                                                   "dstrike": True, "vanish": False})
     assert rec.passed, rec.to_markdown()
     assert plan.intended_parts == [STYLES] and not {k: v for k, v in plan.rev_delta.items() if v}
     st = next(s for s in root_of(out, STYLES).iter(W + "style") if s.get(W + "styleId") == "SpecPart")
-    assert kids(st.find(W + "rPr")) == ["strike", "dstrike", "vanish", "spacing", "highlight", "vertAlign"]
+    assert kids(st.find(W + "rPr")) == ["strike", "dstrike", "vanish", "spacing", "vertAlign"]
     assert st.find(f"{W}rPr/{W}spacing").get(W + "val") == "10" and st.find(f"{W}rPr/{W}strike").get(W + "val") == "0"
     assert any("SpecPartLow keeps its own vertAlign over SpecPart" in n for n in plan.notes)
-    assert any("SpecPartLow keeps its own highlight over SpecPart" in n for n in plan.notes)
     plan, out, rec = props(src, {"styles": {"ids": ["SpecSpaced"]}}, {"spacing": 0})
     assert rec.passed and plan.property_assertions[0]["expected_ids"] == ["SpecSpaced"]
     with pytest.raises(JobException) as e:           # the "2" says superscript directly; Word keeps it
@@ -383,6 +446,27 @@ def test_wrong_outputs_of_the_new_properties_are_caught(src):
     assert "V10" in caught(src, out, plan, STYLES, vanish_off_in_style)
 
 
+@pytest.mark.parametrize("tracked", [True, False])
+def test_a_mark_hidden_beside_visible_text_and_a_mark_left_shown_are_caught(notes, tracked):
+    plan, out, rec = props(notes, RED_NOTES, {"vanish": True}, tracked=tracked)
+    assert rec.passed
+
+    def hidden_anyway(root):                    # Word would join "A." to the note paragraph after it
+        para_with(root, "A.").find(f"{W}pPr/{W}rPr").insert(0, etree.Element(W + "vanish"))
+
+    def b_hidden_too(root):                     # a mark selected by its colour alone
+        para_with(root, "B.").find(f"{W}pPr/{W}rPr").insert(0, etree.Element(W + "vanish"))
+
+    for defect in (hidden_anyway, b_hidden_too):
+        bad = run_suite(notes, mutate(out, MAIN, defect), plan.to_dict(), "s", "o")
+        assert "V10" in failed(bad) and "join the paragraph to the next one" in v10(bad), defect.__name__
+
+    def left_shown(root):                       # the note paragraph's text is all hidden: its mark goes too
+        mrpr = para_with(root, "[Note: delete").find(f"{W}pPr/{W}rPr")
+        mrpr.remove(mrpr.find(W + "vanish"))
+    assert "V10" in caught(notes, out, plan, MAIN, left_shown)
+
+
 def test_the_kind_refuses_bad_values_of_the_new_properties(src):
     base = {"job": "x", "mode": "formatting", "params": {}, "intended_parts": [], "diffs": [], "rev_delta": {},
             "members_removed": [], "members_added": []}
@@ -392,6 +476,11 @@ def test_the_kind_refuses_bad_values_of_the_new_properties(src):
              "set": {"run": run, "paragraph": {}}, "expected_runs": 0, "expected_marks": 0, "expected_paragraphs": 0}
         rec = run_suite(src, src, {**base, "property_assertions": [a]}, "s", "o")
         assert failed(rec) == ["V10"], run
+    # highlighting in a style definition, which Word does not show: the op refuses it, the kind too
+    a = {"kind": "properties", "target": "styles", "styles_part": STYLES, "select": {"ids": ["SpecPart"]},
+         "set": {"run": {"highlight": "yellow"}, "paragraph": {}}, "expected_ids": [], "tracked": False}
+    rec = run_suite(src, src, {**base, "property_assertions": [a]}, "s", "o")
+    assert failed(rec) == ["V10"] and "highlighting set in a style" in v10(rec)
 
 
 # ---- planted IMPLEMENTATION defects shared by plan and apply --------------------------------------------------------
@@ -416,6 +505,28 @@ def test_a_shared_resolver_that_reads_hidden_as_nearest_wins_is_caught(src, monk
                         tuple(e for e in effective_module.RUN_TOGGLE_ELEMENTS if e != "vanish"))
     plan, out, rec = props(src, para_sel(r"^E\."), {"vanish": True})
     assert counts(plan) == (0, 0)
+    assert "V10" in failed(rec) and "predicted" in v10(rec)
+
+
+@pytest.mark.parametrize("helper, wrong", [
+    ("stays_visible", lambda resolver, p, left_out: False),     # every selected mark hidden, whatever its text shows
+    ("shows_content", lambda run: False),                       # no run counted as showing anything
+])
+def test_a_shared_rule_that_hides_a_mark_beside_visible_text_is_caught(notes, monkeypatch, helper, wrong):
+    """Plan and apply both hide "A."'s and "B."'s marks while their text stays visible; V10 reads each paragraph's runs
+    itself and finds the paragraph joined to the next one."""
+    monkeypatch.setattr(set_properties_module, helper, wrong)
+    plan, out, rec = props(notes, RED_NOTES, {"vanish": True})
+    assert counts(plan) == (4, 5) and not any("left visible" in f for f in plan.flags)
+    assert "V10" in failed(rec) and "join the paragraph to the next one" in v10(rec)
+
+
+def test_a_shared_rule_that_never_hides_a_mark_is_caught(notes, monkeypatch):
+    """Plan and apply both keep every mark visible, the note paragraph's too, whose text is all hidden; V10 expects
+    its mark hidden."""
+    monkeypatch.setattr(set_properties_module, "stays_visible", lambda resolver, p, left_out: True)
+    plan, out, rec = props(notes, RED_NOTES, {"vanish": True})
+    assert counts(plan) == (4, 0)
     assert "V10" in failed(rec) and "predicted" in v10(rec)
 
 

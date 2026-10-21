@@ -25,6 +25,9 @@ CASES = {
          ["a field showing the file name with its folder"]),
         ({}, {"field": "SECTIONPAGES", "at_text": "{{PAGES}}", "format": "alphabetic"},
          ["the number of pages in the section in small letters (a, b, c)"]),
+        ({"scope": ["footers"]}, {"field": "PAGE", "at_text": "X"},
+         ["Replace every “X” in the footers with a page number field",
+          "Only whole words match: “X” inside a longer word is left alone."]),
     ],
     "reply_to_comments": [
         ({}, {"text": "Done, see revised 2.3.", "author": "Abe Borg", "initials": "AB"},

@@ -16,14 +16,16 @@ again in verify/inserted_fields.py (kind ``inserted_fields``): keep the two iden
   pages; every other field's begin carries ``w:dirty="true"`` (ECMA-376 §17.16.18: the result is stale and is to be
   recalculated when an application that can reads the document), so Word fills it in when it opens the file.
 * **At the placeholder** (``at_text``): every occurrence, left to right and not overlapping, of the exact text in the
-  run text (ops/textedit.py) of a selected paragraph is an edit of the core whose new text is one character
-  (``ONE``), which is then replaced by the field's runs (``place``): the placeholder's deletion, the field's place and
-  its formatting are exactly the core's — tracked, the placeholder deleted and the field in a new ``w:ins`` after it
-  (after someone's pending insertion when the placeholder lies in one); untracked, the placeholder gone and the field
-  where its first character was, with that run's properties and attributes. The core's refusals hold (a placeholder
-  over a tab, a picture or deleted text, in what a field shows, tracked across a hyperlink or a content control …),
-  and a placeholder run carrying a pending tracked formatting change is refused (its copies would carry that revision
-  twice).
+  run text (ops/textedit.py) of a selected paragraph that is not part of a longer word (``placeholder_pattern``: where
+  the placeholder's first character is a word character, ``\\w``, the one before it is not; where its last is, the one
+  after it is not — "X" is never taken out of "EXTERIOR", "{{PAGE}}" has no word edge) is an edit of the core whose
+  new text is one character (``ONE``), which is then replaced by the field's runs (``place``): the placeholder's
+  deletion, the field's place and its formatting are exactly the core's — tracked, the placeholder deleted and the
+  field in a new ``w:ins`` after it (after someone's pending insertion when the placeholder lies in one); untracked,
+  the placeholder gone and the field where its first character was, with that run's properties and attributes. The
+  core's refusals hold (a placeholder over a tab, a picture or deleted text, in what a field shows, tracked across a
+  hyperlink or a content control …), and a placeholder run carrying a pending tracked formatting change is refused
+  (its copies would carry that revision twice).
 * **At the start or end** (``position``) of the selected — targeted — paragraphs: the field's runs right after the
   paragraph's properties, or after its last child, with the properties of the run of the first (start) or last (end)
   character of the run text that is a ``w:t`` character, else the paragraph mark's (without its revision marks), never
@@ -31,7 +33,9 @@ again in verify/inserted_fields.py (kind ``inserted_fields``): keep the two iden
   (a table of contents: ``field_depths`` counts each paragraph's own begin and end characters, deleted ones too, in
   paragraph order over the part; an end never takes the depth below 0).
 * Refused anywhere: a paragraph in a text box (``textbox``). Scope: the body, headers, footers, footnotes, endnotes
-  (default: the body, headers and footers). Tracked by default (``tracked: false`` on request).
+  (default: the body, headers and footers); a page or section number (PAGE, NUMPAGES, SECTIONPAGES, SECTION) put at a
+  placeholder in the body is flagged — it belongs in a header or footer. Tracked by default (``tracked: false`` on
+  request).
 """
 from __future__ import annotations
 
@@ -71,6 +75,14 @@ ARGUMENTS = ("format", "style", "last_on_page", "paragraph_number", "property", 
 PARAMS = set(ARGUMENTS) | {"field", "at_text", "position", "tracked", "author", "allow_missing", "date_convention"}
 MARK_REVISIONS = (W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "rPrChange")
 ONE = "\uFFFC"      # the one character the core places where a field goes; ``place`` replaces it at once
+
+
+def placeholder_pattern(at_text: str) -> "re.Pattern[str]":
+    """The placeholder where it is not part of a longer word: a word character (``\\w``) at its start may not follow
+    one, at its end may not be followed by one; an edge that is no word character ("{{", "]", "#") takes any
+    neighbour."""
+    return re.compile(("(?<!\\w)" if re.match(r"\w", at_text[0]) else "") + re.escape(at_text)
+                      + ("(?!\\w)" if re.match(r"\w", at_text[-1]) else ""))
 
 
 def _flag(params: Dict[str, Any], key: str, default: bool) -> bool:
@@ -235,6 +247,12 @@ def edge_rpr(p, position: str) -> Optional[Any]:
     return rpr if (len(rpr) or rpr.attrib) else None
 
 
+def _quoted(p, limit: int = 40) -> str:
+    """The start of a paragraph's text for a flag: whitespace collapsed, a field or picture as ¤, cut."""
+    text = " ".join(RunText(p).text.replace("\x00", "¤").split())
+    return f"‘{text if len(text) <= limit else text[:limit - 1] + '…'}’"
+
+
 def place(run, t, k: int, elements: Sequence[Any]) -> None:
     """The character at offset ``k`` of ``t`` (a ``w:t`` of ``run``) replaced by the field: the run split there, each of
     the field's elements in a copy of the run's attributes and properties; a run left empty goes."""
@@ -321,7 +339,8 @@ class InsertField(Op):
                                                           "Category, Company, Manager, LastSavedBy, or a custom "
                                                           "property the file has"},
             "path": {"type": "boolean", "description": "FILENAME: with the folder (\\p)"},
-            "at_text": {"type": "string", "description": "the user's exact placeholder text; every occurrence is "
+            "at_text": {"type": "string", "description": "the user's exact placeholder text; every occurrence that is "
+                                                         "not part of a longer word ('X' never inside 'EXTERIOR') is "
                                                          "removed and the field takes its place and formatting"},
             "position": {"type": "string", "enum": ["start", "end"],
                          "description": "instead of at_text: the start or end of each targeted paragraph"},
@@ -380,6 +399,8 @@ class InsertField(Op):
         frag.untracked_diffs_expected = not tracked
         blocks: Dict[str, Dict[str, Any]] = {}
         expected: Dict[str, Dict[str, int]] = {}
+        pattern = placeholder_pattern(at_text) if at_text is not None else None
+        in_body: List[Any] = []             # body paragraphs a page or section number goes into at a placeholder
         for part in parts:
             frag.touches.append((part, "scope", "verify"))          # V10 re-derives every place over this part
             root = pkg.xml(part)
@@ -393,7 +414,7 @@ class InsertField(Op):
                 where = f"{part} paragraph {bi}"
                 if at_text is not None:
                     rt = RunText(p)
-                    edits = [Edit(m.start(), m.end(), instr) for m in re.finditer(re.escape(at_text), rt.text)]
+                    edits = [Edit(m.start(), m.end(), instr) for m in pattern.finditer(rt.text)]
                     if not edits:
                         continue
                 if nearest_p(p) is not None:
@@ -409,6 +430,8 @@ class InsertField(Op):
                     before, after, accepted, delta = predict(rt, edits, tracked)
                     count = len(edits)
                     blocks.setdefault(part, {})[str(bi)] = [[e.start, e.end] for e in edits]
+                    if field in NUMBERED and part == pkg.main_part():
+                        in_body.append(p)
                 else:
                     if depths[bi][0 if position == "start" else 1]:
                         raise JobException(f"{where}: its {position} lies inside a field that runs over several "
@@ -454,6 +477,12 @@ class InsertField(Op):
             frag.rev_ids_needed = frag.rev_delta.get("ins", 0) + frag.rev_delta.get("del", 0)
         else:
             frag.flags.append(f"UNTRACKED field insertion at the user's request: {total} {field} field(s).")
+        if in_body:
+            n = sum(expected[pkg.main_part()].values())
+            frag.flags.append(f"{n} {field} field(s) go into the document body, in place of {prose.quote(at_text)} in "
+                              f"{len(in_body)} paragraph(s): a page or section number belongs in a header or footer — "
+                              f"check these are the placeholders meant, or limit the scope to the headers and footers: "
+                              + "; ".join(_quoted(p) for p in in_body[:6]) + (" …" if len(in_body) > 6 else ""))
         frag.transform_data = {"blocks": blocks, "field": field, "instruction": instr, "tracked": tracked,
                                "author": author, "use_date_utc": file_uses_date_utc(pkg),
                                "first_rev_id": frag.rev_id_base,
@@ -528,9 +557,12 @@ class InsertField(Op):
         tail = ("shown as a tracked change" + (f" by {prose.quote(params['author'])}" if params.get("author") else "")
                 if tracked else "without tracked changes")
         at_text = params.get("at_text")
+        whole = ""
         if isinstance(at_text, str) and at_text:
             limit = "" if pred in (None, "all", {}) else ", " + prose.where({"paragraphs": pred})
             first = f"Replace every {prose.quote(at_text)} {where}{limit}{',' if limit else ''} with {what}, {tail}."
+            if re.match(r"\w", at_text[0]) or re.match(r"\w", at_text[-1]):
+                whole = f"Only whole words match: {prose.quote(at_text)} inside a longer word is left alone."
         else:
             spot = "start" if params.get("position") == "start" else "end"
             subject = prose.where({"paragraphs": pred, "scope": scope})[3:]
@@ -540,4 +572,4 @@ class InsertField(Op):
         else:
             second = "The field is inserted empty and marked for updating; Word fills it in when it opens the file."
         third = "Files with no such place are left unchanged." if params.get("allow_missing") else ""
-        return prose.sentence(first, second, third)
+        return prose.sentence(first, whole, second, third)

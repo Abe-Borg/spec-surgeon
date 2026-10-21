@@ -1950,7 +1950,10 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 # §3; transform side: ops/effective.PropResolver and ops/set_properties.py — CLAUDE.md lists them among the definitions
 # that must stay identical on both sides). Nothing here is shared with the transform side. Double strikethrough is read
 # as a toggle (two style levels: ambiguous, set directly) and excludes single strikethrough, as in Word: one asked on
-# asks the other off unless the assertion asks it too.
+# asks the other off unless the assertion asks it too. Hidden asked on reaches a selected paragraph mark only when every
+# content run of its paragraph (a run holding more than its properties) is hidden in the output — selected, or hidden
+# already in the source: Word joins a paragraph whose mark is hidden to the next one. Highlight is never asked of a
+# style (Word does not show highlighting set in one).
 
 PROP_PAIRS = {"b": ("b", "bCs"), "i": ("i", "iCs"), "caps": ("caps",), "smallCaps": ("smallCaps",),
               "strike": ("strike",), "dstrike": ("dstrike",), "vanish": ("vanish",)}
@@ -2217,6 +2220,11 @@ def _v_mark_in_revision(mrpr) -> bool:
     return mrpr is not None and any(mrpr.find(W + t) is not None for t in ("ins", "del", "moveFrom", "moveTo"))
 
 
+def _v_has_content(r) -> bool:
+    """A run that shows something: it holds an element other than its w:rPr."""
+    return any(isinstance(c.tag, str) and c.tag != W + "rPr" for c in r)
+
+
 def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], para_asked: Dict[str, bool],
                        errs: List[str]) -> str:
     parts = ctx.scope_parts(a.get("scope", []))
@@ -2229,7 +2237,7 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
     exclude_rev = a.get("in_revisions", "include") == "exclude"
     marks_too = bool(a.get("include_paragraph_marks", True))
     tracked, author = bool(a.get("tracked")), a.get("author")
-    n_runs = n_marks = n_paras = 0
+    n_runs = n_marks = n_paras = n_shown = 0
     for part in parts:
         if part not in ctx.both:
             errs.append(f"properties: {part} missing from the output")
@@ -2240,6 +2248,7 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
             if not para_matches(para_pred, p, bi, sv, ctx.src_styles):
                 continue
             cands = []                                   # (run index, the elements it gets, symbol run)
+            text_shown = False                           # a content run outside the selection that is not hidden
             if run_asked:
                 for ri, r in enumerate(sv.runs[bi]):
                     rpr = r.find(W + "rPr")
@@ -2247,10 +2256,13 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                     if (exclude_rev and in_rev) or not target_matches(
                             runs_pred, rpr, in_rev, preserve,
                             lambda rpr=rpr, p=p: _v_run_prop(rpr, p, ctx.src_styles, "color")[0]):
+                        if not text_shown and _v_has_content(r):
+                            text_shown = _v_run_prop(rpr, p, ctx.src_styles, "vanish")[0] is not True
                         continue
                     sym = symbolic(rpr, p, ctx.src_styles, preserve) or (skip_sym and r.find(W + "sym") is not None)
                     cands.append((ri, _v_gets_run(rpr, p, ctx.src_styles, run_asked, sym), sym))
-            mark = None                                  # (the elements the mark gets, symbol) when selected
+            mark = None                                  # (the elements the mark gets, symbol, its asked values)
+            mark_shown = False                           # asked hidden, the mark stays visible: its text is not all hidden
             if run_asked and marks_too:
                 mrpr = p.find(W + "pPr/" + W + "rPr")
                 m_rev = _v_mark_in_revision(mrpr)
@@ -2258,7 +2270,14 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                         runs_pred, mrpr, m_rev, preserve,
                         lambda mrpr=mrpr, p=p: _v_run_prop(mrpr, p, ctx.src_styles, "color")[0]):
                     msym = symbolic(mrpr, p, ctx.src_styles, preserve)
-                    mark = (_v_gets_run(mrpr, p, ctx.src_styles, run_asked, msym), msym)
+                    m_gets, m_asked = _v_gets_run(mrpr, p, ctx.src_styles, run_asked, msym), dict(run_asked)
+                    # Word joins a paragraph whose mark is hidden to the next one: hidden goes on a mark only when
+                    # every content run of its paragraph is hidden in the output (selected, or hidden already)
+                    if m_gets.get("vanish") is True and text_shown:
+                        mark_shown = True
+                        n_shown += 1
+                        del m_gets["vanish"], m_asked["vanish"]
+                    mark = (m_gets, msym, m_asked)
             pgets = _v_gets_para(p, ctx.src_styles, para_asked) if para_asked else {}
             if not cands and mark is None and not para_asked:
                 continue
@@ -2281,14 +2300,17 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                     _check_props_rpr(s_rpr, o_rpr, gets, tracked, author, where, errs)
                 _check_effective_run(o_rpr, o_p, ctx.out_styles, run_asked, sym, where, errs)
             if mark is not None:
-                gets, msym = mark
+                gets, msym, m_asked = mark
                 s_rpr, o_rpr = p.find(W + "pPr/" + W + "rPr"), o_p.find(W + "pPr/" + W + "rPr")
                 where = f"{part} block {bi} paragraph mark"
                 if gets:
                     n_marks += 1
                     ctx.strip_marks.setdefault(part, set()).add(bi)
                     _check_props_rpr(s_rpr, o_rpr, gets, tracked, author, where, errs)
-                _check_effective_run(o_rpr, o_p, ctx.out_styles, run_asked, msym, where, errs)
+                _check_effective_run(o_rpr, o_p, ctx.out_styles, m_asked, msym, where, errs)
+                if mark_shown and _v_run_prop(o_rpr, o_p, ctx.out_styles, "vanish")[0] is True:
+                    errs.append(f"{where}: hidden in the output while text of the paragraph stays visible — Word would "
+                                f"join the paragraph to the next one (the mark must stay as it was)")
             if para_asked:
                 where = f"{part} block {bi}"
                 if pgets:
@@ -2300,9 +2322,13 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                          (n_paras, "expected_paragraphs", "paragraph(s)")):
         if n != a.get(key, -1):
             errs.append(f"properties: {n} {what} get the change here, plan predicted {a.get(key)}")
+    if n_shown != a.get("expected_shown_marks", 0):
+        errs.append(f"properties: {n_shown} paragraph mark(s) asked hidden stay visible here (their paragraph keeps "
+                    f"visible text), plan predicted {a.get('expected_shown_marks', 0)}")
     setv = a.get("set") or {}
     return (f"properties: {n_runs} run(s) + {n_marks} mark(s) → {setv.get('run') or {}}, {n_paras} paragraph(s) → "
-            f"{setv.get('paragraph') or {}}" + (" (tracked)" if tracked else ""))
+            f"{setv.get('paragraph') or {}}" + (" (tracked)" if tracked else "")
+            + (f"; {n_shown} mark(s) left visible beside visible text" if n_shown else ""))
 
 
 def _judge_style_prop(val, prov: str, asked, sid: str, element: str, symbol: bool, where: str,
@@ -2324,6 +2350,9 @@ def _judge_style_prop(val, prov: str, asked, sid: str, element: str, symbol: boo
 
 def _properties_styles(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], para_asked: Dict[str, bool],
                        errs: List[str]) -> str:
+    if "highlight" in run_asked:
+        raise ValueError("highlight asked in a style definition — Word does not show highlighting set in a style (the "
+                         "op must refuse)")
     if ctx.styles_part is None:
         errs.append("properties: no common styles part")
         return "properties: no styles part"
