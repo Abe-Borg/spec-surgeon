@@ -237,6 +237,9 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "each new row copies that row's formatting: row height and splitting, cell widths, shading, borders and "
         "alignment, the first paragraph's style and the first text's font; it is never a repeating header row unless "
         "repeat_header",
+        "Word repeats only the header rows that run on from a table's first row: rows placed before or among them must "
+        "be header rows too (repeat_header), and header rows must go at the top or right after them (set aside "
+        "otherwise)",
         "a row with merged cells cannot be copied (set aside: place the rows by another row)",
         "tracked unless asked otherwise (rows and text inserted, as Word records it)",
     ],

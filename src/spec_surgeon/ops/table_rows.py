@@ -13,6 +13,9 @@ merges) number rows and grid columns with these definitions.
   it has one (on unless ``w:val`` is 0/false/off); without one, the nearest level of the table style chain
   (``table_select.style_chain``, nearest first) whose ``w:trPr`` holds a ``w:tblHeader`` decides; none → not a header row.
 
+A table's **header run** (``header_run``) is its own rows from row 0 while each is a header row: the rows Word and
+LibreOffice repeat at the top of each page (a header row below a row that is not one does not repeat).
+
 Unknown keys or a wrong shape → ``bad-params``. A table whose rows sit in a content control or custom XML
 (``table_select.rows_wrapped``) cannot have its rows numbered: a row op refuses it (``table-structure``).
 
@@ -110,6 +113,17 @@ def is_header_row(tr, chain: Sequence[Any]) -> bool:
         if e is not None:
             return is_on(e)
     return False
+
+
+def header_run(tbl, chain: Sequence[Any]) -> int:
+    """How many of the table's own rows, from row 0, are header rows one after another (``is_header_row``): the rows
+    Word and LibreOffice repeat at the top of each page — a header row below a row that is not one never repeats."""
+    n = 0
+    for tr in own_rows(tbl):
+        if not is_header_row(tr, chain):
+            break
+        n += 1
+    return n
 
 
 def selects_every_row(pred: Any) -> bool:

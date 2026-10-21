@@ -6,6 +6,8 @@ docs/BUILTIN_OPS_BATCH6_DESIGN.md §6). The transform side is ops/table_rows.py;
   is it, joined by a tab, each the block texts (``textcheck.blocks``) of the paragraphs whose closest cell is it, joined
   by a space; ``header``: the row's own ``w:trPr/w:tblHeader`` (on unless 0/false/off) when it has one, else the first
   level of the table style chain (nearest first) whose ``w:trPr`` holds one, else not a header row. All given keys hold.
+* **Header run** (``v_header_top``): the own rows from the first that are header rows, up to the first that is not —
+  what Word and LibreOffice repeat on each page.
 * **Grid**: a cell's span ``w:gridSpan`` (≥ 1, default 1), its column the row's ``w:gridBefore`` plus the spans before
   it; **merged**: a span over 1, a ``w:vMerge`` or a ``w:hMerge``. A **vertical merge** runs down one column from a
   ``restart`` cell (or a continuing cell with none open above) through the continuing cells (``w:vMerge`` without
@@ -68,6 +70,15 @@ def v_header_row(tr, chain: List[Any]) -> bool:
     if own is None:
         own = next((e for st in chain for e in [st.find(f"{W}trPr/{W}tblHeader")] if e is not None), None)
     return own is not None and own.get(W + "val") not in _V_OFF
+
+
+def v_header_top(tbl, chain: List[Any]) -> int:
+    """The number of own rows, counted from the first, that are header rows without a break — the rows a page repeats."""
+    rows = v_rows(tbl)
+    k = 0
+    while k < len(rows) and v_header_row(rows[k], chain):
+        k += 1
+    return k
 
 
 def v_rows_chosen(tbl, pred: Any, chain: List[Any], text_of: Dict[Any, str]) -> List[int]:
