@@ -359,12 +359,12 @@ class InsertField(Op):
         if req["position"] and not is_targeted(select):
             raise JobException("a field at the start or end of paragraphs needs a targeted 'paragraphs' selector "
                                "naming them", "bad-params")
-        scope = select.get("scope") or list(DEFAULT_SCOPE)
+        scope = select["scope"] if select.get("scope") is not None else list(DEFAULT_SCOPE)
         if isinstance(scope, str):
             scope = [scope]
-        bad = [k for k in scope if k not in SCOPES]
-        if bad:
-            raise JobException(f"insert_field's scope is some of {list(SCOPES)}, got {bad}", "bad-params")
+        bad = [k for k in scope if k not in SCOPES] if isinstance(scope, list) else [scope]
+        if bad or not scope:
+            raise JobException(f"insert_field's scope is some of {list(SCOPES)}, got {scope!r}", "bad-params")
         parts = scope_parts(pkg, scope)
         sheet = StyleSheet(pkg)
         instr, reads = instruction(pkg, sheet, params)

@@ -248,7 +248,7 @@ def _inserted_fields(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                     else pred not in (None, "all", {}))
         if not targeted:
             raise ValueError("a field at the start or end of paragraphs needs a targeted paragraph selector")
-    scope = select.get("scope") or ["document", "headers", "footers"]
+    scope = select["scope"] if select.get("scope") is not None else ["document", "headers", "footers"]
     if isinstance(scope, str):
         scope = [scope]
     if not scope or set(scope) - set(_V_SCOPES):
