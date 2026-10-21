@@ -1,6 +1,6 @@
 # Core (required on every platform)
 lxml>=5.0
-pymupdf>=1.24
+pymupdf>=1.24,<2      # 2.0 loads an unused layout-analysis model (onnxruntime, numpy) on every import
 
 # The desktop window (spec-surgeon-gui): a local server and its page in a native WebView2 window
 fastapi>=0.115

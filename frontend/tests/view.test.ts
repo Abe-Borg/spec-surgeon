@@ -280,6 +280,25 @@ test("a retrying status drops the abandoned attempt's words and thinking", () =>
   assert.equal(state.live?.status, null); // the reply being written clears the strip, as always
 });
 
+test("a fresh view keeps the message objects already shown, so their bubbles are not parsed again", () => {
+  const first = message("m1", "user", "Make the title bold.");
+  const second = message("m2", "assistant", "Done — the **title** is bold.");
+  const before = loaded({ messages: [first, second] });
+  // The same conversation as new JSON (a refresh, the job's `done`), with one reply edited and one added.
+  const again = before.view.messages.map((m) => ({ ...m }));
+  const refreshed = reduce(before, { type: "view", view: view({ messages: again }) });
+  assert.equal(refreshed.view.messages[0], first);
+  assert.equal(refreshed.view.messages[1], second);
+  const edited = { ...second, text: "Done — the **title** is bold and centered." };
+  const third = message("m3", "assistant", "Anything else?");
+  const done = run(before, { type: "done", state: view({ messages: [{ ...first }, edited, third] }) });
+  assert.equal(done.view.messages[0], first);
+  assert.notEqual(done.view.messages[1], second);
+  assert.equal(done.view.messages[1].text, edited.text);
+  assert.deepEqual(done.view.messages[2], third);
+  assert.equal(done.live, null);
+});
+
 test("a view without the to-do fields (an older server) normalizes to an empty list and no pass", () => {
   const v = normalizeView({ version: "1.6.0", action: { label: "x", token: "t", kind: "approve" } });
   assert.deepEqual(v.todo, []);

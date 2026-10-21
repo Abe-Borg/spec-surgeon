@@ -217,7 +217,10 @@ body {
 }
 
 /* Live status strip — the "app is not frozen" line inside a streaming bubble.
-   A shimmer sweep over the label plus three pulsing dots. */
+   The label breathes and three dots pulse. Both animate only opacity and
+   transform, which the compositor runs without repainting the page: the strip
+   stays up through minutes of rendering, and a sweep of `background-position`
+   over clipped text repainted it on every frame for all of that time. */
 .status-strip {
   display: flex;
   align-items: center;
@@ -255,21 +258,16 @@ body {
   }
 }
 .status-shimmer {
-  background: linear-gradient(
-    90deg,
-    var(--color-ink-faint) 20%,
-    var(--color-ink) 50%,
-    var(--color-ink-faint) 80%
-  );
-  background-size: 200% 100%;
-  -webkit-background-clip: text;
-  background-clip: text;
-  color: transparent;
-  animation: status-shimmer 1.8s linear infinite;
+  color: var(--color-ink);
+  animation: status-breathe 2.4s ease-in-out infinite;
 }
-@keyframes status-shimmer {
-  to {
-    background-position: -200% 0;
+@keyframes status-breathe {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+  50% {
+    opacity: 1;
   }
 }
 
