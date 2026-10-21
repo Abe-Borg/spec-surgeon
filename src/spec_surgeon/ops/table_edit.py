@@ -13,9 +13,10 @@ them. Checked over that content, in this order (the first that applies refuses):
 4. a complex field some of whose markers (begin, separate, end) lie inside and some outside, or a permission, move or
    custom-XML range with one end inside and one outside → ``table-anchor``;
 5. tracked: a pending tracked change inside — an insertion, deletion or move of content, of a paragraph mark or of a
-   row, or a cell insertion, deletion or merge — → ``existing-revisions``; a paragraph holding anything but its
-   properties, runs, bookmarks and proofing marks (a hyperlink, content control, simple field, smart tag, equation …) →
-   ``structure``; a text box (``w:txbxContent``) → ``textbox``.
+   row, or a cell insertion, deletion or merge — → ``existing-revisions``; a text box (``w:txbxContent``) →
+   ``textbox``; a paragraph holding anything but its properties, runs, bookmarks and proofing marks (a hyperlink,
+   content control, simple field, smart tag, equation …), or a run whose ``w:t``/``w:instrText`` lies below another of
+   its elements (a phonetic guide) → ``structure``.
 
 Bookmarks never refuse. One wholly inside goes with it (untracked) or stays where it is (tracked). An end whose partner
 (the ``w:bookmarkStart``/``w:bookmarkEnd`` with its ``w:id``) lies outside everything the op deletes in the part keeps its
@@ -167,6 +168,8 @@ def removal(root, gone: Sequence[Any], tracked: bool, where: str) -> Removal:
                                    f"or in Word", "textbox", {"where": where})
             for p in g.iter(W + "p"):
                 odd = [etree.QName(c).localname for c in p if isinstance(c.tag, str) and c.tag not in TRACKABLE_CHILDREN]
+                odd += ["text below another run element (a phonetic guide …)" for c in p if c.tag == W + "r"
+                        and any(t.getparent() is not c for t in c.iter(W + "t", W + "instrText"))]
                 if odd:
                     raise JobException(f"{where}: a paragraph in it holds {sorted(set(odd))}, which a tracked deletion "
                                        f"does not cover (plain runs, bookmarks and proofing marks only) — delete it "

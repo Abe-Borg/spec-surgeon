@@ -35,7 +35,10 @@ def v_check_rows(pred: Any) -> None:
     if "text_regex" in pred:
         if not isinstance(pred["text_regex"], str):
             raise ValueError("bad rows.text_regex (the op must refuse)")
-        re.compile(pred["text_regex"])                        # re.error is a ValueError
+        try:
+            re.compile(pred["text_regex"])
+        except re.error as e:
+            raise ValueError(f"bad rows.text_regex: {e} (the op must refuse)")
     if "header" in pred and not isinstance(pred["header"], bool):
         raise ValueError("bad rows.header (the op must refuse)")
 

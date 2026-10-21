@@ -231,8 +231,8 @@ def _table_words(tables: Any) -> str:
     if tables.get("text_regex"):
         clauses.append("whose text matches the pattern " + quote(tables["text_regex"]))
     if tables.get("index_range"):
-        a, b = tables["index_range"]
-        clauses.append(f"numbered {a + 1} through {b}" if b - a > 1 else f"number {a + 1}")
+        a, b = tables["index_range"]                        # the table selector's range is inclusive at both ends
+        clauses.append(f"numbered {a + 1} through {b + 1}" if b > a else f"number {a + 1}")
     if tables.get("nested") is True:
         clauses.append("including nested tables")
     elif tables.get("nested") is False:

@@ -217,7 +217,7 @@ def table_words(params: Dict[str, Any]) -> str:
     if isinstance(rows, list) and rows and all(isinstance(r, list) and r for r in rows):
         n, m = len(rows), len(rows[0])
         return (f"a table of {prose.count(n, 'row')} and {prose.count(m, 'column')}, the first row with "
-                f"{cells_words(rows[0])[len('the '):]}")
+                f"{cells_words(rows[0])},")
     return "a table with the approved wording"
 
 
