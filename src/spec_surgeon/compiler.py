@@ -1199,7 +1199,8 @@ def _attached_checks(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     named = [d[k] for o in spec.get("ops", []) for d, k in input_slots(o)
              if resolved(d[k]) not in (templates if d is o.get("params") and k == "template" else inputs)]
     if named:
-        return [f"[input] the spec names {named}, which the user did not attach: a table or picture must be one of the "
+        listed = "; ".join(map(str, named))           # the paths as written, never a list's repr (it doubles a backslash)
+        return [f"[input] the spec names {listed}, which the user did not attach: a table or picture must be one of the "
                 f"INPUT FILES (its exact path), a template the attached template or one of the documents. Use an "
                 f"attached file, or call ask_user to have the user attach it."]
     return []
