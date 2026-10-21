@@ -41,6 +41,37 @@ Changes since v1.6.0.
 - **An update you set aside stays one click away.** After **Not now** on the update banner, the top bar keeps a
   "v1.7.0 available — install" pill (from 1280 px wide; About offers it at any width).
 
+## Full control: from one word to whole tables, sections and pictures
+
+Spec Surgeon now refuses only what it cannot predict, never what is large: deleting an article, a PART or the whole
+body is planned, previewed and verified like any other edit. Every new operation predicts its result before it runs
+and is checked by the independent verifier; content changes are tracked by default, as Word records them.
+
+- **Delete anything a selection covers.** "Delete article 2.3", "delete PART 3 to the end", "delete everything":
+  tables wholly inside the selection go with it, as do whole fields, comments and notes; a section break in it joins
+  the sections, as Word does. A selection can now run from a heading up to, not including, the next one. Footnotes
+  and endnotes can be removed, all or by their text.
+- **Move content.** A stretch of paragraphs, with the tables between them, goes before or after another paragraph:
+  untracked, or tracked as a deletion where it was and an insertion where it goes.
+- **Richer text.** New text may hold tabs and line breaks; one request inserts several paragraphs, each with its own
+  style, with bold, italic, underlined or superscript words. Superscript and subscript, hidden text, highlight,
+  character spacing and double strikethrough can be set on text or in styles.
+- **Tables.** Insert a table from an attached spreadsheet or CSV (or typed rows); add and delete rows; delete tables
+  and columns; shade cells, set their vertical alignment and column widths; merge cells. Tracked row insertions and
+  deletions can be accepted or rejected.
+- **Pictures.** Insert an attached picture (PNG, JPEG, GIF or BMP) in its own paragraph, remove pictures, resize them.
+- **Sections.** Insert and remove section breaks; set columns, line numbers, vertical alignment and how a section
+  starts.
+- **Fields and comments.** Insert page numbers ("Page X of Y"), dates, the file name, a style reference or a document
+  property, at your placeholder or at the end of a paragraph; Word fills in the result. Reply to comments with your
+  words and resolve or reopen threads.
+- **An empty document is taken** with a note instead of refused, so a blank shell can be built on.
+- Still out of reach by decision, and refused with a reason: shapes, SmartArt, charts, equations, embedded objects,
+  data-bound content controls, the theme, and edits inside text boxes.
+
+Not yet run in Word on real specifications: every new operation is tested on synthetic documents and rendered with
+LibreOffice; the first real runs are yours.
+
 Upgrading from 1.6.0 starts from 1.6.0's own window: the update banner's **Download**, or **Help ▾ → Check for
 updates** in its top bar.
 

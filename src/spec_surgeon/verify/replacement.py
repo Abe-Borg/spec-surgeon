@@ -155,8 +155,9 @@ def literal_replacement(ctx, assertion, errors):
             edits = [(chars[m.start()].pos, chars[m.end() - 1].pos + 1, replacement, False) for m in hits]
             allow_split = bool(params.get("allow_tracked_format_split", False))
             where = f"literal_replacement {part} block {index}"
+            # the replacement may hold tabs and line breaks (built-in batch 6 §4.3): written as w:tab / w:br
             v_check_edits(paragraph, v_items(paragraph), edits, tracked, field_runs,
-                          allow_tracked_format_split=allow_split)
+                          allow_tracked_format_split=allow_split, breaks=True)
             output_index = ctx.maps[part].get(index)
             if output_index is None:
                 errors.append(f"{where}: original paragraph has no final counterpart")
@@ -165,7 +166,7 @@ def literal_replacement(ctx, assertion, errors):
             if allow_split and tracked:
                 _normalize_split_ids(before, after, old_ids, errors, where)
             check_edited_paragraph(before, after, edits, tracked, assertion.get("author"), set(), old_ids,
-                                   where, errors, allow_tracked_format_split=allow_split)
+                                   where, errors, allow_tracked_format_split=allow_split, breaks=True)
             # The mature envelope check retains empty runs/containers and text
             # metadata in addition to the character-item proof above.
             from .effects import _check_edit_envelope
@@ -205,15 +206,16 @@ def paragraph_edits(ctx, assertion, errors):
             raise ValueError("paragraph_edits requires [start, end, literal text, drop_highlight] entries")
     tracked = assertion.get("tracked", True)
     author = assertion.get("author")
-    if type(tracked) is not bool or type(assertion.get("tabs", False)) is not bool:
-        raise ValueError("paragraph_edits tracked/tabs must be boolean")
+    if type(tracked) is not bool or type(assertion.get("tabs", False)) is not bool \
+            or type(assertion.get("breaks", False)) is not bool:
+        raise ValueError("paragraph_edits tracked/tabs/breaks must be boolean")
     if tracked and (not isinstance(author, str) or not author.strip()):
         raise ValueError("tracked paragraph_edits needs its explicit approved author")
     old_ids = set().union(*(part_revision_ids(ctx.src.xml(name)) for name in ctx.src_tp))
     before, after = source_view.pars[index], output_view.pars[output_index]
     where = f"paragraph_edits {part} block {index}"
     check_edited_paragraph(before, after, edits, tracked, author, _v_field_runs(source_view.root), old_ids,
-                           where, errors, tabs=assertion.get("tabs", False))
+                           where, errors, tabs=assertion.get("tabs", False), breaks=assertion.get("breaks", False))
     from .effects import _check_edit_envelope
     _check_edit_envelope(before, after, old_ids, where, errors)
     ctx.verified_blocks.setdefault(part, {})[index] = output_index

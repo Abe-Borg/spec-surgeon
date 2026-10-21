@@ -56,8 +56,8 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "field-result": (
         "Target Inside a Word Field",
         "The matched text is inside a live field instruction or cached field result (such as a TOC or REF field) "
-        "and is skipped to avoid corrupting field codes — or text to remove is part of a field that is not removed as "
-        "a whole: Word would show the field's result again when it updates fields.",
+        "and is skipped to avoid corrupting field codes — or text (or a picture) to remove is part of a field that is "
+        "not removed as a whole: Word would show the field's result again when it updates fields.",
     ),
     "nested-container": (
         "Target Inside Nested Container",
@@ -94,8 +94,8 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "textbox": (
         "Target Inside a Text Box",
-        "The selected paragraph — or a comment mark, link or field to remove — lives inside a text box (Word keeps two "
-        "copies of a text box); the operation only edits body paragraphs. Change that one in Word.",
+        "The selected paragraph — or a comment mark, link, field or picture to change — lives inside a text box (Word "
+        "keeps two copies of a text box); the operation only edits body paragraphs. Change that one in Word.",
     ),
     "table-cell": (
         "Would Empty a Table Cell",
@@ -264,6 +264,18 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Your Picture File Changed During the Run",
         "The new (or old) logo picture was edited after the plan read it. Preview again, then run.",
     ),
+    # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §5): pictures ----
+    "image-format": (
+        "The Picture Cannot Be Inserted",
+        "The attached picture is not a PNG, JPEG, GIF or BMP file Word shows as it is (the reason says what it is): an "
+        "SVG needs the PNG copy Word makes itself, and a photo turned by its camera setting must be saved upright. Save "
+        "it as a PNG and attach it again, or insert it once in Word.",
+    ),
+    "image-size": (
+        "The Picture's Size Cannot Be Worked Out Here",
+        "The picture's own size needs this file's page size and margins, which a section does not state — or the size "
+        "asked for rounds to nothing. Give the picture's width or height in inches.",
+    ),
     # ---- built-in batch 2 (docs/BUILTIN_OPS_BATCH2_DESIGN.md) ----
     "field-span": (
         "Field Runs Over Several Paragraphs",
@@ -345,9 +357,9 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "revision-kind": (
         "Tracked Change Left for Word",
-        "The file holds a tracked change this operation does not accept or reject: a table row or cell insertion or "
-        "deletion, a change inside an equation, or (when rejecting) a change of section or table properties. Accept or "
-        "reject that one in Word (Review tab), then run again — or name other authors or dates.",
+        "The file holds a tracked change this operation does not accept or reject: a table cell insertion, deletion "
+        "or merge, a moved table row, a change inside an equation, or (when rejecting) a change of section or table "
+        "properties. Accept or reject that one in Word (Review tab), then run again — or name other authors or dates.",
     ),
     "paragraph-merge": (
         "Accepting Would Join Paragraphs",
@@ -378,8 +390,69 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "table-structure": (
         "The Table Cannot Be Changed Safely",
         "A selected table has fewer rows than the header rows asked, rows or cells wrapped in a content control or "
-        "custom XML (so they cannot be counted safely), or no table properties at all. Ask for fewer header rows, or "
-        "fix the table in Word (remove the content control around its rows), then run again.",
+        "custom XML (so they cannot be counted safely), no rows, a cell without a paragraph, or no table properties at "
+        "all — or deleting a table whole (or accepting the deletion of its every row) would leave its cell or the "
+        "document without a closing paragraph, or set the tables before and after it side by side, which Word joins "
+        "into one. Ask for fewer header rows, or fix the table in Word (remove the content control around its rows, "
+        "or delete the table there), then run again.",
+    ),
+    # built-in batch 6 (table rows and tables)
+    "table-anchor": (
+        "The Table Holds Something Anchored Elsewhere",
+        "The table or rows to delete hold a comment's mark (the comment would stay without its place in the text), a "
+        "footnote or endnote mark when the deletion is not tracked (the note would stay without its mark), or part of "
+        "a field, permission or range whose other part lies outside them — or, merging cells, part of a range or field "
+        "whose other part stays in a cell beside the block, which the merge would put out of order. Remove the "
+        "comments first (in the same request), delete it as a tracked change, or delete or merge it in Word.",
+    ),
+    "vertical-merge": (
+        "The Rows Would Cut a Merged Cell",
+        "The rows to delete include the first row of a cell merged down across several rows (its text is in that "
+        "row) but not all of the merged block, so the cell would be left without its content — or the columns to "
+        "delete would take some of a merged-down cell's parts and keep others. Delete the whole merged block, or "
+        "unmerge the cells in Word first, then run again.",
+    ),
+    "table-shape": (
+        "The New Rows or the Cells to Merge Do Not Fit the Table",
+        "A new row gives more or fewer texts than the table's row has cells, or the row the new rows copy has merged "
+        "cells (a cell spanning columns, or merged across rows), whose layout a new row cannot copy — or the cells to "
+        "merge are not one unbroken block of rows and columns, or part of the block has no cell (a row that starts "
+        "late or ends early). Give one text per cell, place the rows by a row without merged cells, or choose one "
+        "block of cells.",
+    ),
+    "header-rows": (
+        "The New Rows Would Break the Repeating Header Rows",
+        "Word repeats a table's header rows at the top of every page only while they run on from its first row. The "
+        "new rows would split the header rows that repeat on every page, or are asked for as header rows where they "
+        "would not join them (Word would ignore the marking). Ask for them as header rows (repeat_header) to place "
+        "them among the header rows, or put them after the header rows.",
+    ),
+    "table-placement": (
+        "A New Table Cannot Go There",
+        "The paragraph the new table is placed by is inside a table, or the new table would stand directly beside "
+        "another table (Word joins two such tables into one), or after the document's last paragraph (a document ends "
+        "with a paragraph), or its section states no page width and margins to make it full width. Place it by "
+        "another paragraph, or give column widths.",
+    ),
+    # built-in batch 6 (table grid and cells)
+    "every-column": (
+        "Every Column of the Table Would Go",
+        "The columns to delete are all the table has; a table cannot be left without columns. Ask to delete the table "
+        "instead.",
+    ),
+    "table-grid": (
+        "The Table's Columns Cannot Be Counted Safely",
+        "The table has no column grid (or two), a row that runs past its grid or a count of empty grid columns that is "
+        "not a number, cells joined by Word's old horizontal merge, a column without a width where a width must be "
+        "taken off or added up, a width that would fall to nothing, or a deletion that would leave a row without a "
+        "cell. Fix the table in Word (Table Properties, or merge and split the cells again), or delete the row first, "
+        "then run again.",
+    ),
+    "merge-overlap": (
+        "The Cells to Merge Cut a Merged Cell",
+        "The block of cells to merge takes only part of a cell that already spans columns or is merged down across "
+        "rows, or the cell just below the block continues a merge and would join this one. Choose a block that takes "
+        "merged cells whole, or unmerge them in Word first.",
     ),
     # built-in batch 5 (list levels and the audit)
     "numbering-override": (
@@ -432,6 +505,135 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "format the engine does not model, a level that has no value yet, or an unreadable definition. Nothing was "
         "changed. Simplify the list in Word (Restart / Continue Numbering, Define New Multilevel List), or run the "
         "numbering audit to see where, then run again.",
+    ),
+    # built-in batch 6 (sections)
+    "break-position": (
+        "A Section Break Cannot Go There",
+        "A section break goes between two paragraphs of the body: the paragraph before it ends the section. The chosen "
+        "paragraph is the document's first, follows a table or a content control (no paragraph before it to carry the "
+        "break), already starts a section, or lies inside a table or a content control. Choose another paragraph, or "
+        "insert the break in Word.",
+    ),
+    "tracked-section": (
+        "Pending Tracked Change at a Section Break",
+        "The section to split or join carries someone's pending tracked change of its page setup, or the paragraph mark "
+        "that holds (or would hold) the section break is a pending tracked insertion or deletion. Which side would keep "
+        "that change cannot be predicted. Accept or reject it in Word (Review tab), then run again.",
+    ),
+    "last-section": (
+        "The Last Section Has No Break to Remove",
+        "The last section ends the document, not at a section break, so there is no break at its end to remove. To join "
+        "it with the section before it, choose that section (the break at its end goes).",
+    ),
+    # built-in batch 6, F9 (move_paragraphs)
+    "move-gap": (
+        "Paragraphs to Move Are Not One Stretch",
+        "The paragraphs chosen to move do not follow one another: a paragraph between them is not chosen, or a chosen "
+        "paragraph sits in a table outside the stretch. Choose one unbroken stretch (from a start paragraph through an "
+        "end paragraph) and move other paragraphs in a step of their own.",
+    ),
+    "move-container": (
+        "Paragraphs to Move Are in More Than One Place",
+        "The paragraphs chosen to move are not all in one place — the body, one table cell, one header, footer, note or "
+        "comment — or they start inside a content control. Move each stretch on its own, or move that content in Word.",
+    ),
+    "move-anchor": (
+        "Destination Paragraph Cannot Take the Move",
+        "The paragraph the move should go before or after is one of the paragraphs being moved, or it is not in the "
+        "same place as them (it is in a table cell, a text box or another container while they are not), or the place "
+        "lies inside a field that runs over several paragraphs (a table of contents), whose text Word replaces when it "
+        "updates fields. Name a destination paragraph beside them — for a place after a table, the paragraph after the "
+        "table, 'before'.",
+    ),
+    "move-table-edge": (
+        "Moving Would Leave Two Tables Touching",
+        "Once the paragraphs leave, the table before them would touch the table after them, or the table cell or "
+        "document would end in a table, which Word cannot show as it is. Include one of the tables in the move, or "
+        "leave a paragraph beside it.",
+    ),
+    "move-split-range": (
+        "Moving Would Cut a Bookmark, Comment, Field or Permission",
+        "A bookmark, comment, editing-permission range, pending moved text or a field that runs over several paragraphs "
+        "(a table of contents) starts among the paragraphs to move and ends outside them (or the reverse), so moving "
+        "them would cut it in two; or the destination lies inside such a range (it runs on past the destination "
+        "paragraph) that the paragraphs are not in, so they would join it. Widen or narrow the stretch to take it "
+        "whole, choose a destination outside the range, or remove it in Word first.",
+    ),
+    "move-last-section": (
+        "Moving Would Empty the Last Section",
+        "The paragraphs to move are everything in the document's last section (after its last section break); moving "
+        "them out would leave that section without a paragraph, which Word shows as an empty last page. Nothing was "
+        "changed. Leave a paragraph in that section, move them within it, or remove the section break before them "
+        "first (remove_section_break), then run again.",
+    ),
+    "comment-last-paragraph": (
+        "A Comment's Last Paragraph Would Go",
+        "The paragraph to delete or move is the last paragraph of a comment, and Word records the comment's thread — "
+        "its replies and whether it is resolved — against that paragraph; removing it, moving it, or moving paragraphs "
+        "after it would leave the thread pointing at nothing. Nothing was changed. Take the whole comment (delete the "
+        "text it is anchored to, or remove the comment), leave its last paragraph where it is, or edit the comment in "
+        "Word, then run again.",
+    ),
+    "move-tracked-content": (
+        "Content a Tracked Move Cannot Copy",
+        "A tracked move deletes the paragraphs where they are and inserts a copy where they go; a table, field, "
+        "hyperlink, content control, comment, picture or footnote reference among them cannot be copied that way. "
+        "Move them untracked (they move exactly as they are), or move them in Word.",
+    ),
+    # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §9): fields and comment threads ----
+    "field-argument": (
+        "The Field Names Something This File Does Not Have",
+        "The field to insert shows a style's text (STYLEREF) or a document property (DOCPROPERTY), and this file has no "
+        "such style (or two of that name, or one that is not a paragraph or character style) or no such property; Word "
+        "would show an error where the field is. Name a style or property the file has — the built-in properties are "
+        "Title, Subject, Author, Keywords, Comments, Category, Company, Manager and LastSavedBy — or add it in Word "
+        "first.",
+    ),
+    "comment-anchor": (
+        "A Reply Cannot Find Its Comment's Place",
+        "The comment to reply to has no single reference mark in the text, its thread's marks lie in two parts of the "
+        "file, or its range starts after its reference (or between paragraphs with no paragraph after it), so where "
+        "Word would show the reply cannot be told. Nothing was changed; reply to that comment in Word.",
+    ),
+    "comment-metadata": (
+        "The File's Comment Threads Are Irregular",
+        "This file keeps its comment threads in parts Word does not write that way — comment dates without comment "
+        "ids, a threads part with another kind of content, or a comment the file's comment ids leave out — so a reply "
+        "or a resolved mark could not be kept consistent with the rest. Nothing was changed. Open the file in Word, "
+        "save it, and run again, or reply and resolve in Word.",
+    ),
+    # built-in batch 6 (deletion)
+    "tables-join": (
+        "Two Tables Would Touch",
+        "The deletion would leave two tables with nothing between them (Word would join them into one), and no "
+        "paragraph between them can stay to keep them apart. Nothing was changed. Keep one paragraph between them, or "
+        "delete one of the tables too, then run again.",
+    ),
+    "field-crossing": (
+        "A Field Runs Past the Edge of the Deletion",
+        "The paragraphs to delete hold part of a field that goes on outside them — a table of contents, an index, or "
+        "another field over several paragraphs — so deleting only part of it would break the field. Nothing was "
+        "changed. Choose every paragraph the field covers, or none of them (or update or remove the field in Word), "
+        "then run again.",
+    ),
+    "comment-crossing": (
+        "A Comment Runs Past the Edge of the Deletion",
+        "A comment's marked text lies partly inside the paragraphs to delete and partly outside them (or a reply to a "
+        "comment that goes is anchored outside them), so removing the text outright would cut the comment's anchor. "
+        "Nothing was changed. Remove that comment first, choose all of its text, or delete with tracked changes, then "
+        "run again.",
+    ),
+    "embedded-object": (
+        "The Deletion Holds a Chart, Diagram or Embedded Object",
+        "The content to delete holds a chart, a SmartArt diagram, an embedded object or a control, which lives in its "
+        "own part of the file; removing it outright cleanly is done in Word. Nothing was changed. Delete that object in "
+        "Word (or delete with tracked changes), then run again.",
+    ),
+    "custom-mark": (
+        "A Footnote Uses a Custom Mark",
+        "The footnote or endnote to remove is marked with a symbol typed in place of its number (a custom mark), which "
+        "the engine cannot remove together with the note safely. Nothing was changed. Remove that note in Word, or "
+        "narrow the removal with a text pattern, then run again.",
     ),
 }
 

@@ -391,9 +391,19 @@ def test_chunk4_delete_paragraphs_tracked_and_untracked_and_planted_defects():
     assert rec_u.passed, rec_u.to_markdown()
     assert len(plan_u.diffs) == 1 and plan_u.diffs[0].after is None
 
-    # Refuses deleting all paragraphs without a targeted selector
+    # "all" is a selection like any other (batch 6, F2): the size of a deletion is never a refusal. This file holds
+    # pending tracked changes, so only a tracked deletion of everything is refused — for them; untracked it plans
     with pytest.raises(JobException) as e:
         get_op("delete_paragraphs").plan(pkg, {"paragraphs": "all"}, {})
+    assert e.value.code == "existing-revisions"
+    frag_a = get_op("delete_paragraphs").plan(pkg, {"paragraphs": "all"}, {"tracked": False})
+    work_a = pkg.copy()
+    get_op("delete_paragraphs").apply(work_a, frag_a)
+    rec_a = run_suite(src, work_a.output_bytes(), merge_fragments([frag_a]).to_dict(), "src.docx", "out.docx")
+    assert rec_a.passed, rec_a.to_markdown()
+    # without a selector at all it is still refused: a deletion names what it deletes
+    with pytest.raises(JobException) as e:
+        get_op("delete_paragraphs").plan(pkg, {}, {})
     assert e.value.code == "bad-params"
 
 
@@ -526,7 +536,7 @@ def test_noise_merge_keeps_complex_script_flag_and_untouched_proofing_markers():
     assert (count(src), count(out)) == (4, 3)      # only the marker between the two merged runs went
 
 
-def test_tracked_delete_tolerates_bookmarks_and_proofing_markers_but_not_hyperlinks():
+def test_tracked_delete_tolerates_bookmarks_proofing_markers_and_hyperlinks_but_not_equations():
     def add_bookmark(root):
         for p in root.find(W + "body").findall(W + "p"):
             if any((t.text or "") == "GENERAL" for t in p.iter(W + "t")):
@@ -548,9 +558,22 @@ def test_tracked_delete_tolerates_bookmarks_and_proofing_markers_but_not_hyperli
                 h = etree.SubElement(p, W + "hyperlink"); h.set(W + "anchor", "top")
                 etree.SubElement(etree.SubElement(h, W + "r"), W + "t").text = "link"
                 return
-    with pytest.raises(JobException) as e:                  # the link's text joins the block text: anchor on the start only
-        get_op("delete_paragraphs").plan(DocxPackage(mutate_xml(build("21 05 00", "X"), "word/document.xml", add_hyperlink)),
-                                         {"paragraphs": {"text_regex": r"^GENERAL"}}, {"tracked": True, "author": AUTHOR})
+    # batch 6 (F2): a tracked deletion now goes through a hyperlink as Word records it — the link's run in a w:del of its
+    # own inside the w:hyperlink (the link's text joins the block text: anchor on the start only)
+    linked = mutate_xml(build("21 05 00", "X"), "word/document.xml", add_hyperlink)
+    plan, out, rec = run_op(linked, "delete_paragraphs", {"paragraphs": {"text_regex": r"^GENERAL"}},
+                            {"tracked": True, "author": AUTHOR})
+    assert rec.passed, rec.to_markdown()
+    p_out = next(p for p in doc_root(out).iter(W + "p") if p.find(W + "hyperlink") is not None)
+    assert p_out.find(f"{W}hyperlink/{W}del/{W}r/{W}delText").text == "link"
+
+    def add_math(root):                                    # content a tracked deletion is not written over: refused
+        p = next(p for p in root.find(W + "body").findall(W + "p")
+                 if any((t.text or "") == "GENERAL" for t in p.iter(W + "t")))
+        etree.SubElement(p, "{http://schemas.openxmlformats.org/officeDocument/2006/math}oMath")
+    with pytest.raises(JobException) as e:
+        get_op("delete_paragraphs").plan(DocxPackage(mutate_xml(build("21 05 00", "X"), "word/document.xml", add_math)),
+                                         {"paragraphs": {"text_regex": r"^GENERAL$"}}, {"tracked": True, "author": AUTHOR})
     assert e.value.code == "structure"
 
 

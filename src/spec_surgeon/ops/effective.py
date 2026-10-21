@@ -236,22 +236,31 @@ class Resolver:
 
 
 # ---- set_properties: the effective value of one property, with its provenance -----------------------------------
-# The op's own definition (docs/SET_PROPERTIES_DESIGN.md §3), apart from the pinnable resolver above: the verifier
-# re-implements it in verify/props.py (_v_run_prop / _v_para_prop) — CLAUDE.md lists the two among the definitions
-# that must stay identical. Toggles (b, bCs, i, iCs, caps, smallCaps, strike): direct formatting wins; specified at
-# exactly one style level (docDefaults, table, paragraph and character style chains) → that value; nowhere → off; more
-# than one → ambiguous (None; Word XORs them — not modelled). w:u, w:color and the paragraph flags: the nearest level
-# that specifies them, else the default. Provenance: "direct", "style:<id>", "docDefaults" or "default".
+# The op's own definition (docs/SET_PROPERTIES_DESIGN.md §3, docs/BUILTIN_OPS_BATCH6_DESIGN.md §3), apart from the
+# pinnable resolver above: the verifier re-implements it in verify/props.py (_v_run_prop / _v_para_prop) — CLAUDE.md
+# lists the two among the definitions that must stay identical. Toggles (b, bCs, i, iCs, caps, smallCaps, strike,
+# dstrike, vanish): direct formatting wins; specified at exactly one style level (docDefaults, table, paragraph and
+# character style chains) → that value; nowhere → off; more than one → ambiguous (None; Word XORs them — not modelled).
+# w:dstrike is no toggle in ECMA-376's list, but it is read as one here (as numbering_convert's look does): specified at
+# two style levels it is set directly rather than trusted to either reading. w:u, w:color, w:vertAlign, w:highlight,
+# the character w:spacing and the paragraph flags: the nearest level that specifies them, else the default.
+# Provenance: "direct", "style:<id>", "docDefaults" or "default".
 
 PROP_PAIRS = {"b": ("b", "bCs"), "i": ("i", "iCs"), "caps": ("caps",), "smallCaps": ("smallCaps",),
-              "strike": ("strike",)}
-RUN_TOGGLE_ELEMENTS = ("b", "bCs", "i", "iCs", "caps", "smallCaps", "strike")
+              "strike": ("strike",), "dstrike": ("dstrike",), "vanish": ("vanish",)}
+RUN_TOGGLE_ELEMENTS = ("b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "vanish")
 PARA_FLAGS = ("keepNext", "keepLines", "widowControl", "pageBreakBefore")
 PARA_FLAG_DEFAULTS = {"keepNext": False, "keepLines": False, "widowControl": True, "pageBreakBefore": False}
 CASE_ELEMENTS = {"caps", "smallCaps"}          # never on a symbol run: case-mapping a dingbat changes the glyph
-REFLOW_ELEMENTS = {"b", "bCs", "i", "iCs", "caps", "smallCaps"}   # change glyph widths: the text reflows
+# change glyph widths, positions or what is shown at all: the text reflows
+REFLOW_ELEMENTS = {"b", "bCs", "i", "iCs", "caps", "smallCaps", "vanish", "vertAlign", "spacing"}
 UNDERLINES = ("single", "double", "words", "dotted", "dash", "wave", "none")
+VERT_ALIGNS = ("superscript", "subscript", "baseline")
 COLOR_DEFAULT = ("auto", None, None, None)
+# the default of each value property nothing specifies (w:spacing: twentieths of a point, as an integer)
+VALUE_DEFAULTS = {"u": "none", "highlight": "none", "vertAlign": "baseline", "spacing": 0}
+# single and double strikethrough exclude each other, as in Word: asking one on turns the other off
+STRIKE_PARTNER = {"strike": "dstrike", "dstrike": "strike"}
 
 
 def on_off(el) -> Optional[bool]:
@@ -261,19 +270,29 @@ def on_off(el) -> Optional[bool]:
 
 def prop_read(element: str, el):
     """The value an element gives its property: on/off for toggles and paragraph flags, the (val, themeColor,
-    themeShade, themeTint) tuple for w:color, w:val for w:u (None when the attribute is missing)."""
+    themeShade, themeTint) tuple for w:color, w:val for w:u, w:vertAlign and w:highlight (None when the attribute is
+    missing), w:spacing's w:val as an integer (its text when it is not one — a measure with a unit is never "already")."""
     if el is None:
         return None
     if element == "color":
         return (el.get(W + "val"), el.get(W + "themeColor"), el.get(W + "themeShade"), el.get(W + "themeTint"))
-    if element == "u":
+    if element in ("u", "vertAlign", "highlight"):
         return el.get(W + "val")
+    if element == "spacing":
+        val = el.get(W + "val")
+        return int(val) if val is not None and re.fullmatch(r"-?[0-9]+", val) else val
     return on_off(el)
+
+
+def twentieths(points: Any) -> int:
+    """Character spacing in points (validated by the op: a multiple of 0.05 pt) as w:spacing's twentieths of a point."""
+    return int(round(float(points) * 20))
 
 
 def run_elements(run_set: Dict[str, Any]) -> Dict[str, Any]:
     """User-facing run properties (validated) → the asked value per element: b/i expand to the complex-script pairs
-    Word itself writes (a w:cs run draws its weight and slant from w:bCs/w:iCs), color to the effective tuple."""
+    Word itself writes (a w:cs run draws its weight and slant from w:bCs/w:iCs), color to the effective tuple, spacing
+    to twentieths of a point; strike or dstrike on brings its partner off (unless asked too), as Word does."""
     out: Dict[str, Any] = {}
     for k, v in (run_set or {}).items():
         if k in PROP_PAIRS:
@@ -281,10 +300,15 @@ def run_elements(run_set: Dict[str, Any]) -> Dict[str, Any]:
                 out[e] = bool(v)
         elif k == "color":
             out["color"] = (v, None, None, None)
-        elif k == "u":
-            out["u"] = v
+        elif k in ("u", "vertAlign", "highlight"):
+            out[k] = v
+        elif k == "spacing":
+            out["spacing"] = twentieths(v)
         else:
             raise ValueError(f"unknown run property {k!r}")
+    for k, partner in STRIKE_PARTNER.items():
+        if out.get(k) is True and partner not in (run_set or {}):
+            out[partner] = False
     return out
 
 
@@ -345,7 +369,7 @@ class PropResolver:
             return COLOR_DEFAULT, "default"
         if element in PARA_FLAGS:
             return PARA_FLAG_DEFAULTS[element], "default"
-        return "none", "default"
+        return VALUE_DEFAULTS.get(element, "none"), "default"
 
     def run_prop(self, rpr, p, element: str) -> Tuple[Any, str]:
         return self._resolve(self._levels_run(p, rpr), rpr, element)

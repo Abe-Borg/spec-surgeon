@@ -5,9 +5,9 @@ this module's OWN selector resolution, style-chain walking and theme lookup (not
 ooxml.py — a selector bug on the transform side must not be able to hide behind the same bug here):
 
 1. **Assertions.** Each ``plan["property_assertions"]`` entry names a kind (run_fonts, style_fonts,
-   doc_defaults_fonts, paragraph_props, section_props, section_hf_refs, effective_font, deleted_paragraphs,
-   inserted_paragraphs, properties), a selector, the property values and the predicted target count. The selection is
-   re-resolved here; the count must match the plan, and every selected target must carry exactly the asserted
+   doc_defaults_fonts, paragraph_props, section_props, section_hf_refs, effective_font, inserted_paragraphs,
+   properties — the op families' kinds in their own modules, imported at the end), a selector, the property values
+   and the predicted target count. The selection is re-resolved here; the count must match the plan, and every selected target must carry exactly the asserted
    change — no more (every other child and attribute identical to the source) and, for tracked changes, a
    w:rPrChange / w:pPrChange whose snapshot is the source's properties.
 
@@ -316,6 +316,16 @@ PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range",
              "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs",
              "case_insensitive", "flexible_whitespace"}
 RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions", "color_in"}
+# is_empty: no block text, and nothing shown without text — a picture or drawing (w:drawing, VML w:pict, an
+# mc:AlternateContent choice), an embedded object, a text box, a field (w:fldSimple, any w:fldChar)
+_V_SHOWN_WITHOUT_TEXT = {W + "drawing", W + "pict", W + "object", W + "txbxContent", W + "fldSimple", W + "fldChar",
+                         "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"}
+
+
+def _v_is_empty(p, text: str) -> bool:
+    if text:
+        return False
+    return not any(isinstance(x.tag, str) and x.tag in _V_SHOWN_WITHOUT_TEXT for x in p.iter())
 
 
 def _v_selector_style(p, styles: Styles) -> Optional[str]:
@@ -431,7 +441,7 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
         return False
     if "in_table" in pred and _has_ancestor(p, {W + "tc"}, None) != bool(pred["in_table"]):
         return False
-    if "is_empty" in pred and (view.texts[bi] == "") != bool(pred["is_empty"]):
+    if "is_empty" in pred and _v_is_empty(p, view.texts[bi]) != bool(pred["is_empty"]):
         return False
     if "index_range" in pred:
         a, b = pred["index_range"]
@@ -459,12 +469,11 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
             ends = [i for i in range(s_idx + 1, len(view.texts)) if erx.search(view.texts[i])]
             if ends:
                 e_idx = ends[0]
-        if bp.get("include_bounds", False):
-            if not (s_idx <= bi <= (e_idx if e_idx < len(view.texts) else len(view.texts) - 1)):
-                return False
-        else:
-            if not (s_idx < bi < e_idx):
-                return False
+        bounds = bp.get("include_bounds", False)             # True (both), False (neither), "start" or "end"
+        lo = s_idx if bounds is True or bounds == "start" else s_idx + 1
+        hi = (e_idx + 1 if e_idx < len(view.texts) else len(view.texts)) if bounds is True or bounds == "end" else e_idx
+        if not lo <= bi < hi:
+            return False
     return True
 
 
@@ -547,7 +556,7 @@ class Ctx:
         self.strip_styles: Set[str] = set()
         self.strip_doc_defaults = False
         self.added_styles: Set[str] = set()       # new styles a styles_added assertion accounted for
-        self.deleted_src_blocks: Dict[str, Set[int]] = {}   # untracked deleted blocks verified by deleted_paragraphs
+        self.deleted_src_blocks: Dict[str, Set[int]] = {}   # untracked deleted blocks a removal kind verified
         self.inserted_out_blocks: Dict[str, Set[int]] = {}  # inserted output blocks verified by inserted_paragraphs
         self.strip_style_ppr: Dict[str, Set[str]] = {}      # style id → pPr children a properties assertion checked
         # source block → output block of every paragraph an edit kind checked item by item (verify/edits.py): the
@@ -573,6 +582,7 @@ class Ctx:
         self.strip_tr: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}     # part → {(ordinal, row): trPr child names}
         self.strip_tc: Dict[str, Dict[Tuple[int, int, int], Set[str]]] = {}   # part → {(ordinal, row, cell): tcPr …}
         self.strip_tblprex: Dict[str, Dict[Tuple[int, int], Set[str]]] = {}  # part → {(ordinal, row): tblPrEx …}
+        self.strip_grid: Dict[str, Set[int]] = {}           # part → ordinals of tables whose w:tblGrid a kind checked
 
     def view(self, part):
         if part not in self.views:
@@ -1108,47 +1118,6 @@ def _paragraph_props(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
     return f"paragraph_props: {n} paragraph(s) → {setv}" + (" (tracked)" if tracked else "")
 
 
-def _deleted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
-    from .edits import check_deleted_paragraph, part_revision_ids
-
-    parts = ctx.scope_parts(a.get("scope", ["document"]))
-    pred = (a.get("select") or {}).get("paragraphs")
-    tracked = bool(a.get("tracked", True))
-    old_ids = set().union(*(part_revision_ids(ctx.src.xml(name)) for name in ctx.src_tp))
-    n = 0
-    for part in parts:
-        if part not in ctx.both:
-            errs.append(f"deleted_paragraphs: {part} missing from the output")
-            continue
-        sv, ov = ctx.view(part)
-        for bi, p in enumerate(sv.pars):
-            if not para_matches(pred, p, bi, sv, ctx.src_styles):
-                continue
-            n += 1
-            if not tracked:
-                ctx.deleted_src_blocks.setdefault(part, set()).add(bi)
-            else:
-                oi = ctx.maps[part].get(bi)
-                if oi is None or oi >= len(ov.pars):
-                    errs.append(f"deleted_paragraphs: {part} block {bi} missing in tracked output")
-                    continue
-                op = ov.pars[oi]
-                check_deleted_paragraph(p, op, a.get("author"), old_ids,
-                                        f"deleted_paragraphs {part} block {bi}", errs)
-                from .effects import _check_edit_envelope
-                _check_edit_envelope(p, op, old_ids, f"deleted_paragraphs {part} block {bi}", errs,
-                                     deleting=True)
-                ctx.verified_blocks.setdefault(part, {})[bi] = oi
-                if a.get("mark_deleted", True):
-                    mrpr = op.find(W + "pPr/" + W + "rPr")
-                    d_el = mrpr.find(W + "del") if mrpr is not None else None
-                    if d_el is None or d_el.get(W + "id") is None or d_el.get(W + "author") != a.get("author"):
-                        errs.append(f"deleted_paragraphs: {part} block {bi} paragraph mark missing valid w:del")
-    if n != a.get("expected_paragraphs", -1):
-        errs.append(f"deleted_paragraphs: {n} paragraph(s) selected here, plan predicted {a.get('expected_paragraphs')}")
-    return f"deleted_paragraphs: {n} paragraph(s) ({'tracked' if tracked else 'untracked'})"
-
-
 _V_MARK_REVS = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "rPrChange"}
 
 
@@ -1204,16 +1173,157 @@ def _v_ppr_sans_mark_ins(p):
     return c if (len(c) or c.attrib) else None
 
 
+# insert_paragraph's wording (built-in batch 6, docs/BUILTIN_OPS_BATCH6_DESIGN.md §4.1–4.2), this module's own
+# reading: exactly one of ``text`` (one paragraph, one run), ``runs`` ([{text, b?, i?, u?, vertAlign?}]: one paragraph,
+# a run per segment) or ``paragraphs`` ([{text | runs, style?}]: several, in order); a tab and a line break in a text
+# are a bare w:tab / w:br run child where they stand, the characters between them a w:t each (none for an empty
+# stretch); no other control character; every paragraph holds a visible character. A segment's run: the inherited run
+# properties with its own over them — b/i as their pairs, exactly the attributes ``_v_expected_attrs`` gives, a new
+# element where the bundled schema's CT_RPr puts it.
+
+_V_SEGMENT_PROPS = {"b", "i", "u", "vertAlign"}
+_V_SEGMENT_UNDERLINES = {"single", "double", "words", "dotted", "dash", "wave", "none"}
+_V_BREAK_TAGS = {"\t": W + "tab", "\n": W + "br"}
+_V_SPACE = "{http://www.w3.org/XML/1998/namespace}space"
+
+
+def _v_segments(src: Dict[str, Any], where: str) -> List[Tuple[str, Dict[str, Any]]]:
+    if "text" in src:
+        if not isinstance(src["text"], str):
+            raise ValueError(f"{where}text is not a string (the op must refuse)")
+        segs = [(src["text"], {})]
+    else:
+        runs = src["runs"]
+        if not isinstance(runs, list) or not runs:
+            raise ValueError(f"{where}runs is not a non-empty list (the op must refuse)")
+        segs = []
+        for s in runs:
+            if not isinstance(s, dict) or not isinstance(s.get("text"), str) or not s["text"] \
+                    or set(s) - _V_SEGMENT_PROPS - {"text"}:
+                raise ValueError(f"{where}runs holds {s!r}, not {{text, b?, i?, u?, vertAlign?}} (the op must refuse)")
+            props = {k: v for k, v in s.items() if k != "text"}
+            if any(k in props and type(props[k]) is not bool for k in ("b", "i")) \
+                    or props.get("u", "single") not in _V_SEGMENT_UNDERLINES \
+                    or props.get("vertAlign", "baseline") not in V_VERT_ALIGNS:
+                raise ValueError(f"{where}runs: bad segment properties {props!r} (the op must refuse)")
+            segs.append((s["text"], props))
+    whole = "".join(t for t, _ in segs)
+    if any((ord(c) < 32 or c == "\x7f") and c not in _V_BREAK_TAGS for c in whole):
+        raise ValueError(f"{where}text {whole!r} holds a control character other than a tab or a line break "
+                         f"(the op must refuse)")
+    if not whole.strip():
+        raise ValueError(f"{where}text {whole!r} has nothing to read (the op must refuse)")
+    return segs
+
+
+def _v_new_paragraphs(a: Dict[str, Any]) -> List[Tuple[List[Tuple[str, Dict[str, Any]]], Any]]:
+    """The paragraphs an ``inserted_paragraphs`` assertion places, from the user's words in it: [(segments, style)] —
+    a paragraph's own style when its ``paragraphs`` entry names one, else the assertion's."""
+    given = [k for k in ("text", "runs", "paragraphs") if k in a]
+    if len(given) != 1:
+        raise ValueError(f"inserted_paragraphs needs exactly one of text, runs and paragraphs, got {given}")
+    if given[0] != "paragraphs":
+        return [(_v_segments(a, ""), a.get("style"))]
+    entries = a["paragraphs"]
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("inserted_paragraphs: paragraphs is not a non-empty list (the op must refuse)")
+    out = []
+    for k, e in enumerate(entries):
+        if not isinstance(e, dict) or set(e) - {"text", "runs", "style"} or ("text" in e) == ("runs" in e):
+            raise ValueError(f"inserted_paragraphs: paragraphs[{k}] is {e!r}, not {{text | runs, style?}}")
+        out.append((_v_segments(e, f"paragraphs[{k}]."), e["style"] if "style" in e else a.get("style")))
+    return out
+
+
+def _v_segment_rpr(base, props: Dict[str, Any]):
+    """The rPr a segment's run must carry: ``base`` (the inherited one, or none) with the segment's own properties."""
+    from .tableprops import v_insert, v_order        # verify/tableprops imports this module: imported when needed
+    asked = _v_run_elements(props)
+    if not asked:
+        return copy.deepcopy(base) if base is not None else None
+    rpr = copy.deepcopy(base) if base is not None else etree.Element(W + "rPr")
+    for e, v in asked.items():
+        old = rpr.find(W + e)
+        el = etree.Element(W + e)
+        for k, val in _v_expected_attrs(e, v, old).items():
+            el.set(k, val)
+        if old is not None:
+            rpr.replace(old, el)
+        else:
+            v_insert(rpr, el, v_order("CT_RPr"))
+    return rpr
+
+
+def _v_run_shape(run) -> Tuple[Any, ...]:
+    """A new run as compared: its attributes, its rPr, then each other child — (tag, text) for a w:t, (tag, attributes)
+    for anything else."""
+    return (tuple(sorted(run.attrib.items())), sig(run.find(W + "rPr")),
+            tuple((c.tag, c.text or "") if c.tag == W + "t" else (c.tag, tuple(sorted(c.attrib.items())))
+                  for c in run if isinstance(c.tag, str) and c.tag != W + "rPr"))
+
+
+def _local_tag(tag: str) -> str:
+    return tag[len(W):] if tag.startswith(W) else tag
+
+
+def _v_expected_shape(text: str, rpr) -> Tuple[Any, ...]:
+    kids: List[Tuple[str, Any]] = []
+    cur = ""
+    for ch in text:
+        if ch in _V_BREAK_TAGS:
+            if cur:
+                kids.append((W + "t", cur))
+            kids.append((_V_BREAK_TAGS[ch], ()))
+            cur = ""
+        else:
+            cur += ch
+    if cur:
+        kids.append((W + "t", cur))
+    return ((), sig(rpr), tuple(kids))
+
+
+def _v_check_new_runs(op, expected: List[Tuple[Any, ...]], tracked: bool, author, old_ids: Set[str],
+                      where: str, errs: List[str]) -> None:
+    """The new paragraph's content: tracked, exactly one NEW w:ins (author, date, an id no source revision has) holding
+    exactly the expected runs; untracked, exactly those runs — each of the expected shape, edge whitespace preserved."""
+    content = [c for c in op if isinstance(c.tag, str) and c.tag != W + "pPr"]
+    if tracked:
+        ins = content[0] if len(content) == 1 and content[0].tag == W + "ins" else None
+        if ins is None or ins.get(W + "id") is None or ins.get(W + "id") in old_ids \
+                or ins.get(W + "author") != author or not ins.get(W + "date"):
+            errs.append(f"{where}: body is not one new w:ins by {author!r}")
+            return
+        content = [c for c in ins if isinstance(c.tag, str)]
+    if [c.tag for c in content] != [W + "r"] * len(expected):
+        errs.append(f"{where}: holds {[_local(c) or c.tag for c in content]}, expected {len(expected)} run(s)")
+        return
+    for k, (r, want) in enumerate(zip(content, expected)):
+        got = _v_run_shape(r)
+        if got != want:
+            why = [w for w, bad in (("its content", got[2] != want[2]), ("its run properties", got[1] != want[1]),
+                                    ("its run attributes", got[0] != want[0])) if bad]
+            errs.append(f"{where} run {k}: not the segment's run — {' and '.join(why)} differ (expected content "
+                        f"{[(_local_tag(t), x) for t, x in want[2]]}, found {[(_local_tag(t), x) for t, x in got[2]]})")
+        for t in r.iter(W + "t"):
+            if (t.text or "") != (t.text or "").strip() and t.get(_V_SPACE) != "preserve":
+                errs.append(f"{where} run {k}: {t.text!r} loses its edge whitespace (no xml:space preserve)")
+            if set(t.attrib) - {_V_SPACE} or t.get(_V_SPACE, "preserve") != "preserve":
+                errs.append(f"{where} run {k}: a w:t carries attributes other than xml:space preserve")
+
+
 def _inserted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
+    from .edits import part_revision_ids
+
     parts = ctx.scope_parts(a.get("scope", ["document"]))
     pred = (a.get("select") or {}).get("paragraphs")
     pos = a.get("position", "after")
-    text = a.get("text", "")
     tracked = bool(a.get("tracked", True))
-    style = a.get("style")
     formatting = a.get("formatting", "inherit")
     if formatting not in ("inherit", "none"):
         raise ValueError(f"unknown formatting {formatting!r}")
+    news = _v_new_paragraphs(a)
+    count = len(news)
+    old_ids = set().union(*(part_revision_ids(ctx.src.xml(name)) for name in ctx.src_tp))
     n = 0
     for part in parts:
         if part not in ctx.both:
@@ -1223,55 +1333,55 @@ def _inserted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         matched = [bi for bi, p in enumerate(sv.pars) if para_matches(pred, p, bi, sv, ctx.src_styles)]
         n += len(matched)
         for k, bi in enumerate(matched):
-            oi = (bi + 1 + k) if pos == "after" else (bi + k)
-            if oi >= len(ov.pars):
-                errs.append(f"inserted_paragraphs: {part} output block {oi} out of range")
-                continue
-            ctx.inserted_out_blocks.setdefault(part, set()).add(oi)
-            op = ov.pars[oi]
-            if ov.texts[oi] != text:
-                errs.append(f"inserted_paragraphs: {part} output block {oi} text {ov.texts[oi]!r} ≠ {text!r}")
-            want_style = (_pstyle(sv.pars[bi]) if style in (None, "inherit") else style)
-            got_style = _pstyle(op)
-            if got_style != want_style:
-                errs.append(f"inserted_paragraphs: {part} output block {oi} style {got_style!r} ≠ {want_style!r}")
-            # formatting, re-derived here from the SOURCE anchor
             anchor = sv.pars[bi]
-            want_ppr = _v_inherit_ppr(anchor) if formatting == "inherit" else None
-            want_rpr = _v_inherit_rpr(anchor, sv.runs[bi]) if formatting == "inherit" else None
-            if want_style is not None:
-                if want_ppr is None:
-                    want_ppr = etree.Element(W + "pPr")
-                ps = want_ppr.find(W + "pStyle")
-                if ps is None:
-                    ps = etree.Element(W + "pStyle")
-                    want_ppr.insert(0, ps)
-                ps.set(W + "val", want_style)
-            got_ppr = _v_ppr_sans_mark_ins(op) if tracked else op.find(W + "pPr")
-            if sig(want_ppr) != sig(got_ppr):
-                errs.append(f"inserted_paragraphs: {part} output block {oi} paragraph properties are not the anchor's "
-                            f"({formatting}): {first_difference(want_ppr, got_ppr) or 'differ'}")
-            oruns = ov.runs[oi]
-            if len(oruns) != 1 or [c.tag for c in oruns[0] if c.tag != W + "rPr"] != [W + "t"]:
-                errs.append(f"inserted_paragraphs: {part} output block {oi} must hold exactly one run with one w:t, "
-                            f"has {len(oruns)} run(s)")
-            else:
-                got_rpr = oruns[0].find(W + "rPr")
-                if sig(want_rpr) != sig(got_rpr):
-                    errs.append(f"inserted_paragraphs: {part} output block {oi} run properties are not the anchor's "
-                                f"first text run's ({formatting}): {first_difference(want_rpr, got_rpr) or 'differ'}")
-            if tracked:
-                mrpr = op.find(W + "pPr/" + W + "rPr")
-                ins_m = mrpr.find(W + "ins") if mrpr is not None else None
-                ins_w = op.find(W + "ins")
-                if ins_m is None or ins_m.get(W + "id") is None or ins_m.get(W + "author") != a.get("author"):
-                    errs.append(f"inserted_paragraphs: {part} output block {oi} mark missing valid w:ins")
-                if ins_w is None or ins_w.get(W + "id") is None or ins_w.get(W + "author") != a.get("author"):
-                    errs.append(f"inserted_paragraphs: {part} output block {oi} body missing valid w:ins")
+            if pos == "after" and any(q is not anchor for q in anchor.iter(W + "p")):
+                errs.append(f"inserted_paragraphs: {part} block {bi} holds a text box — its own paragraphs would come "
+                            f"between it and the new ones (the op must refuse)")
+                continue
+            # formatting, re-derived here from the SOURCE anchor
+            base_ppr = _v_inherit_ppr(anchor) if formatting == "inherit" else None
+            base_rpr = _v_inherit_rpr(anchor, sv.runs[bi]) if formatting == "inherit" else None
+            for j, (segs, style) in enumerate(news):
+                oi = (bi + 1 + k * count + j) if pos == "after" else (bi + k * count + j)
+                where = f"inserted_paragraphs: {part} output block {oi}"
+                if oi >= len(ov.pars):
+                    errs.append(f"{where} out of range")
+                    continue
+                ctx.inserted_out_blocks.setdefault(part, set()).add(oi)
+                op = ov.pars[oi]
+                text = "".join(t for t, _ in segs)
+                shown = "".join(ch for ch in text if ch not in _V_BREAK_TAGS)
+                if ov.texts[oi] != shown:
+                    errs.append(f"{where} text {ov.texts[oi]!r} ≠ {shown!r}")
+                want_style = (_pstyle(anchor) if style in (None, "inherit") else style)
+                got_style = _pstyle(op)
+                if got_style != want_style:
+                    errs.append(f"{where} style {got_style!r} ≠ {want_style!r}")
+                want_ppr = copy.deepcopy(base_ppr) if base_ppr is not None else None
+                if want_style is not None:
+                    if want_ppr is None:
+                        want_ppr = etree.Element(W + "pPr")
+                    ps = want_ppr.find(W + "pStyle")
+                    if ps is None:
+                        ps = etree.Element(W + "pStyle")
+                        want_ppr.insert(0, ps)
+                    ps.set(W + "val", want_style)
+                got_ppr = _v_ppr_sans_mark_ins(op) if tracked else op.find(W + "pPr")
+                if sig(want_ppr) != sig(got_ppr):
+                    errs.append(f"{where} paragraph properties are not the anchor's ({formatting}): "
+                                f"{first_difference(want_ppr, got_ppr) or 'differ'}")
+                expected = [_v_expected_shape(t, _v_segment_rpr(base_rpr, props)) for t, props in segs]
+                _v_check_new_runs(op, expected, tracked, a.get("author"), old_ids, where, errs)
+                if tracked:
+                    mrpr = op.find(W + "pPr/" + W + "rPr")
+                    ins_m = mrpr.find(W + "ins") if mrpr is not None else None
+                    if ins_m is None or ins_m.get(W + "id") is None or ins_m.get(W + "id") in old_ids \
+                            or ins_m.get(W + "author") != a.get("author") or not ins_m.get(W + "date"):
+                        errs.append(f"{where} mark missing valid w:ins")
     if n != a.get("expected_anchors", -1):
         errs.append(f"inserted_paragraphs: {n} anchor(s) selected here, plan predicted {a.get('expected_anchors')}")
-    return (f"inserted_paragraphs: {n} paragraph(s) {pos} anchor ({'tracked' if tracked else 'untracked'}, "
-            f"formatting {formatting} re-derived from the anchor)")
+    return (f"inserted_paragraphs: {n * count} paragraph(s) ({count} per anchor) {pos} anchor "
+            f"({'tracked' if tracked else 'untracked'}, formatting {formatting} re-derived from the anchor)")
 
 
 def sect_prs(root) -> List[Any]:
@@ -1293,8 +1403,11 @@ def sect_prs(root) -> List[Any]:
 # exactly which sectPr elements must change and how, with its own defaults, and compares both with the plan.
 
 V_SECTION_KEYS = ("containing", "with_tables", "index_range")
-V_PAGE_PARAMS = ("margins", "size", "orientation", "different_first_page", "allow_missing")
+V_LAYOUT_PARAMS = ("columns", "line_numbering", "vertical_alignment", "section_start")      # built-in batch 6
+V_PAGE_PARAMS = ("margins", "size", "orientation", "different_first_page", "allow_missing") + V_LAYOUT_PARAMS
 V_MARGIN_KEYS = ("top", "right", "bottom", "left", "header", "footer", "gutter")
+V_SECTION_STARTS = {"next_page": "nextPage", "continuous": "continuous", "even_page": "evenPage",
+                    "odd_page": "oddPage"}
 
 
 def _v_title_pg_on(sp) -> bool:
@@ -1394,6 +1507,114 @@ def _v_page_setup_elements(S, params: Dict[str, Any], where: str) -> Dict[str, D
         out["pgSz"] = {"set": pg_set}
     if dfp is not None and _v_title_pg_on(S) != dfp:
         out["titlePg"] = {"present": True, "remove": ["val"]} if dfp else {"absent": True}
+    out.update(_v_layout_elements(S, params, where))
+    return out
+
+
+# Built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §8): the layout parameters, read here with this module's own rules.
+# A value is written as Word writes it — the schema's default is an absent attribute or element — and an attribute that
+# already reads as asked stays as it is (absent reads the default):
+#   columns {count, space, separator} → w:cols: the line (w:sep) turned on where it is off ("1"), off where it is on
+#     (removed), and with a single column off too; an off w:equalWidth removed and every child gone (equal columns);
+#     w:num the count (1: absent); w:space the asked twips. No w:cols and one column asked: nothing to do.
+#   line_numbering → w:lnNumType: "none" removes it; else w:countBy the asked step (none asked: the section's, else 1),
+#     w:start the first number shown minus one (Word shows the attribute plus one; 0 is the default), w:restart
+#     (newPage the default), w:distance the asked twips; no children.
+#   vertical_alignment → w:vAlign/@w:val (top the default: the element absent); section_start → w:type/@w:val
+#     (nextPage the default: absent).
+
+def _v_wattrs(el) -> Dict[str, str]:
+    """The w: attributes of ``el`` by local name; {} for no element."""
+    out: Dict[str, str] = {}
+    for k, v in (el.attrib.items() if el is not None else ()):
+        q = etree.QName(k)
+        if q.namespace == W[1:-1]:
+            out[q.localname] = v
+    return out
+
+
+def _v_whole(v, lo: int, hi: int) -> bool:
+    return type(v) is int and lo <= v <= hi
+
+
+def _v_reads(attrs: Dict[str, str], name: str, value: str, default: Optional[str]) -> None:
+    """``attrs`` changed so that ``name`` reads ``value``, where it does not already (an absent attribute reads
+    ``default``); the default itself is written as no attribute."""
+    if attrs.get(name, default) != value:
+        if value == default:
+            del attrs[name]
+        else:
+            attrs[name] = value
+
+
+def _v_layout_elements(S, params: Dict[str, Any], where: str) -> Dict[str, Dict[str, Any]]:
+    """The element specs (``exact`` / ``absent``) the layout parameters give sectPr ``S`` (the SOURCE), by the rules of
+    the block comment above; ValueError where the op must refuse."""
+    out: Dict[str, Dict[str, Any]] = {}
+
+    def keep_or(name: str, attrs: Dict[str, str], el) -> None:
+        if el is None or len(el) or attrs != _v_wattrs(el):
+            out[name] = {"exact": attrs}
+
+    cols = params.get("columns")
+    if cols is not None:
+        if (not isinstance(cols, dict) or "count" not in cols or set(cols) - {"count", "space", "separator"}
+                or not _v_whole(cols["count"], 1, 45) or ("space" in cols and not _v_whole(cols["space"], 0, 31680))
+                or ("separator" in cols and type(cols["separator"]) is not bool)
+                or (cols["count"] == 1 and ("space" in cols or cols.get("separator") is True))):
+            raise ValueError(f"columns {cols!r} — the op must refuse")
+        el = S.find(W + "cols")
+        attrs = _v_wattrs(el)
+        line_on = "sep" in attrs and attrs["sep"] not in FALSY
+        if cols.get("separator") is True and not line_on:
+            attrs["sep"] = "1"
+        if line_on and (cols.get("separator") is False or ("separator" not in cols and cols["count"] == 1)):
+            del attrs["sep"]
+        if attrs.get("equalWidth") in FALSY and "equalWidth" in attrs:
+            del attrs["equalWidth"]
+        _v_reads(attrs, "num", str(cols["count"]), "1")
+        if "space" in cols:
+            _v_reads(attrs, "space", str(cols["space"]), None)
+        if not (el is None and cols["count"] == 1):
+            keep_or("cols", attrs, el)
+    lines = params.get("line_numbering")
+    if lines == "none":
+        if S.find(W + "lnNumType") is not None:
+            out["lnNumType"] = {"absent": True}
+    elif lines is not None:
+        if not isinstance(lines, dict) or set(lines) - {"count_by", "start", "restart", "distance"} or any(
+                k in lines and not _v_whole(lines[k], lo, hi)
+                for k, lo, hi in (("count_by", 1, 100), ("start", 1, 32767), ("distance", 0, 31680))) or \
+                lines.get("restart", "new_page") not in ("new_page", "new_section", "continuous"):
+            raise ValueError(f"line_numbering {lines!r} — the op must refuse")
+        el = S.find(W + "lnNumType")
+        attrs = _v_wattrs(el)
+        if "count_by" in lines:
+            _v_reads(attrs, "countBy", str(lines["count_by"]), None)
+        elif "countBy" not in attrs:
+            attrs["countBy"] = "1"
+        if "start" in lines:
+            _v_reads(attrs, "start", str(lines["start"] - 1), "0")
+        if "restart" in lines:
+            _v_reads(attrs, "restart", {"new_page": "newPage", "new_section": "newSection",
+                                        "continuous": "continuous"}[lines["restart"]], "newPage")
+        if "distance" in lines:
+            _v_reads(attrs, "distance", str(lines["distance"]), None)
+        keep_or("lnNumType", attrs, el)
+    for name, asked, default in (("vAlign", params.get("vertical_alignment"), "top"),
+                                 ("type", params.get("section_start"), "nextPage")):
+        if asked is None:
+            continue
+        if name == "vAlign" and asked not in ("top", "center", "both", "bottom"):
+            raise ValueError(f"vertical_alignment {asked!r} — the op must refuse")
+        if name == "type":
+            if asked not in V_SECTION_STARTS:
+                raise ValueError(f"section_start {asked!r} — the op must refuse")
+            asked = V_SECTION_STARTS[asked]
+        attrs = _v_wattrs(S.find(W + name))
+        if attrs.get("val", default) == asked:
+            continue
+        out[name] = {"absent": True} if asked == default else {"exact": dict(attrs, val=asked)}
     return out
 
 
@@ -1448,6 +1669,22 @@ def _v_check_sect_element(ctx: Ctx, i: int, S, O, name: str, spec: Dict[str, Any
     ctx.strip_sect.setdefault(i, set()).add(name)
     se, oe = S.find(W + name), O.find(W + name)
     where = f"section {i} {name}"
+    if "exact" in spec:
+        # built-in batch 6: there, with exactly these w: attributes (the source's attributes of other namespaces kept)
+        # and no children
+        if set(spec) != {"exact"} or not isinstance(spec["exact"], dict):
+            raise ValueError(f"{where}: an exact element spec takes no other keys")
+        if oe is None:
+            errs.append(f"{where}: should be present")
+            return
+        want = {W + k: str(v) for k, v in spec["exact"].items()}
+        want.update({k: v for k, v in (se.attrib.items() if se is not None else ()) if not k.startswith(W)})
+        if dict(oe.attrib) != want:
+            errs.append(f"{where}: expected { {etree.QName(k).localname: v for k, v in want.items()} } got "
+                        f"{ {etree.QName(k).localname: v for k, v in dict(oe.attrib).items()} }")
+        elif len(oe):
+            errs.append(f"{where}: should have no children, has {[_name(c) for c in oe]}")
+        return
     if spec.get("absent"):
         if set(spec) != {"absent"} or spec["absent"] is not True:
             raise ValueError(f"{where}: an absent element spec takes no other keys")
@@ -1720,17 +1957,26 @@ def _effective_font(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
 
 
 # ---- set_properties: the V10 kind "properties" ------------------------------------------------------------------
-# This module's own reading of the op's definitions (docs/SET_PROPERTIES_DESIGN.md §3; transform side:
-# ops/effective.PropResolver and ops/set_properties.py — CLAUDE.md lists them among the definitions that must stay
-# identical on both sides). Nothing here is shared with the transform side.
+# This module's own reading of the op's definitions (docs/SET_PROPERTIES_DESIGN.md §3, docs/BUILTIN_OPS_BATCH6_DESIGN.md
+# §3; transform side: ops/effective.PropResolver and ops/set_properties.py — CLAUDE.md lists them among the definitions
+# that must stay identical on both sides). Nothing here is shared with the transform side. Double strikethrough is read
+# as a toggle (two style levels: ambiguous, set directly) and excludes single strikethrough, as in Word: one asked on
+# asks the other off unless the assertion asks it too. Hidden asked on reaches a selected paragraph mark only when every
+# content run of its paragraph (a run holding more than its properties) is hidden in the output — selected, or hidden
+# already in the source: Word joins a paragraph whose mark is hidden to the next one. Highlight is never asked of a
+# style (Word does not show highlighting set in one).
 
 PROP_PAIRS = {"b": ("b", "bCs"), "i": ("i", "iCs"), "caps": ("caps",), "smallCaps": ("smallCaps",),
-              "strike": ("strike",)}
-RUN_TOGGLE_ELEMENTS = ("b", "bCs", "i", "iCs", "caps", "smallCaps", "strike")
+              "strike": ("strike",), "dstrike": ("dstrike",), "vanish": ("vanish",)}
+RUN_TOGGLE_ELEMENTS = ("b", "bCs", "i", "iCs", "caps", "smallCaps", "strike", "dstrike", "vanish")
 PARA_FLAGS = ("keepNext", "keepLines", "widowControl", "pageBreakBefore")
 PARA_FLAG_DEFAULTS = {"keepNext": False, "keepLines": False, "widowControl": True, "pageBreakBefore": False}
 CASE_ELEMENTS = {"caps", "smallCaps"}          # never on a symbol run: case-mapping a dingbat changes the glyph
 COLOR_DEFAULT = ("auto", None, None, None)
+V_VALUE_DEFAULTS = {"u": "none", "highlight": "none", "vertAlign": "baseline", "spacing": 0}
+V_VERT_ALIGNS = {"superscript", "subscript", "baseline"}
+V_HIGHLIGHTS = {"yellow", "green", "cyan", "magenta", "blue", "red", "darkBlue", "darkCyan", "darkGreen", "darkMagenta",
+                "darkRed", "darkYellow", "darkGray", "lightGray", "black", "white", "none"}
 
 
 def _v_on_off(el) -> Optional[bool]:
@@ -1740,19 +1986,37 @@ def _v_on_off(el) -> Optional[bool]:
 
 def _v_prop_read(element: str, el):
     """The value an element gives its property: on/off for toggles and paragraph flags, the (val, themeColor,
-    themeShade, themeTint) tuple for w:color, w:val for w:u (None when the attribute is missing — never "already")."""
+    themeShade, themeTint) tuple for w:color, w:val for w:u, w:vertAlign and w:highlight (None when the attribute is
+    missing — never "already"), w:spacing's w:val as a whole number of twentieths of a point (else its text)."""
     if el is None:
         return None
     if element == "color":
         return (el.get(W + "val"), el.get(W + "themeColor"), el.get(W + "themeShade"), el.get(W + "themeTint"))
-    if element == "u":
+    if element in ("u", "vertAlign", "highlight"):
         return el.get(W + "val")
+    if element == "spacing":
+        val = el.get(W + "val")
+        digits = val[1:] if val and val[0] == "-" else val
+        return int(val) if digits and digits.isascii() and digits.isdigit() else val
     return _v_on_off(el)
+
+
+def _v_twentieths(points) -> int:
+    """Character spacing in points → w:spacing's twentieths of a point; ValueError unless a multiple of 0.05 pt within
+    Word's ±1584 pt."""
+    if isinstance(points, bool) or not isinstance(points, (int, float)) or not abs(points) <= 1584:
+        raise ValueError(f"character spacing {points!r} is not a number of points within ±1584 (the op must refuse)")
+    n = round(points * 20)
+    if abs(points * 20 - n) > 1e-6:
+        raise ValueError(f"character spacing {points!r} pt is not a whole number of twentieths of a point")
+    return int(n)
 
 
 def _v_run_elements(run_set) -> Dict[str, Any]:
     """An assertion's user-facing run properties → the asked value per element: b/i expand to their complex-script
-    pairs (a w:cs run draws its weight and slant from w:bCs/w:iCs), color to the effective tuple, u to its w:val."""
+    pairs (a w:cs run draws its weight and slant from w:bCs/w:iCs), color to the effective tuple, u, vertAlign and
+    highlight to their w:val, spacing to twentieths of a point; strike or dstrike asked on brings the other off unless
+    the assertion asks it too."""
     out: Dict[str, Any] = {}
     for k, v in (run_set or {}).items():
         if k in PROP_PAIRS:
@@ -1762,10 +2026,27 @@ def _v_run_elements(run_set) -> Dict[str, Any]:
             out["color"] = (str(v), None, None, None)
         elif k == "u":
             out["u"] = str(v)
+        elif k == "vertAlign":
+            if v not in V_VERT_ALIGNS:
+                raise ValueError(f"vertAlign {v!r} is not superscript, subscript or baseline (the op must refuse)")
+            out[k] = v
+        elif k == "highlight":
+            if v not in V_HIGHLIGHTS:
+                raise ValueError(f"highlight {v!r} is not one of Word's highlight colours (the op must refuse)")
+            out[k] = v
+        elif k == "spacing":
+            out[k] = _v_twentieths(v)
         else:
             raise ValueError(f"unknown run property {k!r}")
     if out.get("caps") is True and out.get("smallCaps") is True:
         raise ValueError("caps and smallCaps both asked on — mutually exclusive in Word (the op must refuse)")
+    asked = set(run_set or {})
+    if out.get("strike") is True and out.get("dstrike") is True:
+        raise ValueError("strike and dstrike both asked on — Word draws one or the other (the op must refuse)")
+    if out.get("strike") is True and "dstrike" not in asked:
+        out["dstrike"] = False
+    if out.get("dstrike") is True and "strike" not in asked:
+        out["strike"] = False
     return out
 
 
@@ -1780,13 +2061,16 @@ def _v_para_elements(para_set) -> Dict[str, bool]:
 
 def _v_expected_attrs(element: str, asked, source_el) -> Dict[str, str]:
     """The attributes the output element must carry: toggles and flags on → none, off → val 0; color → exactly val
-    (the theme attributes gone); u → the source element's attributes with val replaced."""
+    (the theme attributes gone); u → the source element's attributes with val replaced; vertAlign, highlight and
+    spacing → exactly val."""
     if element == "color":
         return {W + "val": asked[0]}
     if element == "u":
         attrs = dict(source_el.attrib) if source_el is not None else {}
         attrs[W + "val"] = asked
         return attrs
+    if element in ("vertAlign", "highlight", "spacing"):
+        return {W + "val": str(asked)}
     return {} if asked else {W + "val": "0"}
 
 
@@ -1820,9 +2104,9 @@ def _v_para_levels(p, styles: Styles) -> List[Tuple[str, Any]]:
 
 def _v_resolve(levels: List[Tuple[str, Any]], direct, element: str) -> Tuple[Any, str]:
     """(value, provenance) of one property. Toggles: direct formatting wins; specified at exactly one style level →
-    that value; nowhere → off; more than one → (None, "ambiguous") — Word's XOR is not modelled. w:u, w:color and
-    the paragraph flags: the nearest level that specifies them, else the default. Provenance: "direct",
-    "style:<id>", "docDefaults" or "default"."""
+    that value; nowhere → off; more than one → (None, "ambiguous") — Word's XOR is not modelled. w:u, w:color,
+    w:vertAlign, w:highlight, w:spacing and the paragraph flags: the nearest level that specifies them, else the
+    default. Provenance: "direct", "style:<id>", "docDefaults" or "default"."""
     d = direct.find(W + element) if direct is not None else None
     if d is not None:
         return _v_prop_read(element, d), "direct"
@@ -1840,7 +2124,7 @@ def _v_resolve(levels: List[Tuple[str, Any]], direct, element: str) -> Tuple[Any
         return COLOR_DEFAULT, "default"
     if element in PARA_FLAGS:
         return PARA_FLAG_DEFAULTS[element], "default"
-    return "none", "default"
+    return V_VALUE_DEFAULTS.get(element, "none"), "default"
 
 
 def _v_run_prop(rpr, p, styles: Styles, element: str) -> Tuple[Any, str]:
@@ -1947,6 +2231,11 @@ def _v_mark_in_revision(mrpr) -> bool:
     return mrpr is not None and any(mrpr.find(W + t) is not None for t in ("ins", "del", "moveFrom", "moveTo"))
 
 
+def _v_has_content(r) -> bool:
+    """A run that shows something: it holds an element other than its w:rPr."""
+    return any(isinstance(c.tag, str) and c.tag != W + "rPr" for c in r)
+
+
 def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], para_asked: Dict[str, bool],
                        errs: List[str]) -> str:
     parts = ctx.scope_parts(a.get("scope", []))
@@ -1959,7 +2248,7 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
     exclude_rev = a.get("in_revisions", "include") == "exclude"
     marks_too = bool(a.get("include_paragraph_marks", True))
     tracked, author = bool(a.get("tracked")), a.get("author")
-    n_runs = n_marks = n_paras = 0
+    n_runs = n_marks = n_paras = n_shown = 0
     for part in parts:
         if part not in ctx.both:
             errs.append(f"properties: {part} missing from the output")
@@ -1970,6 +2259,7 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
             if not para_matches(para_pred, p, bi, sv, ctx.src_styles):
                 continue
             cands = []                                   # (run index, the elements it gets, symbol run)
+            text_shown = False                           # a content run outside the selection that is not hidden
             if run_asked:
                 for ri, r in enumerate(sv.runs[bi]):
                     rpr = r.find(W + "rPr")
@@ -1977,10 +2267,13 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                     if (exclude_rev and in_rev) or not target_matches(
                             runs_pred, rpr, in_rev, preserve,
                             lambda rpr=rpr, p=p: _v_run_prop(rpr, p, ctx.src_styles, "color")[0]):
+                        if not text_shown and _v_has_content(r):
+                            text_shown = _v_run_prop(rpr, p, ctx.src_styles, "vanish")[0] is not True
                         continue
                     sym = symbolic(rpr, p, ctx.src_styles, preserve) or (skip_sym and r.find(W + "sym") is not None)
                     cands.append((ri, _v_gets_run(rpr, p, ctx.src_styles, run_asked, sym), sym))
-            mark = None                                  # (the elements the mark gets, symbol) when selected
+            mark = None                                  # (the elements the mark gets, symbol, its asked values)
+            mark_shown = False                           # asked hidden, the mark stays visible: its text is not all hidden
             if run_asked and marks_too:
                 mrpr = p.find(W + "pPr/" + W + "rPr")
                 m_rev = _v_mark_in_revision(mrpr)
@@ -1988,7 +2281,14 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                         runs_pred, mrpr, m_rev, preserve,
                         lambda mrpr=mrpr, p=p: _v_run_prop(mrpr, p, ctx.src_styles, "color")[0]):
                     msym = symbolic(mrpr, p, ctx.src_styles, preserve)
-                    mark = (_v_gets_run(mrpr, p, ctx.src_styles, run_asked, msym), msym)
+                    m_gets, m_asked = _v_gets_run(mrpr, p, ctx.src_styles, run_asked, msym), dict(run_asked)
+                    # Word joins a paragraph whose mark is hidden to the next one: hidden goes on a mark only when
+                    # every content run of its paragraph is hidden in the output (selected, or hidden already)
+                    if m_gets.get("vanish") is True and text_shown:
+                        mark_shown = True
+                        n_shown += 1
+                        del m_gets["vanish"], m_asked["vanish"]
+                    mark = (m_gets, msym, m_asked)
             pgets = _v_gets_para(p, ctx.src_styles, para_asked) if para_asked else {}
             if not cands and mark is None and not para_asked:
                 continue
@@ -2011,14 +2311,17 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                     _check_props_rpr(s_rpr, o_rpr, gets, tracked, author, where, errs)
                 _check_effective_run(o_rpr, o_p, ctx.out_styles, run_asked, sym, where, errs)
             if mark is not None:
-                gets, msym = mark
+                gets, msym, m_asked = mark
                 s_rpr, o_rpr = p.find(W + "pPr/" + W + "rPr"), o_p.find(W + "pPr/" + W + "rPr")
                 where = f"{part} block {bi} paragraph mark"
                 if gets:
                     n_marks += 1
                     ctx.strip_marks.setdefault(part, set()).add(bi)
                     _check_props_rpr(s_rpr, o_rpr, gets, tracked, author, where, errs)
-                _check_effective_run(o_rpr, o_p, ctx.out_styles, run_asked, msym, where, errs)
+                _check_effective_run(o_rpr, o_p, ctx.out_styles, m_asked, msym, where, errs)
+                if mark_shown and _v_run_prop(o_rpr, o_p, ctx.out_styles, "vanish")[0] is True:
+                    errs.append(f"{where}: hidden in the output while text of the paragraph stays visible — Word would "
+                                f"join the paragraph to the next one (the mark must stay as it was)")
             if para_asked:
                 where = f"{part} block {bi}"
                 if pgets:
@@ -2030,9 +2333,13 @@ def _properties_direct(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], p
                          (n_paras, "expected_paragraphs", "paragraph(s)")):
         if n != a.get(key, -1):
             errs.append(f"properties: {n} {what} get the change here, plan predicted {a.get(key)}")
+    if n_shown != a.get("expected_shown_marks", 0):
+        errs.append(f"properties: {n_shown} paragraph mark(s) asked hidden stay visible here (their paragraph keeps "
+                    f"visible text), plan predicted {a.get('expected_shown_marks', 0)}")
     setv = a.get("set") or {}
     return (f"properties: {n_runs} run(s) + {n_marks} mark(s) → {setv.get('run') or {}}, {n_paras} paragraph(s) → "
-            f"{setv.get('paragraph') or {}}" + (" (tracked)" if tracked else ""))
+            f"{setv.get('paragraph') or {}}" + (" (tracked)" if tracked else "")
+            + (f"; {n_shown} mark(s) left visible beside visible text" if n_shown else ""))
 
 
 def _judge_style_prop(val, prov: str, asked, sid: str, element: str, symbol: bool, where: str,
@@ -2054,6 +2361,9 @@ def _judge_style_prop(val, prov: str, asked, sid: str, element: str, symbol: boo
 
 def _properties_styles(ctx: Ctx, a: Dict[str, Any], run_asked: Dict[str, Any], para_asked: Dict[str, bool],
                        errs: List[str]) -> str:
+    if "highlight" in run_asked:
+        raise ValueError("highlight asked in a style definition — Word does not show highlighting set in a style (the "
+                         "op must refuse)")
     if ctx.styles_part is None:
         errs.append("properties: no common styles part")
         return "properties: no styles part"
@@ -2147,7 +2457,6 @@ KINDS = {
     "section_hf_refs": _section_hf_refs,
     "cover_unnumbered": _cover_unnumbered,
     "effective_font": _effective_font,
-    "deleted_paragraphs": _deleted_paragraphs,
     "inserted_paragraphs": _inserted_paragraphs,
     "properties": _properties,
 }
@@ -2213,12 +2522,14 @@ def mask_picture_sizes(drawing) -> None:
 def _strip_table_props(ctx: Ctx, part: str, s_root, o_root) -> None:
     """Built-in batch 5: the table, row and cell property elements a kind checked (``strip_tbl``/``strip_tr``/
     ``strip_tc``/``strip_tblprex``) leave both sides; a row's ``w:trPr`` or ``w:tblPrEx`` or a cell's ``w:tcPr`` left
-    empty by that goes on both sides."""
+    empty by that goes on both sides. Built-in batch 6 (F6): a table's ``w:tblGrid`` a kind compared whole
+    (``strip_grid``) leaves both sides."""
     by_tbl = ctx.strip_tbl.get(part, {})
     by_tr = ctx.strip_tr.get(part, {})
     by_tc = ctx.strip_tc.get(part, {})
     by_ex = ctx.strip_tblprex.get(part, {})
-    if not (by_tbl or by_tr or by_tc or by_ex):
+    by_grid = ctx.strip_grid.get(part, set())
+    if not (by_tbl or by_tr or by_tc or by_ex or by_grid):
         return
 
     def strip(holder, names: Set[str]) -> None:
@@ -2252,6 +2563,9 @@ def _strip_table_props(ctx: Ctx, part: str, s_root, o_root) -> None:
             tcs = [x for x in trs[r] if x.tag == W + "tc"] if r < len(trs) else []
             if c < len(tcs):
                 strip(tcs[c].find(W + "tcPr"), names)
+        for k in by_grid:
+            for grid in (tables[k].findall(W + "tblGrid") if k < len(tables) else []):
+                tables[k].remove(grid)
 
 
 def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
@@ -2530,7 +2844,17 @@ from .numberingaudit import AUDIT_KINDS  # noqa: E402
 from .numberingconvert import CONVERT_KINDS  # noqa: E402
 from .typednumbers import TYPED_KINDS  # noqa: E402
 from .hygiene import HYGIENE_KINDS  # noqa: E402
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §8): section breaks
+from .sections import SECTION_KINDS  # noqa: E402
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §1, §2): deletion
+from .deletion import DELETION_KINDS  # noqa: E402
+from .footnotes import FOOTNOTE_KINDS  # noqa: E402
 from .replacement import literal_replacement, paragraph_edits  # noqa: E402
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §5): pictures
+from .pictures import PICTURE_KINDS  # noqa: E402
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §9): fields and comment threads
+from .inserted_fields import FIELD_INSERT_KINDS  # noqa: E402
+from .comment_threads import COMMENT_THREAD_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -2556,3 +2880,17 @@ KINDS.update(FONT_NUMBERING_KINDS)
 KINDS.update(AUDIT_KINDS)
 KINDS.update(CONVERT_KINDS)
 KINDS.update(TYPED_KINDS)
+KINDS.update(SECTION_KINDS)
+from .moving import MOVE_KINDS  # noqa: E402  — built-in batch 6 (F9: move_paragraphs)
+KINDS.update(MOVE_KINDS)
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §6): table rows and tables
+from .tablestructure import TABLE_STRUCTURE_KINDS  # noqa: E402
+KINDS.update(TABLE_STRUCTURE_KINDS)
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §7): table grid and cells
+from .tablegrid import TABLE_GRID_KINDS  # noqa: E402
+KINDS.update(TABLE_GRID_KINDS)
+KINDS.update(PICTURE_KINDS)
+KINDS.update(FIELD_INSERT_KINDS)
+KINDS.update(COMMENT_THREAD_KINDS)
+KINDS.update(DELETION_KINDS)
+KINDS.update(FOOTNOTE_KINDS)

@@ -23,6 +23,22 @@ Built-in batch 5 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §7):
   by a section of the other orientation (after the change: w > h) is flagged, once per part: its right-aligned items
   stay where the portrait page puts them. The notes and flags are advice for review; V10 checks the sectPr changes.
 
+Built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §8) — the section's layout, each written as Word writes it (a
+value that is the schema's default is an absent attribute or element) and left alone where it is already in effect:
+
+* ``columns`` ``{count, space, separator}`` → w:cols: ``w:num`` the count, ``w:space`` the twips between columns
+  (given; else the section's own), ``w:sep`` on with a separator (off: absent; not given: as it was); the columns are
+  always equal (``w:equalWidth`` and every per-column ``w:col`` go). ``count`` 1 is a single column: ``w:num``,
+  ``w:sep``, ``w:equalWidth`` and the ``w:col`` go, ``w:space`` stays; a section without w:cols already has one.
+* ``line_numbering`` ``{count_by, start, restart, distance}`` → w:lnNumType: ``w:countBy`` (given, else the section's,
+  else 1), ``w:start`` = ``start`` − 1 (Word shows the attribute plus one; ``start`` 1 is the default, absent),
+  ``w:restart`` (``new_page`` is the default, absent), ``w:distance`` (twips from the text); ``"none"`` removes it.
+* ``vertical_alignment`` → w:vAlign (``top``, the default: absent); ``section_start`` → w:type (``next_page``, the
+  default: absent) — how the section begins after the one before it.
+
+Each is an ``exact`` element spec (the element's attributes exactly, no children) or ``absent`` in ``section_props``.
+Columns narrower than half an inch are flagged; an even- or odd-page start is noted (Word may add a blank page).
+
 V10 (``section_props``): one assertion carries the user's own ``select`` and parameters, the sections the plan chose
 and each changed section's element specs; the verifier re-derives the choice and every change from the SOURCE.
 """
@@ -42,9 +58,23 @@ from .selectors import resolve_sections, section_reads
 
 MARGIN_KEYS = ("top", "right", "bottom", "left", "header", "footer", "gutter")
 FALSY = ("0", "false", "off")
-ASSERTED_PARAMS = ("margins", "size", "orientation", "different_first_page", "allow_missing")
+LAYOUT_PARAMS = ("columns", "line_numbering", "vertical_alignment", "section_start")
+ASSERTED_PARAMS = ("margins", "size", "orientation", "different_first_page", "allow_missing") + LAYOUT_PARAMS
 TITLE_PG_ON = {"present": True, "remove": ["val"]}      # section_props element specs (V10)
 TITLE_PG_OFF = {"absent": True}
+# the user's words → Word's (w:type, w:lnNumType/@w:restart); the first of each is the schema's default
+START_TYPES = {"next_page": "nextPage", "continuous": "continuous", "even_page": "evenPage", "odd_page": "oddPage"}
+LINE_RESTARTS = {"new_page": "newPage", "new_section": "newSection", "continuous": "continuous"}
+VERTICAL = ("top", "center", "both", "bottom")
+COLUMN_KEYS = ("count", "space", "separator")
+LINE_KEYS = ("count_by", "start", "restart", "distance")
+MAX_TWIPS = 31680                                       # 22 inches, Word's largest page side
+START_WORDS = {"next_page": "a new page", "continuous": "the same page (continuous)",
+               "even_page": "the next even-numbered page", "odd_page": "the next odd-numbered page"}
+VERTICAL_WORDS = {"top": "the top of the page", "center": "the centre of the page",
+                  "both": "the full height of the page (justified)", "bottom": "the bottom of the page"}
+LINE_RESTART_WORDS = {"new_page": "restarting on each page", "new_section": "restarting at each section",
+                      "continuous": "counting on through the document"}
 
 
 def title_pg_on(sp: Any) -> bool:
@@ -105,12 +135,176 @@ def margin_words(margins: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _whole(v: Any) -> bool:
+    return isinstance(v, int) and not isinstance(v, bool)
+
+
+def check_layout(params: Dict[str, Any]) -> None:
+    """The layout parameters as the op reads them (module docstring); bad-params otherwise."""
+    cols = params.get("columns")
+    if cols is not None:
+        if not isinstance(cols, dict) or set(cols) - set(COLUMN_KEYS) or "count" not in cols:
+            raise JobException(f"columns must be {{count, space, separator}} with a count, got {cols!r}", "bad-params")
+        if not _whole(cols["count"]) or not 1 <= cols["count"] <= 45:
+            raise JobException("columns.count must be a whole number from 1 to 45", "bad-params")
+        if "space" in cols and (not _whole(cols["space"]) or not 0 <= cols["space"] <= MAX_TWIPS):
+            raise JobException("columns.space must be the twips between the columns (0 to 31680)", "bad-params")
+        if "separator" in cols and not isinstance(cols["separator"], bool):
+            raise JobException("columns.separator must be true or false", "bad-params")
+        if cols["count"] == 1 and ("space" in cols or cols.get("separator") is True):
+            raise JobException("a single column has no space between columns and no separator line", "bad-params")
+    lines = params.get("line_numbering")
+    if lines is not None and lines != "none":
+        if not isinstance(lines, dict) or set(lines) - set(LINE_KEYS):
+            raise JobException(f"line_numbering must be 'none' or {{count_by, start, restart, distance}}, got "
+                               f"{lines!r}", "bad-params")
+        for key, lo, hi in (("count_by", 1, 100), ("start", 1, 32767), ("distance", 0, MAX_TWIPS)):
+            if key in lines and (not _whole(lines[key]) or not lo <= lines[key] <= hi):
+                raise JobException(f"line_numbering.{key} must be a whole number from {lo} to {hi}", "bad-params")
+        if "restart" in lines and lines["restart"] not in LINE_RESTARTS:
+            raise JobException(f"line_numbering.restart must be one of {list(LINE_RESTARTS)}", "bad-params")
+    if params.get("vertical_alignment") not in (None,) + VERTICAL:
+        raise JobException(f"vertical_alignment must be one of {list(VERTICAL)}", "bad-params")
+    if params.get("section_start") not in (None, *START_TYPES):
+        raise JobException(f"section_start must be one of {list(START_TYPES)}", "bad-params")
+
+
+def w_attrs(el: Any) -> Dict[str, str]:
+    """An element's w: attributes by local name ({} for no element)."""
+    return {} if el is None else {k[len(W):]: v for k, v in el.attrib.items() if k.startswith(W)}
+
+
+def _put(want: Dict[str, str], key: str, value: str, default: Optional[str]) -> None:
+    """``want[key]`` made to read ``value``: left as it is when it already does (absent reads ``default``), removed
+    when ``value`` is the default, written otherwise."""
+    if want.get(key, default) == value:
+        return
+    if value == default:
+        want.pop(key, None)
+    else:
+        want[key] = value
+
+
+def layout_specs(sp: Any, params: Dict[str, Any]) -> Dict[str, Dict[str, Any]]:
+    """The section_props element specs the layout parameters give one section's sectPr ``sp``: ``{"exact":
+    {attribute: value}}`` (the element with exactly these w: attributes and no children; created where missing) or
+    ``{"absent": True}``, per element — none where the section is already as asked (module docstring)."""
+    out: Dict[str, Dict[str, Any]] = {}
+
+    def exact(name: str, want: Dict[str, str]) -> None:
+        el = sp.find(W + name)
+        if el is None or want != w_attrs(el) or len(el):
+            out[name] = {"exact": want}
+
+    cols = params.get("columns")
+    if cols is not None:
+        el = sp.find(W + "cols")
+        want = w_attrs(el)
+        on, asked = want.get("sep") not in (None,) + FALSY, cols.get("separator")
+        if on and (asked is False or (asked is None and cols["count"] == 1)):
+            want.pop("sep")                         # a single column has no line between columns
+        elif not on and asked is True:
+            want["sep"] = "1"
+        if want.get("equalWidth") in FALSY:
+            want.pop("equalWidth")                  # the columns are equal: the per-column widths go
+        _put(want, "num", str(cols["count"]), "1")
+        if "space" in cols:
+            _put(want, "space", str(cols["space"]), None)
+        if el is not None or cols["count"] > 1:     # no w:cols: a single column already
+            exact("cols", want)
+    lines = params.get("line_numbering")
+    if lines == "none":
+        if sp.find(W + "lnNumType") is not None:
+            out["lnNumType"] = {"absent": True}
+    elif lines is not None:
+        want = w_attrs(sp.find(W + "lnNumType"))
+        if "count_by" in lines:
+            _put(want, "countBy", str(lines["count_by"]), None)
+        want.setdefault("countBy", "1")
+        if "start" in lines:
+            _put(want, "start", str(lines["start"] - 1), "0")     # Word shows w:start plus one
+        if "restart" in lines:
+            _put(want, "restart", LINE_RESTARTS[lines["restart"]], "newPage")
+        if "distance" in lines:
+            _put(want, "distance", str(lines["distance"]), None)
+        exact("lnNumType", want)
+    for name, key, words, default in (("vAlign", "vertical_alignment", {v: v for v in VERTICAL}, "top"),
+                                      ("type", "section_start", START_TYPES, "nextPage")):
+        asked = params.get(key)
+        if asked is None:
+            continue
+        el = sp.find(W + name)
+        value = words[asked]
+        if w_attrs(el).get("val", default) == value:
+            continue                                # already in effect (absent reads the default)
+        if value == default:
+            out[name] = {"absent": True}
+        else:
+            out[name] = {"exact": {**w_attrs(el), "val": value}}
+    return out
+
+
+def column_width(sp: Any, elements: Dict[str, Dict[str, str]], cols: Dict[str, Any]) -> Optional[int]:
+    """Each column's width (twips) in section ``sp`` once this op's own size and margins (``elements``) are set; None
+    when the page size or margins cannot be read."""
+    def read(name: str, key: str) -> Optional[int]:
+        el = sp.find(W + name)
+        v = elements.get(name, {}).get(key, el.get(W + key) if el is not None else None)
+        return int(v) if v is not None and str(v).lstrip("-").isdigit() else None
+    w, left, right = read("pgSz", "w"), read("pgMar", "left"), read("pgMar", "right")
+    if None in (w, left, right):
+        return None
+    own = w_attrs(sp.find(W + "cols")).get("space", "720")
+    space = cols.get("space", int(own) if own.isdigit() else 720)
+    text = w - left - right - (read("pgMar", "gutter") or 0)
+    return (text - (cols["count"] - 1) * space) // cols["count"]
+
+
+def _nth(n: int) -> str:
+    return f"{n}{'th' if 10 <= n % 100 <= 20 else {1: 'st', 2: 'nd', 3: 'rd'}.get(n % 10, 'th')}"
+
+
+def layout_words(params: Dict[str, Any]) -> List[str]:
+    """``the text to 2 columns 0.5 inch apart with a line between them``, ``line numbers to every 5th line, starting
+    at 1, restarting on each page``, ``the text vertically to the centre of the page``, ``the section start to a new
+    page`` — what the layout parameters set, for describe()."""
+    out: List[str] = []
+    cols = params.get("columns")
+    if isinstance(cols, dict) and _whole(cols.get("count")):
+        if cols["count"] == 1:
+            out.append("the text to a single column")
+        else:
+            words = f"the text to {cols['count']} columns of equal width"
+            if _whole(cols.get("space")):
+                words += f" {prose.inches(cols['space'])} apart"
+            if isinstance(cols.get("separator"), bool):
+                words += " with a line between them" if cols["separator"] else " without a line between them"
+            out.append(words)
+    lines = params.get("line_numbering")
+    if isinstance(lines, dict):
+        n = lines.get("count_by", 1)
+        words = "line numbers to every line" if n == 1 else f"line numbers to every {_nth(n) if _whole(n) else n} line"
+        if _whole(lines.get("start")):
+            words += f", starting at {lines['start']}"
+        if lines.get("restart") in LINE_RESTART_WORDS:
+            words += ", " + LINE_RESTART_WORDS[lines["restart"]]
+        if _whole(lines.get("distance")):
+            words += f", {prose.inches(lines['distance'])} from the text"
+        out.append(words)
+    if params.get("vertical_alignment") in VERTICAL_WORDS:
+        out.append("the text vertically to " + VERTICAL_WORDS[params["vertical_alignment"]])
+    if params.get("section_start") in START_WORDS:
+        out.append("the section start to " + START_WORDS[params["section_start"]])
+    return out
+
+
 @register
 class SetPageSetup(Op):
     name = "set_page_setup"
     mode = "formatting"
-    description = ("Set margins (incl. header/footer distance from the page edge), page size, orientation and/or "
-                   "different first page of selected sections — by index or by what they contain.")
+    description = ("Set margins (incl. header/footer distance from the page edge), page size, orientation, different "
+                   "first page, columns, line numbering, vertical alignment and/or the section start of selected "
+                   "sections — by index or by what they contain.")
     params_schema = {"type": "object", "properties": {
         "margins": {"type": "object",
                     "description": "top/right/bottom/left/header/footer/gutter in twips (1440 = 1 in); "
@@ -121,6 +315,19 @@ class SetPageSetup(Op):
         "different_first_page": {"type": "boolean",
                                  "description": "true: the section's first page shows its first-page header/footer "
                                                 "(w:titlePg on); false: it shows the ordinary ones"},
+        "columns": {"type": "object", "properties": {
+                        "count": {"type": "integer", "minimum": 1, "maximum": 45},
+                        "space": {"type": "integer", "description": "twips between the columns"},
+                        "separator": {"type": "boolean", "description": "a line between the columns"}},
+                    "required": ["count"],
+                    "description": "equal columns; count 1 = a single column (no space or separator then)"},
+        "line_numbering": {"description": "'none' turns line numbers off; or {count_by (every Nth line, default 1), "
+                                          "start (the first number shown), restart: new_page | new_section | "
+                                          "continuous, distance (twips from the text)}"},
+        "vertical_alignment": {"type": "string", "enum": list(VERTICAL),
+                               "description": "where the text sits between the top and bottom margins"},
+        "section_start": {"type": "string", "enum": list(START_TYPES),
+                          "description": "how the section begins after the one before it (its section break)"},
         "allow_missing": {"type": "boolean", "default": False,
                           "description": "content-form sections: a file where no section matches is a no-op instead "
                                          "of not-found"},
@@ -130,8 +337,8 @@ class SetPageSetup(Op):
                        "with_tables: bool, index_range: [first, last]} — every given key must hold"}}}
     verification_profile = {"V2": "zero text diffs",
                             "V10": "section_props: the selection re-derived from the user's select; per section "
-                                   "pgMar/pgSz attributes exactly as set, titlePg present without w:val / absent; "
-                                   "nothing else",
+                                   "pgMar/pgSz attributes exactly as set, titlePg present without w:val / absent, "
+                                   "cols/lnNumType/vAlign/type exactly as asked or absent; nothing else",
                             "V7": "none — page geometry changes by design"}
 
     def describe(self, select: Optional[Dict[str, Any]], params: Dict[str, Any]) -> str:
@@ -145,21 +352,26 @@ class SetPageSetup(Op):
         orient = params.get("orientation")
         if orient in ("portrait", "landscape"):
             what.append(f"the orientation to {orient}")
+        what += layout_words(params)
         first = params.get("different_first_page")
-        first_clause = ("give the first page its own header and footer" if first is True else
-                        "show the ordinary header and footer on the first page" if first is False else "")
+        clauses = [c for c in ("give the first page its own header and footer" if first is True else
+                               "show the ordinary header and footer on the first page" if first is False else "",
+                               "turn line numbering off" if params.get("line_numbering") == "none" else "") if c]
         where = prose.where(select, default="every section")
         if what:
-            head = prose.sentence("set", prose.join(what), where, f"and {first_clause}" if first_clause else "")
-        elif first_clause:
-            head = prose.sentence(first_clause, where)
+            head = prose.sentence("set", prose.join(what), where, f"and {prose.join(clauses)}" if clauses else "")
+        elif clauses:
+            head = prose.sentence(prose.join(clauses), where)
         else:
-            head = prose.sentence("set the margins, page size, orientation and first-page header and footer", where)
+            head = prose.sentence("set the margins, page size, orientation, columns, line numbering and first-page "
+                                  "header and footer", where)
         extras: List[str] = []
         if orient in ("portrait", "landscape"):
             extras.append("the page width and height swap where they disagree with it")
             if not (isinstance(margins, dict) and margins):
                 extras.append("the margins stay as they are")
+        if params.get("section_start") in ("even_page", "odd_page"):
+            extras.append("Word adds a blank page where the page before would end on the wrong side")
         if params.get("allow_missing") is True:
             extras.append("files where no section matches are left unchanged")
         return head if not extras else head + " " + prose.sentence(prose.join(extras))
@@ -189,9 +401,11 @@ class SetPageSetup(Op):
             raise JobException("different_first_page must be true or false", "bad-params")
         if not isinstance(allow_missing, bool):
             raise JobException("allow_missing must be true or false", "bad-params")
-        if not (margins or size or orient or first is not None):
-            raise JobException("nothing to set: give margins, size, orientation and/or different_first_page",
-                               "bad-params")
+        check_layout(params)
+        layout = any(params.get(k) is not None for k in LAYOUT_PARAMS)
+        if not (margins or size or orient or first is not None or layout):
+            raise JobException("nothing to set: give margins, size, orientation, different_first_page, columns, "
+                               "line_numbering, vertical_alignment and/or section_start", "bad-params")
         chooser = select.get("sections", "all")
         ords = resolve_sections(pkg, chooser, content=True)
         main = pkg.main_part()
@@ -211,7 +425,9 @@ class SetPageSetup(Op):
         per_section: Dict[int, Dict[str, Dict[str, str]]] = {}
         asserted: Dict[str, Dict[str, Dict[str, Any]]] = {}     # section_props element specs per changed section
         titles: Dict[int, bool] = {}
+        layouts: Dict[int, Dict[str, Dict[str, Any]]] = {}      # the layout parameters' element specs (batch 6)
         already: List[int] = []
+        laid_out: List[int] = []                                # the layout already as asked
         for i in ords:
             sp = secs[i]
             elements: Dict[str, Dict[str, str]] = {}
@@ -241,10 +457,20 @@ class SetPageSetup(Op):
                     titles[i] = first
                 else:
                     already.append(i)
-            if elements or i in titles:
+            lay = layout_specs(sp, params) if layout else {}
+            if layout and not lay:
+                laid_out.append(i)
+            if elements or i in titles or lay:
                 per_section[i] = elements
                 asserted[str(i)] = {name: {"set": attrs} for name, attrs in elements.items()}
-            frag.touches += [(main, f"sectPr:{i}", name) for name in elements]
+                asserted[str(i)].update(copy.deepcopy(lay))
+            if lay:
+                layouts[i] = lay
+                width = column_width(sp, elements, params["columns"]) if "cols" in lay else None
+                if width is not None and params["columns"]["count"] > 1 and width < 720:
+                    frag.flags.append(f"section {i}: {params['columns']['count']} columns leave each column "
+                                      f"{prose.inches(max(width, 0))} wide — less than half an inch")
+            frag.touches += [(main, f"sectPr:{i}", name) for name in list(elements) + list(lay)]
             if i in titles:
                 asserted[str(i)]["titlePg"] = copy.deepcopy(TITLE_PG_ON if titles[i] else TITLE_PG_OFF)
                 frag.touches.append((main, f"sectPr:{i}", "titlePg"))
@@ -257,7 +483,8 @@ class SetPageSetup(Op):
             "selected": list(ords), "sections": changed, "per_section": asserted,
             "expected_sections": len(changed)})
         frag.transform_data = {"main": main, "sections": {str(i): e for i, e in per_section.items()},
-                               "title_pg": {str(i): v for i, v in titles.items()}}
+                               "title_pg": {str(i): v for i, v in titles.items()},
+                               "layout": {str(i): s for i, s in layouts.items()}}
         if not ords:
             if not isinstance(chooser, dict):
                 frag.notes.append("no section selected; nothing to do")
@@ -270,10 +497,20 @@ class SetPageSetup(Op):
             frag.notes.append(f"sections chosen by {chooser!r}: {list(ords)} of {len(secs)}")
         frag.notes.append(f"sections {ords}: " + "; ".join(
             f"{i}: {per_section.get(i, {})}" + (f" + titlePg {'on' if titles[i] else 'off'}" if i in titles else "")
-            for i in ords))
+            + (f" + {layouts[i]}" if i in layouts else "") for i in ords))
         if already:
             frag.notes.append(f"different first page already {'on' if first else 'off'} in section(s) {already}: "
                               f"left alone")
+        if laid_out:
+            frag.notes.append(f"the asked {', '.join(k for k in LAYOUT_PARAMS if params.get(k) is not None)} already "
+                              f"in effect in section(s) {laid_out}: left alone")
+        starting = [i for i in layouts if "type" in layouts[i]]
+        if params.get("section_start") in ("even_page", "odd_page") and starting:
+            frag.notes.append(f"section(s) {starting} start on {START_WORDS[params['section_start']]}: Word adds a "
+                              f"blank page where the page before would end on the wrong side")
+        if 0 in starting:
+            frag.notes.append("section 0 is the first section: no page comes before it, so its start has no effect "
+                              "until a section is inserted before it")
         older = [i for i in changed if secs[i].find(W + "sectPrChange") is not None]
         if older:                          # the change is plain; a pending tracked one stays (batch 5's review)
             frag.flags.append(f"section(s) {older} already carry a pending tracked section change (w:sectPrChange) "
@@ -342,7 +579,7 @@ class SetPageSetup(Op):
 
     def apply(self, pkg: DocxPackage, frag: PlanFragment) -> None:
         td = frag.transform_data
-        if not td["sections"] and not td.get("title_pg"):
+        if not td["sections"] and not td.get("title_pg") and not td.get("layout"):
             return                                  # every section already as asked, or none chosen
         root = pkg.xml(td["main"])
         secs = DocxPackage.sect_prs(root)
@@ -364,4 +601,20 @@ class SetPageSetup(Op):
                     tp.attrib.pop(W + "val", None)
             elif tp is not None:
                 sp.remove(tp)
+        for i, specs in td.get("layout", {}).items():
+            sp = secs[int(i)]
+            for name, spec in specs.items():
+                el = sp.find(W + name)
+                if spec.get("absent"):
+                    if el is not None:
+                        sp.remove(el)
+                    continue
+                if el is None:
+                    el = insert_in_order(sp, etree.Element(W + name), SECTPR_ORDER)
+                for k in [k for k in el.attrib if k.startswith(W)]:
+                    del el.attrib[k]
+                for child in list(el):
+                    el.remove(child)
+                for k, v in spec["exact"].items():
+                    el.set(W + k, v)
         pkg.write_xml(td["main"], root)

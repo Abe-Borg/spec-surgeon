@@ -18,6 +18,37 @@ def quote(text: Any) -> str:
     return f"“{text}”"
 
 
+BREAK_WORDS = {"\t": ("a tab", "tabs"), "\n": ("a line break", "line breaks")}
+
+
+def typed(text: Any) -> str:
+    """The user's exact text in curly quotes, its tabs and line breaks named between the quoted stretches (a plan line
+    holds neither): ``“1.01”, a tab and “SUMMARY”``; text without them is ``quote(text)``."""
+    text = str(text)
+    if not any(ch in BREAK_WORDS for ch in text):
+        return quote(text)
+    parts: List[str] = []
+    cur, k = "", 0
+    while k < len(text):
+        ch = text[k]
+        if ch not in BREAK_WORDS:
+            cur += ch
+            k += 1
+            continue
+        if cur:
+            parts.append(quote(cur))
+            cur = ""
+        n = 1
+        while k + n < len(text) and text[k + n] == ch:
+            n += 1
+        one, many = BREAK_WORDS[ch]
+        parts.append(one if n == 1 else f"{n} {many}")
+        k += n
+    if cur:
+        parts.append(quote(cur))
+    return join(parts)
+
+
 def join(items: Iterable[Any], conjunction: str = "and") -> str:
     """``a``, ``a and b``, ``a, b and c``."""
     parts = [str(x) for x in items]
@@ -173,8 +204,10 @@ def _paragraph_words(pred: Any) -> str:
         clauses.append("after the first paragraph matching " + quote(pred["after_heading_regex"]))
     if isinstance(pred.get("between_paragraphs"), dict):
         bp = pred["between_paragraphs"]
-        clauses.append(f"between {quote(bp.get('start_regex', ''))} and {quote(bp.get('end_regex', ''))}"
-                       + (" inclusive" if bp.get("include_bounds") else ""))
+        start, end, bounds = quote(bp.get("start_regex", "")), quote(bp.get("end_regex", "")), bp.get("include_bounds")
+        clauses.append(f"from {start} up to, not including, {end}" if bounds == "start" else
+                       f"after {start} through {end}" if bounds == "end" else
+                       f"between {start} and {end}" + (" inclusive" if bounds else ""))
     if not adjectives and not clauses:
         return "every paragraph"
     return noun + (" " + " ".join(clauses) if clauses else "")
@@ -213,8 +246,8 @@ def _section_words(sections: Any) -> str:
         if sections.get("with_tables"):
             return "the sections that contain tables"
         if sections.get("index_range"):
-            a, b = sections["index_range"]
-            return f"sections {a + 1} through {b}"
+            a, b = sections["index_range"]              # [first, last], both included
+            return f"sections {a + 1} through {b + 1}"
     return "the selected sections"
 
 
@@ -231,8 +264,8 @@ def _table_words(tables: Any) -> str:
     if tables.get("text_regex"):
         clauses.append("whose text matches the pattern " + quote(tables["text_regex"]))
     if tables.get("index_range"):
-        a, b = tables["index_range"]
-        clauses.append(f"numbered {a + 1} through {b}" if b - a > 1 else f"number {a + 1}")
+        a, b = tables["index_range"]                        # the table selector's range is inclusive at both ends
+        clauses.append(f"numbered {a + 1} through {b + 1}" if b > a else f"number {a + 1}")
     if tables.get("nested") is True:
         clauses.append("including nested tables")
     elif tables.get("nested") is False:

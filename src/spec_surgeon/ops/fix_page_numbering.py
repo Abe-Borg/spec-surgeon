@@ -170,6 +170,9 @@ class FixPageNumbering(Op):
         # template's) would leave this edit on a part the cover no longer shows — the page number still on the cover
         # and nothing to catch it (V7 skips page 1 here) — so it is a plan-time conflict, not a guess at an order.
         reads = [(pkg.main_part(), f"sectPr:{s.sect_pr_ordinal}", "verify:titlePg") for s in sections]
+        # … and the cover footer's fields: the PAGE paragraph is chosen among them, and a field another op inserts there
+        # (insert_field) would leave a page number on the cover — a plan-time conflict, never a guess at an order
+        reads.append((footer, "fields", "verify"))
         # V10 re-derives which footer the cover shows in the output with its own reading of titlePg and checks it
         # holds no PAGE field (a target chosen from a misread titlePg used to pass every check)
         plan.property_assertions.append({"kind": "cover_unnumbered", "footer": footer})

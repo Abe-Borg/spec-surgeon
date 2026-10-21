@@ -20,7 +20,7 @@ from .server import Shell, WindowState, create_app
 WINDOW_SIZE = (1440, 900)
 MIN_SIZE = (1100, 700)
 FILE_TYPES = {"documents": ("Word documents (*.docx)",), "template": ("Word documents (*.docx)",),
-              "references": ("Pictures and tables (*.png;*.jpg;*.jpeg;*.gif;*.xlsx;*.csv;*.json)",)}
+              "references": ("Pictures and tables (*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.xlsx;*.csv;*.json)",)}
 
 
 class WebviewShell(Shell):
