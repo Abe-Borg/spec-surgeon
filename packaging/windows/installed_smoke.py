@@ -145,6 +145,8 @@ def _gui(request, result):
     assert any(e["request"] == "remove all headers and footers" for e in examples)
     assert updater.is_installed_build(), "unins000.exe must sit beside the installed app"
     assert (STATIC / "index.html").is_file(), f"the built page must ship in the bundle ({STATIC})"
+    # PyMuPDF 2.0 loads a layout-analysis model on import; pyproject pins below it so the window never carries one
+    assert "onnxruntime" not in sys.modules, f"PyMuPDF {pymupdf.VersionBind} loaded its layout model"
 
     # pywebview's Windows backend without opening a window: importing it loads pythonnet, WinForms and the WebView2
     # interop assemblies and reads the WebView2 runtime's version from the registry (``renderer``); ``initialize``
