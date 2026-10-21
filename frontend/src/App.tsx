@@ -36,6 +36,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
+  // About asked for a check while this window was open: its answer stays on About, closed and reopened or not.
+  const [updateAsked, setUpdateAsked] = useState(false);
   const [zoom, setZoom] = useState<{ src: string; title: string } | null>(null);
   const [dismissedUpdate, setDismissedUpdate] = useState("");
   const [dragDepth, setDragDepth] = useState(0);
@@ -284,6 +286,7 @@ export default function App() {
   // writes this check's answer or finds an update (lib/help.checkSettled).
   const onCheckUpdates = useCallback(() => {
     setDismissedUpdate("");
+    setUpdateAsked(true);
     setCheckingUpdate(true);
     api
       .checkUpdate()
@@ -414,6 +417,7 @@ export default function App() {
         stepsPerPause={view.budget?.steps_per_pause ?? 48}
         busy={busy}
         update={view.update}
+        updateAsked={updateAsked}
         checkingUpdate={checkingUpdate}
         onCheckUpdate={onCheckUpdates}
         onDownloadUpdate={onDownloadUpdate}

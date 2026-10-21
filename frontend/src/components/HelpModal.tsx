@@ -21,6 +21,8 @@ interface Props {
   stepsPerPause: number;
   busy: boolean;
   update: Update | null;
+  /** About started a check while this window was open; its answer is shown, whenever About is reopened. */
+  updateAsked: boolean;
   /** A check started from About has not settled yet. */
   checkingUpdate: boolean;
   onCheckUpdate: () => void;
@@ -427,6 +429,7 @@ function AboutTopic({
   version,
   busy,
   update,
+  updateAsked,
   checkingUpdate,
   onCheckUpdate,
   onDownloadUpdate,
@@ -436,6 +439,7 @@ function AboutTopic({
   version: string;
   busy: boolean;
   update: Update | null;
+  updateAsked: boolean;
   checkingUpdate: boolean;
   onCheckUpdate: () => void;
   onDownloadUpdate: () => void;
@@ -444,7 +448,6 @@ function AboutTopic({
 }) {
   const [about, setAbout] = useState<About | null>(null);
   const [error, setError] = useState("");
-  const [asked, setAsked] = useState(false);
   const [fullLicense, setFullLicense] = useState(false);
 
   useEffect(() => {
@@ -457,13 +460,8 @@ function AboutTopic({
     };
   }, []);
 
-  // A check still running when this page (re)opens is the one it asked for: say so, then show its answer.
-  useEffect(() => {
-    if (checkingUpdate) setAsked(true);
-  }, [checkingUpdate]);
-
   const shownVersion = about?.version || version;
-  const status = updateStatus(update, asked, checkingUpdate);
+  const status = updateStatus(update, updateAsked, checkingUpdate);
   const model = modelLabel(about?.model);
   const statusTone = {
     quiet: "text-ink-faint",
@@ -513,10 +511,7 @@ function AboutTopic({
         <div className="flex flex-wrap items-center gap-3">
           <button
             type="button"
-            onClick={() => {
-              setAsked(true);
-              onCheckUpdate();
-            }}
+            onClick={onCheckUpdate}
             disabled={checkingUpdate}
             className={quietBtn}
           >
@@ -682,6 +677,7 @@ export default function HelpModal({
   stepsPerPause,
   busy,
   update,
+  updateAsked,
   checkingUpdate,
   onCheckUpdate,
   onDownloadUpdate,
@@ -759,6 +755,7 @@ export default function HelpModal({
               version={version}
               busy={busy}
               update={update}
+              updateAsked={updateAsked}
               checkingUpdate={checkingUpdate}
               onCheckUpdate={onCheckUpdate}
               onDownloadUpdate={onDownloadUpdate}

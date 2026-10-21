@@ -175,6 +175,15 @@ try {
   check("a check says it is checking", await about.getByText("Checking for updates…").isVisible({ timeout: 1000 }).catch(() => false));
   await about.getByText("You're up to date").waitFor({ timeout: 15000 });
   check("…then that you are up to date", true);
+  // Closed while its check runs and reopened after it answered, About still shows that answer.
+  await about.getByRole("button", { name: "Check for updates" }).click();
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(3500);
+  await page.locator("header nav[aria-label='Help']").getByRole("button", { name: "About" }).click();
+  check(
+    "a check's answer survives closing and reopening About",
+    await page.getByRole("dialog", { name: "About" }).getByText("You're up to date").isVisible({ timeout: 3000 }).catch(() => false),
+  );
   await about.getByRole("button", { name: "Open diagnostic logs" }).click();
   check("Open diagnostic logs is in About", true);
   await page.keyboard.press("Escape");

@@ -82,9 +82,10 @@ export interface UpdateStatus {
 }
 
 /**
- * What the About page says beside Check for updates. `asked`: the page
- * started a check this time it was open; `checking`: that check has not
- * settled yet. An answer from a check asked for earlier is not shown.
+ * What the About page says beside Check for updates. `asked`: About started
+ * a check while this window was open (the dialog may have been closed and
+ * reopened since); `checking`: that check has not settled yet. An answer to
+ * a check asked for before the window opened is not shown.
  */
 export function updateStatus(update: Update | null | undefined, asked: boolean, checking: boolean): UpdateStatus {
   const none: UpdateStatus = { text: "", tone: "quiet", action: null, progress: null };
