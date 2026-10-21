@@ -573,9 +573,10 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
 
 
 def test_a_saved_copys_preview_leaves_while_the_rest_are_still_discussed(tmp_path):
-    """A partial save delivers the ready copies; their pages leave the window, and the conversation about the other
-    documents goes on without them. The pages come back for no document whose copy is saved, across a resume."""
-    from spec_surgeon import recovery
+    """A partial save delivers the ready copies; their pages and the visual check's findings about them leave the
+    window, and the conversation about the other documents goes on without them. Neither comes back for a document
+    whose copy is saved, across a resume; a finding about another document, or about none, stays."""
+    from spec_surgeon import recovery, vision
     from test_recovery import candidate, margin, opts, spec, submit
     from test_recovery_resume import distinct_failures
     paths = [document(tmp_path / name) for name in ("First.docx", "Second.docx")]
@@ -588,20 +589,32 @@ def test_a_saved_copys_preview_leaves_while_the_rest_are_still_discussed(tmp_pat
     task.decisions = task.word_sources = [goal["request"]]
     result = recovery.recover(paths, goal["request"], tmp_path / "recovery", spec=goal, options=opts(),
                               prior_failures=distinct_failures(paths), client=fake)
+    result.review = vision.VisualReview(findings=[
+        {"severity": "block", "file": "First.docx", "page": 1, "text": "The header overlaps the title."},
+        {"severity": "warn", "file": "Second.docx", "page": None, "text": "The footer is close to the edge."},
+        {"severity": "warn", "file": "", "page": None, "text": "Fonts were substituted while rendering."}])
+    result._reviews = {str(paths[0]): result.review}        # per file, as recovery keeps the check of each trial
     task.session._adopt_recovery(result)
     task._settle(lambda _: None)
     view = task.view()
-    assert view["action"] == "Save 1 ready copy"
+    assert view["action"] == "Save 1 ready copy" and view["blocking"]
     assert [Path(sv.source).name for sv in view["samples"]] == ["First.docx"]
+    assert any("header overlaps" in w for w in view["warnings"])
     view = task.perform("primary", token=view["token"])
     assert view["stage"] == "question" and list(task.results) == [str(paths[0])]
     assert any(sv.source == paths[0] for sv in task.session.recovery.samples)    # the evidence is kept
     assert view["samples"] == []                                                  # the window shows none of it
+    assert not view["blocking"] and not any("header overlaps" in w for w in view["warnings"])
+    assert any("footer is close" in w for w in view["warnings"])
+    assert any("substituted" in w for w in view["warnings"])
     task._recovery_options = lambda: opts(critic_review=False, visual_review=False)
     view = task.perform("send", text="Yes, use those margins on the second document.")
     assert view["stage"] == "preview"
     assert [Path(sv.source).name for sv in task.session.recovery.samples] == ["First.docx", "Second.docx"]
     assert [Path(sv.source).name for sv in view["samples"]] == ["Second.docx"]
+    assert task.session.outcome().blocking                                        # the finding is still on record
+    assert not view["blocking"] and view["action"] == "Create edited copies"
+    assert not any("header overlaps" in w for w in view["warnings"])
 
 
 def test_a_mixed_batch_gets_one_plan_per_layout_and_one_decision(tmp_path):

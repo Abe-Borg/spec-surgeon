@@ -740,12 +740,31 @@ class DocumentTask:
                 "targets": review_display.recovery_targets(s.recovery) if s.recovery else review_display.spec_bindings(s.spec),
                 "set_aside": set_aside, "stages": stages if groups else 0}
 
-    def _undelivered_samples(self, preview) -> list:
-        """The preview's samples less the documents whose copies are already saved: a partial save during recovery
-        delivers the ready copies, and their pages leave while the conversation goes on about the rest."""
+    def _delivered(self) -> List[Path]:
+        """The documents whose copies a partial save during recovery already delivered: their pages and findings leave
+        while the conversation goes on about the rest."""
         recovery = self.session.recovery
-        delivered = {str(f.source) for f in recovery.files if f.delivered_to} if recovery is not None else set()
+        return [Path(f.source) for f in recovery.files if f.delivered_to] if recovery is not None else []
+
+    def _undelivered_samples(self, preview) -> list:
+        delivered = {str(path) for path in self._delivered()}
         return [sv for sv in getattr(preview, "samples", []) or [] if str(sv.source) not in delivered]
+
+    def _undelivered_findings(self, review) -> list:
+        """The visual check's findings less those about a delivered document. A finding names its file by the label
+        the check was shown (the name, or the trailing folders that tell two same-named files apart); one that names
+        no file, or whose label also fits a document still in play, stays."""
+        findings = list(getattr(review, "findings", []) or [])
+        delivered = self._delivered()
+        if not delivered:
+            return findings
+        pending = [Path(f.source) for f in self.session.recovery.files if not f.delivered_to]
+
+        def names(label, path):
+            return label == str(path) or ("/" + path.as_posix()).endswith("/" + label)
+        return [f for f in findings
+                if not (f.get("file") and any(names(f["file"], path) for path in delivered)
+                        and not any(names(f["file"], path) for path in pending))]
 
     def _samples_view(self) -> Dict[str, Any]:
         preview = self.session.outcome().preview
@@ -755,7 +774,8 @@ class DocumentTask:
                              "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed}
                             for sv in samples],
                 "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
-                "blocking": bool(self.session.outcome().blocking)}
+                "blocking": any(f.get("severity") == "block"
+                                for f in self._undelivered_findings(getattr(preview, "review", None)))}
 
     def _results_view(self) -> List[Dict[str, Any]]:
         return [{"source": source, "output": output, "name": Path(output).name}
@@ -783,10 +803,12 @@ class DocumentTask:
         from .settings import output_root_warnings
         warnings.extend(output_root_warnings(s.out_root))
         visual = getattr(pages, "review", None)
+        findings = self._undelivered_findings(visual)
+        blocking = any(f.get("severity") == "block" for f in findings)
         if visual is not None:
             if visual.skipped:
                 warnings.append("Automated page review was unavailable: " + visual.skipped)
-            for finding in getattr(visual, "findings", []):
+            for finding in findings:
                 location = " · ".join(str(v) for v in (finding.get("file"),
                                            f"page {finding['page']}" if finding.get("page") else None) if v)
                 warnings.append((location + ": " if location else "") + finding.get("text", ""))
@@ -799,7 +821,7 @@ class DocumentTask:
             exc = item.exception or {}
             set_aside.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
         labels = {"preview": "Create edited copies", "resume": "Continue", "budget": "Continue"}
-        if outcome.blocking and self.stage == "preview":
+        if blocking and self.stage == "preview":
             labels["preview"] = "I reviewed the flagged pages — create copies"
         if self.stage == "question" and outcome.partial:
             ready = len(s.recovery.ready)
@@ -833,7 +855,7 @@ class DocumentTask:
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
                 "budget_paused": self.stage == "budget", "steps_per_pause": STEPS_PER_PAUSE,
                 "cost": self._budget.spent_usd,
-                "blocking": outcome.blocking}
+                "blocking": blocking}
 
     # ---- the journal ----
     def save(self, *, in_progress=False):

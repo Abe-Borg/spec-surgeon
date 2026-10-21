@@ -120,7 +120,8 @@ says that page appearance was not checked and asks you to check the edited copie
 The pages are those of the plan in front of you, and nothing older. Sending a message or picking a choice takes
 the plan and its pages off the window while the reply is worked out, and a new plan's pages replace them; once
 copies are created, their pages leave with the plan. During recovery, a document whose copy you already saved
-drops out of the previews while the conversation goes on about the rest.
+drops out of the previews, and its findings out of **About these checks**, while the conversation goes on about
+the rest.
 
 Claude's visual check of the rendered pages is advisory. Its findings appear under **About these checks** with
 their file and page. A finding it marks as blocking changes that card's title to **Please check** and the

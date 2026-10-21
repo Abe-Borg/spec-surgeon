@@ -64,7 +64,7 @@ Rules the page relies on:
 - `samples[].images` are URLs served by `GET /api/image?path=…&token=…` (PNG side-by-side before/after pages).
 - `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document
   whose copy a partial save already delivered; every other stage sends none, so a finished run takes its
-  pages along.
+  pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule.
 - `action.kind`: `approve` → the big button "Create edited copies" (or "I reviewed the flagged pages — create
   copies" when `blocking`), `continue` → "Continue", `save` → "Save N ready copies", `none` → no button. While
   `busy` the same spot shows "Stop now".
