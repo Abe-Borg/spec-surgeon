@@ -147,8 +147,9 @@ Nearest relative: `swap_image` (the picture model `ops/images.py` ↔ `verify/im
 
 * **`insert_image`**: an attached picture (PNG, JPEG, GIF, BMP; SVG refused) as its own paragraph `before`/`after`
   each anchor paragraph (targeted selector); `width`/`height` in inches (one given keeps the proportions; neither: the
-  picture's own size at its resolution, 96 dpi when it has none, shrunk to the anchor section's text width — in a
-  header or footer the narrowest of every section's); `align`; `description` (alt text, the user's words); the new
+  picture's own size at its resolution, 96 dpi when it has none, shrunk in proportion to fit the anchor section's text
+  area, width and height — in a header or footer the narrowest and shortest of every section's, in a fixed-width table
+  cell the cell less its margins); `align`; `description` (alt text, the user's words); the new
   paragraph's style (default: the document's default paragraph style). Media `word/media/imageN.ext`, a relationship
   per part (its rels created when missing), a content-type Default when missing. Tracked by default (the paragraph is
   a tracked insertion). An anchor in or holding a text box, and `after` a section break, are refused. V10 kind

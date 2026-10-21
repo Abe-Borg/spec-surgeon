@@ -366,7 +366,7 @@ swap_image.image / match.image — what a table holds is the user's. Words you t
 END OF SECTION wording) must be the user's exact words, like any replacement.
 - Pictures: insert_image puts an attached picture (PNG, JPEG, GIF, BMP — its exact INPUT FILES path) in its own new \
 paragraph before/after targeted anchor paragraphs; width and/or height in inches only when the user names a size \
-(else its own size, shrunk to the text width); description is the user's alt text verbatim. remove_images and \
+(else its own size, made smaller to fit between the margins or in its table cell); description is the user's alt text verbatim. remove_images and \
 resize_images choose pictures with swap_image's match ({image: an attached picture}, {md5}, {name_regex} on the name or \
 alt text, or "all") in scope document (default), headers, footers; remove_images keeps the paragraph (tracked by \
 default); resize_images takes width/height in inches or scale in percent, never tracked. A header logo: swap_image to \
