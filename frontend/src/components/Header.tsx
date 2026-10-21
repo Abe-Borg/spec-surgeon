@@ -1,5 +1,5 @@
 // Adapted from Build-a-Spec's frontend/src/components/Header.tsx (copy-based reuse).
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import type { View } from "../types";
 import { costPill } from "../lib/chat";
 import Tip from "./Tip";
@@ -23,7 +23,7 @@ const ORIGIN_TIPS: Record<string, string> = {
   none: "No API key is connected. Connect one in Settings to start.",
 };
 
-export default function Header({
+function Header({
   view,
   busy,
   workbenchOpen,
@@ -168,3 +168,6 @@ export default function Header({
     </header>
   );
 }
+
+// Memoized: a streamed delta changes only the live bubble, so the header keeps its last render.
+export default memo(Header);

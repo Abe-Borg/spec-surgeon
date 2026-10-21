@@ -246,6 +246,18 @@ export default function App() {
 
   const onPrefill = useCallback((text: string) => setPrefill((p) => ({ text, nonce: p.nonce + 1 })), []);
 
+  // Stable handlers: the header, the workbench and the composer are memoized and skip the renders a streamed
+  // delta would otherwise cause, as long as nothing handed to them is a new function each time.
+  const onToggleWorkbench = useCallback(() => setWorkbenchOpen((o) => !o), []);
+  const onOpenSettings = useCallback(() => setSettingsOpen(true), []);
+  const onOpenAbout = useCallback(() => setAboutOpen(true), []);
+  const onAddKind = useCallback((kind: PickKind) => void onAdd(kind), [onAdd]);
+  const onZoom = useCallback((src: string, title: string) => setZoom({ src, title }), []);
+  const actionToken = view.action?.token;
+  const onContinue = useCallback(() => {
+    if (actionToken) onAct(actionToken);
+  }, [actionToken, onAct]);
+
   // --- Help: logs, updates, about ------------------------------------------
 
   const onOpenLogs = useCallback(() => {
@@ -315,10 +327,10 @@ export default function App() {
         view={view}
         busy={busy}
         workbenchOpen={workbenchOpen}
-        onToggleWorkbench={() => setWorkbenchOpen((o) => !o)}
+        onToggleWorkbench={onToggleWorkbench}
         onNewConversation={onNewConversation}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onOpenAbout={() => setAboutOpen(true)}
+        onOpenSettings={onOpenSettings}
+        onOpenAbout={onOpenAbout}
         onOpenLogs={onOpenLogs}
         onCheckUpdates={onCheckUpdates}
       />
@@ -352,9 +364,7 @@ export default function App() {
           sendReason={composer.reason}
           onSend={onSend}
           onChoose={onChoose}
-          onContinue={() => {
-            if (view.action?.token) onAct(view.action.token);
-          }}
+          onContinue={onContinue}
           onStop={onStop}
           prefill={prefill}
           onPrefill={onPrefill}
@@ -367,13 +377,13 @@ export default function App() {
             uploading={uploading}
             button={button}
             paused={paused}
-            onAdd={(kind) => void onAdd(kind)}
+            onAdd={onAddKind}
             onRemove={onRemove}
             onAct={onAct}
             onStop={onStop}
             onOpen={onOpen}
             onStartOver={onStartOver}
-            onZoom={(src, title) => setZoom({ src, title })}
+            onZoom={onZoom}
           />
         )}
       </main>

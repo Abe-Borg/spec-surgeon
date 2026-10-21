@@ -148,10 +148,28 @@ function keepAside(asides: Record<string, Aside>, id: string, live: LiveReply | 
   return { ...asides, [id]: { thinking: live.thinking, activities: [...live.activities] } };
 }
 
+/**
+ * `next` with every unchanged message (same id, role, text and time) replaced
+ * by the object already on the page: each view arrives as fresh JSON, and a
+ * memoized bubble given an equal but new object would parse its markdown again.
+ */
+export function keepShownMessages(shown: Message[], next: Message[]): Message[] {
+  if (shown.length === 0) return next;
+  const byId = new Map(shown.map((m) => [m.id, m]));
+  return next.map((m) => {
+    const old = byId.get(m.id);
+    return old && old.role === m.role && old.text === m.text && old.at === m.at ? old : m;
+  });
+}
+
+function withShownMessages(state: UiState, view: View): View {
+  return { ...view, messages: keepShownMessages(state.view.messages, view.messages) };
+}
+
 export function reduce(state: UiState, action: UiAction): UiState {
   switch (action.type) {
     case "view": {
-      const view = action.view;
+      const view = withShownMessages(state, action.view);
       // A view that says busy while no stream is attached (the page was
       // reopened mid-job) still gets a live bubble, so the window shows Stop
       // and a status rather than an idle page that refuses every click.
@@ -267,11 +285,17 @@ function reduceEvent(state: UiState, event: JobEvent): UiState {
     case "cost":
       return { ...state, view: { ...state.view, cost: event.cost } };
     case "done":
-      return { ...state, view: normalizeView(event.state), live: null, error: null, loaded: true };
+      return {
+        ...state,
+        view: withShownMessages(state, normalizeView(event.state)),
+        live: null,
+        error: null,
+        loaded: true,
+      };
     case "error":
       return {
         ...state,
-        view: normalizeView(event.state),
+        view: withShownMessages(state, normalizeView(event.state)),
         live: null,
         error: event.message || "The work could not finish.",
         loaded: true,

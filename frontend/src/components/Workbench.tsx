@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, type ReactNode } from "react";
+import { memo, useEffect, useMemo, useRef, type ReactNode } from "react";
 import type { Attachment, View } from "../types";
 import type { ActionButton } from "../lib/action";
 import { planHasContent, runFolder } from "../lib/workbench";
@@ -82,7 +82,7 @@ function ActionBar({ kind, children }: { kind: ActionButton["kind"]; children: R
   );
 }
 
-export default function Workbench({
+function Workbench({
   view,
   busy,
   uploading,
@@ -262,3 +262,6 @@ export default function Workbench({
     </section>
   );
 }
+
+// Memoized: a streamed delta changes only the live bubble, so the workbench keeps its last render.
+export default memo(Workbench);
