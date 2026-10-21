@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 import json
-import os
-import zipfile
 from pathlib import Path
 
-from spec_surgeon import diagnostics
 from spec_surgeon.batch import BatchResult, FileResult
 from spec_surgeon.readable import RECORD_BYTES, REPORT_BYTES, bounded, grouped_findings
 from spec_surgeon.report import write_batch_report, write_diagnostics
@@ -110,26 +107,3 @@ def test_preview_cap_keeps_exact_approval_token_and_machine_data(tmp_path):
     assert "Truncated" in text and "preview.json" in text and "approval token: " + "a" * 64 in text
     saved = json.loads((tmp_path / "preview.json").read_text())
     assert saved["token"] == preview.token and saved["approval_inputs"] == preview.token_inputs
-
-
-def test_bundle_is_bounded_for_large_incompressible_evidence_and_lists_omissions(tmp_path):
-    root = tmp_path / "results"
-    root.mkdir()
-    (root / "DIAGNOSTICS.md").write_text("V10 failed; rejected files are diagnosis only.")
-    # Hex data defeats tiny compressed fixtures; collectively these exceed the bundle budget.
-    for i in range(16):
-        (root / f"evidence-{i}.json").write_text(json.dumps({"evidence": os.urandom(220_000).hex()}))
-    (root / "large-record.json").write_text(json.dumps({"errors": ["private paragraph"] * 100_000}))
-    result = diagnostics.make_bundle(tmp_path / "bundle.zip", root)
-    assert result["path"].stat().st_size < diagnostics.MAX_BUNDLE_BYTES
-    assert result["omitted_count"] > 0
-    with zipfile.ZipFile(result["path"]) as bundle:
-        assert "results/DIAGNOSTICS.md" in bundle.namelist()
-        manifest = json.loads(bundle.read("environment.json"))
-        assert manifest["omitted_count"] > 0 and manifest["full_evidence"]
-        assert any(x["path"].endswith("large-record.json") for x in manifest["omitted"])
-        for name in bundle.namelist():
-            if name.endswith(".json"):
-                json.loads(bundle.read(name))
-    # Packaging neither removes nor truncates original machine evidence.
-    assert len(json.loads((root / "large-record.json").read_text())["errors"]) == 100_000

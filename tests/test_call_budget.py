@@ -1,4 +1,4 @@
-"""Recovery budgets cover every existing model caller without changing ordinary llm.call behavior."""
+"""The call budget (``llm.CallBudget``) covers every model caller without changing ordinary llm.call behavior."""
 from __future__ import annotations
 
 import json

@@ -1,8 +1,8 @@
 """Phase 5 (Tier B): the source whitelist, the sandbox process, the hard limits, the verifier as the generated op's
-test, the generate → verify → feedback loop (scripted client), running a passing op over a batch, and `do
---allow-codegen` end to end."""
+test, the generate → verify → feedback loop (scripted client) and running a passing op over a batch."""
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,7 +11,6 @@ import pytest
 
 from make_fixtures import build
 from spec_surgeon import compiler as compiler_module
-from spec_surgeon.cli import main as cli_main
 from spec_surgeon.codegen import (ALLOWED_MODULES, check_source, generate_op, hard_limits, run_generated,
                                   run_in_sandbox, trial)
 from spec_surgeon.sandbox_runner import _guarded_import
@@ -175,23 +174,6 @@ def test_generate_gives_up_after_three_attempts(folder, tmp_path):
     assert history["passed"] is False and len(history["attempts"]) == 3 and "after 3 attempt" in history["errors"][0]
 
 
-def test_do_allow_codegen_end_to_end(folder, tmp_path, monkeypatch, capsys):
-    request = "Set the header distance to 900 twips"
-    unsupported = {"request": request, "summary": "Set header distance", "unsupported": "no op sets the header distance alone",
-                   "proposal": "set_header_distance"}
-    offer = {"spec": unsupported, "custom_transform": "possible"}          # Claude judged it within the limits
-    clients = iter([FakeClient(resp(tool("submit_editspec", offer))),
-                    FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}))),
-                    FakeClient(resp(tool("submit_editspec", offer)))])
-    monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
-    assert cli_main(["do", request, str(folder), "--out", str(tmp_path / "o"), "--no-render",
-                     "--allow-codegen", "--yes"]) == 0
-    out = capsys.readouterr().out
-    assert "passed on the samples" in out and "2 of 2 file(s) PASS" in out
-    assert cli_main(["do", request, str(folder), "--out", str(tmp_path / "o2"), "--no-render"]) == 2
-    assert "No custom transform was written" in capsys.readouterr().out
-
-
 # an op that writes a document property: docProps is no text part and no styles part — refused before the suite runs
 DOCPROPS_OP = GOOD_OP.replace("frag.intended_parts = [main]", "frag.intended_parts = [main, 'docProps/core.xml']")
 
@@ -322,3 +304,117 @@ def test_the_custom_transform_has_a_preview(folder, tmp_path):
     log = (tmp_path / "pv" / "logs" / "preview.log").read_text(encoding="utf-8")
     assert "one-off custom transform" in log and log.count("verification PASS") == 2
     assert json.loads((tmp_path / "pv" / "preview.json").read_text(encoding="utf-8"))["log"] == "logs/preview.log"
+
+
+# ---- the sandbox's work folder and a package it breaks ---------------------------------------------------------------
+
+def test_the_sandbox_takes_a_relative_work_folder(tmp_path, monkeypatch):
+    f = tmp_path / "A.docx"
+    f.write_bytes(build("21 00 18", "MIKE"))
+    monkeypatch.chdir(tmp_path)
+    sb = run_in_sandbox(GOOD_OP, Path("A.docx"), {}, {"twips": 900}, Path("rel") / "sb")
+    assert sb.ok and sb.output and sb.output.is_file(), (sb.code, sb.error)
+
+
+def test_a_generated_op_that_breaks_the_package_is_a_failed_trial_not_a_crash(tmp_path):
+    f = tmp_path / "A.docx"
+    f.write_bytes(build("21 00 19", "NOVEMBER"))
+    broken = GOOD_OP.replace("def apply(self, pkg, frag):",
+                             "def apply(self, pkg, frag):\n        pkg.remove_member('word/document.xml')\n"
+                             "        return\n    def _old_apply(self, pkg, frag):")
+    assert broken != GOOD_OP
+    t = trial(broken, f, {}, {"twips": 900}, tmp_path / "sb")
+    assert t.passed is False and "could not check the output" in t.problems[0] and t.record is None
+
+
+# ---- the whitelist is an allowlist; the writer's samples by label ----------------------------------------------------
+
+OP_HEAD = """from spec_surgeon.ops.base import Op, PlanFragment
+{imports}
+
+class Probe(Op):
+    name = "probe"
+    mode = "formatting"
+
+    def plan(self, pkg, select, params):
+        {body}
+        return self.fragment(select, params)
+
+    def apply(self, work, fragment):
+        pass
+"""
+
+
+def probe_source(body, imports=""):
+    return OP_HEAD.format(imports=imports, body=body)
+
+
+@pytest.mark.parametrize("imports, body", [
+    ("import re", "re.enum"),                                         # an allowed module's other attributes
+    ("import json", "json.codecs"),
+    ("import json", "json.decoder"),
+    ("import re as r", "r.enum"),                                     # under another name
+    ("import copy", "copy.sys"),
+    ("from lxml import etree", "etree.ElementTree"),                  # lxml beyond elements
+    ("from lxml import etree as E", "E.xmlfile"),
+    ("from lxml import etree", "etree.Element('x').getroottree().write_c14n('x')"),   # a tree's writers
+    ("from lxml import etree", "etree.Element('x').getroottree().xinclude()"),
+    ("import re", "x = re"),                                          # the module object itself, anywhere
+    ("import json", "print(json)"),
+    ("import json", "[json][0]"),
+    ("import re", "re = None"),
+    ("", "(x for x in ()).gi_frame"),                                 # frames and generator internals
+    ("", "(x for x in ()).gi_frame.f_back.f_globals"),
+    ("", "self.plan.func_globals"),
+    ("", "__builtins__"),                                             # dunder names
+    ("", "__loader__"),
+])
+def test_the_whitelist_refuses_every_route_from_an_allowed_module_to_the_file_system(imports, body):
+    from spec_surgeon.codegen import check_source
+    assert check_source(probe_source(body, imports)), f"{imports!r} / {body!r} must be refused"
+
+
+def test_the_whitelist_still_accepts_what_an_honest_op_uses():
+    from spec_surgeon.codegen import check_source
+    assert check_source(GOOD_OP) == []
+    honest = probe_source(
+        "rx = re.compile(r'^PART \\d', re.IGNORECASE)\n"
+        "        data = json.loads(json.dumps({'a': [1, 2]}))\n"
+        "        twips = math.ceil(0.625 * 1440)\n"
+        "        pairs = list(itertools.chain([1], [2]))\n"
+        "        total = functools.reduce(lambda a, b: a + b, pairs)\n"
+        "        el = etree.SubElement(etree.Element('p'), 'r')\n"
+        "        clone = copy.deepcopy(el)\n"
+        "        ok = bool(rx.search('PART 1')) and twips == 900 and total == 3 and etree.iselement(clone)",
+        "import re\nimport json\nimport math\nimport itertools\nimport functools\nimport copy\nfrom lxml import etree")
+    assert check_source(honest) == []
+
+
+def test_every_module_attribute_the_reference_ops_use_is_allowed():
+    from spec_surgeon import codegen
+    ops_dir = Path(codegen.__file__).parent / "ops"
+    for name in codegen.EXAMPLE_OPS:
+        tree = ast.parse((ops_dir / name).read_text(encoding="utf-8"))
+        bound = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                bound.update({a.asname or a.name: a.name for a in node.names if a.name in codegen.MODULE_ATTRS})
+            elif isinstance(node, ast.ImportFrom):
+                for a in node.names:
+                    key = codegen.MODULE_FROM_IMPORTS.get((node.module, a.name))
+                    if key:
+                        bound[a.asname or a.name] = key
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name) and node.value.id in bound:
+                assert node.attr in codegen.MODULE_ATTRS[bound[node.value.id]], (name, node.value.id, node.attr)
+
+
+def test_the_transform_writer_lists_same_named_samples_by_their_labels(tmp_path):
+    a, b = tmp_path / "A" / "spec.docx", tmp_path / "B" / "spec.docx"
+    for f, num in ((a, "21 00 00"), (b, "21 13 13")):
+        f.parent.mkdir()
+        f.write_bytes(build(num, "SPEC"))
+    fake = FakeClient(resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    g = generate_op("header distance", "set_header_distance", [a, b], tmp_path / "cg", client=fake)
+    first = fake.requests[0]["messages"][0]["content"]
+    assert "'A/spec.docx'" in first and "'B/spec.docx'" in first and g.passed

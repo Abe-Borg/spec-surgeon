@@ -1,5 +1,7 @@
 """Resource failures are contained in the generated subprocess, with bounded diagnostics."""
 import json
+import os
+from pathlib import Path
 import subprocess
 import sys
 
@@ -110,3 +112,46 @@ def test_missing_or_malformed_sandbox_artifacts_are_structured_failures(
     result = codegen.run_in_sandbox(GOOD_OP, source, {}, {"twips": 900}, folder)
     assert not result.ok and result.code == "crash"
     assert "missing or malformed" in result.error
+
+
+GUARD_SCRIPT = """
+import os, subprocess, sys
+from spec_surgeon.sandbox_runner import install_guard
+work, outside = sys.argv[1], sys.argv[2]
+install_guard(work)
+results = {}
+def attempt(name, fn):
+    try:
+        fn()
+        results[name] = "allowed"
+    except PermissionError:
+        results[name] = "refused"
+attempt("write inside", lambda: open(os.path.join(work, "out.txt"), "w").write("ok"))
+attempt("write outside", lambda: open(outside, "w").write("changed"))
+attempt("append outside", lambda: open(outside, "a").write("changed"))
+attempt("os.open outside", lambda: os.close(os.open(outside, os.O_WRONLY)))
+attempt("remove outside", lambda: os.remove(outside))
+attempt("rename outside", lambda: os.rename(outside, outside + ".moved"))
+attempt("remove inside", lambda: os.remove(os.path.join(work, "out.txt")))
+attempt("read outside", lambda: open(outside).read())
+attempt("start a process", lambda: subprocess.run([sys.executable, "-c", "pass"]))
+print(results)
+"""
+
+
+def test_the_sandbox_guard_keeps_writes_inside_its_folder(tmp_path):
+    work = tmp_path / "work"
+    work.mkdir()
+    outside = tmp_path / "kept.txt"
+    outside.write_text("original", encoding="utf-8")
+    script = tmp_path / "guard_probe.py"
+    script.write_text(GUARD_SCRIPT, encoding="utf-8")
+    env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1] / "src"))
+    out = subprocess.run([sys.executable, str(script), str(work), str(outside)], capture_output=True, text=True,
+                         env=env, timeout=60)
+    assert out.returncode == 0, out.stderr
+    results = json.loads(out.stdout.strip().splitlines()[-1].replace("'", '"'))
+    assert results == {"write inside": "allowed", "write outside": "refused", "append outside": "refused",
+                       "os.open outside": "refused", "remove outside": "refused", "rename outside": "refused",
+                       "remove inside": "allowed", "read outside": "allowed", "start a process": "refused"}
+    assert outside.read_text(encoding="utf-8") == "original"

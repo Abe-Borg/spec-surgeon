@@ -11,8 +11,8 @@ pywebview>=5.3                # the native window; on Windows it brings pythonne
 # Windows only: Word as renderer and accept/reject oracle (recommended)
 pywin32>=306; sys_platform == "win32"
 
-# Optional: the Claude layer — typed requests, visual check, custom transforms, advice (needs ANTHROPIC_API_KEY)
-anthropic>=1.13       # optional: the conversation (spec-surgeon do, the window), visual check, custom transforms, advisor
+# Optional: the Claude layer — typed requests, visual check, custom transforms, recovery (needs ANTHROPIC_API_KEY)
+anthropic>=1.13       # optional: the conversation in the window, visual check, custom transforms, recovery
 
 # Development / tests
 pytest>=8

@@ -24,33 +24,16 @@ never delivered, and its recovery runs inside the same conversation and ends in 
 finding appears under **Please check**; the same action records that you looked at it.
 
 There is no second, model-derived outcome contract for ordinary edits and no outcome review gate. Custom methods are
-prepared and tested on sample copies internally before their preview. Office profiles (`spec-surgeon profiles`) keep
-their two command-line approvals; governed recovery keeps its approved contract and exact source bindings. The window
-refuses to close while work is active. The keyless path is the command line: saved EditSpecs, recipes, chains and
-built-in workflows run without an API key.
+prepared and tested on sample copies internally before their preview. Governed recovery keeps its approved contract
+and exact source bindings. The window refuses to close while work is active. There is no command line (removed
+2026-10-21) and no keyless path: every request needs an API key.
 
-## Command line approval
+## Set-aside files
 
-`do` compiles the request, writes the preview under `OUT/preview/`, prints the plan and asks "Run this on N
-file(s)?" (for a mixed batch, "... in N layout(s)?"). `--yes` approves without the question, after the preview is
-written. When Claude's visual check reports a blocking finding, the question says that you have looked at the
-findings; `--ack-review` is accepted for compatibility and changes nothing. Before running, the approval token is
-checked again: a file or template changed since the preview refuses the run. When you decline, the printed command
-runs exactly the previewed specification later with `run-spec --approval TOKEN`. There are no outcome-review flags.
-
-```text
-spec-surgeon do "Make the section titles bold" "Project specs" --out review-run --no-render
-# Inspect review-run/preview/: the plan, the sample records and the rendered pages.
-spec-surgeon do "Make the section titles bold" "Project specs" --out approved-run --no-render --yes
-```
-
-`retry` on a run whose set-aside manifest carries an approved outcome contract resumes that reviewed run on copies
-under the same authority: it cannot drop an approved effect or pick a different ambiguous target, a clarification does
-not expand effects, missing or inconsistent saved authority is refused, and `--in-place` is refused. A run without a
-contract is retried as an ordinary pass. `resolve` investigates set-aside files and asks before exporting (`--yes`
-without a terminal); `workspace export --yes` exports ready workspace candidates; `profiles run` needs both the
-review digest and the preview digest. Older in-place chains that already wrote partial stages require original copies
-before replay.
+A run whose set-aside manifest carries an approved outcome contract recovers on copies under the same authority: it
+cannot drop an approved effect or pick a different ambiguous target, a clarification does not expand effects, missing
+or inconsistent saved authority is refused, and writing back in place is refused. A run without a contract is
+recovered as an ordinary pass.
 
 ## Source and delivery checks
 
@@ -66,8 +49,8 @@ junctions and hardlinks that could alias an input are refused before writes or c
 delivery artifacts so an earlier PASS cannot survive a later failure under the same output name.
 
 Templates, tables and pictures are copied into pinned auxiliary snapshots for preview and execution. Reports retain
-the mapping to original inputs; changing an original before delivery prevents export. Snapshot copies are excluded
-from diagnostics bundles regardless of their file extension. Diagnostic reports can still quote document text.
+the mapping to original inputs; changing an original before delivery prevents export. Diagnostic reports can quote
+document text.
 
 For approved contracts, both batch and chain final results must pass the independent original-to-final verifier.
 Contract-bearing in-place chains stage on copies and write each original only after its complete result passes;
@@ -124,5 +107,5 @@ Checksum publication verifies the actual release assets and retains the prior ma
 
 Regression tests exercise synthetic Word packages, real local LibreOffice PDFs, scripted model exchanges and real
 SDK streaming through an offline HTTP transport. They do not establish success rates on customer projects,
-live-model spending or human-accepted Microsoft Word appearance. Use the existing
-[paired evaluation workflow](WORKFLOW_EVALUATION.md) on representative batches to measure those outcomes.
+live-model spending or human-accepted Microsoft Word appearance; only real batches on the owner's machine measure
+those outcomes.

@@ -28,8 +28,7 @@ Failure kinds (``classify``):
 
 The window keeps an application log (``setup_app_logging``: its activity log and every error with its traceback,
 rotating) and a crash watch per session (``CrashWatch``: Python's fault handler for hard crashes, and a marker that
-tells the next start the previous session ended without closing). ``make_bundle`` zips the diagnostics of a run and
-the app's logs for whoever diagnoses a failure — never the documents themselves.
+tells the next start the previous session ended without closing).
 """
 from __future__ import annotations
 
@@ -441,8 +440,8 @@ class Tracer:
 
     def watch(self, crash: bool) -> None:
         """Python's fault handler into this trace: a stack dump of where the file is when it has been running for
-        HANG_DUMP_SECONDS (again every HANG_DUMP_SECONDS), and — ``crash``, in a pool worker only (the window and the
-        command line keep their own handlers) — the stack of a hard crash."""
+        HANG_DUMP_SECONDS (again every HANG_DUMP_SECONDS), and — ``crash``, in a pool worker only (the window keeps its
+        own handlers) — the stack of a hard crash."""
         if self._fh is None:
             return
         try:
@@ -533,7 +532,7 @@ def plan_summary(plan: Any, limit: int = 420) -> str:
 
 class RunLog:
     """The run's own log (``logs/run.log``): timestamped lines. Calling it is a progress line — it also goes to the
-    caller's ``progress`` callback (the window's activity log, the command line's stderr); ``detail`` and ``block``
+    caller's ``progress`` callback (the window's activity log); ``detail`` and ``block``
     lines go to the file only. A log that cannot be written never stops the run."""
 
     def __init__(self, path: Optional[Path], progress: Optional[Callable[[str], None]] = None,
@@ -744,192 +743,6 @@ def com_quiet() -> Iterator[None]:
                 faulthandler.enable(file=w._fh, all_threads=True)
             except (ValueError, RuntimeError, OSError):
                 pass
-
-
-# ---- the bundle -----------------------------------------------------------------------------------------------------
-
-DOCUMENT_SUFFIXES = {".docx", ".docm", ".dotx", ".dotm", ".doc", ".rtf", ".pdf", ".png", ".jpg", ".jpeg", ".gif",
-                     ".bmp", ".tif", ".tiff", ".emf", ".wmf", ".svg"}
-DOCUMENT_DIRS = {"outputs", "failed", "samples", "images", "source-in"}
-MAX_BUNDLED_FILE = 500_000
-MAX_BUNDLE_BYTES = 5_000_000
-MAX_BUNDLE_FILES = 400
-
-BUNDLE_README = """Spec Surgeon diagnostics bundle
-
-In here, under results/ (the results folder's own layout; for a `do` or window session that is conversation.json,
-compile.json, preview/, codegen/ and run/): the run's reports (BATCH_REPORT.md, DIAGNOSTICS.md, SET_ASIDE_REPORT.md),
-its logs (logs/run.log and one trace per file), the verification records, plans and exception records, the
-conversation with Claude (conversation.json: what was said, the choices offered and picked, the model's exchange) and
-the compile record (compile.json: the outcome of its last turn and the model's whole exchange), the preview's log and
-records, the Tier B history — and, under app-logs/, the application's own logs. environment.json describes the
-computer and the program. When the window's session moved on after that run (a reply, a new request or a newer
-preview opened a newer session folder), that folder is under results-later/<folder name>/, laid out the same way.
-
-Structured timelines are in logs/events.jsonl, logs/<name>.trace.events.jsonl, and
-app-logs/app-events-<pid>.jsonl (including retained rotations). These contain UTC timestamps,
-session/run/action/span IDs, process/thread identity, durations, decisions and exception chains.
-Follow parent_span_id to the initiating operation; deduplicate mirrored events by event_id.
-A *.succeeded event means a function returned: inspect status/passed/counts for the document outcome.
-For an unfinished operation, find its *.started event and its last checkpoint, then inspect crash/trace logs.
-
-Not in here: the documents — no source file, edited copy, failed copy, rendered PDF or page image. The records, plans
-and logs do quote document text (the paragraphs that changed or failed): share this bundle the way you would share
-the specs themselves.
-
-This bundle is bounded below 5 MB. Large JSON evidence is left intact in the original results folder rather than
-partly copied; large text logs may be excerpted. environment.json lists omissions and their relative paths. Reports
-and failure summaries are included first. Request only the relevant original evidence when further detail is needed.
-"""
-
-
-SESSION_MARKERS = ("compile.json", "conversation.json", "preview", "codegen")
-
-
-def bundle_root(folder: Path) -> Path:
-    """The folder a bundle mirrors. A `do` or window session keeps its run in ``<session>/run`` beside the
-    conversation, the compile record, the preview and the Tier B history; given that ``run`` folder, the whole session
-    is bundled."""
-    f = Path(folder).resolve()
-    if f.name == "run" and any((f.parent / m).exists() for m in SESSION_MARKERS):
-        return f.parent
-    return f
-
-
-def _bundled(p: Path, root: Path) -> bool:
-    rel = p.relative_to(root)
-    return (p.suffix.lower() not in DOCUMENT_SUFFIXES and not (set(rel.parts[:-1]) & DOCUMENT_DIRS)
-            and not any(part.startswith("input-snapshot-") for part in rel.parts[:-1])
-            and not p.name.startswith("~$"))
-
-
-LATER_PREFIX = "results-later/"
-
-
-def _within(p: Path, root: Path) -> bool:
-    return p == root or root in p.parents
-
-
-def make_bundle(dest: Path, run_dir: Optional[Path] = None, app_logs: Optional[Path] = None,
-                note: str = "", also: Sequence[Path] = ()) -> Dict[str, Any]:
-    """Zip the diagnostics of a run (``run_dir``: reports, logs, records, plans, exceptions, set-aside — with, for a
-    session's ``run`` folder, the session's conversation, compile record, preview and Tier B history beside it;
-    ``bundle_root``)
-    and the app's logs into ``dest`` — never the documents. ``also``: more results folders, each mirrored the same way
-    under ``results-later/<folder name>/`` (the window: the newer session folder a conversation moved on to after the
-    run); a folder already bundled — the same, or inside one — is not bundled twice, and the files of one already
-    bundled are left out of a folder that holds it. Returns what went in and what was left out."""
-    dest = Path(dest)
-    dest.parent.mkdir(parents=True, exist_ok=True)
-    tmp = dest.with_name(dest.name + ".part")
-    included: List[str] = []
-    omitted: List[Dict[str, str]] = []
-    omitted_count = 0
-    used = 0
-    left_out = 0
-    roots: List[Path] = []                        # every folder bundled so far (resolved)
-    later: List[Path] = []
-
-    def omit(arc: str, reason: str) -> None:
-        nonlocal omitted_count
-        omitted_count += 1
-        if len(omitted) < 100:
-            omitted.append({"path": snip(arc, 300), "reason": reason})
-
-    def add(z: zipfile.ZipFile, p: Path, arc: str) -> None:
-        """Copy evidence whole, or an explicitly labelled text excerpt; reserve space for ZIP metadata."""
-        nonlocal used
-        if len(included) >= MAX_BUNDLE_FILES or len(arc.encode("utf-8")) > 300:
-            omit(arc, "bundle file-count or member-name budget; original remains in results")
-            return
-        with p.open("rb") as stream:
-            data = stream.read(MAX_BUNDLED_FILE + 1)
-        if len(data) > MAX_BUNDLED_FILE:
-            if p.suffix.lower() not in {".log", ".md", ".txt"}:
-                omit(arc, "over 500 KB; full structured evidence remains in results")
-                return
-            from .readable import bounded
-            data = bounded(data.decode("utf-8", errors="replace"), MAX_BUNDLED_FILE,
-                           f"original results file {arc}").encode("utf-8")
-            omit(arc, f"text excerpt included from {p.stat().st_size:,} bytes; full text remains in results")
-        # DEFLATE can expand incompressible input. This allowance exceeds its stored-block overhead,
-        # and includes both ZIP headers and the central-directory entry for this member.
-        cost = len(data) + (len(data) // 16_000 + 1) * 5 + 2 * len(arc.encode("utf-8")) + 150
-        if used + cost >= MAX_BUNDLE_BYTES - 300_000:
-            omit(arc, "5 MB bundle budget; original remains in results")
-            return
-        z.writestr(arc, data)
-        included.append(arc)
-        used += cost
-
-    def priority(p: Path) -> tuple:
-        name = p.name
-        rank = (0 if name in {"DIAGNOSTICS.md", "SET_ASIDE_REPORT.md", "BATCH_REPORT.md", "CHAIN_REPORT.md"}
-                else 1 if name.endswith((".record.md", ".exception.json"))
-                else 2 if name in {"run.log", "chain.log", "preview.log"}
-                else 3 if name.endswith((".record.json", ".plan.json"))
-                else 4 if p.suffix.lower() in {".log", ".jsonl"} else 5)
-        return rank, p.as_posix()
-
-    def mirror(z: zipfile.ZipFile, root: Path, prefix: str) -> None:
-        nonlocal left_out
-        for p in sorted(root.rglob("*"), key=priority):
-            if not p.is_file() or p.resolve() in (dest.resolve(), tmp.resolve()):
-                continue
-            if any(_within(p.resolve(), r) for r in roots):
-                continue                          # already in the bundle, under another folder
-            if not _bundled(p, root):
-                left_out += 1
-                continue
-            arc = prefix + p.relative_to(root).as_posix()
-            add(z, p, arc)
-        roots.append(root.resolve())
-
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-        if run_dir is not None and Path(run_dir).is_dir():
-            mirror(z, bundle_root(Path(run_dir)), "results/")
-        names: set = set()
-        for folder in also or ():
-            if folder is None or not Path(folder).is_dir():
-                continue
-            root = bundle_root(Path(folder))
-            if any(_within(root, r) for r in roots):
-                continue
-            name, n = root.name, 2
-            while name in names:
-                name, n = f"{root.name}-{n}", n + 1
-            names.add(name)
-            mirror(z, root, f"{LATER_PREFIX}{name}/")
-            later.append(root)
-        if app_logs is not None and Path(app_logs).is_dir():
-            for p in sorted(Path(app_logs).iterdir()):
-                if p.is_file() and (p.suffix in (".log", ".jsonl") or ".log." in p.name
-                                    or ".jsonl." in p.name or p.name.startswith("compile-")):
-                    arc = "app-logs/" + p.name
-                    add(z, p, arc)
-        manifest = {"made": datetime.now().astimezone().isoformat(timespec="seconds"), "note": snip(note, 4000),
-                    "run_dir": str(run_dir) if run_dir else None,
-                    "results": str(bundle_root(Path(run_dir))) if run_dir else None,
-                    "also": [str(r) for r in later],
-                    "app_logs": str(app_logs) if app_logs else None,
-                    "included": included, "documents_left_out": left_out, "environment": environment(),
-                    "size_limit_bytes": MAX_BUNDLE_BYTES, "omitted_count": omitted_count,
-                    "omitted": omitted, "omission_list_truncated": omitted_count > len(omitted),
-                    "full_evidence": "Original files remain under results / also / app_logs paths above."}
-        encoded_manifest = json.dumps(manifest, indent=2, ensure_ascii=False)
-        if len(encoded_manifest.encode("utf-8")) > 200_000:
-            # Even a caller supplying thousands of additional roots cannot spend the ZIP metadata reserve.
-            manifest = {"made": manifest["made"], "size_limit_bytes": MAX_BUNDLE_BYTES,
-                        "manifest_truncated": True, "included_count": len(included),
-                        "included": included[:100], "omitted_count": omitted_count, "omitted": omitted[:20],
-                        "full_evidence": "Complete original evidence remains in the selected results and app-log folders.",
-                        "run_dir": snip(run_dir, 1000), "app_logs": snip(app_logs, 1000)}
-            encoded_manifest = json.dumps(manifest, indent=2, ensure_ascii=False)
-        z.writestr("environment.json", encoded_manifest)
-        z.writestr("README.txt", BUNDLE_README)
-    os.replace(tmp, dest)
-    return {"path": dest, "included": included, "left_out": left_out + omitted_count, "also": later,
-            "omitted_count": omitted_count}
 
 
 def write_json(path: Path, data: Any) -> Optional[Path]:

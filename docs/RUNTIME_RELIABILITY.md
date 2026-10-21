@@ -47,19 +47,19 @@ preservation, and it is not proof of human-accepted appearance in Word.
 
 ## Local run storage and short evidence paths
 
-The default run root is `%LOCALAPPDATA%\Spec Surgeon\runs` on Windows. The
-conversation window always uses it. Explicitly selected roots (`--out`) remain
-supported on the command line, which warns about common synced folders and roots
-deep enough to put generated paths near the Windows path limit.
+The default run root is `%LOCALAPPDATA%\Spec Surgeon\runs` on Windows. A results
+folder the user chooses instead is supported; the window warns
+(`settings.output_root_warnings`) about common synced folders and roots deep enough to
+put generated paths near the Windows path limit.
 
 New conversation directories and content-addressed evidence files use 16-character
 disk identifiers. The complete SHA-256 remains in their JSON metadata, references
 and identity checks. Short-name collisions fail without replacing evidence. Reads
 also accept older files named with all 64 digest characters; conversation folders
 from older versions are copied to their shorter location before new checkpoints.
-Both frozen executables declare `longPathAware` in their application manifest.
+The frozen executable declares `longPathAware` in its application manifest.
 User-selected roots and source filenames can still exceed platform limits; the
-command line prints its output warning before a run starts.
+window shows its output warning before a run starts.
 
 Active conversation checkpoints and sealed epochs reference a shared prompt/tool
 catalog by its complete digest. Signed provider messages remain unchanged. Catalog
@@ -69,12 +69,12 @@ prefix before writing an updated checkpoint.
 
 ## Desktop-safe workers
 
-Ordinary transforms and verification use threads by default, with single-worker
-and `--worker-mode serial` execution inline. Thread mode runs one worker unless
-`--workers N` asks for more: the work holds the GIL, and on eight 53-page sections
-eight threads took 19% longer than one and 2.7 times the memory. Rendering keeps its
-own parallel workers. `--worker-mode process` explicitly
-opts into spawned processes in an unfrozen Python installation. The packaged app
+Ordinary transforms and verification use threads by default (`run_batch`'s
+`worker_mode`), with single-worker and `worker_mode="serial"` execution inline.
+Thread mode runs one worker unless `workers=N` asks for more: the work holds the
+GIL, and on eight 53-page sections eight threads took 19% longer than one and 2.7
+times the memory. Rendering keeps its own parallel workers. `worker_mode="process"`
+explicitly opts into spawned processes in an unfrozen Python installation. The packaged app
 always substitutes threads for a requested process pool, avoiding the worker-spawn
 access violations observed in the live Windows runs. Isolated retries remain part
 of the explicit process mode. The frozen Windows launcher still calls

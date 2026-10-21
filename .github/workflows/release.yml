@@ -83,8 +83,6 @@ jobs:
           python -m venv /tmp/spec-surgeon-release-smoke
           /tmp/spec-surgeon-release-smoke/bin/python -m pip install dist/*.whl
           cd /tmp
-          /tmp/spec-surgeon-release-smoke/bin/spec-surgeon --help
-          /tmp/spec-surgeon-release-smoke/bin/spec-surgeon ops --catalog > /tmp/spec-surgeon-catalog.json
           /tmp/spec-surgeon-release-smoke/bin/python "$GITHUB_WORKSPACE/packaging/installed_wheel_smoke.py" "$GITHUB_WORKSPACE/examples/specs" --expected-prompts /tmp/spec-surgeon-source-prompts.json
           # without the gui extra the window says how to install it instead of crashing
           set +e; /tmp/spec-surgeon-release-smoke/bin/spec-surgeon-gui; code=$?; set -e

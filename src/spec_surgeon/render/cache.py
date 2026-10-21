@@ -43,7 +43,7 @@ def cache_root_for(out_dir: Path) -> Path:
     """Where the cache for a preview or run folder lives: beside the session folders, so every session of the window
     shares one — ``<default run root>/.render-cache`` when the folder is under the app's run root; ``<out_root>/
     .render-cache`` when its parent is a session folder (``gui.Session`` stamps them ``YYYYMMDD-HHMMSS``) under a root
-    the user chose; otherwise (the command line's ``--out``, a test's folder) a ``.render-cache`` beside the output
+    the user chose; otherwise (a folder the caller named, a test's folder) a ``.render-cache`` beside the output
     folder itself — never anywhere above a folder the caller named."""
     from ..settings import default_run_root
     out = Path(out_dir)

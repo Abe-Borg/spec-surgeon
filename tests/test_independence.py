@@ -1,13 +1,13 @@
-"""The verifier must not share code with the transform side (CLAUDE.md rule 1): nothing from jobs/, ops/,
+"""The verifier must not share code with the transform side (CLAUDE.md rule 1): nothing from ops/,
 editspec.py, ooxml.py or package.py — nor from the Claude layer (Claude never grades: llm, conversation, compiler,
-codegen, advisor) or the app around the engine (preview, gui)."""
+codegen) or the app around the engine (preview, gui)."""
 import ast
 from importlib.util import resolve_name
 from pathlib import Path
 
 VERIFY = Path(__file__).resolve().parent.parent / "src" / "spec_surgeon" / "verify"
-_NAMES = {"jobs", "ooxml", "package", "ops", "editspec", "llm", "conversation", "vision", "library", "compiler",
-          "codegen", "advisor", "preview", "gui", "goals", "goal_contracts"}
+_NAMES = {"ooxml", "package", "ops", "editspec", "llm", "conversation", "vision", "compiler",
+          "codegen", "preview", "gui", "goals", "goal_contracts"}
 FORBIDDEN = {f"spec_surgeon.{n}" for n in _NAMES} | _NAMES
 
 

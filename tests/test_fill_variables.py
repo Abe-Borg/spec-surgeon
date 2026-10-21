@@ -6,16 +6,18 @@ from __future__ import annotations
 import csv
 import json
 from typing import Any, Dict, List
+from pathlib import Path
 
 import pytest
 
-from make_fixtures import build_batch1
+from make_fixtures import build_batch1, png
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import fill_variables as fill_module
 from spec_surgeon.ops import tables as tables_module
 from spec_surgeon.package import DocxPackage, W
 from spec_surgeon.verify import run_suite
 from test_text_edits import _xlsx, accepted_text, failed, mutate, para, v10_errors
+from spec_surgeon.compiler import _Batch, check_submission
 
 AUTHOR = "Abraham Borg"
 VALUES = {"SITE_NAME": "Ashburn VA3", "OWNER_NAME": "Acme Cloud LLC", "PROJECT NO": "2026-117"}
@@ -190,3 +192,31 @@ def test_conflicts_with_another_op_on_the_same_paragraph(doc):
     for f in (a, c):
         get_op(f.op).apply(work, f)
     assert run_suite(doc, work.output_bytes(), plan.to_dict(), "s", "o").passed
+
+
+@pytest.fixture
+def inputs_folder(tmp_path) -> Path:
+    d = tmp_path / "specs"
+    d.mkdir()
+    (d / "211319 - Preaction.docx").write_bytes(build_batch1())
+    (d / "PROJECT.xlsx").write_bytes(_xlsx([["Variable", "VA1", "VA3"], ["SITE_NAME", "Ashburn", "Leesburg"],
+                                            ["OWNER_NAME", "Contoso", "Contoso"], ["PROJECT NO", "1001", "1003"]]))
+    (d / "pairs.csv").write_text("find,replace\nOwner,Client\n", encoding="utf-8")
+    (d / "logo.png").write_bytes(png((1, 2, 3), size=6))
+    return d
+
+
+def fill_spec(inputs_folder, **values):
+    params = {"table": {"file": str(inputs_folder / "PROJECT.xlsx"), "name_column": "Variable", "value_column": "VA3"},
+              "author": "A"}
+    if values:
+        params["values"] = values
+    return {"request": "fill the VA3 site", "summary": "s", "mode": "content", "ops": [
+        {"op": "fill_variables", "params": params}]}
+
+
+def test_a_typed_fill_value_must_be_the_users_and_a_table_value_needs_no_trace(inputs_folder):
+    batch = _Batch(sorted(inputs_folder.glob("*.docx")), None)
+    assert check_submission(fill_spec(inputs_folder), batch, ["fill the VA3 site from PROJECT.xlsx"]) == []
+    errs = check_submission(fill_spec(inputs_folder, SITE_NAME="Loudoun"), batch, ["fill the VA3 site"])
+    assert errs and "never gave them verbatim" in errs[0] and "Loudoun" in errs[0]

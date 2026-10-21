@@ -54,7 +54,6 @@ from .fingerprint import fingerprint
 from .editspec import (apply_spec, is_template_file, naming_op, plan_spec, spec_input_files, spec_renames_outputs, spec_templates,
                        validate_spec)
 from .ops import JobException
-from .jobs import get_job
 from .package import DocxPackage
 from .verify import run_suite, VerificationRecord, CheckResult, GEOM_TOL_PT
 from .verify import geometry as geom
@@ -405,37 +404,22 @@ def _process_one_impl(path: str, job_name: str, params: Dict[str, Any], out_dir:
         stage, t_stage = "plan", time.perf_counter()
         if refuse:
             raise JobException(refuse["reason"], refuse["code"], refuse.get("details") or {})
-        if spec is not None:
-            plan, fragments = plan_spec(pkg, spec, res["fingerprint"].get("pattern_id"), trace=tr.op_hook)
-            if plan.output_name is not None and plan.output_name != name:
-                raise JobException(f"the spec names this file {plan.output_name!r} but the batch planned "
-                                   f"{name!r}", "internal")
-        else:
-            tr.note("plan", f"job {job_name} …")
-            job = get_job(job_name)
-            plan = job.plan(pkg, params)
+        plan, fragments = plan_spec(pkg, spec, res["fingerprint"].get("pattern_id"), trace=tr.op_hook)
+        if plan.output_name is not None and plan.output_name != name:
+            raise JobException(f"the spec names this file {plan.output_name!r} but the batch planned "
+                               f"{name!r}", "internal")
         res["plan"] = plan.to_dict()
         res["timings"]["plan"] = time.perf_counter() - t_stage
         diag.event("file.planned", duration_ms=res["timings"]["plan"] * 1000,
                    intended_parts=res["plan"].get("intended_parts"),
                    members_added=res["plan"].get("members_added"),
                    members_removed=res["plan"].get("members_removed"), output_name=plan.output_name)
-        tr.note("plan", ("merged: " if spec is not None else f"job {job_name}: ") + diag.plan_summary(plan)
-                + f" [{diag.ms(t_stage)}]")
+        tr.note("plan", "merged: " + diag.plan_summary(plan) + f" [{diag.ms(t_stage)}]")
 
         stage, t_stage = "apply", time.perf_counter()
-        if spec is not None:
-            work = apply_spec(pkg, fragments, trace=tr.op_hook)
-            res["noop"] = not work.is_modified() and plan.output_name in (None, src.name)   # a rename is delivered
-            out_bytes = work.output_bytes()
-        else:
-            tr.note("apply", f"job {job_name} …")
-            subs = job.apply(pkg, plan)
-            if not subs:
-                res["noop"] = True
-                out_bytes = pkg.data
-            else:
-                out_bytes = pkg.repack(subs)
+        work = apply_spec(pkg, fragments, trace=tr.op_hook)
+        res["noop"] = not work.is_modified() and plan.output_name in (None, src.name)   # a rename is delivered
+        out_bytes = work.output_bytes()
         res["timings"]["apply"] = time.perf_counter() - t_stage
         tr.note("apply", ("no change — the output is identical to the source" if res.get("noop")
                           else f"repacked: {len(out_bytes):,} bytes") + f" [{diag.ms(t_stage)}]")
@@ -746,7 +730,7 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
                inherited_inputs=(), public_spec=None, approved_inputs=None,
                inherited_sources=None, inherited_refusals=None, enforce_goals=False,
                worker_mode="thread") -> BatchResult:
-    """Run a named job (``job_name`` + ``params``) or an EditSpec (``spec``; then ``job_name`` is only a label).
+    """Run an EditSpec (``spec``) over the inputs; ``job_name`` is only a label in the records.
 
     Everything the run does goes to ``<out>/logs/run.log`` (``progress`` gets the same progress lines), each file's
     path through the pipeline to ``<out>/logs/<name>.trace.log``, and what went wrong, file by file, to
@@ -765,12 +749,11 @@ def _run_batch(inputs: Sequence[str], job_name: str, params: Dict[str, Any], out
     if enforce_goals and goal_contract is not None:
         from .goals import goal_templates
         goal_inputs = goal_templates(goal_contract)  # validates the immutable outcome before any mutation
-    if spec is not None:
-        validate_spec(spec)          # fail early: questions, unsupported, unknown ops — before any file is read
-        job_name = job_name or "edit-spec"
-        params = {"request": spec.get("request"), "summary": spec.get("summary")}
-    else:
-        get_job(job_name)  # fail early on an unknown job
+    if spec is None:
+        raise ValueError("a batch runs an EditSpec (spec=...)")
+    validate_spec(spec)              # fail early: questions, unsupported, unknown ops — before any file is read
+    job_name = job_name or "edit-spec"
+    params = {"request": spec.get("request"), "summary": spec.get("summary")}
     if in_place and spec is not None and spec_renames_outputs(spec):
         raise ValueError("this spec names the output files (name_output / make_values_agree with the file name) — "
                          "renamed files are delivered as copies only; run it without writing back in place (nothing "

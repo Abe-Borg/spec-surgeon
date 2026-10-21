@@ -453,3 +453,26 @@ def test_stop_cuts_off_a_real_streaming_connection_that_has_gone_quiet():
         gone.set()
         server.shutdown()
         server.server_close()
+
+
+def test_progress_observer_failure_never_changes_accepted_model_response():
+    fake = FakeClient(resp(text("accepted"), stop="end_turn"))
+
+    def broken(*args):
+        raise RuntimeError("observer failed")
+
+    with llm.model_progress_scope(broken):
+        response = llm.call(fake, model=llm.DEFAULT_MODEL, system="s", tools=[], messages=[])
+    assert response.content[0].text == "accepted" and len(fake.requests) == 1
+
+
+def test_cancellation_prevents_next_provider_call_and_scope_resets():
+    event = threading.Event()
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": {}})))
+    event.set()
+    arguments = dict(model=llm.DEFAULT_MODEL, system="s", tools=[], messages=[])
+    with llm.cancellation_scope(event), pytest.raises(llm.UserCancelled):
+        llm.call(fake, **arguments)
+    assert fake.requests == []
+    assert llm.call(fake, **arguments).stop_reason == "tool_use"
+    assert len(fake.requests) == 1

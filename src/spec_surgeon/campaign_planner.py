@@ -151,15 +151,6 @@ def propose(project, documents, request, options, *, client=None, log=None, prio
     if template:
         pins.append({"path": template, "sha256": digest(Path(template))})
     desired_system, desired_tools = system, tools
-    # Older planning states did not persist these fields. Recover the exact
-    # provider schema from the immutable active epoch before a schema upgrade.
-    if batch.context_dir and ("system" not in state or "tools" not in state):
-        active = Path(batch.context_dir) / "context" / f"active-{batch.context_state.get('epoch', 0)}.json"
-        if active.exists():
-            from .contexts import load_context_manifest
-            saved = load_context_manifest(active)
-            state.setdefault("system", saved["system"])
-            state.setdefault("tools", saved["tools"])
     system, tools = state.setdefault("system", system), state.setdefault("tools", tools)
     try:
         with llm.budget_scope(budget):
