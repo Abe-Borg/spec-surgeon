@@ -6,6 +6,7 @@ import copy
 import io
 
 from docx import Document
+from docx.enum.section import WD_SECTION
 from docx.enum.style import WD_STYLE_TYPE
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
@@ -328,6 +329,20 @@ def build_blank(*, header_blanks: bool = True) -> bytes:
     t3.cell(0, 0).add_paragraph("")
     doc.add_paragraph("")
     doc.add_paragraph("")
+    return save(doc)
+
+
+def build_blank_last_section() -> bytes:
+    """Three sections, each break on a paragraph of its own (empty, as Word and python-docx write it): "Cover", a break;
+    "Body text", a blank, a break; then the last section — three blank paragraphs and nothing else."""
+    doc = Document()
+    doc.add_paragraph("Cover")
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    doc.add_paragraph("Body text")
+    doc.add_paragraph("")
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    for _ in range(3):
+        doc.add_paragraph("")
     return save(doc)
 
 
