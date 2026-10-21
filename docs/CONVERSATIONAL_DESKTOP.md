@@ -142,6 +142,12 @@ applied and verified in memory; sources are never touched. Rendering is requeste
 Microsoft Word when available, otherwise LibreOffice. If no renderer can provide usable page evidence, a card
 says that page appearance was not checked and asks you to check the edited copies in Word.
 
+The pages are those of the plan in front of you, and nothing older. Sending a message or picking a choice takes
+the plan and its pages off the window while the reply is worked out, and a new plan's pages replace them; once
+copies are created, their pages leave with the plan. During recovery, a document whose copy you already saved
+drops out of the previews, and its findings out of **About these checks**, while the conversation goes on about
+the rest.
+
 ## The green checkmark, the red X and the to-do list
 
 Every preview card carries two marks. The green checkmark says the pages look right. The red X says this

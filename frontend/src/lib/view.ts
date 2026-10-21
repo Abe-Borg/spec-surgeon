@@ -169,6 +169,9 @@ export function reduce(state: UiState, action: UiAction): UiState {
     case "job_started": {
       let messages = state.view.messages;
       let seq = state.localSeq;
+      // A message or a choice voids whatever plan and pages were on screen (the server sets the old outcome
+      // aside the moment it reads the reply); creating copies or continuing keeps them until the job's view.
+      const reply = action.userText !== null;
       if (action.userText !== null) {
         const [message, next] = localMessage(state, "user", action.userText);
         messages = [...messages, message];
@@ -187,6 +190,7 @@ export function reduce(state: UiState, action: UiAction): UiState {
           questions: [],
           choices: [],
           chips: [],
+          ...(reply ? { plan: null, samples: [], warnings: [], blocking: false } : {}),
         },
       };
     }
@@ -244,7 +248,8 @@ function reduceEvent(state: UiState, event: JobEvent): UiState {
       };
     }
     case "plan":
-      return { ...state, view: { ...state.view, plan: event.plan } };
+      // The pages on screen belong to the plan before this one; this plan's pages follow in `samples`.
+      return { ...state, view: { ...state.view, plan: event.plan, samples: [], warnings: [], blocking: false } };
     case "samples":
       return {
         ...state,

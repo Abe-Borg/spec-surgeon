@@ -66,6 +66,9 @@ Rules the page relies on:
   number of ordered steps the engine composed internally — shown as a quiet "in N ordered steps" note, never as a
   procedure the user performs.
 - `samples[].images` are URLs served by `GET /api/image?path=…&token=…` (PNG side-by-side before/after pages).
+- `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document
+  whose copy a partial save already delivered; every other stage sends none, so a finished run takes its
+  pages along. The visual check's findings in `warnings`, and `blocking`, follow the same rule.
 - `action.kind`: `approve` → the one button "Create edited copies" (or "I reviewed the flagged pages — create
   copies" when `blocking`), `continue` → "Continue", `save` → "Save N ready copies", `none` → no button. The button
   lives in the conversation pane, above the composer; while `busy` the composer shows "Stop now" instead.
@@ -125,7 +128,7 @@ Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/50
 | `thinking_delta` | `text` | a chunk of the model's thinking summary (collapsible aside) |
 | `text_delta` | `text` | a chunk of the assistant's reply as it is written |
 | `message` | `message` | a complete message object (assistant or app) to append; the streaming bubble is finalized with it |
-| `plan` | `plan` | the plan became available (before previews render) |
+| `plan` | `plan` | the plan became available (before previews render); the page drops the pages of the plan before it |
 | `samples` | `samples`, `warnings`, `blocking` | previews are in |
 | `results` | `results` | copies were written |
 | `question` | `questions`, `choices`, `chips` | the model needs the user |
@@ -135,6 +138,9 @@ Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/50
 
 Order within a job: any number of `status`/`activity`/`thinking_delta`/`text_delta`, then `message` when a reply is
 complete, `plan`/`samples`/`results`/`question`/`cost` as they happen, then exactly one `done` or `error`.
+
+A `send` or `choose` voids the plan and pages on screen (the server sets the old outcome aside as it reads the
+reply), so the page takes them off the workbench when the job starts; `primary` keeps them until its view.
 
 ## Static files and dev mode
 

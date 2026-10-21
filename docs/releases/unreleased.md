@@ -4,6 +4,11 @@ Changes since v1.6.0.
 
 ## The window
 
+- **Old previews leave the window.** The pages shown are always those of the plan in front of you. A message
+  sent over a preview takes the old plan and pages away at once instead of leaving them up while the reply is
+  worked out, a new plan never sits above the pages of the one before it, and during recovery the pages and
+  visual-check findings of a document whose copy you already saved drop out while the conversation goes on
+  about the rest.
 - Every preview card carries a green checkmark (looks good) and a red X (needs more work). **Create edited
   copies** runs the documents that look right; the X'd ones get no copy and wait on a to-do list ("Create edited
   copies (2 set aside)"). Every file that runs is still held to the exact identity the user approved; a file
