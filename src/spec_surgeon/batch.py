@@ -872,12 +872,17 @@ def _transform_and_verify(batch: BatchResult, files: List[Path], job_name: str, 
                           source_identities=None, source_refusals=None, *, worker_mode="thread") -> None:
     """1-2. acquire, fingerprint, plan, apply, verify — in parallel; a worker that dies costs only its own file."""
     t_start = time.perf_counter()
-    workers = workers or max(1, min(os.cpu_count() or 2, len(files), 8))
     # Frozen Windows processes triggered access violations during spawn on live runs.
     # Threads also avoid paying spawn costs for small batches; processes require an explicit choice.
     if worker_mode == "process" and getattr(sys, "frozen", False):
         worker_mode = "thread"
         log("Process workers are unavailable in the packaged app; using threads.")
+    # Plan, apply and verify are Python holding the GIL: threads run them one at a time anyway. Measured on eight
+    # 53-page sections, eight threads took 19% longer than one and 2.7x the memory, so threads default to one;
+    # an explicit count is still honored, and rendering keeps its own parallel workers.
+    if worker_mode == "thread" and not workers:
+        workers = 1
+    workers = workers or max(1, min(os.cpu_count() or 2, len(files), 8))
     if worker_mode == "serial":
         workers = 1
     results: Dict[str, Dict[str, Any]] = {}

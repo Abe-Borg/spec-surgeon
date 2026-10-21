@@ -70,7 +70,10 @@ prefix before writing an updated checkpoint.
 ## Desktop-safe workers
 
 Ordinary transforms and verification use threads by default, with single-worker
-and `--worker-mode serial` execution inline. `--worker-mode process` explicitly
+and `--worker-mode serial` execution inline. Thread mode runs one worker unless
+`--workers N` asks for more: the work holds the GIL, and on eight 53-page sections
+eight threads took 19% longer than one and 2.7 times the memory. Rendering keeps its
+own parallel workers. `--worker-mode process` explicitly
 opts into spawned processes in an unfrozen Python installation. The packaged app
 always substitutes threads for a requested process pool, avoiding the worker-spawn
 access violations observed in the live Windows runs. Isolated retries remain part

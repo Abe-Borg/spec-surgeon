@@ -1598,7 +1598,8 @@ def main(argv=None) -> int:
     p.add_argument("job"); p.add_argument("files", nargs="+"); p.add_argument("--params", default=None, help="JSON or @file.json")
     p.add_argument("--out", default=None, help="output directory (default local app runs/<timestamp>)")
     p.add_argument("--in-place", action="store_true", help="write verified outputs back over the sources (guarded)")
-    p.add_argument("--workers", type=int, default=0, help="parallel workers (default: CPU count, max 8)")
+    p.add_argument("--workers", type=int, default=0,
+                   help="parallel workers (default: 1 for threads, which share one core; CPU count, max 8, for processes)")
     p.add_argument("--worker-mode", choices=["thread", "serial", "process"], default="thread",
                    help="transform workers (default threads; processes require opt-in and a source install)")
     p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
@@ -1670,7 +1671,8 @@ def main(argv=None) -> int:
     p.add_argument("spec", help="EditSpec JSON file (or inline JSON)"); p.add_argument("files", nargs="+")
     p.add_argument("--out", default=None, help="output directory (default local app runs/<timestamp>)")
     p.add_argument("--in-place", action="store_true", help="write verified outputs back over the sources (guarded)")
-    p.add_argument("--workers", type=int, default=0, help="parallel workers (default: CPU count, max 8)")
+    p.add_argument("--workers", type=int, default=0,
+                   help="parallel workers (default: 1 for threads, which share one core; CPU count, max 8, for processes)")
     p.add_argument("--worker-mode", choices=["thread", "serial", "process"], default="thread",
                    help="transform workers (default threads; processes require opt-in and a source install)")
     p.add_argument("--renderer", default="auto", choices=["auto", "word", "libreoffice", "none"])
