@@ -21,6 +21,12 @@ Grammar implemented (all from the paid-for lessons):
   gets a fresh ``w:id``; the plan predicts the exact ``rPrChange`` delta and V4 fails on any duplicated id.
 * Paragraph-scoped run coalescing can optionally ignore non-visual rPr noise (``ignore_formatting_noise: true``)
   and tolerate whitespace/NBSP/dash variations (``flexible_whitespace: true``).
+* Tabs and line breaks in the replacement (built-in batch 6, docs/BUILTIN_OPS_BATCH6_DESIGN.md §4.3): a ``\\t`` is
+  written as a ``w:tab`` and a ``\\n`` as a ``w:br`` (a line break in the same paragraph) where they stand among the new
+  characters, inside the new run (tracked) or after the edited ``w:t`` in its run (untracked) — the edit core's
+  definition (``textedit.text_children`` / ``place_text``; the verifier's ``verify/edits.py`` with ``breaks``). They are
+  no block text: V2's after-text leaves them out, and the block's structural counts after (V3) are declared. Any other
+  control character is refused (``bad-params``).
 """
 from __future__ import annotations
 
@@ -34,12 +40,13 @@ from typing import Any, Dict, List, Optional, Tuple
 from lxml import etree
 
 from ..package import W, DocxPackage
-from ..ooxml import (FULL_TEXT_TAGS, RevisionStamp, XML_SPACE, ancestor, clone_run_shell, file_uses_date_utc,
-                     flexible_regex_from_literal, max_revision_id, merge_adjacent_runs, paragraphs, set_text,
+from ..ooxml import (FULL_TEXT_TAGS, RevisionStamp, XML_SPACE, ancestor, block_struct_counts, clone_run_shell,
+                     file_uses_date_utc, flexible_regex_from_literal, max_revision_id, merge_adjacent_runs, paragraphs,
                      split_run_at_text, to_del_text)
 from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .selectors import StyleSheet, check_paragraph_selector, paragraph_selected
+from .textedit import control_characters, place_text, placed_counts, shown_text, text_children
 
 
 def default_author() -> str:
@@ -162,7 +169,9 @@ class ReplaceText(Op):
         "type": "object",
         "properties": {
             "find": {"type": "string", "description": "Exact text to replace (live text; case-sensitive by default)."},
-            "replace": {"type": "string", "description": "Approved replacement text, verbatim. Empty string = pure deletion."},
+            "replace": {"type": "string", "description": "Approved replacement text, verbatim. Empty string = pure "
+                                                         "deletion. \\t = a tab, \\n = a line break in the same "
+                                                         "paragraph (written as Word's own tab and line break)."},
             "scope": {"type": "array", "items": {"type": "string",
                       "enum": ["document", "headers", "footers", "footnotes", "endnotes", "comments"]},
                       "default": ["document"]},
@@ -212,6 +221,9 @@ class ReplaceText(Op):
             raise JobException("'find' must be a non-empty string", "bad-params")
         if replace is None:
             raise JobException("'replace' is required (use \"\" for a pure deletion)", "bad-params")
+        if not isinstance(replace, str) or control_characters(replace, breaks=True):
+            raise JobException(f"the replacement {replace!r} holds a control character other than a tab (\\t) or a "
+                               f"line break (\\n)", "bad-params")
         select = select or {}
         if select.get("scope") and params.get("scope") and list(select["scope"]) != list(params["scope"]):
             raise JobException("select.scope and params.scope disagree", "bad-params")
@@ -335,7 +347,7 @@ class ReplaceText(Op):
                         stop = True
                         break
                 self._predict_paragraph(plan, part, pi, p if not merge_needed else work_p, live, occ_list,
-                                        find, replace, mode, allow_tf_split=allow_tf_split)
+                                        find, replace, mode, allow_tf_split=allow_tf_split, source_p=p)
                 edits.append({"part": part, "paragraph": pi, "merge": merge_needed,
                               "merge_noise": merge_noise, "allow_tf_split": allow_tf_split,
                               "live_offsets": [(s, e) for s, e, _ in occ_list]})
@@ -392,10 +404,11 @@ class ReplaceText(Op):
 
     def _predict_paragraph(self, plan: PlanFragment, part: str, pi: int, p: etree._Element, live: str,
                            occ: List[Tuple[int, int, Segment]], find: str, replace: str, mode: str,
-                           allow_tf_split: bool = False) -> None:
+                           allow_tf_split: bool = False, source_p: Optional[etree._Element] = None) -> None:
         full, offsets = full_text_map(p)
         accepted, acc_offsets = full_text_map(p, skip_deleted=True)
         after = full
+        shown = shown_text(replace)            # the replacement's block text: its tabs and line breaks are structure
         d_ins = d_del = d_rpr = 0
         # descending so earlier offsets stay valid
         for s, e, seg in sorted(occ, key=lambda x: -x[0]):
@@ -404,11 +417,11 @@ class ReplaceText(Op):
             fe = fs + (e - s)
             as_ = acc_offsets[id(seg.t)] + local
             ae = as_ + (e - s)
-            accepted = accepted[:as_] + replace + accepted[ae:]
+            accepted = accepted[:as_] + shown + accepted[ae:]
             if mode == "untracked":
-                after = after[:fs] + replace + after[fe:]
+                after = after[:fs] + shown + after[fe:]
             else:
-                after = after[:fe] + replace + after[fe:]       # old stays (as delText), new follows
+                after = after[:fe] + shown + after[fe:]         # old stays (as delText), new follows
                 d_del += 1
                 if replace:
                     d_ins += 1
@@ -432,9 +445,19 @@ class ReplaceText(Op):
                     if has_after_in_run or has_after_in_ins:
                         d_ins += 1
         plan.accepted_views.append({"part": part, "block_index": pi, "accepted_view": accepted})
-        if after != full:   # a pure tracked deletion leaves the block's full text unchanged (old text stays as delText)
+        # the tabs and line breaks every occurrence places join the block's structural children (V3); the found text
+        # lies inside one w:t, so nothing structural leaves
+        placed = placed_counts(replace)
+        struct_after = None
+        if placed:
+            struct_after = block_struct_counts(source_p if source_p is not None else p)
+            for k, n in placed.items():
+                struct_after[k] = struct_after.get(k, 0) + n * len(occ)
+        if after != full or struct_after is not None:
+            # a pure tracked deletion leaves the block's full text unchanged (old text stays as delText); a replacement
+            # of only tabs or line breaks declares its structure alone (V2 leaves it out, V3 checks it)
             plan.diffs.append(BlockDiff(part=part, block_index=pi, before=full, after=after,
-                                        accepted_view=accepted,
+                                        accepted_view=accepted, struct_after=struct_after,
                                         note=f"{len(occ)} occurrence(s); {'untracked' if mode == 'untracked' else 'tracked'}"))
         else:
             plan.notes.append(f"{part} block {pi}: pure deletion — block text unchanged (deleted text stays as w:delText); "
@@ -479,7 +502,7 @@ class ReplaceText(Op):
     @staticmethod
     def _apply_untracked(seg: Segment, ls: int, le: int, replace: str) -> None:
         text = seg.t.text or ""
-        set_text(seg.t, text[:ls] + replace + text[le:])
+        place_text(seg.t, text[:ls], replace, text[le:])     # its tabs and line breaks after that w:t, in its run
 
     @staticmethod
     def _apply_tracked(seg: Segment, ls: int, le: int, replace: str, stamp: RevisionStamp, next_id: List[int],
@@ -500,8 +523,8 @@ class ReplaceText(Op):
             ins_el = etree.Element(W + "ins")
             stamp.apply(ins_el, next_id[0]); next_id[0] += 1
             new_run = clone_run_shell(run)
-            t = etree.SubElement(new_run, W + "t")
-            set_text(t, replace)
+            for el in text_children(replace):            # one w:t, or the stretches with their tabs and line breaks
+                new_run.append(el)
             ins_el.append(new_run)
 
         if allow_tf_split:
@@ -561,7 +584,7 @@ class ReplaceText(Op):
             elif replace is None:
                 head = f"Replace {target} with the approved wording"
             else:
-                head = f"Replace {target} with {prose.quote(replace)}"
+                head = f"Replace {target} with {prose.typed(replace)}"    # its tabs and line breaks named
         else:
             head = "Replace the wording to be found with the approved wording"
         hows: List[str] = []
