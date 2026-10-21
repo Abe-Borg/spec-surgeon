@@ -5,15 +5,15 @@ the default browser when pywebview is not installed) and served by a local serve
 leaves the machine but the model calls you ask for (the contract between the page and the server is
 `docs/WEB_API.md`). On the left is the conversation, with the one button above the box you type in. On the right
 are the Word documents you attached (a section that folds to one line once a plan exists; click its title to open
-it), optionally one reference template, any pictures or tables you attached for the edit to use, the plan and the
-before/after pages. You add documents, describe the result, read the plan, look at the pages, mark each preview with
-a green checkmark or a red X, and create edited copies. Nothing else is asked of you: no operations, methods or
-settings beyond an API key. Both panes render what the assistant writes as formatted text (lists, bold, links), in
-the chat and on the plan's cards alike.
+it), optionally one reference template, any pictures or tables you attached for the edit to use, and the before/after
+pages. You add documents, describe the result, look at the pages, mark each preview with a green checkmark or a red
+X, and create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
+Both panes render what the assistant writes as formatted text (lists, bold, links), in the chat and on the cards
+beside it alike.
 
 ![The conversation starts with Word documents, an optional template, and a request](conversation-start.png)
 
-![A readable plan and rendered before-and-after pages, followed by one action to create copies](conversation-preview.png)
+![The plan in the conversation and rendered before-and-after pages, followed by one action to create copies](conversation-preview.png)
 
 ## The top bar
 
@@ -96,7 +96,7 @@ turn, each with the answer it recommends, and offers short replies you can tap. 
 and is sent as your reply, but it is never approved wording: words that go into a document are always ones you
 typed or picked. Changes that touch the same parts of a file — a font change beside a header/footer template,
 restyling beside direct formatting — are composed into ordered steps by the engine itself, each step planned and
-verified on the step before it; the plan says "in N ordered steps" and nothing is asked of you in two steps.
+verified on the step before it; nothing is asked of you in two steps.
 
 **The next request builds on the result.** After copies are created, the next thing you ask for is made on those
 copies; your originals stay as they are, and the assistant is told what was already done so it plans only what is
@@ -104,19 +104,15 @@ new. **Start over from the originals** (a reply you can tap, or type) returns to
 after a run is an original beside the copies: the window says so, and it gets only the next change.
 
 While work runs you see it: the assistant's words as they are written, a summary of its thinking, one plain
-sentence per thing it is doing ("Reading your documents…", "Writing the plan…"), the plan the moment it is
-ready, the pages as they render and the copies as they are written. **Stop now** keeps what landed.
+sentence per thing it is doing ("Reading your documents…", "Writing the plan…"), the pages as they render and
+the copies as they are written. **Stop now** keeps what landed.
 
-## The plan in prose
+## The plan
 
-When the plan is ready, the card **Here's what will change** lists one sentence per change. Each sentence is
-written by the operation that will make the change, from the same specification the preview ran: units are
-inches and points, exact text is quoted, and selections read as "paragraphs in the Normal style". Assumptions
-the plan rests on appear beneath the changes as "Assuming: …". **Every setting** opens every setting of every
-change for the reader who wants it all (a long pattern is not spelled out in the sentence; it is here). **Where
-exactly** lists the passages each document contributes, such as the value a template field takes from each file.
-A plan the engine composed into ordered steps says so under its title ("in 2 ordered steps"); it is still one plan
-with one button.
+When the plan is ready, the assistant says in the chat, in plain words, what will change and where, and the
+window shows the rendered before/after pages of sample documents. The window has no separate card listing the
+changes: the pages are what you review. A plan the engine composed into ordered steps is still one plan with one
+button.
 
 JSON, approval hashes, operation catalogs and recovery internals are not part of the window.
 
@@ -128,10 +124,7 @@ of them. When one specification cannot express the request for every structure p
 has one specification per layout. Each is validated and dry-planned on that layout's documents only; every
 delivered file still has exactly one specification, and the independent verifier is unchanged.
 
-The window then shows **Your documents use N layouts** and one card per layout, titled with how you would
-recognise those documents and how many there are ("Styled, PR1 articles · 8 documents"), each with its own
-changes, assumptions and the names of its files. The preview covers at least one sample per layout. One button
-approves all of them. A document whose structure no layout covers is listed under **Left untouched** with a
+The preview covers at least one sample per layout, and one button approves all of them. A document whose structure no layout covers is listed under **Left untouched** with a
 sentence: attach it on its own, or ask for a plan that covers it.
 
 ## Previews and page counts

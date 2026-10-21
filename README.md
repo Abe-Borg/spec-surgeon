@@ -93,11 +93,10 @@ conversation** and Settings.
    exactly those words (a tapped reply never does). Changes that touch the same parts of a file — the template's
    header and footer beside its font, say — are composed into ordered steps by the engine; nothing is asked of you
    in two steps.
-5. **Review the plan.** **Here's what will change** lists one sentence per change, written by the operation that will
-   make it, in inches and points, never a setting name. Assumptions appear beneath the changes; **See every setting**
-   opens the full list. Below it: rendered before/after pages for sample documents with their page counts, and
-   **Left untouched**: any file the plan cannot cover, with the reason. Each preview carries a green checkmark
-   (looks good) and a red X (needs more work: set it aside for after the others).
+5. **Look at the pages.** The chat says in plain words what will change. Beside it: rendered before/after pages for
+   sample documents with their page counts, and **Left untouched**: any file the plan cannot cover, with the reason.
+   Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
+   others).
 6. **Create edited copies.** One button, in the conversation above the box you type in, approves the displayed plan.
    The engine applies it to every file you did not set aside, verifies each one independently, and lists the copies
    under **Your edited copies**; click one to open it in Word. Originals are never written. A file that fails a
@@ -107,16 +106,16 @@ conversation** and Settings.
    different.
 
 **Mixed batches.** Documents from different projects are often built differently: styled article titles in one,
-plain paragraphs with typed numbers in another. For such a batch the plan has one card per layout ("Styled, PR1
-articles · 8 documents"), each with its own changes, assumptions and preview. One button still approves all of
-them. A document built differently from every layout the plan covers is left untouched with a sentence.
+plain paragraphs with typed numbers in another. For such a batch the plan has one specification per layout, and the
+previews cover at least one sample of each. One button still approves all of them. A document built differently
+from every layout the plan covers is left untouched with a sentence.
 
 Keep chatting: the next thing you ask for is made on the copies the last run created, your originals stay as they
 are, and **Start over from the originals** is one tap away. Each run's copies go into their own folder, so earlier
 copies remain. The conversation, your decisions, the attachments, the working copies and the result locations are
 saved locally and come back when you reopen the app, with every attachment checked again.
 
-![The plan in prose and before/after pages, with one action](docs/conversation-preview.png)
+![The plan in the conversation and before/after pages, with one action](docs/conversation-preview.png)
 
 Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing

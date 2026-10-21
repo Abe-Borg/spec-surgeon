@@ -182,13 +182,12 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
             d: "Type what you want and press Enter (Shift+Enter starts a new line). Spec Surgeon reads the documents before asking anything they can answer, goes ahead on sensible defaults and says what it assumed, and asks at most three questions, each with the answer it recommends. Click a choice, type its number, tap a suggested reply, or answer in your own words.",
           },
           {
-            t: "Read the plan and look at the pages",
+            t: "Look at the pages",
             d: (
               <>
-                <Tag>Here’s what will change</Tag> gives one sentence per change, in inches and points with exact text
-                quoted, and the assumptions beneath it. <Tag>Every setting</Tag> opens the rest for the reader who wants
-                it all. Below are rendered before-and-after pages for sample documents with their page counts — click a
-                page to enlarge it — and <Tag>Left untouched</Tag> names any file the plan cannot cover, and why.
+                The conversation says in plain words what it will change. Beside it are rendered before-and-after pages
+                for sample documents with their page counts — click a page to enlarge it — and{" "}
+                <Tag>Left untouched</Tag> names any file the plan cannot cover, and why.
               </>
             ),
           },

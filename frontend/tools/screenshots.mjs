@@ -57,7 +57,7 @@ try {
   await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 30000 });
   await page.locator("img[alt^='Before and after']").first().waitFor();
   await page.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
-  // The plan card's arrival tint settles over 0.6 s and the scroll is smooth.
+  // The previews rise in and the scroll to them is smooth.
   await page.waitForTimeout(1200);
   await shot(page, "conversation-preview", DOCS_DIR ? [join(DOCS_DIR, "conversation-preview.png")] : []);
 
@@ -74,12 +74,7 @@ try {
   await page.waitForTimeout(900);
   await shot(page, "conversation-done");
 
-  // 6. Two layouts, a pause, an update and no key: canned views.
-  await scenario("layouts");
-  await page.reload();
-  await page.getByText("Your documents use 2 layouts").waitFor();
-  await page.waitForTimeout(1000);
-  await shot(page, "plan-layouts");
+  // 6. A pause, an update and no key: canned views.
   await scenario("paused");
   await page.reload();
   await page.getByText("Work paused; your progress is saved").waitFor();

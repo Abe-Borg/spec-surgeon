@@ -63,8 +63,9 @@ Rules the page relies on:
   `chips` are plain suggested replies the model offered and are sent as typed text. Both appear only in stage
   `question`, under the latest assistant message. Choices with `words` show the words beneath the button.
 - `plan` is present whenever a plan exists (stages `preview` and `question` with a partial result); `stages` is the
-  number of ordered steps the engine composed internally — shown as a quiet "in N ordered steps" note, never as a
-  procedure the user performs.
+  number of ordered steps the engine composed internally, never a procedure the user performs. The page shows only
+  `set_aside` (the **Left untouched** card); `groups`, `targets` and `stages` tell it a plan exists but are not
+  displayed (the chat says what will change, the previews show it).
 - `samples[].images` are URLs served by `GET /api/image?path=…&token=…` (PNG side-by-side before/after pages).
 - `samples` are the pages of the plan waiting for the user (stages `preview` and `question`), less any document
   whose copy a partial save already delivered; every other stage sends none, so a finished run takes its

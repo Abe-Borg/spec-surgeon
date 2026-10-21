@@ -2,7 +2,7 @@ import type { Sample } from "../types";
 import { imageSrc } from "../lib/api";
 import type { Mark } from "../lib/review";
 import { pageCount } from "../lib/workbench";
-import { PaperCard } from "./PlanCards";
+import PaperCard from "./PaperCard";
 
 interface Props {
   sample: Sample;
