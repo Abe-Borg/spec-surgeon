@@ -49,7 +49,7 @@ from .selectors import StyleSheet, check_paragraph_selector, is_targeted, paragr
 from .swap_image import A, A_NS, IMAGE_REL, PIC, PIC_NS, R, R_NS, W, W_NS, WP, WP_NS
 
 PARAMS = ("image", "position", "width", "height", "align", "description", "style", "tracked", "author",
-          "allow_missing", "date_convention", "scope")
+          "allow_missing", "date_convention")
 ALIGNS = ("left", "center", "right")
 PIC_URI = "http://schemas.openxmlformats.org/drawingml/2006/picture"
 

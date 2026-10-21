@@ -612,7 +612,7 @@ def _v_size_els(drawing):
 def _v_unresizable(drawing) -> Optional[str]:
     fr, ext, aext = _v_size_els(drawing)
     xfrm = fr.find(f"{_A}graphic/{_A}graphicData/{_PIC}pic/{_PIC}spPr/{_A}xfrm") if fr is not None else None
-    if xfrm is not None and xfrm.get("rot") not in (None, "0"):
+    if xfrm is not None and xfrm.get("rot") not in (None, "", "0"):
         return "turned"
     if fr is not None and (fr.find(_WP14 + "sizeRelH") is not None or fr.find(_WP14 + "sizeRelV") is not None):
         return "sized relative to the page"

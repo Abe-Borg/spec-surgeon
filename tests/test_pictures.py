@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Tuple
 import pytest
 from lxml import etree
 
-from fx_pictures import (A, BLUE, GREEN, PIC, R, RED, SVG, W, WP, alternate, bmp, build_pictures, cropped,
+from fx_pictures import (A, BLUE, GREEN, PIC, R, RED, SVG, W, WP, alternate, bmp, build_pictures, cropped, docpr,
                          drawing_named, format_change, gif, in_field, in_hyperlink, in_insertion, in_textbox, jpeg,
                          mutate, no_page_size, paragraph_with, png, rels_of, relative, text_of, turned, turned_jpeg,
                          vml, watermark)
@@ -344,6 +344,21 @@ def test_every_anchor_gets_a_picture_with_its_own_drawing_id(src, pics):
     assert len(body) == 1                                       # one relationship per part
 
 
+def test_an_anchor_in_a_table_cell_gets_its_picture_inside_the_cell(src, pics):
+    sel = {"paragraphs": {"text_regex": "^Valve room$"}}
+    plan, out, rec = one(src, "insert_image", sel, {"image": pics["small.png"], "position": "after"})
+    assert rec.passed, explain(rec)
+    cell = paragraph_with(xml(out), "Valve room").getparent()
+    assert cell.tag == W + "tc" and len(cell.findall(W + "p")) == 2 and new_pictures(out)
+
+    def after_the_table(root):                         # the same place in document order, outside the cell
+        p = paragraph_of(_new_drawing(root))
+        table = p.getparent().getparent().getparent()   # w:p → w:tc → w:tr → w:tbl
+        table.addnext(p)
+    rec = suite(src, mutate(out, MAIN, after_the_table), plan)
+    assert "V10" in failed(rec) and "not right after its anchor" in v10(rec)
+
+
 def test_a_file_without_an_anchor_is_set_aside_unless_allowed(src, pics):
     with pytest.raises(JobException) as e:
         one(src, "insert_image", {"paragraphs": {"text_regex": "^NOWHERE"}}, {"image": pics["small.png"]})
@@ -363,6 +378,21 @@ def _media(data: bytes) -> Dict[str, str]:
 def _media_of(data: bytes, picture: bytes) -> str:
     md5 = hashlib.md5(picture).hexdigest()
     return next(n for n, m in _media(data).items() if m == md5)
+
+
+@pytest.mark.parametrize("how", ["image", "md5", "name", "descr", "all"])
+def test_every_kind_of_match_chooses_its_pictures(src, pics, how):
+    blue = hashlib.md5(png(8, 8, BLUE)).hexdigest()
+    match, want = {"image": ({"image": pics["blue.png"]}, ["Picture 2", "Picture 4"]),
+                   "md5": ({"md5": blue.upper()}, ["Picture 2", "Picture 4"]),
+                   "name": ({"name_regex": r"^Logo \d$"}, ["Logo 2"]),
+                   "descr": ({"name_regex": "plan"}, ["Picture 2"]),
+                   "all": ("all", ["Picture 2", "Riser diagram", "Picture 4", "Logo 2", "Detail 1",
+                                   "Linked badge"])}[how]
+    plan, out, rec = one(src, "remove_images", {}, {"match": match, "tracked": False})
+    assert rec.passed, explain(rec)
+    names = lambda data: [d.get("name") for d in xml(data).iter(WP + "docPr")]          # noqa: E731
+    assert [n for n in names(src) if n not in names(out)] == want
 
 
 def test_untracked_removal_by_file_takes_the_relationship_and_the_media_with_it(src, pics):
@@ -710,6 +740,22 @@ def test_a_shared_field_rule_that_misses_a_field_is_caught(src, monkeypatch):
     assert "V10" in failed(rec) and "shown by a field" in v10(rec)
 
 
+def test_a_shared_rule_that_ignores_a_pending_change_is_caught(src, monkeypatch):
+    data = mutate(src, MAIN, in_insertion("Logo 2"))
+    monkeypatch.setattr(rm_module, "in_revision", lambda el, p: False)
+    _, _, rec = one(data, "remove_images", {}, {"match": {"name_regex": "^Logo 2$"}, "tracked": False})
+    assert "V10" in failed(rec) and "pending tracked change — the op must refuse" in v10(rec)
+
+
+def test_a_shared_rule_that_takes_a_watermark_for_a_picture_is_caught(src, monkeypatch):
+    data = mutate(src, HEADER, lambda r: docpr(r, "Logo 1").set("name", "WordPictureWatermark1"))
+    plan, out, rec = one(data, "remove_images", {"scope": ["headers"]}, {"match": "all", "allow_missing": True})
+    assert rec.passed and out == data and "1 watermark picture(s) left alone" in " ".join(plan.notes)
+    monkeypatch.setattr(pic_module, "in_watermark", lambda ref: False)
+    _, _, rec = one(data, "remove_images", {"scope": ["headers"]}, {"match": "all"})
+    assert "V10" in failed(rec) and "watermark picture(s) here" in v10(rec)
+
+
 def test_a_shared_rule_that_wraps_a_shared_run_whole_is_caught(src, monkeypatch):
     monkeypatch.setattr(rm_module, "stretches", lambda run, matched: [(True, rm_module.content_of(run))])
     _, out, rec = one(src, "remove_images", {}, {"match": {"name_regex": "^Riser"}})
@@ -803,6 +849,7 @@ def test_before_a_section_break_is_fine_and_a_size_given_needs_no_page(src, pics
     {"image": None}, {"image": 3}, {"width": 0}, {"width": -1}, {"width": True}, {"height": "2in"}, {"width": 101},
     {"align": "justify"}, {"description": ""}, {"description": "bell\x07"}, {"position": "inside"},
     {"tracked": "yes"}, {"allow_missing": 1}, {"date_convention": "local"}, {"colour": "red"}, {"style": 4},
+    {"scope": ["headers"]},                                   # the anchors' scope is the selector's
 ])
 def test_insert_parameters_are_checked(src, pics, params):
     with pytest.raises(JobException) as e:

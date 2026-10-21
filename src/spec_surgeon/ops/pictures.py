@@ -212,14 +212,13 @@ def free_media_name(pkg: DocxPackage, ext: str) -> str:
 
 
 def max_docpr_id(pkg: DocxPackage) -> int:
-    """The highest ``wp:docPr`` id of every text part (0 when there is none; an id that is not a number is skipped)."""
+    """The highest ``wp:docPr`` id of every text part (0 when there is none; an id that is not a whole number — an
+    optional minus sign and digits — is skipped)."""
     top = 0
     for part in pkg.text_parts():
         for e in pkg.xml(part).iter(WP + "docPr"):
-            try:
+            if re.fullmatch(r"-?[0-9]+", e.get("id") or ""):
                 top = max(top, int(e.get("id")))
-            except (TypeError, ValueError):
-                pass
     return top
 
 
