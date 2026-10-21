@@ -115,20 +115,6 @@ function Guide({ title, tagline, children }: { title: string; tagline: string; c
   );
 }
 
-/** Two-column rows: what you see, and what it means. */
-function Rows({ rows }: { rows: [ReactNode, ReactNode][] }) {
-  return (
-    <dl className="mt-3 overflow-hidden rounded-lg border border-edge text-xs">
-      {rows.map(([see, means], i) => (
-        <div key={i} className={"grid gap-1 px-3 py-2 sm:grid-cols-2 sm:gap-3" + (i > 0 ? " border-t border-edge" : "")}>
-          <dt className="leading-relaxed text-ink">{see}</dt>
-          <dd className="leading-relaxed text-ink-dim">{means}</dd>
-        </div>
-      ))}
-    </dl>
-  );
-}
-
 /* --- per-topic content --- */
 
 function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
@@ -163,8 +149,8 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
             ),
           },
           {
-            t: "Read the note under each file",
-            d: "Each file is checked the moment it arrives — in milliseconds, with no AI call. A note describes the file, and the file is still edited like any other; a refused file stays greyed out with the reason and never enters a plan. The guide below says what each one means.",
+            t: "Check the list of files",
+            d: "Each file is checked the moment it arrives — in milliseconds, with no AI call — and listed by its name. What the check finds goes to the plan, not the list; a refused file stays greyed out with the reason and never enters a plan. The guide below says what to do about one.",
           },
           {
             t: "Add a template, a picture or a table, if the change needs one",
@@ -215,27 +201,9 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
         ]}
       />
       <Guide
-        title="Reading the note under a file"
-        tagline="What Spec Surgeon found when the file arrived. A note is information, not a refusal."
+        title="When a file arrives"
+        tagline="Listed by its name. What the check finds in a file goes to the plan; only a refusal is shown."
       >
-        <Rows
-          rows={[
-            ["Editing is restricted in Word", "The edited copies keep the restriction."],
-            ["Saved in an older compatibility mode", "Told so you know; the file is edited like any other."],
-            [
-              "No paragraph styles in use",
-              "Changes pick paragraphs by how they look and what they say, not by style name.",
-            ],
-            ["Numbers typed by hand", "The numbering is typed text, not Word’s automatic list numbering."],
-            [
-              "Text split into many small runs, irregular spacing",
-              "Common in files edited for years; told so you know.",
-            ],
-            ["Text boxes in the headers or footers", "Worth a look on the before-and-after pages."],
-            ["Tracked changes pending, comments", "Told so you know; the file is still edited like any other."],
-            ["Nothing in the body yet", "An empty document is taken: ask to add to it, or to change its headers, footers and page setup."],
-          ]}
-        />
         <p className="mt-3 text-xs leading-relaxed text-ink-dim">
           Tidying a file — typed numbers into automatic numbering, clearing direct formatting or spacing, settling
           tracked changes — is never automatic. It is only ever offered to you as a first step, and runs only if you

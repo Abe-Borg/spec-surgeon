@@ -22,7 +22,7 @@ documents · 1 template · 1 picture · building on your copies"; files triage r
 1280 px wide and shortens with an ellipsis before anything else gives way. Then the in-app guide, one dialog with a
 tab strip:
 
-- **How to use** — a first pass in eight steps, what each triage note means, and how spending, Stop now and the
+- **How to use** — a first pass in eight steps, what a refused file means, and how spending, Stop now and the
   pause work.
 - **Workflows** — recipes for the usual jobs: fonts across a set, headers and footers from a template, a logo, values
   from a sheet, an issue stamp, a mixed batch, one change after another, a file left untouched, stopped or paused work.
@@ -35,7 +35,7 @@ On the right: the estimated spending of the conversation, the connection pill (i
 **New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
 ("v1.7.0 available — install") from 1280 px wide; below that, About offers it.
 
-## Attachments and triage notes
+## Attachments and triage
 
 Drop `.docx` files anywhere in the window or use **Add Word documents**. Dropping a file attaches that file
 only; it never selects the other documents in its folder, and tables or pictures beside the documents are not
@@ -47,23 +47,24 @@ and if one of the documents is a copy of the template the window says so and ask
 (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`), for example a new logo to put in place of the old one or a detail to
 insert, or a table (`.xlsx`, `.csv`, `.json`), for example a sheet of project names and numbers to fill in, or a
 schedule to place in the documents as a table. It is listed under the
-template with one line saying what it is ("A PNG picture, 600 × 200 pixels, for the edit to use."); one that
+template by its name, tagged Picture or Table; one that
 cannot be read or is larger than 20 MB is refused with the reason. Claude is told about each one (a picture's
 format and size, a table's sheets and columns) and can read the tables, but nothing beside your documents is
 ever looked for. A plan that uses one names it, and
 the approval covers its exact content: changing the file after the preview means the plan must be checked again.
 Values a table gives are yours, not Claude's words.
 
-The moment a file is attached, Spec Surgeon reads it. This takes milliseconds and makes no model call. Under
-the file name it shows one of three states:
+The moment a file is attached, Spec Surgeon reads it. This takes milliseconds and makes no model call. The
+list shows each file by its name only (with a Template, Picture or Table tag, and To do or Working on while the
+to-do list is in use):
 
-- Nothing. The file is fine.
-- A note, one plain sentence each, in this order when several apply: editing is restricted in Word (edited
-  copies keep the restriction); saved in an older compatibility mode; no paragraph styles in use, so changes
-  pick paragraphs by appearance and text; numbers typed by hand, not automatic list numbering; text split into
-  many small runs; text boxes in the headers or footers; how many tracked changes are pending; the file has
-  comments; irregular spacing (non-breaking or doubled spaces); nothing in the body yet (an empty document is
-  taken: a request can add to it, or change its headers, footers and page setup).
+- Accepted. What the check found stays out of the list: editing restricted in Word (edited copies keep the
+  restriction); saved in an older compatibility mode; no paragraph styles in use, so changes pick paragraphs by
+  appearance and text; numbers typed by hand, not automatic list numbering; text split into many small runs;
+  text boxes in the headers or footers; pending tracked changes; comments; irregular spacing (non-breaking or
+  doubled spaces); nothing in the body yet (an empty document is taken: a request can add to it, or change its
+  headers, footers and page setup). The server still reports these as the attachment's `notes`; the window does
+  not show them.
 - Refused, greyed out with the reason: the file cannot be opened as a Word package, is a Strict Open XML
   document, is larger than the app opens, or has no paragraph at all in its body. The reason says what to do,
   usually to open the file in Word and save it again as `.docx`. A refused file never enters a plan.
@@ -73,8 +74,8 @@ refused is not attached either.
 
 The planner receives the same facts for each structural layout in the batch (styles, numbering, spacing,
 fragmentation, and how that layout marks its section title, PART headings and article titles), so it plans with
-them instead of discovering them. A note describes the file, not the edit: a file with a note is edited like
-any other, and a file without one can still be set aside at plan time.
+them instead of discovering them. These facts describe the file, not the edit: a file with any of them is
+edited like any other, and a file with none can still be set aside at plan time.
 
 Adding or removing a document after a plan exists voids that plan. The conversation says so, and the button
 reads **Continue** until the documents have been checked against your request again.

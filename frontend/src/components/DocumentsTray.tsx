@@ -55,11 +55,11 @@ function AttachmentCard({
   const tag = kindTag(attachment);
   return (
     <li
-      className={`card-in flex items-start gap-3 rounded-xl border px-3 py-2.5 ${
-        refused ? "border-err/30 bg-err/5" : "border-edge bg-surface"
+      className={`card-in flex gap-3 rounded-xl border px-3 py-2.5 ${
+        refused ? "items-start border-err/30 bg-err/5" : "items-center border-edge bg-surface"
       }`}
     >
-      <span className="mt-0.5 text-ink-faint">
+      <span className={`text-ink-faint ${refused ? "mt-0.5" : ""}`}>
         <FileIcon />
       </span>
       <div className="min-w-0 flex-1">
@@ -71,14 +71,8 @@ function AttachmentCard({
           {scope === "To do" && <Tag text="To do" tone="warn" />}
           {scope === "Working on" && <Tag text="Working on" tone="accent" />}
         </div>
-        {refused ? (
+        {refused && (
           <p className="mt-0.5 text-[12px] leading-snug text-err">{attachment.reason || "This file was left out."}</p>
-        ) : (
-          attachment.notes?.map((note, index) => (
-            <p key={`${index}-${note}`} className="mt-0.5 text-[12px] leading-snug text-ink-faint">
-              {note}
-            </p>
-          ))
         )}
       </div>
       <Tip tip={busy ? BUSY_TIP : `Remove ${attachment.name} from this conversation`}>
@@ -99,8 +93,9 @@ function AttachmentCard({
 /**
  * The attachments: a collapsible section — its title line counts the
  * documents and, folded, sums them up in one line; open, each one is a card
- * with its name, what triage found, a kind tag, a to-do or working-on tag and
- * a way to remove it, with three ways to add more. It folds by itself once a
+ * with its name, a kind tag, a to-do or working-on tag and a way to remove it
+ * (a refused one says why; triage's notes go to the planner, not the card),
+ * with three ways to add more. It folds by itself once a
  * plan or copies exist and opens on a click. Dropping a file anywhere in the
  * window works too (App owns the drop ring).
  */
@@ -129,7 +124,7 @@ export default function DocumentsTray({ attachments, todo, focus, busy, uploadin
         onClick={toggle}
         aria-expanded={!collapsed}
         aria-controls="documents-tray-body"
-        title={collapsed ? "Show each document, with what was found in it, and the ways to add more" : "Fold the documents to one line"}
+        title={collapsed ? "Show each document and the ways to add more" : "Fold the documents to one line"}
         className="group flex w-full items-baseline gap-2 rounded-lg text-left transition-colors hover:text-accent"
       >
         <span
