@@ -128,6 +128,9 @@ export interface Update {
   text?: string;
   /** `failed`: the install log that says why. */
   install_log?: string;
+  /** The answer to the last check you asked for ("You're up to date — …", or why it could not check); "" while that
+   *  check runs and after one that found an update, which `state` shows instead. */
+  manual_result?: string;
 }
 
 export interface View {
@@ -195,9 +198,29 @@ export interface Settings {
   logs_dir: string;
 }
 
+export interface Component {
+  name: string;
+  license: string;
+  url: string;
+}
+
+/** GET /api/about. Everything but `version`, `license`, `release_notes` and `credits` came later: a server that
+ *  predates a field leaves it out, and the About page reads what is there. */
 export interface About {
   version: string;
   license: string;
   release_notes: string;
   credits: string[];
+  name?: string;
+  tagline?: string;
+  github?: string;
+  author?: string;
+  email?: string;
+  linkedin?: string;
+  copyright?: string;
+  license_name?: string;
+  license_summary?: string[];
+  /** The model id every AI step uses. */
+  model?: string;
+  components?: Component[];
 }
