@@ -21,9 +21,10 @@ EXAMPLES_DIR = Path(__file__).resolve().parent / "examples" / "specs"
 
 # What a compiled spec usually has to state about each op (the user sees these in the preview and can veto them).
 # Request-only operations: accepting/rejecting tracked changes, editing
-# the document properties, changing the Track Changes setting / Mark as Final — never on a model's own initiative, only
-# when the user asks for exactly that. The advisor never adds one to a respec (advisor._respec_errors).
-REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_document_state", "add_review_comments")
+# the document properties, changing the Track Changes setting / Mark as Final, adding, answering or resolving comments
+# — never on a model's own initiative, only when the user asks for exactly that. The advisor never adds one to a respec (advisor._respec_errors).
+REQUEST_ONLY_OPS = ("resolve_tracked_changes", "set_document_properties", "set_document_state", "add_review_comments",
+                    "reply_to_comments", "resolve_comments")
 
 COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
     "normalize_whitespace": ["ordinary spaces only; tabs, line breaks and non-breaking spaces stay", "tracked unless clean copies requested"],
@@ -467,6 +468,33 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "are neither accepted nor rejected; a file whose tracking is locked with a password is set aside",
         "Mark as Final sets the custom property _MarkAsFinal and the Status 'Final', as Word does; unmarking removes both "
         "(another Status stays)",
+    ],
+    # built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §9)
+    "insert_field": [
+        "the field is inserted empty: Word fills in page numbers as it lays out the pages and updates every other field "
+        "when it opens the file (it is marked so); the engine never writes a number or a date itself",
+        "at_text: every occurrence of the user's exact placeholder in scope (default the body, headers and footers) is "
+        "removed and the field takes its place and its formatting; a file without it is set aside (allow_missing "
+        "leaves it as it is)",
+        "position: the field goes at the start or end of each targeted paragraph, formatted like its first or last "
+        "word",
+        "tracked by default (the placeholder deleted, the field inserted); a placeholder in what a field shows, over a "
+        "tab or a picture, in a text box, or in a link (tracked) sets the file aside",
+        "STYLEREF and DOCPROPERTY name a style or property the file has (the built-in properties always exist)",
+    ],
+    "reply_to_comments": [
+        "only on the user's request, with the user's exact words: one reply per thread chosen, by the named author; a "
+        "reply to a reply goes to its thread, as Word threads replies",
+        "the reply is a comment, not a tracked change, and carries no date; the comments already there, their resolved "
+        "state and the document's text are unchanged",
+        "a file whose comment threads Word could not keep consistent, or a comment with no single place in the text, "
+        "is set aside; a file with no such thread too (allow_missing leaves it as it is)",
+    ],
+    "resolve_comments": [
+        "only on the user's request: 'resolve' marks the threads chosen resolved as Word's Resolve does, 'reopen' marks "
+        "them open; a thread's state is its first comment's, and its replies are left as they are",
+        "threads already as asked are left alone; the comments' words and the document's text are unchanged",
+        "a file with no such thread is left as it is (allow_missing false sets it aside)",
     ],
 }
 

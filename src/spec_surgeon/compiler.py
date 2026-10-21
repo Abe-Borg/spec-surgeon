@@ -568,6 +568,8 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
             for key in ("text", "source"):
                 if isinstance(params.get(key), str) and params[key]:
                     out.append(params[key])
+        if op == "reply_to_comments" and isinstance(params.get("text"), str) and params["text"]:
+            out.append(params["text"])
         if op == "apply_header_footer_template":
             for rule in (params.get("slot_fills") or {}).values():
                 _extract_literal_rules(rule, out)
