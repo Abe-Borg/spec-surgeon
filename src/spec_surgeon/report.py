@@ -418,10 +418,10 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "header-rows": (
         "The New Rows Would Break the Repeating Header Rows",
-        "Word repeats a table's header rows at the top of every page only while they run on from its first row. The new "
-        "rows would split the header rows that repeat on every page, or are asked for as header rows where they would "
-        "not join them (Word would ignore the marking). Ask for them as header rows (repeat_header) to place them among "
-        "the header rows, or put them after the header rows.",
+        "Word repeats a table's header rows at the top of every page only while they run on from its first row. The "
+        "new rows would split the header rows that repeat on every page, or are asked for as header rows where they "
+        "would not join them (Word would ignore the marking). Ask for them as header rows (repeat_header) to place "
+        "them among the header rows, or put them after the header rows.",
     ),
     "table-placement": (
         "A New Table Cannot Go There",

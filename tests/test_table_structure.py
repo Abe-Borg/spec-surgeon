@@ -592,7 +592,8 @@ def test_new_rows_keep_the_repeating_header_rows_whole(src, damage, select, para
 
 def test_header_rows_join_the_repeating_rows_at_the_top(src):
     sel = {"tables": SCHEDULE, "rows": {"index_range": [0, 0]}}
-    plan, out, rec = run(src, "insert_table_rows", sel, {"rows": [["Tag", "Equipment", "Rating"]], "repeat_header": True})
+    plan, out, rec = run(src, "insert_table_rows", sel, {"rows": [["Tag", "Equipment", "Rating"]],
+                                                         "repeat_header": True})
     assert rec.passed, rec.to_markdown()                       # right after the header row: it joins it
     assert heads(out, 0) == [True, True, False, False, False]
     two = mutate(src, MAIN, header_at(0, 1))
@@ -612,7 +613,8 @@ def test_header_rows_join_the_repeating_rows_at_the_top(src):
     # unmarked right after the header row; a wrong output that puts it above the header row is caught
     plan, out, rec = run(src, "insert_table_rows", sel, {"rows": [["a", "b", "c"]], "tracked": False})
     assert rec.passed and heads(out, 0) == [True, False, False, False, False]
-    _caught(src, plan, out, MAIN, lambda r: rows(tbls(r)[0])[0].addprevious(rows(tbls(r)[0])[1]), "is not the source with")
+    _caught(src, plan, out, MAIN, lambda r: rows(tbls(r)[0])[0].addprevious(rows(tbls(r)[0])[1]),
+            "is not the source with")
 
 
 # ---- insert_table -------------------------------------------------------------------------------------------------------

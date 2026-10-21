@@ -231,7 +231,8 @@ class RemoveImages(Op):
                     why = ("a picture shares its run with text that carries a pending formatting change — accept or "
                            "reject it first" if tracked else "a picture's run carries a pending formatting change that "
                            "would go with it — accept or reject it first, or remove the picture as a tracked change")
-                    raise JobException(f"{part} paragraph {bi}: {why}", "tracked-format", {"part": part, "paragraph": bi})
+                    raise JobException(f"{part} paragraph {bi}: {why}", "tracked-format",
+                                       {"part": part, "paragraph": bi})
                 if tracked:
                     dels += sum(1 for r in runs for hit, _ in stretches(r, ids) if hit)
                 else:

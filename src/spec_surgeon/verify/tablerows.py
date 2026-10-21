@@ -73,7 +73,7 @@ def v_header_row(tr, chain: List[Any]) -> bool:
 
 
 def v_header_top(tbl, chain: List[Any]) -> int:
-    """The number of own rows, counted from the first, that are header rows without a break — the rows a page repeats."""
+    """How many own rows, counted from the first, are header rows without a break — the rows each page repeats."""
     rows = v_rows(tbl)
     k = 0
     while k < len(rows) and v_header_row(rows[k], chain):

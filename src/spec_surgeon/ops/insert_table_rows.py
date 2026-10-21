@@ -215,7 +215,8 @@ class InsertTableRows(Op):
                                        f"{[len(texts[i - 1]) for i in bad]} text(s) — give one text per cell",
                                        "table-shape", {"table": where, "cells": len(cells)})
                 head = header_run(tbl, chain)                  # read: each row's marking down to the first body row
-                frag.touches += [(part, f"tr:{k}:{i}", "verify-props:tblHeader") for i in range(min(head + 1, len(rows)))]
+                frag.touches += [(part, f"tr:{k}:{i}", "verify-props:tblHeader")
+                                 for i in range(min(head + 1, len(rows)))]
                 lands = r if position == "before" else r + 1   # own rows before the new ones
                 if not repeat and lands < head:
                     raise JobException(f"{where}: the new rows would split the header rows that repeat on every page "
