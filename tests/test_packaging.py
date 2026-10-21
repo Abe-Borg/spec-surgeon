@@ -73,6 +73,17 @@ def test_version_and_package_data():
     assert (ROOT / "docs" / "releases" / f"v{__version__}.md").is_file()
 
 
+def test_pymupdf_stays_below_the_release_that_loads_a_layout_model():
+    """PyMuPDF 2.0 imports a layout-analysis model (onnxruntime, numpy) with ``import pymupdf``; nothing here uses it."""
+    pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
+    assert "pymupdf>=1.24,<2" in pyproject["project"]["dependencies"]
+    requirements = (ROOT / "requirements.txt").read_text(encoding="utf-8")
+    assert re.search(r"^pymupdf>=1\.24,<2\b", requirements, re.M)
+    probe = "import sys, spec_surgeon.verify.geometry, spec_surgeon.batch; print('onnxruntime' in sys.modules)"
+    loaded = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True).stdout
+    assert loaded.strip() == "False", "importing PyMuPDF loaded its layout model; reinstall with pip install -e ."
+
+
 def test_the_workflows_build_the_page_before_the_tests_and_prove_it_is_committed():
     """The page is committed under src/spec_surgeon/web/static; every workflow rebuilds it from frontend/ with
     Node 22 before the Python tests and fails when the committed copy is not what the source builds."""

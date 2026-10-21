@@ -1,5 +1,5 @@
 // Adapted from Build-a-Spec's frontend/src/components/Composer.tsx (copy-based reuse).
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import Tip from "./Tip";
 
 interface Props {
@@ -20,7 +20,7 @@ interface Props {
 
 const MAX_HEIGHT = 220; // about nine lines
 
-export default function Composer({
+function Composer({
   busy,
   canSend,
   reason,
@@ -159,3 +159,6 @@ export default function Composer({
     </div>
   );
 }
+
+// Memoized: a streamed delta changes only the live bubble, so the composer keeps its last render.
+export default memo(Composer);

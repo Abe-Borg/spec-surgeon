@@ -1,4 +1,5 @@
-// Copied from Build-a-Spec's frontend/src/lib/useSmoothText.ts (copy-based reuse, unchanged).
+// Copied from Build-a-Spec's frontend/src/lib/useSmoothText.ts (copy-based reuse); changed here so the loop
+// runs only while there is text to catch up on — the live bubble stays mounted through minutes of rendering.
 import { useEffect, useRef, useState } from "react";
 
 /** True when the user asked for reduced motion (live-updates on change). */
@@ -24,40 +25,54 @@ export function usePrefersReducedMotion(): boolean {
  * frame so the text flows instead of jumping in chunks. The catch-up rate
  * scales with the backlog (`ceil(backlog / 30)`, min 2) so it never lags the
  * stream by more than ~half a second. Flushes instantly when `active` goes
- * false (turn end / unmount) and when `prefers-reduced-motion` is set.
+ * false (turn end / unmount) and when `prefers-reduced-motion` is set. The
+ * frame loop stops once the text has caught up and starts again with the
+ * next delta, so a bubble waiting on a long step asks for no frames at all.
  */
 export function useSmoothText(target: string, active: boolean): string {
   const reduced = usePrefersReducedMotion();
   const [displayed, setDisplayed] = useState(target);
   const targetRef = useRef(target);
   const displayedRef = useRef(target);
+  const rafRef = useRef<number | null>(null);
   targetRef.current = target;
 
   // Snap (no animation) when reduced-motion is on, the stream has ended, or
   // the target shrank out from under us (a fresh message reusing the hook).
   const snap = reduced || !active || target.length < displayedRef.current.length;
 
+  const stopLoop = () => {
+    if (rafRef.current !== null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = null;
+  };
+
   useEffect(() => {
-    if (snap) {
-      displayedRef.current = targetRef.current;
-      setDisplayed(targetRef.current);
-      return;
-    }
-    // One persistent rAF loop reads the ref each frame, so new deltas are
-    // picked up without restarting the loop.
-    let raf = requestAnimationFrame(function tick() {
+    if (!snap) return;
+    stopLoop();
+    displayedRef.current = targetRef.current;
+    setDisplayed(targetRef.current);
+  }, [snap]);
+
+  // Start draining when text is behind; a running loop reads the ref each
+  // frame, so later deltas join it instead of starting another.
+  useEffect(() => {
+    if (snap || rafRef.current !== null || displayedRef.current.length >= target.length) return;
+    rafRef.current = requestAnimationFrame(function tick() {
       const t = targetRef.current;
       const cur = displayedRef.current;
-      if (cur.length < t.length) {
-        const step = Math.max(2, Math.ceil((t.length - cur.length) / 30));
-        const next = t.slice(0, cur.length + step);
-        displayedRef.current = next;
-        setDisplayed(next);
+      if (cur.length >= t.length) {
+        rafRef.current = null;
+        return;
       }
-      raf = requestAnimationFrame(tick);
+      const step = Math.max(2, Math.ceil((t.length - cur.length) / 30));
+      const next = t.slice(0, cur.length + step);
+      displayedRef.current = next;
+      setDisplayed(next);
+      rafRef.current = requestAnimationFrame(tick);
     });
-    return () => cancelAnimationFrame(raf);
-  }, [snap]);
+  }, [snap, target]);
+
+  useEffect(() => stopLoop, []);
 
   // While snapping — reduced motion, stream end, or a shrunk target — the
   // effect only re-runs when `snap` flips, so `displayed` can lag a growing

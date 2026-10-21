@@ -33,7 +33,7 @@ computer* to keep it in Windows Credential Manager. The installer is unsigned, s
 **Python package / development setup** (Python 3.10+ on Windows, macOS or Linux; from the project folder):
 
 ```powershell
-py -3 -m pip install -e .            # core: lxml, pymupdf
+py -3 -m pip install -e .            # core: lxml, PyMuPDF 1.x (2.0 loads an AI layout model the app never uses)
 py -3 -m pip install -e ".[gui]"     # the window: FastAPI, uvicorn, pywebview (WebView2 on Windows) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
 py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests in the window
@@ -151,7 +151,9 @@ print(result.counts())          # {'PASS': ..., 'FAIL': ..., 'EXCEPTION': ..., '
 
 Inputs may be files, folders (every `*.docx`, lock files skipped) or globs, mixed. The results folder holds the
 verified copies under `outputs/`, a verification record per file under `records/`, `BATCH_REPORT.md` and
-`DIAGNOSTICS.md`; nothing is written over an original.
+`DIAGNOSTICS.md`; nothing is written over an original. Files are planned, edited and verified one at a time unless
+`workers=N` asks for more: that work holds one processor core whatever the thread count, so extra threads only add
+memory (rendering runs its own parallel renderers either way).
 
 ## The verification record
 

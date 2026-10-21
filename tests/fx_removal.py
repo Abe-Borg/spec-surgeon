@@ -356,6 +356,20 @@ def build_blank(*, header_blanks: bool = True) -> bytes:
     return save(doc)
 
 
+def build_blank_last_section() -> bytes:
+    """Three sections, each break on a paragraph of its own (empty, as Word and python-docx write it): "Cover", a break;
+    "Body text", a blank, a break; then the last section — three blank paragraphs and nothing else."""
+    doc = Document()
+    doc.add_paragraph("Cover")
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    doc.add_paragraph("Body text")
+    doc.add_paragraph("")
+    doc.add_section(WD_SECTION.NEW_PAGE)
+    for _ in range(3):
+        doc.add_paragraph("")
+    return save(doc)
+
+
 def _numbered_style(style):
     ppr = style.element.get_or_add_pPr()
     np_ = OxmlElement("w:numPr")

@@ -222,6 +222,24 @@ def test_batch_uses_safe_workers_by_default_and_in_frozen_build(tmp_path, monkey
     assert len(result.files) == 2 and all(file.output and file.output.exists() for file in result.files)
 
 
+def test_thread_mode_defaults_to_one_worker_and_honors_an_explicit_count(tmp_path, monkeypatch):
+    # The work holds the GIL: a default thread pool only added memory and time, so none starts unless asked for.
+    pools = []
+    real_pool = batch.ThreadPoolExecutor
+    monkeypatch.setattr(batch, "ThreadPoolExecutor", lambda **kwargs: pools.append(kwargs) or real_pool(**kwargs))
+    sources = []
+    for index in range(3):
+        source = tmp_path / f"spec-{index}.docx"
+        source.write_bytes(build("21 13 13", f"WET-PIPE {index}"))
+        sources.append(str(source))
+    default = batch.run_batch(sources, "edit-spec", {}, tmp_path / "default", do_render=False, spec=CONTINUOUS)
+    assert pools == [] and all(file.output and file.output.exists() for file in default.files)
+    assert "with 1 thread worker(s)" in (tmp_path / "default" / "logs" / "run.log").read_text(encoding="utf-8")
+    explicit = batch.run_batch(sources, "edit-spec", {}, tmp_path / "explicit", workers=2, do_render=False,
+                               spec=CONTINUOUS)
+    assert pools == [{"max_workers": 2}] and all(file.output and file.output.exists() for file in explicit.files)
+
+
 def test_frozen_launcher_handles_spawn_before_app_mutex_or_ui(monkeypatch):
     from spec_surgeon import winapp
     path = Path(__file__).resolve().parents[1] / "packaging/windows/launcher_bootstrap.py"

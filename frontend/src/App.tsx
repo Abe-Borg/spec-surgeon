@@ -268,6 +268,16 @@ export default function App() {
 
   const onPrefill = useCallback((text: string) => setPrefill((p) => ({ text, nonce: p.nonce + 1 })), []);
 
+  // Stable handlers: the header, the workbench and the composer are memoized and skip the renders a streamed
+  // delta would otherwise cause, as long as nothing handed to them is a new function each time.
+  const onOpenSettings = useCallback(() => setSettingsOpen(true), []);
+  const onAddKind = useCallback((kind: PickKind) => void onAdd(kind), [onAdd]);
+  const onZoom = useCallback((src: string, title: string) => setZoom({ src, title }), []);
+  const actionToken = view.action?.token;
+  const onContinue = useCallback(() => {
+    if (actionToken) onAct(actionToken);
+  }, [actionToken, onAct]);
+
   // --- About: logs, updates -------------------------------------------------
 
   const onOpenLogs = useCallback(() => {
@@ -352,7 +362,7 @@ export default function App() {
         updatePill={updatePill(view.update, updateShown)}
         onDownloadUpdate={onDownloadUpdate}
         onNewConversation={onNewConversation}
-        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenSettings={onOpenSettings}
         onOpenHelp={setHelpTopic}
       />
       {updateShown && (
@@ -388,9 +398,7 @@ export default function App() {
           onSend={onSend}
           onChoose={onChoose}
           onAct={onAct}
-          onContinue={() => {
-            if (view.action?.token) onAct(view.action.token);
-          }}
+          onContinue={onContinue}
           onStop={onStop}
           prefill={prefill}
           onPrefill={onPrefill}
@@ -403,11 +411,11 @@ export default function App() {
           reviews={reviews}
           canReview={reviewing}
           onMark={onMark}
-          onAdd={(kind) => void onAdd(kind)}
+          onAdd={onAddKind}
           onRemove={onRemove}
           onOpen={onOpen}
           onStartOver={onStartOver}
-          onZoom={(src, title) => setZoom({ src, title })}
+          onZoom={onZoom}
         />
       </main>
       <input

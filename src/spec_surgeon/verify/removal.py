@@ -22,10 +22,10 @@ residual's.
   proofing marks and runs of ``w:rPr``, ``w:lastRenderedPageBreak`` and ``w:t`` of spaces / no-break spaces.
 * **Keeps** (per container, over its blocks ``w:p``/``w:tbl``/``w:sdt``/``w:customXml``/``w:altChunk``): the first
   paragraph between two tables the deletions would join; the last block when tracked, or — untracked — when the rest
-  would leave the container empty or ending in a non-paragraph. Hidden text and notes, in the body, once the hidden
-  paragraphs that cannot be deleted are kept: when every block after the last section-break paragraph that stays is
-  chosen and none of them kept, the last of them too (the last section keeps a paragraph:
-  ``verify/deletion._v_last_section``); only then is a note that cannot be deleted refused, unless that is the one kept.
+  would leave the container empty or ending in a non-paragraph. In the body, when every block after the last
+  section-break paragraph that stays is chosen and none of them kept, the last of them too (the last section keeps a
+  paragraph: ``verify/deletion._v_last_section``) — blank paragraphs; hidden text and notes once the hidden paragraphs
+  that cannot be deleted are kept, and only then is a note that cannot be deleted refused, unless that is the one kept.
 * **Fields**: a run to remove inside a complex field's span goes only with the whole outermost field (local to the
   paragraph, every content run of its span chosen and live, no simple field in it); inside a simple field only with the
   whole simple field (untracked; tracked refused).
@@ -502,6 +502,8 @@ def _v_blank_decisions(sv, styles: Styles, mode: str, tracked: bool) -> List[int
         else:
             chosen = [b for i, (b, e) in enumerate(zip(blocks, blank)) if e and i > 0 and blank[i - 1]]
         keep = _v_keep(blocks, chosen, tracked)
+        if c.tag == W + "body":
+            _v_last_section(blocks, set(chosen), keep)
         out += [at[id(b)] for b in chosen if all(b is not k for k in keep)]
     return sorted(out)
 

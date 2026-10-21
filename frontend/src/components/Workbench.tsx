@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useMemo, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import { planHasContent, runFolder } from "../lib/workbench";
@@ -66,7 +66,7 @@ function PlanPlaceholder({
   );
 }
 
-export default function Workbench({
+function Workbench({
   view,
   busy,
   uploading,
@@ -271,3 +271,6 @@ export default function Workbench({
     </section>
   );
 }
+
+// Memoized: a streamed delta changes only the live bubble, so the workbench keeps its last render.
+export default memo(Workbench);

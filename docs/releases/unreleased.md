@@ -103,8 +103,6 @@ updates** in its top bar.
 - Pull-request CI runs the Windows suite once instead of twice; the installer job skips it when the Windows test job
   has just run it.
 
-Pending on the owner's machine: the installed Windows app without `spec-surgeon.exe`.
-
 ## Lower model cost for follow-up requests
 
 - **The instructions are paid for once an hour, not once per request.** The assistant's instructions and the list of
@@ -128,3 +126,23 @@ Pending on the owner's machine: the installed Windows app without `spec-surgeon.
   or the documents' text.
 - **The app log says when the window closed.** A clean exit writes `Spec Surgeon closed` again, as the Qt window did
   before 1.6.0; a session that ends without it did not close cleanly.
+
+## Lighter on your computer
+
+- **No more unused AI model.** PyMuPDF 2.0 (released 2026-10-19, two days before v1.6.0 was built) loads a
+  page-layout neural network, with onnxruntime and numpy, every time it is imported. Spec Surgeon never uses it, but
+  v1.6.0 carried it: about 75 MB more memory and 13 more threads in the window, and roughly 160 MB more in the
+  installer. PyMuPDF is now kept below 2.0, and the installed-app check fails if the model ever comes back.
+- **One worker by default.** Planning, applying and verifying a batch used one thread per processor core (up to
+  eight). Python runs that work one thread at a time, so the extra threads only cost memory: on eight 53-page
+  sections, eight threads took 19% longer than one and 2.7 times the memory (471 MB against 177 MB). Batches now
+  use one worker; rendering keeps its own parallel workers.
+- **A quiet window while it waits.** While Word renders, the window used to redraw itself on every screen refresh:
+  the reply's typing animation kept running with nothing to type, and the status line's shimmer repainted the text
+  each frame. The typing animation now stops when it has caught up, the status line fades gently instead, and the
+  side panel, header and input box no longer redraw on every streamed word. Measured on the page: about 1% of a
+  processor core while waiting, down from 6–8%. Finished messages are no longer re-read each time the window
+  refreshes.
+
+Pending on the owner's machine: the installed Windows app without `spec-surgeon.exe`, and the rebuilt installer's
+memory and processor use with WebView2 and Word.
