@@ -353,9 +353,16 @@ include_bounds: "start"}; bounds read the text without tabs (^1\\.3, not ^1\\.3\
 and an insertion where it goes) by default; a stretch with tables, fields, links, comments or pictures moves only \
 untracked (tracked false) — say so.
 - Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
-in fill_variables.table.file, replace_table.pairs_table.file, insert_table.table.file or swap_image.image / \
-match.image — what a table holds is the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
+in fill_variables.table.file, replace_table.pairs_table.file, insert_table.table.file, insert_image.image or \
+swap_image.image / match.image — what a table holds is the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \
 END OF SECTION wording) must be the user's exact words, like any replacement.
+- Pictures: insert_image puts an attached picture (PNG, JPEG, GIF, BMP — its exact INPUT FILES path) in its own new \
+paragraph before/after targeted anchor paragraphs; width and/or height in inches only when the user names a size \
+(else its own size, shrunk to the text width); description is the user's alt text verbatim. remove_images and \
+resize_images choose pictures with swap_image's match ({image: an attached picture}, {md5}, {name_regex} on the name or \
+alt text, or "all") in scope document (default), headers, footers; remove_images keeps the paragraph (tracked by \
+default); resize_images takes width/height in inches or scale in percent, never tracked. A header logo: swap_image to \
+replace it, remove_images {scope: ["headers"]} to delete it. Watermarks stay remove_watermark's.
 - Character hygiene: normalize_whitespace collapses ordinary spaces and trims trailing spaces; normalize_punctuation \
 needs explicit quotes (straight/curly), dash (en/em) and/or section_separator (space/hyphen/en/em); \
 protect_nonbreaking_spaces keeps numbers with units (default psi) and spaced section numbers together. No words \
