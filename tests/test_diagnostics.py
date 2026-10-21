@@ -191,6 +191,14 @@ def test_every_refusal_code_of_every_operation_is_explained_and_only_spec_level_
                                                   "unknown-slot"}
 
 
+def test_no_report_sends_the_reader_to_a_command_or_the_removed_diagnostics_bundle():
+    import inspect
+    from spec_surgeon import report
+    text = inspect.getsource(report).lower()
+    assert "bundle" not in text and "spec-surgeon " not in text
+    assert "help → open diagnostic logs" in FAILURE_EXPLANATIONS["internal-error"][1].lower()
+
+
 # ---- the trace, the run log, DIAGNOSTICS.md -------------------------------------------------------------------------
 
 def test_every_file_leaves_a_trace_and_the_run_a_log(tmp_path):

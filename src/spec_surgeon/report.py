@@ -72,7 +72,7 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The edit was applied to a copy, but one or more of the V1–V10 checks failed on the result, so the copy was "
         "moved to failed/ and nothing was delivered. The rejected copy is for diagnosis only; do not use it. "
         "Read the failing check in records/, then preview a corrected recipe and run again. If the recipe looks "
-        "right, send the diagnostics bundle so the transform can be fixed.",
+        "right, send DIAGNOSTICS.md and the logs/ folder so the transform can be fixed.",
     ),
     "section-break": (
         "Paragraph Carries a Section Break",
@@ -182,7 +182,7 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Spec Surgeon Hit an Internal Error",
         "Something unexpected went wrong inside Spec Surgeon while working on this file — a defect in the program, not "
         "a problem with your file. The file was left untouched. DIAGNOSTICS.md and the file's trace (logs/) show the "
-        "stage and the line of code; please send the diagnostics bundle (window: Help → Save diagnostics bundle…).",
+        "stage and the line of code; please send them, with the app's logs (window: Help → Open diagnostic logs).",
     ),
     "worker-died": (
         "The Process Working on This File Stopped",
@@ -1078,8 +1078,8 @@ def write_chain_diagnostics(result: "Any") -> Path:
              f"- **Program:** {environment_line(result.environment or {})}", ""]
     if result.stopped:
         lines += [f"> **The chain itself stopped** — {result.stopped}. The files below are the ones it had reached; "
-                  f"`logs/chain.log` ends with the traceback. This is a defect in Spec Surgeon: please send the "
-                  f"diagnostics bundle.", ""]
+                  f"`logs/chain.log` ends with the traceback. This is a defect in Spec Surgeon: please send "
+                  f"DIAGNOSTICS.md and the `logs/` folder beside it.", ""]
     if not problems and not result.stopped:
         lines += ["**No problems: every file passed every stage.**", ""]
     if problems:
