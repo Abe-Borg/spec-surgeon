@@ -99,14 +99,28 @@ try {
   await shot(page, "settings");
   await page.keyboard.press("Escape");
 
-  // 7. The to-do list: a document set aside with the red X, after the other copies were created.
+  // 7. The top bar's guide: How to use, and About.
+  await scenario("attached");
+  await page.reload();
+  const topics = page.locator("header nav[aria-label='Help']");
+  await topics.getByRole("button", { name: "How to use" }).click();
+  await page.getByRole("dialog", { name: "How to use Spec Surgeon" }).waitFor();
+  await page.waitForTimeout(300);
+  await shot(page, "help-how-to-use");
+  await page.getByRole("tab", { name: "About" }).click();
+  await page.getByRole("dialog", { name: "About" }).getByText("Open-source components").waitFor();
+  await page.waitForTimeout(300);
+  await shot(page, "help-about");
+  await page.keyboard.press("Escape");
+
+  // 8. The to-do list: a document set aside with the red X, after the other copies were created.
   await scenario("todo");
   await page.reload();
   await page.getByText("Set aside for more work").first().waitFor();
   await page.waitForTimeout(800);
   await shot(page, "todo");
 
-  // 8. The narrow window: 1000 px wide, the documents folded to their title line beside the plan.
+  // 9. The narrow window: 1000 px wide, the documents folded to their title line beside the plan.
   await scenario("preview");
   await page.setViewportSize({ width: 1000, height: 700 });
   await page.reload();

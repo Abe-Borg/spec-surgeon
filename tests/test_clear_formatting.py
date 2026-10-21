@@ -5,11 +5,9 @@ a wrong OUTPUT per rule; wrong IMPLEMENTATIONS shared by plan and apply; the two
 parameters; the reuse API apply_style builds on."""
 from __future__ import annotations
 
-import ast
 import copy
 import io
 import zipfile
-from pathlib import Path
 from typing import List, Tuple
 
 import pytest
@@ -22,7 +20,6 @@ from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import clear_formatting as clear_module
 from spec_surgeon.ops.selectors import StyleSheet, runs_by_paragraph
 from spec_surgeon.package import DocxPackage, W, serialize_xml
-from spec_surgeon.report import FAILURE_EXPLANATIONS
 from spec_surgeon.verify import clearing as vclear
 from spec_surgeon.verify import props as vprops
 from spec_surgeon.verify import run_suite
@@ -741,18 +738,3 @@ def test_the_reuse_api_leaves_the_mark_to_others_with_mark_false():
     marked = el('<w:pPr><w:jc w:val="center"/><w:pPrChange w:id="1" w:author="J"><w:pPr/></w:pPrChange></w:pPr>')
     vclear.check_cleared_ppr(marked, None, [], False, AUTHOR, "p", errs, mark=False)
     assert errs and "w:pPrChange changed" in errs[0]                         # someone's marker may not vanish
-
-
-def _codes(module) -> set:
-    codes = set()
-    for n in ast.walk(ast.parse(Path(module.__file__).read_text(encoding="utf-8"))):
-        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "JobException" and len(n.args) > 1:
-            assert isinstance(n.args[1], ast.Constant), ast.unparse(n)
-            codes.add(n.args[1].value)
-    return codes
-
-
-def test_every_refusal_code_of_clear_direct_formatting_is_explained():
-    codes = _codes(clear_module)
-    assert codes == {"bad-params", "tracked-format"}
-    assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []

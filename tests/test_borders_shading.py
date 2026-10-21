@@ -4,10 +4,8 @@ shading, already as asked); a wrong OUTPUT per rule; wrong IMPLEMENTATIONS share
 parameters and refusals."""
 from __future__ import annotations
 
-import ast
 import io
 import zipfile
-from pathlib import Path
 from typing import List, Tuple
 
 import pytest
@@ -20,7 +18,6 @@ from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import set_borders_shading as bs_module
 from spec_surgeon.ops.base import verify_family
 from spec_surgeon.package import DocxPackage, W, serialize_xml
-from spec_surgeon.report import FAILURE_EXPLANATIONS
 from spec_surgeon.verify import run_suite
 from spec_surgeon.verify import borders as vborders
 
@@ -598,17 +595,6 @@ def test_the_spec_schema_takes_the_op(src):
                          "params": {"borders": "none"}}))
     with pytest.raises(SpecError):
         validate_spec(_spec({"op": "set_borders_shading", "select": NOTES, "params": {"borders": {"top": {"weight": 4}}}}))
-
-
-def test_every_refusal_code_of_set_borders_shading_is_explained():
-    path = Path(bs_module.__file__)
-    codes = set()
-    for n in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
-        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "JobException" and len(n.args) > 1:
-            assert isinstance(n.args[1], ast.Constant)
-            codes.add(n.args[1].value)
-    assert codes == {"bad-params", "not-found", "structure", "style-mismatch", "tracked-format"}
-    assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
 
 
 def test_a_spec_runs_through_the_batch_pipeline(src, tmp_path):

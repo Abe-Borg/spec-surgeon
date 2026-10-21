@@ -84,3 +84,5 @@ jobs:
   windows-installer:
     name: Installed Windows app
     uses: ./.github/workflows/windows-build.yml
+    with:
+      run_tests: false            # "Tests (windows-2022)" above runs the whole suite on Windows

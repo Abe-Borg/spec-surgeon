@@ -7,13 +7,33 @@ leaves the machine but the model calls you ask for (the contract between the pag
 are the Word documents you attached (a section that folds to one line once a plan exists; click its title to open
 it), optionally one reference template, any pictures or tables you attached for the edit to use, the plan and the
 before/after pages. You add documents, describe the result, read the plan, look at the pages, mark each preview with
-a green checkmark or a red X, and create edited copies. Nothing else is asked of you: no operations, recipes,
-methods or settings beyond an API key. Both panes render what the assistant writes as formatted text (lists, bold,
-links), in the chat and on the plan's cards alike.
+a green checkmark or a red X, and create edited copies. Nothing else is asked of you: no operations, methods or
+settings beyond an API key. Both panes render what the assistant writes as formatted text (lists, bold, links), in
+the chat and on the plan's cards alike.
 
 ![The conversation starts with Word documents, an optional template, and a request](conversation-start.png)
 
 ![A readable plan and rendered before-and-after pages, followed by one action to create copies](conversation-preview.png)
+
+## The top bar
+
+The top bar follows Build-a-Spec's. Beside the title, a quiet line says what the conversation works on ("3
+documents · 1 template · 1 picture · building on your copies"; files triage refused are not counted). It shows from
+1280 px wide and shortens with an ellipsis before anything else gives way. Then the in-app guide, one dialog with a
+tab strip:
+
+- **How to use** — a first pass in eight steps, what each triage note means, and how spending, Stop now and the
+  pause work.
+- **Workflows** — recipes for the usual jobs: fonts across a set, headers and footers from a template, a logo, values
+  from a sheet, an issue stamp, a mixed batch, one change after another, a file left untouched, stopped or paused work.
+- **How it works** — the mechanics in plain words.
+- **About** — the version, the model, the release notes, the license and the open-source components, the author's
+  links, **Check for updates** (it says "Checking for updates…" until the check answers, then the answer or the update
+  with **Download and install**) and **Open diagnostic logs**. These replace the old Help menu and About box.
+
+On the right: the estimated spending of the conversation, the connection pill (it opens Settings), **Hide plan**,
+**New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
+("v1.7.0 available — install") from 1280 px wide; below that, About offers it.
 
 ## Attachments and triage notes
 
@@ -96,7 +116,7 @@ exactly** lists the passages each document contributes, such as the value a temp
 A plan the engine composed into ordered steps says so under its title ("in 2 ordered steps"); it is still one plan
 with one button.
 
-JSON, approval hashes, operation catalogs, recipes and recovery workspaces are not part of the window.
+JSON, approval hashes, operation catalogs and recovery internals are not part of the window.
 
 ## Layouts for a mixed batch
 
@@ -181,7 +201,7 @@ belong to the displayed plan too: a new plan or preview starts the review over.
 
 Originals are never written; the window always creates copies. Each run's copies go into a timestamped folder
 under the app's local data (`%LOCALAPPDATA%\Spec Surgeon\runs` on Windows), so earlier copies remain. **Your
-edited copies** lists them; double-click one to open it in Word.
+edited copies** lists them; click one to open it in Word.
 
 A file can be left out at three points, each time with one sentence that names the file and the reason:
 
@@ -217,7 +237,7 @@ you accept it.
 Typed requests need an Anthropic API key. **Settings** opens one dialog, **AI connection**: paste the key and
 tick **Remember securely on this computer** to keep it in Windows Credential Manager. Nothing else is
 configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer says
-"Connect your Anthropic API key in Settings to start." The command line runs saved specifications without a key.
+"Connect your Anthropic API key in Settings to start."
 
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
@@ -226,7 +246,7 @@ operations' settings ride the cached prompt, so a plan is one or two calls); rec
 high. Three things keep the spending in your hands instead:
 
 - **You see it.** While work runs the chat shows the assistant's words and its thinking summary as they are
-  written, a sentence per step, and the header the estimated spending so far. A step that is still running is
+  written, a sentence per step, and the top bar the estimated spending so far. A step that is still running is
   counted when it ends. The amounts are estimates from a built-in price table, not provider bills.
 - **Stop now.** While work runs the button is the kill switch. It cuts off the AI step that is running at
   once, so Claude stops writing, and starts no other; a document check or file operation already running
@@ -277,8 +297,9 @@ A PASS means the engine found exactly the predicted change and nothing else, not
 wanted. Automated page comparison and Claude's visual check are not human acceptance in Word; look at the
 pages, and open the copies.
 
-The window has no other mode. The command line is unchanged; office profiles, specification QA audits, project
-evidence, built-in workflows, campaign workspaces and recovery workspaces are command-line features.
+The window has no other mode, and there is no command line: it was removed on 2026-10-21 together with the
+features only it offered (the recipe library, office profiles, specification QA audits, project evidence, built-in
+workflows, campaign and recovery workspaces, evaluations).
 
 Validation uses generated Word fixtures (including a family of deliberately dirty files), scripted model
 responses, the real engine and verifier, and the window's server driven in-process (FastAPI's test client, no

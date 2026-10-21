@@ -114,7 +114,7 @@ export function ErrorBubble({ text }: { text: string }) {
     <div className="rounded-xl border border-err/40 bg-err/10 px-4 py-3 text-sm text-err" role="alert">
       <p>{text}</p>
       <p className="mt-1 text-[11px] text-err/80">
-        Nothing was changed. You can send the request again, or open the diagnostic logs from Help.
+        Nothing was changed. You can send the request again, or open the diagnostic logs from About.
       </p>
     </div>
   );

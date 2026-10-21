@@ -184,29 +184,3 @@ def resume_choice(c, choice_id, *, options=None):
     c.turn = None
     return resume_recovery(Path(snapshot["run_dir"]), request=snapshot["answer"], options=options,
         client=c._client_now(), log=c.log)
-
-
-def after_compile(request, files, template, result, *, answers=(), client=None, work_dir=None,
-                  model=None, log=None, **limits):
-    """Preserve a noninteractive compiler's refusal as evidence and continue read-only planning."""
-    from .conversation import Conversation, Entry
-    c = Conversation(request, files, template=template, client=client, answers=answers,
-        work_dir=work_dir, model=model, log=log, continuous_recovery=True, **limits)
-    c.started = c.recovery_active = True
-    # CompileResult retains aggregate tokens, including fallback attempts. Its
-    # transcript does not retain every attempt's usage: never reconstruct a
-    # cheaper ledger from only the final response. Mixed serving-model prices
-    # are unknown at this compatibility boundary.
-    replies = [e for e in result.transcript if e.get("role") == "assistant"]
-    models = result.served_models
-    fallbacks = sum(bool(e.get("fell_back")) for e in replies)
-    model = models[0] if len(models) == 1 and not fallbacks else "unattributed compile usage"
-    _add_usage(c, {"calls": len(replies), "fallbacks": fallbacks,
-                  "served_models": models, "by_model": {model: result.usage}})
-    c.calls = max((e.get("turn", 0) for e in result.transcript), default=0)
-    c.exchange = copy.deepcopy(result.transcript)
-    c.seconds = result.seconds
-    c.unsupported = copy.deepcopy(result.spec)
-    c.entries.append(Entry("user", request))
-    c._advance()
-    return c

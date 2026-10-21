@@ -121,25 +121,6 @@ def _approval_token_from_inputs(spec, inputs):
     return h.hexdigest()[:16]
 
 
-def _legacy_approval_token(spec: Dict[str, Any], files: Sequence[Path]) -> str:
-    """Pre-content-pin digest, solely for migration of independently revalidated recovery checkpoints.
-
-    This is not an approval capability for new previews or runs.
-    """
-    h = hashlib.sha256(json.dumps(spec, sort_keys=True, ensure_ascii=False).encode("utf-8"))
-    for f in sorted(Path(x).resolve() for x in files):
-        st = f.stat()
-        h.update(f"\n{f}|{st.st_size}|{st.st_mtime_ns}".encode("utf-8"))
-    for t in sorted(set(key_templates(spec))):
-        try:
-            st = t.stat()
-            identity = f"{st.st_size}|{st.st_mtime_ns}|{hashlib.md5(t.read_bytes()).hexdigest()}"
-        except OSError:
-            identity = "missing"
-        h.update(f"\ntemplate {t}|{identity}".encode("utf-8"))
-    return h.hexdigest()[:16]
-
-
 def generated_key(g: Any) -> Dict[str, Any]:
     """What a custom transform's approval token hashes beside the files (in place of a spec): its code, selection and
     parameters and approved adaptive outcome — the same key as the window's ``Session._generated_key``."""
@@ -172,8 +153,8 @@ def _stamp(ns: Any) -> str:
 def explain_approval_change(before: Dict[str, Any], now: Dict[str, Any], limit: int = 12,
                             since: str = "the preview") -> List[str]:
     """What changed between the preview's ``approval_inputs`` and the files as they are now, one line each — the
-    reason a run is refused, instead of "something changed". ``since`` names the moment ``before`` was taken (the
-    command line's custom transform compares the files with how they were before it was written)."""
+    reason a run is refused, instead of "something changed". ``since`` names the moment ``before`` was taken (a
+    custom transform compares the files with how they were before it was written)."""
     out: List[str] = []
     if before.get("spec") != now.get("spec"):
         out.append("the EditSpec itself changed")

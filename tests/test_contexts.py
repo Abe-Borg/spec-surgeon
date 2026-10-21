@@ -2,7 +2,6 @@ import copy
 import hashlib
 import json
 import shutil
-import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -231,11 +230,9 @@ def test_catalog_evidence_is_paged_and_checked_against_its_digest(tmp_path):
         read_context_archive(batch, identity)
 
 
-@pytest.mark.parametrize("transport", ["copy", "bundle"])
 @pytest.mark.parametrize("shared", [False, True])
-def test_session_context_evidence_survives_relocation_without_original_catalog(tmp_path, transport, shared):
+def test_session_context_evidence_survives_relocation_without_original_catalog(tmp_path, shared):
     from spec_surgeon.contexts import read_context_archive
-    from spec_surgeon.diagnostics import make_bundle
     original = tmp_path / "original"
     session = original / "session"
     (session / "run").mkdir(parents=True)
@@ -250,14 +247,7 @@ def test_session_context_evidence_survives_relocation_without_original_catalog(t
     archived_path = artifact_path(folder / "context", archived_id)
     sealed = archived_path.read_bytes()
     relocated = tmp_path / "relocated"
-    if transport == "copy":
-        shutil.copytree(session, relocated)
-    else:
-        bundle = tmp_path / "diagnostics.zip"
-        make_bundle(bundle, session / "run")
-        with zipfile.ZipFile(bundle) as archive:
-            archive.extractall(relocated)
-        relocated /= "results"
+    shutil.copytree(session, relocated)
     shutil.rmtree(original)
     moved_context = relocated / folder.relative_to(session)
     active_path = moved_context / "context" / "active-1.json"

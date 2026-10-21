@@ -4,7 +4,8 @@
  * browser — the paths the screenshots do not show: a failed job, a pause
  * and its Continue, Stop now mid-job, typing ahead, a chip click, the
  * draft hold on the action button, the file-chooser fallback, a drop,
- * remove, no key → Settings, About, the update banner, start over, the
+ * remove, no key → Settings, the top bar's help topics, About and its
+ * update check, the update banner and the pill it leaves, start over, the
  * button's home in the conversation, the folding documents tray, and the
  * red X on a preview → the to-do list → the pass over it.
  *
@@ -145,27 +146,75 @@ try {
   await page.waitForTimeout(500);
   check("the key pill reads Connected after saving", await page.getByText("Connected", { exact: true }).isVisible());
 
-  // 10. Help → About.
-  await page.getByRole("button", { name: "Help ▾" }).click();
-  await page.getByRole("menuitem", { name: "About Spec Surgeon" }).click();
-  await page.getByText("Release notes").waitFor();
-  check("About shows the release notes", await page.getByText("The window is a web page").isVisible({ timeout: 3000 }).catch(() => false));
-  await page.getByRole("tab", { name: "License" }).click();
-  check("About shows the license", await page.getByText("MIT License").first().isVisible());
+  // 10. The top bar's help topics: one dialog, a tab strip, Escape closes it.
+  const topBar = page.locator("header nav[aria-label='Help']");
+  check(
+    "the top bar names the help topics, without Why trust it yet",
+    JSON.stringify(await topBar.getByRole("button").allInnerTexts()) === JSON.stringify(["How to use", "Workflows", "How it works", "About"]),
+    JSON.stringify(await topBar.getByRole("button").allInnerTexts()),
+  );
+  check("the old Help menu is gone", (await page.getByRole("button", { name: "Help ▾" }).count()) === 0);
+  await topBar.getByRole("button", { name: "How to use" }).click();
+  const help = page.getByRole("dialog", { name: "How to use Spec Surgeon" });
+  await help.waitFor();
+  check("How to use opens with its steps", await help.getByText("Connect your Anthropic API key").isVisible());
+  await help.getByRole("tab", { name: "Workflows" }).click();
+  await page.getByRole("dialog", { name: "Typical workflows" }).getByText("Swap a logo").waitFor();
+  check("the tab strip moves to Workflows in the same dialog", true);
+  await page.getByRole("tab", { name: "How it works" }).click();
+  check("…and to How it works", await page.getByRole("dialog", { name: "How it works" }).getByText("Claude plans, the engine edits").isVisible());
+  check("the active tab is marked", (await page.getByRole("tab", { name: "How it works" }).getAttribute("aria-selected")) === "true");
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  check("Escape closes the help dialog", (await page.getByRole("dialog").count()) === 0);
+
+  // 11. About: the version, the model, the release notes, the license; a check that finds nothing says so.
+  await scenario("up-to-date");
+  await page.reload();
+  await page.locator("header nav[aria-label='Help']").getByRole("button", { name: "About" }).click();
+  const about = page.getByRole("dialog", { name: "About" });
+  await about.getByText("What’s new in 1.6.0").waitFor();
+  check("About shows the release notes", await about.getByText("The window is a web page").isVisible({ timeout: 3000 }).catch(() => false));
+  check("About names the model", await about.getByText("Claude Opus 5.5").isVisible());
+  await about.getByRole("button", { name: "Read the full license" }).click();
+  check("About shows the full license", await about.getByText("Permission is hereby granted").isVisible());
+  await about.getByRole("button", { name: "Check for updates" }).click();
+  check("a check says it is checking", await about.getByText("Checking for updates…").isVisible({ timeout: 1000 }).catch(() => false));
+  await about.getByText("You're up to date").waitFor({ timeout: 15000 });
+  check("…then that you are up to date", true);
+  // Closed while its check runs and reopened after it answered, About still shows that answer.
+  await about.getByRole("button", { name: "Check for updates" }).click();
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(3500);
+  await page.locator("header nav[aria-label='Help']").getByRole("button", { name: "About" }).click();
+  check(
+    "a check's answer survives closing and reopening About",
+    await page.getByRole("dialog", { name: "About" }).getByText("You're up to date").isVisible({ timeout: 3000 }).catch(() => false),
+  );
+  await about.getByRole("button", { name: "Open diagnostic logs" }).click();
+  check("Open diagnostic logs is in About", true);
   await page.keyboard.press("Escape");
 
-  // 11. Updates: check → available → download → ready.
+  // 12. Updates: About's check finds one → the banner → Not now leaves a pill → the pill downloads → ready.
   await scenario("attached");
   await page.reload();
-  await page.getByRole("button", { name: "Help ▾" }).click();
-  await page.getByRole("menuitem", { name: "Check for updates" }).click();
-  await page.getByText("is available").waitFor({ timeout: 15000 });
-  await page.getByRole("button", { name: "Download" }).click();
+  await page.locator("header nav[aria-label='Help']").getByRole("button", { name: "About" }).click();
+  await page.getByRole("dialog", { name: "About" }).getByRole("button", { name: "Check for updates" }).click();
+  await page.getByRole("dialog", { name: "About" }).getByText("Version 1.7.0 is available.").waitFor({ timeout: 15000 });
+  check("About offers the update it found", await page.getByRole("dialog", { name: "About" }).getByRole("button", { name: "Download and install" }).isVisible());
+  await page.keyboard.press("Escape");
+  await page.getByText("is available").first().waitFor({ timeout: 5000 });
+  check("no update pill while the banner shows it", (await page.getByRole("button", { name: /available — install/ }).count()) === 0);
+  await page.getByRole("button", { name: "Not now" }).click();
+  const pill = page.getByRole("button", { name: "v1.7.0 available — install" });
+  check("Not now leaves the update one click away in the top bar", await pill.isVisible({ timeout: 2000 }).catch(() => false));
+  await pill.click();
   await page.getByText("Downloading Spec Surgeon").waitFor({ timeout: 5000 });
+  check("the pill downloads, and the banner shows the progress", (await pill.count()) === 0);
   await page.getByRole("button", { name: "Restart to update" }).waitFor({ timeout: 15000 });
   check("the update banner walks available → downloading → ready", true);
 
-  // 12. Copies and Start over.
+  // 13. Copies and Start over.
   await scenario("done");
   await page.reload();
   await page.getByText("Your edited copies").waitFor();

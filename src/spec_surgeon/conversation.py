@@ -27,7 +27,7 @@ What makes it safe:
   engine picks the operations itself and the user is asked only about the outcome.
 
 ``mode="compile"`` is the one-shot behaviour ``compiler.compile_request`` keeps (a plain-text answer gets one nudge,
-then fails); ``mode="chat"`` (the window, the interactive command line) treats Claude's plain text as a message to the
+then fails); ``mode="chat"`` (the window) treats Claude's plain text as a message to the
 user and offers the ``view_pages`` tool.
 
 Two records, never read back to rebuild the history: ``entries`` is what the user saw (the chat); ``exchange`` is the
@@ -92,7 +92,7 @@ class Choice:
         return ", ".join(f"«{w}»" for w in self.words)
 
     def describe(self) -> str:
-        """The choice as the command line and CompileResult show it — the exact words included."""
+        """The choice as CompileResult shows it — the exact words included."""
         return self.label + (f" — exact words: {self.exact_words()}" if self.words else "")
 
 
@@ -456,7 +456,7 @@ class Conversation:
         return path
 
     def compile_result(self, turn: Turn) -> "compiler.CompileResult":
-        """The one-shot view of a turn (``compiler.compile_request``, the command line without a terminal)."""
+        """The one-shot view of a turn (``compiler.compile_request``)."""
         qs = list(turn.questions)
         if turn.status == "questions":
             if turn.message and turn.message not in qs:

@@ -1,9 +1,0 @@
-{
-  "find": "FM Global",
-  "replace": "the Owner's risk consultant – GRC (Global Risk Consultants)",
-  "scope": ["document", "headers", "footers"],
-  "occurrences": "all",
-  "match_case": true,
-  "mode": "tracked",
-  "author": "Abraham Borg"
-}

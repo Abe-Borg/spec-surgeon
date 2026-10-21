@@ -15,12 +15,12 @@ whole view, and the page renders it (`src/lib/view.ts`). Streamed frames are pre
 | `src/lib/connection.ts` | the token and API base (`window.SPEC_SURGEON`, else `?token=` and `?api=`) |
 | `src/lib/sse.ts` | the `data: <json>` frame parser and the stream reader |
 | `src/lib/view.ts` | the reducer over the view and the live reply bubble |
-| `src/lib/chat.ts`, `action.ts`, `workbench.ts`, `review.ts` | the pure rules the components render (the review marks and `hold` live in `review.ts`) |
+| `src/lib/chat.ts`, `action.ts`, `workbench.ts`, `review.ts`, `help.ts` | the pure rules the components render (the review marks and `hold` live in `review.ts`; `help.ts`: the top bar's topics and context line, About's update line) |
 | `src/lib/api.ts` | every route of the contract |
-| `src/components/` | the header, the chat, the workbench, the modals |
+| `src/components/` | the header (the top bar), the chat, the workbench, the modals; `HelpModal.tsx` is the in-app guide and About |
 | `mock/server.mjs` | a Node-only mock of the whole contract |
 | `tools/screenshots.mjs` | Playwright screenshots against the mock |
-| `tools/flows.mjs` | Playwright walk through the other paths (a failed job, a pause, Stop, a drop, Settings, updates, the review marks and the to-do list) |
+| `tools/flows.mjs` | Playwright walk through the other paths (a failed job, a pause, Stop, a drop, Settings, the top bar's help topics, About and its update check, the update banner, the review marks and the to-do list) |
 | `tools/browser.mjs` | shared by both: the mock's launch and the Chromium lookup |
 | `tests/*.test.ts` | `node --test` over the pure rules |
 
@@ -55,7 +55,8 @@ The built page can also be opened straight from the mock server, which serves `s
 
 Mock-only routes, never in the real server: `POST /mock/scenario` with `{"name": "preview"}` (one of
 `empty`, `attached`, `question`, `preview`, `layouts`, `done`, `todo`, `paused`, `update-available`,
-`update-ready`, `no-key`) sets the view to a canned scenario; `POST /mock/reset` empties it. `MOCK_DELAY=0`
+`update-ready`, `up-to-date`, `no-key`) sets the view to a canned scenario (a check for updates finds 1.7.0,
+except after `up-to-date`, where it answers "You're up to date"); `POST /mock/reset` empties it. `MOCK_DELAY=0`
 removes the pauses between frames; `MOCK_PICK=1` makes `/api/pick` answer with canned paths instead of 501.
 
 On Windows (PowerShell or Command Prompt), one command per line:
@@ -74,7 +75,7 @@ npm run dev
 ## Tests
 
 The pure rules (the frame parser, the reducer, the chat rules, the action label, the token and base
-resolution, the workbench rules, the review marks) run under `node --test`:
+resolution, the workbench rules, the review marks, the top bar's rules) run under `node --test`:
 
 ```
 cd frontend

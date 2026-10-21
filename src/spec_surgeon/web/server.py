@@ -40,7 +40,7 @@ NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>Spec Surgeon</title>
 <p>The window's page has not been built. From the project folder:</p>
 <pre>cd frontend
 npm install
-npm run build</pre><p>Then start Spec Surgeon again. The command line works without the page.</p></body>"""
+npm run build</pre><p>Then start Spec Surgeon again.</p></body>"""
 
 
 def release_notes_text(version: str = __version__) -> str:
@@ -215,7 +215,7 @@ class WindowState:
                     else:
                         message = (str(e).replace("press Preview again", "continue to check the documents again")
                                    if kind in KNOWN_FAILURES else
-                                   "The work could not finish. You can continue, or open the diagnostic logs from Help.")
+                                   "The work could not finish. You can continue, or open the diagnostic logs from About.")
                         lost = bool(submitted) and not any(m["role"] == "user" and m["text"] == submitted
                                                            for m in task.messages)
                         terminal = {"type": "error", "message": message, "state": self._payload(task.view(), busy=False),
@@ -449,7 +449,11 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     def about_info():
         return {"version": state.version, "name": about.APP_NAME, "tagline": about.TAGLINE,
                 "license": about.LICENSE_TEXT, "release_notes": release_notes_text(state.version),
-                "credits": about.about_lines(state.version), "github": about.GITHUB_URL}
+                "credits": about.about_lines(state.version), "github": about.GITHUB_URL,
+                "author": about.AUTHOR, "email": about.EMAIL, "linkedin": about.LINKEDIN_URL,
+                "copyright": about.COPYRIGHT_LINE, "license_name": about.LICENSE_NAME,
+                "license_summary": list(about.LICENSE_SUMMARY), "model": llm.DEFAULT_MODEL,
+                "components": [{"name": name, "license": lic, "url": url} for name, lic, url in about.THIRD_PARTY]}
 
     @app.get("/api/update")
     def get_update():
