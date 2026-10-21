@@ -556,9 +556,9 @@ TEXT_READING_KEYS = ("text_regex", "is_empty", "has_bold", "is_all_caps", "after
 
 
 def check_section_selector(sections) -> None:
-    """The content form of ``select.sections`` (built-in batch 5, set_page_setup only): a non-empty object of
-    ``containing`` (a non-empty paragraph predicate), ``with_tables`` (true/false), ``index_range`` ([a, b], inclusive,
-    0 ≤ a ≤ b) — every given key must hold."""
+    """The content form of ``select.sections`` (set_page_setup since built-in batch 5, remove_section_break since
+    batch 6): a non-empty object of ``containing`` (a non-empty paragraph predicate), ``with_tables`` (true/false),
+    ``index_range`` ([a, b], inclusive, 0 ≤ a ≤ b) — every given key must hold."""
     if not isinstance(sections, dict) or not sections:
         raise JobException(f"sections as an object needs at least one of {list(SECTION_KEYS)}, got {sections!r}",
                            "bad-params")

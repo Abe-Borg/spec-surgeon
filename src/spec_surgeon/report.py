@@ -433,6 +433,25 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "changed. Simplify the list in Word (Restart / Continue Numbering, Define New Multilevel List), or run the "
         "numbering audit to see where, then run again.",
     ),
+    # built-in batch 6 (sections)
+    "break-position": (
+        "A Section Break Cannot Go There",
+        "A section break goes between two paragraphs of the body: the paragraph before it ends the section. The chosen "
+        "paragraph is the document's first, follows a table or a content control (no paragraph before it to carry the "
+        "break), already starts a section, or lies inside a table or a content control. Choose another paragraph, or "
+        "insert the break in Word.",
+    ),
+    "tracked-section": (
+        "Pending Tracked Change at a Section Break",
+        "The section to split or join carries someone's pending tracked change of its page setup, or the paragraph mark "
+        "that holds (or would hold) the section break is a pending tracked insertion or deletion. Which side would keep "
+        "that change cannot be predicted. Accept or reject it in Word (Review tab), then run again.",
+    ),
+    "last-section": (
+        "The Last Section Has No Break to Remove",
+        "The last section ends the document, not at a section break, so there is no break at its end to remove. To join "
+        "it with the section before it, choose that section (the break at its end goes).",
+    ),
 }
 
 

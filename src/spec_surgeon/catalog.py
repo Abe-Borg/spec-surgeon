@@ -271,6 +271,32 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "to change them); a header/footer shared with portrait pages is flagged",
         "sections can be chosen by what they contain: {containing: <paragraph predicate>, with_tables: true, "
         "index_range: [first, last]}; allow_missing true when not every file has such a section",
+        "columns {count, space (twips between them), separator: true for a line between}: always equal columns; count "
+        "1 is a single column (no space or separator then)",
+        "line_numbering {count_by (every Nth line), start (the first number shown), restart: new_page | new_section | "
+        "continuous, distance (twips from the text)} turns line numbers on; 'none' turns them off",
+        "vertical_alignment top | center | both | bottom; section_start next_page | continuous | even_page | odd_page is "
+        "how the section begins after the one before it (its section break); a setting already in effect is left alone",
+    ],
+    "insert_section_break": [
+        "the break goes before each matched top-level body paragraph (a targeted selector): the paragraph before it "
+        "ends the first part, and both parts keep the section's page setup, headers and footers",
+        "type next_page (default) | continuous | even_page | odd_page is how the new section starts; the split section's "
+        "own start and page-number restart stay with its first part, so the page numbers run on",
+        "refused: the document's first paragraph, a paragraph after a table or content control, one that already starts "
+        "a section, or one inside a table, text box or content control",
+        "a section with a different first page shows its first-page header again after each new break (flagged); never "
+        "tracked (Word cannot track a section break)",
+        "to change the new section's layout, run set_page_setup as a later step choosing it by content "
+        "({containing: …}): its index is not known before the break exists",
+    ],
+    "remove_section_break": [
+        "sections names those whose ENDING break goes: 'all' = every break (one section remains); the last section "
+        "ends the document at no break and cannot be chosen",
+        "the joined pages take the following section's page setup, headers and footers (flagged where they differ); "
+        "the joined section begins where the first joined one did, with its page-number restart",
+        "headers and footers that no section shows any more leave the file; the paragraph that held the break stays; "
+        "never tracked",
     ],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
                      "tracked unless the user said otherwise"],
@@ -538,8 +564,9 @@ SELECTOR_GRAMMAR = {
     "runs": "'all' or {has_direct_font: bool, font_in: [names], not_in_revisions: bool, color_in: [colours]} — "
             "color_in: the run's effective colour (direct, else its character/paragraph style's) is one of the listed "
             "6-hex values, theme colour names (accent1, text2 …) or 'auto'",
-    "sections": "'all', [section indices] (0-based), or (set_page_setup) by content: {containing: <paragraph "
-                "predicate — a paragraph of the section matches>, with_tables: bool (the section holds a table), "
+    "sections": "'all', [section indices] (0-based), or (set_page_setup, remove_section_break) by content: "
+                "{containing: <paragraph predicate — a paragraph of the section matches>, with_tables: bool (the "
+                "section holds a table), "
                 "index_range: [first, last] (inclusive)} — every given key must hold",
     "styles": "'all' | 'all-paragraph-and-character' | {ids: [...]} | {types: [...]}",
     "symbol_runs": "never changed by font ops: a run whose explicit font (direct, character style or paragraph "
