@@ -105,6 +105,13 @@ asked element like any (off on text only where it shows; in a style unless the s
 `highlight: none` writes `w:val="none"` (explicitly off — `remove_highlight` is the op that takes the element away);
 `spacing` is a multiple of 0.05 pt within ±1584 pt, written in twentieths, and a measure with a unit (`"2pt"`) is never
 "already". `vanish`, `vertAlign` and `spacing` reflow (layout reference `none`); `highlight` and `dstrike` do not.
+`highlight` is text-only: with `select.styles` it is `bad-params` ("Word does not show highlighting set in a style;
+highlight the text directly") — Word's styles carry no highlighting (LibreOffice writes a style's background as
+shading), so a style's `w:highlight` would very likely show nothing in Word. `vanish: true` reaches a paragraph mark only
+when, after the change, every content run of its paragraph (a run holding more than its properties) is hidden —
+selected, or hidden already: Word joins a paragraph whose mark is hidden to the next one, so a mark beside text that
+stays visible is left as it is and flagged (counted in the assertion, `expected_shown_marks`); `vanish: false` on a mark
+is unchanged.
 
 ## 4. Richer text (F3)
 
@@ -428,6 +435,13 @@ bundled schema, parameters, placed words, the catalog, the batch pipeline and a 
 machine: a live request over real specifications opened in Word (superscript, hidden text, highlight, condensed spacing,
 double strikethrough; a numbered clause inserted with a tab after its number; a heading split by a line break).
 
+* Review fix (2026-10-21): hidden text no longer hides a paragraph mark whose paragraph keeps visible text (Word would
+  join it to the next paragraph) — both sides re-derive which content runs stay visible (`set_properties.stays_visible`
+  ↔ `verify/props._properties_direct`), the mark is left alone and flagged; highlight on a style is refused
+  (`bad-params`; the kind refuses it too). Tests: `tests/test_text_control.py` on `fx_text.build_notes()` — end to end
+  tracked and untracked, a mark hidden anyway and a mark left visible caught, three shared wrong rules caught. Needs the
+  owner's machine: hiding red specifier notes in a real specification opened in Word (no paragraph joined).
+
 ### F4 — built (2026-10-21)
 
 `insert_image`, `remove_images`, `resize_images` (ops/insert_image.py, ops/remove_images.py, ops/resize_images.py over
@@ -495,6 +509,15 @@ deletion's look in the review pane).
   machine has no Word and no Word-saved resolved thread; the build marks the top comment, as `remove_comments` reads a
   thread's state); that Word shows the replies in their threads; that it fills the dirty fields on open, and whether
   it asks first.
+* **Review fix (2026-10-21): whole-word placeholders.** An `at_text` occurrence counts only when it is not part of a
+  longer word — a word character (letter, digit, underscore) at the placeholder's start may not follow one, at its end
+  may not be followed by one (`insert_field.placeholder_pattern` ↔ `verify/inserted_fields._v_whole_words`): "Page X
+  of Y" no longer turns "EXTERIOR" into a page number, nor "UPDATE" into a date; `{{PAGE}}` is unaffected. A page or
+  section number (PAGE, NUMPAGES, SECTIONPAGES, SECTION) put at a placeholder in the body is flagged (it belongs in a
+  header or footer); the default scope stays body, headers and footers. Tests: `tests/test_insert_field.py` on
+  `fx_fields.build_placeholders()` — whole words end to end tracked and untracked, the body flag, the two readings
+  compared, a field inside a word caught, a shared substring search caught. Needs the owner's machine: "Page X of Y"
+  asked in plain English over real specifications (only the footer's X and Y become fields).
 
 ### F2 — built (2026-10-21)
 

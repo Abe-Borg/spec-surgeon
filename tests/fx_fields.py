@@ -16,6 +16,9 @@ Variants: ``in_field`` body 7 a REF field showing ``{{PAGE}}``; ``deleted_inside
 ``x`` + ``GE}}``; ``tracked_format`` body 1's run carries a pending tracked formatting change; ``textbox`` body 7 a text
 box holding ``{{DATE}}``; ``toc`` body 7–8 a table of contents over two paragraphs (its begin in 7, its end in 8);
 ``footnote`` a footnotes part with ``Footnote dated {{DATE}}.``; ``custom=False`` no custom properties.
+
+``build_placeholders()`` — "Page X of Y" in the footer and body words holding the placeholders' letters (whole-word
+matching; its own docstring).
 """
 from __future__ import annotations
 
@@ -188,6 +191,28 @@ def build_fields(*, in_field: bool = False, deleted_inside: bool = False, tracke
         overrides[FOOTNOTES] = FOOTNOTES_CT
     data = add_parts(data, parts, rels=rels, overrides=overrides)
     return patch_docx(data, {"word/_rels/document.xml.rels": _external_link})
+
+
+def build_placeholders() -> bytes:
+    """"Page X of Y" in the footer — the user's one-letter placeholders — and body words holding the same letters:
+
+    * body 0 ``WET-PIPE SPRINKLER SYSTEMS`` (a Y inside a word);
+    * body 1 ``A.<tab>Provide FLEXIBLE couplings at EXTERIOR walls; MAXIMUM spacing per NFPA 13.`` — "EXTERIOR" over two
+      runs ("E" | "XTERIOR …"): an X inside a word across a run boundary;
+    * body 2 ``B.<tab>See Detail X on sheet X2 for the X_RAY room.`` — a whole X, then an X before a digit and before an
+      underscore (word characters both);
+    * body 3 ``C.<tab>UPDATE the schedule and VALIDATE the CANDIDATE products by DATE.`` — one whole DATE, three inside
+      words.
+    """
+    doc = Document()
+    doc.add_paragraph("WET-PIPE SPRINKLER SYSTEMS")
+    p = doc.add_paragraph()
+    p.add_run("A.\tProvide FLEXIBLE couplings at E")
+    p.add_run("XTERIOR walls; MAXIMUM spacing per NFPA 13.")
+    doc.add_paragraph("B.\tSee Detail X on sheet X2 for the X_RAY room.")
+    doc.add_paragraph("C.\tUPDATE the schedule and VALIDATE the CANDIDATE products by DATE.")
+    doc.sections[0].footer.paragraphs[0].add_run("Page X of Y")
+    return docx_bytes(doc)
 
 
 def _external_link(root):

@@ -16,21 +16,24 @@ Two target families, one per op call:
 
 * **direct formatting** — ``select.scope`` / ``paragraphs`` / ``runs`` (set_font's grammar): ``run`` properties go on
   every selected run of the selected paragraphs and on their paragraph marks (``include_paragraph_marks``),
-  ``paragraph`` properties on each selected paragraph's pPr. Bold and italic are the pairs Word itself writes (w:b +
-  w:bCs, w:i + w:iCs): a run marked complex-script (w:cs) draws its weight and slant from the Cs twin. Caps and small
-  caps never touch a symbol run (set_font's definition: ``preserve_fonts``, w:sym) — case-mapping a dingbat changes the
-  glyph; the other run properties do apply to it. A target that already shows the asked value — the effective value,
-  resolved through its styles by ``effective.PropResolver`` — is left alone and not counted, so tracked mode records a
-  change only where Word itself would have. An ambiguous toggle (specified at two style levels) counts as needing the
-  change: direct formatting wins, so the result is certain either way.
+  ``paragraph`` properties on each selected paragraph's pPr. Hidden (``vanish`` on) goes on a mark only when, after the
+  change, every content run of its paragraph (a run holding anything but its properties) is hidden — selected, or
+  hidden already: Word joins a paragraph whose mark is hidden to the next one, so a paragraph that keeps visible text
+  keeps its mark visible (flagged). Bold and italic are the pairs Word itself writes (w:b + w:bCs, w:i + w:iCs): a run
+  marked complex-script (w:cs) draws its weight and slant from the Cs twin. Caps and small caps never touch a symbol
+  run (set_font's definition: ``preserve_fonts``, w:sym) — case-mapping a dingbat changes the glyph; the other run
+  properties do apply to it. A target that already shows the asked value — the effective value, resolved through its
+  styles by ``effective.PropResolver`` — is left alone and not counted, so tracked mode records a change only where
+  Word itself would have. An ambiguous toggle (specified at two style levels) counts as needing the change: direct
+  formatting wins, so the result is certain either way.
 * **style definitions** — ``select.styles: {"ids": [...]}`` (paragraph and character styles; ``paragraph`` properties on
-  paragraph styles only): the style's rPr/pPr in styles.xml, never tracked. The plan resolves every run, mark and
-  paragraph of every text part whose style chain includes the style, after the change (``PropResolver`` with an
-  override) and with its provenance: a value from the style itself is affected (styles based on it inherit the change
-  — noted); a nearer style's own value is normal inheritance (noted, never refused); a disagreeing direct value refuses
-  ``conflict-property``; a toggle another style level specifies too refuses ``toggle-ambiguous`` (Word XORs them — not
-  modelled, as the pinnable resolvers decide today); caps/smallCaps reaching a symbol run from the style refuse
-  ``conflict-property``.
+  paragraph styles only; ``highlight`` on text only — Word does not show highlighting set in a style, ``bad-params``):
+  the style's rPr/pPr in styles.xml, never tracked. The plan resolves every run, mark and paragraph of every text part
+  whose style chain includes the style, after the change (``PropResolver`` with an override) and with its provenance:
+  a value from the style itself is affected (styles based on it inherit the change — noted); a nearer style's own
+  value is normal inheritance (noted, never refused); a disagreeing direct value refuses ``conflict-property``; a
+  toggle another style level specifies too refuses ``toggle-ambiguous`` (Word XORs them — not modelled, as the
+  pinnable resolvers decide today); caps/smallCaps reaching a symbol run from the style refuse ``conflict-property``.
 
 Tracked or plain (decision §14.1): plain for whole-document selections, tracked — one w:rPrChange per changed run or
 mark, one w:pPrChange per changed paragraph, the snapshot the properties before — when the selector names particular
@@ -58,6 +61,7 @@ from .selectors import (DEFAULT_PRESERVE_FONTS, StyleSheet, chain_reads, check_p
                         in_revision, is_symbol_rpr, is_targeted, mark_in_revision, paragraph_selected, rpr_selected,
                         runs_by_paragraph, scope_parts, table_ordinals)
 from .set_font import formatting_extras, preserved_fonts_extra, style_definitions, tracked_phrase, two_sentences
+from .textedit import run_text
 
 BOOL_RUN = ("b", "i", "caps", "smallCaps", "strike", "dstrike", "vanish")
 VALUE_RUN = ("u", "color", "vertAlign", "highlight", "spacing")
@@ -162,6 +166,24 @@ CAPS_CONFLICT = ("w:caps and w:smallCaps would both be in effect — Word shows 
                  "other one false in this op")
 
 
+def shows_content(run) -> bool:
+    """A content run: one holding anything but its properties (text, a tab, a break, a field character, a picture …)."""
+    return any(isinstance(c.tag, str) and c.tag != W + "rPr" for c in run)
+
+
+def stays_visible(resolver: PropResolver, p, left_out: List[Any]) -> bool:
+    """Whether paragraph ``p`` still shows text once its selected runs are hidden: a content run the selection leaves
+    out (``left_out``, their rPr) is not hidden already — an ambiguous toggle counts as shown. Word joins a paragraph
+    whose mark is hidden to the next one, so such a paragraph keeps its mark visible."""
+    return any(resolver.run_prop(rpr, p, "vanish")[0] is not True for rpr in left_out)
+
+
+def _quoted(p, limit: int = 40) -> str:
+    """The start of a paragraph's text for a flag: whitespace collapsed, a field or picture as ¤, cut."""
+    text = " ".join(run_text(p).replace("\x00", "¤").split())
+    return f"‘{text if len(text) <= limit else text[:limit - 1] + '…'}’"
+
+
 def write_element(container, element: str, value, order: List[str]) -> None:
     """Set one property element (created in schema order when absent): toggles and flags on → no attributes, off →
     w:val 0; w:color → exactly w:val (theme attributes gone); w:u → w:val set, its other attributes kept; w:vertAlign,
@@ -214,9 +236,11 @@ class SetProperties(Op):
     params_schema = {"type": "object", "properties": {
         "run": {"type": "object",
                 "description": "text properties: b, i, caps, smallCaps, strike, dstrike (double strikethrough), "
-                               "vanish (hidden text) (true = on, false = explicitly off), u "
+                               "vanish (hidden text; a paragraph mark only when all its paragraph's text is hidden) "
+                               "(true = on, false = explicitly off), u "
                                "(single|double|words|dotted|dash|wave|none), color (RRGGBB hex or 'auto'), vertAlign "
-                               "(superscript|subscript|baseline), highlight (Word's highlighter colour or 'none'), "
+                               "(superscript|subscript|baseline), highlight (Word's highlighter colour or 'none'; on "
+                               "text only: Word shows no highlighting set in a style), "
                                "spacing (character spacing in points: positive expands, negative condenses, 0 is "
                                "normal). b and i are written as the pairs Word writes (w:b + w:bCs, w:i + w:iCs); "
                                "strike on turns dstrike off and the reverse, as Word does",
@@ -358,6 +382,7 @@ class SetProperties(Op):
         reads: set = set()
         n_runs = n_marks = n_paras = 0
         already = Counter()
+        kept_shown: List[Any] = []        # paragraphs whose mark stays visible: their text is not all hidden
         older_r = older_p = 0
         for part in parts:
             root = pkg.xml(part)
@@ -376,10 +401,13 @@ class SetProperties(Op):
                     # another op restyling it (apply_style, map_styles) is a plan-time conflict, never a failure after apply
                     reads.add((part, str(bi), "verify-props:pStyle"))
                 if run_asked:
+                    left_out: list = []          # the rPr of each content run the selection leaves out
                     for ri, r in enumerate(groups[bi]):
                         rpr = r.find(W + "rPr")
                         revised = in_revision(r, p)
                         if (in_revs == "exclude" and revised) or not rpr_selected(runs_pred, rpr, revised, p, sheet):
+                            if shows_content(r):
+                                left_out.append(rpr)
                             continue
                         reads.update({(part, str(bi), "verify-props:rPr"), (part, str(bi), "verify-props:rStyle")})
                         chain_rprs.append(rpr)
@@ -404,6 +432,19 @@ class SetProperties(Op):
                             if not msym and caps_conflict(run_asked, lambda e, mrpr=mrpr, p=p: resolver.run_prop(mrpr, p, e)[0]):
                                 raise JobException(f"{part} paragraph {bi} paragraph mark: {CAPS_CONFLICT}",
                                                    "conflict-property", {"part": part, "paragraph": bi})
+                            keep_shown = False
+                            if gets.get("vanish") is True:
+                                # a hidden mark joins the paragraph to the next one in Word: only a paragraph whose
+                                # every content run is hidden after the change hides its mark (what the runs left out
+                                # of the selection show is read)
+                                if left_out:
+                                    reads.update({(part, str(bi), "verify-props:rPr"),
+                                                  (part, str(bi), "verify-props:rStyle")})
+                                    chain_rprs += left_out
+                                keep_shown = stays_visible(resolver, p, left_out)
+                                if keep_shown:
+                                    del gets["vanish"]
+                                    kept_shown.append(p)
                             if gets:
                                 if tracked and revised:
                                     raise JobException(
@@ -411,7 +452,7 @@ class SetProperties(Op):
                                         f"formatting change on it would copy that revision into the snapshot",
                                         "tracked-format", {"part": part, "paragraph": bi})
                                 t_marks.append([bi, sorted(gets)])
-                            else:
+                            elif not keep_shown:
                                 already["marks"] += 1
                 if (part, str(bi), "verify-props:pStyle") in reads:
                     reads.update(chain_reads(sheet, part, p, tables, chain_rprs, ("replace", "props")))
@@ -461,7 +502,8 @@ class SetProperties(Op):
             "parts": parts, "select": {"runs": runs_pred, "paragraphs": para_pred},
             "set": {"run": run_set, "paragraph": para_set}, "preserve_fonts": preserve, "skip_sym_runs": skip_sym,
             "in_revisions": in_revs, "include_paragraph_marks": marks_too, "tracked": tracked, "author": author,
-            "expected_runs": n_runs, "expected_marks": n_marks, "expected_paragraphs": n_paras})
+            "expected_runs": n_runs, "expected_marks": n_marks, "expected_paragraphs": n_paras,
+            "expected_shown_marks": len(kept_shown)})
         frag.transform_data = {"target": "direct", "targets": targets, "set": {"run": run_set, "paragraph": para_set},
                                "tracked": tracked, "author": author}
         n = n_runs + n_marks + n_paras
@@ -484,6 +526,11 @@ class SetProperties(Op):
         if run_asked and set(run_asked) & CASE_ELEMENTS:
             frag.notes.append(f"caps/smallCaps never touch symbol runs (fonts {preserve}, w:sym runs): case-mapping a "
                               f"dingbat changes the glyph; the other run properties apply to them")
+        if kept_shown:
+            frag.flags.append(f"{len(kept_shown)} paragraph mark(s) left visible: the rest of the paragraph's text stays "
+                              f"visible, and Word joins a paragraph whose mark is hidden to the next one (select the "
+                              f"whole paragraph to hide it, mark and all): "
+                              + "; ".join(_quoted(p) for p in kept_shown[:6]) + (" …" if len(kept_shown) > 6 else ""))
         if older_r or older_p:
             frag.flags.append(f"{older_r} changed run(s)/mark(s) and {older_p} paragraph(s) already carried a pending "
                               f"tracked formatting change (w:rPrChange / w:pPrChange) from an earlier reviewer; "
@@ -498,6 +545,9 @@ class SetProperties(Op):
         if params.get("tracked"):
             raise JobException("style-definition changes are not tracked (Word does not track them either); omit "
                                "'tracked' or set it false", "bad-params")
+        if "highlight" in run_set:
+            raise JobException("Word does not show highlighting set in a style; highlight the text directly "
+                               "(select.runs / paragraphs)", "bad-params")
         for k in ("in_revisions", "include_paragraph_marks"):
             if k in params:
                 raise JobException(f"'{k}' applies to direct formatting, not to style definitions", "bad-params")

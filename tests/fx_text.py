@@ -20,6 +20,9 @@ case is found by its text in the tests, never by index.
   paragraph of the first section (it carries the section break); PART 2 in SpecPart, PART 3 in SpecPartLow; a table;
   "END OF SECTION";
 * the header holds "PROJECT NAME"; trackRevisions is on.
+
+``build_notes()``: red specifier notes whose paragraph marks are red too, for hiding the notes and, only where the whole
+paragraph goes, the mark (its own docstring).
 """
 from __future__ import annotations
 
@@ -31,7 +34,7 @@ from docx.oxml.ns import qn
 from docx.shared import Pt
 from lxml import etree
 
-from make_fixtures import _W_DECL, _hyperlink, _ppr_add, _rev, _rfonts, _rpr_add, docx_bytes
+from make_fixtures import _W_DECL, _hyperlink, _mark_add, _ppr_add, _rev, _rfonts, _rpr_add, docx_bytes
 
 LITERAL_TAB_TEXT = "Item\tliteral, then REPLACE ME here"
 
@@ -143,4 +146,44 @@ def build_text(section_number: str = "21 13 13", title: str = "WET-PIPE SPRINKLE
     t.cell(0, 0).text = "Tag"; t.cell(0, 1).text = "Value"
     doc.add_paragraph("END OF SECTION")
     doc.settings.element.insert(0, OxmlElement("w:trackRevisions"))
+    return docx_bytes(doc)
+
+
+RED = '<w:color w:val="FF0000"/>'
+
+
+def build_notes() -> bytes:
+    """Specifier notes in red, for hiding them (a hidden paragraph mark joins its paragraph to the next one in Word).
+    Word gives a paragraph mark the formatting of the last character typed, so a note typed at a paragraph's end leaves
+    the mark red —
+
+    * "A." a requirement and a red note, the mark red: the requirement stays visible, so the mark must too;
+    * a red note paragraph, the mark red: all of it hidden, the mark too;
+    * "Superseded …" already hidden, then a red note, the mark red: every run hidden after the change, the mark too;
+    * "B." black text whose mark alone is red (its note deleted earlier): the mark stays visible;
+    * an empty paragraph whose mark is red: no text to keep visible, the mark is hidden;
+    * "D." a requirement and a red note, the mark red and hidden already: left as it is;
+    * "E." plain text, nothing red.
+    """
+    doc = Document()
+    doc.styles["Normal"].font.name = "Arial"
+    doc.add_paragraph("PART 1 - GENERAL")
+    p = doc.add_paragraph()
+    p.add_run("A.\tProvide shop drawings. ")
+    _rpr_add(p.add_run("[Note: verify with the AHJ.]"), RED)
+    _mark_add(p, RED)
+    p = doc.add_paragraph()
+    _rpr_add(p.add_run("[Note: delete this article when the Owner furnishes the valves.]"), RED)
+    _mark_add(p, RED)
+    p = doc.add_paragraph()
+    _rpr_add(p.add_run("Superseded: provide bronze valves. "), "<w:vanish/>")
+    _rpr_add(p.add_run("[Note: retain for public projects.]"), RED)
+    _mark_add(p, RED)
+    _mark_add(doc.add_paragraph("B.\tProvide product data."), RED)
+    _mark_add(doc.add_paragraph(), RED)
+    p = doc.add_paragraph()
+    p.add_run("D.\tProvide samples. ")
+    _rpr_add(p.add_run("[Note: two sets.]"), RED)
+    _mark_add(p, "<w:vanish/>" + RED)
+    doc.add_paragraph("E.\tProvide a warranty.")
     return docx_bytes(doc)

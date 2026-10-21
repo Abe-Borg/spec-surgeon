@@ -20,11 +20,14 @@ each field goes and with what formatting, and its own expected paragraph, item b
   pages), ``w:instrText`` (``xml:space="preserve"``), ``w:fldChar`` separate, ``w:fldChar`` end — an empty result;
   tracked, the four are the whole of one NEW ``w:ins``.
 * **At the placeholder**: every occurrence, left to right and not overlapping, of ``at_text`` in the run text of a
-  selected paragraph is an edit of the core (verify/edits.py: its rules, refused otherwise) whose new text is one
-  character; the expected paragraph is the core's expected items with that character's item replaced by the four field
-  items in its context — tracked: after the placeholder's deletion, in a NEW ``w:ins`` (after someone's pending
-  insertion when the placeholder lies in one); untracked: where its first character was, with that run's properties
-  and attributes. The run that character is in may not carry ``w:rPrChange``.
+  selected paragraph that is not part of a longer word (a letter, digit or underscore at the placeholder's start may not
+  follow another, at its end may not be followed by one: "X" in "EXTERIOR", "DATE" in "UPDATE" stay; an edge that is no
+  word character, as in "{{PAGE}}", takes any neighbour) is an edit of the core (verify/edits.py: its rules, refused
+  otherwise) whose new text is one character; the expected paragraph is the core's expected items with that
+  character's item replaced by the four field items in its context — tracked: after the placeholder's deletion, in a
+  NEW ``w:ins`` (after someone's pending insertion when the placeholder lies in one); untracked: where its first
+  character was, with that run's properties and attributes. The run that character is in may not carry
+  ``w:rPrChange``.
 * **At the start or end** of a selected paragraph: the four items before (start) or after (end) every other item, with
   the properties of the run of the first (start) or last (end) character of the run text that is a ``w:t`` character —
   the paragraph mark's, without its revision marks, when there is none — without ``w:rPrChange``, no run attributes.
@@ -157,6 +160,28 @@ def _v_markup(field: str, instruction: str) -> List[Any]:
     return out
 
 
+def _v_wordy(ch: str) -> bool:
+    """A word character: a letter or digit of any script, or the underscore."""
+    return ch.isalnum() or ch == "_"
+
+
+def _v_whole_words(text: str, at_text: str) -> List[Tuple[int, int]]:
+    """(start, end) of every occurrence of the placeholder in ``text``, left to right and not overlapping, that is not
+    part of a longer word: a word character at its start may not follow one, at its end may not be followed by one."""
+    out: List[Tuple[int, int]] = []
+    k = text.find(at_text)
+    while k >= 0:
+        end = k + len(at_text)
+        inside = ((_v_wordy(at_text[0]) and k > 0 and _v_wordy(text[k - 1]))
+                  or (_v_wordy(at_text[-1]) and end < len(text) and _v_wordy(text[end])))
+        if inside:
+            k = text.find(at_text, k + 1)
+        else:
+            out.append((k, end))
+            k = text.find(at_text, end)
+    return out
+
+
 def _v_owner(el) -> Optional[Any]:
     q = el.getparent()
     while q is not None and q.tag != W + "p":
@@ -269,11 +294,7 @@ def _inserted_fields(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             where = f"inserted_fields {part} block {bi}"
             items = v_items(p)
             if at_text is not None:
-                text = v_run_text(items)
-                edits, k = [], text.find(at_text)
-                while k >= 0:
-                    edits.append((k, k + len(at_text), _V_ONE, False))
-                    k = text.find(at_text, k + len(at_text))
+                edits = [(s, e, _V_ONE, False) for s, e in _v_whole_words(v_run_text(items), at_text)]
                 if not edits:
                     continue
             if _v_owner(p) is not None:
