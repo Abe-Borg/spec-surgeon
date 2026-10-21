@@ -2,8 +2,8 @@
 
 One place that the window's About box, the installer, the package metadata and the updater all draw from.
 ``tests/test_about.py`` pins these values to the ``LICENSE`` file, ``pyproject.toml`` and the installer script,
-so the name on the copyright line, the links and the license text cannot drift apart. No Qt here: the command
-line and the packaging scripts read it too.
+so the name on the copyright line, the links and the license text cannot drift apart. No window code here: the
+command line and the packaging scripts read it too.
 """
 from __future__ import annotations
 
@@ -60,7 +60,11 @@ SOFTWARE.
 # What the installed app ships or loads, with each component's own license (the About box lists them).
 THIRD_PARTY: List[Tuple[str, str, str]] = [
     ("Python", "PSF License", "https://docs.python.org/3/license.html"),
-    ("Qt for Python (PySide6) and Qt 6", "LGPL-3.0", "https://www.qt.io/licensing/open-source-lgpl-obligations"),
+    ("pywebview (the native window)", "BSD-3-Clause", "https://github.com/r0x0r/pywebview/blob/master/LICENSE"),
+    ("FastAPI", "MIT", "https://github.com/fastapi/fastapi/blob/master/LICENSE"),
+    ("uvicorn", "BSD-3-Clause", "https://github.com/encode/uvicorn/blob/master/LICENSE.md"),
+    ("React", "MIT", "https://github.com/facebook/react/blob/main/LICENSE"),
+    ("Tailwind CSS", "MIT", "https://github.com/tailwindlabs/tailwindcss/blob/main/LICENSE"),
     ("lxml", "BSD-3-Clause", "https://github.com/lxml/lxml/blob/master/LICENSE.txt"),
     ("PyMuPDF (MuPDF)", "AGPL-3.0", "https://github.com/pymupdf/PyMuPDF/blob/main/COPYING"),
     ("Anthropic Python SDK", "MIT", "https://github.com/anthropics/anthropic-sdk-python/blob/main/LICENSE"),

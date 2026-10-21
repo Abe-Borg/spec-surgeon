@@ -378,13 +378,14 @@ def test_the_command_line_chain_command_and_library_use(folder, tmp_path, capsys
     assert "Not run." in capsys.readouterr().out and not (tmp_path / "o6" / "run").exists()
 
 
-# ---- no Qt for the engine --------------------------------------------------------------------------------------------
+# ---- no window for the engine ----------------------------------------------------------------------------------------
 
-def test_the_engine_and_command_line_never_load_qt_for_a_chain():
+def test_the_engine_and_command_line_never_load_the_window_for_a_chain():
     import subprocess
     import sys
     code = ("import sys, spec_surgeon.chain, spec_surgeon.cli, spec_surgeon.gui; "
-            "bad = [m for m in sys.modules if m.split('.')[0] in ('PySide6', 'shiboken6')]; assert not bad, bad")
+            "bad = [m for m in sys.modules if m.split('.')[0] in ('fastapi', 'starlette', 'uvicorn', 'webview') "
+            "or m.startswith('spec_surgeon.web')]; assert not bad, bad")
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
 

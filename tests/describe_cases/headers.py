@@ -8,12 +8,22 @@ CASES = {
           "slot_fills": {"SECTION NUMBER": {"rule": "regex", "pattern": "^SECTION (\\d{2} \\d{2} \\d{2})",
                                             "source": "document"},
                          "SECTION TITLE": {"rule": "paragraph_after", "anchor_regex": "^SECTION \\d{2} \\d{2} \\d{2}$"}}},
-         ["Give every section the headers and footers of the template “C:/Projects/hf-template.docx” "
+         ["Give every section the headers and footers of the template “hf-template.docx” "
           "(its section 1 for the cover, section 2 for the body)",
           "with each placeholder (text highlighted in yellow or “{{NAME}}”) filled from the document itself",
           "“SECTION NUMBER” from the text matching the pattern “^SECTION (\\d{2} \\d{2} \\d{2})” in the document body",
           "“SECTION TITLE” from the paragraph after the one matching “^SECTION \\d{2} \\d{2} \\d{2}$”",
           "The old headers and footers are removed; the new ones keep the template's look"]),
+        ({"sections": "all"},
+         {"template": "C:/Projects/hf-template.docx", "slot_markers": ["reference"],
+          "slot_fills": {"SECTION_NUMBER": {"rule": "regex", "source": "document", "case_insensitive": True,
+                                            "pattern": "^SECTION\\s+(\\d{2}[\\s-]*\\d{2}[\\s-]*\\d{2}(?:\\.\\d{2})?)\\b"},
+                         "SECTION_TITLE": {"rule": "paragraph_after", "source": "document",
+                                           "anchor_regex": "^SECTION\\s+\\d{2}[\\s-]*\\d{2}[\\s-]*\\d{2}(?:\\.\\d{2})?\\s*$"}}},
+         # A long pattern is not spelled out in the sentence; every setting is shown on demand beside it.
+         ["with every place that shows the template's own values filled from the document itself",
+          "“SECTION_NUMBER” from the text matching a pattern in the document body (ignoring case)",
+          "“SECTION_TITLE” from the paragraph after the one matching a pattern in the document body"]),
         ({"sections": "all"},
          {"template": "T:/hf/arch-spec.docx", "template_sections": {"all": 0}, "kinds": ["footer"],
           "slot_markers": ["reference"],
@@ -21,7 +31,7 @@ CASES = {
                                     "occurrence": "first", "in_template": "09 91 23"},
                          "issue": {"rule": "literal", "value": "Issued for Construction", "in_template": "Issued for Bid"}},
           "rescale_tabs": False, "import_missing_styles": False, "slot_formatting": "keep"},
-         ["Give every section the footers of the template “T:/hf/arch-spec.docx” (its section 1 throughout)",
+         ["Give every section the footers of the template “arch-spec.docx” (its section 1 throughout)",
           "with every place that shows the template's own values filled from the document itself",
           "“number” from the text matching the pattern “(\\d{2} \\d{2} \\d{2})” in the footer (the first match), "
           "where the template shows “09 91 23”",

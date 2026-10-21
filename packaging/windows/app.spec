@@ -1,10 +1,13 @@
 """Build both entry points with a shared onedir runtime; run on native Windows.
 
-The window is Qt (PySide6-Essentials). PyInstaller's own PySide6 hooks collect what QtCore/QtGui/QtWidgets need
-(the windows platform plugin, styles incl. windows11, image formats, the SVG icon engine); the filter below drops
-what a widgets-only app never loads (software OpenGL, the D3D shader compiler, Qt Quick/QML, PDF, TLS, translations)
-to keep the installer small. The installed-app smoke test (installed_smoke.py) is the gate that nothing needed
-was dropped.
+The window is a web page: a local FastAPI server (uvicorn) around one ``DocumentTask``, the page built from
+``frontend/`` into ``src/spec_surgeon/web/static`` (collected as data, so the bundle must be built after
+``npm run build``), and a native WebView2 window through pywebview. pywebview resolves its Windows backend (Edge
+WebView2 through pythonnet/clr) at run time, invisible to static analysis, so ``webview``, ``clr_loader`` and
+``pythonnet`` are collected whole and ``clr`` is named; uvicorn, FastAPI, Starlette, anyio and python-multipart load
+their pieces dynamically too. The WebView2 runtime itself ships with Windows 10/11 and is not bundled. The
+installed-app smoke test (installed_smoke.py) is the gate that nothing needed is missing: it imports the backend,
+serves the page and drives a run over HTTP.
 """
 from pathlib import Path
 import tomllib
@@ -32,41 +35,59 @@ version_file.write_text(f'''VSVersionInfo(
   ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]
 )''', encoding="utf-8")
 
+page = root / "src" / "spec_surgeon" / "web" / "static" / "index.html"
+if not page.is_file():
+    raise SystemExit(f"The window's page is not built ({page}): run `npm ci` and `npm run build` in frontend/ first.")
+
 datas = collect_data_files("spec_surgeon", include_py_files=True,
-                           includes=["schemas/**/*.xsd", "skill/**/*.md", "ops/*.py", "ui/resources/*", "examples/specs/*.json"])
+                           includes=["schemas/**/*.xsd", "skill/**/*.md", "ops/*.py", "web/static/**/*",
+                                     "examples/specs/*.json"])
 datas += copy_metadata("anthropic", recursive=True)
+for dist in ("fastapi", "uvicorn", "pywebview"):           # the diagnostics report their versions from the metadata
+    try:
+        datas += copy_metadata(dist)
+    except Exception:  # noqa: BLE001 — a missing distribution fails the smoke test, not the build
+        pass
 pdf_datas, pdf_binaries, pdf_imports = collect_all("pymupdf")
 datas += pdf_datas
+binaries = list(pdf_binaries)
 hiddenimports = pdf_imports + collect_submodules("anthropic")
 hiddenimports += ["pythoncom", "pywintypes", "win32com.client", "win32cred", "win32timezone", "spec_surgeon.sandbox_runner",
                   "spec_surgeon.analysis_runner",
-                  "spec_surgeon.ui.app", "PySide6.QtSvg"]
+                  "spec_surgeon.web.server", "spec_surgeon.web.shell", "spec_surgeon.web.updates"]
 # CredRead constructs LastWritten through a dynamic win32timezone import; without it a saved key cannot be read.
-excludes = ["pytest", "docx", "jsonschema", "tkinter", "_tkinter",
-            "PySide6.QtQml", "PySide6.QtQuick", "PySide6.QtQuickWidgets", "PySide6.QtOpenGL",
-            "PySide6.QtOpenGLWidgets", "PySide6.QtNetwork", "PySide6.QtPdf", "PySide6.QtDesigner"]
 
-DROP_NAMES = ("opengl32sw.dll", "d3dcompiler_47.dll", "Qt6Pdf", "Qt6Quick", "Qt6Qml", "Qt6OpenGL", "Qt6Network",
-              "Qt6VirtualKeyboard")
-DROP_DIRS = ("PySide6/translations/", "PySide6/qml/", "PySide6/plugins/imageformats/qpdf",
-             "PySide6/plugins/vectorimageformats/", "PySide6/plugins/platforms/qdirect2d",
-             "PySide6/plugins/tls/", "PySide6/plugins/networkinformation/", "PySide6/plugins/platforminputcontexts/",
-             "PySide6/plugins/qmltooling/", "PySide6/plugins/sqldrivers/", "PySide6/plugins/designer/")
+# The server: uvicorn picks its loop, protocol and lifespan classes by name; FastAPI/Starlette/anyio/python-multipart
+# load pieces lazily.
+hiddenimports += collect_submodules("uvicorn")
+hiddenimports += ["fastapi", "starlette", "anyio", "anyio._backends._asyncio", "multipart", "python_multipart"]
+for name in ("fastapi", "starlette", "anyio"):
+    hiddenimports += collect_submodules(name)
+for name in ("python_multipart", "multipart"):           # python-multipart's import name changed in 0.0.13
+    try:
+        hiddenimports += collect_submodules(name)
+    except Exception:  # noqa: BLE001
+        pass
 
+# The native window: pywebview's Windows backend is Edge WebView2 through pythonnet (``import clr``), resolved at run
+# time — collect everything (the interop DLLs under webview/lib, Python.Runtime.dll, clr_loader's runtimes).
+for name in ("webview", "clr_loader", "pythonnet"):
+    try:
+        w_datas, w_binaries, w_imports = collect_all(name)
+        datas += w_datas
+        binaries += w_binaries
+        hiddenimports += w_imports
+    except Exception:  # noqa: BLE001 — absent on a non-Windows build box; the Windows build has them
+        pass
+hiddenimports += ["clr"]
 
-def keep(entry):
-    dest = entry[0].replace("\\", "/")
-    name = dest.rsplit("/", 1)[-1]
-    return not (name.startswith(DROP_NAMES) or dest.startswith(DROP_DIRS))
+excludes = ["pytest", "docx", "jsonschema", "tkinter", "_tkinter"]
 
 
 def analyze(entry):
-    a = Analysis([str(windows / entry)], pathex=[str(windows), str(root / "src")],
-                 binaries=pdf_binaries, datas=datas, hiddenimports=hiddenimports,
-                 excludes=excludes, noarchive=False)
-    a.binaries = [b for b in a.binaries if keep(b)]
-    a.datas = [d for d in a.datas if keep(d)]
-    return a
+    return Analysis([str(windows / entry)], pathex=[str(windows), str(root / "src")],
+                    binaries=binaries, datas=datas, hiddenimports=hiddenimports,
+                    excludes=excludes, noarchive=False)
 
 
 gui = analyze("gui_entry.py")

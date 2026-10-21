@@ -1,7 +1,7 @@
 """The window's logic (``gui.Session``) end to end with a scripted client — preview and run, stale previews, the
 conversation (Claude's questions and choices, replies, a custom transform), copies only, plain errors — plus what the
-conversation window keeps beside the chat (the update banner, Help → About; the window itself is driven in
-``test_conversation_window.py``), and that Qt never leaks into the engine or the command line."""
+window keeps beside the chat without a toolkit (the update flow, About over the server; the server itself is driven
+in ``test_web_server.py``), and that the web stack never leaks into the engine or the command line."""
 from __future__ import annotations
 
 import json
@@ -17,6 +17,7 @@ from test_codegen import GOOD_OP
 from test_compiler import FakeClient, resp, tool, generate_reviewed_custom
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
+WEB_STACK = ("fastapi", "starlette", "uvicorn", "webview", "multipart", "python_multipart")   # the window's own
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
 
 
@@ -205,34 +206,7 @@ def test_generated_approval_identity_includes_approved_goal_and_bound_targets(tm
     assert approval_token(generated_key(generated), [source]) != original
 
 
-# ---- the conversation window (Qt, offscreen): what it keeps beside the chat --------------------------------
-
-@pytest.fixture
-def qt(monkeypatch):
-    """A QApplication and no update check; the settings folder and the key are sealed by conftest."""
-    from qt_support import close_windows, qt_app_or_skip
-    app = qt_app_or_skip()
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    windows = []
-    yield app, windows
-    close_windows(app, windows)
-
-
-def window(qt, tmp_path, **kw):
-    from spec_surgeon.gui import build_window
-    from spec_surgeon.settings import Settings
-    from spec_surgeon.ui.app import RecordingPrompts
-    kw.setdefault("prompts", RecordingPrompts())
-    kw.setdefault("settings", Settings())
-    w = build_window(Session(out_root=tmp_path / "out"), **kw)
-    qt[1].append(w)
-    return w
-
-
-def help_action(w, title: str):
-    from PySide6.QtGui import QAction
-    return next(a for a in w.findChildren(QAction) if a.text() == title)
-
+# ---- beside the chat, without a toolkit: the update flow (web.updates) and About (/api/about) -----------------
 
 def _release(version="9.9.9"):
     from spec_surgeon.updater import Asset, UpdateInfo
@@ -262,78 +236,83 @@ def _checker(results):
     return check
 
 
-def test_update_banner_skip_and_manual_check(qt, tmp_path, monkeypatch):
-    from spec_surgeon.settings import load_settings
-    monkeypatch.delenv("SPEC_SURGEON_NO_UPDATE_CHECK")
+def _settle(flow, done, timeout=10.0):
+    """Wait for the flow's check to land (it runs on a daemon thread, as in the window) and return the state."""
+    import time
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        state = flow.state()
+        if done(state) and not flow.checking:
+            return state
+        time.sleep(0.01)
+    raise AssertionError(f"the update check did not settle: {flow.state()}")
+
+
+def test_update_flow_skip_and_manual_check(tmp_path, monkeypatch):
+    from spec_surgeon.settings import Settings, load_settings
+    from spec_surgeon.web.updates import UpdateFlow
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    monkeypatch.delenv("SPEC_SURGEON_NO_UPDATE_CHECK", raising=False)
     checker = _checker(["update"])
-    w = window(qt, tmp_path, checker=checker)
-    banner, wait = w.updates.banner, w._spec_surgeon["wait"]
-    assert banner.isHidden()
-    assert w.updates.auto_check() is True
-    wait()
-    assert not banner.isHidden() and banner.mode == "available"
-    assert "9.9.9 is available" in banner.title.text()
-    assert banner.btn_install.isEnabled()
-    assert w.settings.last_update_check > 0
-    assert w.updates.auto_check() is False                      # once a day
-    banner.btn_skip.click()
-    assert banner.isHidden() and load_settings().skipped_version == "9.9.9"
-    w.settings.last_update_check = 0
-    w.updates.auto_check()
-    wait()
-    assert banner.isHidden()                                    # a skipped version stays quiet on automatic checks
-    help_action(w, "Check for updates").trigger()
-    wait()
-    assert not banner.isHidden() and "skip" in banner.text.text()
-    assert checker.calls[-1] == (True, "9.9.9")
+    flow = UpdateFlow(Settings(), checker=checker)
+    assert flow.state()["state"] == "none"
+    assert flow.auto_check() is True
+    shown = _settle(flow, lambda s: s["state"] == "available")
+    assert shown["version"] == "9.9.9" and shown["notes"].startswith("## New") and "You have" in shown["text"]
+    assert flow.settings.last_update_check > 0
+    assert flow.auto_check() is False                           # once a day
+    flow.skip()
+    assert flow.state()["state"] == "none" and load_settings().skipped_version == "9.9.9"
+    flow.settings.last_update_check = 0
+    assert flow.auto_check() is True
+    _settle(flow, lambda s: True)
+    assert flow.state()["state"] == "none"                      # a skipped version stays quiet on automatic checks
+    assert flow.check(manual=True) is True
+    shown = _settle(flow, lambda s: s["state"] == "available")
+    assert "skip" in shown["text"] and checker.calls[-1] == (True, "9.9.9")
 
 
-def test_about_says_who_made_it_the_license_and_how_to_reach_him(qt, tmp_path):
-    from PySide6.QtWidgets import QMenu
+def test_about_says_who_made_it_the_license_and_how_to_reach_him(tmp_path):
+    from fastapi.testclient import TestClient
     from spec_surgeon import __version__, about
-    from spec_surgeon.ui.about_dialog import AboutDialog
-    w = window(qt, tmp_path)
-    help_menu = next(m for m in w.menuBar().findChildren(QMenu) if m.title() == "Help")
-    assert [a.text() for a in help_menu.actions()] == ["Check for updates", "Open diagnostic logs", "About Spec Surgeon"]
-    help_action(w, "About Spec Surgeon").trigger()
-    dlg = w._viewers[-1]
-    assert isinstance(dlg, AboutDialog)
-    assert dlg.name.text() == "Spec Surgeon" and __version__ in dlg.version.text()
-    plain = dlg.body.toPlainText()
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.settings import Settings
+    from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
+    state = WindowState(DocumentTask(Session(out_root=tmp_path / "out"), render=False), Settings(), token="t")
+    info = TestClient(create_app(state), headers={TOKEN_HEADER: "t"}).get("/api/about").json()
+    assert info["name"] == about.APP_NAME and info["version"] == __version__ and info["github"] == about.GITHUB_URL
+    plain = "\n".join(info["credits"])
+    assert plain.startswith(f"{about.APP_NAME} {__version__}")
     assert about.COPYRIGHT_LINE in plain and about.LICENSE_NAME in plain and about.AUTHOR in plain
     for line in about.LICENSE_SUMMARY:
         assert line in plain
-    assert f'href="mailto:{about.EMAIL}"' in dlg.html and about.EMAIL in plain
-    assert f'href="{about.GITHUB_URL}"' in dlg.html and f'href="{about.LINKEDIN_URL}"' in dlg.html
-    for name, lic, url in about.THIRD_PARTY:
-        assert f'href="{url}"' in dlg.html and lic in plain
-    assert "Settings:" in plain
-    dlg.show_license()
-    assert dlg._viewers[-1].browser.toPlainText().strip() == about.LICENSE_TEXT.strip()
-    text = dlg.text()
-    for value in (about.EMAIL, about.GITHUB_URL, about.LINKEDIN_URL, about.LICENSE_NAME, "Settings:"):
-        assert value in text
-    dlg.close()
+    for value in (about.EMAIL, about.GITHUB_URL, about.LINKEDIN_URL):
+        assert value in plain
+    for name, lic, _ in about.THIRD_PARTY:
+        assert f"{name}: {lic}" in plain
+    assert info["license"].strip() == about.LICENSE_TEXT.strip()
 
 
-# ---- Qt stays inside the window --------------------------------------------------------------------------------
+# ---- the web stack stays inside the window -----------------------------------------------------------------------
 
-def test_without_qt_the_window_explains_how_to_install_it():
+def test_without_the_gui_extra_the_window_explains_how_to_install_it():
     import subprocess
     import sys
-    code = "import sys; sys.modules['PySide6'] = None; from spec_surgeon.gui import main; sys.exit(main())"
+    code = "import sys; sys.modules['fastapi'] = None; from spec_surgeon.gui import main; sys.exit(main())"
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert r.returncode == 2 and 'pip install "spec-surgeon[gui]"' in r.stderr
 
 
-def test_without_qt_a_message_box_only_when_there_is_no_console(monkeypatch, capsys):
+def test_without_the_gui_extra_a_message_box_only_when_there_is_no_console(monkeypatch, capsys):
     """The native message box is modal: with a stream to print to it must never appear (it hung the Windows CI
     run of the subprocess test above); only pythonw (no stderr) gets it."""
     import sys
     from spec_surgeon import gui, winapp
     shown = []
     monkeypatch.setattr(winapp, "message_box", lambda title, text: shown.append(text))
-    monkeypatch.setitem(sys.modules, "PySide6", None)
+    monkeypatch.setitem(sys.modules, "fastapi", None)
+    for name in ("spec_surgeon.web.server", "spec_surgeon.web.shell", "spec_surgeon.web.updates"):
+        monkeypatch.delitem(sys.modules, name, raising=False)     # a copy imported earlier would mask the absence
     assert gui.main() == 2 and shown == []
     assert 'pip install "spec-surgeon[gui]"' in capsys.readouterr().err
     # Restore stderr while capsys is still open. The monkeypatch fixture tears down after capsys; restoring
@@ -343,19 +322,20 @@ def test_without_qt_a_message_box_only_when_there_is_no_console(monkeypatch, cap
         assert gui.main() == 2 and len(shown) == 1 and "spec-surgeon[gui]" in shown[0]
 
 
-def test_the_engine_and_command_line_never_load_qt():
+def test_the_engine_and_command_line_never_load_the_window():
     import subprocess
     import sys
     code = ("import sys, spec_surgeon.gui, spec_surgeon.document_task, spec_surgeon.cli, spec_surgeon.batch, "
             "spec_surgeon.updater, spec_surgeon.llm, spec_surgeon.conversation, "
-            "spec_surgeon.settings, spec_surgeon.winapp, spec_surgeon.credentials, spec_surgeon.ui; "
-            "bad = [m for m in sys.modules if m.split('.')[0] in ('PySide6', 'shiboken6')]; "
+            "spec_surgeon.settings, spec_surgeon.winapp, spec_surgeon.credentials; "
+            f"stack = {WEB_STACK!r}; "
+            "bad = [m for m in sys.modules if m.split('.')[0] in stack or m.startswith('spec_surgeon.web')]; "
             "assert not bad, bad")
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
 
 
-def test_pyside6_is_imported_only_by_the_ui_package():
+def test_the_web_stack_is_imported_only_by_the_web_package():
     import ast
     src = Path(__file__).resolve().parent.parent / "src" / "spec_surgeon"
     offenders = []
@@ -368,8 +348,8 @@ def test_pyside6_is_imported_only_by_the_ui_package():
                 names = [a.name for a in node.names]
             elif isinstance(node, ast.ImportFrom) and node.module:
                 names = [node.module]
-            if any(n.split(".")[0] in ("PySide6", "shiboken6") for n in names) and \
-                    not (rel.startswith("ui/") and rel != "ui/__init__.py"):
+            if any(n.split(".")[0] in WEB_STACK for n in names) and \
+                    not (rel.startswith("web/") and rel != "web/__init__.py"):
                 offenders.append(rel)
     assert offenders == []
 

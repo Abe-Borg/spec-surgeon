@@ -2,6 +2,14 @@
 several processes side by side, each with its own user profile (LibreOffice serializes on a shared
 profile).
 
+The profiles are kept: ``<config dir>/render-profiles/<n>`` (``settings.config_dir``), one per parallel worker,
+reused from call to call and from launch to launch instead of created and deleted every time — creating one is
+most of what a soffice start costs. A profile is leased for the life of one soffice run (a lock file beside it,
+released by the OS when the process ends), so a second process rendering at the same time takes the next free
+index rather than sharing — two soffice on one profile hand their work to each other and lose it. A profile that
+fails to start (soffice exits with an error and nothing came out of it) is wiped and recreated once; the chunk is
+tried again on the fresh one before its files are retried one by one.
+
 What LibreOffice says is kept: a chunk that fails is reported with its exit status and the end of its stderr/stdout
 (not just "Command … returned non-zero exit status"), and a file that comes out without a PDF is reported with what
 the process printed — LibreOffice exits 0 even when it could not load a file."""
@@ -11,12 +19,13 @@ import configparser
 import contextvars
 import os
 import shutil
+import signal
 import subprocess
-import tempfile
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Sequence
+from typing import Callable, Dict, List, Optional, Sequence, Set, Tuple
 
 from .. import diagnostics as diag
 
@@ -26,6 +35,9 @@ _CANDIDATES = [
     r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
     "/Applications/LibreOffice.app/Contents/MacOS/soffice",
 ]
+PROFILES_DIR_NAME = "render-profiles"
+MAX_PROFILES = 32           # indexes a lease may try past the one it was asked for
+_RETIRED_PROFILES: Set[Path] = set()   # profiles whose soffice timed out this process: possibly still occupied
 
 
 def find_soffice() -> Optional[str]:
@@ -69,6 +81,145 @@ def version(soffice: Optional[str] = None) -> Optional[str]:
     return None
 
 
+def executable_identity(soffice: Optional[str] = None) -> Optional[str]:
+    """When no version file can be read: the executable's size and modification time, which an upgrade changes —
+    the render cache's fallback renderer identity. None when there is no executable to look at."""
+    exe = soffice or find_soffice()
+    if not exe:
+        return None
+    try:
+        launcher = Path(exe).resolve()
+        binary = launcher.parent / "soffice.bin"       # the program itself, beside the launcher it is started by
+        st = (binary if binary.is_file() else launcher).stat()
+    except OSError:
+        return None
+    return f"exe-{st.st_size}-{int(st.st_mtime)}"
+
+
+# ---- user profiles: kept, leased, recreated when broken ---------------------------------------------------------------
+
+def profiles_root() -> Path:
+    from ..settings import config_dir
+    return config_dir() / PROFILES_DIR_NAME
+
+
+def _try_lock(fh) -> None:
+    """An exclusive, non-blocking lock the OS releases when the holder dies; raises OSError when another holds it."""
+    fh.seek(0)
+    if os.name == "nt":
+        import msvcrt
+        msvcrt.locking(fh.fileno(), msvcrt.LK_NBLCK, 1)
+    else:
+        import fcntl
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _unlock(fh) -> None:
+    try:
+        fh.seek(0)
+        if os.name == "nt":
+            import msvcrt
+            msvcrt.locking(fh.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(fh.fileno(), fcntl.LOCK_UN)
+    except OSError:
+        pass
+    finally:
+        fh.close()
+
+
+class ProfileLease:
+    """``with ProfileLease(root, index) as lease:`` — ``lease.path`` is a user profile no other soffice is using:
+    the one asked for, or the next free index when another process holds it. Held through a lock file
+    (``<root>/<index>.lock``) for the life of the run."""
+
+    def __init__(self, root: Path, index: int):
+        self.root = Path(root)
+        self.wanted = int(index)
+        self.index: Optional[int] = None
+        self.path: Optional[Path] = None
+        self._lock = None
+
+    def __enter__(self) -> "ProfileLease":
+        self.root.mkdir(parents=True, exist_ok=True)
+        for i in range(self.wanted, self.wanted + MAX_PROFILES):
+            if (self.root / str(i)).resolve() in _RETIRED_PROFILES:
+                continue                                   # a run on it timed out: never hand it more work
+            fh = open(self.root / f"{i}.lock", "a+b")
+            try:
+                _try_lock(fh)
+            except OSError:
+                fh.close()
+                continue
+            self._lock, self.index, self.path = fh, i, self.root / str(i)
+            self.path.mkdir(parents=True, exist_ok=True)
+            if i != self.wanted:
+                diag.event("render.profile_busy", backend="libreoffice", wanted=self.wanted, leased=i)
+            return self
+        raise RuntimeError(f"no free LibreOffice profile under {self.root} ({MAX_PROFILES} are in use)")
+
+    def __exit__(self, *exc) -> None:
+        if self._lock is not None:
+            _unlock(self._lock)
+            self._lock = None
+
+
+def reset_profile(path: Path) -> None:
+    """Wipe a profile LibreOffice cannot start from and recreate it empty (LibreOffice fills it on the next start)."""
+    shutil.rmtree(path, ignore_errors=True)
+    path.mkdir(parents=True, exist_ok=True)
+
+
+def retire_profile(path: Path) -> None:
+    """A profile whose soffice run timed out is not leased again in this process: the launcher's tree is killed
+    on a timeout, but a survivor that escaped the kill would take every later request on its profile and never
+    answer, so the one-by-one retries and every later call lease a fresh index instead."""
+    _RETIRED_PROFILES.add(Path(path).resolve())
+    diag.event("render.profile_retired", level="warning", backend="libreoffice", profile=str(path))
+
+
+def _kill_tree(proc: subprocess.Popen) -> None:
+    """End the launcher AND what it started: ``soffice`` is a launcher (``oosplash``/``soffice.exe``) whose child
+    ``soffice.bin`` does the work and would otherwise outlive a timeout, holding its profile."""
+    try:
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/F", "/T", "/PID", str(proc.pid)], capture_output=True, timeout=30)
+        else:
+            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except Exception:  # noqa: BLE001 — the process may be gone already; the plain kill below is the fallback
+        pass
+    try:
+        proc.kill()
+    except Exception:  # noqa: BLE001
+        pass
+
+
+def _run_tree(cmd: List[str], env: Dict[str, str], timeout: float) -> subprocess.CompletedProcess:
+    """``subprocess.run(cmd, check=True, capture_output=True, timeout=timeout)`` whose timeout kills the whole
+    process tree (its own session on POSIX, a job of ``taskkill /T`` on Windows), not the launcher alone."""
+    kwargs: Dict[str, object] = {}
+    if os.name == "nt":
+        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+    else:
+        kwargs["start_new_session"] = True
+    proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=env, **kwargs)  # noqa: S603
+    try:
+        out, err = proc.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_tree(proc)
+        try:
+            out, err = proc.communicate(timeout=30)
+        except subprocess.TimeoutExpired:
+            out, err = b"", b""
+        raise subprocess.TimeoutExpired(cmd, timeout, output=out, stderr=err) from None
+    if proc.returncode != 0:
+        raise subprocess.CalledProcessError(proc.returncode, cmd, output=out, stderr=err)
+    return subprocess.CompletedProcess(cmd, proc.returncode, out, err)
+
+
+# ---- conversion -----------------------------------------------------------------------------------------------------
+
 def _convert_batch(soffice: str, files: Sequence[Path], out_dir: Path, profile_dir: Path, timeout: int):
     profile_dir.mkdir(parents=True, exist_ok=True)
     env = dict(os.environ)
@@ -80,7 +231,7 @@ def _convert_batch(soffice: str, files: Sequence[Path], out_dir: Path, profile_d
                    files=[str(f) for f in files], out_dir=str(out_dir), profile=str(profile_dir),
                    timeout_seconds=timeout) as outcome:
         try:
-            result = subprocess.run(cmd, check=True, capture_output=True, timeout=timeout, env=env)
+            result = _run_tree(cmd, env, timeout)
         except (subprocess.CalledProcessError, subprocess.TimeoutExpired) as e:
             outcome.update(returncode=getattr(e, "returncode", None),
                            stdout=_tail(getattr(e, "stdout", None)), stderr=_tail(getattr(e, "stderr", None)))
@@ -116,7 +267,8 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
     """Render each .docx to <out_dir>/<stem>.pdf. Returns {docx: pdf} for the ones that rendered. A chunk whose
     soffice process fails (a crash on one file, a timeout) is retried one file at a time, so one bad file costs
     its own PDF and no other's; every failure is said on ``log``, with what soffice printed; ``detail`` gets each
-    run's command summary, time and output."""
+    run's command summary, time and output. Chunk ``i`` runs on profile ``i`` (see ``ProfileLease``), and so do
+    its one-by-one retries; a profile soffice cannot start from is wiped and recreated once per call."""
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
     soffice = find_soffice()
@@ -128,44 +280,76 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, workers: int = 4, timeout:
         return {}
     workers = max(1, min(workers, len(files)))
     chunks = [files[i::workers] for i in range(workers)]
-    base = Path(tempfile.mkdtemp(prefix="specsurgeon-lo-"))
+    root = profiles_root()
     said: Dict[Path, str] = {}                      # file → what its (last) soffice run printed
     reported: set = set()                           # files whose failure has been said already
+    wiped: Set[Path] = set()                        # profiles recreated during this call (once each)
+    worked: Set[Path] = set()                       # profiles a PDF came out of during this call: proven, never wiped
 
-    def run(chunk: List[Path], profile: Path, attempt: int = 1):
+    def came_out(chunk: List[Path]) -> bool:
+        return any((out_dir / (f.stem + ".pdf")).exists() for f in chunk)
+
+    def run(chunk: List[Path], lease: ProfileLease, attempt: int = 1):
         t = time.perf_counter()
-        with diag.scope(render_attempt=attempt):
-            done = _convert_batch(soffice, chunk, out_dir, profile, timeout)
+        for f in chunk:                             # a PDF from an earlier run is never taken for this one
+            (out_dir / (f.stem + ".pdf")).unlink(missing_ok=True)
+        with diag.scope(render_attempt=attempt, render_profile=lease.index):
+            try:
+                done = _convert_batch(soffice, chunk, out_dir, lease.path, timeout)
+            except subprocess.CalledProcessError as e:
+                if came_out(chunk):
+                    worked.add(lease.path)
+                if lease.path in wiped or lease.path in worked:
+                    raise
+                # soffice exited with an error and nothing has ever come out of this profile: a damaged profile makes
+                # every start fail this way, so recreate it once and try the chunk again on the fresh one
+                wiped.add(lease.path)
+                diag.event("render.profile_reset", level="warning", backend="libreoffice", profile=str(lease.path),
+                           reason=failure_text(e))
+                detail(f"LibreOffice: profile {lease.index} failed to start ({failure_text(e)}); recreating it and "
+                       f"trying the {len(chunk)} file(s) again")
+                reset_profile(lease.path)
+                done = _convert_batch(soffice, chunk, out_dir, lease.path, timeout)
+            except subprocess.TimeoutExpired:
+                if came_out(chunk):
+                    worked.add(lease.path)
+                retire_profile(lease.path)         # the retries and every later call take a fresh profile
+                raise
+        if came_out(chunk):
+            worked.add(lease.path)
         printed = " ".join(x for x in (_tail(getattr(done, "stdout", None)), _tail(getattr(done, "stderr", None))) if x)
         for f in chunk:
             said[f] = printed
-        detail(f"LibreOffice: {len(chunk)} file(s) → {out_dir.name}/ in {time.perf_counter() - t:.1f}s"
-               + (f"; it printed: {printed}" if printed else ""))
+        detail(f"LibreOffice (profile {lease.index}): {len(chunk)} file(s) → {out_dir.name}/ in "
+               f"{time.perf_counter() - t:.1f}s" + (f"; it printed: {printed}" if printed else ""))
         return done
-    try:
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            futs = [(chunk, ex.submit(contextvars.copy_context().run, run, chunk, base / f"profile{i}"))
-                    for i, chunk in enumerate(chunks) if chunk]
-            retry: List[Path] = []
-            for chunk, fut in futs:
-                try:
-                    fut.result()
-                except Exception as e:  # noqa: BLE001 — the chunk's process failed; find the file(s) at fault
-                    diag.event("render.retry", level="warning", backend="libreoffice", attempt=2,
-                               files=[str(f) for f in chunk], reason=failure_text(e))
-                    log(f"LibreOffice failed on a chunk of {len(chunk)} file(s) ({failure_text(e)}); retrying them "
-                        f"one by one: {[f.name for f in chunk][:8]}")
-                    retry += [f for f in chunk if not (out_dir / (f.stem + ".pdf")).exists()]
-        for k, f in enumerate(retry):
+
+    def run_chunk(index: int, chunk: List[Path]):
+        with ProfileLease(root, index) as lease:
+            return run(chunk, lease)
+
+    with ThreadPoolExecutor(max_workers=workers) as ex:
+        futs = [(i, chunk, ex.submit(contextvars.copy_context().run, run_chunk, i, chunk))
+                for i, chunk in enumerate(chunks) if chunk]
+        retry: List[Tuple[int, Path]] = []
+        for i, chunk, fut in futs:
             try:
-                run([f], base / f"retry{k}", attempt=2)
-            except Exception as e:  # noqa: BLE001
-                reported.add(f)
-                diag.event("render.file_failed", level="error", backend="libreoffice", source=str(f),
-                           attempt=2, reason=failure_text(e))
-                log(f"{f.name}: LibreOffice could not render it: {failure_text(e)}")
-    finally:
-        shutil.rmtree(base, ignore_errors=True)
+                fut.result()
+            except Exception as e:  # noqa: BLE001 — the chunk's process failed; find the file(s) at fault
+                diag.event("render.retry", level="warning", backend="libreoffice", attempt=2,
+                           files=[str(f) for f in chunk], reason=failure_text(e))
+                log(f"LibreOffice failed on a chunk of {len(chunk)} file(s) ({failure_text(e)}); retrying them "
+                    f"one by one: {[f.name for f in chunk][:8]}")
+                retry += [(i, f) for f in chunk if not (out_dir / (f.stem + ".pdf")).exists()]
+    for i, f in retry:
+        try:
+            with ProfileLease(root, i) as lease:
+                run([f], lease, attempt=2)
+        except Exception as e:  # noqa: BLE001
+            reported.add(f)
+            diag.event("render.file_failed", level="error", backend="libreoffice", source=str(f),
+                       attempt=2, reason=failure_text(e))
+            log(f"{f.name}: LibreOffice could not render it: {failure_text(e)}")
     result = {}
     for f in files:
         pdf = out_dir / (f.stem + ".pdf")

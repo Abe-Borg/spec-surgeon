@@ -8,12 +8,14 @@ optional template: the conversation with Claude (``compile``, ``reply``), ``make
 approval-token check), custom transforms and the recovery of set-aside files. Each step is a plain call into the
 engine with an explicit result, and ``Session.outcome`` is the one decision table that says what is needed next.
 Nothing is applied before a preview, and ``run`` refuses when a file changed since the preview. The stages the user
-sees belong to ``document_task.DocumentTask``, which also triages every attachment; the one window is
-``ui/conversation_window.py``. This module has no widgets and no Qt, so it is tested on its own and the command line
-never loads Qt.
+sees belong to ``document_task.DocumentTask``, which also triages every attachment; the one window is the ``web``
+package: a local FastAPI server around one ``DocumentTask`` (``web/server.py``, contract ``docs/WEB_API.md``), the
+page built from ``frontend/`` into ``web/static/``, a native WebView2 window through pywebview (``web/shell.py``)
+and the headless update flow (``web/updates.py``). This module has no server and no window code, so it is tested
+on its own and the command line never loads them.
 
-The window itself (PySide6 / Qt 6) is the ``ui`` package: ``main()`` and ``build_window()`` below import it lazily
-and explain how to install Qt when it is missing (``pip install "spec-surgeon[gui]"``).
+``main()`` below imports the ``web`` package lazily and, when its dependencies are missing, explains how to install
+them (``pip install "spec-surgeon[gui]"``) instead of crashing.
 """
 from __future__ import annotations
 
@@ -114,6 +116,7 @@ class Outcome:
     token: str = ""
     blocking: bool = False                             # the preview carries blocking visual findings
     partial: bool = False                              # kind question: some copies are ready to save meanwhile
+    chips: List[str] = field(default_factory=list)     # suggested replies the user may tap
 
 
 @dataclass
@@ -182,12 +185,12 @@ class Session:
     def _templates(self, outcome: bool = True) -> List[Path]:
         """The files that are never part of the batch: the attached template and (``outcome``) every template the
         current spec reads — a spec may name one of the attached documents as its template."""
-        from .editspec import spec_templates
+        from .editspec import templates_of
         from .layouts import is_layout_plan, layout_spec
         own: List[Path] = []
         if outcome and self.spec:
-            own = ([t for layout in self.spec["layouts"] for t in spec_templates(layout_spec(self.spec, layout))]
-                   if is_layout_plan(self.spec) else spec_templates(self.spec))
+            own = ([t for layout in self.spec["layouts"] for t in templates_of(layout_spec(self.spec, layout))]
+                   if is_layout_plan(self.spec) else templates_of(self.spec))
         return ([self.template.resolve()] if self.template else []) + own
 
     def files(self, outcome: bool = True) -> List[Path]:
@@ -245,8 +248,9 @@ class Session:
         self.pending_custom_transform = None
 
     def outcome_key(self) -> Any:
-        """What the approval token is taken over beside the files: the spec (or the plan per layout)."""
-        return self.spec
+        """What the approval token is taken over beside the files: the spec, a chain's key, or the plan per layout."""
+        from .editspec import approval_key
+        return approval_key(self.spec)
 
     @_session_action
     def end_conversation(self) -> None:
@@ -276,7 +280,8 @@ class Session:
             return False
 
     @_session_action
-    def compile(self, request: str, log: Log) -> str:
+    def compile(self, request: str, log: Log, history: Optional[List[str]] = None,
+                fresh: Optional[List[str]] = None) -> str:
         """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
         Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user. It opens the session
         folder (``out_dir``): conversation.json and compile.json there after every turn, and the first preview or
@@ -297,7 +302,8 @@ class Session:
         log(f"Talking the request through with Claude over {len(files)} file(s)…")
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
                                          work_dir=out / "chat", log=log, continuous_recovery=True,
-                                         word_sources=self.replay_word_sources, input_files=self.inputs)
+                                         word_sources=self.replay_word_sources, input_files=self.inputs,
+                                         history=list(history or []), fresh=list(fresh or []))
         try:
             turn = self.conversation.start()
         except Exception:
@@ -310,8 +316,9 @@ class Session:
 
     @_session_action
     def reply(self, text: str = "", choice_id: Optional[str] = None, log: Log = lambda m: None,
-              render: bool = False) -> str:
-        """The user's next message in the conversation — typed words, a picked choice, or both."""
+              render: bool = False, approve: bool = True) -> str:
+        """The user's next message in the conversation — typed words, a picked choice, or both. ``approve=False``
+        for a tapped suggested reply: the model's words carry the decision but are never approved wording."""
         c = self.conversation
         if c is None:
             raise ValueError("there is no conversation yet — describe the change first")
@@ -384,7 +391,7 @@ class Session:
             self._save_chat()
             return msg
         try:
-            turn = c.reply(text, choice_id, client=self.client)
+            turn = c.reply(text, choice_id, client=self.client, approve=approve)
         except Exception:
             self._save_chat()
             raise
@@ -621,7 +628,9 @@ class Session:
 
     # ---- the preview: a spec, a plan per layout (layouts.py) or a custom transform, tried on samples ----
     @_session_action
-    def make_preview(self, render: bool, log: Log) -> str:
+    def make_preview(self, render: bool, log: Log, on_preview: Optional[Callable[[], None]] = None) -> str:
+        """``on_preview`` is called once the preview exists and before Claude's visual check: the window shows the
+        pages while Claude looks at them."""
         from .preview import approval_token, make_preview
         if self.pending_custom_transform is not None:
             pending = self.pending_custom_transform
@@ -642,18 +651,28 @@ class Session:
             raise ValueError("nothing to preview — describe the change first")
         files = self.files()                      # the same filtered set Run checks and runs (no template files)
         out = self._session_dir()                 # beside the conversation's records
+        from .editspec import is_chain
         from .layouts import is_layout_plan, make_layout_preview
         if is_layout_plan(self.spec):
             n = len(self.spec["layouts"])
             log(f"Planning {n} layout(s) on their own files and trying one sample per layout…")
             self.preview = make_layout_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
                                                do_render=render)
+        elif is_chain(self.spec):
+            from .preview import make_chain_preview
+            n = len(self.spec["stages"])
+            log(f"Planning every file through {n} ordered steps and trying the samples…")
+            self.preview = make_chain_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
+                                              do_render=render)
         else:
             log("Planning every file and trying the samples…")
             self.preview = make_preview(self.spec, [str(f) for f in files], out / "preview", renderer="auto",
                                         do_render=render)
         log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
+        if on_preview is not None:
+            on_preview()
         if render and self.visual_check:
+            log("Looking at the rendered pages…")
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
         c = self.conversation
@@ -667,7 +686,14 @@ class Session:
 
     # ---- Claude's visual check: findings accompany preview consent ----
     def _intent(self) -> str:
+        from .editspec import is_chain
         spec = self.spec or {}
+        if is_chain(spec):
+            from .chain import chain_intent
+            lines = [chain_intent(spec)]
+            if self.conversation is not None:
+                lines.append("THE CONVERSATION:\n" + self.conversation.brief())
+            return "\n".join(lines)
         lines = [f"REQUEST: {spec.get('request') or ''}", f"WHAT THE SPEC DOES: {spec.get('summary') or ''}"]
         for layout in spec.get("layouts") or []:
             lines.append(f"LAYOUT {layout.get('id')} ({layout.get('label') or ''}): {layout['spec'].get('summary') or ''}")
@@ -732,10 +758,12 @@ class Session:
                 return Outcome("auto", needs_preview=True)
             review = getattr(pv, "review", None)
             return Outcome("preview", preview=pv, token=token,
-                           blocking=bool(review is not None and review.blocking()))
+                           blocking=bool(review is not None and review.blocking()),
+                           chips=list(getattr(turn, "chips", []) or []) if turn is not None else [])
         if turn is not None and turn.needs_user():
             user = [c for c in turn.choices if c.kind not in APP_CHOICE_KINDS]
-            return Outcome("question", message=turn.message, questions=list(turn.questions), choices=user)
+            return Outcome("question", message=turn.message, questions=list(turn.questions), choices=user,
+                           chips=list(getattr(turn, "chips", []) or []))
         if self.conversation is not None:
             return Outcome("question", message=(getattr(turn, "message", "") or
                                                "Tell me what you\u2019d like to change or clarify."))
@@ -840,9 +868,12 @@ class Session:
             diag.event("session.approval.refused", level="warning", gate="delivery_mode", reason="copies_only")
             raise ValueError("Edited copies only; original files are never overwritten.")
         files = self.files()
+        from .editspec import is_chain
         from .layouts import is_layout_plan
         if is_layout_plan(self.spec):
             return self._run_layouts(files, in_place, render, log)
+        if is_chain(self.spec):
+            return self._run_chain(files, render, log)
         key = self.outcome_key()
         current_inputs = approval_inputs(key, files)
         try:
@@ -884,6 +915,46 @@ class Session:
         lines.append(f"Edited copies that passed every check: {out / 'outputs'} (your files were not changed)")
         if c["FAIL"]:
             lines.append(f"Copies that FAILED verification: {out / 'failed'} (diagnosis only — do not use them)")
+        return "\n".join(lines)
+
+    @_session_action
+    def _run_chain(self, files: List[Path], render: bool, log: Log) -> str:
+        """Ordered steps (a chain the app composed, or the model submitted): every stage a verified batch on the stage
+        before it (``chain.run_chain``), copies only; the token the user approved binds every stage and the files."""
+        from .chain import run_chain
+        from .preview import approval_inputs, _approval_token_from_inputs
+        key = self.outcome_key()
+        current_inputs = approval_inputs(key, files)
+        try:
+            current_token = _approval_token_from_inputs(key, current_inputs)
+        except OSError:
+            current_token = ""
+        if current_token != self.preview.token:
+            from .preview import explain_approval_change
+            what = explain_approval_change(getattr(self.preview, "token_inputs", None) or {}, current_inputs)
+            diag.event("session.approval.refused", level="warning", gate="approval_digest",
+                       reason="preview_inputs_changed", changes=what)
+            raise ValueError("a file or the plan changed since the preview — check the documents again"
+                             + ("".join(f"\n  • {w}" for w in what) if what else ""))
+        out = self.out_dir / "run"
+        diag.event("session.approval.accepted", approval_digest=self.preview.token, file_count=len(files),
+                   in_place=False, run_dir=str(out))
+        self.last_run_dir = out
+        result = run_chain([str(f) for f in files], self.spec, out, renderer="auto", do_render=render,
+                           in_place=False, progress=log, approved_inputs=getattr(self.preview, "token_inputs", None))
+        self.last_run_dir, self.last_batch, self.last_trials = out, result, None
+        c = result.counts()
+        lines = [f"{len(result.files)} file(s) through {len(result.stages)} step(s): PASS {c['PASS']}  FAIL {c['FAIL']}  "
+                 f"EXCEPTION {c['EXCEPTION']}"]
+        for f in result.files:
+            line = f"  {f.status:<9} {f.source.name}"
+            if f.stopped_at:
+                line += f"  stopped at step {f.stopped_at}: [{f.code}] {f.reason}"
+            elif f.delivered_to:
+                line += f"  → {f.delivered_to}"
+            lines.append(line)
+        lines.append(f"\nReport: {out / 'CHAIN_REPORT.md'}")
+        lines.append(f"Edited copies that passed every step: {out / 'outputs'} (your files were not changed)")
         return "\n".join(lines)
 
     @_session_action
@@ -997,7 +1068,9 @@ class Session:
             clarified = original_request
             if request and request.strip() != original_request.strip():
                 clarified = original_request + "\n\nUser clarification: " + request if original_request else request
-            result = recover(files, clarified, out, spec=self.spec, template=self.template,
+            from .editspec import is_chain
+            result = recover(files, clarified, out, spec=None if is_chain(self.spec) else self.spec,
+                             chain=self.spec if is_chain(self.spec) else None, template=self.template,
                              approved_words=approved, options=options, client=self.client, log=log,
                              input_files=list(self.inputs))
         self._adopt_recovery(result)
@@ -1033,41 +1106,64 @@ def open_folder(path: Path) -> None:
 
 # ---- the window ----------------------------------------------------------------------------------
 
-def build_window(session: Optional[Session] = None, **kw):
-    """The Qt window (``ui.app.build_window``); imported lazily so this module never needs PySide6."""
-    from .ui.app import build_window as _build
-    return _build(session, **kw)
-
-
-GUI_MISSING = ("The Spec Surgeon window needs Qt for Python (PySide6).\n"
-               "Install it with:\n"
-               '    py -3 -m pip install "spec-surgeon[gui]"\n'
-               "(the Windows installer includes it).")
+GUI_MISSING = ("The Spec Surgeon window needs its web dependencies (FastAPI, uvicorn, python-multipart; pywebview for "
+               "the native window). Install them with:\n\n    pip install \"spec-surgeon[gui]\"\n\n"
+               "The command line (spec-surgeon) works without them.")
 
 
 def main(argv=None) -> int:
-    from .settings import logs_dir
-    diag.setup_app_logging(logs_dir())           # also records Qt/import failures before the window can start
-    with diag.span("gui.application") as completion:
-        code = _main(argv)
-        completion["exit_code"] = code
-        return code
-
-
-def _main(argv=None) -> int:
+    """``spec-surgeon-gui``: the window — a local server around one ``DocumentTask`` (``web.server``) and the page
+    in a native WebView2 window, or the default browser when pywebview is not installed (``web.shell``). Without
+    the ``gui`` extra it says how to install it and returns 2."""
+    from . import __version__, winapp
+    from .document_task import DocumentTask
+    from .settings import config_dir, load_settings, logs_dir
+    diag.setup_app_logging(logs_dir())           # also records an import failure before the window can start
     try:
-        import PySide6.QtWidgets  # noqa: F401 — PySide6, or a system library Qt needs (libEGL on Linux), missing
-    except ImportError as e:
+        from .web.server import WindowState, new_token, release_notes_text
+        from .web.shell import run_window
+        from .web.updates import UpdateFlow
+    except ImportError as e:                      # FastAPI or uvicorn missing: the gui extra is not installed
         diag.event("gui.startup.failed", level="error", **diag.error_fields(e))
         msg = f"{GUI_MISSING}\n\n({e})"
         if sys.stderr is not None:
             print(msg, file=sys.stderr)
         else:                                      # pythonw (the windowed launcher): no console to print to
-            from .winapp import message_box
-            message_box("Spec Surgeon", msg)       # modal — never shown when a stream can take the message
+            winapp.message_box("Spec Surgeon", msg)  # modal — never shown when a stream can take the message
         return 2
-    from .ui.app import main as qt_main
-    return qt_main(argv)
+    winapp.set_app_user_model_id()
+    winapp.hold_app_mutex()
+    settings = load_settings()
+    log_path = diag.setup_app_logging(logs_dir())
+    watch = diag.CrashWatch(logs_dir())
+    previous = watch.start()
+    diag.app_log().info(f"Spec Surgeon {__version__} started — {diag.environment_line(diag.environment())}"
+                        + (f"; app log {log_path}" if log_path else ""))
+    with diag.span("gui.application") as completion:
+        session = Session()
+        if settings.out_root:
+            session.out_root = Path(settings.out_root)
+        task = DocumentTask(session, journal=config_dir() / "conversation.json")
+        try:
+            task.restore()
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            task.say(f"The saved conversation could not be opened: {exc}")
+        if previous:
+            last = previous[-1]
+            task.say("The previous session ended unexpectedly"
+                     + (f"; Python's fault handler wrote what it saw to {last['crash_log']}." if last.get("crash_log") else ".")
+                     + " Your saved conversation is below.")
+        state = WindowState(task, settings, token=new_token(), version=__version__)
+        state.updates = UpdateFlow(settings, release_notes=lambda: release_notes_text(__version__),
+                                   quit_app=lambda: state.shell.close(), is_busy=lambda: state.busy)
+        state.updates.startup()
+        if not os.environ.get("SPEC_SURGEON_NO_UPDATE_CHECK"):
+            state.updates.auto_check()
+        dev = os.environ.get("SPEC_SURGEON_DEV", "") not in ("", "0")
+        code = run_window(state, dev=dev, page_url=os.environ.get("SPEC_SURGEON_PAGE_URL") or None)
+        completion["exit_code"] = code
+        watch.stop()
+        return code
 
 
 if __name__ == "__main__":  # pragma: no cover

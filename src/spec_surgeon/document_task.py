@@ -1,4 +1,4 @@
-"""One conversational document task, independent of Qt.
+"""One conversational document task, independent of the window.
 
 The Session is a toolbox: compile, reply, preview, run, recover, each a verified engine step. This coordinator owns
 the stages the user sees — empty, question, preview, done, budget, resume — and moves between them on the Session's
@@ -16,8 +16,10 @@ the conversation up where it stopped.
 from __future__ import annotations
 
 import hashlib
+import contextlib
 import json
 import re
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -31,6 +33,27 @@ from .resources import DEFAULT_MAX_OUTPUT_TOKENS
 STEPS_PER_PAUSE = 48    # model calls between the pauses where the user says to go on
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
+START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
+CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
+RECOVERY_EFFORT = "high"         # the hard path keeps the depth
+
+# What the window says while the model uses a tool: one plain sentence per tool, never the tool's name.
+TOOL_ACTIVITY = {
+    "inspect_profile": "Looking at how the documents are built", "list_styles": "Reading the styles",
+    "sample_paragraphs": "Reading sample paragraphs", "show_part_text": "Reading a header or footer",
+    "read_template": "Reading the template", "read_input_file": "Reading the attached table",
+    "view_pages": "Looking at the rendered pages", "describe_op": "Checking what an edit can do",
+    "inspect_template_styles": "Checking the template's styles", "list_parts": "Listing the document's parts",
+    "read_paragraphs": "Reading the documents", "read_xml_page": "Reading the document's structure",
+    "run_analysis": "Analysing the documents", "read_analysis_result": "Reading the analysis",
+    "propose_defined_terms": "Finding defined terms", "read_context_archive": "Looking back at the conversation",
+    "submit_editspec": "Writing the plan", "ask_user": "",
+}
+STATUS_FOR_LOG = {"Preparing and checking the preview…": ("previewing", "Preparing and checking the preview…"),
+                  "Looking at the rendered pages…": ("looking", "Looking at the rendered pages…"),
+                  "Creating and checking your edited copies…": ("creating", "Creating and checking your edited copies…"),
+                  "Checking the files that still need work…": ("recovering", "Checking the files that still need work…"),
+                  "Continuing where the conversation stopped…": ("resuming", "Continuing where the conversation stopped…")}
 
 
 @dataclass
@@ -89,6 +112,14 @@ def triage(path: Path, *, template: bool = False) -> Attachment:
                       reason=found.reason, pattern_id=getattr(found, "pattern_id", "") or "")
 
 
+def _same_file_key(path) -> str:
+    """One spelling of a path for comparing files: resolved when the file system can, the text otherwise."""
+    try:
+        return str(Path(path).resolve())
+    except OSError:
+        return str(Path(path))
+
+
 class DocumentTask:
     def __init__(self, session=None, *, journal=None, render=True):
         self.session = session or Session()
@@ -101,6 +132,13 @@ class DocumentTask:
         self.attachments: List[Attachment] = []
         self.stage = "empty"
         self.problem = ""
+        # continue on the result: the delivered copies become what the next request works on (original → current),
+        # a generation counter, and what was already done, told to the model with the next request
+        self.working: Dict[str, str] = {}
+        self.generation = 0
+        self.history: List[str] = []
+        self._events = None                 # the window's live channel for the job that is running (perform)
+        self._talking = False               # inside a call of the conversation itself: its words are the reply
         self._seen = 0
         self._conversation_id = None
         self._revision = 0
@@ -125,11 +163,66 @@ class DocumentTask:
     def _new_budget(max_calls=STEPS_PER_PAUSE):
         """No spending or token ceiling; the call count pauses the work for the user's go-ahead."""
         return llm.CallBudget(max_cost_usd=None, max_calls=max_calls, max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS,
-                              max_total_tokens=None, effort="high")
+                              max_total_tokens=None, effort=CONVERSATION_EFFORT)
 
     # ---- attachments ----
     def documents(self) -> List[Path]:
-        return [a.path for a in self.attachments if not a.template and not a.reference and not a.refused]
+        """The documents the next request works on: each attached document, or the copy the last run made of it."""
+        return [self.current_of(a.path) for a in self.attachments if not a.template and not a.reference and not a.refused]
+
+    def current_of(self, original) -> Path:
+        return Path(self.working.get(str(Path(original)), str(Path(original))))
+
+    def origin_of(self, current) -> Path:
+        """The attached original a working copy stands for (itself when it is an original). Compared as the files
+        on disk: the engine resolves the paths it reads (a results folder behind a junction, a mapped drive or
+        another spelling of the case would otherwise never match the copy it was given)."""
+        wanted = _same_file_key(current)
+        for original, path in self.working.items():
+            if path == str(Path(current)) or _same_file_key(path) == wanted:
+                return Path(original)
+        return Path(current)
+
+    # ---- the window's live channel ----
+    @contextlib.contextmanager
+    def _conversation(self):
+        """Around a call of the conversation itself (compile, a reply, a resumed turn): its words are the reply."""
+        self._talking = True
+        try:
+            yield
+        finally:
+            self._talking = False
+
+    def _emit(self, event: Dict[str, Any]) -> None:
+        if self._events is None:
+            return
+        try:
+            self._events(event)
+        except Exception:  # noqa: BLE001 — the window's problem, never the job's
+            pass
+
+    def _on_stream(self, event: Dict[str, Any]) -> None:
+        """A model call's stream, as the window shows it: the model's words as they are written, its thinking
+        summary, and one plain sentence per tool it uses. Words and thinking are relayed from the conversation's
+        own calls alone (``_talking``): the visual reviewer, recovery and a custom method also call the model, and
+        their text is not the assistant's reply to the user."""
+        kind = event.get("type")
+        if kind == "started":
+            self._emit({"type": "status", "kind": "thinking", "text": "Thinking…"})
+        elif kind == "retry":
+            # the attempt is abandoned and sent again: the page drops the words it had from it
+            self._emit({"type": "status", "kind": "retrying", "text": "Sending again…"})
+        elif kind in ("text_delta", "thinking_delta"):
+            if self._talking:
+                self._emit({"type": kind, "text": event.get("text", "")})
+        elif kind == "tool":
+            name = str(event.get("name") or "")
+            if name == "submit_editspec":
+                self._emit({"type": "status", "kind": "planning", "text": "Writing the plan…"})
+            else:
+                text = TOOL_ACTIVITY.get(name, "")
+                if text:
+                    self._emit({"type": "activity", "text": text})
 
     def template(self) -> Optional[Path]:
         return next((a.path for a in self.attachments if a.template and not a.refused), None)
@@ -144,7 +237,12 @@ class DocumentTask:
 
     def say(self, text, role="app"):
         if text:
-            self.messages.append({"role": role, "text": str(text)})
+            message = {"role": role, "text": str(text), "at": time.time()}
+            self.messages.append(message)
+            if role != "user":
+                # the id the view numbers this message by (docs/WEB_API.md: ``m<index>``), so the page can finalize
+                # the streaming bubble under it and keep its aside
+                self._emit({"type": "message", "message": {"id": f"m{len(self.messages) - 1}", **message}})
 
     def _invalidate(self):
         self.session._set_outcome()
@@ -173,6 +271,7 @@ class DocumentTask:
         if template and len(checked) != 1:
             raise ValueError("Choose one template document.")
         before = (self.documents(), self.template(), self.references())
+        fresh: List[str] = []
         if template:
             found = triage(checked[0], template=True)
             if found.refused:
@@ -185,18 +284,32 @@ class DocumentTask:
                 if path in known:
                     continue
                 self.attachments.append(triage(path) if path.suffix.lower() == ".docx" else triage_reference(path))
+                if self.working and path.suffix.lower() == ".docx":
+                    fresh.append(path.name)
         self._sync()
         if before != (self.documents(), self.template(), self.references()):
             self._invalidate()
             if self.decisions:
                 self.say("The attachments changed. I’ll check the updated documents against your request.")
+            if fresh:
+                self.say(f"{', '.join(fresh)}: attached as an original. The changes already made to the other copies "
+                         f"are not in it; the next change is made to it as it is. To give it every change, say "
+                         f"“{START_OVER}” and ask again.")
         self.save()
 
     def remove(self, path, *, template=False):
         path = Path(path)
         self.attachments = [a for a in self.attachments if not (a.path == path and a.template == template)]
+        had_copies = bool(self.working)
+        self.working.pop(str(path), None)
         self._sync()
         self._invalidate()
+        if had_copies and not self.working:
+            # the last working copy left with its original: the attached documents are originals again, and the
+            # changes the history lists are in none of them
+            self.history, self.generation, self.results = [], 0, {}
+            self.stage = "resume" if self.decisions else "empty"
+            self.say("No edited copy is attached any more, so the next change starts from your originals.")
         self.save()
 
     # ---- the request ----
@@ -208,7 +321,50 @@ class DocumentTask:
 
     def _compile(self, log):
         self.session.replay_word_sources = list(self.word_sources)
-        self.session.compile(self._request(), log)
+        self._emit({"type": "status", "kind": "reading", "text": "Reading your documents…"})
+        with self._conversation():
+            self.session.compile(self._request(), log, history=list(self.history), fresh=self._fresh_documents())
+
+    # ---- continue on the result ----
+    def _advance_generation(self) -> None:
+        """The delivered copies become the working set: the next request builds on them, the originals stay as they
+        are, and the model is told what was already done. The conversation that led here is over (its files are
+        not the next request's)."""
+        moved = False
+        for original, output in self.results.items():
+            if Path(output).is_file():
+                self.working[str(Path(original))] = str(Path(output).resolve())
+                moved = True
+        if not moved:
+            return
+        done = [c["summary"] for g in self._groups() for c in g["changes"]]
+        self.history.extend(done or self.decisions[:1])
+        self.generation += 1
+        self.decisions = []
+        self._sync()
+        self.session._set_outcome()
+        self.session.end_conversation()
+
+    def _fresh_documents(self) -> List[str]:
+        """Documents attached after the last run: originals among working copies, carrying none of the changes the
+        history lists (the model is told; the user was told when they attached them)."""
+        if not self.working:
+            return []
+        return [a.path.name for a in self.attachments
+                if not a.template and not a.reference and not a.refused and str(a.path) not in self.working]
+
+    def start_over(self) -> None:
+        """Back to the attached originals: the working copies are set aside (the files stay where they are), the
+        plan is void, and the next request starts from the originals."""
+        if not self.working and not self.history:
+            return
+        self.working, self.generation, self.history, self.decisions = {}, 0, [], []
+        self.results = {}
+        self._sync()
+        self._invalidate()
+        self.stage = "empty"
+        self.say("Starting over from the originals. Tell me what you'd like to change.")
+        self.save()
 
     def _target_question(self):
         if self.session.recovery is None:
@@ -230,18 +386,24 @@ class DocumentTask:
                                 "Reply with the number, or numbers separated by commas."}
         return None
 
-    def perform(self, action, *, text="", token="", choice_id="", log=lambda _: None):
-        """Worker entry point. One ledger covers every nested model call and every turn."""
+    def perform(self, action, *, text="", token="", choice_id="", chip=False, log=lambda _: None, events=None):
+        """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
+        live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
+        question, cost); without one the job runs silently and the view says everything at the end."""
         self.problem = ""
+        self._events = events
         self.save(in_progress=True)
 
         def checkpointed_log(message):
             self.save(in_progress=True)
+            status = STATUS_FOR_LOG.get(str(message))
+            if status:
+                self._emit({"type": "status", "kind": status[0], "text": status[1]})
             log(message)
         try:
-            with llm.budget_scope(self._budget):
+            with llm.budget_scope(self._budget), llm.stream_observer_scope(self._on_stream):
                 if action == "send":
-                    self._send(text, checkpointed_log)
+                    self._send(text, checkpointed_log, chip=chip)
                 elif action == "choose":
                     self._choose(choice_id, checkpointed_log)
                 elif action == "primary":
@@ -258,17 +420,32 @@ class DocumentTask:
         finally:
             if self._budget.exhausted_reason and self.stage not in {"done", "preview"}:
                 self.stage = "budget"
+            self._emit({"type": "cost", "cost": self._cost()})
+            self._events = None
+            self._talking = False
             self.save()
         return self.view()
+
+    def _cost(self) -> Dict[str, Any]:
+        cost = self._budget.spent_usd
+        text = ("an amount the price table cannot estimate" if cost is None else
+                "less than $0.01" if cost < 0.005 else f"about ${cost:.2f}")
+        return {"usd": cost, "text": text, "calls": self._budget.calls}
 
     def _ready_to_talk(self):
         self.session.files(outcome=False)  # reject missing attachments before consuming an answer
         if not self.session.claude_ready():
             raise ValueError("Connect your Anthropic API key in Settings to start the conversation.")
 
-    def _send(self, text, log):
+    def _send(self, text, log, chip=False):
+        """The user's message. ``chip``: the text is one of the model's suggested replies, tapped — the user's
+        decision, carried to the model as their reply, but never approved wording (the words are Claude's)."""
         text = text.strip()
         if not text:
+            return
+        if text.casefold() == START_OVER.casefold():
+            self.say(text, "user")
+            self.start_over()
             return
         self._ready_to_talk()
         question = self._target_question()
@@ -292,11 +469,13 @@ class DocumentTask:
         else:
             self.say(text, "user")
             self.decisions.append(text)
-            self.word_sources.append(text)
+            if not chip:
+                self.word_sources.append(text)
             self.save(in_progress=True)
             s = self.session
             if s.conversation is not None and s.conversation_matches(s.conversation.request):
-                s.reply(text, render=self.render, log=log)
+                with self._conversation():
+                    s.reply(text, render=self.render, log=log, approve=not chip)
             elif s.recovery is not None and any(f.status != "READY" for f in s.recovery.files):
                 s.resolve_remaining(log, request=text, options=self._recovery_options())
             else:
@@ -318,7 +497,8 @@ class DocumentTask:
         self.decisions.extend(chosen.words)
         self.word_sources.extend(chosen.words)
         self.save(in_progress=True)
-        self.session.reply(choice_id=chosen.id, render=self.render, log=log)
+        with self._conversation():
+            self.session.reply(choice_id=chosen.id, render=self.render, log=log)
 
     @staticmethod
     def _numbers(text, count):
@@ -358,10 +538,14 @@ class DocumentTask:
             if outcome.kind != "auto":
                 break
             if outcome.needs_preview:
+                self._emit({"type": "plan", "plan": self._plan_view()})    # the plan shows before any page renders
                 log("Preparing and checking the preview…")
-                s.make_preview(self.render, log)
+                s.make_preview(self.render, log,
+                               on_preview=lambda: self._emit({"type": "samples", **self._samples_view()}))
+                self._emit({"type": "samples", **self._samples_view()})     # again with Claude's visual findings
             else:
-                s.reply(choice_id=outcome.auto_choice, render=self.render, log=log)
+                with self._conversation():
+                    s.reply(choice_id=outcome.auto_choice, render=self.render, log=log)
             self._collect_conversation()
             outcome = s.outcome()
         self._revision += 1
@@ -369,12 +553,16 @@ class DocumentTask:
                       "empty": "resume" if self.decisions else "empty"}[outcome.kind]
         if self._budget.exhausted_reason and self.stage == "question":
             self.stage = "budget"
+        if self.stage == "question":
+            self._emit({"type": "question", "questions": list(outcome.questions),
+                        "choices": [{"id": c.id, "label": c.label, "words": list(c.words), "detail": c.detail}
+                                    for c in outcome.choices], "chips": list(outcome.chips)})
 
     def _recovery_options(self):
         from .recovery import RecoveryOptions
         return RecoveryOptions(max_cost_usd=None, max_calls=self._budget.max_calls, max_attempts=8,
                                max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_total_tokens=None,
-                               effort="high", render=self.render, visual_review=self.session.visual_check)
+                               effort=RECOVERY_EFFORT, render=self.render, visual_review=self.session.visual_check)
 
     def action_token(self):
         s = self.session
@@ -414,6 +602,7 @@ class DocumentTask:
         log("Creating and checking your edited copies…")
         s.run(False, self.render, log)
         self._collect_results()
+        self._emit({"type": "results", "results": self._results_view()})
         if s.last_batch is not None and any(f.status != "PASS" for f in s.last_batch.files):
             log("Checking the files that still need work…")
             conversation = s.conversation
@@ -445,7 +634,10 @@ class DocumentTask:
             return
         self.stage = "done"
         self._revision += 1
-        self.say(f"{len(self.results)} document copies are ready. You can open them below or describe another change.")
+        n = len(self.results)
+        self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. You can open them, describe another "
+                 f"change to make on top of them, or start over from the originals.")
+        self._advance_generation()
 
     def _resume(self, log):
         s = self.session
@@ -474,26 +666,30 @@ class DocumentTask:
         c = s.conversation
         if c is not None and c.resumable() and s.conversation_matches(c.request):
             # A pause, a stop or a failed call: the conversation goes on with what it had investigated.
-            s.resume_conversation(log)
+            with self._conversation():
+                s.resume_conversation(log)
         else:
             self._compile(log)
         self._settle(log)
 
     def _collect_results(self):
+        """The copies a run delivered, keyed by the ATTACHED original (a run on working copies reads the copies, but
+        the user thinks in their own files)."""
         s = self.session
         result = s.last_recovery or s.last_batch
         if result is not None:
             for item in result.files:
+                origin = str(self.origin_of(item.source))
                 if item.delivered_to:
-                    self.results[str(item.source)] = str(item.delivered_to)
+                    self.results[origin] = str(item.delivered_to)
                 elif (getattr(item, "noop", False) and item.status == "PASS" and item.output
                       and Path(item.output).is_file()):
                     # The engine verifies and saves identical copies too, but intentionally leaves delivered_to
                     # empty to distinguish them from changed documents in its reports.
-                    self.results[str(item.source)] = str(item.output)
+                    self.results[origin] = str(item.output)
         for item in s.last_trials or []:
             if item.passed and item.output:
-                self.results[str(item.source)] = str(item.output)
+                self.results[str(self.origin_of(item.source))] = str(item.output)
 
     # ---- what the window shows ----
     def _groups(self):
@@ -522,6 +718,41 @@ class DocumentTask:
         if not changes:
             return []
         return [{"id": "", "label": "", "count": count, "files": [], "changes": changes, "assumptions": assumptions}]
+
+    def _plan_view(self) -> Dict[str, Any]:
+        """The plan as the window shows it: groups of change sentences with their assumptions, the passages each
+        document contributes, the documents left untouched, and how many ordered steps the engine composed."""
+        from .editspec import is_chain
+        from .layouts import is_layout_plan
+        s = self.session
+        groups = self._groups()
+        if is_layout_plan(s.spec):
+            stages = max([len(layout["spec"].get("stages") or []) if is_chain(layout["spec"]) else 1
+                          for layout in s.spec.get("layouts") or []] or [1])
+        else:
+            stages = len(s.spec.get("stages") or []) if is_chain(s.spec) else 1
+        preview = s.outcome().preview
+        set_aside = []
+        for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
+            exc = item.exception or {}
+            set_aside.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
+        return {"groups": groups,
+                "targets": review_display.recovery_targets(s.recovery) if s.recovery else review_display.spec_bindings(s.spec),
+                "set_aside": set_aside, "stages": stages if groups else 0}
+
+    def _samples_view(self) -> Dict[str, Any]:
+        preview = self.session.outcome().preview
+        samples = list(getattr(preview, "samples", []) or [])
+        return {"samples": [{"source": str(sv.source), "name": Path(sv.source).name,
+                             "images": [str(p) for p in sv.images if Path(p).is_file()],
+                             "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed}
+                            for sv in samples],
+                "warnings": list(dict.fromkeys(getattr(preview, "warnings", []) or [])),
+                "blocking": bool(self.session.outcome().blocking)}
+
+    def _results_view(self) -> List[Dict[str, Any]]:
+        return [{"source": source, "output": output, "name": Path(output).name}
+                for source, output in self.results.items()]
 
     def view(self):
         s = self.session
@@ -564,8 +795,22 @@ class DocumentTask:
             ready = len(s.recovery.ready)
             labels["question"] = f"Save {ready} ready {'copy' if ready == 1 else 'copies'}"
         groups = self._groups() if self.stage in {"preview", "question"} else []
+        from .editspec import is_chain
+        from .layouts import is_layout_plan
+        if is_layout_plan(s.spec):
+            stages = max([len(layout["spec"].get("stages") or []) if is_chain(layout["spec"]) else 1
+                          for layout in s.spec.get("layouts") or []] or [1])
+        else:
+            stages = len(s.spec.get("stages") or []) if is_chain(s.spec) else 1
+        chips = list(outcome.chips) if not question else []
+        if (self.working or self.history) and self.stage in {"done", "empty", "resume"} and START_OVER not in chips:
+            chips.append(START_OVER)
         return {"stage": self.stage, "messages": list(self.messages),
-                "attachments": [a.to_dict() for a in self.attachments],
+                "stages": stages if groups else 0,
+                "chips": chips,
+                "working": {"generation": self.generation, "from_originals": not self.working,
+                            "can_start_over": bool(self.working or self.history)},
+                "attachments": [{**a.to_dict(), "current": str(self.current_of(a.path))} for a in self.attachments],
                 "groups": groups,
                 "effects": [c for g in groups for c in g["changes"]],
                 "assumptions": list(dict.fromkeys(a for g in groups for a in g["assumptions"])),
@@ -592,6 +837,7 @@ class DocumentTask:
             "recovery": str(self.session.recovery.out_dir) if self.session.recovery else
                         str(self.session.recovery_checkpoint) if self.session.recovery_checkpoint else self._resume_recovery,
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
+            "working": dict(self.working), "generation": self.generation, "history": list(self.history),
             "budget": self._budget.to_dict(), "in_progress": in_progress})
 
     def restore(self):
@@ -641,6 +887,23 @@ class DocumentTask:
         if not isinstance(self.word_sources, list) or not all(isinstance(x, str) for x in self.word_sources):
             raise ValueError("The saved wording approvals could not be read.")
         self.results = data.get("results", {})
+        working = data.get("working", {})
+        history = data.get("history", [])
+        if (isinstance(working, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in working.items())
+                and isinstance(history, list) and all(isinstance(h, str) for h in history)
+                and all(Path(v).is_file() for v in working.values())):
+            self.working, self.history = dict(working), list(history)
+            self.generation = int(data.get("generation", 0) or 0) if type(data.get("generation", 0)) is int else 0
+        else:
+            # a copy is gone: the originals are the set again, the vanished copies are no longer results, and the
+            # user is told before their next request builds on the wrong files
+            lost = isinstance(working, dict) and bool(working)
+            self.working, self.history, self.generation = {}, [], 0
+            self.results = {k: v for k, v in self.results.items() if Path(v).is_file()}
+            if lost:
+                self.say("The edited copies from your last run could not be found where they were saved, so the next "
+                         "change starts from your originals.")
+        self._sync()
         self._resume_recovery = data.get("recovery")
         layouts = data.get("pending_layouts", [])
         if not isinstance(layouts, list) or not all(isinstance(x, str) for x in layouts):
@@ -660,7 +923,11 @@ class DocumentTask:
         if data.get("in_progress") or cost is None:
             # The app closed while work ran: its last call may have cost more than was recorded; ask before going on.
             self._budget.exhausted_reason = "Previous work stopped before its final usage was recorded."
-        self.stage = "budget" if self._budget.exhausted_reason else "resume" if self.decisions else "empty"
+        self.stage = ("budget" if self._budget.exhausted_reason else "resume" if self.decisions else
+                      "done" if self.results and self.generation else "empty")
         if self.decisions:
             self.say("Your conversation is restored. I’ll recheck the documents before making further changes.")
+        elif self.generation:
+            self.say("Your conversation is restored. The edited copies from your last run are what the next change "
+                     "builds on; say “Start over from the originals” to go back to your files.")
         return True

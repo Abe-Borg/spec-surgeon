@@ -26,7 +26,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import diagnostics as diag
-from .editspec import SpecError, validate_spec
+from .editspec import SpecError, is_chain, validate_spec
 from .fingerprint import fingerprint
 from .package import DocxPackage
 
@@ -72,13 +72,29 @@ def validate_layout_plan(plan: Any) -> None:
         spec = layout.get("spec")
         if not isinstance(spec, dict):
             raise SpecError(f"layout {ident!r} needs a spec", "layouts")
-        validate_spec(layout_spec(plan, layout))
+        if is_chain(spec):
+            from .chain import validate_chain
+            validate_chain(layout_spec(plan, layout))
+        else:
+            validate_spec(layout_spec(plan, layout))
 
 
 def layout_spec(plan: Dict[str, Any], layout: Dict[str, Any]) -> Dict[str, Any]:
     """The layout's spec as the engine executes it: the plan's request, and ``applies_to`` pinned to the layout's
-    patterns so ``plan_spec`` refuses any file routed to it by mistake (defence in depth)."""
+    patterns so ``plan_spec`` refuses any file routed to it by mistake (defence in depth). A layout whose ops the app
+    composed into ordered steps is a chain; its first stage carries the pin (a later stage reads the step before it,
+    whose structure the first stage already checked)."""
     spec = copy.deepcopy(layout["spec"])
+    if is_chain(spec):
+        for i, st in enumerate(spec.get("stages") or []):
+            own = st.get("spec") if isinstance(st, dict) else None
+            if not isinstance(own, dict):
+                continue
+            if not own.get("request"):
+                own["request"] = plan.get("request", "")
+            if i == 0:
+                own["applies_to"] = {"pattern_ids": list(layout["pattern_ids"])}
+        return spec
     spec.setdefault("request", plan.get("request", ""))
     if not spec.get("request"):
         spec["request"] = plan.get("request", "")
@@ -96,7 +112,12 @@ def plan_from_submission(spec: Dict[str, Any], request: str) -> Dict[str, Any]:
             continue
         own = copy.deepcopy(layout)
         if isinstance(own.get("spec"), dict):
-            own["spec"]["request"] = request
+            if is_chain(own["spec"]):
+                for st in own["spec"]["stages"]:
+                    if isinstance(st, dict) and isinstance(st.get("spec"), dict):
+                        st["spec"]["request"] = request
+            else:
+                own["spec"]["request"] = request
         layouts.append(own)
     return {"kind": "layouts", "request": request, "summary": str(spec.get("summary") or ""),
             "assumptions": list(spec.get("assumptions") or []), "layouts": layouts}
@@ -174,13 +195,14 @@ def unreadable_exception(path: Path, error: str) -> Dict[str, Any]:
 def layout_inputs(plan: Dict[str, Any], files: Sequence[Path]) -> Dict[str, Any]:
     """What the user's approval binds: every layout's own approval inputs on its own files, the routing, and the
     files left out. Recomputed by ``run_layouts`` and compared with the preview's token before anything runs."""
+    from .editspec import approval_key
     from .preview import approval_inputs
     routing = route(files, plan)
     inputs = {"kind": "layouts", "layouts": {}, "unassigned": sorted(str(p) for p, _ in routing.unassigned),
               "unreadable": sorted(str(p) for p, _ in routing.unreadable), "files": {}}
     for layout in plan["layouts"]:
         spec = layout_spec(plan, layout)
-        own = approval_inputs(spec, routing.files[layout["id"]])
+        own = approval_inputs(approval_key(spec), routing.files[layout["id"]])
         inputs["layouts"][layout["id"]] = own
         inputs["files"].update(own.get("files", {}))
     return inputs
@@ -279,7 +301,7 @@ def make_layout_preview(plan: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
     binds every layout's spec, its files and the routing."""
     from .batch import expand_inputs
     from .planner import FilePlan
-    from .preview import make_preview
+    from .preview import make_chain_preview, make_preview
     validate_layout_plan(plan)
     out_dir = Path(out_dir)
     files = expand_inputs(inputs)
@@ -296,8 +318,10 @@ def make_layout_preview(plan: Dict[str, Any], inputs: Sequence[str], out_dir: Pa
                 result.warnings.append(f"No attached document has the layout “{layout.get('label') or layout['id']}”; "
                                        f"that part of the plan changes nothing.")
                 continue
-            pv = make_preview(layout_spec(plan, layout), [str(f) for f in own], out_dir / f"layout-{layout['id']}",
-                              renderer=renderer, do_render=do_render)
+            own_spec = layout_spec(plan, layout)
+            maker = make_chain_preview if is_chain(own_spec) else make_preview
+            pv = maker(own_spec, [str(f) for f in own], out_dir / f"layout-{layout['id']}",
+                       renderer=renderer, do_render=do_render)
             result.previews.append((layout, pv))
             result.samples.extend(pv.samples)
             result.warnings.extend(pv.warnings)
@@ -373,10 +397,17 @@ def run_layouts(inputs: Sequence[str], plan: Dict[str, Any], out_dir: Path, *, r
                 continue
             label = layout.get("label") or layout["id"]
             log(f"Layout {layout['id']} ({label}): {len(own)} file(s)…")
-            batch = run_batch([str(f) for f in own], "edit-spec", {}, out_dir / f"layout-{layout['id']}",
-                              renderer=renderer, do_render=do_render, in_place=False, progress=log,
-                              spec=layout_spec(plan, layout),
-                              approved_inputs=current["layouts"].get(layout["id"]), worker_mode=worker_mode)
+            own_spec = layout_spec(plan, layout)
+            if is_chain(own_spec):
+                from .chain import run_chain
+                batch = run_chain([str(f) for f in own], own_spec, out_dir / f"layout-{layout['id']}",
+                                  renderer=renderer, do_render=do_render, in_place=False, progress=log,
+                                  approved_inputs=current["layouts"].get(layout["id"]), worker_mode=worker_mode)
+            else:
+                batch = run_batch([str(f) for f in own], "edit-spec", {}, out_dir / f"layout-{layout['id']}",
+                                  renderer=renderer, do_render=do_render, in_place=False, progress=log,
+                                  spec=own_spec, approved_inputs=current["layouts"].get(layout["id"]),
+                                  worker_mode=worker_mode)
             result.batches.append((layout, batch))
             for fr in batch.files:
                 by_source[str(fr.source)] = fr

@@ -294,7 +294,7 @@ def _process_pool(workers: int) -> ProcessPoolExecutor:
     """Spawn on every platform: pools can start from the desktop's background thread.
 
     The Windows frozen launcher calls freeze_support before opening UI. Using an
-    explicit context also keeps retries from inheriting a threaded Qt/native state.
+    explicit context also keeps retries from inheriting a threaded native (window) state.
     """
     return ProcessPoolExecutor(max_workers=workers, mp_context=multiprocessing.get_context("spawn"))
 
@@ -979,6 +979,11 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
         log(msg)
     if backend and renderable:
         log(f"rendering {2 * len(renderable)} PDF(s) with {backend}")
+        # the cache beside the session folders: a source the preview rendered, or any file whose bytes were rendered
+        # before by this renderer, is served from it instead of rendered again (keyed by bytes, never by name)
+        cache = render_mod.RenderCache.for_out_dir(out_dir)
+        if cache is not None:
+            log.detail(f"render cache: {cache.root}")
         # a source whose name another source has too is rendered from a copy carrying its unique output name, so
         # two sources called Spec.docx never share one Spec.pdf (V7 would compare one of them with the other's)
         src_in: Dict[Path, Path] = {}
@@ -991,10 +996,10 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
             else:
                 src_in[fr.source] = fr.source
         rendered = render_mod.render_pdfs(list(src_in), out_dir / "render" / "source", backend, workers, log=rlog,
-                                          detail=log.detail)
+                                          detail=log.detail, cache=cache)
         src_pdfs = {src_in[k]: v for k, v in rendered.items() if k in src_in}
         out_pdfs = render_mod.render_pdfs([fr.output for fr in renderable], out_dir / "render" / "output", backend,
-                                          workers, log=rlog, detail=log.detail)
+                                          workers, log=rlog, detail=log.detail, cache=cache)
         templates = sorted({(fr.plan or {}).get("geometry_template") for fr in renderable
                             if (fr.plan or {}).get("geometry_reference") == "template" and (fr.plan or {}).get("geometry_template")})
         tpl_pdfs: Dict[str, Path] = {}
@@ -1010,7 +1015,7 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
                          f"({type(e).__name__}: {e})")
                     log.block(traceback.format_exc())
             rendered = render_mod.render_pdfs(list(hf_docs), out_dir / "render" / "template", backend, 1, log=rlog,
-                                              detail=log.detail)
+                                              detail=log.detail, cache=cache)
             tpl_pdfs = {hf_docs[k]: v for k, v in rendered.items() if k in hf_docs}
         # V7 template mode compares headers/footers-only renders of the output and the template, page for page
         out_hf: Dict[Path, Tuple[Path, int]] = {}
@@ -1027,7 +1032,7 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
                     log.block(traceback.format_exc())
             log(f"rendering {len(copies)} headers/footers-only output(s) with {backend}")
             for k, v in render_mod.render_pdfs(list(copies), hf_dir, backend, workers, log=rlog,
-                                               detail=log.detail).items():
+                                               detail=log.detail, cache=cache).items():
                 if k in copies:
                     out_hf[copies[k][0]] = (v, copies[k][1])
         removed_hf_required, removed_hf_inputs = set(), {}
@@ -1051,7 +1056,7 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
         if removed_hf_inputs:
             log(f"rendering {len(removed_hf_inputs)} independent header/footer-removal reference(s) with {backend}")
             references = render_mod.render_pdfs(list(removed_hf_inputs), out_dir / "render" / "removed-hf-reference-pdf",
-                                               backend, workers, log=rlog, detail=log.detail)
+                                               backend, workers, log=rlog, detail=log.detail, cache=cache)
             removed_hf_pdfs = {removed_hf_inputs[path]: pdf for path, pdf in references.items() if path in removed_hf_inputs}
         pages_dir = out_dir / "render" / "pages"
         for fr in renderable:

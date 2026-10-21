@@ -54,6 +54,47 @@ def available() -> bool:
     return word_registered()
 
 
+C2R_CONFIGURATION_KEYS = (r"SOFTWARE\Microsoft\Office\ClickToRun\Configuration",
+                          r"SOFTWARE\WOW6432Node\Microsoft\Office\ClickToRun\Configuration")
+WINWORD_APP_PATH_KEY = r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\Winword.exe"
+WORD_CURVER_KEY = r"Word.Application\CurVer"
+
+
+def installed_version() -> Optional[str]:
+    """The version of the Word installed on this machine, read from the registry without starting Word — the render
+    cache's renderer identity (``render.renderer_identity``), asked before any rendering so that a cache hit costs no
+    Word start. Click-to-Run installs (Microsoft 365, Office 2019+) report their build as ``VersionToReport``
+    (``16.0.17328.20068``); an MSI install gives WINWORD.EXE's own file version; failing both, the registered COM
+    server's major version (``Word.Application.16``). None when none of them can be read (no winreg, no Word)."""
+    try:
+        import winreg
+    except ImportError:
+        return None
+    for key in C2R_CONFIGURATION_KEYS:
+        try:
+            with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, key) as k:
+                value, _kind = winreg.QueryValueEx(k, "VersionToReport")
+            if value:
+                return str(value)
+        except OSError:
+            continue
+    try:
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, WINWORD_APP_PATH_KEY) as k:
+            exe = winreg.QueryValue(k, None)
+        import win32api
+        info = win32api.GetFileVersionInfo(str(exe), "\\")
+        ms, ls = info["FileVersionMS"], info["FileVersionLS"]
+        return f"{ms >> 16}.{ms & 0xFFFF}.{ls >> 16}.{ls & 0xFFFF}"
+    except Exception:  # noqa: BLE001 — no App Path, no pywin32 version info: the coarser answer below
+        pass
+    try:
+        with winreg.OpenKey(winreg.HKEY_CLASSES_ROOT, WORD_CURVER_KEY) as k:
+            value = winreg.QueryValue(k, None)
+        return str(value) or None
+    except OSError:
+        return None
+
+
 def com_error_text(e: BaseException) -> Optional[str]:
     """A COM error (``pywintypes.com_error``) as one readable line: the HRESULT in hex, its text, and the description
     Word gave (``excepinfo``) — e.g. ``COM error 0x80020009 (Exception occurred.): Microsoft Word: This file could not
@@ -175,36 +216,48 @@ class WordSession:
 
 def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[str], None]] = None,
                 detail: Optional[Callable[[str], None]] = None, timeout: Optional[float] = None) -> Dict[Path, Path]:
-    """{docx: pdf} for the files Word rendered. A file Word cannot open or export is reported on ``log`` — with the
-    COM error's code and Word's own description — and left out; the others still render.
-    Each file has a fresh spawned worker and deadline, including startup/close/quit.
-    ``detail`` gets Word's version and each file's time. Existing PDFs are never reused."""
+    """{docx: pdf} for the files Word rendered. One spawned worker starts ONE private Word instance and renders every
+    file in turn (``word_worker.run_word_batch``); a file Word cannot open or export is reported on ``log`` — with
+    the COM error's code and Word's own description — and left out, and the others still render. A file that
+    exceeds ``timeout`` (per file, enforced by the parent) ends that worker and its private Word, and the remaining
+    files go on in a fresh one. Only a Word that cannot start at all, with nothing rendered, raises — the
+    renderer-selection wrapper then reports the backend as unavailable once. ``detail`` gets Word's version and
+    each file's time. Existing PDFs are never reused."""
     from .. import diagnostics as diag
-    from .word_worker import run_word
-    import time
+    from .word_worker import run_word_batch
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
+    out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
-    result = {}
+    files = [Path(f) for f in files]
+    held: Dict[Path, str] = {}                      # an old PDF that cannot be replaced: that file's failure
     for f in files:
-        f = Path(f)
-        pdf = out_dir / (f.stem + ".pdf")
-        t = time.perf_counter()
         try:
-            pdf.unlink(missing_ok=True)
-            with diag.span("render.word_file", source=str(f), output=str(pdf)):
-                outcome = run_word("render", f, pdf=pdf, timeout=timeout)
-            detail(f"Word {outcome.get('version', '(version unavailable)')}: "
-                   f"{f.name} → {pdf.name} in {time.perf_counter() - t:.1f}s")
-        except Exception as e:  # noqa: BLE001 — isolated failure; continue with a fresh private instance
+            (out_dir / (f.stem + ".pdf")).unlink(missing_ok=True)
+        except OSError as exc:
+            held[f] = f"{type(exc).__name__}: {exc}"
+    with diag.span("render.word_batch", out_dir=str(out_dir), file_count=len(files)) as outcome:
+        batch = run_word_batch([f for f in files if f not in held], out_dir, timeout_per_file=timeout)
+        outcome.update(workers=batch.workers, version=batch.version,
+                       rendered=sum(1 for v in batch.results.values() if isinstance(v, Path)),
+                       failed=sum(1 for v in batch.results.values() if not isinstance(v, Path)))
+    if batch.start_error is not None:
+        raise batch.start_error  # backend unavailable: the renderer-selection wrapper reports it once
+    result: Dict[Path, Path] = {}
+    for f in files:
+        got = batch.results.get(f)
+        pdf = out_dir / (f.stem + ".pdf")
+        if f in held:
             diag.event("render.word_worker_failed", level="error", source=str(f), output=str(pdf),
-                       code=getattr(e, "code", "word-render"), details=getattr(e, "details", {}))
-            if getattr(e, "details", {}).get("stage") == "word_start":
-                raise  # backend unavailable: the renderer-selection wrapper reports it once
-            log(f"{f.name}: Word could not render it: {com_error_text(e) or f'{type(e).__name__}: {e}'}")
-            continue
-        if pdf.is_file():
-            result[f] = pdf
+                       code="word-publish", details={"reason": held[f]})
+            log(f"{f.name}: Word could not render it: the old {pdf.name} could not be replaced ({held[f]})")
+        elif isinstance(got, Path) and got.is_file():
+            result[f] = got
+            detail(f"Word {batch.version}: {f.name} → {got.name} in {batch.seconds.get(f, 0.0):.1f}s")
+        elif isinstance(got, Exception):
+            diag.event("render.word_worker_failed", level="error", source=str(f), output=str(pdf),
+                       code=getattr(got, "code", "word-render"), details=getattr(got, "details", {}))
+            log(f"{f.name}: Word could not render it: {com_error_text(got) or str(got)}")
         else:
             diag.event("render.file_missing", level="warning", backend="word", source=str(f), output=str(pdf))
             log(f"{f.name}: Word reported no error but wrote no PDF")

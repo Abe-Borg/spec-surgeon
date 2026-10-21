@@ -6,7 +6,7 @@
   replacing files during an in-app update, refuses to uninstall while it exists, and the window refuses to
   start an update while another instance holds it. Pool workers and the Tier B sandbox never take it.
 - **AppUserModelID**, so the taskbar groups the window under the Start-menu shortcut (which carries the same id).
-- **message_box**, for errors before Qt exists (a windowed launcher has no console to print to).
+- **message_box**, for errors before the window exists (a windowed launcher has no console to print to).
 
 ``packaging/windows/installer.iss`` repeats ``APP_MUTEX`` and ``AUMID``; ``tests/test_packaging.py`` pins them.
 """

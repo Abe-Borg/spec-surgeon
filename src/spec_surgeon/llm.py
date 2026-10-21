@@ -35,6 +35,7 @@ content).
 """
 from __future__ import annotations
 
+import contextlib
 import copy
 import json
 import math
@@ -66,6 +67,34 @@ def cancellation_scope(event):
         yield
     finally:
         _CANCEL_EVENT.reset(token)
+
+
+_STREAM_OBSERVER: ContextVar = ContextVar("spec_surgeon_stream_observer", default=None)
+_THINKING_DISPLAY = {"type": "adaptive", "display": "summarized"}   # the model's thinking summary, for the window
+_thinking_display_refused = False                                    # latched off for the process after one 400
+
+
+@contextmanager
+def stream_observer_scope(observer):
+    """Observe a call's stream as it arrives, for the window: ``observer(event)`` gets ``{"type": "started"}``,
+    ``{"type": "text_delta", "text"}``, ``{"type": "thinking_delta", "text"}`` and ``{"type": "tool", "name"}``
+    (content-free apart from the model's own words to the user). Never affects the call: an observer that raises is
+    reported once and ignored."""
+    token = _STREAM_OBSERVER.set(observer)
+    try:
+        yield
+    finally:
+        _STREAM_OBSERVER.reset(token)
+
+
+def _observe(event: Dict[str, Any]) -> None:
+    observer = _STREAM_OBSERVER.get()
+    if observer is None:
+        return
+    try:
+        observer(event)
+    except Exception as error:  # noqa: BLE001 — the window's problem, never the call's
+        diag.event("model.stream.observer_failed", level="warning", error_type=type(error).__name__)
 
 
 @contextmanager
@@ -162,6 +191,7 @@ def _finished_message(stream, seen=None, cancel=None):
                         {k: int(getattr(usage, k, 0) or 0) for k in TOKEN_KEYS if getattr(usage, k, None) is not None})
             if kind == "message_start":
                 started = True
+                _observe({"type": "started"})
             elif kind == "content_block_start":
                 index = event.index
                 opened.add(index)
@@ -171,9 +201,14 @@ def _finished_message(stream, seen=None, cancel=None):
                     tool_json.clear()
                 elif block_type(block) in ("tool_use", "server_tool_use", "mcp_tool_use"):
                     tool_json[index] = ""
+                    _observe({"type": "tool", "name": str(getattr(block, "name", "") or "")})
             elif kind == "content_block_delta" and getattr(event.delta, "type", None) == "input_json_delta":
                 if event.index in tool_json:
                     tool_json[event.index] += event.delta.partial_json
+            elif kind == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
+                _observe({"type": "text_delta", "text": str(getattr(event.delta, "text", "") or "")})
+            elif kind == "content_block_delta" and getattr(event.delta, "type", None) == "thinking_delta":
+                _observe({"type": "thinking_delta", "text": str(getattr(event.delta, "thinking", "") or "")})
             elif kind == "content_block_stop":
                 opened.discard(event.index)
             elif kind == "message_stop":
@@ -271,6 +306,7 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
                         raise
                     delay = _retry_delay(exc, attempt)
                     record.update(retrying=True, error=_record_error(exc))
+                    _observe({"type": "retry"})      # the window drops the abandoned attempt's words
                     diag.event("model.call.retry", level="warning", attempt=attempt + 1, delay_seconds=delay,
                                error=api_error_text(exc)[:300])
         if cancel is not None:
@@ -363,6 +399,30 @@ def _stop_on_cancel(stream, cancel):
         watcher.join(timeout=STOP_POLL_SECONDS * 4)
 
 
+@contextlib.contextmanager
+def _open_stream(client, kw):
+    """``with client.beta.messages.stream(**kw) as stream``; a request refused for its thinking display (a 400
+    naming ``thinking.display``) is sent again without it, once, and the display stays off for the process. The
+    SDK sends the request when the manager is ENTERED, not when it is built, so the manager is entered here, inside
+    the catch; a 400 for anything else (a thinking block the history carries, say) propagates untouched."""
+    global _thinking_display_refused
+    manager = client.beta.messages.stream(**kw)
+    try:
+        stream = manager.__enter__()
+    except Exception as e:  # noqa: BLE001 — classified below; anything else propagates untouched
+        status = getattr(e, "status_code", None)
+        if "thinking" not in kw or status != 400 or "thinking.display" not in str(e).lower():
+            raise
+        _thinking_display_refused = True
+        diag.event("model.thinking_display.refused", level="warning", error=str(e)[:300])
+        manager = client.beta.messages.stream(**{k: v for k, v in kw.items() if k != "thinking"})
+        stream = manager.__enter__()
+    try:
+        yield stream
+    finally:
+        manager.__exit__(None, None, None)
+
+
 def _budget_records() -> List[Dict[str, Any]]:
     """A budget snapshot is evidence only; malformed provider usage cannot break a call while logging it."""
     try:
@@ -420,6 +480,8 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
     kw = dict(model=model, max_tokens=max_tokens, system=system, tools=tools, messages=messages,
               output_config={"effort": effort}, cache_control={"type": "ephemeral"},
               betas=[FALLBACK_BETA], fallbacks="default")
+    if not _thinking_display_refused and _STREAM_OBSERVER.get() is not None:
+        kw["thinking"] = dict(_THINKING_DISPLAY)   # the summary the window shows; refused once → never sent again
     record.update(model=model, max_output_tokens=max_tokens, effort=effort, phase="stream.open")
     diag.event("model.request.prepared", model=model, max_output_tokens=max_tokens, effort=effort,
                message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets),
@@ -429,7 +491,7 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
     seen: Dict[str, Any] = {}
     started = time.monotonic()
     try:
-        with client.beta.messages.stream(**kw) as stream:
+        with _open_stream(client, kw) as stream:
             record["phase"] = "stream.receive"
             diag.event("model.stream.opened")
             with _stop_on_cancel(stream, cancel):

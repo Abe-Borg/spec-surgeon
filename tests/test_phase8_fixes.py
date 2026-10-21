@@ -274,9 +274,9 @@ def test_a_malformed_spec_goes_back_to_claude_as_rejected_and_the_conversation_p
 
 
 def test_a_check_that_raises_is_answered_as_rejected(folder, monkeypatch):
-    def boom(spec, batch, sources):
+    def boom(spec, batch, sources, patterns=None):
         raise TypeError("unhashable type: 'dict'")
-    monkeypatch.setattr(compiler_module, "check_submission", boom)
+    monkeypatch.setattr(compiler_module, "compose_submission", boom)
     fake = FakeClient(submit(REMOVE, "s1"), ask("a2", questions=["Which sections?"]),
                       ask("a3", questions=["And the cover?"]))
     c = conv(folder, fake)
@@ -1376,26 +1376,23 @@ def test_no_test_reads_or_writes_the_key_saved_on_this_computer(machine_with_a_s
 
 
 def test_a_window_never_loads_or_overwrites_the_saved_key(machine_with_a_saved_key, monkeypatch, tmp_path):
-    from qt_support import close_windows, qt_app_or_skip
-    app = qt_app_or_skip()
-    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
-    from spec_surgeon.gui import build_window
+    """The window's server never reads the key saved on this computer in a test, and Settings → remember cannot
+    reach the store either (conftest's cut makes ``credentials.available()`` False)."""
+    from fastapi.testclient import TestClient
+    from spec_surgeon.document_task import DocumentTask
     from spec_surgeon.settings import Settings
-    from spec_surgeon.ui.app import RecordingPrompts
-    from spec_surgeon.ui.conversation_window import ConnectionDialog
+    from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    monkeypatch.delenv(credentials.ENV, raising=False)
     fake = machine_with_a_saved_key
-    w = build_window(Session(out_root=tmp_path / "out"), settings=Settings(), prompts=RecordingPrompts())
-    try:
-        assert w.key_origin == "none" and credentials.ENV not in os.environ     # the window's init found nothing
-        dlg = ConnectionDialog(w)
-        assert not dlg.remember.isEnabled() and not dlg.remember.isChecked()
-        dlg.key.setText("sk-ant-test-not-a-real-key")
-        dlg.remember.setChecked(True)                    # even ticked by code, apply() cannot reach the store
-        dlg.apply()
-        assert w.key_origin == "session" and os.environ[credentials.ENV] == "sk-ant-test-not-a-real-key"
-        assert fake.calls == [] and fake.store == {credentials.TARGET: REAL_KEY}
-    finally:
-        close_windows(app, [w])
+    state = WindowState(DocumentTask(Session(out_root=tmp_path / "out"), render=False), Settings(), token="t")
+    assert state.key_origin == "none" and credentials.ENV not in os.environ     # the window's init found nothing
+    client = TestClient(create_app(state), headers={TOKEN_HEADER: "t"})
+    assert client.get("/api/settings").json()["can_remember"] is False
+    answer = client.post("/api/settings", json={"api_key": "sk-ant-test-not-a-real-key", "remember": True}).json()
+    assert answer["origin"] == "session" and state.key_origin == "session"   # ticked, yet the store is out of reach
+    assert os.environ[credentials.ENV] == "sk-ant-test-not-a-real-key"
+    assert fake.calls == [] and fake.store == {credentials.TARGET: REAL_KEY}
 
 
 def test_credentials_py_is_the_only_way_to_credential_manager():

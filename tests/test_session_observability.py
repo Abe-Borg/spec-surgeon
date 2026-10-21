@@ -5,7 +5,6 @@ import json
 import os
 import threading
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -182,31 +181,33 @@ def test_diagnose_keeps_unfinished_run_with_its_own_log(tmp_path, capsys):
     assert "Fixture run stopped here" in capsys.readouterr().out
 
 
-def test_ui_worker_preserves_action_context_and_failure_before_signal(tmp_path):
-    from qt_support import qt_app_or_skip
-    qt_app_or_skip()
-    from spec_surgeon.ui.worker import start_job
+def test_the_window_job_preserves_action_context_and_failure_before_the_page_hears(tmp_path):
+    """The server's job thread carries the request's session and span (``copy_context``) and journals a failure
+    under them, with the queue wait, before the page is told."""
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.settings import Settings
+    from spec_surgeon.web.server import WindowState
     journal = tmp_path / "events.jsonl"
-    delivered = []
-    bridge = SimpleNamespace(log=SimpleNamespace(emit=lambda _: None),
-                             done=SimpleNamespace(emit=lambda result: delivered.append(result)),
-                             failed=SimpleNamespace(emit=lambda message, tb: delivered.append((message, tb))))
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False)
 
-    def job(log):
+    def perform(action, log, events, **values):
         diag.event("fixture.worker.checkpoint")
         raise RuntimeError("fixture background defect")
-
+    task.perform = perform
+    state = WindowState(task, Settings(out_root=str(tmp_path / "out")), token="t")
     with diag.scope(journal, session_id="fixture-session", action_id="fixture-action"):
         with diag.span("fixture.dispatch"):
-            worker = start_job(bridge, job)
-        worker.join(timeout=10)
-    assert not worker.is_alive()
+            queue = state.start_job("send", text="anything")
+        delivered = queue.get(timeout=30)
+        state.thread.join(timeout=10)
+    assert not state.thread.is_alive()
+    assert delivered["type"] == "error" and "could not finish" in delivered["message"]
     records = events(journal)
     queued = next(r for r in records if r["event"] == "fixture.dispatch.started")
     checkpoint = next(r for r in records if r["event"] == "fixture.worker.checkpoint")
-    failed = next(r for r in records if r["event"] == "ui.worker.failed")
-    assert failed["parent_span_id"] == queued["span_id"]
+    failed = next(r for r in records if r["event"] == "web.job.failed")
+    assert failed["parent_span_id"] == queued["span_id"] and failed["action"] == "send"
     assert checkpoint["session_id"] == "fixture-session" and checkpoint["action_id"] == "fixture-action"
     assert checkpoint["thread_id"] != threading.get_ident()
     assert failed["queue_ms"] >= 0 and failed["duration_ms"] >= 0
-    assert delivered and "fixture background defect" in delivered[0][0]
+    assert "fixture background defect" in failed["error"]

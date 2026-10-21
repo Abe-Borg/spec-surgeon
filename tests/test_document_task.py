@@ -173,12 +173,12 @@ def test_journal_restores_work_without_restoring_approval_or_resetting_spend(tmp
     task.save()
     restored = task_for(tmp_path, journal=journal)
     assert restored.restore()
-    assert restored.stage == "resume"
-    assert restored.decisions == [REQUEST]
+    assert restored.stage == "done"                   # the run finished: the copies are the working set now
+    assert restored.decisions == [] and restored.generation == 1 and len(restored.history) == 1
     assert restored.session.preview is None
     assert restored._budget.calls == task._budget.calls
     assert restored._budget.estimated_cost_usd == task._budget.estimated_cost_usd
-    assert "outcome_approval" not in json.loads(journal.read_text())
+    assert "outcome_approval" not in json.loads(journal.read_text(encoding="utf-8"))
 
 
 def test_interrupted_call_pauses_before_new_spending(tmp_path):
@@ -199,13 +199,15 @@ def test_interrupted_call_pauses_before_new_spending(tmp_path):
     assert restored.stage == "preview"
 
 
-def test_every_desktop_call_gets_the_models_full_output_at_high_effort_with_no_spending_ceiling(tmp_path):
+def test_every_desktop_call_gets_the_models_full_output_at_medium_effort_with_no_spending_ceiling(tmp_path):
+    """The conversation runs at the model's own default effort (fewer tool rounds per turn); recovery, the hard path,
+    keeps high."""
     journal = tmp_path / "conversation.json"
     task = task_for(tmp_path, journal=journal)
     task.attach([document(tmp_path / "Spec.docx")])
     task.perform("send", text=REQUEST)
     request = task.session.client.requests[0]
-    assert request["max_tokens"] == 128000 and request["output_config"] == {"effort": "high"}
+    assert request["max_tokens"] == 128000 and request["output_config"] == {"effort": "medium"}
     assert (task._budget.max_cost_usd, task._budget.max_total_tokens, task._budget.max_calls) == (None, None, 48)
     options = task._recovery_options()
     options.validate()
@@ -214,7 +216,7 @@ def test_every_desktop_call_gets_the_models_full_output_at_high_effort_with_no_s
     task.save()
     restored = task_for(tmp_path, journal=journal)
     assert restored.restore()
-    assert (restored._budget.max_output_tokens, restored._budget.effort) == (128000, "high")
+    assert (restored._budget.max_output_tokens, restored._budget.effort) == (128000, "medium")
     assert (restored._budget.max_cost_usd, restored._budget.max_total_tokens) == (None, None)
 
 
@@ -224,7 +226,7 @@ def test_a_journal_from_the_allowance_version_keeps_its_spending_but_not_its_cei
     task.attach([document(tmp_path / "Spec.docx")])
     task.decisions = [REQUEST]
     task.save()
-    data = json.loads(journal.read_text())
+    data = json.loads(journal.read_text(encoding="utf-8"))
     data["budget"].update(max_cost_usd=10.0, max_total_tokens=1_000_000, calls=30, estimated_cost_usd=10.2,
                           exhausted_reason="estimated recovery spending ceiling reached ($10.2000 accounted, "
                                            "$10.0000 ceiling); provider billing may differ")
@@ -255,9 +257,9 @@ def test_simple_prompt_keeps_drafting_behind_exact_wording_approval(tmp_path):
     task.attach([document(tmp_path / "Spec.docx")])
     task.perform("send", text=REQUEST)
     prompt = task.session.client.requests[0]["system"]
-    assert "Do not apply that draft until the" in prompt
-    assert "user chooses it" in prompt
+    assert "it is applied only if the user picks it" in prompt
     assert "Never invent project facts" in prompt
+    assert "never both" in prompt and "At most three questions per turn" in prompt
 
 
 def test_proposed_rewrite_requires_wording_choice_then_preview_approval(tmp_path):
