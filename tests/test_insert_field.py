@@ -457,6 +457,22 @@ def test_unlinking_fields_beside_an_inserted_one_conflicts(src):
           ("unlink_fields", {"scope": ["headers"]}, {"types": "all"}))
 
 
+def test_a_field_in_the_cover_footer_conflicts_with_unnumbering_the_cover():
+    """fix_page_numbering chooses the cover footer's PAGE paragraph among its fields: another op inserting a field
+    there is a plan-time conflict (the declared read), whichever paragraph of the footer it lands in."""
+    from make_fixtures import build
+    cover = build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")
+    pkg = DocxPackage(cover)
+    unnumber = get_op("fix_page_numbering").plan(pkg, {}, {"option": "cover-unnumbered"})
+    footer = unnumber.transform_data["footer"]
+    assert (footer, "fields", "verify") in unnumber.touches
+    page = get_op("insert_field").plan(pkg, {"scope": ["footers"], "paragraphs": {"text_regex": "^21 13 13"}},
+                                       {"field": "NUMPAGES", "position": "end"})
+    with pytest.raises(JobException) as e:
+        merge_fragments([unnumber, page])
+    assert e.value.code == "conflict"
+
+
 def test_two_fields_in_one_paragraph_conflict_and_compose_in_order(src):
     footer = {"scope": ["footers"]}
     with pytest.raises(JobException) as e:
