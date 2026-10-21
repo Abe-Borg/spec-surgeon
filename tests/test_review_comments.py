@@ -380,8 +380,12 @@ def test_shipped_example_and_compiler_require_traceable_literal_wording():
     recipe = load_spec(Path(__file__).resolve().parents[1] / "examples/specs/add-review-comments.json")
     assert "add_review_comments" in REQUEST_ONLY_OPS
     assert op_catalog(examples=False)["ops"]["add_review_comments"]["mode"] == "untracked"
-    assert placed_words(recipe) == [REASON, "Source: approved coordination memo, item 3."]
+    assert placed_words(recipe) == [REASON, "Source: approved coordination memo, item 3.", "Abraham Borg", "AB"]
     assert untraceable(recipe, [recipe["request"]]) == []
     assert untraceable(recipe, ["Add some useful comments"]) == placed_words(recipe)
+    # the reviewer Word shows is the user's too: a name the user never gave is refused like invented wording
+    reviewer = copy.deepcopy(recipe)
+    reviewer["ops"][0]["params"].update(author="Spec Reviewer", initials="SR")
+    assert untraceable(reviewer, [recipe["request"]]) == ["Spec Reviewer", "SR"]
     _, _, result = run(build_plain("A. Provide listed sprinklers."), recipe)
     assert result.passed, failures(result)
