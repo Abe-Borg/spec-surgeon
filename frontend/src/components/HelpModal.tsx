@@ -150,7 +150,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
           },
           {
             t: "Check the list of files",
-            d: "Each file is checked the moment it arrives — in milliseconds, with no AI call — and listed by its name. What the check finds goes to the plan, not the list; a refused file stays greyed out with the reason and never enters a plan. The guide below says what to do about one.",
+            d: "Each file is checked the moment it arrives — in milliseconds, with no AI call — and listed by its name. A refused file stays greyed out with the reason and never enters a plan; the guide below says what to do about one.",
           },
           {
             t: "Add a template, a picture or a table, if the change needs one",
@@ -202,7 +202,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
       />
       <Guide
         title="When a file arrives"
-        tagline="Listed by its name. What the check finds in a file goes to the plan; only a refusal is shown."
+        tagline="Each file is listed by its name; only a refusal says more."
       >
         <p className="mt-3 text-xs leading-relaxed text-ink-dim">
           Tidying a file — typed numbers into automatic numbering, clearing direct formatting or spacing, settling

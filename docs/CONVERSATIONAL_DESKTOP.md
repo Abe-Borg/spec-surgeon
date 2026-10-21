@@ -74,8 +74,8 @@ refused is not attached either.
 
 The planner receives the same facts for each structural layout in the batch (styles, numbering, spacing,
 fragmentation, and how that layout marks its section title, PART headings and article titles), so it plans with
-them instead of discovering them. These facts describe the file, not the edit: a file with any of them is
-edited like any other, and a file with none can still be set aside at plan time.
+them instead of discovering them. The check's findings describe the file, not the edit: a file with any of them
+is edited like any other, and a file with none can still be set aside at plan time.
 
 Adding or removing a document after a plan exists voids that plan. The conversation says so, and the button
 reads **Continue** until the documents have been checked against your request again.

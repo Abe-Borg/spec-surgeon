@@ -94,7 +94,7 @@ function AttachmentCard({
  * The attachments: a collapsible section — its title line counts the
  * documents and, folded, sums them up in one line; open, each one is a card
  * with its name, a kind tag, a to-do or working-on tag and a way to remove it
- * (a refused one says why; triage's notes go to the planner, not the card),
+ * (a refused one says why; triage's notes are not shown),
  * with three ways to add more. It folds by itself once a
  * plan or copies exist and opens on a click. Dropping a file anywhere in the
  * window works too (App owns the drop ring).
