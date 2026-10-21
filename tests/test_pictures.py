@@ -20,10 +20,10 @@ from typing import Any, Dict, List, Tuple
 import pytest
 from lxml import etree
 
-from fx_pictures import (A, BLUE, GREEN, PIC, R, RED, SVG, W, WP, alternate, bmp, build_pictures, cropped, docpr,
-                         drawing_named, format_change, gif, in_field, in_hyperlink, in_insertion, in_textbox, jpeg,
-                         mutate, no_page_size, paragraph_with, png, rels_of, relative, svg_blip, text_of, turned,
-                         turned_jpeg, vml, watermark)
+from fx_pictures import (A, BLUE, GREEN, PIC, R, RED, SVG, W, WP, alternate, bmp, build_pictures, cell_setup, cropped,
+                         docpr, drawing_named, format_change, gif, in_field, in_hyperlink, in_insertion, in_textbox,
+                         jpeg, line_spacing, mutate, no_page_size, paragraph_with, png, rels_of, relative,
+                         section_attrs, svg_blip, text_of, turned, turned_jpeg, vml, watermark)
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, op_catalog, op_sheet
 from spec_surgeon.editspec import apply_spec, plan_spec, spec_input_files, split_into_stages, stage_cuts
 from spec_surgeon.ops import JobException, get_op, merge_fragments
@@ -43,6 +43,7 @@ CT = "[Content_Types].xml"
 EMU = 914400
 TEXT_WIDTH_0 = int(6.5 * EMU)                    # section 1: 8.5 in − 1 in − 1 in
 TEXT_WIDTH_1 = int(3.5 * EMU)                    # section 2: 8.5 in − 2.5 in − 2.5 in
+TEXT_HEIGHT = 9 * EMU                            # both sections: 11 in − 1 in − 1 in
 SITE = {"paragraphs": {"text_regex": r"^A\.\tSee the site plan"}}
 MATERIALS = {"paragraphs": {"text_regex": r"^2\.01"}}
 
@@ -222,14 +223,18 @@ def test_the_two_size_rules_agree():
         ex, ey = Fraction(rnd.choice([9525, 3048, 36000000]), rnd.choice([1, 7, 3937])), Fraction(9525)
         pic = op_images.Picture("png", pw, ph, ex, ey)
         width, height = rnd.choice(sizes), rnd.choice(sizes)
-        limit = rnd.choice([TEXT_WIDTH_0, TEXT_WIDTH_1, 1])
+        area = (rnd.choice([TEXT_WIDTH_0, TEXT_WIDTH_1, 1]), rnd.choice([TEXT_HEIGHT, 2 * EMU, 1]))
         try:
-            a = op_images.placed_size(pic, width, height, limit)
+            a = op_images.placed_size(pic, width, height, area)
         except JobException:
             a = "refused"
-        b = v_pictures._v_placed(pw, ph, ex, ey, width, height, limit)
-        assert a == (b if v_pictures._v_fits(b) else "refused"), (pw, ph, ex, width, height, limit, a, b)
-        box = (rnd.randint(1, 10 ** 7), rnd.randint(1, 10 ** 7))
+        b = v_pictures._v_placed(pw, ph, ex, ey, width, height, area)
+        assert a == (b if v_pictures._v_fits(b) else "refused"), (pw, ph, ex, width, height, area, a, b)
+        if width is None and height is None and a != "refused":     # inside the area: its own size, or touching a side
+            assert a[0] <= area[0] and a[1] <= area[1], (pw, ph, ex, area, a)
+            natural = (op_images.half_up(pw * ex), op_images.half_up(ph * ey))
+            assert a == natural or a[0] == area[0] or a[1] == area[1], (pw, ph, ex, area, a)
+        box =(rnd.randint(1, 10 ** 7), rnd.randint(1, 10 ** 7))
         scale = rnd.choice([None, 50, 33.3, 0.001, 250])
         args = {"scale": scale} if scale else {"width": width, "height": height}
         if not scale and width is None and height is None:
@@ -376,7 +381,169 @@ def test_a_file_without_an_anchor_is_set_aside_unless_allowed(src, pics):
     assert rec.passed and out == src and plan.members_added == []
 
 
-# ---- remove_images end to end ---------------------------------------------------------------------------------------
+# ---- insert_image: the text area across and down, a table cell's width, the line spacing ---------------------------
+
+STYLES = "word/styles.xml"
+VALVE = {"paragraphs": {"text_regex": "^Valve room$"}}
+CELL_WIDTH = (4680 - 2 * 108) * 635              # the valve room's cell: 3.25 in less Word's 108-twip margins = 3.1 in
+
+
+@pytest.fixture()
+def tall(tmp_path) -> str:
+    path = tmp_path / "tall.png"
+    path.write_bytes(png(600, 1600))             # 6.25 × 16.67 in at 96 dpi: fits across, not down
+    return str(path)
+
+
+def _sized(cx: int, cy: int):
+    """A wrong output: the new picture's two sizes set to cx × cy."""
+    def fn(root):
+        d = _new_drawing(root)
+        for e in (d.find(f"{WP}inline/{WP}extent"), next(d.iter(A + "ext"))):
+            e.set("cx", str(cx))
+            e.set("cy", str(cy))
+    return fn
+
+
+def test_a_tall_picture_shrinks_to_the_text_height(src, tall):
+    plan, out, rec = one(src, "insert_image", SITE, {"image": tall})
+    assert rec.passed, explain(rec)
+    assert extent(new_pictures(out)[0]) == ((3086100, TEXT_HEIGHT),) * 2    # 9 in high: 3.375 in wide
+    # the size the width alone gave (6.25 × 16.67 in, taller than the page's text) is caught
+    caught(src, plan, out, MAIN, _sized(600 * 9525, 1600 * 9525), "not the expected picture paragraph")
+    # a header: the shortest text height of every section (section 2 here: 11 in − 3 in − 1 in), the narrowest width
+    short = mutate(src, MAIN, section_attrs(1, "pgMar", top="4320"))
+    plan, out, rec = one(short, "insert_image", {"scope": ["headers"], "paragraphs": {"text_regex": "^ACME"}},
+                         {"image": tall})
+    assert rec.passed, explain(rec)
+    assert extent(new_pictures(out, HEADER)[0])[0] == (2400300, 7 * EMU)
+    # a negative top margin counts its size; a section without its height cannot fit a picture at its own size
+    _, out, rec = one(mutate(src, MAIN, section_attrs(0, "pgMar", top="-2880")), "insert_image", SITE, {"image": tall})
+    assert rec.passed and extent(new_pictures(out)[0])[0] == (2743200, 8 * EMU)
+    with pytest.raises(JobException) as e:
+        one(mutate(src, MAIN, section_attrs(0, "pgSz", h=None)), "insert_image", SITE, {"image": tall})
+    assert e.value.code == "image-size"
+
+
+def test_a_picture_in_a_fixed_width_cell_fits_the_cell(src, pics):
+    plan, out, rec = one(src, "insert_image", VALVE, {"image": pics["wide.png"], "tracked": False})
+    assert rec.passed, explain(rec)
+    assert extent(new_pictures(out)[0])[0] == (CELL_WIDTH, CELL_WIDTH // 2)
+    assert not any("table cell" in f for f in plan.flags)
+    caught(src, plan, out, MAIN, _sized(TEXT_WIDTH_0, TEXT_WIDTH_0 // 2), "not the expected picture paragraph")
+    # each margin the cell's own, else the table's, else 108 twips: start 0 (the cell), right 360 (the table), nil
+    for tcpr, cell_mar, room in (
+            ('<w:tcW w:w="4680" w:type="dxa"/><w:tcMar><w:start w:w="0" w:type="dxa"/></w:tcMar>',
+             '<w:right w:w="360" w:type="dxa"/>', 4680 - 0 - 360),
+            ('<w:tcW w:w="4680" w:type="dxa"/>', '<w:left w:w="0" w:type="nil"/><w:right w:w="0" w:type="dxa"/>', 4680),
+            ('<w:tcW w:w="2000" w:type="dxa"/><w:tcMar><w:left w:w="500" w:type="dxa"/></w:tcMar>', None,
+             2000 - 500 - 108)):
+        data = mutate(src, MAIN, cell_setup("Valve room", tcpr=tcpr, cell_mar=cell_mar))
+        _, out, rec = one(data, "insert_image", VALVE, {"image": pics["wide.png"]})
+        assert rec.passed, explain(rec)
+        assert extent(new_pictures(out)[0])[0] == (room * 635, room * 635 // 2), (tcpr, cell_mar)
+
+
+@pytest.mark.parametrize("tcpr,cell_mar", [
+    ('<w:tcW w:w="2500" w:type="pct"/>', None), ('<w:tcW w:w="0" w:type="auto"/>', None), ("", None),
+    ('<w:tcW w:w="4680"/>', None),                                         # no type: not taken for twips
+    ('<w:tcW w:w="4680" w:type="dxa"/>', '<w:left w:w="5%" w:type="pct"/>'),  # a margin that cannot be read
+    ('<w:tcW w:w="200" w:type="dxa"/>', None)])                            # nothing left inside the margins
+def test_a_cell_without_a_fixed_width_is_flagged_and_fitted_to_the_page(src, pics, tcpr, cell_mar):
+    data = mutate(src, MAIN, cell_setup("Valve room", tcpr=tcpr, cell_mar=cell_mar))
+    plan, out, rec = one(data, "insert_image", VALVE, {"image": pics["wide.png"]})
+    assert rec.passed, explain(rec)
+    assert extent(new_pictures(out)[0])[0] == (TEXT_WIDTH_0, TEXT_WIDTH_0 // 2)
+    assert any("table cell whose width is not set in fixed units" in f for f in plan.flags)
+
+
+def test_a_size_given_is_kept_and_flagged_when_larger_than_its_room(src, pics):
+    for select, width in ((MATERIALS, 5), (VALVE, 3.2)):           # 3.5 in between the margins; the 3.1 in cell
+        plan, out, rec = one(src, "insert_image", select, {"image": pics["wide.png"], "width": width})
+        assert rec.passed, explain(rec)
+        assert extent(new_pictures(out)[0])[0][0] == int(width * EMU)
+        assert any("larger than the text area" in f and "kept as asked" in f for f in plan.flags)
+    plan, _, rec = one(src, "insert_image", SITE, {"image": pics["wide.png"], "height": 4})       # 8 × 4 in: too wide
+    assert rec.passed and any("larger than the text area" in f for f in plan.flags)
+    for size in ({"width": 2}, {"height": 3}, {"width": 6.5, "height": 9}):                   # inside 6.5 × 9 in
+        plan, _, rec = one(src, "insert_image", SITE, {"image": pics["wide.png"], **size})
+        assert rec.passed and not any("larger than" in f for f in plan.flags), size
+
+
+def test_exact_line_spacing_gives_the_picture_paragraph_single_spacing(src, pics):
+    exact = mutate(src, STYLES, line_spacing("Normal", "exact"))
+    for tracked in (True, False):
+        plan, out, rec = one(exact, "insert_image", SITE, {"image": pics["photo.jpg"], "tracked": tracked})
+        assert rec.passed, explain(rec)
+        ppr = paragraph_of(new_pictures(out)[0]).find(W + "pPr")
+        assert dict(ppr.find(W + "spacing").attrib) == {W + "line": "240", W + "lineRule": "auto"}
+        assert [etree.QName(c).localname for c in ppr] == (["spacing", "rPr"] if tracked else ["spacing"])
+        assert any("exact line spacing, which would crop the picture" in f for f in plan.flags)
+        assert plan.property_assertions[0]["expected"][MAIN][0]["single"] is True
+    plan, out, rec = one(exact, "insert_image", SITE, {"image": pics["photo.jpg"], "style": "Figure", "align": "right"})
+    assert rec.passed, explain(rec)                             # Figure inherits Normal's; schema order kept
+    ppr = paragraph_of(new_pictures(out)[0]).find(W + "pPr")
+    assert [etree.QName(c).localname for c in ppr] == ["pStyle", "spacing", "jc", "rPr"]
+
+    def unspaced(root):
+        p = paragraph_of(_new_drawing(root))
+        p.find(W + "pPr").remove(p.find(f"{W}pPr/{W}spacing"))
+    caught(exact, plan, out, MAIN, unspaced, "not the expected picture paragraph")
+
+
+@pytest.mark.parametrize("styles,select,grid,style,single", [
+    ([line_spacing("Normal", "atLeast")], SITE, False, None, False),
+    ([line_spacing("Normal", "exact"), line_spacing("Figure", "auto")], SITE, False, "Figure", False),   # the nearer
+    ([line_spacing(None, "exact")], SITE, False, None, True),                                # the document defaults
+    ([line_spacing("TableGrid", "exact")], VALVE, True, None, True),                         # the table's style
+    ([line_spacing("TableGrid", "exact")], SITE, True, None, False),                         # … not outside the table
+    ([line_spacing("TableGrid", "exact"), line_spacing("Normal", "auto")], VALVE, True, None, False),  # Normal wins
+    ([line_spacing("TableNormal", "exact")], VALVE, False, None, False),        # Word ignores Normal Table's definition
+])
+def test_the_line_spacing_the_new_paragraph_would_get(src, pics, styles, select, grid, style, single):
+    data = mutate(src, MAIN, cell_setup("Valve room", style="TableGrid")) if grid else src
+    for fn in styles:
+        data = mutate(data, STYLES, fn)
+    params = {"image": pics["small.png"], **({"style": style} if style else {})}
+    plan, out, rec = one(data, "insert_image", select, params)
+    assert rec.passed, explain(rec)
+    assert (paragraph_of(new_pictures(out)[0]).find(f"{W}pPr/{W}spacing") is not None) is single
+    assert any("exact line spacing" in f for f in plan.flags) is single
+
+
+def test_the_two_sides_read_the_text_area_the_cells_and_the_line_spacing_alike(src):
+    from spec_surgeon.ops.effective import Resolver
+    from spec_surgeon.ops.selectors import StyleSheet
+    from spec_surgeon.verify.props import Styles, sect_prs
+    from spec_surgeon.verify.reader import VPackage
+    variants = [src]
+    for tcpr, cell_mar in (
+            (None, None), ('<w:tcW w:w="4680" w:type="dxa"/><w:tcMar><w:end w:w="72" w:type="dxa"/></w:tcMar>', None),
+            ('<w:tcW w:w="4680" w:type="dxa"/><w:tcMar><w:left w:w="0" w:type="nil"/></w:tcMar>',
+             '<w:start w:w="300" w:type="dxa"/><w:right w:w="1.5in" w:type="dxa"/>'),
+            ('<w:tcW w:w="4680" w:type="dxa"/>', '<w:left w:w="90"/>'), ('<w:tcW w:w="3000" w:type="pct"/>', None),
+            ('<w:tcW w:w="216" w:type="dxa"/>', None), ('<w:tcW w:w="217" w:type="dxa"/>', None), ("", None)):
+        variants.append(mutate(src, MAIN, cell_setup("Valve room", tcpr=tcpr, cell_mar=cell_mar, style="TableGrid")))
+    for fn in (line_spacing("Normal", "exact"), line_spacing(None, "exact"), line_spacing("TableGrid", "exact"),
+               line_spacing("Figure", "atLeast"), line_spacing("TableNormal", "exact")):
+        variants.append(mutate(variants[1], STYLES, fn))
+    for attrs in ({"top": "-1440"}, {"bottom": None}, {"top": "x"}, {"top": "8000", "bottom": "8000"}):
+        variants.append(mutate(src, MAIN, section_attrs(0, "pgMar", **attrs)))
+    variants.append(mutate(src, MAIN, section_attrs(1, "pgSz", h=None)))
+    for data in variants:
+        pkg, vpkg = DocxPackage(data), VPackage(data)
+        res, styles = Resolver(StyleSheet(pkg), {}), Styles(vpkg.xml(STYLES))
+        for part in (MAIN, HEADER):
+            for p, vp in zip(pkg.xml(part).iter(W + "p"), vpkg.xml(part).iter(W + "p")):
+                for style in (None, "Figure"):
+                    assert ins_module.line_rule(res, p, style)[0] == v_pictures._v_line_rule(styles, vp, style)
+                tc = next(p.iterancestors(W + "tc"), None)
+                assert (tc is not None, ins_module.cell_width(tc) if tc is not None else None) == v_pictures._v_cell(vp)
+        secs, vsecs = DocxPackage.sect_prs(pkg.xml(MAIN)), sect_prs(vpkg.xml(MAIN))
+        assert [ins_module.text_height(s) for s in secs] == [v_pictures._v_text_height(s) for s in vsecs]
+    cells = [v_pictures._v_cell(paragraph_with(VPackage(d).xml(MAIN), "Valve room")) for d in variants[1:9]]
+    assert cells == [(True, CELL_WIDTH), (True, (4680 - 108 - 72) * 635), (True, None), (True, None), (True, None),
+                     (True, None), (True, 635), (True, None)]
 
 def _media(data: bytes) -> Dict[str, str]:
     z = zipfile.ZipFile(io.BytesIO(data))
@@ -738,6 +905,54 @@ def test_a_shared_text_width_that_forgets_the_margins_is_caught(src, pics, monke
     assert "V10" in failed(rec)
 
 
+def test_a_shared_size_rule_that_fits_only_the_width_is_caught(src, tall, monkeypatch):
+    real = ins_module.placed_size
+    monkeypatch.setattr(ins_module, "placed_size", lambda pic, width, height, area: real(
+        pic, width, height, (area[0], op_images.MAX_EMU) if area else None))
+    _, out, rec = one(src, "insert_image", SITE, {"image": tall})
+    assert extent(new_pictures(out)[0])[0] == (600 * 9525, 1600 * 9525)          # 16.67 in high: off the page
+    assert "V10" in failed(rec) and "the plan inserts" in v10(rec)
+
+
+def test_a_shared_text_height_that_forgets_the_margins_is_caught(src, tall, monkeypatch):
+    monkeypatch.setattr(ins_module, "text_height", lambda sp: int(sp.find(W + "pgSz").get(W + "h")) * 635)
+    _, out, rec = one(src, "insert_image", SITE, {"image": tall})
+    assert extent(new_pictures(out)[0])[0][1] == 11 * EMU
+    assert "V10" in failed(rec) and "the plan inserts" in v10(rec)
+
+
+def test_a_shared_cell_rule_that_ignores_the_cell_or_its_margins_is_caught(src, pics, monkeypatch):
+    monkeypatch.setattr(ins_module, "cell_width", lambda tc: None)
+    _, out, rec = one(src, "insert_image", VALVE, {"image": pics["wide.png"]})
+    assert extent(new_pictures(out)[0])[0][0] == TEXT_WIDTH_0
+    assert "V10" in failed(rec) and "the plan inserts" in v10(rec)
+    monkeypatch.undo()
+    monkeypatch.setattr(ins_module, "CELL_MARGIN", 0)                              # Word's default margins forgotten
+    _, out, rec = one(src, "insert_image", VALVE, {"image": pics["wide.png"]})
+    assert extent(new_pictures(out)[0])[0][0] == 4680 * 635
+    assert "V10" in failed(rec) and "the plan inserts" in v10(rec)
+
+
+def test_a_shared_line_spacing_rule_that_misses_an_exact_style_is_caught(src, pics, monkeypatch):
+    exact = mutate(src, STYLES, line_spacing("Normal", "exact"))
+    monkeypatch.setattr(ins_module, "line_rule", lambda res, anchor, style: ("auto", []))
+    _, out, rec = one(exact, "insert_image", SITE, {"image": pics["photo.jpg"]})
+    assert paragraph_of(new_pictures(out)[0]).find(f"{W}pPr/{W}spacing") is None
+    assert "V10" in failed(rec) and "the plan inserts" in v10(rec)
+    monkeypatch.undo()
+    real = ins_module.build_paragraph
+
+    def spaced_after_jc(drawing, style, align, single, tracked, stamp, ids):     # the spacing out of schema order
+        p = real(drawing, style, align, single, tracked, stamp, ids)
+        sp = p.find(f"{W}pPr/{W}spacing")
+        if sp is not None:
+            p.find(f"{W}pPr/{W}jc").addnext(sp)
+        return p
+    monkeypatch.setattr(ins_module, "build_paragraph", spaced_after_jc)
+    _, _, rec = one(exact, "insert_image", SITE, {"image": pics["photo.jpg"], "align": "center"})
+    assert "V10" in failed(rec) and "not the expected picture paragraph" in v10(rec)
+
+
 def test_a_shared_section_rule_off_by_one_is_caught(src, pics, monkeypatch):
     real = ins_module.section_of
     monkeypatch.setattr(ins_module, "section_of", lambda pars: [k + 1 for k in real(pars)])
@@ -762,8 +977,8 @@ def test_a_shared_content_type_rule_that_writes_an_override_is_caught(src, pics,
 def test_a_shared_paragraph_without_its_mark_is_caught(src, pics, monkeypatch):
     real = ins_module.build_paragraph
 
-    def no_mark(drawing, style, align, tracked, stamp, ids):
-        p = real(drawing, style, align, tracked, stamp, ids)
+    def no_mark(*args):
+        p = real(*args)
         if p.find(W + "pPr") is not None:
             p.remove(p.find(W + "pPr"))
         return p
@@ -991,7 +1206,14 @@ def test_touches_declare_the_changes_and_the_reads(src, pics):
     ins = set(_frag(src, "insert_image", SITE, {"image": pics["wide.png"]}).touches)
     assert {(MAIN, "*", "text"), ("word/_rels/document.xml.rels", "*", "rels"), ("word/media/image6.png", "*", "add"),
             (MAIN, "docPr", "ids"), (MAIN, "sectPr:0", "verify:pgSz"), (MAIN, "sectPr:0", "verify:pgMar"),
-            (MAIN, "scope", "verify")} <= ins
+            (MAIN, "scope", "verify"), (STYLES, "docDefaults", "verify:pPr"),
+            (STYLES, "style:Normal", "verify:pPr")} <= ins             # the line spacing the new paragraph would get
+    # a change of the spacing the new paragraph would inherit, in the same spec: a plan-time conflict
+    with pytest.raises(JobException) as e:
+        merge_fragments([_frag(src, "insert_image", SITE, {"image": pics["wide.png"]}),
+                         _frag(src, "set_paragraph_props", {"styles": {"ids": ["Normal"]}},
+                               {"spacing": {"line": 240, "lineRule": "exact"}})])
+    assert e.value.code == "conflict"
     rm = set(_frag(src, "remove_images", {}, {"match": {"image": pics["red.png"]}, "tracked": False}).touches)
     assert ("word/_rels/document.xml.rels", "*", "rels") in rm and ("word/_rels/header1.xml.rels", "*", "verify") in rm
     rs = set(_frag(src, "resize_images", {}, {"match": {"name_regex": "^Detail"}, "width": 1}).touches)

@@ -467,9 +467,11 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "it goes into a new paragraph of its own before or after each anchor paragraph — say which paragraphs; the "
         "anchor's text and formatting are untouched",
         "a width or height alone keeps the proportions; neither: the picture's own size at its resolution (96 dpi "
-        "when it has none), made smaller to fit between the margins",
-        "the new paragraph has the document's default paragraph style unless a style is named, and the style's "
-        "alignment unless align is given; the alt text is the user's words verbatim, or none",
+        "when it has none), made smaller to fit between the margins across and down (in a table cell: the cell's "
+        "width); a size given is kept even when larger (noted)",
+        "the new paragraph has the document's default paragraph style unless a style is named (single line spacing "
+        "where that style's is exact, which would crop the picture), and the style's alignment unless align is given; "
+        "the alt text is the user's words verbatim, or none",
         "tracked unless the user asked for clean copies",
     ],
     "remove_images": [

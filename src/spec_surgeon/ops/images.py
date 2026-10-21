@@ -25,9 +25,10 @@ dots per inch) or 2 (360 000 / dots per cm), else Exif IFD0's XResolution / YRes
 its numbers are positive; without one a picture has 96 dpi (9 525 EMU per pixel). Reading a resolution never refuses a
 picture: a damaged one is no resolution. The **natural size** is the pixel size times the resolution, exactly
 (fractions); the **placed size** (``placed_size``): width and height given → those (inches × 914 400, halves rounded
-up); one given → it, and the other in the natural proportions (rounded); neither → the natural size rounded, and when
-the natural width exceeds the text width, the text width and the height in proportion. A side that rounds to 0, or
-beyond the largest size a drawing may state (``MAX_EMU``), is refused.
+up); one given → it, and the other in the natural proportions (rounded); neither → the natural size rounded when it fits
+the text area of ``W`` × ``H`` EMU, else made smaller in proportion to fit it both ways: when ``W·nh ≤ H·nw`` (natural
+width nw, height nh) the width is ``W`` and the height ``round(W·nh/nw)``, else the height is ``H`` and the width
+``round(H·nw/nh)``. A side that rounds to 0, or beyond the largest size a drawing may state (``MAX_EMU``), is refused.
 """
 from __future__ import annotations
 
@@ -357,9 +358,9 @@ def length_param(value: Any, what: str) -> Optional[Any]:
     return value
 
 
-def placed_size(pic: Picture, width: Any, height: Any, text_width: Optional[int]) -> Tuple[int, int]:
-    """The inserted picture's size in EMU (module docstring); ``text_width`` (EMU) is read only when neither side is
-    given."""
+def placed_size(pic: Picture, width: Any, height: Any, area: Optional[Tuple[int, int]]) -> Tuple[int, int]:
+    """The inserted picture's size in EMU (module docstring); ``area`` (the text area's width and height, EMU) is read
+    only when neither side is given."""
     nat_w, nat_h = pic.width * pic.emu_x, pic.height * pic.emu_y
     if width is not None and height is not None:
         w, h = inches_emu(width), inches_emu(height)
@@ -370,12 +371,15 @@ def placed_size(pic: Picture, width: Any, height: Any, text_width: Optional[int]
         h = inches_emu(height)
         w = half_up(h * nat_w / nat_h)
     else:
-        if text_width is None:
-            raise JobException("internal: the picture's own size needs the text width", "internal")
-        if nat_w > text_width:
-            w, h = text_width, half_up(text_width * nat_h / nat_w)
-        else:
+        if area is None:
+            raise JobException("internal: the picture's own size needs the text area", "internal")
+        aw, ah = area
+        if nat_w <= aw and nat_h <= ah:
             w, h = half_up(nat_w), half_up(nat_h)
+        elif aw * nat_h <= ah * nat_w:                   # the width binds
+            w, h = aw, half_up(aw * nat_h / nat_w)
+        else:                                            # the height binds
+            w, h = half_up(ah * nat_w / nat_h), ah
     if w <= 0 or h <= 0 or w > MAX_EMU or h > MAX_EMU:
         raise JobException(f"the picture ({pic.width} × {pic.height} px) would be {w} × {h} EMU — give another "
                            f"width or height", "image-size", {"size": [w, h]})
