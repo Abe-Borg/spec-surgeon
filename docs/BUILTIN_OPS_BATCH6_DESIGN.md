@@ -253,16 +253,18 @@ Nearest relatives: `set_page_setup` (the section selector), `remove_header_foote
 
 * **`insert_field`**: `field` one of `PAGE`, `NUMPAGES`, `SECTIONPAGES`, `SECTION`, `DATE`, `SAVEDATE`, `FILENAME`,
   `STYLEREF`, `DOCPROPERTY`, with its argument (`style`, `property`, `format` — the user's date picture or number
-  format). Placement: `at_text` (every occurrence of the user's exact placeholder, which is removed) or `position`
-  `end`/`start` of the selected paragraphs. A complex field with the neighbouring run's formatting and an EMPTY cached
-  result (zero generated characters); fields Word does not recompute at layout are marked `w:dirty` so Word updates
-  them when the file opens. Tracked by default (the field's runs inserted, a placeholder deleted). V10 kind
-  `inserted_fields`.
-* **`reply_to_comments`**: the user's words as a reply (author, initials) to the comments chosen (all, by author, by
-  text pattern); the reply shares its parent's anchor and is linked in `commentsExtended.xml` (`w15:paraIdParent`),
-  paragraph ids and the part added where missing. Untracked. V10 kind `comment_replies`.
-* **`resolve_comments`**: mark the chosen threads done, or reopen them (`w15:done`), adding `commentsExtended.xml`
-  and paragraph ids where missing. Untracked. V10 kind `resolved_comments`.
+  format). Placement: `at_text` (every occurrence of the user's exact placeholder, which is removed; the field takes
+  the placeholder's run formatting, placed by the edit core) or `position` `end`/`start` of the selected (targeted)
+  paragraphs (the neighbouring run's formatting). A complex field with an EMPTY cached result (zero generated
+  characters); fields Word does not recompute at layout are marked `w:dirty` so Word updates them when the file opens.
+  Tracked by default (the field's runs inserted, a placeholder deleted). V10 kind `inserted_fields`.
+* **`reply_to_comments`**: the user's words as a reply (author, initials) to the threads of the comments chosen (all,
+  by author, by text pattern — a reply to a reply goes to its thread, as Word threads replies one level deep); the
+  reply's marks go beside its thread's, as Word writes them, and it is linked in `commentsExtended.xml`
+  (`w15:paraIdParent`), paragraph ids and the part added where missing. Untracked. V10 kind `comment_replies`.
+* **`resolve_comments`**: mark the chosen threads done, or reopen them (`w15:done` on the thread's top comment; the
+  replies' own entries are left as they are), adding `commentsExtended.xml` and paragraph ids where missing.
+  Untracked. V10 kind `resolved_comments`.
 
 ## 10. `move_paragraphs` (F9)
 
@@ -382,3 +384,44 @@ tracked and untracked, every match, inline and floating, body, headers and foote
 implementations caught; refusals; conflicts and composed steps; the batch pipeline; a LibreOffice render. Needs the
 owner's machine: a live request per op over real specifications, opened in Word (picture placement and the tracked
 deletion's look in the review pane).
+
+### F8 — built (2026-10-21)
+
+`ops/insert_field.py` ↔ `verify/inserted_fields.py`, `ops/comment_threads.py` ↔ `verify/comment_threads.py`; tests
+`tests/test_insert_field.py`, `tests/test_comment_threads.py` (fixtures `tests/fx_fields.py`, two builders added to
+`tests/fx_comments.py`); describe cases `tests/describe_cases/fields_comments.py`.
+
+* **`insert_field`.** The instruction is built from the request only: STYLEREF quotes the style's `w:name` (named by
+  id or name) with `\l` / `\n`; DOCPROPERTY quotes a built-in property (Title, Subject, Author, Keywords, Comments,
+  Category, Company, Manager, LastSavedBy) or a custom property the file has; FILENAME takes `\p` (`path`); a number
+  format is `\* Arabic|roman|ROMAN|alphabetic|ALPHABETIC`, a date picture `\@ "…"` of d, M, y, H, h, m, s, AM/PM and
+  the separators only. At a placeholder the edit core places one stand-in character, which is then replaced by the
+  field's four runs, so the deletion, the place and the formatting are exactly the core's (tracked: in a new `w:ins`
+  after the deletion, after someone's pending insertion when the placeholder is in one; untracked: the placeholder
+  run's properties and attributes). Default scope: body, headers, footers (footnotes and endnotes on request). New
+  refusal `field-argument` (no such style or property); a placeholder run with a pending formatting change is
+  `tracked-format` in both modes; a paragraph edge inside a complex field (a table of contents) is `field-result`.
+  `unlink_fields` now reads `(part, "fields", "verify")`, `insert_field` writes `(part, "fields", "add")`: both in one
+  spec is a conflict, as the order would decide whether the new field stays.
+* **`w:dirty`.** ECMA-376 Part 1 §17.16.18 (`fldChar/@dirty`): the field's result is stale and shall be recalculated
+  when an application that can reads the document; set on the begin character. Word is reported to refresh such
+  fields when it opens the file; the reports of Word's "update the fields in this document?" prompt trace it to
+  `w:updateFields` in settings, which this op never sets. LibreOffice computes PAGE, NUMPAGES, DATE, FILENAME,
+  STYLEREF and DOCPROPERTY with an empty result (rendered and checked); it shows nothing for SECTION, which Word
+  computes.
+* **Comment threads.** `which` is `all` | `authors` | `text_regex`; the threads are the roots of the chosen comments.
+  A reply's range start goes after the thread's last one (when its range starts between paragraphs: at the start of
+  the next paragraph — the same text), its end and reference run after the thread's last reference run, the run's
+  properties copied; no date is written. New comment ids follow the largest in use; paragraph and durable ids are the
+  smallest free from 1 (below 0x80000000) over the text and side parts. commentsIds / commentsExtensible gain the
+  reply's entries when present; a top comment the comment ids leave out, dates without ids, or a side part with
+  another root is `comment-metadata`; a comment without a single reference, marks in two parts or a range starting
+  after its reference is `comment-anchor`. Both ops are untracked only (`tracked: false`), request-only
+  (`catalog.REQUEST_ONLY_OPS`); a reply is the user's words (`compiler.placed_words`). Replies verify the comments
+  part and side parts whole and each marked paragraph item by item, so they compose with untracked edits elsewhere
+  (a tracked edit beside them is the usual mixed-mode refusal); resolving touches only commentsExtended (and the
+  comments part when a paragraph id is added).
+* **Needs the owner's machine:** whether Word, when it resolves a thread, also marks the replies' entries done (this
+  machine has no Word and no Word-saved resolved thread; the build marks the top comment, as `remove_comments` reads a
+  thread's state); that Word shows the replies in their threads; that it fills the dirty fields on open, and whether
+  it asks first.

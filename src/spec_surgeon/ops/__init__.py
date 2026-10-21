@@ -48,3 +48,4 @@ from . import insert_section_break, remove_section_break  # noqa: E402,F401 — 
 from . import move_paragraphs  # noqa: E402,F401 — built-in batch 6 (F9: moving)
 from . import delete_table_rows, delete_tables, insert_table, insert_table_rows  # noqa: E402,F401 — built-in batch 6 (F5)
 from . import insert_image, remove_images, resize_images  # noqa: E402,F401 — built-in batch 6 (F4, pictures)
+from . import comment_threads, insert_field  # noqa: E402,F401 — built-in batch 6 (fields and comment threads, §9)

@@ -532,6 +532,28 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "hyperlink, content control, comment, picture or footnote reference among them cannot be copied that way. "
         "Move them untracked (they move exactly as they are), or move them in Word.",
     ),
+    # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §9): fields and comment threads ----
+    "field-argument": (
+        "The Field Names Something This File Does Not Have",
+        "The field to insert shows a style's text (STYLEREF) or a document property (DOCPROPERTY), and this file has no "
+        "such style (or two of that name, or one that is not a paragraph or character style) or no such property; Word "
+        "would show an error where the field is. Name a style or property the file has — the built-in properties are "
+        "Title, Subject, Author, Keywords, Comments, Category, Company, Manager and LastSavedBy — or add it in Word "
+        "first.",
+    ),
+    "comment-anchor": (
+        "A Reply Cannot Find Its Comment's Place",
+        "The comment to reply to has no single reference mark in the text, its thread's marks lie in two parts of the "
+        "file, or its range starts after its reference (or between paragraphs with no paragraph after it), so where "
+        "Word would show the reply cannot be told. Nothing was changed; reply to that comment in Word.",
+    ),
+    "comment-metadata": (
+        "The File's Comment Threads Are Irregular",
+        "This file keeps its comment threads in parts Word does not write that way — comment dates without comment "
+        "ids, a threads part with another kind of content, or a comment the file's comment ids leave out — so a reply "
+        "or a resolved mark could not be kept consistent with the rest. Nothing was changed. Open the file in Word, "
+        "save it, and run again, or reply and resolve in Word.",
+    ),
 }
 
 

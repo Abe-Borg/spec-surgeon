@@ -2846,6 +2846,9 @@ from .sections import SECTION_KINDS  # noqa: E402
 from .replacement import literal_replacement, paragraph_edits  # noqa: E402
 # built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §5): pictures
 from .pictures import PICTURE_KINDS  # noqa: E402
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §9): fields and comment threads
+from .inserted_fields import FIELD_INSERT_KINDS  # noqa: E402
+from .comment_threads import COMMENT_THREAD_KINDS  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
 KINDS.update(TEXT_OP_KINDS)
@@ -2878,3 +2881,5 @@ KINDS.update(MOVE_KINDS)
 from .tablestructure import TABLE_STRUCTURE_KINDS  # noqa: E402
 KINDS.update(TABLE_STRUCTURE_KINDS)
 KINDS.update(PICTURE_KINDS)
+KINDS.update(FIELD_INSERT_KINDS)
+KINDS.update(COMMENT_THREAD_KINDS)
