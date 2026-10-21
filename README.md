@@ -33,7 +33,7 @@ installer is unsigned, so Windows may show a publisher prompt on the first manua
 **Python package / development setup** (Python 3.10+ on Windows, macOS or Linux; from the project folder):
 
 ```powershell
-py -3 -m pip install -e .            # core: lxml, pymupdf
+py -3 -m pip install -e .            # core: lxml, PyMuPDF 1.x (2.0 loads an AI layout model the app never uses)
 py -3 -m pip install -e ".[gui]"     # the window: FastAPI, uvicorn, pywebview (WebView2 on Windows) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
 py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests (`do`, the window), `advise`
@@ -154,7 +154,9 @@ spec-surgeon workspace create "C:\Projects" --out C:\Temp\ss-workspace   # a per
 ```
 
 Inputs may be files, folders (every `*.docx`, lock files skipped) or globs, mixed. Every command exits 0 only when
-every file passed. `do` compiles with Claude, writes a preview under `OUT/preview/`, asks "Run this on N file(s)?"
+every file passed. Files are planned, edited and verified one at a time unless `--workers N` asks for more: that work
+holds one processor core whatever the thread count, so extra threads only add memory (rendering runs its own parallel
+renderers either way). `do` compiles with Claude, writes a preview under `OUT/preview/`, asks "Run this on N file(s)?"
 (`--yes` without a terminal) and refuses to run if any file or template changed since the preview. Office
 profiles, specification QA audits, project evidence (`spec-surgeon evidence`), built-in workflows, campaign
 workspaces and recovery workspaces are command-line features; the window does not show them.
