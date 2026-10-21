@@ -1293,8 +1293,11 @@ def sect_prs(root) -> List[Any]:
 # exactly which sectPr elements must change and how, with its own defaults, and compares both with the plan.
 
 V_SECTION_KEYS = ("containing", "with_tables", "index_range")
-V_PAGE_PARAMS = ("margins", "size", "orientation", "different_first_page", "allow_missing")
+V_LAYOUT_PARAMS = ("columns", "line_numbering", "vertical_alignment", "section_start")      # built-in batch 6
+V_PAGE_PARAMS = ("margins", "size", "orientation", "different_first_page", "allow_missing") + V_LAYOUT_PARAMS
 V_MARGIN_KEYS = ("top", "right", "bottom", "left", "header", "footer", "gutter")
+V_SECTION_STARTS = {"next_page": "nextPage", "continuous": "continuous", "even_page": "evenPage",
+                    "odd_page": "oddPage"}
 
 
 def _v_title_pg_on(sp) -> bool:
@@ -1394,6 +1397,114 @@ def _v_page_setup_elements(S, params: Dict[str, Any], where: str) -> Dict[str, D
         out["pgSz"] = {"set": pg_set}
     if dfp is not None and _v_title_pg_on(S) != dfp:
         out["titlePg"] = {"present": True, "remove": ["val"]} if dfp else {"absent": True}
+    out.update(_v_layout_elements(S, params, where))
+    return out
+
+
+# Built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §8): the layout parameters, read here with this module's own rules.
+# A value is written as Word writes it — the schema's default is an absent attribute or element — and an attribute that
+# already reads as asked stays as it is (absent reads the default):
+#   columns {count, space, separator} → w:cols: the line (w:sep) turned on where it is off ("1"), off where it is on
+#     (removed), and with a single column off too; an off w:equalWidth removed and every child gone (equal columns);
+#     w:num the count (1: absent); w:space the asked twips. No w:cols and one column asked: nothing to do.
+#   line_numbering → w:lnNumType: "none" removes it; else w:countBy the asked step (none asked: the section's, else 1),
+#     w:start the first number shown minus one (Word shows the attribute plus one; 0 is the default), w:restart
+#     (newPage the default), w:distance the asked twips; no children.
+#   vertical_alignment → w:vAlign/@w:val (top the default: the element absent); section_start → w:type/@w:val
+#     (nextPage the default: absent).
+
+def _v_wattrs(el) -> Dict[str, str]:
+    """The w: attributes of ``el`` by local name; {} for no element."""
+    out: Dict[str, str] = {}
+    for k, v in (el.attrib.items() if el is not None else ()):
+        q = etree.QName(k)
+        if q.namespace == W[1:-1]:
+            out[q.localname] = v
+    return out
+
+
+def _v_whole(v, lo: int, hi: int) -> bool:
+    return type(v) is int and lo <= v <= hi
+
+
+def _v_reads(attrs: Dict[str, str], name: str, value: str, default: Optional[str]) -> None:
+    """``attrs`` changed so that ``name`` reads ``value``, where it does not already (an absent attribute reads
+    ``default``); the default itself is written as no attribute."""
+    if attrs.get(name, default) != value:
+        if value == default:
+            del attrs[name]
+        else:
+            attrs[name] = value
+
+
+def _v_layout_elements(S, params: Dict[str, Any], where: str) -> Dict[str, Dict[str, Any]]:
+    """The element specs (``exact`` / ``absent``) the layout parameters give sectPr ``S`` (the SOURCE), by the rules of
+    the block comment above; ValueError where the op must refuse."""
+    out: Dict[str, Dict[str, Any]] = {}
+
+    def keep_or(name: str, attrs: Dict[str, str], el) -> None:
+        if el is None or len(el) or attrs != _v_wattrs(el):
+            out[name] = {"exact": attrs}
+
+    cols = params.get("columns")
+    if cols is not None:
+        if (not isinstance(cols, dict) or "count" not in cols or set(cols) - {"count", "space", "separator"}
+                or not _v_whole(cols["count"], 1, 45) or ("space" in cols and not _v_whole(cols["space"], 0, 31680))
+                or ("separator" in cols and type(cols["separator"]) is not bool)
+                or (cols["count"] == 1 and ("space" in cols or cols.get("separator") is True))):
+            raise ValueError(f"columns {cols!r} — the op must refuse")
+        el = S.find(W + "cols")
+        attrs = _v_wattrs(el)
+        line_on = "sep" in attrs and attrs["sep"] not in FALSY
+        if cols.get("separator") is True and not line_on:
+            attrs["sep"] = "1"
+        if line_on and (cols.get("separator") is False or ("separator" not in cols and cols["count"] == 1)):
+            del attrs["sep"]
+        if attrs.get("equalWidth") in FALSY and "equalWidth" in attrs:
+            del attrs["equalWidth"]
+        _v_reads(attrs, "num", str(cols["count"]), "1")
+        if "space" in cols:
+            _v_reads(attrs, "space", str(cols["space"]), None)
+        if not (el is None and cols["count"] == 1):
+            keep_or("cols", attrs, el)
+    lines = params.get("line_numbering")
+    if lines == "none":
+        if S.find(W + "lnNumType") is not None:
+            out["lnNumType"] = {"absent": True}
+    elif lines is not None:
+        if not isinstance(lines, dict) or set(lines) - {"count_by", "start", "restart", "distance"} or any(
+                k in lines and not _v_whole(lines[k], lo, hi)
+                for k, lo, hi in (("count_by", 1, 100), ("start", 1, 32767), ("distance", 0, 31680))) or \
+                lines.get("restart", "new_page") not in ("new_page", "new_section", "continuous"):
+            raise ValueError(f"line_numbering {lines!r} — the op must refuse")
+        el = S.find(W + "lnNumType")
+        attrs = _v_wattrs(el)
+        if "count_by" in lines:
+            _v_reads(attrs, "countBy", str(lines["count_by"]), None)
+        elif "countBy" not in attrs:
+            attrs["countBy"] = "1"
+        if "start" in lines:
+            _v_reads(attrs, "start", str(lines["start"] - 1), "0")
+        if "restart" in lines:
+            _v_reads(attrs, "restart", {"new_page": "newPage", "new_section": "newSection",
+                                        "continuous": "continuous"}[lines["restart"]], "newPage")
+        if "distance" in lines:
+            _v_reads(attrs, "distance", str(lines["distance"]), None)
+        keep_or("lnNumType", attrs, el)
+    for name, asked, default in (("vAlign", params.get("vertical_alignment"), "top"),
+                                 ("type", params.get("section_start"), "nextPage")):
+        if asked is None:
+            continue
+        if name == "vAlign" and asked not in ("top", "center", "both", "bottom"):
+            raise ValueError(f"vertical_alignment {asked!r} — the op must refuse")
+        if name == "type":
+            if asked not in V_SECTION_STARTS:
+                raise ValueError(f"section_start {asked!r} — the op must refuse")
+            asked = V_SECTION_STARTS[asked]
+        attrs = _v_wattrs(S.find(W + name))
+        if attrs.get("val", default) == asked:
+            continue
+        out[name] = {"absent": True} if asked == default else {"exact": dict(attrs, val=asked)}
     return out
 
 
@@ -1448,6 +1559,22 @@ def _v_check_sect_element(ctx: Ctx, i: int, S, O, name: str, spec: Dict[str, Any
     ctx.strip_sect.setdefault(i, set()).add(name)
     se, oe = S.find(W + name), O.find(W + name)
     where = f"section {i} {name}"
+    if "exact" in spec:
+        # built-in batch 6: there, with exactly these w: attributes (the source's attributes of other namespaces kept)
+        # and no children
+        if set(spec) != {"exact"} or not isinstance(spec["exact"], dict):
+            raise ValueError(f"{where}: an exact element spec takes no other keys")
+        if oe is None:
+            errs.append(f"{where}: should be present")
+            return
+        want = {W + k: str(v) for k, v in spec["exact"].items()}
+        want.update({k: v for k, v in (se.attrib.items() if se is not None else ()) if not k.startswith(W)})
+        if dict(oe.attrib) != want:
+            errs.append(f"{where}: expected { {etree.QName(k).localname: v for k, v in want.items()} } got "
+                        f"{ {etree.QName(k).localname: v for k, v in dict(oe.attrib).items()} }")
+        elif len(oe):
+            errs.append(f"{where}: should have no children, has {[_name(c) for c in oe]}")
+        return
     if spec.get("absent"):
         if set(spec) != {"absent"} or spec["absent"] is not True:
             raise ValueError(f"{where}: an absent element spec takes no other keys")
@@ -2530,6 +2657,8 @@ from .numberingaudit import AUDIT_KINDS  # noqa: E402
 from .numberingconvert import CONVERT_KINDS  # noqa: E402
 from .typednumbers import TYPED_KINDS  # noqa: E402
 from .hygiene import HYGIENE_KINDS  # noqa: E402
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §8): section breaks
+from .sections import SECTION_KINDS  # noqa: E402
 from .replacement import literal_replacement, paragraph_edits  # noqa: E402
 
 KINDS.update(TEMPLATE_KINDS)
@@ -2556,3 +2685,4 @@ KINDS.update(FONT_NUMBERING_KINDS)
 KINDS.update(AUDIT_KINDS)
 KINDS.update(CONVERT_KINDS)
 KINDS.update(TYPED_KINDS)
+KINDS.update(SECTION_KINDS)

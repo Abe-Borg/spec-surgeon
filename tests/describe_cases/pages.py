@@ -20,6 +20,22 @@ CASES = {
         # the first page back to the ordinary header and footer, sections chosen by a pattern
         ({"sections": {"containing": {"text_regex": "^PART 1"}}}, {"different_first_page": False},
          ["ordinary header and footer on the first page", "sections whose text matches the pattern “^PART 1”"]),
+        # built-in batch 6: two columns with a line between them, the text centred on the page
+        ({"sections": [2]}, {"columns": {"count": 2, "space": 720, "separator": True},
+                             "vertical_alignment": "center"},
+         ["the text to 2 columns of equal width 0.5 inch apart with a line between them",
+          "vertically to the centre of the page", "in section 3"]),
+        # back to one column, line numbers every fifth line restarting on each page, the section on an odd page
+        ({"sections": "all"}, {"columns": {"count": 1},
+                               "line_numbering": {"count_by": 5, "start": 1, "restart": "new_page", "distance": 360},
+                               "section_start": "odd_page"},
+         ["a single column", "line numbers to every 5th line, starting at 1, restarting on each page, 0.25 inch from "
+          "the text", "section start to the next odd-numbered page", "blank page"]),
+        # line numbers off, a continuous start
+        ({"sections": [1]}, {"line_numbering": "none", "section_start": "continuous"},
+         ["section start to the same page (continuous)", "turn line numbering off", "in section 2"]),
+        # line numbering alone
+        ({}, {"line_numbering": "none"}, ["Turn line numbering off in every section"]),
     ],
     "set_tab_stops": [
         # a table-of-contents style: a dot-leader right tab at the right margin, nothing else left
