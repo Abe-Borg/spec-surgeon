@@ -123,11 +123,11 @@ Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/50
 
 | type | payload | meaning |
 | --- | --- | --- |
-| `status` | `kind`, `text` | what the app is doing now: `working`, `thinking`, `reading` (documents/template), `planning`, `checking` (verification), `previewing`, `rendering`, `looking` (visual check), `creating` (copies), `recovering`, `resuming`. Replaces the status strip; cleared by the next `text_delta` or `message`. `retrying` means the running attempt was abandoned and sent again from the start: the page drops the words it had from it |
-| `activity` | `text` | one plain sentence of model activity, e.g. "Reading the template's header and footer" (from a tool call), shown as a quiet line inside the streaming reply |
-| `thinking_delta` | `text` | a chunk of the model's thinking summary (collapsible aside) |
-| `text_delta` | `text` | a chunk of the assistant's reply as it is written |
-| `message` | `message` | a complete message object (assistant or app) to append; the streaming bubble is finalized with it |
+| `status` | `kind`, `text` | what the app is doing now: `working`, `thinking`, `reading` (documents/template), `planning`, `checking` (verification), `previewing`, `rendering`, `looking` (visual check), `creating` (copies), `recovering`, `resuming`. Named on the reply's working line; cleared by the next `text_delta` or `message`. `thinking` is sent as each model call starts: the words written before it belong to an earlier call of the same turn, which are not the reply the turn ends with (that is its last call's words), and the page keeps them among the reply's steps. `retrying` means the running attempt was abandoned and sent again from the start: the page drops the words it had from it |
+| `activity` | `text` | one plain sentence of model activity, e.g. "Reading the template's header and footer" (from a tool call), named on the working line until the next frame and kept as a quiet line in the reply's log |
+| `thinking_delta` | `text` | a chunk of the model's thinking summary (in the reply's log) |
+| `text_delta` | `text` | a chunk of the assistant's reply as it is written: the model's plain text, then the `message` of its question or submission (read from the tool call's input as it streams, nothing else of it), a paragraph apart, as the reply joins them |
+| `message` | `message` | a complete message object (assistant or app) to append; the streaming bubble is finalized with it, and the page carries the reply on from the words already shown |
 | `plan` | `plan` | the plan became available (before previews render); the page drops the pages of the plan before it |
 | `samples` | `samples`, `warnings`, `blocking` | previews are in |
 | `results` | `results` | copies were written |

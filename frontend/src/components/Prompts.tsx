@@ -2,6 +2,11 @@
 import type { Choice } from "../types";
 import Markdown from "./Markdown";
 
+/** Each choice and chip lands a beat after the one before it, once the card has risen in. */
+function stagger(index: number) {
+  return { animationDelay: `${120 + Math.min(index, 8) * 45}ms` };
+}
+
 interface Props {
   questions: string[];
   choices: Choice[];
@@ -22,7 +27,7 @@ interface Props {
  */
 export default function Prompts({ questions, choices, chips, busy, onChoose, onSend }: Props) {
   return (
-    <div className="card-in rounded-2xl border border-edge bg-surface/60 px-4 py-3" role="group" aria-label="One thing to clarify">
+    <div className="chat-in rounded-2xl border border-edge bg-surface/60 px-4 py-3" role="group" aria-label="One thing to clarify">
       {questions.length > 0 && (
         <div className="mb-3">
           <p className="text-[11px] font-medium tracking-wide text-ink-faint uppercase">
@@ -42,6 +47,7 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
                 onClick={() => onChoose(choice)}
                 disabled={busy}
                 title={choice.detail || (choice.words.length ? "Picking this approves exactly the words beneath it" : "")}
+                style={stagger(index)}
                 className="prompt-chip-in w-full rounded-xl border border-edge bg-raised px-4 py-2.5 text-left text-sm text-ink transition-colors hover:border-accent/70 hover:bg-raised/80 disabled:pointer-events-none disabled:opacity-40"
               >
                 <span className="mr-2 text-ink-faint tabular-nums">{index + 1}.</span>
@@ -77,13 +83,14 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
           <span aria-hidden className="text-xs text-ink-faint">
             ✦
           </span>
-          {chips.map((chip) => (
+          {chips.map((chip, index) => (
             <button
               key={chip}
               type="button"
               onClick={() => onSend(chip, true)}
               disabled={busy}
               title={chip}
+              style={stagger(choices.length + index)}
               className="prompt-chip-in max-w-full truncate rounded-full border border-accent/50 bg-accent/10 px-3 py-1 text-xs text-ink transition-colors hover:border-accent hover:bg-accent/15 disabled:pointer-events-none disabled:opacity-40"
             >
               {chip}

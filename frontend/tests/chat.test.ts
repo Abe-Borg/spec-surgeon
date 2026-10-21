@@ -13,13 +13,16 @@ import {
   WORK_TODO,
   composerState,
   costPill,
+  endedLive,
   liveHasContent,
   pauseFor,
   promptsFor,
   spentText,
   statusLabel,
+  stepsLabel,
   todoFor,
   transcript,
+  withLeaving,
 } from "../src/lib/chat.ts";
 import { EMPTY_VIEW, INITIAL_STATE, emptyLive, reduce, type UiState } from "../src/lib/view.ts";
 
@@ -158,7 +161,7 @@ test("the status strip prefers the server's sentence, then the kind's label, the
 test("an empty live bubble after a message renders nothing until something arrives", () => {
   assert.equal(liveHasContent(emptyLive()), false);
   assert.equal(liveHasContent({ ...emptyLive(), status: { kind: "working", text: "" } }), true);
-  assert.equal(liveHasContent({ ...emptyLive(), activities: ["x"] }), true);
+  assert.equal(liveHasContent({ ...emptyLive(), steps: [{ kind: "activity", text: "x" }] }), true);
   assert.equal(liveHasContent({ ...emptyLive(), text: "x" }), true);
   assert.equal(liveHasContent({ ...emptyLive(), thinking: "x" }), true);
 });
@@ -188,4 +191,63 @@ test("the to-do card closes the transcript once copies are saved and documents w
   assert.ok(todoFor(state({ ...done, stage: "resume" })));
   assert.equal(todoFor(state({ ...done, todo: [] })), null);
   assert.equal(WORK_TODO, "Work on the documents I set aside");               // the server's exact words
+});
+
+test("the live bubble takes the key of the message it becomes, and a sent message keeps its key", () => {
+  let s = reduce(state({ messages: [message("m0", "assistant", "Hello.")] }), { type: "job_started", userText: "Bold the title" });
+  s = reduce(s, { type: "event", event: { type: "text_delta", text: "I'll bold" } });
+  const live = transcript(s);
+  assert.deepEqual(live.map((i) => [i.kind, i.key]), [["message", "entry-0"], ["message", "entry-1"], ["live", "entry-2"]]);
+  // The reply finishes in the same entry; the next live bubble waits under the next key.
+  s = reduce(s, { type: "event", event: { type: "message", message: message("m2", "assistant", "I'll bold the title.") } });
+  assert.deepEqual(transcript(s).map((i) => [i.kind, i.key]), [["message", "entry-0"], ["message", "entry-1"], ["message", "entry-2"], ["live", "entry-3"]]);
+  // The server's copy of the optimistic user bubble (a new id) is the same entry.
+  const done = reduce(s, {
+    type: "event",
+    event: {
+      type: "done",
+      state: { ...EMPTY_VIEW, messages: [message("m0", "assistant", "Hello."), message("m1", "user", "Bold the title"), message("m2", "assistant", "I'll bold the title.")] },
+    },
+  });
+  const items = transcript(done);
+  assert.deepEqual(items.map((i) => i.key), ["entry-0", "entry-1", "entry-2"]);
+  assert.equal(items[1].kind === "message" && items[1].message.id, "m1");
+});
+
+test("the folded line names a reply's making", () => {
+  const activity = { kind: "activity" as const, text: "Reading" };
+  const said = { kind: "said" as const, text: "I'll read it." };
+  assert.equal(stepsLabel([activity, said, activity], "hmm"), "2 steps · thinking");
+  assert.equal(stepsLabel([activity], ""), "1 step");
+  assert.equal(stepsLabel([], "hmm"), "Thinking");
+  assert.equal(stepsLabel([said], ""), "Working notes");
+  assert.equal(stepsLabel([], ""), "");
+});
+
+test("a working line whose job ended without a message in its place folds away where it was", () => {
+  const user = message("m0", "user", "Bold the title");
+  let s = reduce(state({ messages: [user] }), { type: "job_started", userText: null });
+  s = reduce(s, { type: "event", event: { type: "status", kind: "previewing", text: "" } });
+  const during = transcript(s);
+  const end = (messages: Message[]) =>
+    transcript(reduce(s, { type: "event", event: { type: "done", state: { ...EMPTY_VIEW, ...question, messages } } }));
+  // The job ends with its question and no message under the bubble's key: it stays after the messages, before the card.
+  const idle = end([user]);
+  const ended = endedLive(during, idle);
+  assert.equal(ended?.key, "entry-1");
+  assert.equal(ended?.live.status?.kind, "previewing");
+  assert.deepEqual(withLeaving(idle, ended).map((i) => [i.kind, i.key, i.kind === "live" && i.leaving]), [
+    ["message", "entry-0", false],
+    ["live", "entry-1", true],
+    ["prompts", "prompts", false],
+  ]);
+  // A message under its key: the bubble carries on as that message, nothing folds.
+  assert.equal(endedLive(during, end([user, message("m1", "assistant", "Stopped.")])), null);
+  // A key taken again later (the next job's first message) drops the folding bubble.
+  const next = end([user, message("m1", "user", "Go on")]);
+  assert.equal(withLeaving(next, ended), next);
+  // An empty bubble (after a finished reply), or one already folding: nothing to fold.
+  const replied = transcript(reduce(s, { type: "event", event: { type: "message", message: message("m1", "assistant", "ok") } }));
+  assert.equal(endedLive(replied, end([user, message("m1", "assistant", "ok")])), null);
+  assert.equal(endedLive(withLeaving(idle, ended), idle), null);
 });

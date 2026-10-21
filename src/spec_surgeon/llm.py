@@ -82,9 +82,10 @@ _thinking_display_refused = False                                    # latched o
 @contextmanager
 def stream_observer_scope(observer):
     """Observe a call's stream as it arrives, for the window: ``observer(event)`` gets ``{"type": "started"}``,
-    ``{"type": "text_delta", "text"}``, ``{"type": "thinking_delta", "text"}`` and ``{"type": "tool", "name"}``
-    (content-free apart from the model's own words to the user). Never affects the call: an observer that raises is
-    reported once and ignored."""
+    ``{"type": "text_delta", "text"}``, ``{"type": "thinking_delta", "text"}``, ``{"type": "tool", "name", "index"}``
+    and ``{"type": "tool_input", "index", "json"}`` (a piece of that tool call's input JSON as it is written, for the
+    observer to find the model's words to the user in; nothing else of it may reach the window). Never affects the
+    call: an observer that raises is reported once and ignored."""
     token = _STREAM_OBSERVER.set(observer)
     try:
         yield
@@ -214,10 +215,11 @@ def _finished_message(stream, seen=None, cancel=None):
                     tool_json.clear()
                 elif block_type(block) in ("tool_use", "server_tool_use", "mcp_tool_use"):
                     tool_json[index] = ""
-                    _observe({"type": "tool", "name": str(getattr(block, "name", "") or "")})
+                    _observe({"type": "tool", "name": str(getattr(block, "name", "") or ""), "index": index})
             elif kind == "content_block_delta" and getattr(event.delta, "type", None) == "input_json_delta":
                 if event.index in tool_json:
                     tool_json[event.index] += event.delta.partial_json
+                    _observe({"type": "tool_input", "index": event.index, "json": event.delta.partial_json})
             elif kind == "content_block_delta" and getattr(event.delta, "type", None) == "text_delta":
                 _observe({"type": "text_delta", "text": str(getattr(event.delta, "text", "") or "")})
             elif kind == "content_block_delta" and getattr(event.delta, "type", None) == "thinking_delta":
