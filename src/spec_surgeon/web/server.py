@@ -74,6 +74,18 @@ def spent_text(cost) -> str:
     return "less than $0.01" if cost < 0.005 else f"about ${cost:.2f}"
 
 
+def job_ended_line(action: str, stage: str, *, stopped: bool, failure: str, cost: Dict[str, Any],
+                   seconds: float) -> str:
+    """The app log's line at the end of every job: how it ended, never what was said — the action, the stage it left
+    the task in (``done``, ``preview``, ``question``, ``budget``, ``resume``…), whether the user stopped it, the
+    exception's type when it failed, the model calls so far and the estimated spending (``DocumentTask._cost``)."""
+    calls = cost.get("calls", 0)
+    return (f"Job {action} ended: stage {stage}; stopped {'yes' if stopped else 'no'}"
+            + (f"; failed ({failure})" if failure else "")
+            + f"; {calls} model call{'' if calls == 1 else 's'} so far; estimated cost {cost.get('text')}"
+            + f"; {seconds:.1f} s")
+
+
 class Shell:
     """What the native window offers the server: file dialogs and closing. The default has neither (a browser)."""
 
@@ -198,6 +210,7 @@ class WindowState:
 
             def target():
                 terminal: Dict[str, Any]
+                failure = ""
                 try:
                     with llm.cancellation_scope(cancel), llm.model_progress_scope(progress), \
                             diag.span("web.job", action=action, queue_ms=round((time.perf_counter() - queued) * 1000, 3)):
@@ -210,6 +223,7 @@ class WindowState:
                                  f"spending so far: {spent_text(task._budget.spent_usd)}.")
                         terminal = {"type": "done", "state": self._payload(task.view(), busy=False), "stopped": True}
                     else:
+                        failure = kind
                         message = (str(e).replace("press Preview again", "continue to check the documents again")
                                    if kind in KNOWN_FAILURES else
                                    "The work could not finish. You can continue, or open the diagnostic logs from Help.")
@@ -226,6 +240,9 @@ class WindowState:
                 except Exception:  # noqa: BLE001
                     pass
                 self._last_view = dict(terminal["state"])
+                diag.app_log().info(job_ended_line(action, task.stage, stopped=bool(terminal.get("stopped")),
+                                                   failure=failure, cost=task._cost(),
+                                                   seconds=time.perf_counter() - queued))
                 events.put(terminal)
             self.thread = threading.Thread(target=context.run, args=(target,), daemon=False, name="spec-surgeon-job")
             self.thread.start()

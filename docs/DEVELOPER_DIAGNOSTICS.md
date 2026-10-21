@@ -15,7 +15,7 @@ Take the results folder's `DIAGNOSTICS.md`, `logs/` and `records/`, and the appl
 | Conversation timeline | `<conversation work folder>/logs/events.jsonl` | Model calls, tool execution, validation and accepted/rejected submissions |
 | Preview/chain/recovery timeline | Their own `logs/events.jsonl`, including nested run folders | Sample processing, chain stages, repair trials, budgets, reviews and delivery |
 | Application timeline | Application logs folder, `app-events-<pid>.jsonl` and `.1`–`.3` | UI actions, background jobs, session state and failures before a run folder exists |
-| Readable application log/crashes | `spec-surgeon.log`, `crash-*.log` | Activity, caught failures and native crashes |
+| Readable application log/crashes | `spec-surgeon.log`, `crash-*.log` | Activity, caught failures and native crashes; how every window job ended (`Job <action> ended: stage …; stopped yes/no; [failed (<error type>);] N model calls so far; estimated cost …; N s`) and `Spec Surgeon closed` on a clean exit. A job's activity with no `Job … ended` line after it was cut off; a `started` line with no `closed` before it means the previous session did not exit cleanly |
 
 On Windows, the application logs folder is `%LOCALAPPDATA%\Spec Surgeon\logs`. Other platforms use `spec_surgeon.settings.logs_dir()`. `SPEC_SURGEON_CONFIG_DIR` overrides application storage for isolated development/tests.
 
