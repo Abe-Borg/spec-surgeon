@@ -512,6 +512,24 @@ def test_splitting_a_run_with_a_pending_formatting_change_is_refused(src, pics):
     assert rec.passed, explain(rec)
 
 
+def test_emptying_a_run_with_a_pending_formatting_change_is_refused(src, monkeypatch):
+    # untracked, the run left with nothing but its properties goes: its w:rPrChange would go with it
+    lone = mutate(src, MAIN, format_change("Picture 2"))
+    with pytest.raises(JobException) as e:
+        one(lone, "remove_images", {}, {"match": {"name_regex": "^Picture 2$"}, "tracked": False})
+    assert e.value.code == "tracked-format" and "would go with it" in e.value.reason
+    # a rule shared by plan and apply that lets it through: the verifier refuses on its own reading (and V4 counts it)
+    monkeypatch.setattr(rm_module, "format_change_problem", lambda run, matched, tracked: False)
+    plan, out, rec = one(lone, "remove_images", {}, {"match": {"name_regex": "^Picture 2$"}, "tracked": False})
+    assert not list(xml(out).iter(W + "rPrChange"))
+    assert {"V4", "V10"} <= set(failed(rec)) and "empties carries a pending formatting change" in v10(rec)
+    monkeypatch.undo()
+    # tracked, the same run is wrapped whole: the change stays with it, nothing copied
+    plan, out, rec = one(lone, "remove_images", {}, {"match": {"name_regex": "^Picture 2$"}})
+    assert rec.passed, explain(rec)
+    assert len(list(xml(out).iter(W + "rPrChange"))) == 1
+
+
 def test_a_picture_watermark_is_left_to_remove_watermark(src):
     rid = next(iter(rels_of(src, HEADER)))
     marked = mutate(src, HEADER, watermark(rid))

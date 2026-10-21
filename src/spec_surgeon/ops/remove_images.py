@@ -15,7 +15,8 @@ Definition (both sides; the pictures, the match and the refusals every picture o
   pending formatting change (``w:rPrChange``: its revision id would be copied) is refused (``tracked-format``). The
   picture stays referenced until the deletion is accepted: no relationship and no member changes.
 * **Untracked** (``tracked: false``): each matched ``w:drawing`` leaves its run, and a run left with nothing but its
-  ``w:rPr`` goes. A relationship of the part that only removed drawings name (an attribute in the relationships
+  ``w:rPr`` goes — one carrying a pending formatting change (``w:rPrChange``: the revision would go with it) is refused
+  (``tracked-format``). A relationship of the part that only removed drawings name (an attribute in the relationships
   namespace inside them, none outside) goes; a member a removed relationship targeted that no relationship of the
   package targets any more goes too, with its Override (one with relationships of its own refuses: ``structure``).
   Each paragraph's drawing count drops (a structure-only declaration).
@@ -59,6 +60,15 @@ def stretches(run, matched: set) -> List[Tuple[bool, List[Any]]]:
         else:
             out.append((hit, [c]))
     return out
+
+
+def format_change_problem(run, matched: set, tracked: bool) -> bool:
+    """Whether removing the matched drawings (``matched``: their ids) from ``run`` would copy its pending formatting
+    change (``w:rPr/w:rPrChange``) — tracked, a run split in pieces — or drop it — untracked, a run left empty goes."""
+    if run.find(f"{W}rPr/{W}rPrChange") is None:
+        return False
+    parts = stretches(run, matched)
+    return len(parts) > 1 if tracked else all(hit for hit, _ in parts)
 
 
 def remove_tracked(runs: List[Any], matched: set, stamp, ids: List[int]) -> None:
@@ -215,14 +225,14 @@ class RemoveImages(Op):
             for bi, ds in sorted(by_block.items()):
                 frag.touches.append((part, str(bi), "text"))
                 p = pars[bi]
+                ids = {id(d) for d in ds}
+                runs = list(dict.fromkeys(d.getparent() for d in ds))
+                if any(format_change_problem(r, ids, tracked) for r in runs):
+                    why = ("a picture shares its run with text that carries a pending formatting change — accept or "
+                           "reject it first" if tracked else "a picture's run carries a pending formatting change that "
+                           "would go with it — accept or reject it first, or remove the picture as a tracked change")
+                    raise JobException(f"{part} paragraph {bi}: {why}", "tracked-format", {"part": part, "paragraph": bi})
                 if tracked:
-                    ids = {id(d) for d in ds}
-                    runs = list(dict.fromkeys(d.getparent() for d in ds))
-                    for r in runs:
-                        if len(stretches(r, ids)) > 1 and r.find(f"{W}rPr/{W}rPrChange") is not None:
-                            raise JobException(f"{part} paragraph {bi}: a picture shares its run with text that carries "
-                                               f"a pending formatting change — accept or reject it first",
-                                               "tracked-format", {"part": part, "paragraph": bi})
                     dels += sum(1 for r in runs for hit, _ in stretches(r, ids) if hit)
                 else:
                     text = block_full_text(p)

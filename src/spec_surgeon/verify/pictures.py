@@ -12,9 +12,10 @@ template, written as XML text.
   needs; the drawing ids unique in the output.
 * ``removed_images``: the matches derived here; every paragraph holding a removed picture must be the source's with
   exactly those drawings gone (untracked) or inside a new ``w:del`` (tracked), item by item, and equal to the paragraph
-  built here from the source's by the rule (the runs cut, emptied runs gone); untracked, the rels must lose exactly the
-  relationships only removed drawings named, the package exactly the members nothing targets any more, and
-  ``[Content_Types].xml`` exactly their Overrides; tracked, nothing but the parts may change.
+  built here from the source's by the rule (the runs cut, emptied runs gone); a run carrying a pending formatting change
+  (``w:rPrChange``) that the removal would split (tracked) or empty (untracked) must have been refused; untracked, the
+  rels must lose exactly the relationships only removed drawings named, the package exactly the members nothing
+  targets any more, and ``[Content_Types].xml`` exactly their Overrides; tracked, nothing but the parts may change.
 * ``resized_images``: the matches and the new sizes derived here; every drawing of a part identical but for the resized
   pictures' two sizes, which the residual then masks.
 """
@@ -540,9 +541,15 @@ def _removed_images(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                             if it.el in gone else it for it in items]
             else:
                 expected = drop(items, elements=ds)
-            if tracked and any(len(_v_cuts(r, gone)) > 1 and r.find(f"{W}rPr/{W}rPrChange") is not None
-                               for r in dict.fromkeys(d.getparent() for d in ds)):
-                errs.append(f"{where}: a run to split carries a pending formatting change — the op must refuse")
+            for r in dict.fromkeys(d.getparent() for d in ds):
+                if r.find(f"{W}rPr/{W}rPrChange") is None:
+                    continue
+                cuts = _v_cuts(r, gone)
+                if tracked and len(cuts) > 1:
+                    errs.append(f"{where}: a run to split carries a pending formatting change — the op must refuse")
+                elif not tracked and all(hit for hit, _ in cuts):
+                    errs.append(f"{where}: a run the removal empties carries a pending formatting change, which would go "
+                                f"with it — the op must refuse")
             check_paragraph(p, ov.pars[oi], expected, old_ids, where, errs)
             want_p = _v_without(p, ds, tracked, author)
             got_p = _v_unstamped(ov.pars[oi], author, old_ids, where, errs) if tracked else ov.pars[oi]
