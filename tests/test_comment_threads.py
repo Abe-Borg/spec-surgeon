@@ -499,11 +499,25 @@ def test_catalog_and_the_users_words():
     spec = {"request": "r", "summary": "s", "mode": "untracked",
             "ops": [{"op": "reply_to_comments", "params": {**REPLY, "which": "authors", "authors": ["Jack"]}}]}
     validate_spec(spec)
-    assert placed_words(spec) == [REPLY["text"]]
+    assert placed_words(spec) == [REPLY["text"], REPLY["author"], REPLY["initials"]]
     with pytest.raises(SpecError):
         validate_spec({**spec, "ops": [{"op": "reply_to_comments", "params": {**REPLY, "tracked": True}}]})
     with pytest.raises(SpecError):
         validate_spec({**spec, "ops": [{"op": "resolve_comments", "params": {"action": "close"}}]})
+
+
+def test_the_reply_s_author_and_initials_are_the_user_s_words_too():
+    """Review of batch 6: only the reply's text was traced, so a reviewer name the model made up reached Word's comment
+    balloon as the author of the user's reply."""
+    from spec_surgeon.compiler import untraceable
+    request = "Reply 'Revised in 2.3 — see the new wording.' to Jack's comments as Abe Borg, initials AB."
+    spec = {"ops": [{"op": "reply_to_comments", "params": {**REPLY, "which": "authors", "authors": ["Jack"]}}]}
+    assert untraceable(spec, [request]) == []
+    invented = {"ops": [{"op": "reply_to_comments", "params": {**REPLY, "author": "Claude AI Reviewer",
+                                                               "initials": "CAI"}}]}
+    assert untraceable(invented, [request]) == ["Claude AI Reviewer", "CAI"]
+    no_initials = {"ops": [{"op": "reply_to_comments", "params": {"text": REPLY["text"], "author": "Abe Borg"}}]}
+    assert untraceable(no_initials, ["Reply 'Revised in 2.3 — see the new wording.' as Abe Borg"]) == []
 
 
 def test_specs_run_through_the_batch_pipeline(src, tmp_path):
