@@ -125,6 +125,10 @@ def test_whole_words_still_trace_wherever_they_stand():
         assert untraceable(spec, [request]) == [], placed
     assert untraceable({"ops": [{"op": "replace_text", "params": {"find": "x", "replace": "Café"}}]},
                        ["the Cafés"]) == ["Café"]                                 # letters beyond ASCII are letters
+    for placed, source in (("Cafe", "the Cafe\u0301 menu"),                     # a decomposed accent is the word's
+                           ("\u0928\u092e\u0938", "\u0928\u092e\u0938\u094d\u0924\u0947")):  # an Indic vowel sign too
+        assert untraceable({"ops": [{"op": "replace_text", "params": {"find": "x", "replace": placed}}]},
+                           [source]) == [placed]
     assert untraceable({"ops": [{"op": "replace_text", "params": {"find": "x", "replace": "\t"}}]},
                        ["anything"]) == []                                        # whitespace alone places no words
 

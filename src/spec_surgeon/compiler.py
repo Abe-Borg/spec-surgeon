@@ -48,6 +48,7 @@ import copy
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -671,13 +672,14 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
 
 
 def _word_char(c: str) -> bool:
-    return c.isalnum() or c == "_"
+    # a combining mark (a decomposed accent, an Indic vowel sign) belongs to the word it follows
+    return c.isalnum() or c == "_" or unicodedata.category(c).startswith("M")
 
 
 def _traced(phrase: str, source: str) -> bool:
-    """``phrase`` occurs in ``source`` as whole words: an occurrence that starts or ends with a letter, digit or
-    underscore counts only where the source has none of those right beside it, so "shall not" is not in "shall
-    notify", "50" is not in "500" and "Own" is not in "Owner". A phrase that starts or ends with punctuation
+    """``phrase`` occurs in ``source`` as whole words: an occurrence that starts or ends with a letter, digit,
+    underscore or combining mark counts only where the source has none of those right beside it, so "shall not" is
+    not in "shall notify", "50" is not in "500" and "Own" is not in "Owner". A phrase that starts or ends with punctuation
     ("(SPRINKLERS)") is bounded by that punctuation. Every occurrence is tried: the phrase may be lifted from inside
     a longer word once and stand alone later. Whitespace alone (a tab, a line break) places no words."""
     if not phrase:
