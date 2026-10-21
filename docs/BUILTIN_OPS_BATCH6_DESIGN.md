@@ -121,15 +121,20 @@ Nearest relative: `swap_image` (the picture model `ops/images.py` ↔ `verify/im
 
 * **`insert_image`**: an attached picture (PNG, JPEG, GIF, BMP; SVG refused) as its own paragraph `before`/`after`
   each anchor paragraph (targeted selector); `width`/`height` in inches (one given keeps the proportions; neither: the
-  picture's own size at its resolution, 96 dpi when it has none, shrunk to the section's text width); `align`;
-  `description` (alt text, the user's words); the new paragraph's style (default: the document's default paragraph
-  style). Media `word/media/imageN.ext`, a relationship, a content-type default when missing. Tracked by default
-  (the paragraph is a tracked insertion). V10 kind `inserted_images`.
-* **`remove_images`**: the pictures `match` selects (file, checksum, name/description pattern, `all`) in the scope;
-  the run holding each goes (tracked: deleted); media and relationships no longer used leave the package. Watermarks
-  are `remove_watermark`'s. The paragraph stays. V10 kind `removed_images`.
+  picture's own size at its resolution, 96 dpi when it has none, shrunk to the anchor section's text width — in a
+  header or footer the narrowest of every section's); `align`; `description` (alt text, the user's words); the new
+  paragraph's style (default: the document's default paragraph style). Media `word/media/imageN.ext`, a relationship
+  per part (its rels created when missing), a content-type Default when missing. Tracked by default (the paragraph is
+  a tracked insertion). An anchor in or holding a text box, and `after` a section break, are refused. V10 kind
+  `inserted_images`.
+* **`remove_images`**: the pictures `match` selects (file, checksum, name/description pattern, `all`) in the scope (the
+  document body by default); tracked, the run holding each is deleted (split where it also holds text); untracked, the
+  drawing goes, and media and relationships no longer used leave the package. Watermarks are `remove_watermark`'s.
+  The paragraph stays. VML pictures, pictures in shapes, groups, text boxes or fields, and pictures in a pending
+  change are refused. V10 kind `removed_images`.
 * **`resize_images`**: the pictures `match` selects get `width`/`height` in inches or `scale` in percent (proportions
-  kept unless both are given); inline and floating; formatting, untracked. V10 kind `resized_images`.
+  kept unless both are given); inline and floating, cropped included; turned pictures and pictures sized relative to
+  the page are refused; formatting, untracked. V10 kind `resized_images`.
 
 ## 6. Table rows and tables (F5)
 
@@ -350,3 +355,30 @@ wrong outputs and shared wrong implementations caught by V10, the two resolvers 
 bundled schema, parameters, placed words, the catalog, the batch pipeline and a LibreOffice render. Needs the owner's
 machine: a live request over real specifications opened in Word (superscript, hidden text, highlight, condensed spacing,
 double strikethrough; a numbered clause inserted with a tab after its number; a heading split by a line break).
+
+### F4 — built (2026-10-21)
+
+`insert_image`, `remove_images`, `resize_images` (ops/insert_image.py, ops/remove_images.py, ops/resize_images.py over
+the shared ops/pictures.py; V10 kinds in verify/pictures.py). The picture readers (ops/images.py ↔ verify/images.py)
+grow BMP and the resolution: PNG `pHYs`, JPEG JFIF density then Exif X/YResolution, BMP pixels per metre, 96 dpi
+otherwise; swap_image still reads PNG, JPEG and GIF only. Settled in the build:
+
+* every length from its decimal spelling, exact fractions, halves up; a size that rounds to 0 or exceeds the schema's
+  largest drawing refuses (`image-size`, also a section without a usable page size); an unusable picture file refuses
+  with `image-format` (SVG, a quarter-turned JPEG, anything that is not PNG, JPEG, GIF or BMP); a picture at its own
+  size in a section with several text columns is flagged (it fills the whole text width);
+* the new paragraph carries only `w:pStyle` (a given style; `missing-style` / `style-mismatch`) and `w:jc`; its run
+  `w:noProof` and Word's inline picture; drawing ids count up from the package's highest (a `docPr` touch, so two
+  insertions in one spec are composed into steps);
+* a tracked removal splits a run that also holds text and refuses one carrying a pending `w:rPrChange`
+  (`tracked-format`); an untracked one takes the relationships only the removed drawings name (a picture's hyperlink
+  too) and the members nothing targets any more; a picture a field shows refuses (`field-result`); an emptied
+  hyperlink or content control stays;
+* `.bmp` joins the window's picture attachments (inputs.KINDS, the native dialog's filter); the browser picker's
+  accept list in `frontend/src/lib/workbench.ts` still lists .png/.jpg/.jpeg/.gif.
+
+Tested on fixtures (tests/test_pictures.py, tests/fx_pictures.py, tests/describe_cases/pictures.py): each op end to end,
+tracked and untracked, every match, inline and floating, body, headers and footers; wrong outputs and shared wrong
+implementations caught; refusals; conflicts and composed steps; the batch pipeline; a LibreOffice render. Needs the
+owner's machine: a live request per op over real specifications, opened in Word (picture placement and the tracked
+deletion's look in the review pane).

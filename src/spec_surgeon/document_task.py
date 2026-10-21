@@ -262,7 +262,7 @@ class DocumentTask:
             usable = suffix == ".docx" or (not template and suffix in REFERENCE_KINDS)
             if not path.is_file() or not usable or path.name.startswith("~$"):
                 raise ValueError(f"Choose a Word .docx file: {path.name}" if template else
-                                 f"Choose Word .docx documents, pictures (.png, .jpg, .gif) or tables (.xlsx, .csv, "
+                                 f"Choose Word .docx documents, pictures (.png, .jpg, .gif, .bmp) or tables (.xlsx, .csv, "
                                  f".json): {path.name}")
             if path not in checked:
                 checked.append(path)

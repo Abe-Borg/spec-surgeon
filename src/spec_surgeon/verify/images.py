@@ -8,6 +8,7 @@ import copy
 import hashlib
 import posixpath
 import re
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -105,6 +106,138 @@ def v_picture(data: bytes) -> Tuple[str, int, int]:
     if not (w > 0 and h > 0):
         raise ValueError(f"{w} × {h} pixels")
     return kind, w, h
+
+
+_PER_METRE = 36000000          # EMU in a metre
+_PER_INCH = 914400
+_PER_CM = 360000
+_DPI96 = Fraction(_PER_INCH, 96)
+
+
+def _s32(data: bytes, at: int) -> int:
+    v = _u(data, at, 4, False)
+    return v - (1 << 32) if v >= 1 << 31 else v
+
+
+def _v_bmp(data: bytes) -> Tuple[int, int, Optional[Tuple[Fraction, Fraction]]]:
+    header = _u(data, 14, 4, False)
+    if header == 12:
+        _u(data, 22, 4, False)                              # the whole 12-byte header must be there
+        return _u(data, 18, 2, False), _u(data, 20, 2, False), None
+    if header < 40:
+        raise ValueError(f"a {header}-byte BMP header")
+    _u(data, 50, 4, False)                                  # the whole 40-byte header must be there
+    w, h = _s32(data, 18), _s32(data, 22)
+    px, py = _s32(data, 38), _s32(data, 42)
+    density = (Fraction(_PER_METRE, px), Fraction(_PER_METRE, py)) if px > 0 and py > 0 else None
+    return w, -h if h < 0 else h, density
+
+
+def _v_png_density(data: bytes) -> Optional[Tuple[Fraction, Fraction]]:
+    pos = 8
+    while True:
+        try:
+            n, kind = _u(data, pos, 4, True), data[pos + 4:pos + 8]
+        except ValueError:
+            return None
+        if len(kind) < 4 or kind == b"IDAT" or kind == b"IEND":
+            return None
+        if kind == b"pHYs":
+            if n != 9 or pos + 17 > len(data):
+                return None
+            px, py, unit = _u(data, pos + 8, 4, True), _u(data, pos + 12, 4, True), data[pos + 16]
+            if unit != 1 or px == 0 or py == 0:
+                return None
+            return Fraction(_PER_METRE, px), Fraction(_PER_METRE, py)
+        pos += n + 12
+
+
+def _v_exif_density(app1: bytes) -> Optional[Tuple[Fraction, Fraction]]:
+    t = app1[6:]
+    if t[:2] not in (b"II", b"MM"):
+        return None
+    big = t[:2] == b"MM"
+    try:
+        if _u(t, 2, 2, big) != 42:
+            return None
+        ifd = _u(t, 4, 4, big)
+        xr = yr = None
+        unit = 2
+        for k in range(_u(t, ifd, 2, big)):
+            e = ifd + 2 + 12 * k
+            if e + 12 > len(t):
+                return None
+            tag, typ, count = _u(t, e, 2, big), _u(t, e + 2, 2, big), _u(t, e + 4, 4, big)
+            if count != 1:
+                continue
+            if tag in (0x011A, 0x011B) and typ == 5:
+                at = _u(t, e + 8, 4, big)
+                value = (_u(t, at, 4, big), _u(t, at + 4, 4, big))
+                if tag == 0x011A:
+                    xr = value
+                else:
+                    yr = value
+            elif tag == 0x0128 and typ == 3:
+                unit = _u(t, e + 8, 2, big)
+    except ValueError:
+        return None
+    per = _PER_INCH if unit == 2 else _PER_CM if unit == 3 else None
+    if per is None or xr is None or yr is None or 0 in xr or 0 in yr:
+        return None
+    return Fraction(per * xr[1], xr[0]), Fraction(per * yr[1], yr[0])
+
+
+def _v_jpeg_density(data: bytes) -> Optional[Tuple[Fraction, Fraction]]:
+    pos = 2
+    jfif = exif = None
+    jfif_read = exif_read = False
+    while pos < len(data):
+        if data[pos] != 0xFF:
+            return None
+        while pos < len(data) and data[pos] == 0xFF:
+            pos += 1
+        if pos >= len(data):
+            return None
+        marker = data[pos]
+        pos += 1
+        if marker == 0x01 or 0xD0 <= marker <= 0xD8:
+            continue
+        if marker in (0xD9, 0xDA, 0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF):
+            break
+        try:
+            n = _u(data, pos, 2, True)
+        except ValueError:
+            break
+        if n < 2 or pos + n > len(data):
+            return None
+        body = data[pos + 2:pos + n]
+        if marker == 0xE0 and body.startswith(b"JFIF\x00") and not jfif_read:
+            jfif_read = True
+            if len(body) >= 12:
+                per = {1: _PER_INCH, 2: _PER_CM}.get(body[7])
+                dx, dy = _u(body, 8, 2, True), _u(body, 10, 2, True)
+                if per and dx and dy:
+                    jfif = (Fraction(per, dx), Fraction(per, dy))
+        elif marker == 0xE1 and body.startswith(b"Exif\x00\x00") and not exif_read:
+            exif_read = True
+            exif = _v_exif_density(body)
+        pos += n
+    return jfif if jfif is not None else exif
+
+
+def v_picture_info(data: bytes) -> Tuple[str, int, int, Fraction, Fraction]:
+    """(format, width, height, EMU per pixel across, down) of a picture to insert — the definition of
+    ops/images.read_picture, written again — or ValueError."""
+    if data.startswith(b"BM"):
+        w, h, density = _v_bmp(data)
+        if not (w > 0 and h > 0):
+            raise ValueError(f"{w} × {h} pixels")
+        kind = "bmp"
+    else:
+        kind, w, h = v_picture(data)
+        density = _v_png_density(data) if kind == "png" else _v_jpeg_density(data) if kind == "jpeg" else None
+    ex, ey = density if density is not None else (_DPI96, _DPI96)
+    return kind, w, h, ex, ey
 
 
 def v_fit(box: Tuple[int, int], px: Tuple[int, int], fit: str) -> Tuple[int, int]:

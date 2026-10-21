@@ -632,6 +632,9 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
             for key in ("set", "custom"):
                 if isinstance(params.get(key), dict):
                     out += [v for v in params[key].values() if isinstance(v, str) and v]
+        # built-in batch 6: an inserted picture's alt text is the user's words
+        if op == "insert_image" and isinstance(params.get("description"), str) and params["description"]:
+            out.append(params["description"])
     return out
 
 

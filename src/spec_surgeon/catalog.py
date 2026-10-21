@@ -442,6 +442,36 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "the old picture's alt text stays as it was (flagged); a linked, SVG, cropped or turned picture sets the file "
         "aside, and so does a file without a matching picture unless allow_missing",
     ],
+    # built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §5): pictures
+    "insert_image": [
+        "the picture is the file the user attached (PNG, JPEG, GIF or BMP; an SVG is refused): its exact path in "
+        "'image'",
+        "it goes into a new paragraph of its own before or after each anchor paragraph — say which paragraphs; the "
+        "anchor's text and formatting are untouched",
+        "a width or height alone keeps the proportions; neither: the picture's own size at its resolution (96 dpi "
+        "when it has none), made smaller to fit between the margins",
+        "the new paragraph has the document's default paragraph style unless a style is named, and the style's "
+        "alignment unless align is given; the alt text is the user's words verbatim, or none",
+        "tracked unless the user asked for clean copies",
+    ],
+    "remove_images": [
+        "the pictures are found by their file (its bytes), md5, name/alt text, or every picture in scope — say which; "
+        "the document body by default",
+        "the paragraph that held a picture stays (with its text); watermarks are left to remove_watermark",
+        "tracked: the picture is shown deleted until accepted; untracked: its file leaves the document when nothing "
+        "else shows it",
+        "a VML picture, a picture in a shape, group, text box or field, or one inside someone's pending change sets "
+        "the file aside",
+    ],
+    "resize_images": [
+        "the pictures are found by their file, md5, name/alt text, or every picture in scope — say which; the "
+        "document body by default",
+        "a width or height alone keeps each picture's present proportions; both set the size exactly; scale is a "
+        "percentage of the present size",
+        "the position, wrapping and crop stay as they were; a turned picture, or one sized relative to the page, sets "
+        "the file aside",
+        "Word cannot track a picture's size: the change is never tracked",
+    ],
     "make_values_agree": [
         "the place the user picked is the truth; a place whose value has the same letters and digits (any case or "
         "spacing: '211319' and '21 13 19') already agrees and is left as it is — nothing is converted",
