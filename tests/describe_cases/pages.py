@@ -3,6 +3,8 @@ remove_watermark — (select, params, [expected substrings]); the typical call f
 
 CASES = {
     "set_page_setup": [
+        # sections by an index range: both ends included, counted from 1 in the sentence
+        ({"sections": {"index_range": [0, 2]}}, {"orientation": "landscape"}, ["sections 1 through 3"]),
         # the usual request: one-inch margins everywhere, every section, never tracked
         ({"sections": "all"}, {"margins": {"top": 1440, "bottom": 1440, "left": 1440, "right": 1440}},
          ["every margin to 1 inch", "in every section"]),

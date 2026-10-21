@@ -246,8 +246,8 @@ def _section_words(sections: Any) -> str:
         if sections.get("with_tables"):
             return "the sections that contain tables"
         if sections.get("index_range"):
-            a, b = sections["index_range"]
-            return f"sections {a + 1} through {b}"
+            a, b = sections["index_range"]              # [first, last], both included
+            return f"sections {a + 1} through {b + 1}"
     return "the selected sections"
 
 
