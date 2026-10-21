@@ -272,6 +272,36 @@ def test_update_flow_skip_and_manual_check(tmp_path, monkeypatch):
     assert "skip" in shown["text"] and checker.calls[-1] == (True, "9.9.9")
 
 
+def test_a_manual_check_clears_the_last_answer_until_its_own_lands(tmp_path, monkeypatch):
+    """The About page shows ``manual_result`` once a check it started answers: the previous answer must not stand in
+    for it while the new check runs, or a second "up to date" would read as instant."""
+    import threading
+    from spec_surgeon.settings import Settings
+    from spec_surgeon.updater import CheckResult, current_version
+    from spec_surgeon.web.updates import UpdateFlow
+    monkeypatch.setenv("SPEC_SURGEON_CONFIG_DIR", str(tmp_path / "config"))
+    gate = threading.Event()
+
+    def checker(manual, skipped):
+        gate.wait(5)
+        return CheckResult("current", current_version())
+    flow = UpdateFlow(Settings(), checker=checker)
+    gate.set()
+    assert flow.check(manual=True) is True
+    first = _settle(flow, lambda s: bool(s["manual_result"]))["manual_result"]
+    assert "up to date" in first
+    gate.clear()
+    assert flow.check(manual=True) is True
+    assert flow.state()["manual_result"] == ""                 # cleared the moment the check starts
+    gate.set()
+    assert _settle(flow, lambda s: bool(s["manual_result"]))["manual_result"] == first
+    gate.clear()
+    assert flow.check(manual=False) is True
+    assert flow.state()["manual_result"] == first               # an automatic check never touches it
+    gate.set()
+    _settle(flow, lambda s: True)
+
+
 def test_about_says_who_made_it_the_license_and_how_to_reach_him(tmp_path):
     from fastapi.testclient import TestClient
     from spec_surgeon import __version__, about
@@ -291,6 +321,13 @@ def test_about_says_who_made_it_the_license_and_how_to_reach_him(tmp_path):
     for name, lic, _ in about.THIRD_PARTY:
         assert f"{name}: {lic}" in plain
     assert info["license"].strip() == about.LICENSE_TEXT.strip()
+    # The window's About page reads the same values field by field, never from a copy of its own.
+    assert (info["author"], info["email"], info["linkedin"]) == (about.AUTHOR, about.EMAIL, about.LINKEDIN_URL)
+    assert info["copyright"] == about.COPYRIGHT_LINE and info["license_name"] == about.LICENSE_NAME
+    assert info["license_summary"] == about.LICENSE_SUMMARY
+    assert info["components"] == [{"name": n, "license": lic, "url": u} for n, lic, u in about.THIRD_PARTY]
+    from spec_surgeon import llm
+    assert info["model"] == llm.DEFAULT_MODEL
 
 
 # ---- the web stack stays inside the window -----------------------------------------------------------------------
