@@ -8,7 +8,11 @@ the plan's. Any condition under which the op must refuse is an error here.
 The definition, as this module reads it: a revision element (ins, del, moveFrom, moveTo, the property changes, the cell
 revisions) outside any property change's snapshot; ins/del/moveFrom/moveTo under a w:rPr are a paragraph mark's when the
 rPr belongs to a w:pPr (an equation's otherwise), under w:trPr a row's, under w:numPr a numbering marker's, anywhere else
-content. Chosen: author in the list (casefolded, whitespace collapsed) and wall-clock date in range (no readable date
+content. A row's insertion or deletion (built-in batch 6): accepting a deleted row or rejecting an inserted one drops
+the row (directly in its table; in a content control the op must refuse) and all it holds — a table all of whose own
+rows go, whole, unless that leaves its container without a closing paragraph or two tables side by side (the op must
+refuse) —, and what it holds is content that goes for the anchor checks; the other way round only the marker goes (and
+a w:trPr emptied by it). Chosen: author in the list (casefolded, whitespace collapsed) and wall-clock date in range (no readable date
 under a date filter: not chosen). A move piece takes the choice of the innermost open move range of its kind (scanned in
 document order, ranges paired by id); the ranges sharing a name and their pieces are chosen whole or the op must refuse.
 Accept keeps ins/moveTo content and drops del/moveFrom with theirs; reject the reverse, an unwrapped deletion's deleted
@@ -32,6 +36,7 @@ from .reader import W
 from .props import Ctx
 from .fields import v_fields
 from .markup import tree_difference
+from .tablestructure import v_container_problem
 
 _WRAPS = {W + "ins": "ins", W + "del": "del", W + "moveFrom": "moveFrom", W + "moveTo": "moveTo"}
 _CHANGES = {W + t: t for t in ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange",
@@ -230,7 +235,35 @@ def _v_decide(root, part: str, action: str, chooses: Callable[[Any], Tuple[bool,
     for el in picked:
         if kind[id(el)] == "content":
             d.mark(d.unwrap if _WRAPS[el.tag] in keeps_content else d.drop, el)
-    content_dropped = {id(el) for el in picked if kind[id(el)] == "content" and id(el) in d.drop}
+    # rows (built-in batch 6): accepting a deleted row or rejecting an inserted one takes the row with all it holds (a
+    # table whose every own row goes, whole); the other way round only its marker, and a w:trPr left empty with it
+    rows_out: List[Any] = []
+    for el in picked:
+        if kind[id(el)] == "row" and el.tag in (W + "ins", W + "del"):
+            if (el.tag == W + "del") == accept:
+                rows_out.append(el.getparent().getparent())
+            else:
+                d.mark(d.drop, el)
+                d.mark(d.touched, el.getparent())
+    out_set = set(rows_out)
+    by_table: Dict[Any, List[Any]] = {}
+    for tr in rows_out:
+        if any(a in out_set for a in tr.iterancestors()):
+            continue
+        if tr.getparent() is None or tr.getparent().tag != W + "tbl":
+            d.refusals.append(f"{part}: a tracked row that goes sits in a content control")
+            continue
+        by_table.setdefault(tr.getparent(), []).append(tr)
+    whole = [t for t, trs in by_table.items() if len(trs) == sum(1 for c in t if c.tag == W + "tr")]
+    for container in {t.getparent() for t in whole}:
+        if v_container_problem(container, {t for t in whole if t.getparent() is container}):
+            d.refusals.append(f"{part}: a whole table would go and leave its container without a closing paragraph or "
+                              f"two tables side by side")
+    taken = whole + [tr for t, trs in by_table.items() if t not in whole for tr in trs]
+    for x in taken:
+        d.mark(d.drop, x)
+    content_dropped = {id(el) for el in picked if kind[id(el)] == "content" and id(el) in d.drop} | \
+        {id(x) for x in taken}
     move_marks = set(d.drop) - content_dropped
 
     def inside(el, ids: Set[int]) -> bool:
@@ -303,6 +336,8 @@ def _v_decide(root, part: str, action: str, chooses: Callable[[Any], Tuple[bool,
         if id(el) in gone or inside(el, gone):
             continue
         k = kind[id(el)]
+        if k == "row" and el.tag in (W + "ins", W + "del"):
+            continue                                   # decided with the rows above
         if k in ("row", "numbering", "math", "cell") or (k == "property" and not accept):
             d.refusals.append(f"{part}: a chosen {_ALL[el.tag]} ({k}) the op does not resolve")
             continue

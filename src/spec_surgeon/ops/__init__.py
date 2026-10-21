@@ -44,3 +44,4 @@ from . import audit_numbering, set_list_level  # noqa: E402,F401  — built-in b
 from . import convert_numbering, convert_typed_numbers  # noqa: E402,F401  — built-in batch 5 (numbering, items 33, 34)
 from . import hygiene  # noqa: E402,F401 — character hygiene, items 41–44
 from . import add_comments  # noqa: E402,F401 — literal approved review reasons
+from . import delete_table_rows, delete_tables, insert_table, insert_table_rows  # noqa: E402,F401 — built-in batch 6 (F5)

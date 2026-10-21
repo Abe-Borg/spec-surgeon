@@ -2556,3 +2556,6 @@ KINDS.update(FONT_NUMBERING_KINDS)
 KINDS.update(AUDIT_KINDS)
 KINDS.update(CONVERT_KINDS)
 KINDS.update(TYPED_KINDS)
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §6): table rows and tables
+from .tablestructure import TABLE_STRUCTURE_KINDS  # noqa: E402
+KINDS.update(TABLE_STRUCTURE_KINDS)
