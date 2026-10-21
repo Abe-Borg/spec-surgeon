@@ -279,8 +279,8 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "how the section begins after the one before it (its section break); a setting already in effect is left alone",
     ],
     "insert_section_break": [
-        "the break goes before each matched top-level body paragraph (a targeted selector): the paragraph before it ends "
-        "the new section's predecessor, and both sections keep the same page setup, headers and footers",
+        "the break goes before each matched top-level body paragraph (a targeted selector): the paragraph before it "
+        "ends the first part, and both parts keep the section's page setup, headers and footers",
         "type next_page (default) | continuous | even_page | odd_page is how the new section starts; the split section's "
         "own start and page-number restart stay with its first part, so the page numbers run on",
         "refused: the document's first paragraph, a paragraph after a table or content control, one that already starts "

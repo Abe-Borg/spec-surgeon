@@ -156,13 +156,29 @@ Nearest relatives: `set_page_setup` (the section selector), `remove_header_foote
   and anything that must stay with the original section start (a page-number restart) stays with the copy. A new
   first page where the section shows a different first page is flagged. A match that is the first paragraph, follows a
   table, or already follows a break is refused. Untracked only. V10 kind `inserted_section_breaks`.
+  *As built:* a section's START is its `w:type` and its page-number restart, the rest of its sectPr its setup; a section
+  with k matches splits into k + 1 parts, the first keeping the source sectPr unchanged and every later one starting with
+  the asked break and no restart. Also refused: a match in a table, text box or content control (`break-position`,
+  `textbox`), a pending tracked change of the section's properties or of the carrying paragraph's mark
+  (`tracked-section`). Flagged besides the first page: line or note numbers that restart per section, several columns,
+  a vertical alignment.
 * **`remove_section_break`**: the break at the end of each chosen section (index or content, `set_page_setup`'s
   selector) goes; its content joins the following section and takes its setup and headers (Word's behaviour); header/
   footer parts no longer referenced leave the package; the paragraph that held the break stays. The last section's
   properties cannot be removed. Untracked only. V10 kind `removed_section_breaks`.
+  *As built:* `"all"` is every break; choosing the last section is `last-section`. So that nothing moves but the joined
+  pages, the joined section keeps the START of the first joined section (where it now begins — a next-page cover stays
+  on its own page, the body keeps its numbers), and each header/footer reference the following section inherited from
+  a joined one moves into it (its pages and every later section's show what they showed); removing a break inserted by
+  `insert_section_break` gives the source back. A printer-settings part only a removed break used leaves the package
+  too. A pending tracked change of a removed sectPr or of its paragraph mark is refused (`tracked-section`).
 * **`set_page_setup`** gains `columns` (`{count, space, separator}`; count 1 = one column), `line_numbering`
   (`{count_by, start, restart, distance}` or `none`), `vertical_alignment` (`top` | `center` | `both` | `bottom`) and
   `section_start` (`next_page` | `continuous` | `even_page` | `odd_page`).
+  *As built:* each is written as Word writes it (a schema default is an absent attribute or element) and left alone
+  where already in effect; columns are always equal (`w:equalWidth` off and the per-column `w:col` go); `start` is the
+  first number shown, written as `w:start` minus one (Word and LibreOffice show the attribute plus one). V10's
+  `section_props` gains the `exact` element spec.
 
 ## 9. Fields and comments (F8)
 
@@ -198,3 +214,16 @@ is refused. V10 kind `moved_paragraphs`.
 5. **Text boxes stay refused** with the rest of Tier 3.
 
 ## Built (fill in per item as it lands)
+
+### F7 — built (2026-10-21)
+
+`insert_section_break` and `remove_section_break` (ops/insert_section_break.py, ops/remove_section_break.py, their
+shared core ops/section_breaks.py) and `set_page_setup`'s `columns`, `line_numbering`, `vertical_alignment` and
+`section_start`. V10: `inserted_section_breaks` and `removed_section_breaks` (verify/sections.py) rebuild the expected
+main part from the source with their own code and compare it whole; the remove kind also re-derives the relationships,
+content types and parts that go. Both ops change the main part as a whole for the ops beside them (`(main, "*",
+"sections")`: section indices shift), so a page setup of the new section is a later step of the same request, chosen by
+content. Refusal codes `break-position`, `tracked-section`, `last-section`. Tests: tests/test_sections.py (fixtures
+tests/fx_sections.py; describe cases tests/describe_cases/sections.py and pages.py), LibreOffice renders of the pages a
+break adds and removes and of two columns. Needs the owner's machine: a live request over real specifications, opened
+in Word (a break before an appendix, a cover joined to the body, two columns).

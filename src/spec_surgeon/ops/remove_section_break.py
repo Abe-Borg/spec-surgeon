@@ -189,7 +189,8 @@ class RemoveSectionBreak(Op):
                         moved.append([i, k])
                         moved_rids.append(rid)
             runs.append({"first": a, "last": b, "target": b + 1, "moved": moved})
-        kept = [rid for i, r in enumerate(own) if i not in set(chosen) for _, _, rid, _ in r] + moved_rids
+        joined = set(chosen)
+        kept = [rid for i, r in enumerate(own) if i not in joined for _, _, rid, _ in r] + moved_rids
         rp = plan_removal(pkg, main, root, dropped, kept)
         printer_rids, printer_parts = self._printer_settings(pkg, main, root, secs, chosen)
         rids = sorted(set(rp.gone_rids) | set(printer_rids))
@@ -214,6 +215,9 @@ class RemoveSectionBreak(Op):
                 raise JobException(f"no section matches {chooser!r}", "not-found", {"sections": chooser})
             frag.notes.append("no section break to remove here; nothing to do"
                               + (" (allow_missing)" if isinstance(chooser, dict) else ""))
+            # "no break" was read from the sections: a break inserted beside it would make the order decide (a soft
+            # read: an edit of the words moves no section)
+            frag.touches.append((main, "*", "verify-props:sections"))
             return frag
         _, overrides = pkg.content_types()
         ct = any(m in overrides for m in members)
@@ -236,14 +240,14 @@ class RemoveSectionBreak(Op):
     def _printer_settings(pkg: DocxPackage, main: str, root, secs, chosen: Sequence[int]) -> Tuple[List[str], List[str]]:
         """The printer settings relationships only a joined section's break used, and their parts no other
         relationship targets."""
-        gone_secs = {id(secs[i]) for i in chosen}
+        gone_secs = {secs[i] for i in chosen}             # elements: the list keeps their proxies alive
         mine = [secs[i].find(W + "printerSettings") for i in chosen]
         rids = {el.get(R + "id") for el in mine if el is not None and el.get(R + "id")}
         if not rids:
             return [], []
         used = set()
         for el in root.iter():
-            if not isinstance(el.tag, str) or any(id(a) in gone_secs for a in el.iterancestors(W + "sectPr")):
+            if not isinstance(el.tag, str) or any(a in gone_secs for a in el.iterancestors(W + "sectPr")):
                 continue
             used |= {v for k, v in el.attrib.items() if k.startswith(R)}
         rels = pkg.rels(main)

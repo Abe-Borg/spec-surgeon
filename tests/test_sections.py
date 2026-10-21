@@ -415,6 +415,22 @@ def test_a_section_chosen_by_content_and_not_found():
     assert rec.passed and "no section break to remove here" in " ".join(plan.notes)
 
 
+def test_later_sections_inheriting_through_the_joined_one_keep_what_they_show():
+    from spec_surgeon.ops.hf_common import effective_refs
+
+    def unlinked(root):                              # the last section names nothing: it shows the body's parts too
+        sp = sect_prs(root)[3]
+        for ref in [c for c in sp if etree.QName(c).localname in ("headerReference", "footerReference")]:
+            sp.remove(ref)
+    data = patch_docx(SECTIONS, {MAIN: unlinked})
+    before = effective_refs(DocxPackage(data))
+    plan, _, out, rec = _run(data, rem([1]))
+    assert rec.passed, rec.to_markdown()
+    after = effective_refs(DocxPackage(out))
+    assert after[1] == before[2] and after[2] == before[3] == before[1]     # the appendix and the end, as they were
+    assert plan.members_removed == []
+
+
 def test_inserting_a_break_and_removing_it_gives_the_source_back():
     _, _, once, rec = _run(SECTIONS, ins("^PART 2"))
     assert rec.passed
@@ -469,6 +485,17 @@ def test_remove_refusals():
     assert e.code == "structure"
     for code in ("last-section", "tracked-section", "structure", "not-found"):
         assert code in FAILURE_EXPLANATIONS
+
+
+def test_the_verifier_refuses_the_last_section_and_flags_the_joined_into_sections_pending_change():
+    plan, _, out, rec = _run(SECTIONS, rem([2]))
+    d = plan.to_dict()
+    d["property_assertions"][0]["select"] = {"sections": [2, 3]}
+    rec = run_suite(SECTIONS, out, d, "s", "o")
+    assert _failed(rec) == ["V10"] and "ends the document at no break — the op must refuse" in _v10(rec)
+    plan, _, out, rec = _run(with_section_change(SECTIONS, 1), rem([0]))
+    assert rec.passed, rec.to_markdown()
+    assert any("section 1 carries a pending tracked section change" in f for f in plan.flags)
 
 
 @pytest.mark.parametrize("select, params", [
@@ -747,6 +774,24 @@ def test_a_removed_break_beside_a_header_removal_is_a_conflict():
     with pytest.raises(JobException) as e:
         merge_fragments([b, a])
     assert e.value.code == "conflict"
+
+
+def test_a_plan_that_found_nothing_still_declares_what_it_read():
+    pkg = DocxPackage(SINGLE)
+    none_found = get_op("insert_section_break").plan(pkg, {"paragraphs": {"text_regex": "^APPENDIX C"}},
+                                                     {"allow_missing": True})
+    assert none_found.touches == [(MAIN, "*", "verify:text")]
+    edit = get_op("replace_text").plan(pkg, {}, {"find": "Appendix B text", "replace": "Appendix C text"})
+    with pytest.raises(JobException) as e:
+        merge_fragments([none_found, edit])
+    assert e.value.code == "conflict"
+    no_break = get_op("remove_section_break").plan(pkg, {}, {})
+    assert no_break.touches == [(MAIN, "*", "verify-props:sections")]
+    a_break = get_op("insert_section_break").plan(pkg, {"paragraphs": {"text_regex": "^APPENDIX B"}}, {})
+    with pytest.raises(JobException) as e:
+        merge_fragments([no_break, a_break])
+    assert e.value.code == "conflict"
+    assert merge_fragments([no_break, edit]).ops                 # a text edit reaches no section
 
 
 def test_two_section_ops_never_share_a_plan():

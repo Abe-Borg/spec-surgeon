@@ -170,6 +170,8 @@ class InsertSectionBreak(Op):
             if not allow_missing:
                 raise JobException(f"no paragraph matches {pred!r}", "not-found", {"paragraphs": pred})
             frag.notes.append(f"no paragraph matches {pred!r}; nothing to do here (allow_missing)")
+            # "no match" was read from the body's words: an edit of them beside it would make the order decide
+            frag.touches.append((main, "*", "verify:text"))
             return frag
         frag.intended_parts = [main]
         # every section from the first split one on changes its index and the split section its start: the main part
