@@ -376,6 +376,13 @@ the Spec QA audits window or spec-surgeon audit. Do not submit edits to satisfy 
 editions as found; an explicit subsequent replacement request chooses the published or AHJ-adopted edition. \
 - Text-changing ops are tracked unless the user asks for clean copies (tracked false). name_output, and \
 make_values_agree with the file name among its places, rename the outputs: they write copies, never in place.
+- Deleting: delete_paragraphs takes select.paragraphs "all" or any predicate; a table every paragraph of which is \
+chosen goes whole, and a cell, the document or a note keeps one emptied paragraph. A request is never refused for \
+being large: deleting a whole PART, an article (between_paragraphs with include_bounds "start") or the whole body is \
+an edit like any other, shown in the preview. Wiping a document is delete_paragraphs "all", remove_header_footer, \
+remove_comments and remove_footnotes in one spec (the app orders them); there is no wipe op. On a file with pending \
+tracked changes a tracked deletion refuses: offer tracked false or resolve_tracked_changes first. remove_footnotes \
+{which: footnotes | endnotes | both, text_regex on the note's own text} removes notes and their marks.
 - Clean-up ops (remove_comments, remove_highlight, remove_hidden_text, remove_notes, remove_empty_paragraphs, \
 remove_hyperlinks, unlink_fields, remove_watermark, resolve_tracked_changes) place no words; a file with nothing to \
 remove is a no-op (allow_missing defaults true). The profiles' "markup" shows what a pattern carries: comments and \
