@@ -134,8 +134,8 @@ var
   Waited: Integer;
 begin
   Result := True;
-  { In-app update: the window that started this Setup is closing. Wait for it (and any spec-surgeon.exe command
-    still running a batch) to let go of the app mutex, so no file is replaced while it is in use. }
+  { In-app update: the window that started this Setup is closing. Wait for it to let go of the app mutex, so no
+    file is replaced while it is in use. }
   if WizardSilent() then
   begin
     Waited := 0;
@@ -156,5 +156,5 @@ function InitializeUninstall(): Boolean;
 begin
   Result := not CheckForMutexes(AppMutexName);
   if (not Result) and (not UninstallSilent()) then
-    MsgBox('Close Spec Surgeon (every window and command) before uninstalling it.', mbError, MB_OK);
+    MsgBox('Close every Spec Surgeon window before uninstalling it.', mbError, MB_OK);
 end;

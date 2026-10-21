@@ -40,7 +40,7 @@ NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>Spec Surgeon</title>
 <p>The window's page has not been built. From the project folder:</p>
 <pre>cd frontend
 npm install
-npm run build</pre><p>Then start Spec Surgeon again. The command line works without the page.</p></body>"""
+npm run build</pre><p>Then start Spec Surgeon again.</p></body>"""
 
 
 def release_notes_text(version: str = __version__) -> str:

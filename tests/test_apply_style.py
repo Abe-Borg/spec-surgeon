@@ -387,3 +387,18 @@ def test_catalog_and_explanations():
     assert "apply_style" in cat["ops"] and COMMON_ASSUMPTIONS["apply_style"]
     for code in ("style-mismatch", "style-import", "style-numbering", "missing-style"):
         assert code in FAILURE_EXPLANATIONS
+
+
+def test_apply_style_refuses_a_template_changed_after_planning_even_when_nothing_is_imported(src, tmp_path):
+    """Review C8 (rule 12): the plan read the template to resolve the style; the file holds that style, so nothing is
+    copied — apply still refuses a template that changed since."""
+    path = tmp_path / "OFFICE STYLES.docx"
+    path.write_bytes(build_style_template())
+    pkg = DocxPackage(src)
+    frag = get_op("apply_style").plan(pkg, {"paragraphs": {"text_regex": "^PART 2"}},
+                                      {"style": "Heading 1", "template": str(path)})
+    assert frag.transform_data["import"] is None
+    path.write_bytes(path.read_bytes() + b"\0")
+    with pytest.raises(JobException) as e:
+        get_op("apply_style").apply(pkg.copy(), frag)
+    assert e.value.code == "internal" and "changed" in e.value.reason

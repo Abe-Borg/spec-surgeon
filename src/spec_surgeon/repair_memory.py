@@ -271,7 +271,7 @@ class CaseStore:
             con.row_factory = sqlite3.Row
             con.execute("PRAGMA busy_timeout = 10000")
             version = con.execute("PRAGMA user_version").fetchone()[0]
-            if version not in (0, 1, SCHEMA_VERSION):
+            if version not in (0, SCHEMA_VERSION):
                 raise RepairMemoryError("repair memory uses a newer database format")
             if write:
                 _enable_wal(con)
@@ -281,14 +281,6 @@ class CaseStore:
                     id TEXT PRIMARY KEY, created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
                     payload TEXT NOT NULL, reuse_blocked INTEGER NOT NULL DEFAULT 0)""")
                 con.execute("CREATE TABLE IF NOT EXISTS blocked_repairs (identity TEXT PRIMARY KEY)")
-                if version < SCHEMA_VERSION:
-                    # Preserve corrections recorded before repair identity was explicit.
-                    for row in con.execute("SELECT * FROM cases WHERE reuse_blocked = 1"):
-                        case = self._read(row)
-                        if case is not None:
-                            con.execute("INSERT OR IGNORE INTO blocked_repairs(identity) VALUES (?)",
-                                        (_repair_identity(case),))
-                    self._propagate_blocks(con)
                 con.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             yield con
             if write:

@@ -1,6 +1,6 @@
 """The op catalog and the EditSpec JSON schema — generated from the op classes, so the compiler, the GUI and a
 human writing a spec by hand all read the same contract (docs/history/NL_SURGICAL_EDITOR_PLAN.md §6, Appendix A;
-Phase 3). ``spec-surgeon ops --catalog`` prints it as JSON.
+Phase 3).
 
 The schema is documentation and compiler material; ``editspec.validate_spec`` remains the authority (it also
 checks things a JSON schema cannot: mode vs ops, expect vs plan, geometry reference vs ops).

@@ -1,21 +1,31 @@
 """Phase 4: the compiler loop (scripted fake client — no API calls), the submission checks (validation, traceable
-words, dry plan), the preview and the approval token, and the `do` command end to end."""
+words, dry plan), the preview and the approval token."""
 from __future__ import annotations
 
 import copy
+import io
 import json
+import os
 import shutil
 from pathlib import Path
 from types import SimpleNamespace
+import zipfile
 
+from lxml import etree
 import pytest
 
-from make_fixtures import build
-from spec_surgeon import compiler as compiler_module
-from spec_surgeon.cli import main as cli_main
-from spec_surgeon.compiler import compile_request, untraceable
+from make_fixtures import build, build_batch1, build_reference_spec, build_rich, png
+from spec_surgeon import SKILL_DIR, compiler, compiler as C, vision
+from spec_surgeon.catalog import describe_op, op_catalog
+from spec_surgeon.compiler import (_Batch, build_messages, check_submission, compile_request, file_labels, placed_words,
+                                   system_prompt, untraceable)
+from spec_surgeon.conversation import Conversation
 from spec_surgeon.editspec import load_spec
-from spec_surgeon.preview import approval_token, make_preview
+from spec_surgeon.ops import end_of_section, get_op
+from spec_surgeon.package import W
+from spec_surgeon.preview import approval_inputs, approval_token, explain_approval_change, make_preview
+from test_adaptive_messy import _build_messy_inline_spec
+from test_text_edits import _xlsx
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
@@ -82,16 +92,6 @@ def test_traceable_words_come_from_one_source_each():
     spec = {"ops": [{"op": "replace_text", "params": {"find": "a", "replace": "ISSUED FOR PERMIT"}}]}
     assert untraceable(spec, ["ISSUED FOR", "PERMIT"]) == ["ISSUED FOR PERMIT"]      # not stitched across sources
     assert untraceable(spec, ["the stamp: ISSUED FOR  PERMIT"]) == []                  # whitespace-normalised
-
-
-def test_the_legacy_ask_and_agent_commands_are_retired(capsys):
-    for cmd in (["ask", "x"], ["agent", "x.json"]):
-        with pytest.raises(SystemExit):
-            cli_main(cmd)
-    import importlib.util
-    assert importlib.util.find_spec("spec_surgeon.agent") is None
-    from spec_surgeon import SKILL_DIR
-    assert (SKILL_DIR / "SKILL.md").is_file()
 
 
 def test_a_rejected_spec_goes_back_once(folder):
@@ -190,60 +190,369 @@ def test_preview_renders_side_by_side_images(folder, tmp_path):
     assert pv.samples[0].images and pv.samples[0].images[0].is_file()
 
 
-def test_do_end_to_end_with_approval(folder, tmp_path, monkeypatch, capsys):
-    script = lambda: FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})))
-    clients = iter([script(), script()])
-    monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
-    out = tmp_path / "out"
-    monkeypatch.setattr("spec_surgeon.cli._interactive", lambda: False)
-    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out), "--no-render"]) == 0
-    printed = capsys.readouterr().out
-    assert "PREVIEW" in printed and "Not run." in printed and not (out / "run").exists()
-    token = printed.split("approval token: ")[1].split()[0]
-    spec_path = out / "preview" / "spec.json"
-    assert cli_main(["run-spec", str(spec_path), str(folder), "--out", str(tmp_path / "r1"), "--no-render",
-                     "--approval", "0" * 16]) == 2                       # wrong recipe token: refused
-    assert cli_main(["run-spec", str(spec_path), str(folder), "--out", str(tmp_path / "r2"), "--no-render",
-                     "--approval", token]) == 0
-    capsys.readouterr()
-    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(tmp_path / "o2"), "--no-render",
-                     "--yes"]) == 0
-    assert "PASS 3" in capsys.readouterr().out
-    monkeypatch.setattr(compiler_module, "_client",
-                        lambda: FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]}))))
-    assert cli_main(["do", "remove some headers", str(folder), "--out", str(tmp_path / "o3"), "--no-render"]) == 2
-    assert "? Which sections?" in capsys.readouterr().out
+# ---- words a built-in operation places, and the inputs the approval covers -------------------------------------------
+
+@pytest.fixture
+def inputs_folder(tmp_path) -> Path:
+    d = tmp_path / "specs"
+    d.mkdir()
+    (d / "211319 - Preaction.docx").write_bytes(build_batch1())
+    (d / "PROJECT.xlsx").write_bytes(_xlsx([["Variable", "VA1", "VA3"], ["SITE_NAME", "Ashburn", "Leesburg"],
+                                            ["OWNER_NAME", "Contoso", "Contoso"], ["PROJECT NO", "1001", "1003"]]))
+    (d / "pairs.csv").write_text("find,replace\nOwner,Client\n", encoding="utf-8")
+    (d / "logo.png").write_bytes(png((1, 2, 3), size=6))
+    return d
 
 
-def test_do_talks_it_through_at_the_terminal(folder, tmp_path, monkeypatch, capsys):
-    """A person at the terminal: Claude's choices print with their exact words, '#n' picks one (wording needs a yes),
-    plain text is a reply, and the conversation is kept beside compile.json."""
-    from spec_surgeon import cli
-    fake = FakeClient(resp(tool("ask_user", {"understanding": "Remove headers and footers.",
-                                             "choices": [{"label": "Every section", "kind": "clarify"},
-                                                         {"label": "Stamp it", "kind": "alternative",
-                                                          "wording": "ISSUED FOR PERMIT"}]})),
-                      resp(tool("ask_user", {"questions": ["And the cover?"]}, "a2")),
-                      resp(tool("submit_editspec", {"spec": REMOVE}, "s3")))
-    clients = iter([fake])
-    monkeypatch.setattr(compiler_module, "_client", lambda: next(clients))
-    monkeypatch.setattr(cli, "_interactive", lambda: True)
-    answers = iter(["#2", "n", "#1", "yes, the cover too", "n"])
-    monkeypatch.setattr("builtins.input", lambda prompt="": next(answers))
-    out_dir = tmp_path / "o"
-    assert cli_main(["do", "remove all headers and footers", str(folder), "--out", str(out_dir), "--no-render"]) == 0
-    printed = capsys.readouterr().out
-    assert "[#2] Stamp it" in printed and "exact words: «ISSUED FOR PERMIT»" in printed and "Not run." in printed
-    assert fake.requests[1]["messages"][-1]["content"][0]["content"].startswith("The user chose: «Every section»")
-    assert fake.requests[2]["messages"][-1]["content"][0]["content"] == "The user replied: yes, the cover too"
-    saved = json.loads((out_dir / "conversation.json").read_text(encoding="utf-8"))
-    assert [e["role"] for e in saved["entries"]] == ["user", "claude", "user", "claude", "user", "claude"]
-    assert json.loads((out_dir / "compile.json").read_text(encoding="utf-8"))["status"] == "ok"
+def fill_spec(inputs_folder, **values):
+    params = {"table": {"file": str(inputs_folder / "PROJECT.xlsx"), "name_column": "Variable", "value_column": "VA3"},
+              "author": "A"}
+    if values:
+        params["values"] = values
+    return {"request": "fill the VA3 site", "summary": "s", "mode": "content", "ops": [
+        {"op": "fill_variables", "params": params}]}
 
 
-def test_do_at_the_terminal_stops_on_an_empty_line(folder, tmp_path, monkeypatch):
-    from spec_surgeon import cli
-    monkeypatch.setattr(compiler_module, "_client", lambda: FakeClient(resp(tool("ask_user", {"questions": ["Which?"]}))))
-    monkeypatch.setattr(cli, "_interactive", lambda: True)
-    monkeypatch.setattr("builtins.input", lambda prompt="": "")
-    assert cli_main(["do", "remove some headers", str(folder), "--out", str(tmp_path / "o"), "--no-render"]) == 2
+def test_the_words_the_new_ops_place_are_traced_to_the_user():
+    spec = {"request": "r", "summary": "s", "mode": "content", "ops": [
+        {"op": "replace_table", "params": {"pairs": [{"find": "Owner", "replace": "Client"},
+                                                     {"find": "x", "replace": ""}],
+                                           "pairs_table": {"file": "t.csv"}}},
+        {"op": "set_issue_stamp", "params": {"pattern": "ISSUED.*", "text": "ISSUED FOR BID"}},
+        {"op": "fill_variables", "params": {"values": {"SITE_NAME": "Leesburg"}, "table": {"file": "p.xlsx"}}},
+        {"op": "ensure_end_of_section", "params": {"number": {"rule": "regex", "pattern": "x"},
+                                                   "text": "END OF SECTION {number} (SPRINKLERS)"}},
+        {"op": "ensure_end_of_section", "params": {"number": {"rule": "regex", "pattern": "x"}}},
+        {"op": "resolve_options", "params": {"rules": [{"match": "preaction", "action": "pick"}]}},
+        {"op": "name_output", "params": {"pattern": "{n} - SPEC", "values": {"n": {"rule": "regex", "pattern": "x"}}}},
+    ]}
+    assert placed_words(spec) == ["Client", "ISSUED FOR BID", "Leesburg", "END OF SECTION", "(SPRINKLERS)",
+                                  "END OF SECTION"]
+    assert compiler.END_OF_SECTION_DEFAULT == end_of_section.DEFAULT_TEXT
+    assert untraceable(spec, ["replace Owner with Client, stamp ISSUED FOR BID, END OF SECTION (SPRINKLERS)"]) == \
+        ["Leesburg"]
+
+
+def test_a_table_or_picture_edited_after_the_preview_voids_the_approval(inputs_folder):
+    spec = fill_spec(inputs_folder)
+    files = sorted(inputs_folder.glob("*.docx"))
+    token, before = approval_token(spec, files), approval_inputs(spec, files)
+    (inputs_folder / "PROJECT.xlsx").write_bytes(_xlsx([["Variable", "VA3"], ["SITE_NAME", "Elsewhere"]]))
+    assert approval_token(spec, files) != token
+    assert explain_approval_change(before, approval_inputs(spec, files)) == \
+        ["input file PROJECT.xlsx: changed since the preview"]
+    # a spec with templates only hashes exactly as before (old tokens stay valid)
+    plain = {"request": "r", "summary": "s", "mode": "formatting", "ops": [{"op": "remove_header_footer"}]}
+    assert approval_token(plain, files) == approval_token(plain, files)
+
+
+# ---- the clean-up operations in the prompt and the method ------------------------------------------------------------
+
+def test_the_words_batch2_places_are_traced_to_the_user():
+    spec = {"request": "r", "summary": "s", "mode": "untracked", "ops": [
+        {"op": "add_watermark", "params": {"text": "NOT FOR CONSTRUCTION"}},
+        {"op": "set_document_properties", "params": {"set": {"title": "Fire Suppression", "company": "ACME"},
+                                                     "clear": ["author"], "custom": {"Project Number": "P-1003"}}},
+        {"op": "remove_comments", "params": {"which": "all"}},
+        {"op": "resolve_tracked_changes", "params": {"action": "accept", "authors": ["Jeremy"]}},
+        {"op": "set_document_state", "params": {"final": True}},
+    ]}
+    assert placed_words(spec) == ["NOT FOR CONSTRUCTION", "Fire Suppression", "ACME", "P-1003"]
+    assert untraceable(spec, ["watermark NOT FOR CONSTRUCTION, title Fire Suppression, company ACME"]) == ["P-1003"]
+
+
+def test_claude_is_told_when_the_batch2_ops_may_be_used():
+    prompt = system_prompt(chat=True)
+    assert "resolve_tracked_changes accepts or rejects tracked changes ONLY when the user asks" in prompt
+    assert "a watermark's words and a property's value are the user's exact" in prompt
+
+
+def test_the_method_reads_as_abraham_changed_it():
+    skill = (Path(SKILL_DIR) / "SKILL.md").read_text(encoding="utf-8")
+    assert "on the model's own initiative" in skill and "resolve_tracked_changes" in skill
+    assert "by the model. The user accepts and rejects in Word." not in skill
+    elements = (Path(SKILL_DIR) / "references" / "element-types.md").read_text(encoding="utf-8")
+    assert "never toggle it on your own" in elements and "Mark as Final" in elements
+
+
+ROOT = Path(__file__).resolve().parent.parent
+EXAMPLES = ROOT / "examples" / "specs"
+WORKED = ("notes-boxed-and-shaded", "style-spacing", "clear-direct-formatting", "language-us-english",
+          "bold-caps-to-heading", "architect-styles-to-office", "remove-unused-styles")
+
+
+def test_the_batch4_ops_place_no_words():
+    for name in WORKED:
+        assert compiler.placed_words(load_spec(EXAMPLES / f"{name}.json")) == [], name
+
+
+HF_SPEC = EXAMPLES / "match-template-spec-header-footer.json"
+
+
+def _spec(request, mode, ops, **extra):
+    return {"request": request, "summary": request, "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": ops, **extra}
+
+
+@pytest.fixture
+def project(tmp_path):
+    """Two specs and the architect's spec as the template, with a spec file that names it."""
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    (folder / "21 13 13 – WET-PIPE SPRINKLER SYSTEMS.docx").write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    (folder / "21 13 16 – DRY-PIPE SPRINKLER SYSTEMS.docx").write_bytes(build("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS"))
+    tpl = tmp_path / "ACME.docx"
+    tpl.write_bytes(build_reference_spec())
+    spec = load_spec(HF_SPEC)
+    spec["ops"][0]["params"]["template"] = str(tpl)
+    spec_file = tmp_path / "spec.json"
+    spec_file.write_text(json.dumps(spec), encoding="utf-8")
+    return folder, tpl, spec, spec_file
+
+
+def test_approval_token_changes_when_the_template_changes(project):
+    folder, tpl, spec, _ = project
+    files = sorted(folder.glob("*.docx"))
+    before = approval_token(spec, files)
+    assert before == approval_token(spec, files)                       # stable
+    st = tpl.stat()
+    os.utime(tpl, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))  # touched (saved again, same bytes)
+    touched = approval_token(spec, files)
+    assert touched != before
+    # different bytes of the same size with the mtime put back: the content hash still voids the token
+    data = bytearray(tpl.read_bytes())
+    data[-1] ^= 0xFF
+    tpl.write_bytes(bytes(data))
+    os.utime(tpl, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000_000))
+    assert approval_token(spec, files) not in (before, touched)
+    # a spec without a template is unaffected by template files
+    plain = _spec("x", "formatting", [{"op": "remove_header_footer", "select": {"sections": "all"}, "params": {}}])
+    assert approval_token(plain, files) == approval_token(plain, files)
+
+
+AUTHOR = "Abraham Borg"
+
+
+def test_compiler_gate_rejects_a_spec_that_plans_on_no_file_whatever_the_refusal_code(tmp_path):
+    only_messy = tmp_path / "messy"; only_messy.mkdir()
+    (only_messy / "21 13 13 – MESSY.docx").write_bytes(_build_messy_inline_spec())
+    spec = {"request": "replace FM Global with GRC", "summary": "s", "mode": "content",
+            "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
+                     "params": {"find": "FM Global", "replace": "GRC", "author": AUTHOR}}]}
+    errs = C.check_submission(spec, C._Batch(sorted(only_messy.glob("*.docx")), None), [spec["request"]])
+    assert errs and "[spans-runs]" in " ".join(errs) and "MESSY" in " ".join(errs)
+    rich = tmp_path / "rich"; rich.mkdir(); (rich / "rich.docx").write_bytes(build_rich())
+    spec_tf = {"request": "replace Hangers with Supports", "summary": "s", "mode": "content",
+               "ops": [{"op": "replace_text", "select": {},
+                        "params": {"find": "Hangers", "replace": "Supports", "author": AUTHOR}}]}
+    assert "[tracked-format]" in " ".join(C.check_submission(spec_tf, C._Batch([rich / "rich.docx"], None), [spec_tf["request"]]))
+    assert C.check_submission(spec, C._Batch([], None), [spec["request"]]) == ["the batch has no .docx files to plan on"]
+
+
+def _spec_with_mode(mode, ops):
+    return {"request": "x", "summary": "x", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": ops}
+
+
+def _rewrite(data: bytes, part: str, fn) -> bytes:
+    """``data`` with ``fn(root)`` applied to the XML of ``part``."""
+    zin = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            b = zin.read(info.filename)
+            if info.filename == part:
+                root = etree.fromstring(b)
+                fn(root)
+                b = etree.tostring(root, xml_declaration=True, encoding="UTF-8", standalone=True)
+            zout.writestr(info, b)
+    return out.getvalue()
+
+
+def test_the_compile_gate_tries_every_file_of_a_pattern_before_rejecting(tmp_path):
+    def nfpa14(root):
+        for t in root.iter(W + "t"):
+            if t.text and "NFPA 13" in t.text:
+                t.text = t.text.replace("NFPA 13", "NFPA 14")
+    (tmp_path / "A.docx").write_bytes(_rewrite(build("21 00 13", "HOTEL"), "word/document.xml", nfpa14))
+    (tmp_path / "B.docx").write_bytes(build("21 00 14", "INDIA"))
+    spec = _spec_with_mode("content", [{"op": "replace_text",
+                                        "params": {"find": "NFPA 13", "replace": "NFPA 13 (2025)"}}])
+    for order in (["A.docx", "B.docx"], ["B.docx", "A.docx"]):
+        b = _Batch([tmp_path / n for n in order], None)
+        assert len(b.prof["patterns"]) == 1
+        assert check_submission(spec, b, ["NFPA 13 (2025)"]) == []
+    nowhere = _spec_with_mode("content", [{"op": "replace_text",
+                                           "params": {"find": "NFPA 99", "replace": "NFPA 13 (2025)"}}])
+    errs = check_submission(nowhere, _Batch([tmp_path / "A.docx", tmp_path / "B.docx"], None), ["NFPA 13 (2025)"])
+    assert errs and "none of this pattern's 2 files plans" in errs[1]
+    # two folders, one file name: the gate goes by path, so the file the name map shadows is still tried
+    for d in ("a", "b"):
+        (tmp_path / d).mkdir()
+    (tmp_path / "a" / "Spec.docx").write_bytes(build("21 00 14", "INDIA"))                        # has NFPA 13
+    (tmp_path / "b" / "Spec.docx").write_bytes(_rewrite(build("21 00 13", "HOTEL"), "word/document.xml", nfpa14))
+    b = _Batch([tmp_path / "a" / "Spec.docx", tmp_path / "b" / "Spec.docx"], None)
+    assert b.prof["patterns"][0]["paths"] == [str(tmp_path / "a" / "Spec.docx"), str(tmp_path / "b" / "Spec.docx")]
+    assert check_submission(spec, b, ["NFPA 13 (2025)"]) == []
+
+
+# ---- files that share a name in different folders --------------------------------------------------------------------
+
+@pytest.fixture
+def two_specs(tmp_path) -> Path:
+    d = tmp_path / "specs"
+    d.mkdir()
+    for i in range(2):
+        (d / f"21 0{i} 00 – SPEC {i}.docx").write_bytes(build(f"21 0{i} 00", f"SPEC {i}"))
+    return d
+
+
+def _two_folders(tmp_path) -> list:
+    for sub, title in (("a", "ALPHA"), ("b", "BRAVO")):
+        (tmp_path / sub).mkdir()
+        (tmp_path / sub / "Spec.docx").write_bytes(build("21 00 00", title))
+    (tmp_path / "a" / "Other.docx").write_bytes(build("21 00 01", "OTHER"))
+    return [tmp_path / "a" / "Spec.docx", tmp_path / "b" / "Spec.docx", tmp_path / "a" / "Other.docx"]
+
+
+def test_file_labels_are_names_unless_two_files_share_one():
+    assert file_labels([Path("p/A.docx"), Path("p/B.docx")]) == {str(Path("p/A.docx")): "A.docx",
+                                                                  str(Path("p/B.docx")): "B.docx"}
+    got = file_labels([Path("a/x/Spec.docx"), Path("b/x/Spec.docx"), Path("c/Spec.docx"), Path("c/Other.docx")])
+    assert got == {str(Path("a/x/Spec.docx")): "a/x/Spec.docx", str(Path("b/x/Spec.docx")): "b/x/Spec.docx",
+                   str(Path("c/Spec.docx")): "c/Spec.docx", str(Path("c/Other.docx")): "Other.docx"}
+    assert len(set(got.values())) == len(got)
+    assert file_labels([Path("p/A.docx"), Path("p/A.docx")]) == {str(Path("p/A.docx")): "A.docx"}   # one file
+
+
+def test_every_tool_reads_the_file_its_label_names(tmp_path, monkeypatch):
+    files = _two_folders(tmp_path)
+    b = _Batch(files, None)
+    assert list(b.files) == ["a/Spec.docx", "b/Spec.docx", "Other.docx"]
+    assert [b.files[k] for k in b.files] == files
+    for label, title in (("a/Spec.docx", "ALPHA"), ("b/Spec.docx", "BRAVO")):
+        assert title in json.dumps(b.sample_paragraphs(label, n=3))
+        assert title in json.dumps(b.show_part_text(label, "word/document.xml"))
+        assert title in json.dumps(b.find_paragraphs(label, title))
+        assert title in b.show_xml(label, start=0, count=3)["xml"]
+        assert isinstance(b.list_styles(label), list)
+    assert "BRAVO" not in json.dumps(b.sample_paragraphs("a/Spec.docx", n=3))
+    with pytest.raises(KeyError, match=r"a/Spec\.docx"):
+        b.sample_paragraphs("Spec.docx")                                    # the bare name is ambiguous: refused
+    seen = []
+
+    def fake_pngs(path, pages, work_dir, renderer="auto"):
+        seen.append(Path(path))
+        return []
+    monkeypatch.setattr(vision, "page_pngs", fake_pngs)
+    b.work_dir = tmp_path / "chat"
+    with pytest.raises(ValueError):
+        b.view_pages("b/Spec.docx")
+    assert seen == [tmp_path / "b" / "Spec.docx"]
+
+
+def test_the_summary_and_profiles_claude_sees_use_the_labels(tmp_path):
+    files = _two_folders(tmp_path)
+    b = _Batch(files, None)
+    [pat] = b.summary()["patterns"]
+    assert pat["files"] == ["a/Spec.docx", "b/Spec.docx", "Other.docx"] and pat["profile"]["file"] == "a/Spec.docx"
+    assert b.inspect_profile(pat["pattern_id"])["files"] == pat["files"]
+    msg = build_messages("remove all headers and footers", b, [], {})[0]["content"]
+    assert '"a/Spec.docx"' in msg and '"b/Spec.docx"' in msg
+    assert [str(p) for p in b.pattern_paths(b.prof["patterns"][0])] == [str(f) for f in files]
+
+
+def test_a_single_folder_batch_reads_as_before(two_specs):
+    files = sorted(two_specs.glob("*.docx"))
+    b = _Batch(files, None)
+    assert list(b.files) == [f.name for f in files]
+    assert b.summary()["patterns"][0]["files"] == [f.name for f in files]
+    assert b.summary()["patterns"][0]["profile"]["file"] == files[0].name
+
+
+def test_unprofiled_and_unreadable_files_are_named_by_label(tmp_path):
+    W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+    def bad_margin(root):
+        for m in root.iter(W + "pgMar"):
+            m.set(W + "left", "abc")
+    for sub in ("a", "b", "c"):
+        (tmp_path / sub).mkdir()
+    (tmp_path / "a" / "Spec.docx").write_bytes(_rewrite(build("21 00 15", "JULIET"), "word/document.xml", bad_margin))
+    (tmp_path / "b" / "Spec.docx").write_bytes(build("21 00 16", "KILO"))
+    (tmp_path / "c" / "Spec.docx").write_bytes(b"not a zip")
+    b = _Batch([tmp_path / "a" / "Spec.docx", tmp_path / "b" / "Spec.docx", tmp_path / "c" / "Spec.docx"], None)
+    [pat] = b.prof["patterns"]
+    assert pat["files"] == ["b/Spec.docx", "a/Spec.docx"] and pat["profile"]["file"] == "b/Spec.docx"
+    assert pat["unprofiled"][0].startswith("a/Spec.docx: ")
+    assert b.prof["unreadable"][0]["file"] == "c/Spec.docx"
+    alone = _Batch([tmp_path / "a" / "Spec.docx", tmp_path / "c" / "Spec.docx"], None)
+    [pat] = alone.prof["patterns"]
+    assert pat["profile"]["error"] and pat["profile"]["files"][0].startswith("a/Spec.docx: ")
+    assert pat["unprofiled"][0].startswith("a/Spec.docx: ")
+
+
+def test_the_gate_s_errors_name_files_by_label(tmp_path):
+    files = _two_folders(tmp_path)
+    spec = {"request": "r", "summary": "s", "mode": "content", "ops": [{
+        "op": "replace_text", "select": {"scope": ["document"]},
+        "params": {"find": "NFPA 99", "replace": "NFPA 13 (2025)", "tracked": True, "author": "x"}}]}
+    errs = check_submission(spec, _Batch(files, None), ["NFPA 13 (2025)"])
+    assert errs and errs[1].startswith("a/Spec.docx: [") and "e.g. b/Spec.docx: [" in errs[1]
+
+
+def test_claude_addresses_the_second_same_named_file_in_a_conversation(tmp_path):
+    files = _two_folders(tmp_path)
+    fake = FakeClient(resp(tool("sample_paragraphs", {"file": "b/Spec.docx", "n": 3}, "t1")),
+                      resp(text("BRAVO is the second file."), stop="end_turn"))
+    c = Conversation("remove all headers and footers", files, client=fake)
+    assert c.start().status == "questions"
+    result = fake.requests[1]["messages"][-1]["content"][0]
+    assert result["tool_use_id"] == "t1" and "BRAVO" in result["content"] and "ALPHA" not in result["content"]
+    assert '"b/Spec.docx"' in fake.requests[0]["messages"][0]["content"]
+
+
+def test_preview_samples_with_the_same_name_keep_their_own_outputs(tmp_path):
+    from spec_surgeon.editspec import load_spec, plan_spec
+    from spec_surgeon.fingerprint import fingerprint
+    from spec_surgeon.package import DocxPackage
+    from spec_surgeon.preview import make_preview
+    from spec_surgeon.verify import run_suite
+    (tmp_path / "A").mkdir()
+    (tmp_path / "B").mkdir()
+    a, b = tmp_path / "A" / "spec.docx", tmp_path / "B" / "spec.docx"
+    a.write_bytes(build("21 13 13", "WET-PIPE"))
+    b.write_bytes(build_rich())                                           # another structure pattern: both sampled
+    spec = load_spec(SPECS / "change-all-font-arial.json")
+    pv = make_preview(spec, [str(a), str(b)], tmp_path / "pv", do_render=False)
+    assert [s.source for s in pv.samples] == [a, b] and all(s.passed for s in pv.samples)
+    assert [s.output.name for s in pv.samples] == ["spec.docx", "spec (1).docx"]
+    for s in pv.samples:                                                  # each output is its own source's
+        pkg = DocxPackage(s.source.read_bytes(), name=str(s.source))
+        plan, _ = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+        assert run_suite(pkg.data, s.output.read_bytes(), plan.to_dict(), str(s.source), str(s.output)).passed
+
+
+def test_compiler_carries_every_operations_sheet_and_reads_the_rest_on_demand(tmp_path):
+    """Every operation's selectors and parameters ride the cached system prompt (the op sheet), so a plan needs no
+    round trip per operation; describe_op still returns an operation's verification rules and worked examples."""
+    from spec_surgeon.catalog import op_sheet
+    source = tmp_path / "spec.docx"
+    source.write_bytes(build("21 13 13", "SPRINKLERS"))
+    spec = {"request": "remove headers", "summary": "remove headers", "mode": "formatting",
+            "ops": [{"op": "remove_header_footer", "select": {"sections": "all", "kinds": ["header"]}, "params": {}}]}
+    fake = FakeClient(resp(tool("describe_op", {"name": "remove_header_footer"})),
+                      resp(tool("submit_editspec", {"spec": spec}, "submit")))
+    result = compiler.compile_request("remove headers", [source], client=fake)
+    assert result.status == "ok", result.errors
+    prompt = fake.requests[0]["system"]
+    sheet = op_sheet()
+    assert json.dumps(sheet["ops"]["remove_header_footer"]["select"]) in prompt or "remove_header_footer" in prompt
+    assert len(prompt) < len(json.dumps(op_catalog()))          # the sheet is the catalog without its examples
+    docs = json.loads(fake.requests[1]["messages"][-1]["content"][0]["content"])
+    assert docs["params"] == get_op("remove_header_footer").params_schema
+    assert docs["verification"] and docs["worked_examples"]
+    assert all(any(op["op"] == "remove_header_footer" for op in example["ops"])
+               for example in docs["worked_examples"])
+    with pytest.raises(ValueError, match="Unknown operation"):
+        describe_op("not_an_op")

@@ -5,7 +5,6 @@ the styles a field update applies); a wrong OUTPUT per rule; wrong IMPLEMENTATIO
 readings compared; conflicts; no-op files; parameters."""
 from __future__ import annotations
 
-import ast
 import copy
 import io
 import zipfile
@@ -20,7 +19,7 @@ from spec_surgeon.editspec import apply_spec, load_spec, plan_spec
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import remove_unused_styles as rus
 from spec_surgeon.package import DocxPackage, W, serialize_xml
-from spec_surgeon.report import FAILURE_EXPLANATIONS
+from spec_surgeon.profile import profile
 from spec_surgeon.verify.reader import VPackage
 from spec_surgeon.verify import props as vprops
 from spec_surgeon.verify import run_suite
@@ -295,17 +294,6 @@ def test_parameters_are_checked(src, select, params, needle):
     assert e.value.code == "bad-params" and needle in str(e.value)
 
 
-def test_every_refusal_code_is_explained():
-    codes = set()
-    for n in ast.walk(ast.parse(Path(rus.__file__).read_text(encoding="utf-8"))):
-        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "JobException" and len(n.args) > 1:
-            assert isinstance(n.args[1], ast.Constant)
-            codes.add(n.args[1].value)
-    codes.discard("internal")                                         # diagnostics.classify: an internal error
-    assert codes == {"bad-params", "not-found", "structure"}
-    assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
-
-
 # ---- wrong outputs -------------------------------------------------------------------------------------------------
 
 def _caught(src, plan, out, part, fn, needle=None):
@@ -535,3 +523,9 @@ def test_a_spec_runs_through_the_batch(src, tmp_path):
     with pytest.raises(Exception) as e:
         plan_spec(DocxPackage(src), bad)
     assert "types" in str(e.value)
+
+
+def test_the_profile_counts_unused_styles(src):
+    unused = profile(DocxPackage(src, name="spec.docx"))["styles_unused"]
+    assert unused["custom"] == 4                                  # ArchUnused(+Char), ArchLinkedPara(+Char)
+    assert unused["all"] > unused["custom"]

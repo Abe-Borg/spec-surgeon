@@ -2,7 +2,7 @@
 
 `add_review_comments` puts an explicitly reviewed reason beside the affected paragraph in the delivered Word file. It takes literal comment text and an explicit author; an optional `source` string becomes a second comment paragraph. Both strings are inserted verbatim, including surrounding spaces. If a source label is wanted, include that label in the approved source string. This operation does not generate explanations or export a model's internal rationale.
 
-Use an explicit EditSpec with `run-spec`, or a saved recipe with `library use`. In the conversation window, ask for the comment and give its exact wording; the compiler places only the text you supplied. [The supplied example](../examples/specs/add-review-comments.json) selects one provision and includes its exact reason and source. The operation is untracked: Word comments are separate annotations, not tracked insertions into document wording. Adding annotations never accepts or rejects existing revisions.
+In the conversation window, ask for the comment and give its exact wording; the compiler places only the text you supplied. [The supplied example](../examples/specs/add-review-comments.json) selects one provision and includes its exact reason and source. The operation is untracked: Word comments are separate annotations, not tracked insertions into document wording. Adding annotations never accepts or rejects existing revisions.
 
 ```json
 {
@@ -25,7 +25,7 @@ The existing targeted paragraph selector grammar is available, including exact `
 
 ## Approval and outcome verification
 
-Governed recovery and workspace planning can propose a `review_comments` document effect with `select`, literal `params`, and an explicit `expected_count` (a number or `"all"`). The reviewed plan carries the complete contract, binds the original source and matched count, and is approved as exactly that plan (`workspace approve-plan`, the plan choice in interactive `do`, or the preview in the conversation window). Ordinary edits have no separate outcome review; the preview approval and the independent verifier govern them. `approved_goal_words` exposes only the approved `text` and optional `source`; review rationale is never another source of wording.
+Governed recovery can propose a `review_comments` document effect with `select`, literal `params`, and an explicit `expected_count` (a number or `"all"`). The reviewed plan carries the complete contract, binds the original source and matched count, and is approved as exactly that plan (the preview in the conversation window). Ordinary edits have no separate outcome review; the preview approval and the independent verifier govern them. `approved_goal_words` exposes only the approved `text` and optional `source`; review rationale is never another source of wording.
 
 This first version requires a **standalone comment contract and a separate recipe/chain stage after other edits**. Its independent proof compares the complete original document and comment graph. A combined contract with wording/style/paragraph changes would need a separately qualified composition proof and is refused rather than weakened. When reasons differ, create separate reviewed comment stages for their distinct paragraphs.
 

@@ -14,6 +14,7 @@ import pytest
 from lxml import etree
 
 from fx_revisions import JACK, JEREMY, awkward, redline
+from make_fixtures import build_rich, patch_docx
 from spec_surgeon.editspec import apply_spec, load_spec, plan_spec
 from spec_surgeon.ops import JobException
 from spec_surgeon.ops import revisions as rev_module
@@ -388,3 +389,32 @@ def test_a_wrong_revision_count_is_caught(doc, monkeypatch):
     monkeypatch.setattr(rev_module, "gone_revisions", lambda res: dict(list(real(res).items())[1:]))
     plan, out, rec = run(doc, {"action": "accept"})
     assert {"V4", "V10"} <= set(failed(rec))
+
+
+def _verify(data: bytes, ops, mode="untracked", tamper=None):
+    pkg = DocxPackage(data)
+    plan, frags = plan_spec(pkg, {"request": "r", "summary": "s", "mode": mode, "ops": ops})
+    out = apply_spec(pkg, frags).output_bytes()
+    if tamper:
+        out = tamper(out)
+    return run_suite(pkg.data, out, plan.to_dict(), "src.docx", "out.docx")
+
+
+def _drop_first_char(root):
+    t = next(t for t in root.iter("{http://schemas.openxmlformats.org/wordprocessingml/2006/main}t") if t.text)
+    t.text = t.text[1:]
+
+
+def test_accepting_beside_another_op_on_a_part_it_does_not_resolve():
+    """resolved_changes compares WHOLE only the parts it resolves; a part with nothing to resolve stays with the
+    residual — so a set_font on footers the accept never touches verifies (it planned clean and failed V10 when the
+    kind claimed every part in scope), and a change nobody checked in such a part still fails."""
+    ops = [{"op": "resolve_tracked_changes", "params": {"action": "accept"}},
+           {"op": "set_font", "select": {"scope": ["footers"]}, "params": {"font": "Arial"}}]
+    rec = _verify(build_rich(), ops)
+    assert [c.id for c in rec.checks if c.status == "FAIL"] == []
+
+    def tamper(out: bytes) -> bytes:                  # the footer loses a character nobody asked to change
+        return patch_docx(out, {"word/footer1.xml": lambda root: _drop_first_char(root)})
+    bad = _verify(build_rich(), ops, tamper=tamper)
+    assert "V10" in [c.id for c in bad.checks if c.status == "FAIL"]

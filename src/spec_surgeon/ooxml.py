@@ -1,4 +1,4 @@
-"""OOXML helpers used by the TRANSFORM side (jobs/, ops/). The verifier (verify/) must not import this
+"""OOXML helpers used by the TRANSFORM side (ops/). The verifier (verify/) must not import this
 module — it keeps its own independent extraction so the two cannot share a failure mode.
 """
 from __future__ import annotations
