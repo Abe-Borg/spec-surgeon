@@ -1,14 +1,11 @@
 """The identity approved in a frontend survives its handoff to queued engine work."""
-import json
-
 from docx import Document
 
 from fake_claude import FakeClient, resp, tool
-from spec_surgeon.cli import main
 from spec_surgeon.gui import Session
 from spec_surgeon.preview import approval_inputs, approval_token, generated_key
 from test_codegen import GOOD_OP
-from test_ordinary_outcomes import document, recipe
+from test_execution_delivery_safety import document
 
 
 def changed_source(tmp_path):
@@ -17,30 +14,6 @@ def changed_source(tmp_path):
     doc.paragraphs[1].text = "WATER SUPPRESSION"
     doc.save(path)
     return path.read_bytes()
-
-
-def test_run_spec_hands_off_the_same_capture_used_to_validate_approval(tmp_path, monkeypatch):
-    from spec_surgeon import cli
-    source = document(tmp_path / "spec.docx")
-    spec = recipe({"text_regex": "^Owner"})
-    spec_path = tmp_path / "recipe.json"
-    spec_path.write_text(json.dumps(spec))
-    original_capture = approval_inputs(spec, [source])
-    token = approval_token(spec, [source])
-    replacement = changed_source(tmp_path)
-    original = cli.run_batch
-    handoffs = []
-
-    def run(*args, **kwargs):
-        handoffs.append(kwargs.get("approved_inputs"))
-        source.write_bytes(replacement)
-        return original(*args, **kwargs)
-
-    monkeypatch.setattr(cli, "run_batch", run)
-    assert main(["run-spec", str(spec_path), str(source), "--approval", token, "--in-place",
-                 "--out", str(tmp_path / "result"), "--workers", "1", "--no-render"]) != 0
-    assert handoffs == [original_capture]
-    assert source.read_bytes() == replacement
 
 
 def test_generated_gui_run_keeps_its_approved_source_identity(tmp_path, monkeypatch):

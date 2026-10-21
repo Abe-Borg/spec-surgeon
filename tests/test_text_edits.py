@@ -11,14 +11,19 @@ import zipfile
 from pathlib import Path
 from typing import Any, Dict, List
 
+from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 import pytest
 from lxml import etree
 
 from make_fixtures import build, build_batch1
-from spec_surgeon.editspec import SpecError, plan_spec, validate_spec
+from spec_surgeon.editspec import SpecError, apply_spec, plan_spec, validate_spec
+from spec_surgeon.ooxml import paragraphs
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import replace_table as replace_module
 from spec_surgeon.ops import textedit
+from spec_surgeon.ops.replace_text import field_start_depths
 from spec_surgeon.package import DocxPackage, W, serialize_xml
 from spec_surgeon.verify import run_suite
 from spec_surgeon.verify.edits import v_paragraph_text
@@ -633,3 +638,40 @@ def test_shared_defect_a_positional_tab_accepted(tmp_path, monkeypatch):
                         lambda ps: ps.offset < 0 and ps.child.tag in (W + "tab", W + "ptab"))
     plan, out, rec = _convert(src, tmp_path)
     assert failed(rec) == ["V10"] and any("the op must refuse" in e for e in v10_errors(rec))
+
+
+def _spec(mode, ops):
+    return {"request": "x", "summary": "x", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": ops}
+
+
+def _fld(paragraph, kind):
+    r = paragraph.add_run()
+    fc = OxmlElement("w:fldChar"); fc.set(qn("w:fldCharType"), kind); r._r.append(fc)
+
+
+def _instr(paragraph, text):
+    r = paragraph.add_run()
+    it = OxmlElement("w:instrText"); it.set(qn("xml:space"), "preserve"); it.text = text; r._r.append(it)
+
+
+def test_replace_text_refuses_a_toc_entry_in_a_later_paragraph_of_the_field():
+    doc = Document()
+    doc.add_paragraph("CONTENTS")
+    p = doc.add_paragraph()
+    _fld(p, "begin"); _instr(p, ' TOC \\o "1-3" \\h '); _fld(p, "separate"); p.add_run("PART 1 GENERAL\t1")
+    doc.add_paragraph().add_run("NFPA 14 STANDPIPES\t3")              # a TOC entry: cached field result
+    p = doc.add_paragraph()
+    p.add_run("PART 3 EXECUTION\t5"); _fld(p, "end")
+    doc.add_paragraph("Install standpipes per NFPA 14.")
+    buf = io.BytesIO()
+    doc.save(buf)
+    pkg = DocxPackage(buf.getvalue())
+    assert field_start_depths(paragraphs(pkg.xml("word/document.xml"))) == [0, 0, 1, 1, 0]
+    with pytest.raises(JobException) as e:
+        plan_spec(pkg, _spec("content", [{"op": "replace_text", "params": {"find": "NFPA 14", "replace": "NFPA 13"}}]))
+    assert e.value.code == "field-result" and "earlier paragraph" in e.value.reason
+    plan, frags = plan_spec(pkg, _spec("content", [{"op": "replace_text", "params": {
+        "find": "standpipes per NFPA 14", "replace": "standpipes per NFPA 13"}}]))
+    assert [(d.part, d.block_index) for d in plan.diffs] == [("word/document.xml", 4)]
+    assert run_suite(pkg.data, apply_spec(pkg, frags).output_bytes(), plan.to_dict(), "a.docx", "b.docx").passed

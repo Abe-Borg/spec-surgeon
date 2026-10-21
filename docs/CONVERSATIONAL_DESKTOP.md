@@ -6,7 +6,7 @@ leaves the machine but the model calls you ask for (the contract between the pag
 `docs/WEB_API.md`). On the left is the conversation. On the right are the Word documents you attached,
 optionally one reference template and any pictures or tables you attached for the edit to use, then the plan, the
 pages and one button. You add documents, describe the result, read the plan, look at the before/after pages and
-create edited copies. Nothing else is asked of you: no operations, recipes, methods or settings beyond an API key.
+create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
 
 ![The conversation starts with Word documents, an optional template, and a request](conversation-start.png)
 
@@ -115,7 +115,7 @@ exactly** lists the passages each document contributes, such as the value a temp
 A plan the engine composed into ordered steps says so under its title ("in 2 ordered steps"); it is still one plan
 with one button.
 
-JSON, approval hashes, operation catalogs, recipes and recovery workspaces are not part of the window.
+JSON, approval hashes, operation catalogs and recovery internals are not part of the window.
 
 ## Layouts for a mixed batch
 
@@ -211,13 +211,16 @@ you accept it.
 Typed requests need an Anthropic API key. **Settings** opens one dialog, **AI connection**: paste the key and
 tick **Remember securely on this computer** to keep it in Windows Credential Manager. Nothing else is
 configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer says
-"Connect your Anthropic API key in Settings to start." The command line runs saved specifications without a key.
+"Connect your Anthropic API key in Settings to start."
 
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
 conversation runs at the model's default reasoning effort (medium: its sentences and plans are short and the
 operations' settings ride the cached prompt, so a plan is one or two calls); recovery and custom methods think at
-high. Three things keep the spending in your hands instead:
+high. The instructions and the operations' settings (the same for every conversation) are cached for an hour, so the
+next request after a run, a start over or a changed attachment reads them instead of paying for them again; the
+conversation itself is cached for five minutes between its calls, and the one-call checks (the visual check, the
+recovery critic) are not cached at all beyond the instructions. Three things keep the spending in your hands instead:
 
 - **You see it.** While work runs the chat shows the assistant's words and its thinking summary as they are
   written, a sentence per step, and the top bar the estimated spending so far. A step that is still running is
@@ -270,8 +273,9 @@ A PASS means the engine found exactly the predicted change and nothing else, not
 wanted. Automated page comparison and Claude's visual check are not human acceptance in Word; look at the
 pages, and open the copies.
 
-The window has no other mode. The command line is unchanged; office profiles, specification QA audits, project
-evidence, built-in workflows, campaign workspaces and recovery workspaces are command-line features.
+The window has no other mode, and there is no command line: it was removed on 2026-10-21 together with the
+features only it offered (the recipe library, office profiles, specification QA audits, project evidence, built-in
+workflows, campaign and recovery workspaces, evaluations).
 
 Validation uses generated Word fixtures (including a family of deliberately dirty files), scripted model
 responses, the real engine and verifier, and the window's server driven in-process (FastAPI's test client, no

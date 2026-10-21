@@ -72,7 +72,7 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The edit was applied to a copy, but one or more of the V1–V10 checks failed on the result, so the copy was "
         "moved to failed/ and nothing was delivered. The rejected copy is for diagnosis only; do not use it. "
         "Read the failing check in records/, then preview a corrected recipe and run again. If the recipe looks "
-        "right, send the diagnostics bundle so the transform can be fixed.",
+        "right, send DIAGNOSTICS.md and the logs/ folder so the transform can be fixed.",
     ),
     "section-break": (
         "Paragraph Carries a Section Break",
@@ -182,7 +182,7 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Spec Surgeon Hit an Internal Error",
         "Something unexpected went wrong inside Spec Surgeon while working on this file — a defect in the program, not "
         "a problem with your file. The file was left untouched. DIAGNOSTICS.md and the file's trace (logs/) show the "
-        "stage and the line of code; please send the diagnostics bundle (window: Help → Save diagnostics bundle…).",
+        "stage and the line of code; please send them, with the app's logs (window: About → Open diagnostic logs).",
     ),
     "worker-died": (
         "The Process Working on This File Stopped",
@@ -637,7 +637,7 @@ def _set_aside_summary(manifest: Dict[str, Any]) -> str:
 
 def build_set_aside_manifest(batch: "BatchResult") -> Dict[str, Any]:
     """Structured manifest of every file that did not PASS (untouched exceptions and verification failures),
-    ready for human review or the next iterative pass (`spec-surgeon retry`)."""
+    ready for human review or a recovery pass on only these files."""
     items: List[Dict[str, Any]] = []
     by_code: Counter = Counter()
     by_pattern: Counter = Counter()
@@ -750,9 +750,8 @@ def write_batch_report(batch: "BatchResult") -> Path:
     if manifest["files"]:
         lines.append("## Set-Aside Files (Ready for Next Pass or Manual Review)")
         lines.append(_set_aside_summary(manifest))
-        lines.append(f"{manifest['set_aside_count']} file(s) were set aside. "
-                     f"Run `spec-surgeon retry \"{out}\"` (or click **Load set-aside files** in the GUI) to compile "
-                     f"a pass specifically for these files.")
+        lines.append(f"{manifest['set_aside_count']} file(s) were set aside. The guidance under each file says "
+                     f"what to do next.")
         lines.append("")
         for item in manifest["files"]:
             lines.append(f"- **{item['name']}** (pattern `{item['pattern_id']}`) — **{item['category']}** (`{item['code']}`)")
@@ -782,7 +781,7 @@ def write_batch_report(batch: "BatchResult") -> Path:
         write_report(out / "SET_ASIDE_REPORT.md", "\n".join(sa_lines), "set_aside.json and records/*.record.json")
     exc = [f for f in batch.files if f.exception]
     if exc:
-        lines.append("## Exceptions (Tier 2 — route to a human, `spec-surgeon retry`, or `spec-surgeon advise`)")
+        lines.append("## Exceptions (Tier 2 — route to a human)")
         for f in exc:
             lines.append(f"- **{f.source.name}** — `{f.exception.get('code')}`: {short(f.exception.get('reason'))}")
             lines.append(f"  - diagnosis: `exceptions/{getattr(f, 'record_stem', f.source.stem)}.exception.json`")
@@ -1011,12 +1010,12 @@ def write_diagnostics(batch: "BatchResult") -> Path:
     lines.append("")
     if getattr(batch, "stopped", None):
         lines += [f"> **The batch itself stopped** — {batch.stopped}. The files below are the ones it had reached; "
-                  f"`logs/run.log` ends with the traceback. This is a defect in Spec Surgeon: please send the "
-                  f"diagnostics bundle.", ""]
+                  f"`logs/run.log` ends with the traceback. This is a defect in Spec Surgeon: please send "
+                  f"DIAGNOSTICS.md and the `logs/` folder beside this report.", ""]
     if internal:
         lines += [f"> **Spec Surgeon itself failed on {len(internal)} file(s)** — a defect in the program, not in your "
-                  f"files. Send the diagnostics bundle (window: Help → Save diagnostics bundle…; command line: "
-                  f"`spec-surgeon diagnose \"{out}\" --bundle diagnostics.zip`) with a word about what you ran.", ""]
+                  f"files. Send DIAGNOSTICS.md and the `logs/` folder beside this report, and the app's logs "
+                  f"(window: About → Open diagnostic logs), with a word about what you ran.", ""]
     if not problems and not getattr(batch, "stopped", None):
         lines += ["**No problems: every file passed every check.**", ""]
     if problems:
@@ -1051,7 +1050,7 @@ def write_diagnostics(batch: "BatchResult") -> Path:
 
 def build_chain_set_aside_manifest(result: "Any") -> Dict[str, Any]:
     """The set-aside manifest of a chain (``chain.ChainResult``): every file that did not pass every stage, with the
-    ORIGINAL source path (the next pass — ``retry``, *Load set-aside files* — works on the user's files), the stage it
+    ORIGINAL source path (recovery works on the user's files), the stage it
     stopped at and why. The same keys as a batch's manifest, so the loaders read it as one."""
     from .chain import chain_name, chain_templates
     items: List[Dict[str, Any]] = []
@@ -1163,8 +1162,7 @@ def write_chain_report(result: "Any") -> Path:
                         if atomic_final else
                         "In copies mode their sources are untouched; in place, earlier passing stages were written back (said per file). ")
         lines.append(f"{manifest['set_aside_count']} file(s) stopped before delivery. {source_state}"
-                     f"Run `spec-surgeon retry \"{out}\"` (or **Load set-aside files** in the window) for a pass on "
-                     f"only these files.")
+                     f"The guidance under each file says what to do next.")
         lines.append("")
         for item in manifest["files"]:
             lines.append(f"- **{item['name']}** (pattern `{item['pattern_id']}`) — **{item['category']}** (`{item['code']}`)")
@@ -1234,8 +1232,8 @@ def write_chain_diagnostics(result: "Any") -> Path:
              f"- **Program:** {environment_line(result.environment or {})}", ""]
     if result.stopped:
         lines += [f"> **The chain itself stopped** — {result.stopped}. The files below are the ones it had reached; "
-                  f"`logs/chain.log` ends with the traceback. This is a defect in Spec Surgeon: please send the "
-                  f"diagnostics bundle.", ""]
+                  f"`logs/chain.log` ends with the traceback. This is a defect in Spec Surgeon: please send "
+                  f"DIAGNOSTICS.md and the `logs/` folder beside it.", ""]
     if not problems and not result.stopped:
         lines += ["**No problems: every file passed every stage.**", ""]
     if problems:

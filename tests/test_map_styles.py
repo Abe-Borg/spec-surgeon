@@ -4,7 +4,6 @@ tracked), what is skipped and flagged, the parameters and refusals; a wrong OUTP
 by plan and apply; plan-time conflicts (rule 9); a spec through the batch. The import itself: tests/test_style_import.py."""
 from __future__ import annotations
 
-import ast
 import copy
 import io
 import json
@@ -16,13 +15,11 @@ import pytest
 from lxml import etree
 
 from make_fixtures import build, build_style_template, build_styles
-from spec_surgeon.editspec import apply_spec, load_spec, plan_spec
+from spec_surgeon.editspec import apply_spec, load_spec, plan_spec, spec_input_files
 from spec_surgeon.ooxml import paragraphs
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import map_styles as map_module
-from spec_surgeon.ops import style_import as imp_module
 from spec_surgeon.package import DocxPackage, W, serialize_xml
-from spec_surgeon.report import FAILURE_EXPLANATIONS
 from spec_surgeon.verify import run_suite
 
 AUTHOR = "Abraham Borg"
@@ -297,20 +294,6 @@ def with_mark_style_el(root):
     rpr = etree.SubElement(ppr, W + "rPr")
     etree.SubElement(rpr, W + "rStyle", {W + "val": "ArchStrong"})
     return rpr
-
-
-def test_every_refusal_code_is_known():
-    codes = set()
-    for module in (map_module, imp_module):
-        for n in ast.walk(ast.parse(Path(module.__file__).read_text(encoding="utf-8"))):
-            if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "JobException" and len(n.args) > 1:
-                assert isinstance(n.args[1], ast.Constant) or ast.unparse(n.args[1]) == "code", ast.unparse(n)
-                if isinstance(n.args[1], ast.Constant):
-                    codes.add(n.args[1].value)
-    assert codes == {"bad-params", "style-mismatch", "style-import", "style-numbering", "missing-style", "not-found",
-                     "tracked-format", "internal", "structure"}
-    # every code but `internal` (an internal error: diagnostics.classify) has its plain-words explanation
-    assert set(c for c in codes if c not in FAILURE_EXPLANATIONS) <= {"internal"}
 
 
 # ---- a wrong output per rule ---------------------------------------------------------------------------------------
@@ -604,3 +587,16 @@ def test_a_spec_with_a_relative_template_runs_through_the_batch(src, tpl_bytes, 
                       renderer="none", do_render=False, spec=loaded)
     f = batch.files[0]
     assert f.status == "PASS", f.record.to_markdown() if f.record else f.exception
+
+
+ROOT = Path(__file__).resolve().parent.parent
+EXAMPLES = ROOT / "examples" / "specs"
+
+
+def test_the_mapping_example_reads_the_office_template_as_an_input():
+    """Rule 12: the example's relative template path resolves against the spec's folder, and the approval token's
+    input files include it."""
+    spec = load_spec(EXAMPLES / "architect-styles-to-office.json")
+    tpl = (ROOT / "examples" / "templates" / "OFFICE STYLES.docx").resolve()
+    assert Path(spec["ops"][0]["params"]["template"]) == tpl
+    assert tpl in spec_input_files(spec)

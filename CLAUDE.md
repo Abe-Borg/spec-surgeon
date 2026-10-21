@@ -13,7 +13,7 @@ files go to clients, so the one failure that matters is content lost or invented
 
 1. **Predict first.** `Op.plan()` computes every prediction (diffs, parts, members, revision deltas, assertions and
    their target counts) from the SOURCE, analytically; never by running the transform on a copy and reading the result.
-2. **The verifier shares no code with the transforms.** `src/spec_surgeon/verify/` imports nothing from `ops/`, `jobs/`,
+2. **The verifier shares no code with the transforms.** `src/spec_surgeon/verify/` imports nothing from `ops/`,
    `editspec.py`, `ooxml.py`, `package.py`, `goals.py`, `goal_contracts.py` or the Claude layer
    (`tests/test_independence.py`). It has its own readers, text extraction, selectors, style chains and definitions.
    Do not deduplicate the twin implementations: the duplication is the point.
@@ -43,7 +43,8 @@ The desktop is one window: the page in `web/static/` (built from `frontend/`), s
 optional template and pictures or tables for the edit to use; `triage.py` checks each on arrival without a model call.
 `layouts.py` gives a mixed batch one EditSpec per structural layout with one approval; `review_display.py` describes
 the previewed spec in the sentences each op writes for itself (`Op.describe`). Delivered copies are the working set the
-next request builds on. Recipes, recovery, campaigns and custom transforms are command-line only. Details:
+next request builds on. There is no command line (removed 2026-10-21 with the library, workspaces, workflows, office
+profiles, spec QA audits, project evidence, evaluations and the named v0.1.0 jobs). Details:
 `docs/CONVERSATIONAL_DESKTOP.md`.
 
 - `src/spec_surgeon/`
@@ -54,16 +55,19 @@ next request builds on. Recipes, recovery, campaigns and custom transforms are c
   - `verify/` — the INDEPENDENT verifier: `suite.py` (V1–V10 as a `VerificationRecord`), `props.py` (V10 dispatch, the
     residual identity check; each op family's kinds live in their own module, imported at its end), `reader.py`,
     `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py`, `explain.py`.
-  - `jobs/` — the two v0.1.0 CLI jobs, aliases over ops.
   - `editspec.py` — load, validate, plan, merge, apply; composition (`stage_cuts`, `compose_chain`, `plan_chain`).
   - `batch.py` (per-file pipeline, guarded delivery, records), `guard.py`, `chain.py`, `report.py`
     (`FAILURE_EXPLANATIONS`: every refusal code in plain words), `diagnostics.py`.
   - `catalog.py` (op catalog, `COMMON_ASSUMPTIONS`, `op_sheet`), `profile.py`, `planner.py`, `structure.py`, `triage.py`.
-  - `compiler.py`, `conversation.py`, `llm.py` (`llm.call` is the one call site), `vision.py` — request → EditSpec.
+  - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec. `llm.call` is the one call site: the
+    system prompt carries its own 1-hour cache breakpoint, the history the automatic 5-minute one, and a `one_shot`
+    call caches nothing after the system prompt; keep system prompts and tools byte-stable.
     `compiler.compose_submission` is the one gate a submission passes.
-  - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `advisor.py`, `library.py`, `workflows.py`,
-    `goals.py`, `goal_contracts.py`, `recovery*.py`, `campaign*.py`, `office_profiles.py`, `spec_qa.py`.
-  - `document_task.py`, `review_display.py`, `cli.py`, `gui.py`, `web/`, `updater.py`, `settings.py`, `winapp.py`.
+  - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
+    `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
+    (bounded investigation of set-aside files), `inventory.py` (the content digest that pins a file).
+  - `document_task.py`, `review_display.py`, `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/`,
+    `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
   - `render/` (Word COM, LibreOffice), `schemas/` (ECMA-376 XSDs), `skill/`, `examples/`.
 - `tests/` — pytest; `make_fixtures.py` and `fx_*.py` build synthetic documents; `fake_claude.py` scripts Claude;
   `conftest.py` seals keys, config dir and model; `describe_cases/` feeds `test_describe.py`.
@@ -78,14 +82,13 @@ python3 -m pytest -q                          # Windows: py -3 -m pytest -q -s
 python3 -m pytest -q tests/test_ops.py        # one module (in a git worktree: PYTHONPATH=src python3 -m pytest …)
 cd frontend && npm ci && npm run build        # rebuild the window's page (Node 22) into web/static; commit it
 python3 tests/make_fixtures.py OUT            # fixtures; --rich, --template, --reference, --styles-template, --numbering-scheme, --dirty
-spec-surgeon ops --catalog
-spec-surgeon plan-spec SPEC.json FILES...
-spec-surgeon run-spec SPEC.json FILES... --out OUT
-spec-surgeon verify SOURCE.docx OUTPUT.docx --plan OUT/plans/NAME.plan.json
-spec-surgeon diagnose OUT
-spec-surgeon do "change all fonts to Arial" FILES... --out OUT
-spec-surgeon-gui                              # or: spec-surgeon gui
+spec-surgeon-gui                              # the window; or: python3 -m spec_surgeon
 ```
+
+There is no command line. Check a change with the test suite; to run the engine by hand, call it from Python:
+`batch.run_batch(files, "edit-spec", {}, out_dir, spec=editspec.load_spec(path))` for a batch, `verify.run_suite`
+for one pair, `gui.Session` for the window's steps with a scripted client (`tests/fake_claude.py`). A run's
+`DIAGNOSTICS.md`, `records/` and `logs/` say why a file did not pass.
 
 ## How to add an op
 

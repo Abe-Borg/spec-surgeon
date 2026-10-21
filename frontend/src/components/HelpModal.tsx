@@ -418,7 +418,7 @@ function HowItWorks() {
           },
           {
             t: "One window, no modes",
-            d: "Everything here happens in the conversation. The same engine also runs from a command line, which applies saved plans without an API key.",
+            d: "Everything here happens in the conversation. There is no other mode and nothing to run outside this window.",
           },
         ]}
       />

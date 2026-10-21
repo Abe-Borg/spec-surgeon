@@ -1,6 +1,5 @@
 """Running without an API key (keyless mode): what needs Claude says so instead of failing, and everything else — saved
-specs, your library's recipes and operations, Preview, Run and its verification — works without a key, in the session
-and on the command line (``library use``).
+specs, Preview, Run and its verification — works without a key in the session.
 
 ``tests/conftest.py`` makes ``llm.credentials_found`` True for every test (the tests script their Claude clients); the
 tests here patch it to False and test the real function on its own (``REAL_CREDENTIALS_FOUND``, taken when this module
@@ -15,13 +14,10 @@ from pathlib import Path
 import pytest
 
 from make_fixtures import build
-from spec_surgeon import compiler as compiler_module
-from spec_surgeon import library, llm, vision
-from spec_surgeon.cli import main as cli_main
+from spec_surgeon import llm, vision
 from spec_surgeon.editspec import load_spec
 from spec_surgeon.gui import NEEDS_KEY, NEEDS_KEY_REPLY, NO_KEY_REVIEW, Session
 from test_compiler import FakeClient, resp, tool
-from test_library import passing_op
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
@@ -137,63 +133,3 @@ def test_a_conversation_waits_for_a_key_once_it_is_gone(folder, tmp_path, monkey
 
 
 # ---- the command line -------------------------------------------------------------------------------------------
-
-def test_do_and_advise_say_what_works_without_a_key(keyless, folder, tmp_path, monkeypatch, capsys):
-    def never(*a, **k):
-        raise AssertionError("keyless: no compile")
-    monkeypatch.setattr(compiler_module, "compile_request", never)
-    out = tmp_path / "o"
-    assert cli_main(["do", "change all fonts to Arial", str(folder), "--out", str(out), "--no-render"]) == 2
-    err = capsys.readouterr().err
-    assert "needs an Anthropic API key" in err and "library use" in err and "run-spec" in err
-    assert not out.exists()                                         # nothing written
-    assert cli_main(["advise", str(tmp_path)]) == 2
-    assert "spec-surgeon diagnose" in capsys.readouterr().err
-
-
-def test_library_use_runs_a_recipe_without_a_key(keyless, folder, tmp_path, capsys):
-    library.save_recipe("Strip headers", REMOVE)
-    out = tmp_path / "o"
-    assert cli_main(["library", "use", "strip headers", str(folder), "--out", str(out), "--no-render", "--yes"]) == 0
-    assert len(list((out / "run" / "outputs").glob("*.docx"))) == 2 and (out / "preview" / "spec.json").is_file()
-    assert cli_main(["library", "use", "strip headers", str(folder), "--out", str(tmp_path / "o2"), "--no-render"]) == 0
-    text = capsys.readouterr().out
-    assert "Not run. To run exactly this:" in text and "--approval" in text   # no --yes, no terminal: nothing runs
-    assert not (tmp_path / "o2" / "run").exists()
-    assert cli_main(["library", "use", "strip headers"]) == 2                 # which files?
-    assert cli_main(["library", "use", "no such thing", str(folder)]) == 2
-    assert cli_main(["library", "show", "strip headers"]) == 0 and "library use" in capsys.readouterr().out
-
-
-def test_library_use_tries_an_operation_first_and_runs_it_without_a_key(keyless, folder, tmp_path, monkeypatch,
-                                                                       capsys):
-    library.save_operation("Header distance", passing_op(folder, tmp_path))
-    out = tmp_path / "o"
-    assert cli_main(["library", "use", "Header distance", str(folder), "--out", str(out), "--no-render",
-                     "--yes"]) == 0
-    text = capsys.readouterr().out
-    assert "passed on the samples" in text and "2 of 2 file(s) PASS" in text
-    assert (out / "library-trial" / "try-1").is_dir()
-    import spec_surgeon.codegen as cg
-    real = cg.trial
-
-    def failing(*a, **k):
-        t = real(*a, **k)
-        t.passed, t.problems = False, ["V10 FAIL: not here"]
-        return t
-    monkeypatch.setattr(cg, "trial", failing)
-    out2 = tmp_path / "o2"
-    assert cli_main(["library", "use", "Header distance", str(folder), "--out", str(out2), "--no-render",
-                     "--yes"]) == 2
-    assert "does not pass on these files" in capsys.readouterr().out and not (out2 / "run").exists()
-
-
-def test_the_command_line_visual_check_is_skipped_without_a_key(keyless, tmp_path, monkeypatch, capsys):
-    from spec_surgeon import cli
-
-    def never(*a, **k):
-        raise AssertionError("keyless: nothing is prepared or sent")
-    monkeypatch.setattr(vision, "review_samples", never)
-    rv = cli._review("REQUEST: x", [], tmp_path, types.SimpleNamespace())
-    assert rv.skipped == cli.NO_KEY_REVIEW and rv.blocking() == []
-    assert "visual check skipped" in capsys.readouterr().err

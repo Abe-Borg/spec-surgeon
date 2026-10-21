@@ -265,21 +265,6 @@ def test_a_composed_stage_declares_the_mode_its_ops_plan_not_the_mode_of_their_c
     assert [st["spec"]["mode"] for st in outcome["stages"]] == ["formatting", "untracked"]
 
 
-def test_a_composed_chain_is_never_run_in_place(folder, tmp_path, capsys):
-    """Written back step by step, a file that fails the last step's final assertion would keep the earlier steps —
-    where the one request the user approved would have withheld it whole. The command line refuses --in-place for
-    the steps the app composed, before anything is previewed or written."""
-    from types import SimpleNamespace
-    from spec_surgeon import cli
-    pkg = DocxPackage(build_sized(), name="x.docx")
-    chain = split_into_stages(pkg, combined_spec())
-    args = SimpleNamespace(in_place=True, no_render=True, renderer=None, yes=True, workers=1)
-    code = cli._preview_and_run_chain(args, chain, sorted(folder.glob("*.docx")), tmp_path / "out")
-    assert code == 2
-    assert "--in-place" in capsys.readouterr().err
-    assert not (tmp_path / "out").exists()
-
-
 def test_a_submission_that_is_both_steps_and_a_question_is_refused_not_half_run(folder, tmp_path):
     """Stages beside an unsupported outcome (or questions): the plan branch would win the turn and the preview would
     crash on the unknown chain keys, with the model's explanation never shown. Refused to the model, which answers
@@ -310,7 +295,7 @@ def test_a_source_bound_template_op_is_never_reordered_only_refused_when_not_fir
     import hashlib
     from make_fixtures import build_template
     from spec_surgeon.ops.base import JobException
-    from test_live_template_bindings import TEMPLATE_FILLS, template_params
+    from test_template_bindings import TEMPLATE_FILLS, template_params
     source = tmp_path / "21 13 13 – WET-PIPE.docx"
     source.write_bytes(build_sized())
     template = tmp_path / "template.docx"

@@ -1,29 +1,20 @@
 # Continue a request and reuse what worked
 
-The conversation window and interactive `do` continue into outcome planning when
+The conversation window continues into outcome planning when
 the compiler cannot offer a supported method. A failed ordinary preview or a failed
 custom-method trial also feeds its evidence into that investigation. The
-conversation keeps the original request, actual answers, template and source pins;
-the user does not have to create a project workspace.
+conversation keeps the original request, actual answers, template and source pins.
 
-At the terminal, `do` prints the complete proposed outcomes, target scope, counts and
-exact new wording; choosing that plan approves that snapshot. In the conversation window
-the plan is carried out internally and its result is shown as the ordinary plan view, with
+The plan is carried out internally and its result is shown as the ordinary plan view, with
 the targets, any exact wording placed and before/after pages; **Create edited copies**
 approves it. Changed input bytes or altered plans require a fresh plan. Recovery first
 tries deterministic implementations, then investigates unresolved files with inspection,
 analysis and generated methods. Single-target ambiguities become source-bound choices in
 the same chat. Free-text answers to investigation and critic questions resume the existing
-recovery in both the terminal and the conversation window, retaining its evidence and
-ready files. Target ambiguity still requires a bound choice or a freshly reviewed plan. A
+recovery in the conversation window, retaining its evidence and ready files. Target ambiguity still requires a bound choice or a freshly reviewed plan. A
 revision after completion creates a new reviewed outcome and a separate recovery folder.
 Verified copies are exported with that same approval; originals remain unchanged.
-
-Noninteractive `do` can also plan after an unsupported compilation. Without `--yes`
-it saves the proposal in `conversation.json`. With `--yes`, it can continue only if
-every inserted/replacement literal is already present in the user's word sources.
-Model-proposed wording still needs a visible user choice. Existing explicit recipe,
-manual set-aside, and narrow custom-transform routes remain available.
+Model-proposed wording still needs a visible user choice.
 
 ## Reusable implementations
 
@@ -31,9 +22,9 @@ Successful governed generated methods can now be stored in the bounded local rep
 database. The source has a protocol version, engine version, SHA256, a 64 KiB limit,
 goal shape, parameters, assumptions and the existing verification/feedback record.
 Compressed source is data in the database, not an installed operation. It can contain
-literal project text; the memory store is not anonymized. The `memory` command
-can inspect cases, give feedback and forget them; `--no-memory` on a command-line run
-prevents lookup and recording.
+literal project text; the memory store is not anonymized. The window has no view of
+it: there is no surface to inspect cases, give feedback or forget them (the command line
+that had one was removed on 2026-10-21).
 
 A related goal can retrieve a method even when its title, paragraph position,
 formatting values or attached template changes. Each trial receives fresh job-local
@@ -96,8 +87,7 @@ implementations, and exercise adaptation after a remembered method fails.
 This is an integrated increment, not arbitrary DOCX capability. Recovery still needs
 a supported independent outcome contract, valid source bindings and sufficient
 resources. Multi-target ambiguity can require a clarified plan; unknown effects
-must be reported precisely. Noninteractive failed previews retain the existing
-set-aside path. Learning is local method retrieval/adaptation, not model training.
-The next evidence step is a representative real corpus with human and visual review,
-using [the paired evaluation workflow](WORKFLOW_EVALUATION.md) to measure completion,
-interventions, end-to-end time and spending with and without remembered methods.
+must be reported precisely. Learning is local method retrieval/adaptation, not model
+training. The next evidence step is a representative real corpus with human and visual
+review, measuring completion, interventions, end-to-end time and spending with and
+without remembered methods.

@@ -3,7 +3,7 @@
 One place that the window's About box, the installer, the package metadata and the updater all draw from.
 ``tests/test_about.py`` pins these values to the ``LICENSE`` file, ``pyproject.toml`` and the installer script,
 so the name on the copyright line, the links and the license text cannot drift apart. No window code here: the
-command line and the packaging scripts read it too.
+packaging scripts read it too.
 """
 from __future__ import annotations
 

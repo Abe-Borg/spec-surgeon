@@ -1,6 +1,6 @@
-"""Built-in operations batch 5, items 39–40 (docs/BUILTIN_OPS_BATCH5_DESIGN.md §7): ``set_page_setup`` grows a
-``different_first_page`` switch (and the header/footer distances are its ``margins.header`` / ``margins.footer``), and
-its ``select.sections`` a content form ``{containing, with_tables, index_range}``.
+"""Page setup (``set_page_setup``; docs/BUILTIN_OPS_BATCH5_DESIGN.md §7): the ``different_first_page`` switch (the
+header/footer distances are its ``margins.header`` / ``margins.footer``) and the content form of ``select.sections``,
+``{containing, with_tables, index_range}``.
 
 Every rule is planted against: wrong outputs (a ``w:val="0"`` left on the title page, a title page added to a section
 nobody chose, one left on), wrong implementations shared by plan and apply (the "already" rule, the writer, the section
@@ -637,3 +637,80 @@ def test_recovery_infers_no_final_page_check_for_a_content_selection():
     by_index = _spec(_setup([2], orientation="landscape"))
     assertions, _ = recovery._goals(by_index)
     assert assertions == [{"kind": "page_setup", "sections": [2], "orientation": "landscape"}]
+
+
+# ---- content selections, assertions and recovery (batch 5 review) ----------------------------------------------------
+
+def _spec_in_mode(*ops, mode="formatting"):
+    return {"request": "r", "summary": "r", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": list(ops)}
+
+
+def _one_section_spec(heading: str = "") -> bytes:
+    import io
+    from docx import Document
+    doc = Document()
+    for text in ("SECTION 21 13 13", "WET-PIPE SPRINKLER SYSTEMS", "PART 2 - PRODUCTS",
+                 "A.\tSteel pipe: ASTM A 53, Schedule 40, black steel.", "PART 3 - EXECUTION") + ((heading,) if heading else ()):
+        doc.add_paragraph(text)
+    t = doc.add_table(rows=2, cols=2)
+    t.cell(0, 0).text, t.cell(0, 1).text, t.cell(1, 0).text, t.cell(1, 1).text = "Pipe size", "Max spacing", "1 in", "12 ft"
+    doc.add_paragraph("END OF SECTION 21 13 13")
+    buf = io.BytesIO()
+    doc.save(buf)
+    return buf.getvalue()
+
+
+def test_the_landscape_example_leaves_schedule_40_pipe_alone():
+    """It chose sections by '(?i)\\bschedule\\b' + a table: a one-section piping spec ('Schedule 40') went landscape
+    as a whole, every check passing and nothing flagged."""
+    from pathlib import Path
+    from spec_surgeon.editspec import load_spec
+    spec = load_spec(Path(__file__).resolve().parent.parent / "examples" / "specs" / "landscape-schedule-sections.json")
+    plan, frags = plan_spec(DocxPackage(_one_section_spec()), spec)
+    assert plan.intended_parts == [] and any("nothing" in n or "no section" in n for n in plan.notes)
+
+
+def test_a_content_selection_that_chooses_every_section_is_flagged():
+    data = _one_section_spec("SPRINKLER HEAD SCHEDULE")
+    op = {"op": "set_page_setup", "select": {"sections": {"containing": {"text_regex": "SCHEDULE$"}, "with_tables": True}},
+          "params": {"orientation": "landscape"}}
+    plan, frags = plan_spec(DocxPackage(data), _spec_in_mode(op))
+    assert any("chose every section" in f and "whole document" in f for f in plan.flags)
+    out = apply_spec(DocxPackage(data), frags).output_bytes()
+    assert run_suite(data, out, plan.to_dict(), "a.docx", "b.docx").passed
+    plan2, _ = plan_spec(DocxPackage(data), _spec_in_mode({**op, "select": {"sections": [0]}}))
+    assert not any("chose every section" in f for f in plan2.flags)        # an index chooses on purpose
+
+
+def test_a_set_page_setup_assertion_without_its_select_fails_v10():
+    data = build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS")
+    op = {"op": "set_page_setup", "select": {"sections": [1]}, "params": {"orientation": "landscape"}}
+    plan, frags = plan_spec(DocxPackage(data), _spec_in_mode(op))
+    out = apply_spec(DocxPackage(data), frags).output_bytes()
+    d = plan.to_dict()
+    assert run_suite(data, out, d, "a.docx", "b.docx").passed
+    for a in d["property_assertions"]:
+        a.pop("select", None)
+    rec = run_suite(data, out, d, "a.docx", "b.docx")
+    assert not rec.passed and "carries no select" in rec.get("V10").summary
+
+
+def test_a_pending_section_change_is_flagged():
+    def edit(root):
+        sp = DocxPackage.sect_prs(root)[1]
+        chg = etree.SubElement(sp, W + "sectPrChange")
+        chg.set(W + "id", "901"); chg.set(W + "author", "Jack")
+        etree.SubElement(chg, W + "sectPr")
+    data = patch_docx(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"), {MAIN: edit})
+    op = {"op": "set_page_setup", "select": {"sections": [1]}, "params": {"orientation": "landscape"}}
+    plan, _ = plan_spec(DocxPackage(data), _spec_in_mode(op))
+    assert any("sectPrChange" in f for f in plan.flags)
+
+
+def test_recovery_says_different_first_page_has_no_final_check():
+    from spec_surgeon import recovery
+    spec = _spec_in_mode({"op": "set_page_setup", "select": {"sections": [0]},
+                          "params": {"different_first_page": True}})
+    _, notes = recovery._goals(spec)
+    assert any("different-first-page" in n for n in notes)

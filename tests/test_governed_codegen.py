@@ -7,7 +7,6 @@ from fake_claude import FakeClient, resp, tool
 from make_fixtures import build
 from spec_surgeon.codegen import generate_op, run_generated, trial
 from spec_surgeon.goals import choose_goal, resolve_goal
-from spec_surgeon.library import LibraryError, save_operation
 
 
 CONTENT_OP = '''from spec_surgeon.ops.base import Op, JobException
@@ -98,8 +97,6 @@ def test_writer_repairs_goal_failure_and_verifies_every_full_batch_file(source, 
     assert generated.goal_contract["effects"][0]["replace"] == "WATER"
     results = run_generated(generated, [str(source), str(other)], tmp_path / "delivery")
     assert len(results) == 2 and all(item.passed and item.record.get("GOAL").status == "PASS" for item in results)
-    with pytest.raises(LibraryError, match="approved workspace goal"):
-        save_operation("content method", generated)
 
 
 def test_proposal_and_brief_cannot_approve_goal_wording(source, tmp_path):
