@@ -359,17 +359,33 @@ def test_without_the_gui_extra_a_message_box_only_when_there_is_no_console(monke
         assert gui.main() == 2 and len(shown) == 1 and "spec-surgeon[gui]" in shown[0]
 
 
-def test_a_clean_exit_says_so_in_the_app_log(monkeypatch):
+@pytest.mark.parametrize("job", ["none", "outlives the window"])
+def test_a_clean_exit_says_so_in_the_app_log(monkeypatch, job):
     """The window's app log ends with ``Spec Surgeon closed`` when the window closes normally, and the crash watch's
-    marker is gone (no "ended unexpectedly" at the next start)."""
+    marker is gone (no "ended unexpectedly" at the next start). A job still running when the window's server stops
+    (it did not stop within shutdown's wait) is waited for first: until it ends the marker stays and nothing says
+    closed, so a process killed meanwhile is reported at the next start."""
     import logging
+    import threading
+    import time
     pytest.importorskip("fastapi")
-    from spec_surgeon import gui, winapp
+    from spec_surgeon import diagnostics as diag, gui, winapp
     from spec_surgeon.settings import logs_dir
     from spec_surgeon.web import shell
+    seen = {}
+
+    def run_window(state, **kw):
+        if job != "none":
+            def work():
+                time.sleep(0.3)
+                seen["marker"] = bool(list(logs_dir().glob("session-*.json")))
+                diag.app_log().info("the job ended")
+            state.thread = threading.Thread(target=work, name="spec-surgeon-job")
+            state.thread.start()
+        return 0
     monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
     monkeypatch.setattr(winapp, "hold_app_mutex", lambda: False)
-    monkeypatch.setattr(shell, "run_window", lambda state, **kw: 0)
+    monkeypatch.setattr(shell, "run_window", run_window)
     logger = logging.getLogger("spec_surgeon")
     try:
         assert gui.main() == 0
@@ -378,6 +394,11 @@ def test_a_clean_exit_says_so_in_the_app_log(monkeypatch):
         lines = (logs_dir() / "spec-surgeon.log").read_text(encoding="utf-8").splitlines()
         assert " started — " in lines[0] and lines[-1].endswith(" Spec Surgeon closed") and " INFO " in lines[-1]
         assert not list(logs_dir().glob("session-*.json"))
+        if job != "none":
+            assert seen["marker"] is True                       # not yet a clean exit while the job ran
+            assert " WARNING " in lines[-3] and "still running" in lines[-3] and lines[-2].endswith(" the job ended")
+        else:
+            assert not any("still running" in line for line in lines)
     finally:
         for h in [h for h in logger.handlers if isinstance(h, logging.FileHandler)]:
             logger.removeHandler(h)

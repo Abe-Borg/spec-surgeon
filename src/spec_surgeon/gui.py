@@ -1162,6 +1162,10 @@ def main(argv=None) -> int:
         dev = os.environ.get("SPEC_SURGEON_DEV", "") not in ("", "0")
         code = run_window(state, dev=dev, page_url=os.environ.get("SPEC_SURGEON_PAGE_URL") or None)
         completion["exit_code"] = code
+        job = state.thread
+        if job is not None and job.is_alive():   # shutdown's wait ran out; the process cannot end before the job does
+            diag.app_log().warning("The window closed while a job was still running; waiting for it to stop")
+            job.join()
         diag.app_log().info("Spec Surgeon closed")
         watch.stop()                     # a clean exit: no "closed unexpectedly" at the next start
         return code
