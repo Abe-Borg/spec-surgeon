@@ -30,7 +30,7 @@ Rules this module keeps:
   engine would refuse it (rule 9); in a chain the user asked for that order.
 * Each stage keeps its own records, logs, plans and exception records in its folder; the chain adds its own log,
   report and set-aside manifest (``report.write_chain_report`` / ``write_chain_diagnostics``) with the ORIGINAL source
-  paths, so the set-aside loop (``retry``, *Load set-aside files*) works on the user's files.
+  paths, so recovery works on the user's files.
 """
 from __future__ import annotations
 
@@ -619,26 +619,3 @@ def _deliver(result: ChainResult, current: Dict[str, Path], in_place: bool, veri
         diag.event("chain.delivered", source=str(cf.source), in_place=False, delivered_to=cf.delivered_to,
                    size=len(data), output_md5=last.output_md5)
     result.timings["deliver"] = time.perf_counter() - t0
-
-
-def load_chain_file(path: Path) -> Dict[str, Any]:
-    """A chain from a JSON file (a saved chain, or ``chain.json`` of a run or preview); relative template paths in its
-    stages resolve against the file's folder, as ``editspec.load_spec`` does for a spec."""
-    path = Path(path)
-    data = json.loads(path.read_text(encoding="utf-8"))
-    # a run's chain.json wraps the chain beside the stages' RESULTS (``write_chain_report``: ``chain``, ``stages``,
-    # ``files``, …); a saved chain and a preview's chain.json are the chain itself
-    if isinstance(data, dict) and isinstance(data.get("chain"), dict) and isinstance(data["chain"].get("stages"), list):
-        chain = data["chain"]
-    else:
-        chain = data
-    if not isinstance(chain, dict):
-        raise ChainError(f"{path} does not hold a chain")
-    for st in chain.get("stages") or []:
-        for o in (st.get("spec") or {}).get("ops") or [] if isinstance(st, dict) else []:
-            params = o.get("params") if isinstance(o, dict) else None
-            if isinstance(params, dict) and isinstance(params.get("template"), str) \
-                    and not Path(params["template"]).is_absolute():
-                params["template"] = str((path.parent / params["template"]).resolve())
-    validate_chain(chain)
-    return chain

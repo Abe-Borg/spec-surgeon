@@ -7,9 +7,11 @@ what to do; the facts carry the raw values; nothing in the module reaches the ve
 from __future__ import annotations
 
 import ast
+import io
 import json
 import time
 from pathlib import Path
+import zipfile
 
 import pytest
 
@@ -17,6 +19,10 @@ from fx_comments import build_commented
 from make_fixtures import DIRTY_KINDS, _drop_members, build, build_dirty, patch_docx
 from spec_surgeon import llm
 from spec_surgeon import triage as triage_module
+from spec_surgeon.batch import run_batch
+from spec_surgeon.package import DocxPackage, UnsupportedFormat
+from spec_surgeon.planner import plan_file
+from spec_surgeon.report import explain_failure
 from spec_surgeon.triage import (NOTE_COMMENTS, NOTE_COMPAT_MODE, NOTE_FRAGMENTED, NOTE_NORMAL_ONLY, NOTE_PROTECTED,
                                  NOTE_SPACING, NOTE_TEXTBOX_HF, NOTE_TYPED_NUMBERS, STATES, Triage, revisions_note,
                                  triage_file, triage_files)
@@ -253,3 +259,43 @@ def test_triage_takes_milliseconds(files):
         start = time.perf_counter()
         triage_file(path)
         assert time.perf_counter() - start < 1.0, path.name                    # 3–12 ms measured; a loose ceiling
+
+
+def _spec(mode, ops):
+    return {"request": "x", "summary": "x", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": ops}
+
+
+REPLACE = _spec("content", [{"op": "replace_text", "params": {"find": "FM Global", "replace": "FM Approved"}}])
+
+
+def _strict(data: bytes) -> bytes:
+    """The fixture re-saved as ISO Strict: every transitional namespace moved to purl.oclc.org."""
+    ns = {"http://schemas.openxmlformats.org/wordprocessingml/2006/main": "http://purl.oclc.org/ooxml/wordprocessingml/main",
+          "http://schemas.openxmlformats.org/officeDocument/2006/relationships":
+              "http://purl.oclc.org/ooxml/officeDocument/relationships"}
+    zin = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w", zipfile.ZIP_DEFLATED) as zout:
+        for info in zin.infolist():
+            b = zin.read(info.filename)
+            if info.filename.endswith((".xml", ".rels")):
+                s = b.decode("utf-8")
+                for a, c in ns.items():
+                    s = s.replace(a, c)
+                b = s.encode("utf-8")
+            zout.writestr(info, b)
+    return out.getvalue()
+
+
+def test_a_strict_open_xml_file_is_set_aside_with_a_plain_message(tmp_path):
+    f = tmp_path / "STRICT.docx"
+    f.write_bytes(_strict(build("21 00 22", "QUEBEC")))
+    with pytest.raises(UnsupportedFormat, match="Strict Open XML"):
+        DocxPackage.from_path(f).main_part()
+    fp = plan_file(f, REPLACE)
+    assert fp.status == "exception" and fp.exception["code"] == "unsupported-format" and "Save As" in fp.exception["reason"]
+    b = run_batch([str(f)], "edit-spec", {}, tmp_path / "out", workers=1, renderer="none", do_render=False, spec=REPLACE)
+    assert b.files[0].status == "EXCEPTION" and b.files[0].exception["code"] == "unsupported-format"
+    assert explain_failure("unsupported-format", "x")[0] == "Strict Open XML Document"
+    assert DocxPackage(build("21 00 22", "QUEBEC")).main_part() == "word/document.xml"      # transitional: as before

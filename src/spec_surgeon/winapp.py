@@ -1,7 +1,7 @@
 """Small Windows integration helpers (ctypes only; every function is a harmless no-op on other platforms).
 
-- **App mutex.** Every Spec Surgeon process that can hold files of the installed app open (the window and the
-  ``spec-surgeon.exe`` command line) holds the named mutex ``APP_MUTEX`` until the process ends (never released
+- **App mutex.** Every Spec Surgeon process that can hold files of the installed app open (the window) holds the
+  named mutex ``APP_MUTEX`` until the process ends (never released
   early: Windows drops it when the process is really gone). The installer waits for it to disappear before
   replacing files during an in-app update, refuses to uninstall while it exists, and the window refuses to
   start an update while another instance holds it. Pool workers and the Tier B sandbox never take it.

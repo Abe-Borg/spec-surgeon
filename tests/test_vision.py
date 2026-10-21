@@ -2,6 +2,8 @@
 samples — advisory findings accompany preview approval and never replace engine verification. Scripted client only."""
 from __future__ import annotations
 
+import copy
+import inspect
 import json
 import shutil
 from pathlib import Path
@@ -11,10 +13,10 @@ import pytest
 
 from fake_claude import FakeClient, api_error, raise_on_enter, resp, text, tool
 from make_fixtures import build
-from spec_surgeon import llm, vision
+from spec_surgeon import llm, render, vision
 from spec_surgeon.editspec import load_spec
 from spec_surgeon.gui import Session
-from spec_surgeon.preview import SampleView
+from spec_surgeon.preview import GeneratedPreview, SampleView, make_preview, render_samples
 from spec_surgeon.vision import VisualReview, review_samples
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
@@ -218,3 +220,259 @@ def test_real_render_keeps_the_pdfs_and_the_pages_for_the_visual_check(folder, t
     sent = s.client.requests[0]["messages"][0]["content"]
     images = [b["source"]["data"] for b in sent if b["type"] == "image"]
     assert len(images) >= 2 and images[0] != images[1]                         # the header was removed: pages differ
+
+
+# ---- same-named samples are told apart -------------------------------------------------------------------------------
+
+def one_page_pdf(path: Path, words: str) -> Path:
+    from spec_surgeon.verify.geometry import fitz
+    doc = fitz.open()
+    doc.new_page(width=612, height=792).insert_text((72, 72), words, fontsize=14)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+def two_same_named_samples(tmp_path):
+    out = []
+    for sub in ("a", "b"):
+        out.append(SampleView(source=tmp_path / sub / "Spec.docx", output=tmp_path / f"{sub}-out.docx", passed=True,
+                              source_pdf=one_page_pdf(tmp_path / "pdf" / sub / "before.pdf", f"{sub} before"),
+                              output_pdf=one_page_pdf(tmp_path / "pdf" / sub / "after.pdf", f"{sub} after"),
+                              look_pages=[1]))
+    return out
+
+
+def test_the_visual_check_labels_same_named_samples_apart_and_files_findings_by_label(tmp_path):
+    samples = two_same_named_samples(tmp_path)
+    fake = FakeClient(resp(tool("submit_review", {"summary": "b lost its header", "findings": [
+        {"severity": "block", "file": "b/Spec.docx", "page": 1, "text": "The header is gone."},
+        {"severity": "warn", "file": "Spec.docx", "page": 1, "text": "Which one? A bare name is not a label."}]})))
+    rv = vision.review_samples("REQUEST: x", samples, tmp_path / "review", lambda: fake)
+    content = fake.requests[0]["messages"][0]["content"]
+    labels = [b["text"] for b in content if b["type"] == "text"][:-1]
+    assert labels == ["a/Spec.docx — page 1 — BEFORE", "a/Spec.docx — page 1 — AFTER",
+                      "b/Spec.docx — page 1 — BEFORE", "b/Spec.docx — page 1 — AFTER"]
+    assert rv.pages_sent == 4
+    assert rv.findings == [{"severity": "block", "file": "b/Spec.docx", "page": 1, "text": "The header is gone."},
+                           {"severity": "warn", "file": "", "page": None,
+                            "text": "Which one? A bare name is not a label."}]
+    # one sample alone (or names that differ) keeps its bare name, as before
+    one = vision.review_samples("REQUEST: x", samples[:1], tmp_path / "review1",
+                                lambda: FakeClient(resp(tool("submit_review", {"summary": "ok", "findings": []}))))
+    assert one.pages_sent == 2 and not one.skipped
+
+
+def test_the_preview_text_tells_same_named_samples_apart(tmp_path):
+    samples = two_same_named_samples(tmp_path)
+    samples[1].passed, samples[1].checks = False, {"V2": "FAIL"}
+    text = GeneratedPreview(out_dir=tmp_path, name="op", samples=samples).to_text()
+    assert "   a/Spec.docx: verification PASS" in text and "   b/Spec.docx: verification FAIL ['V2']" in text
+
+    for sub, title in (("a", "ALPHA"), ("b", "BRAVO")):
+        (tmp_path / "in" / sub).mkdir(parents=True)
+        (tmp_path / "in" / sub / "Spec.docx").write_bytes(build("21 00 00", title))
+    spec = load_spec(SPECS / "remove-all-headers-footers.json")
+    pv = make_preview(spec, [str(tmp_path / "in" / "a"), str(tmp_path / "in" / "b")], tmp_path / "pv", do_render=False)
+    text = pv.to_text()
+    assert "   a/Spec.docx: verification PASS" in text and "   b/Spec.docx: verification PASS" in text
+    single = make_preview(spec, [str(tmp_path / "in" / "a")], tmp_path / "pv1", do_render=False).to_text()
+    assert "   Spec.docx: verification PASS" in single                  # a single folder reads as before
+
+
+# ---- an answer the review cannot read is a skipped review, never an exception ----------------------------------------
+
+def _pdf(path: Path, pages=1, size=(612, 792), words="page") -> Path:
+    from spec_surgeon.verify.geometry import fitz
+    doc = fitz.open()
+    for i in range(pages):
+        pg = doc.new_page(width=size[0], height=size[1])
+        pg.insert_text((72, 72), f"{words} {i + 1}", fontsize=14)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    doc.save(str(path))
+    doc.close()
+    return path
+
+
+def _sample(tmp_path, name="21 00 00 – SPEC 0.docx") -> SampleView:
+    return SampleView(source=tmp_path / name, output=tmp_path / "o.docx", passed=True,
+                      source_pdf=_pdf(tmp_path / "pdf" / "before" / "x.pdf", words="before"),
+                      output_pdf=_pdf(tmp_path / "pdf" / "after" / "x.pdf", words="after"), look_pages=[1])
+
+
+def _odd(content=None, usage=None, stop="tool_use"):
+    """A response with any content/usage (the scripted ``resp`` always builds well-formed ones)."""
+    return SimpleNamespace(content=content, stop_reason=stop, stop_details=None, model="claude-opus-5-5", usage=usage)
+
+
+def _review(**inp):
+    return [tool("submit_review", inp)]
+
+
+GOOD_USAGE = SimpleNamespace(input_tokens=10, output_tokens=2, cache_read_input_tokens=0, cache_creation_input_tokens=0,
+                             iterations=None)
+BAD_USAGE = SimpleNamespace(input_tokens="lots", output_tokens=2, cache_read_input_tokens=0,
+                            cache_creation_input_tokens=0, iterations=None)
+UNREADABLE = {
+    "findings is true": resp(tool("submit_review", {"summary": "looked", "findings": True})),        # review-5
+    "findings is a number": resp(tool("submit_review", {"summary": "x", "findings": 5})),            # merge-verify-2
+    "findings is a string": resp(tool("submit_review", {"summary": "x", "findings": "none"})),
+    "findings is an object": resp(tool("submit_review", {"summary": "x", "findings": {"severity": "block",
+                                                                                       "text": "squashed logo"}})),
+    "input is a list of pairs": resp(tool("submit_review", [["summary", "x"], ["findings", []]])),
+    "input is a string": resp(tool("submit_review", "summary: fine")),
+    "input is None": resp(tool("submit_review", None)),
+    "usage cannot be read": _odd(_review(summary="x", findings=[]), BAD_USAGE),
+    "content is not a list": _odd(5, GOOD_USAGE),
+    "a block without a name": _odd([{"type": "tool_use", "id": "t1", "input": {"summary": "x", "findings": []}}],
+                                   GOOD_USAGE),
+}
+
+
+@pytest.mark.parametrize("name", list(UNREADABLE))
+def test_an_answer_that_cannot_be_read_is_a_skipped_review_never_an_exception(tmp_path, name):
+    fake = FakeClient(copy.deepcopy(UNREADABLE[name]))
+    rv = review_samples("REQUEST: remove the headers", [_sample(tmp_path)], tmp_path / "review", lambda: fake)
+    assert len(fake.requests) == 1                                    # the call was made; reading its answer failed
+    assert rv.skipped.startswith("Claude's answer could not be read (") and rv.findings == [] and rv.summary == ""
+    assert rv.blocking() == [] and "skipped: Claude's answer could not be read" in rv.to_text()
+    last = rv.transcript[-1]
+    assert last["turn"] == 1 and last["read_error"] and "Traceback" in last["traceback"]
+    assert [e.get("role") for e in rv.transcript[:2]] == ["user", "assistant"]      # the answer itself is kept
+    saved = json.loads(vision.save_review(rv, tmp_path).read_text(encoding="utf-8"))
+    assert saved["skipped"] == rv.skipped and saved["transcript"][-1]["traceback"] == last["traceback"]
+
+
+def test_a_review_read_part_way_keeps_nothing(tmp_path, monkeypatch):
+    """A reading failure after some findings were read must not leave them behind a skip (a skipped review shows no
+    findings, so a hidden `block` would stop Run with nothing on the screen)."""
+    calls = []
+    real = vision._finding
+
+    def flaky(f, sent):
+        calls.append(f)
+        if len(calls) == 2:
+            raise RuntimeError("a defect while reading the second finding")
+        return real(f, sent)
+    monkeypatch.setattr(vision, "_finding", flaky)
+    s = _sample(tmp_path)
+    fake = FakeClient(resp(tool("submit_review", {"summary": "Two problems.", "findings": [
+        {"severity": "block", "file": s.source.name, "page": 1, "text": "Logo squashed."},
+        {"severity": "warn", "text": "Footer moved."}]})))
+    rv = review_samples("r", [s], tmp_path / "review", lambda: fake)
+    assert rv.findings == [] and rv.summary == "" and rv.blocking() == []
+    assert "RuntimeError: a defect while reading the second finding" in rv.skipped
+    assert "flaky" in rv.transcript[-1]["traceback"]
+
+
+def test_finding_items_of_any_type_are_read_or_dropped(tmp_path):
+    s = _sample(tmp_path)
+    fake = FakeClient(resp(tool("submit_review", {"summary": "Looked.", "findings": [
+        None, 3, "a string", ["block", "x"], True,
+        {"severity": "block", "file": s.source.name, "page": True, "text": "Logo squashed."},     # a bool is no page
+        {"severity": ["block"], "file": {"a": 1}, "page": "1", "text": {"what": "odd"}},
+        {"severity": "info", "file": s.source.name, "page": 1.0, "text": "  fine  "},
+        {"severity": "warn", "text": None}]})))
+    rv = review_samples("r", [s], tmp_path / "review", lambda: fake)
+    assert not rv.skipped and rv.summary == "Looked."
+    assert rv.findings == [
+        {"severity": "block", "file": s.source.name, "page": None, "text": "Logo squashed."},
+        {"severity": "warn", "file": "", "page": None, "text": "{'what': 'odd'}"},
+        {"severity": "info", "file": s.source.name, "page": None, "text": "fine"}]
+    assert "p.True" not in rv.to_text()
+
+
+def test_findings_missing_is_a_review_without_findings(tmp_path):
+    fake = FakeClient(resp(tool("submit_review", {"summary": "Nothing to see."})))
+    rv = review_samples("r", [_sample(tmp_path)], tmp_path / "review", lambda: fake)
+    assert not rv.skipped and rv.summary == "Nothing to see." and rv.findings == []
+
+
+def test_a_client_factory_error_is_classified_like_a_call_error(tmp_path):
+    def raising(exc):
+        def factory():
+            raise exc
+        return factory
+
+    defect = review_samples("r", [_sample(tmp_path)], tmp_path / "r1", raising(KeyError("defect")))
+    assert defect.skipped == "Claude could not be set up: KeyError: 'defect'"
+    assert "not available" not in defect.skipped                      # a defect is never "Claude is not available"
+    entry = defect.transcript[-1]
+    assert entry["turn"] == 0 and entry["error"] == "KeyError: 'defect'" and "Traceback" in entry["traceback"]
+    assert "raise exc" in entry["traceback"]
+
+    plain = review_samples("r", [_sample(tmp_path)], tmp_path / "r2", raising(RuntimeError("no key")))
+    assert plain.skipped.startswith("Claude could not be set up: RuntimeError") and "traceback" in plain.transcript[-1]
+
+    missing = review_samples("r", [_sample(tmp_path)], tmp_path / "r3",
+                             raising(llm.ClaudeUnavailable("install the Claude layer")))
+    assert missing.skipped == "Claude is not available: install the Claude layer"
+    assert missing.transcript == [{"turn": 0, "error": "ClaudeUnavailable: install the Claude layer", "seconds": 0.0}]
+
+    api = review_samples("r", [_sample(tmp_path)], tmp_path / "r4", raising(api_error("no key", 401, "req_9")))
+    assert api.skipped == "Claude could not be set up: APIStatusError: no key · HTTP 401 · request id req_9"
+    assert "traceback" not in api.transcript[-1] and api.transcript[-1]["error"].endswith("request id req_9")
+    for rv in (defect, plain, missing, api):
+        assert rv.findings == [] and rv.usage.calls == 0 and rv.pages_sent == 0
+
+
+def test_pages_that_cannot_be_sent_are_a_skip_with_their_traceback(tmp_path, monkeypatch):
+    def unreadable(png):
+        raise PermissionError(f"{Path(png).name} is locked")
+    monkeypatch.setattr(vision, "image_block", unreadable)
+    fake = FakeClient()
+    rv = review_samples("r", [_sample(tmp_path)], tmp_path / "review", lambda: fake)
+    assert rv.skipped == "the pages could not be prepared (PermissionError: p1.png is locked)" and fake.requests == []
+    assert "Traceback" in rv.transcript[-1]["traceback"] and rv.transcript[-1]["error"].startswith("PermissionError")
+
+
+def test_a_log_that_raises_never_stops_the_review(tmp_path):
+    def broken(_m):
+        raise RuntimeError("the window's log is gone")
+    fake = FakeClient(resp(tool("submit_review", {"summary": "Fine.", "findings": []})))
+    rv = review_samples("r", [_sample(tmp_path)], tmp_path / "review", lambda: fake, log=broken)
+    assert not rv.skipped and rv.summary == "Fine."
+
+
+def test_the_view_pages_budget_figure_is_derived_from_est_tokens(tmp_path):
+    """The ample configurable allowance still reports actual image-token costs."""
+    letter = vision.rasterize_pages(_pdf(tmp_path / "letter.pdf"), [1], tmp_path / "l")[0]
+    tabloid = vision.rasterize_pages(_pdf(tmp_path / "tabloid.pdf", size=(792, 1224)), [1], tmp_path / "t")[0]
+    a4 = vision.rasterize_pages(_pdf(tmp_path / "a4.pdf", size=(595.28, 841.89)), [1], tmp_path / "a")[0]
+    assert vision.page_dpi(612, 792) == vision.TARGET_DPI and vision.png_size(letter) == (1275, 1650)
+    assert vision.page_tokens() == vision.est_tokens(letter) == 2714
+    assert vision.page_tokens(792, 1224) == vision.est_tokens(tabloid)
+    assert vision.page_tokens(595.28, 841.89) == vision.est_tokens(a4)
+    budget, per_letter = vision.VIEW_BUDGET_TOKENS, vision.page_tokens()
+    one_at_a_time = budget // per_letter
+    in_threes = 3 * (budget // (3 * per_letter))
+    tabloids = budget // vision.page_tokens(792, 1224)
+    assert (one_at_a_time, in_threes, tabloids) == (368, 366, 301)
+    src = inspect.getsource(vision)
+    start = src.index("TOKENS_PER_IMAGE_CAP = ")
+    comment = " ".join(src[start:src.index("SEVERITIES = ", start)].replace("#", " ").split())
+    assert "VIEW_BUDGET_TOKENS = DEFAULT_MAX_IMAGE_TOKENS" in comment
+    assert "Configurable investigation allowance" in comment
+    assert f"{per_letter:,}" in comment and f"{one_at_a_time} one at a time" in comment
+    assert f"{in_threes} in calls of three" in comment and f"{tabloids} pages of 11×17" in comment
+
+
+def test_page_growth_is_visible_and_advisory(tmp_path, monkeypatch):
+    source, output = tmp_path / "source.docx", tmp_path / "output.docx"
+    source.write_bytes(build("21 13 13", "SPRINKLERS"))
+    output.write_bytes(source.read_bytes())
+    before, after = make_pdf(tmp_path / "before.pdf", pages=2), make_pdf(tmp_path / "after.pdf", pages=3)
+    monkeypatch.setattr(render, "pick", lambda _: "word")
+    monkeypatch.setattr(render, "render_pdfs", lambda paths, folder, *a, **kw:
+                        {p: before if folder.name == "source" else after for p in paths})
+    sample = SampleView(source=source, output=output, passed=True)
+    warnings = []
+    render_samples([sample], tmp_path / "preview", "auto", True, warnings)
+    assert sample.pages_before == 2 and sample.pages_after == 3 and sample.passed
+    assert sample.to_dict()["pages_after"] == 3
+    assert any("pages 2 → 3" in warning for warning in warnings)
+    from spec_surgeon.preview import ChainPreview, GeneratedPreview
+    assert "pages: 2 → 3" in GeneratedPreview(tmp_path, "custom", samples=[sample]).to_text()
+    batch_plan = SimpleNamespace(to_text=lambda **kwargs: "Planned", spec={})
+    assert "pages: 2 → 3" in ChainPreview(tmp_path, batch_plan, samples=[sample]).to_text()

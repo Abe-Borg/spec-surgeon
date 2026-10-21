@@ -1,4 +1,4 @@
-"""Reconstruct GUI/CLI actions, approval refusals and cross-thread failures without recording request payloads."""
+"""Reconstruct window actions, approval refusals and cross-thread failures without recording request payloads."""
 from __future__ import annotations
 
 import json
@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 
 from make_fixtures import build
-from spec_surgeon import cli, diagnostics as diag
+from spec_surgeon import diagnostics as diag
 from spec_surgeon.editspec import load_spec
 from spec_surgeon.gui import Session
 
@@ -110,75 +110,6 @@ def test_internal_session_failure_keeps_cause_and_does_not_change_behavior(sessi
     assert [item["type"] for item in failed["exception_chain"]] == ["RuntimeError", "OSError"]
     assert "broken" in failed["traceback"]
     assert session.preview is None and session.spec is not None     # nothing previewed, the outcome kept
-
-
-def test_cli_refusal_is_durable_before_any_results_folder(tmp_path, capsys):
-    from spec_surgeon.settings import logs_dir
-    missing = tmp_path / "missing.json"
-    assert cli.main(["run-spec", str(missing), str(tmp_path / "source.docx"), "--no-render"]) == 2
-    records = events(next(logs_dir().glob("app-events*.jsonl")))
-    refusal = next(r for r in records if r["event"] == "cli.spec.unreadable")
-    finished = next(r for r in records if r["event"] == "cli.command.succeeded")
-    assert refusal["command_id"] == finished["command_id"]
-    assert finished["exit_code"] == 2 and finished["outcome"] == "refused"
-    assert finished["options"]["no_render"] is True
-    assert "cannot read the EditSpec" in capsys.readouterr().err
-
-
-def test_cli_dispatch_failure_is_logged_and_reraised(monkeypatch):
-    from spec_surgeon.settings import logs_dir
-    error = RuntimeError("fixture dispatch defect")
-
-    def broken(_):
-        raise error
-
-    monkeypatch.setattr(cli, "cmd_jobs", broken)
-    with pytest.raises(RuntimeError) as raised:
-        cli.main(["jobs"])
-    assert raised.value is error
-    failed = next(r for r in events(next(logs_dir().glob("app-events*.jsonl"))) if r["event"] == "cli.command.failed")
-    assert failed["command"] == "jobs" and failed["error_type"] == "RuntimeError"
-
-
-def test_cli_journals_do_not_contaminate_machine_readable_stdout(capsys):
-    assert cli.main(["ops", "--catalog"]) == 0
-    output = capsys.readouterr()
-    assert json.loads(output.out)
-    assert "cli.command" not in output.out
-
-
-def test_diagnose_finds_journals_after_interrupted_preview(tmp_path, capsys):
-    folder = tmp_path / "session"
-    preview = folder / "preview" / "logs"
-    preview.mkdir(parents=True)
-    journal = preview / "events.jsonl"
-    with diag.scope(journal):
-        diag.event("fixture.preview.started")
-    assert cli.main(["diagnose", str(folder)]) == 0
-    output = capsys.readouterr().out
-    assert "no DIAGNOSTICS.md" in output
-    assert str(journal) in output
-    assert "Application and command events:" in output
-
-
-def test_diagnose_session_journal_does_not_hide_nested_run_report(tmp_path, capsys):
-    folder = tmp_path / "session"
-    (folder / "logs").mkdir(parents=True)
-    (folder / "logs" / "events.jsonl").write_text('{"event":"conversation.turn.started"}\n', encoding="utf-8")
-    (folder / "run").mkdir()
-    (folder / "run" / "DIAGNOSTICS.md").write_text("# Fixture nested run diagnosis\n", encoding="utf-8")
-    assert cli.main(["diagnose", str(folder)]) == 0
-    output = capsys.readouterr().out
-    assert "Fixture nested run diagnosis" in output
-    assert "no DIAGNOSTICS.md" not in output
-
-
-def test_diagnose_keeps_unfinished_run_with_its_own_log(tmp_path, capsys):
-    (tmp_path / "logs").mkdir()
-    (tmp_path / "logs" / "run.log").write_text("Fixture run stopped here\n", encoding="utf-8")
-    (tmp_path / "run").mkdir()
-    assert cli.main(["diagnose", str(tmp_path)]) == 0
-    assert "Fixture run stopped here" in capsys.readouterr().out
 
 
 def test_the_window_job_preserves_action_context_and_failure_before_the_page_hears(tmp_path):

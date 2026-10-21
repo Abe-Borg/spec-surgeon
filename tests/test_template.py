@@ -10,22 +10,28 @@ import shutil
 import zipfile
 from pathlib import Path
 
+from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 import pytest
 from lxml import etree
 
-from make_fixtures import TEMPLATE_FILLS, build, build_rich, build_template
+from make_fixtures import TEMPLATE_FILLS, _styleref_field, build, build_rich, build_template
 from spec_surgeon.batch import run_batch
-from spec_surgeon.editspec import load_spec
+from spec_surgeon.compiler import _Batch, check_submission
+from spec_surgeon.editspec import apply_spec, load_spec, plan_spec
 from spec_surgeon.ooxml import block_full_text, paragraphs
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import apply_header_footer_template as tmpl_module
 from spec_surgeon.ops.apply_header_footer_template import ApplyHeaderFooterTemplate
 from spec_surgeon.ops.effective import AmbiguousToggle, Resolver, theme_fonts
 from spec_surgeon.ops.selectors import StyleSheet
+from spec_surgeon.ops.slots import extract_fill
 from spec_surgeon.package import CT_PART, DocxPackage, W, serialize_xml
 from spec_surgeon.verify import run_suite
 from spec_surgeon.verify.reader import VPackage
-from spec_surgeon.verify.template import Eff
+from spec_surgeon.verify.template import Eff, _v_field_runs, fill_value, slots_of
+from test_adaptive_messy import _build_messy_inline_spec, mutate_xml
 
 OP = "apply_header_footer_template"
 SPEC = Path(__file__).resolve().parent.parent / "examples" / "specs" / "apply-header-footer-template.json"
@@ -600,3 +606,105 @@ def test_v7_blank_first_page_variant_does_not_hide_a_displaced_header(template, 
     assert failed(rec) == ["V7"], rec.to_markdown()
     bad = [p["page"] for p in rec.get("V7").data["pages"] if p["problems"]]
     assert bad == [2, 3, 4, 5, 6]
+
+
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "specs"
+PREPARED_SPEC = EXAMPLES / "apply-header-footer-template.json"
+
+
+def test_single_section_spec_plans_with_a_cover_and_body_template_and_the_batch_compiles(tmp_path):
+    spec = load_spec(PREPARED_SPEC)
+    tpl = Path(spec["ops"][0]["params"]["template"])
+    single = DocxPackage(build("21 98 00", "VARIANT", single_section=True))
+    plan, frags = plan_spec(single, spec)                       # was: unknown-slot (body rules unused here)
+    out = apply_spec(single, frags).output_bytes()
+    rec = run_suite(single.data, out, plan.to_dict(), "src.docx", "out.docx")
+    assert rec.passed, rec.to_markdown()
+    assert [a["part"] for a in plan.property_assertions if a["kind"] == "template_parts"]
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    (folder / "21 13 13 – WET-PIPE SPRINKLER SYSTEMS.docx").write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    (folder / "SINGLE SECTION.docx").write_bytes(single.data)
+    batch = _Batch(sorted(folder.glob("*.docx")), tpl)
+    assert len(batch.prof["patterns"]) == 2
+    assert check_submission(spec, batch, [spec["request"], "ISSUED FOR CONSTRUCTION  2026-02-15"]) == []
+    # a rule naming a slot in none of the mapped template sections is still refused, on every file
+    spec["ops"][0]["params"]["slot_fills"]["NOWHERE"] = {"rule": "literal", "value": "ISSUED FOR CONSTRUCTION  2026-02-15"}
+    for pkg in (single, DocxPackage(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))):
+        with pytest.raises(JobException) as e:
+            plan_spec(pkg, spec)
+        assert e.value.code == "unknown-slot" and "NOWHERE" in e.value.reason
+    errs = check_submission(spec, batch, [spec["request"], "ISSUED FOR CONSTRUCTION  2026-02-15"])
+    assert errs and "unknown-slot" in errs[0]
+
+
+def test_fills_keep_the_documents_own_characters_on_both_sides():
+    def nbsp_title(root):
+        for t in root.find(W + "body").iter(W + "t"):
+            if t.text and "WET-PIPE" in t.text:
+                t.text = t.text.replace("WET-PIPE SPRINKLER", "WET-PIPE SPRINKLER"); return
+    messy = DocxPackage(mutate_xml(_build_messy_inline_spec("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"), "word/document.xml", nbsp_title))
+    rx = {"rule": "regex", "source": "document", "pattern": r"^SECTION\s+\d{2}\s+\d{2}\s+\d{2}\s*[-–—]\s*(.+)$"}
+    t, v = extract_fill(messy, "T", rx), fill_value(VPackage(messy.data), "T", rx)
+    assert t == v == "WET-PIPE SPRINKLER SYSTEMS"
+    clean = DocxPackage(mutate_xml(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"), "word/document.xml", nbsp_title))
+    pa = {"rule": "paragraph_after", "source": "document", "anchor_regex": r"^SECTION \d{2} \d{2} \d{2}$"}
+    assert extract_fill(clean, "T", pa) == fill_value(VPackage(clean.data), "T", pa) == "WET-PIPE SPRINKLER SYSTEMS"
+    # consensus is still judged with whitespace collapsed: two anchors whose titles differ only in spacing agree
+    def two_anchors(root):
+        body = root.find(W + "body"); pars = body.findall(W + "p")
+        p = etree.Element(W + "p"); etree.SubElement(etree.SubElement(p, W + "r"), W + "t").text = "SECTION 21 13 13"
+        p2 = etree.Element(W + "p"); etree.SubElement(etree.SubElement(p2, W + "r"), W + "t").text = "WET-PIPE  SPRINKLER SYSTEMS"
+        pars[6].addnext(p); p.addnext(p2)
+    two = DocxPackage(mutate_xml(clean.data, "word/document.xml", two_anchors))
+    assert extract_fill(two, "T", pa) == fill_value(VPackage(two.data), "T", pa) == "WET-PIPE SPRINKLER SYSTEMS"
+
+
+def _spec(mode, ops):
+    return {"request": "x", "summary": "x", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": ops}
+
+
+def _template_with_field_slots(tmp_path: Path) -> Path:
+    doc = Document()
+    s0 = doc.sections[0]
+    h = s0.header
+    h.is_linked_to_previous = False
+    p = h.paragraphs[0]
+    p.add_run("SECTION {{SECTION_NUMBER}} – ")
+    _styleref_field(p, "{{SECTION_TITLE}}")                 # the title typed as a STYLEREF field's cached result
+    p = h.add_paragraph()
+    fs = OxmlElement("w:fldSimple"); fs.set(qn("w:instr"), " DOCPROPERTY Title ")
+    r = OxmlElement("w:r"); rpr = OxmlElement("w:rPr"); hl = OxmlElement("w:highlight"); hl.set(qn("w:val"), "yellow")
+    rpr.append(hl); r.append(rpr); t = OxmlElement("w:t"); t.text = "SECTION_TITLE"; r.append(t); fs.append(r)
+    p._p.append(fs)                                         # a highlighted slot inside a simple field
+    f = s0.footer
+    f.is_linked_to_previous = False
+    f.paragraphs[0].add_run("{{SECTION_NUMBER}} - page")
+    doc.add_paragraph("TEMPLATE BODY")
+    tpl = tmp_path / "field_slots_template.docx"
+    buf = io.BytesIO()
+    doc.save(buf)
+    tpl.write_bytes(buf.getvalue())
+    return tpl
+
+
+def test_a_slot_shown_by_a_field_is_refused_on_both_sides(tmp_path):
+    tpl = _template_with_field_slots(tmp_path)
+    fills = {"SECTION_NUMBER": {"rule": "regex", "source": "footer.default", "pattern": "^(\\d{2} \\d{2} \\d{2})"},
+             "SECTION_TITLE": {"rule": "paragraph_after", "source": "document",
+                               "anchor_regex": "^SECTION \\d{2} \\d{2} \\d{2}$"}}
+    pkg = DocxPackage(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    for markers in (["braces"], ["highlight"]):
+        spec = _spec("untracked", [{"op": "apply_header_footer_template", "select": {"sections": "all"},
+                                    "params": {"template": str(tpl), "template_sections": {"cover": 0, "body": 0},
+                                               "slot_markers": markers, "slot_fills": fills}}])
+        with pytest.raises(JobException) as e:
+            plan_spec(pkg, spec)
+        assert e.value.code == "slot-in-field" and "SECTION_TITLE" in e.value.reason
+    root = VPackage(tpl.read_bytes()).xml("word/header1.xml")
+    pars = list(root.iter(W + "p"))
+    for par, markers in ((pars[0], ["braces"]), (pars[1], ["highlight"])):
+        with pytest.raises(ValueError, match="inside a field"):
+            slots_of(par, markers, ["yellow"], None, _v_field_runs(root))
+        assert "SECTION_TITLE" in [s["name"] for s in slots_of(par, markers, ["yellow"], None, None)]

@@ -1,8 +1,8 @@
 # Recovery and local repair memory
 
 Contract-bearing batch, chain and generated runs retain their approved outcomes and exact source bindings in
-set-aside artifacts. `retry` and the conversation window's saved checkpoint resume recovery under that same
-authority, refusing missing or inconsistent approvals. Ordinary delivery is governed by the preview the user
+set-aside artifacts. The conversation window's saved checkpoint resumes recovery under that same authority,
+refusing missing or inconsistent approvals. Ordinary delivery is governed by the preview the user
 approved and the independent verifier; see [Reliability and approved outcomes](RELIABILITY.md).
 
 Spec Surgeon v0.7.1 adds a bounded investigation workflow for requests that fail during
@@ -32,7 +32,7 @@ result satisfies the complete request.
 
 Custom methods are prepared and tested on sample copies internally, only under an independently
 checked outcome contract, and end in the same action. Local repair memory is read and recorded in
-the window; it can be switched off only on the command line.
+the window; there is no switch to turn it off.
 
 The saved conversation keeps the location of the current investigation. Reopening restores its
 attempts, evidence and pending decisions; a changed source invalidates the dependent candidates.
@@ -40,53 +40,19 @@ A new failed conversation or preview uses its current files, rather than silentl
 unrelated older run. A chain that already wrote stages in place cannot be replayed automatically:
 start from original copies to avoid performing successful earlier edits twice.
 
-## At the terminal
+## Layout runs, allowances and records
 
-From a prior batch, chain or recovery folder containing `set_aside.json`:
+A layout run (the window's plan per layout) writes one batch folder per layout, `layout-<id>`, each with its own
+specification and `set_aside.json`, and no manifest at its root. Recovery takes the layouts whose documents still
+need work one at a time, each against its own specification. A document that no layout covered has no specification
+to recover against and is not among them.
 
-```text
-spec-surgeon resolve "previous-run" --out "recovery-01"
-spec-surgeon resolve "recovery-01" --request "Use the title shown in the table"
-spec-surgeon resolve "layout-run/layout-B" --out "recovery-02"
-```
-
-A layout run (`run-spec` with a layout plan, or the window's plan per layout) writes one batch folder per layout,
-`layout-<id>`, each with its own specification and `set_aside.json`, and no manifest at its root. `resolve` on the
-run folder refuses and names the layout folders whose documents still need work; recovery takes them one at a
-time. A document that no layout covered has no specification to recover against and is not among them.
-
-In a terminal, the command shows the investigation and visual findings, then asks before
-exporting. Without an interactive terminal or `--yes`, it writes the investigation for review
-and does not export. `--yes` approves export; it **does not** acknowledge blocking visual
-findings. `--ack-review` is the separate explicit acknowledgement for findings you have inspected.
-There is no recovery `--in-place` option.
-
-Useful options:
-
-| Option | Meaning |
-| --- | --- |
-| `--request "..."` | Append a clarification or answer to the original request; it does not replace the pinned goal. |
-| `--model MODEL --effort medium` | Choose recovery's model and effort (`low`, `medium`, `high`, `max`). |
-| `--budget 250` | Estimated model-spending allowance in USD, default 250. |
-| `--max-attempts 50` | Candidate-attempt allowance per problem group, default 50. |
-| `--max-calls 512` | Model-call allowance for the investigation, default 512. |
-| `--max-output-tokens 128000` | Maximum output tokens per model call (the model's maximum, the default). |
-| `--max-total-tokens 20000000` | Estimated total input/output token allowance. |
-| `--allow-codegen` | Permit offered custom formatting transforms within the restricted recovery contract. |
-| `--no-memory` | Neither retrieve nor record local repair cases for this investigation. |
-| `--no-render` | Skip rendering and visual review; this leaves visual acceptance to you. |
-| `--renderer word` | Choose `auto`, `word`, `libreoffice`, or `none`. |
-
-The same budget covers investigation, generated-transform calls and visual-review calls. A
-conservative reservation is checked before each call; calls with missing usage retain their
-reservation. Unknown pricing prevents further calls under a USD budget. These are listed-price
-estimates and application limits, not a provider billing guarantee. The report retains usage,
-reservations and stop reasons. Output and total-token allowances are command-line options.
-Default reasoning effort is `max`. Independent problem groups take
-turns investigating, so a long first group does not monopolize the initial model calls.
-Reopening restores the saved resource settings. Explicit CLI flags override individual values;
-`--render`, `--memory`, and `--no-codegen` reverse saved choices. Each continuation receives a fresh
-allowance at those settings, with prior usage retained in the resource history.
+The same allowance covers investigation, generated-transform calls and visual-review calls. A conservative
+reservation is checked before each call; calls with missing usage retain their reservation. These are listed-price
+estimates and application limits, not a provider billing guarantee. The report retains usage, reservations and stop
+reasons. Independent problem groups take turns investigating, so a long first group does not monopolize the initial
+model calls. Reopening restores the saved resource settings; each continuation receives a fresh allowance at those
+settings, with prior usage retained in the resource history.
 
 `RECOVERY_REPORT.md` and `recovery.json` retain the investigation, attempts and evidence.
 `set_aside.json` retains unresolved files and their goal for compatibility with older workflows.
@@ -133,7 +99,7 @@ agents can choose another built-in sequence or a sandboxed custom method, includ
 exact-wording edits. Automatic custom methods are enabled for these contracts unless explicitly
 disabled. Every result must pass both the ordinary suite and independent original-to-final checks.
 A separately prompted critic can reject a candidate or request more investigation; it cannot
-override a failed check. See [Adaptive workspaces](ADAPTIVE_WORKSPACES.md) for the full workflow.
+override a failed check.
 
 ## What the application remembers
 
@@ -148,29 +114,15 @@ not attributed to a new repair case. An attempt without verified output is recor
 
 Freeform requests, notes and feedback are retained locally; the store is not an anonymizer.
 When memory is enabled, relevant previous cases can be included in a recovery model request.
-There is no model-weight training or shared cloud pool of repairs. Disable memory for a
-command-line run with `--no-memory`; the conversation window keeps it on. Existing entries remain
-until forgotten.
+There is no model-weight training or shared cloud pool of repairs. The conversation window always
+uses it, and since the command line was removed (2026-10-21) nothing in the app inspects, accepts,
+rejects or forgets a case; entries stay until the size bound prunes them or the database is deleted.
 
 Similarity only helps find evidence. Automatic reuse requires the current goal, request,
 document pattern, template identities and application version to match the applicability checks.
 Each reuse must still satisfy current wording rules and fresh verification on every file.
 Past project wording never becomes current approved wording merely because it was remembered.
 Failed cases remain useful evidence of approaches to avoid.
-
-Use the `memory` command to inspect a case, accept or reject its result, or forget it:
-
-```text
-spec-surgeon memory list
-spec-surgeon memory show CASE_ID
-spec-surgeon memory accept CASE_ID --note "Checked the result in Word"
-spec-surgeon memory reject CASE_ID --note "The footer font was wrong"
-spec-surgeon memory forget CASE_ID
-```
-
-Accepting records your judgment; it never bypasses future checks. Rejection blocks automatic
-reuse of that repair across matching duplicate cases. A later acceptance does not erase the
-negative evidence. Forgetting removes the named record, not other records of the same repair.
 
 ## Developer entry points and validation
 
@@ -188,5 +140,5 @@ verification, stale inputs, dropped goals and later stages undoing earlier requi
 
 Automated tests use synthetic documents and scripted model replies. Live Claude repair quality,
 real-project success rates, actual API economics and Microsoft Word COM fidelity have **not**
-been validated by those tests. Use the [real-batch evaluation protocol](RECOVERY_EVALUATION.md)
-before making reliability or savings claims.
+been validated by those tests. Real batches are needed before making reliability or savings claims (the earlier
+evaluation protocol is kept in [docs/history/RECOVERY_EVALUATION.md](history/RECOVERY_EVALUATION.md)).

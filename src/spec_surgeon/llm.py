@@ -1,5 +1,5 @@
 """Every call Spec Surgeon makes to Claude goes through this module (the compiler's chat, the custom-transform writer,
-the advisor and the visual check of the preview samples).
+recovery and the visual check of the preview samples).
 
 * ``call`` **streams** (``client.beta.messages.stream`` + ``get_final_message``): the output cap is 128,000 tokens (the
   most Opus 5.5 writes), and the SDK refuses a non-streaming request that large. Effort ``max``; thinking is left to the
@@ -26,8 +26,7 @@ the advisor and the visual check of the preview samples).
 * ``budget_scope`` gives recovery and its nested callers shared call, token and estimated USD limits, with optional
   model/effort overrides. Calls outside a scope retain the ordinary defaults above.
 
-``client()`` builds the real client; callers resolve it at call time through ``compiler._client`` (the advisor through
-its own ``advisor._client``), which is what the tests replace with a scripted fake. Without the ``anthropic`` package it
+``client()`` builds the real client; callers resolve it at call time through ``compiler._client``, which is what the tests replace with a scripted fake. Without the ``anthropic`` package it
 raises ``ClaudeUnavailable``.
 
 Diagnostics, one rule for every caller: ``is_api_error`` tells an error of the call itself (the SDK's, its HTTP stack's,
@@ -260,13 +259,12 @@ def client():
 
 
 # ---- running without an API key -----------------------------------------------------------------------------------
-# Everything that calls Claude, as the user reads it. Without credentials these are off; everything else — saved specs,
-# your library's recipes and operations, the preview, the run and its verification, set-aside passes, diagnostics — runs
-# without a key (README → "Running without an API key").
+# Everything that calls Claude, as the user reads it. Without credentials these are off; everything else — the
+# preview, the run and its verification, diagnostics — runs without a key (README → "Running without an API key").
 CLAUDE_FEATURES = ("describing a change in plain English (the conversation with Claude)",
                    "custom transforms Claude writes when no built-in operation fits",
                    "Claude's visual check of the preview pages",
-                   "advice on set-aside files")
+                   "recovery of set-aside files")
 CREDENTIAL_ENV = ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN")
 
 
@@ -607,7 +605,7 @@ def _record_error(e: BaseException) -> str:
 
 def block_dict(b: Any) -> Dict[str, Any]:
     """A response content block as plain data for a transcript (the SDK's objects, a dict, or a test's stand-ins). A tool
-    call's input is deep-copied (a caller may change it later — the advisor pins a spec's applies_to). Total: a block
+    call's input is deep-copied (a caller may change it later). Total: a block
     that cannot be read is recorded as a ``record_error``."""
     kind = "?"
     try:
@@ -822,9 +820,9 @@ class Usage:
                 out[k] += row[k]
         return out
 
-    def handoff(self) -> Dict[str, int]:
-        """``as_dict`` plus the 1-hour share of the cache writes (``CACHE_1H_KEY``) when there is one, for a record
-        that is priced again later (compile.json's usage, ``continuous_recovery.after_compile``)."""
+    def as_record(self) -> Dict[str, int]:
+        """``as_dict`` plus the 1-hour share of the cache writes (``CACHE_1H_KEY``) when there is one, for the records
+        (``CompileResult.usage``, compile.json)."""
         out = self.as_dict()
         hour = sum(row.get(CACHE_1H_KEY, 0) for row in self.by_model.values())
         if hour:
@@ -851,7 +849,7 @@ class Usage:
         return total
 
     def line(self) -> str:
-        """One line for the window and the command line: "12,345 tokens · ≈ $0.42"."""
+        """One line for the window: "12,345 tokens · ≈ $0.42"."""
         n = self.tokens()
         cost = self.cost_usd()
         money = f"≈ ${cost:.2f}" if cost is not None else "cost unknown (a model without a listed price answered)"

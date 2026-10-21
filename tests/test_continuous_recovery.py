@@ -117,22 +117,6 @@ def test_failed_preview_automatically_investigates_without_switching_modes(tmp_p
     assert source.is_file()
 
 
-def test_noninteractive_cli_requires_exact_new_wording_even_with_yes(tmp_path, monkeypatch, capsys):
-    from spec_surgeon import cli, compiler
-    source = write_document(tmp_path / "source.docx")
-    goal = {"kind": "document_effects", "effects": [{"id": "wording", "type": "replace_text",
-        "target": {"all": True}, "find": "FIRE", "replace": "INVENTED PROJECT",
-        "expected_matches": 1, "tracked": False}]}
-    client = FakeClient(refusal(), proposal(goal))
-    monkeypatch.setattr(cli, "_interactive", lambda: False)
-    monkeypatch.setattr(compiler, "_client", lambda: client)
-    monkeypatch.setattr("spec_surgeon.llm.client", lambda: client)
-    code = cli.main(["do", "Change the project name", str(source), "--yes", "--no-render", "--out", str(tmp_path / "out")])
-    assert code == 2
-    assert "exact wording" in capsys.readouterr().out
-    assert not (tmp_path / "out" / "recovery").exists()
-
-
 def test_invisible_proposed_words_are_not_offered_as_an_approval(tmp_path):
     goal = {"kind": "document_effects", "effects": [{"id": "wording", "type": "replace_text",
         "target": {"all": True}, "find": "FIRE", "replace": "NEW\u200bPROJECT",
@@ -181,82 +165,3 @@ def test_completed_recovery_can_be_revised_in_chat_into_a_new_review(tmp_path, m
     assert s.recovery is None and s.turn.choices[0].kind == "recovery_plan"
     s.reply(choice_id=s.turn.choices[0].id)
     assert s.recovery.ready and s.recovery.out_dir != previous
-
-
-def test_noninteractive_cli_continues_with_yes_and_preserves_model_settings(tmp_path, monkeypatch):
-    from spec_surgeon import cli, compiler, continuous_recovery
-    source = write_document(tmp_path / "source.docx")
-    client = FakeClient(refusal(), proposal())
-    monkeypatch.setattr(cli, "_interactive", lambda: False)
-    monkeypatch.setattr(compiler, "_client", lambda: client)
-    monkeypatch.setattr("spec_surgeon.llm.client", lambda: client)
-    out = tmp_path / "out"
-    assert cli.main(["do", "Make the title bold", str(source), "--yes", "--no-render",
-        "--max-context-tokens", "800000", "--out", str(out)]) == 0
-    assert (out / "recovery" / "outputs" / source.name).is_file()
-    import json
-    journal = json.loads((out / "conversation.json").read_text())
-    assert journal["calls"] == 2 and journal["resource_policy"]["max_context_tokens"] == 800000
-
-
-@pytest.mark.parametrize("question_kind", ["investigation", "critic"])
-def test_cli_free_text_resumes_current_recovery_without_replanning(tmp_path, monkeypatch, question_kind):
-    from types import SimpleNamespace
-    from spec_surgeon import cli, continuous_recovery, recovery
-    from spec_surgeon.goals import compile_goal_candidate
-    from test_recovery import submit
-    from test_recovery_adaptive import critic
-
-    c, source = conversation(tmp_path, proposal())
-    original = source.read_bytes()
-    snapshot = approve(c, c.start().choices[0].id)
-    goal = snapshot["contract"]
-    candidate = compile_goal_candidate(source, goal)
-    question = "Should the selected title stay bold?"
-    pause = ([submit(candidate), critic("need_user", question=question)] if question_kind == "critic"
-             else [resp(tool("need_user", {"question": question}))])
-    out = tmp_path / "out"
-    initial = recovery.recover([source], c.request, out / "recovery", adaptive_contract=goal, options=opts(),
-        client=FakeClient(resp(tool("list_styles", {"file": str(source)})), *pause))
-    assert initial.questions == [question] and not initial.ready
-    retained_output = initial.files[0].output
-    retained_bytes = retained_output.read_bytes() if retained_output else None
-    c._client = FakeClient(resp(tool("review_candidate", {})) if question_kind == "critic" else submit(candidate),
-                           critic())
-    monkeypatch.setattr(continuous_recovery, "execute", lambda *a, **kw: initial)
-    monkeypatch.setattr(continuous_recovery, "options_for", lambda *a, **kw: opts())
-    monkeypatch.setattr(cli, "_interactive", lambda: True)
-    answer = "Yes, keep the selected title bold."
-    replies = iter([answer])
-    monkeypatch.setattr(cli, "_ask", lambda _: next(replies))
-    args = SimpleNamespace(no_render=True, renderer="none", no_review=True, ack_review=False, yes=True)
-
-    assert cli._do_continuous_recovery(args, c, snapshot, out) == 0
-    resumed = recovery.load_recovery(initial.out_dir)
-    assert resumed.ready and len(resumed.attempts) == 1
-    assert resumed.question_records[0]["status"] == "answered"
-    assert resumed.decisions[-1]["answer"] == answer
-    assert "list_styles" in str(c._client.requests[0]["messages"])
-    assert answer in str(c._client.requests[0]["messages"])
-    assert len(c._client.requests) == 2 and answer in c.sources
-    assert c.recovery_planning["calls"] == 1
-    assert list(out.glob("recovery*")) == [initial.out_dir]
-    assert (initial.out_dir / "outputs" / source.name).is_file()
-    assert source.read_bytes() == original
-    if retained_output:
-        assert resumed.ready[0].output == retained_output and retained_output.read_bytes() == retained_bytes
-
-
-def test_compile_handoff_retains_time_and_does_not_guess_fallback_pricing(tmp_path):
-    from spec_surgeon.compiler import CompileResult
-    from spec_surgeon.continuous_recovery import after_compile
-    source = write_document(tmp_path / "source.docx")
-    prior = CompileResult(status="unsupported", seconds=10.0,
-        usage={"input_tokens": 1000, "output_tokens": 200, "cache_read_input_tokens": 0,
-               "cache_creation_input_tokens": 0}, served_models=["claude-sonnet-5-5"],
-        transcript=[{"turn": 1, "role": "assistant", "fell_back": True}])
-    c = after_compile("Make the title bold", [source], None, prior, client=FakeClient(proposal()),
-                      work_dir=tmp_path / "chat")
-    assert c.seconds > 10.0 and c.calls == 2 and c.usage.calls == 2
-    assert c.usage.as_dict()["input_tokens"] == 1100
-    assert c.usage.cost_usd() is None  # aggregate usage cannot price each fallback attempt

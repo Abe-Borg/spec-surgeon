@@ -1,4 +1,4 @@
-"""Build both entry points with a shared onedir runtime; run on native Windows.
+"""Build the desktop app as one onedir runtime; run on native Windows.
 
 The window is a web page: a local FastAPI server (uvicorn) around one ``DocumentTask``, the page built from
 ``frontend/`` into ``src/spec_surgeon/web/static`` (collected as data, so the bundle must be built after
@@ -91,12 +91,7 @@ def analyze(entry):
 
 
 gui = analyze("gui_entry.py")
-cli = analyze("cli_entry.py")
 gui_exe = EXE(PYZ(gui.pure), gui.scripts, [], exclude_binaries=True, name="SpecSurgeon",
               console=False, version=str(version_file), icon=icon, manifest=manifest, upx=False,
               contents_directory="_internal")
-cli_exe = EXE(PYZ(cli.pure), cli.scripts, [], exclude_binaries=True, name="spec-surgeon",
-              console=True, version=str(version_file), icon=icon, manifest=manifest, upx=False,
-              contents_directory="_internal")
-COLLECT(gui_exe, cli_exe, gui.binaries, gui.datas, cli.binaries, cli.datas,
-        name="SpecSurgeon", upx=False)
+COLLECT(gui_exe, gui.binaries, gui.datas, name="SpecSurgeon", upx=False)
