@@ -232,12 +232,11 @@ def test_thread_mode_defaults_to_one_worker_and_honors_an_explicit_count(tmp_pat
         source = tmp_path / f"spec-{index}.docx"
         source.write_bytes(build("21 13 13", f"WET-PIPE {index}"))
         sources.append(str(source))
-    default = batch.run_batch(sources, "page-numbering", {"option": "continuous"}, tmp_path / "default",
-                              do_render=False)
+    default = batch.run_batch(sources, "edit-spec", {}, tmp_path / "default", do_render=False, spec=CONTINUOUS)
     assert pools == [] and all(file.output and file.output.exists() for file in default.files)
     assert "with 1 thread worker(s)" in (tmp_path / "default" / "logs" / "run.log").read_text(encoding="utf-8")
-    explicit = batch.run_batch(sources, "page-numbering", {"option": "continuous"}, tmp_path / "explicit",
-                               workers=2, do_render=False)
+    explicit = batch.run_batch(sources, "edit-spec", {}, tmp_path / "explicit", workers=2, do_render=False,
+                               spec=CONTINUOUS)
     assert pools == [{"max_workers": 2}] and all(file.output and file.output.exists() for file in explicit.files)
 
 
