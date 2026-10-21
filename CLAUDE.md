@@ -73,7 +73,9 @@ for persistence, cost limits and review behavior.
     dry runs, the op catalog and EditSpec schema.
   - `triage.py` — attach-time triage: refused, noted or ok, with the facts the planner reads.
   - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec with Claude; `llm.call` is the one
-    call site. `compiler.compose_submission` is the one gate a submission passes (a spec, the model's own stages, a
+    call site: the system prompt carries its own 1-hour cache breakpoint (shared by every conversation), the history
+    the automatic 5-minute one, and a `one_shot` call (visual check, critic) caches nothing after the system prompt;
+    keep system prompts and tools byte-stable. `compiler.compose_submission` is the one gate a submission passes (a spec, the model's own stages, a
     layout plan — composed into a chain when its ops overlap); the op sheet (`catalog.op_sheet`) rides the cached
     system prompt.
   - `preview.py` — samples applied and verified in memory, before/after pages, the approval token.

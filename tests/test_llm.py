@@ -24,10 +24,65 @@ def test_call_streams_with_the_agreed_settings():
     assert req["max_tokens"] == 128000 == llm.MAX_TOKENS
     assert req["output_config"] == {"effort": "max"}
     assert req["fallbacks"] == "default" and req["betas"] == [llm.FALLBACK_BETA]
-    assert req["cache_control"] == {"type": "ephemeral"}
+    assert req["cache_control"] == {"type": "ephemeral"}            # the history, for the next call (5 minutes)
+    # the system prompt's own breakpoint, for an hour: the next conversation over the same prompt reads it
+    assert req["system_blocks"] == [{"type": "text", "text": "S", "cache_control": {"type": "ephemeral", "ttl": "1h"}}]
     assert "thinking" not in req and "tool_choice" not in req       # both are refused by Opus 5.5 when forced
     with pytest.raises(AssertionError, match="non-streaming"):
         fake.beta.messages.create(model="m")
+
+
+def test_a_one_shot_call_caches_its_system_prompt_and_nothing_after_it():
+    fake = FakeClient(resp(text("hi"), stop="end_turn"))
+    llm.call(fake, model="claude-opus-5-5", system="S", tools=[], messages=[{"role": "user", "content": "x"}],
+             one_shot=True)
+    req = fake.requests[0]
+    assert "cache_control" not in req                                # its unique content is plain input, not a write
+    assert req["system_blocks"][0]["cache_control"] == llm.SYSTEM_CACHE
+    assert llm.system_blocks("") == ""                               # nothing to cache, and no empty text block
+
+
+def test_one_hour_cache_writes_are_priced_as_such_and_kept_out_of_the_token_total():
+    usage = SimpleNamespace(input_tokens=100, output_tokens=10, cache_read_input_tokens=2000,
+                            cache_creation_input_tokens=1500, iterations=None,
+                            cache_creation=SimpleNamespace(ephemeral_1h_input_tokens=1000, ephemeral_5m_input_tokens=500))
+    r = SimpleNamespace(content=[], stop_reason="end_turn", stop_details=None, model="claude-opus-5-5", usage=usage)
+    u = llm.Usage()
+    u.add(r, "claude-opus-5-5")
+    assert u.as_dict() == {"input_tokens": 100, "output_tokens": 10, "cache_read_input_tokens": 2000,
+                           "cache_creation_input_tokens": 1500}            # the 1-hour writes are not counted twice
+    assert u.by_model["claude-opus-5-5"][llm.CACHE_1H_KEY] == 1000
+    assert u.cost_usd() == pytest.approx((100 * 4 + 10 * 20 + 2000 * 0.20 + 500 * 5 + 1000 * 8) / 1e6)
+    both = llm.Usage()
+    both.merge(u)
+    both.merge(u)
+    assert both.by_model["claude-opus-5-5"][llm.CACHE_1H_KEY] == 2000 and both.cost_usd() == pytest.approx(2 * u.cost_usd())
+    assert llm.response_entry(1, r, 0.1)["usage"][llm.CACHE_1H_KEY] == 1000   # the records show which TTL was written
+    assert llm.CACHE_1H_KEY not in llm.response_entry(1, resp(text("x")), 0.1)["usage"]
+    # a stopped call is settled at the 1-hour price for the 1-hour writes its stream reported
+    budget = llm.CallBudget(max_calls=48, max_cost_usd=None, max_total_tokens=None)
+    budget._reserve((1000 + llm.MAX_TOKENS, 1.0))
+    seen = {"input_tokens": 10, "cache_creation_input_tokens": 1000, llm.CACHE_1H_KEY: 1000}
+    budget._settle_stopped("claude-opus-5-5", (1000 + llm.MAX_TOKENS, 1.0), seen, llm.MAX_TOKENS, 0.0)
+    assert budget.spent_usd == pytest.approx((10 * 4 + 1000 * 8) / 1e6)
+    # the preflight reserves the 1-hour write price for the tools and system prompt alone, the 5-minute one after them
+    tokens, cost = llm.CallBudget(max_cost_usd=None)._preflight("claude-opus-5-5", 10_000, 100, 4_000)
+    assert tokens == 10_100 and cost == pytest.approx((4_000 * 8 + 6_000 * 5 + 100 * 20) / 1e6)
+
+
+def test_the_stream_reports_its_one_hour_writes_for_a_stopped_call():
+    usage = SimpleNamespace(input_tokens=5, cache_creation_input_tokens=300,
+                            cache_creation=SimpleNamespace(ephemeral_1h_input_tokens=200, ephemeral_5m_input_tokens=100))
+    events = [SimpleNamespace(type="message_start", message=SimpleNamespace(usage=usage))]
+
+    class Stream:
+        def __iter__(self):
+            return iter(events)
+
+    seen = {}
+    with pytest.raises(llm.IncompleteResponse):
+        llm._finished_message(Stream(), seen)                         # it ended early: what it reported stays seen
+    assert seen["usage"]["cache_creation_input_tokens"] == 300 and seen["usage"][llm.CACHE_1H_KEY] == 200
 
 
 def test_history_content_drops_what_a_declined_attempt_produced():

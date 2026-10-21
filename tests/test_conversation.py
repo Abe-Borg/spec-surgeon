@@ -66,6 +66,36 @@ def assert_well_formed(fake):
             assert req["messages"][:len(prev["messages"])] == prev["messages"]          # append-only
 
 
+def test_every_conversation_sends_the_same_system_prompt_with_its_own_cache_breakpoint(folder):
+    """The next request after a run is a new conversation over other files: its tools and system prompt are the same
+    bytes as the last one's and carry their own (1-hour) breakpoint, so its first call reads them instead of writing
+    them again; only the history behind them is new."""
+    files = sorted(folder.glob("*.docx"))
+    first, second = FakeClient(ask(message="Which headers?")), FakeClient(ask(message="Which font?"))
+    Conversation("remove all headers and footers", files, client=first).start()
+    Conversation("change the font to Arial", files[:1], client=second, history=["Removed the headers."]).start()
+    a, b = first.requests[0], second.requests[0]
+    assert a["messages"] != b["messages"]
+    assert a["system_blocks"] == b["system_blocks"] and a["tools"] == b["tools"]
+    assert [block["cache_control"] for block in a["system_blocks"]] == [llm.SYSTEM_CACHE]
+    assert a["cache_control"] == b["cache_control"] == llm.MESSAGES_CACHE
+
+
+def test_the_compile_result_hands_on_its_one_hour_cache_writes_at_their_price(folder):
+    from types import SimpleNamespace
+    from spec_surgeon.continuous_recovery import _add_usage
+    answer = ask(message="Which headers?")
+    answer.usage.cache_creation_input_tokens = 1000
+    answer.usage.cache_creation = SimpleNamespace(ephemeral_1h_input_tokens=800, ephemeral_5m_input_tokens=200)
+    c = Conversation("remove all headers and footers", sorted(folder.glob("*.docx")), client=FakeClient(answer))
+    usage = c.compile_result(c.start()).usage
+    assert usage[llm.CACHE_1H_KEY] == 800 and usage["cache_creation_input_tokens"] == 1000
+    handed = SimpleNamespace(usage=llm.Usage())
+    _add_usage(handed, {"calls": 1, "by_model": {"claude-opus-5-5": usage}})          # the command line's handoff
+    assert handed.usage.cost_usd() == pytest.approx(c.usage.cost_usd())
+    assert handed.usage.tokens() == c.usage.tokens()                                    # never counted twice
+
+
 def test_choices_reply_by_choice_approves_its_exact_wording(folder):
     fake = FakeClient(
         ask(understanding="You want the cover stamp replaced.", message="Which words should the stamp say?",

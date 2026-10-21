@@ -463,7 +463,7 @@ class Conversation:
             qs += [f"[choice] {c.describe()}" for c in turn.choices]
         status = turn.status
         res = compiler.CompileResult(status=status, spec=turn.spec, questions=qs, errors=list(turn.errors),
-                                     tool_calls=list(self.tool_calls), model=self.model, usage=self.usage.as_dict(),
+                                     tool_calls=list(self.tool_calls), model=self.model, usage=self.usage.handoff(),
                                      served_models=sorted(set(self.usage.served)),
                                      custom_transform=turn.custom_transform,
                                      custom_transform_reason=turn.custom_transform_reason,

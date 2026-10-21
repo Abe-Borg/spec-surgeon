@@ -195,7 +195,10 @@ There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether 
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
 conversation runs at the model's default reasoning effort (medium: its sentences and plans are short and the
 operations' settings ride the cached prompt, so a plan is one or two calls); recovery and custom methods think at
-high. Three things keep the spending in your hands instead:
+high. The instructions and the operations' settings (the same for every conversation) are cached for an hour, so the
+next request after a run, a start over or a changed attachment reads them instead of paying for them again; the
+conversation itself is cached for five minutes between its calls, and the one-call checks (the visual check, the
+recovery critic) are not cached at all beyond the instructions. Three things keep the spending in your hands instead:
 
 - **You see it.** While work runs the chat shows the assistant's words and its thinking summary as they are
   written, a sentence per step, and the header the estimated spending so far. A step that is still running is

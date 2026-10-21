@@ -69,6 +69,8 @@ def test_the_visual_check_sends_labelled_before_and_after_pages_and_validates_fi
     assert [b["type"] for b in content] == ["text", "image", "text", "image", "text"]
     assert content[0]["text"].endswith("page 1 — BEFORE") and content[2]["text"].endswith("page 1 — AFTER")
     assert "remove the headers" in content[-1]["text"] and "tool_choice" not in req
+    # one call, never repeated: its system prompt is cached for the next preview, its page images are plain input
+    assert "cache_control" not in req and req["system_blocks"][0]["cache_control"] == llm.SYSTEM_CACHE
     assert content[1]["source"]["data"] != content[3]["source"]["data"]           # before and after are different pages
     assert rv.findings == [{"severity": "block", "file": s.source.name, "page": 1, "text": "Body text is white on white."},
                            {"severity": "warn", "file": "", "page": None, "text": "Something odd."}]
