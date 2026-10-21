@@ -1180,7 +1180,8 @@ def main(argv=None) -> int:
             archived = task.archive()
         except OSError as exc:
             archived = None
-            diag.app_log().warning(f"The last conversation could not be archived: {exc}")
+            task.journal = None          # this session never writes over a conversation that could not be set aside
+            diag.app_log().warning(f"The last conversation could not be archived ({exc}); this session keeps no journal")
         if previous:
             last = previous[-1]
             task.say("The previous session ended unexpectedly"

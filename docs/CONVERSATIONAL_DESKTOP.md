@@ -285,7 +285,9 @@ deliver, or an acknowledgement of a visual finding; those belong to one displaye
 
 Every start of the app is a clean one: an empty conversation, nothing attached. The last conversation's journal
 is moved under `conversations\` (named by the time it was set aside) and never reopened; the edited copies stay
-in their run folders. **New conversation** does the same mid-session. After a crash the first message says the
+in their run folders. **New conversation** does the same mid-session. A journal that cannot be moved (another
+program holds the file open) is left exactly as it is, and that session keeps no journal of its own rather than
+write over it. After a crash the first message says the
 previous session ended unexpectedly, where Python's fault handler wrote what it saw, and where its conversation
 was archived.
 

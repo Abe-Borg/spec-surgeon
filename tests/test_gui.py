@@ -455,6 +455,46 @@ def test_every_start_is_clean_and_the_last_conversation_is_archived(monkeypatch,
         assert seen["messages"] == []
 
 
+def test_a_conversation_that_cannot_be_archived_is_never_written_over(monkeypatch):
+    """When the last conversation cannot be moved aside (Windows holds the file open for a backup or a scanner), the
+    clean session keeps no journal: its saves, and New conversation, leave that file as it was."""
+    import logging
+    pytest.importorskip("fastapi")
+    from spec_surgeon import gui, winapp
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.settings import config_dir
+    from spec_surgeon.web import shell
+    journal = config_dir() / "conversation.json"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text('{"version": 2, "messages": [{"role": "user", "text": "keep me"}]}', encoding="utf-8")
+    before = journal.read_bytes()
+
+    def locked(self):                               # the one file that is held open cannot be moved
+        if self.journal == journal:
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        return None
+    seen = {}
+
+    def run_window(state, **kw):
+        state.task.say("A new message")
+        state.save_settings()                       # what closing the window does
+        state.new_conversation()
+        seen["journal"] = state.task.journal
+        return 0
+    monkeypatch.setattr(DocumentTask, "archive", locked)
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    monkeypatch.setattr(winapp, "hold_app_mutex", lambda: False)
+    monkeypatch.setattr(shell, "run_window", run_window)
+    logger = logging.getLogger("spec_surgeon")
+    try:
+        assert gui.main() == 0
+    finally:
+        for h in [h for h in logger.handlers if isinstance(h, logging.FileHandler)]:
+            logger.removeHandler(h)
+            h.close()
+    assert journal.read_bytes() == before and seen["journal"] is None
+
+
 def test_the_engine_never_loads_the_window():
     import subprocess
     import sys
