@@ -129,7 +129,11 @@ class FakeClient:
         raise AssertionError("a non-streaming Claude call: every call must go through llm.call (streaming)")
 
     def _stream(self, **kw):
-        self.requests.append(copy.deepcopy({k: v for k, v in kw.items() if k != "system"}) | {"system": kw.get("system")})
+        # "system" is the prompt text the model reads; "system_blocks" is the system as sent (its cache breakpoint)
+        sent = kw.get("system")
+        text = "".join(b.get("text", "") for b in sent) if isinstance(sent, list) else sent
+        self.requests.append(copy.deepcopy({k: v for k, v in kw.items() if k != "system"})
+                             | {"system": text, "system_blocks": sent})
         if not self.responses:
             raise AssertionError("the code asked Claude for more turns than were scripted")
         item = self.responses.pop(0)

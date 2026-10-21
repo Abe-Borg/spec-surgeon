@@ -216,7 +216,8 @@ def critic_review(ctx, files, *, explicit=False):
             ctx["client"] = compiler._client()
         response = llm.call(ctx["client"], model=ctx["options"].model or llm.DEFAULT_MODEL,
                             system=CRITIC_SYSTEM, tools=[CRITIC_TOOL],
-                            messages=[{"role": "user", "content": json.dumps(evidence, ensure_ascii=False)}])
+                            messages=[{"role": "user", "content": json.dumps(evidence, ensure_ascii=False)}],
+                            one_shot=True)
         record["transcript"].append(llm.response_entry(ctx["budget"].calls, response, time.perf_counter() - started))
         stop = llm.stop_problem(response)
         if stop:
