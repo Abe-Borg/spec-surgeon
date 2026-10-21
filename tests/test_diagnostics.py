@@ -196,7 +196,7 @@ def test_no_report_sends_the_reader_to_a_command_or_the_removed_diagnostics_bund
     from spec_surgeon import report
     text = inspect.getsource(report).lower()
     assert "bundle" not in text and "spec-surgeon " not in text
-    assert "help → open diagnostic logs" in FAILURE_EXPLANATIONS["internal-error"][1].lower()
+    assert "about → open diagnostic logs" in FAILURE_EXPLANATIONS["internal-error"][1].lower()
 
 
 # ---- the trace, the run log, DIAGNOSTICS.md -------------------------------------------------------------------------

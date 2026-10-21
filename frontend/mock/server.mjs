@@ -14,7 +14,9 @@
  *
  * Mock-only routes (never in the real server): POST /mock/scenario {name}
  * sets the view to a canned scenario (empty, attached, question, preview,
- * done, paused, update-available, update-ready, no-key); POST /mock/reset.
+ * done, paused, update-available, update-ready, up-to-date, no-key);
+ * POST /mock/reset. A check for updates finds 1.7.0, except after the
+ * up-to-date scenario, where it answers "You're up to date".
  *
  * No dependencies: http, fs, path, zlib. Preview images are PNGs drawn here.
  */
@@ -303,6 +305,11 @@ const SCENARIOS = {
     v.update = { state: "ready", version: "1.7.0", notes: "", progress: 100, error: "" };
     return v;
   },
+  "up-to-date": () => {
+    const v = SCENARIOS.attached();
+    updateFound = false;
+    return v;
+  },
   "no-key": () => {
     const v = SCENARIOS.attached();
     v.connection = { ready: false, origin: "none" };
@@ -315,6 +322,7 @@ let view = emptyView();
 let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs" };
 let running = null; // { stop: boolean }
 let downloadTimer = null;
+let updateFound = true; // what the next check for updates finds; the up-to-date scenario turns it off
 
 // --- Helpers --------------------------------------------------------------
 
@@ -706,6 +714,7 @@ async function handle(req, res) {
       const make = SCENARIOS[body.name];
       if (!make) return json(res, 400, { error: `Unknown scenario; one of ${Object.keys(SCENARIOS).join(", ")}.` });
       settings = { ...settings, key_present: true, origin: "saved" };
+      updateFound = true;
       view = make();
       running = null;
       return json(res, 200, view);
@@ -841,15 +850,37 @@ async function handle(req, res) {
         license: readFileSync(resolve(HERE, "../../LICENSE"), "utf8"),
         release_notes: `## Spec Surgeon ${VERSION}\n\n- The window is a web page in the style of Build-a-Spec.\n- One Word instance per batch and a render cache make previews faster.\n- Pictures and tables can be attached for the edit to use.\n`,
         credits: ["Python: PSF License", "lxml: BSD-3-Clause", "PyMuPDF (MuPDF): AGPL-3.0", "Anthropic Python SDK: MIT", "pywebview: BSD-3-Clause"],
+        name: "Spec Surgeon",
+        tagline: "Surgical edits to Word specifications with independent verification records.",
+        github: "https://github.com/Abe-Borg/spec-surgeon",
+        author: "Abraham Borg",
+        email: "abrahamborg@gmail.com",
+        linkedin: "https://www.linkedin.com/in/abrahamborg/",
+        copyright: "© 2026 Abraham Borg",
+        license_name: "MIT License",
+        license_summary: [
+          "Free to use, copy, change and share, for any purpose, including commercially.",
+          "Keep the copyright notice and this license text with every copy or substantial part of it.",
+          "Provided as is, without warranty of any kind: the author is not liable for anything that happens through its use. Check every delivered file yourself.",
+        ],
+        model: "claude-opus-5-5",
+        components: [
+          { name: "Python", license: "PSF License", url: "https://docs.python.org/3/license.html" },
+          { name: "pywebview (the native window)", license: "BSD-3-Clause", url: "https://github.com/r0x0r/pywebview/blob/master/LICENSE" },
+          { name: "lxml", license: "BSD-3-Clause", url: "https://github.com/lxml/lxml/blob/master/LICENSE.txt" },
+          { name: "PyMuPDF (MuPDF)", license: "AGPL-3.0", url: "https://github.com/pymupdf/PyMuPDF/blob/main/COPYING" },
+          { name: "Anthropic Python SDK", license: "MIT", url: "https://github.com/anthropics/anthropic-sdk-python/blob/main/LICENSE" },
+        ],
       });
     case "GET /api/update":
       return json(res, 200, view.update);
     case "POST /api/update/check":
-      if (view.update.state === "none") {
-        setTimeout(() => {
-          if (view.update.state === "none") view.update = { state: "available", version: "1.7.0", notes: "Faster previews: one Word instance per batch.", progress: 0, error: "" };
-        }, 1500);
-      }
+      // As the real flow does: a check you asked for clears the last answer until its own lands.
+      view.update = { ...view.update, manual_result: "" };
+      setTimeout(() => {
+        if (!updateFound) view.update = { ...view.update, manual_result: `You're up to date — Spec Surgeon ${VERSION} is the newest version.` };
+        else if (view.update.state === "none") view.update = { state: "available", version: "1.7.0", notes: "Faster previews: one Word instance per batch.", progress: 0, error: "", manual_result: "" };
+      }, 1500);
       return json(res, 200, view.update);
     case "POST /api/update/download":
       if (view.update.state !== "available") return json(res, 409, { error: "There is no update to download." });

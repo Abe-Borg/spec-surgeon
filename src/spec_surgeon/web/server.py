@@ -443,7 +443,11 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     def about_info():
         return {"version": state.version, "name": about.APP_NAME, "tagline": about.TAGLINE,
                 "license": about.LICENSE_TEXT, "release_notes": release_notes_text(state.version),
-                "credits": about.about_lines(state.version), "github": about.GITHUB_URL}
+                "credits": about.about_lines(state.version), "github": about.GITHUB_URL,
+                "author": about.AUTHOR, "email": about.EMAIL, "linkedin": about.LINKEDIN_URL,
+                "copyright": about.COPYRIGHT_LINE, "license_name": about.LICENSE_NAME,
+                "license_summary": list(about.LICENSE_SUMMARY), "model": llm.DEFAULT_MODEL,
+                "components": [{"name": name, "license": lic, "url": url} for name, lic, url in about.THIRD_PARTY]}
 
     @app.get("/api/update")
     def get_update():

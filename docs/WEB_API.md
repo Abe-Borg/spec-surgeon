@@ -48,7 +48,8 @@ that ends a job is authoritative.
   "working": {"generation": 0, "from_originals": true, "can_start_over": false},
   "budget": {"paused": false, "steps_per_pause": 48},
   "update": {"state": "none | available | downloading | ready | installing | updated | failed | error",
-             "version": "", "notes": "", "progress": 0, "error": "", "text": "", "install_log": ""}
+             "version": "", "notes": "", "progress": 0, "error": "", "text": "", "manual_result": "",
+             "install_log": ""}
 }
 ```
 
@@ -67,6 +68,10 @@ Rules the page relies on:
   `busy` the same spot shows "Stop now".
 - `results` lists the edited copies of the latest run; `working.generation` > 0 means the next request builds on
   those copies, and `can_start_over` shows the "Start over from the originals" chip.
+- `update.manual_result` is the answer to the last check the user asked for (About → Check for updates): "You're up
+  to date — …", "No release has been published yet." or "Couldn't check for updates: …". `POST /api/update/check`
+  clears it when the check starts, so About shows "Checking for updates…" until it is written again or `state`
+  reports an update. An automatic check never writes it.
 
 ## Routes
 
@@ -87,7 +92,7 @@ Rules the page relies on:
 | GET | `/api/image` | `?path=…` | the PNG (only files under the app's run folders are served; else 404) |
 | GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "out_root": "…", "logs_dir": "…"}` |
 | POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` | the settings; 400 with `{"error"}` |
-| GET | `/api/about` | | `{"version", "license", "release_notes", "credits": [...]}` |
+| GET | `/api/about` | | `{"version", "name", "tagline", "license", "license_name", "license_summary": [...], "release_notes", "credits": [...], "copyright", "author", "email", "github", "linkedin", "model", "components": [{"name", "license", "url"}]}` — every value from `about.py` (and `model` from `llm.DEFAULT_MODEL`); `credits` is the same as plain lines |
 | GET | `/api/update` | | the `update` block |
 | POST | `/api/update/check` | | the `update` block (starts a background check) |
 | POST | `/api/update/download` | | the `update` block (starts the download; `progress` 0–100) |

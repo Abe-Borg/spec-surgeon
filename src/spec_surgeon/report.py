@@ -182,7 +182,7 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Spec Surgeon Hit an Internal Error",
         "Something unexpected went wrong inside Spec Surgeon while working on this file — a defect in the program, not "
         "a problem with your file. The file was left untouched. DIAGNOSTICS.md and the file's trace (logs/) show the "
-        "stage and the line of code; please send them, with the app's logs (window: Help → Open diagnostic logs).",
+        "stage and the line of code; please send them, with the app's logs (window: About → Open diagnostic logs).",
     ),
     "worker-died": (
         "The Process Working on This File Stopped",
@@ -861,7 +861,7 @@ def write_diagnostics(batch: "BatchResult") -> Path:
     if internal:
         lines += [f"> **Spec Surgeon itself failed on {len(internal)} file(s)** — a defect in the program, not in your "
                   f"files. Send DIAGNOSTICS.md and the `logs/` folder beside this report, and the app's logs "
-                  f"(window: Help → Open diagnostic logs), with a word about what you ran.", ""]
+                  f"(window: About → Open diagnostic logs), with a word about what you ran.", ""]
     if not problems and not getattr(batch, "stopped", None):
         lines += ["**No problems: every file passed every check.**", ""]
     if problems:

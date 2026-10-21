@@ -99,7 +99,21 @@ try {
   await shot(page, "settings");
   await page.keyboard.press("Escape");
 
-  // 7. The narrow window: 1000 px wide, with the plan shown and hidden.
+  // 7. The top bar's guide: How to use, and About.
+  await scenario("attached");
+  await page.reload();
+  const topics = page.locator("header nav[aria-label='Help']");
+  await topics.getByRole("button", { name: "How to use" }).click();
+  await page.getByRole("dialog", { name: "How to use Spec Surgeon" }).waitFor();
+  await page.waitForTimeout(300);
+  await shot(page, "help-how-to-use");
+  await page.getByRole("tab", { name: "About" }).click();
+  await page.getByRole("dialog", { name: "About" }).getByText("Open-source components").waitFor();
+  await page.waitForTimeout(300);
+  await shot(page, "help-about");
+  await page.keyboard.press("Escape");
+
+  // 8. The narrow window: 1000 px wide, with the plan shown and hidden.
   await scenario("preview");
   await page.setViewportSize({ width: 1000, height: 700 });
   await page.reload();
