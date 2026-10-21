@@ -670,14 +670,37 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _word_char(c: str) -> bool:
+    return c.isalnum() or c == "_"
+
+
+def _traced(phrase: str, source: str) -> bool:
+    """``phrase`` occurs in ``source`` as whole words: an occurrence that starts or ends with a letter, digit or
+    underscore counts only where the source has none of those right beside it, so "shall not" is not in "shall
+    notify", "50" is not in "500" and "Own" is not in "Owner". A phrase that starts or ends with punctuation
+    ("(SPRINKLERS)") is bounded by that punctuation. Every occurrence is tried: the phrase may be lifted from inside
+    a longer word once and stand alone later. Whitespace alone (a tab, a line break) places no words."""
+    if not phrase:
+        return True
+    start = source.find(phrase)
+    while start >= 0:
+        end = start + len(phrase)
+        if (not (_word_char(phrase[0]) and start > 0 and _word_char(source[start - 1]))
+                and not (_word_char(phrase[-1]) and end < len(source) and _word_char(source[end]))):
+            return True
+        start = source.find(phrase, start + 1)
+    return False
+
+
 def untraceable(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
-    """The words the spec would place that appear verbatim (whitespace-normalised) in none of the sources. Each source
-    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next, nor
-    from pieces of one source. A tab or a line break in a phrase (built-in batch 6) is whitespace like any other: the
-    phrase traces only as a whole, in order — wording the user described rather than typed ("then a tab") is offered
-    back to them as a choice's exact wording, and their pick approves it."""
+    """The words the spec would place that appear verbatim (whitespace-normalised, as whole words: ``_traced``) in
+    none of the sources. Each source is searched on its own: a phrase may not be stitched together from the end of one
+    and the start of the next, nor from pieces of one source, nor lifted from inside a longer word or number. A tab or
+    a line break in a phrase (built-in batch 6) is whitespace like any other: the phrase traces only as a whole, in
+    order — wording the user described rather than typed ("then a tab") is offered back to them as a choice's exact
+    wording, and their pick approves it."""
     hay = [_norm(s) for s in sources if s]
-    return [w for w in placed_words(spec) if not any(_norm(w) in h for h in hay)]
+    return [w for w in placed_words(spec) if not any(_traced(_norm(w), h) for h in hay)]
 
 
 def file_labels(files: Sequence[Path]) -> Dict[str, str]:
@@ -1209,7 +1232,8 @@ def _content_checks(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
     bad = untraceable(spec, sources)
     if bad:
         return [f"these words would be placed in the documents but the user never gave them verbatim: {bad}. Use "
-                f"the user's exact words, or call ask_user for them."]
+                f"the user's exact words, whole (never a piece cut out of a longer word or number), or call ask_user "
+                f"for them."]
     return []
 
 

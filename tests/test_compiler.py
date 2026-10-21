@@ -94,6 +94,41 @@ def test_traceable_words_come_from_one_source_each():
     assert untraceable(spec, ["the stamp: ISSUED FOR  PERMIT"]) == []                  # whitespace-normalised
 
 
+@pytest.mark.parametrize("placed", ["shall not",           # the end of "shall notify"
+                                    "Contractor shall not",
+                                    "50",                  # inside "500"
+                                    "00 gpm at 1",         # cut out of "500 gpm at 120 ft"
+                                    "Own",                 # the start of "Owner"
+                                    "act"])                # inside "Contractor"
+def test_words_are_never_lifted_from_inside_a_longer_word_or_number(placed):
+    """Review of batch 6: tracing was a plain substring test, so a fragment of the user's words passed as theirs — and
+    a typed table traces every cell on its own, so a row could be built from fragments."""
+    request = ("In 01 23 00, change 'The Contractor shall notify the Owner' to read 'The Contractor shall notify the "
+               "Architect' and set the pump to 500 gpm at 120 ft.")
+    for spec in ({"ops": [{"op": "replace_text", "params": {"find": "x", "replace": placed}}]},
+                 {"ops": [{"op": "insert_paragraph", "params": {"text": placed}}]},
+                 {"ops": [{"op": "insert_table_rows", "params": {"rows": [["FP-1", placed]]}}]}):
+        assert placed in untraceable(spec, [request]), (placed, spec)
+
+
+def test_whole_words_still_trace_wherever_they_stand():
+    request = "Change 'shall notify' to 'shall not delay'; add (SPRINKLERS) after FIRE-SUPPRESSION, 500 gpm."
+    for placed in ("shall not",                 # a later occurrence stands alone though the first is inside a word
+                   "shall not delay",
+                   "Change",                    # at the start of the source
+                   "500 gpm.",                  # at the end, ending with punctuation
+                   "500",                       # a number before a space
+                   "(SPRINKLERS)",              # bounded by its own punctuation
+                   "FIRE",                      # a hyphenated word's part is a word
+                   "SUPPRESSION, 500"):
+        spec = {"ops": [{"op": "replace_text", "params": {"find": "x", "replace": placed}}]}
+        assert untraceable(spec, [request]) == [], placed
+    assert untraceable({"ops": [{"op": "replace_text", "params": {"find": "x", "replace": "Café"}}]},
+                       ["the Cafés"]) == ["Café"]                                 # letters beyond ASCII are letters
+    assert untraceable({"ops": [{"op": "replace_text", "params": {"find": "x", "replace": "\t"}}]},
+                       ["anything"]) == []                                        # whitespace alone places no words
+
+
 def test_a_rejected_spec_goes_back_once(folder):
     bad = copy.deepcopy(REMOVE)
     bad["ops"][0]["op"] = "remove_headers"
