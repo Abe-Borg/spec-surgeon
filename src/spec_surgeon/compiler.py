@@ -244,7 +244,8 @@ itself); "all caps" is a display property — no letters are retyped. Format the
 (tracked when targeted, so the reviewer sees "Formatted: Bold"); change a style (select.styles) only when the user \
 speaks of the style or wants every paragraph of that style to follow — the profiles' styles_in_use show bold, italic, \
 caps and colour per style. set_properties.run also takes vertAlign (superscript | subscript | baseline), vanish (hidden \
-text: the characters stay in the file — hiding is not deleting), highlight (a Word highlighter name, or none), spacing \
+text: the characters stay in the file — hiding is not deleting; a paragraph mark is hidden only with its whole \
+paragraph), highlight (a Word highlighter name, or none — on text only: Word shows no highlight set in a style), spacing \
 (character spacing in points; negative condenses, 0 is normal) and dstrike (double strikethrough, which replaces \
 single: never ask both on).
 - insert_paragraph takes exactly one of text, runs [{text, b?, i?, u?, vertAlign?}] (bold, italic, underlined or \
@@ -396,7 +397,9 @@ The reviewed outcome type is review_comments. Ask for missing wording and target
 - Fields: "put the page number / date / file name where it says X" is insert_field {field, at_text: the placeholder \
 exactly as typed}; "add page numbers to the footer" is insert_field with position "end" (or "start"), a targeted \
 select.paragraphs and scope ["footers"]. Never write the number or date yourself: the field goes in empty and Word \
-fills it in. "Page X of Y" is two insert_field ops, PAGE then NUMPAGES (the app runs them as two steps). format is \
+fills it in. "Page X of Y" in the footer is two insert_field ops, PAGE then NUMPAGES, each with scope ["footers"] \
+(the app runs them as two steps); at_text matches whole words only, so name the placeholder as the footer types it \
+and always give the scope (a page number belongs in a header or footer, never the body). format is \
 arabic | roman | ROMAN | alphabetic | ALPHABETIC for the numbering fields, a Word date picture such as "MMMM d, yyyy" \
 for DATE/SAVEDATE; STYLEREF and DOCPROPERTY name a style or property the file has. Tracked by default.
 - reply_to_comments {text: the user's exact words, author: the name they give, which: all | authors | text_regex} and \
@@ -612,17 +615,18 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
         if op == "replace_text" and isinstance(params.get("replace"), str) and params["replace"]:
             out.append(params["replace"])
         if op == "insert_paragraph":
-            # built-in batch 6: one text, a paragraph's segments, or several paragraphs of either — every text the
-            # user's (a segment is placed as typed, on its own)
+            # built-in batch 6: one text, a paragraph's segments, or several paragraphs of either — every paragraph's
+            # text the user's, a paragraph of segments as it reads (its segments joined: never traced one by one)
             paras = params.get("paragraphs") if isinstance(params.get("paragraphs"), list) else [params]
             for para in paras:
                 if not isinstance(para, dict):
                     continue
                 if isinstance(para.get("text"), str) and para["text"]:
                     out.append(para["text"])
-                for seg in para.get("runs") if isinstance(para.get("runs"), list) else []:
-                    if isinstance(seg, dict) and isinstance(seg.get("text"), str) and seg["text"]:
-                        out.append(seg["text"])
+                segments = [seg["text"] for seg in (para.get("runs") if isinstance(para.get("runs"), list) else [])
+                            if isinstance(seg, dict) and isinstance(seg.get("text"), str)]
+                if "".join(segments):
+                    out.append("".join(segments))
         if op == "add_review_comments":
             for key in ("text", "source"):
                 if isinstance(params.get(key), str) and params[key]:
@@ -661,17 +665,12 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
 
 def untraceable(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
     """The words the spec would place that appear verbatim (whitespace-normalised) in none of the sources. Each source
-    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next. A
-    phrase holding a tab or a line break (built-in batch 6: written as Word's own, layout rather than words) traces
-    when each stretch of words between them does — a request seldom spells the tab, and every word must still be the
-    user's."""
+    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next, nor
+    from pieces of one source. A tab or a line break in a phrase (built-in batch 6) is whitespace like any other: the
+    phrase traces only as a whole, in order — wording the user described rather than typed ("then a tab") is offered
+    back to them as a choice's exact wording, and their pick approves it."""
     hay = [_norm(s) for s in sources if s]
-
-    def traces(phrase: str) -> bool:
-        return any(_norm(phrase) in h for h in hay)
-    return [w for w in placed_words(spec)
-            if not traces(w) and not (re.search(r"[\t\n]", w)
-                                      and all(traces(s) for s in re.split(r"[\t\n]+", w) if s.strip()))]
+    return [w for w in placed_words(spec) if not any(_norm(w) in h for h in hay)]
 
 
 def file_labels(files: Sequence[Path]) -> Dict[str, str]:
