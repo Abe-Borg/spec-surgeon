@@ -109,7 +109,7 @@ function Composer({
                 type="button"
                 onClick={onStop}
                 aria-label="Stop now"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-white transition-colors hover:bg-accent-hover"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-on-accent transition-colors hover:bg-accent-hover"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
                   <rect x="5" y="5" width="14" height="14" rx="2.5" />
@@ -123,7 +123,7 @@ function Composer({
                 onClick={send}
                 disabled={!canSend || !value.trim()}
                 aria-label="Send"
-                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-white transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-30"
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-accent text-on-accent transition-colors hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-30"
               >
                 <svg
                   width="16"

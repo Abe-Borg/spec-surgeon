@@ -62,7 +62,7 @@ export function ModalShell({
 
 /** The one filled button of an area. */
 export const primaryBtn =
-  "rounded-lg bg-accent px-3.5 py-1.5 text-sm font-medium text-white transition-colors " +
+  "rounded-lg bg-accent px-3.5 py-1.5 text-sm font-medium text-on-accent transition-colors " +
   "hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-40";
 /** Every other button: outlined, accent on hover. */
 export const quietBtn =
