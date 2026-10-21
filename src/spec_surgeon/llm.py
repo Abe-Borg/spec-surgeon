@@ -6,6 +6,12 @@ recovery and the visual check of the preview samples).
   model (Opus 5.5 always thinks — sending a ``thinking`` setting, a forced ``tool_choice`` or an assistant prefill is a
   400 there). The server-side refusal fallback is on (``fallbacks="default"``): a request the model's safety filters
   decline is re-run on another model inside the same call.
+* Prompt caching, two breakpoints: the system prompt carries its own marker with the 1-hour TTL
+  (``SYSTEM_CACHE``), so every conversation over the same prompt and tools — the next request after a run, a start
+  over, a changed attachment — reads the tools and system prompt instead of writing them again, across the pauses a
+  person takes; the top-level automatic marker (5 minutes) caches the growing history for the next call of the same
+  exchange. A ``one_shot`` call (the visual check, the critic: no later request repeats its messages) leaves the
+  automatic marker off, so its unique content is billed as plain input, not as a cache write no one reads.
 * ``call`` re-sends a call that failed transiently (``is_transient``: overloaded, rate-limited, a 5xx, a dropped
   connection or stream) up to ``RETRIES`` times after ``RETRY_DELAYS``; each attempt passes the same preflight and
   counts against the same limits. Nothing of a failed attempt was returned, so nothing of it was acted on.
@@ -132,15 +138,21 @@ STOPPED = "Stopped by you. The AI step that was running was cut off; your source
 _TRANSIENT_TYPES = {"overloaded_error", "rate_limit_error", "api_error", "timeout_error"}
 _TRANSPORT_ROOTS = ("httpx", "httpcore", "httpx2", "httpcore2")
 
-# USD per million tokens: (input, output, cache read, 5-minute cache write). An estimate shown to the user, never a bill.
-# Update when Anthropic's prices change. A model that is not listed is shown as "price unknown", never guessed.
-PRICES: Dict[str, Tuple[float, float, float, float]] = {
-    "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00),
-    "claude-opus-5": (5.00, 25.00, 0.50, 6.25),
-    "claude-opus-4-8": (5.00, 25.00, 0.50, 6.25),
-    "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50),
+# USD per million tokens: (input, output, cache read, 5-minute cache write, 1-hour cache write). An estimate shown to
+# the user, never a bill. Update when Anthropic's prices change. A model that is not listed is shown as "price
+# unknown", never guessed.
+PRICES: Dict[str, Tuple[float, float, float, float, float]] = {
+    "claude-opus-5-5": (4.00, 20.00, 0.20, 5.00, 8.00),
+    "claude-opus-5": (5.00, 25.00, 0.50, 6.25, 10.00),
+    "claude-opus-4-8": (5.00, 25.00, 0.50, 6.25, 10.00),
+    "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50, 4.00),
 }
 TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+# Of the cache writes, those made for the 1-hour TTL (priced higher): kept beside TOKEN_KEYS, never added to the
+# token total — they are already counted in cache_creation_input_tokens.
+CACHE_1H_KEY = "cache_creation_1h_input_tokens"
+SYSTEM_CACHE = {"type": "ephemeral", "ttl": "1h"}   # the system prompt's own breakpoint (see the module docstring)
+MESSAGES_CACHE = {"type": "ephemeral"}              # the automatic breakpoint at the end of the history (5 minutes)
 _CALL_BUDGETS: ContextVar[tuple] = ContextVar("spec_surgeon_call_budgets", default=())
 
 
@@ -188,6 +200,8 @@ def _finished_message(stream, seen=None, cancel=None):
                 if usage is not None:
                     seen.setdefault("usage", {}).update(
                         {k: int(getattr(usage, k, 0) or 0) for k in TOKEN_KEYS if getattr(usage, k, None) is not None})
+                    if getattr(usage, "cache_creation", None) is not None:
+                        seen["usage"][CACHE_1H_KEY] = hour_writes(usage)
             if kind == "message_start":
                 started = True
                 _observe({"type": "started"})
@@ -280,13 +294,15 @@ def _sdk_credentials() -> bool:
 
 
 def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], messages: List[Dict[str, Any]],
-         max_output_tokens: Optional[int] = None, effort: Optional[str] = None):
-    """One streamed request; returns the final message. A transient failure is re-sent (``RETRIES``); after the last
-    attempt it raises whatever the SDK raised: the caller classifies it with ``is_api_error`` (an API error is a
-    recorded failure, anything else a defect that propagates) and never half-appends a turn. Inside ``budget_scope``,
-    every caller shares its limits, including nested transform and visual calls, and every attempt counts against them.
-    A refused preflight raises ``BudgetExceeded`` before opening a stream; ordinary calls are unchanged. The kill switch
-    (``cancellation_scope``) raises ``UserCancelled`` before a call, while one runs, or while waiting to re-send."""
+         max_output_tokens: Optional[int] = None, effort: Optional[str] = None, one_shot: bool = False):
+    """One streamed request; returns the final message. ``one_shot``: no later request repeats these messages, so
+    nothing after the system prompt is cached (see the module docstring). A transient failure is re-sent
+    (``RETRIES``); after the last attempt it raises whatever the SDK raised: the caller classifies it with
+    ``is_api_error`` (an API error is a recorded failure, anything else a defect that propagates) and never
+    half-appends a turn. Inside ``budget_scope``, every caller shares its limits, including nested transform and
+    visual calls, and every attempt counts against them. A refused preflight raises ``BudgetExceeded`` before opening
+    a stream; ordinary calls are unchanged. The kill switch (``cancellation_scope``) raises ``UserCancelled`` before a
+    call, while one runs, or while waiting to re-send."""
     cancel = _CANCEL_EVENT.get()
     for attempt in range(RETRIES + 1):
         if cancel is not None and cancel.is_set():
@@ -295,7 +311,7 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
             with diag.span("model.call", requested_model=model, attempt=attempt + 1) as record:
                 try:
                     return _call(client, model=model, system=system, tools=tools, messages=messages, record=record,
-                                 max_output_tokens=max_output_tokens, effort=effort)
+                                 max_output_tokens=max_output_tokens, effort=effort, one_shot=one_shot)
                 except BudgetExceeded as exc:
                     diag.event("model.budget.exhausted", level="warning", reason=str(exc), budgets=_budget_records())
                     raise
@@ -442,7 +458,13 @@ def _response_metadata(resp, requested):
         return {"record_error": _record_error(exc)}
 
 
-def _call(client, *, model, system, tools, messages, record, max_output_tokens, effort):
+def system_blocks(system: str) -> Any:
+    """The system prompt as sent: one text block carrying its own cache breakpoint (``SYSTEM_CACHE``). An empty prompt
+    is sent as it is (an empty text block is refused, and there is nothing to cache)."""
+    return [{"type": "text", "text": system, "cache_control": dict(SYSTEM_CACHE)}] if system else system
+
+
+def _call(client, *, model, system, tools, messages, record, max_output_tokens, effort, one_shot=False):
     budgets = _CALL_BUDGETS.get()
     max_tokens = MAX_TOKENS if max_output_tokens is None else positive_integer("max_output_tokens", max_output_tokens)
     if max_tokens > MAX_TOKENS:
@@ -460,11 +482,14 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
         record.update(model=model, max_output_tokens=max_tokens, effort=effort)
         try:
             estimated_input = estimate_input_tokens(system=system, tools=tools, messages=messages)
+            # the tools and system prompt: the part a 1-hour cache write (SYSTEM_CACHE) can cover
+            estimated_prefix = min(estimated_input, estimate_input_tokens(system=system, tools=tools, messages=[]))
         except (TypeError, ValueError) as e:
             for budget in budgets:
                 budget.exhausted_reason = f"cannot estimate this request's input tokens: {e}"
             raise BudgetExceeded(budgets[-1].exhausted_reason) from e
-        reservations = [b._preflight(model, estimated_input, max_tokens) for b in budgets]
+        reservations = [b._preflight(model, estimated_input, max_tokens, estimated_prefix, cached_history=not one_shot)
+                        for b in budgets]
         # SDK retries are additional HTTP attempts invisible to this call site. ``call`` re-sends a transient failure
         # itself, so that every attempt passes the same preflight and counts against the same cap.
         options = getattr(client, "with_options", None)
@@ -475,9 +500,10 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
             budget._reserve(reservation)
         diag.event("model.budget.reserved", estimated_input_tokens=estimated_input,
                    max_output_tokens=max_tokens, budgets=_budget_records())
-    kw = dict(model=model, max_tokens=max_tokens, system=system, tools=tools, messages=messages,
-              output_config={"effort": effort}, cache_control={"type": "ephemeral"},
-              betas=[FALLBACK_BETA], fallbacks="default")
+    kw = dict(model=model, max_tokens=max_tokens, system=system_blocks(system), tools=tools, messages=messages,
+              output_config={"effort": effort}, betas=[FALLBACK_BETA], fallbacks="default")
+    if not one_shot:
+        kw["cache_control"] = dict(MESSAGES_CACHE)
     if not _thinking_display_refused and _STREAM_OBSERVER.get() is not None:
         kw["thinking"] = dict(_THINKING_DISPLAY)   # the summary the window shows; refused once → never sent again
     record.update(model=model, max_output_tokens=max_tokens, effort=effort, phase="stream.open")
@@ -648,11 +674,14 @@ def response_entry(n: int, resp: Any, seconds: float) -> Dict[str, Any]:
     try:
         u = getattr(resp, "usage", None)
         model, fell_back = served(resp)
+        usage = {k: int(getattr(u, k, 0) or 0) for k in TOKEN_KEYS}
+        if u is not None and hour_writes(u):
+            usage[CACHE_1H_KEY] = hour_writes(u)       # the 1-hour share of the writes, when there is one
         return {"turn": n, "role": "assistant", "stop_reason": getattr(resp, "stop_reason", None),
                 "seconds": round(seconds, 2),
                 "request_id": getattr(resp, "_request_id", None) or getattr(resp, "id", None),
                 "model": model, "fell_back": fell_back,
-                "usage": {k: int(getattr(u, k, 0) or 0) for k in TOKEN_KEYS},
+                "usage": usage,
                 "content": [block_dict(b) for b in (getattr(resp, "content", None) or [])]}
     except Exception as e:  # noqa: BLE001 — a diagnostic never stops the work it describes
         return {"turn": n, "role": "assistant", "record_error": _record_error(e)}
@@ -730,9 +759,23 @@ def stop_problem(resp) -> Optional[str]:
     return None
 
 
+def hour_writes(src) -> int:
+    """Of a usage's cache writes, those made for the 1-hour TTL: ``cache_creation.ephemeral_1h_input_tokens`` as the
+    API reports it, or ``CACHE_1H_KEY`` on a usage this module rebuilt (a stopped call). Never more than the writes."""
+    flat = getattr(src, CACHE_1H_KEY, None)
+    if flat is None:
+        flat = getattr(getattr(src, "cache_creation", None), "ephemeral_1h_input_tokens", None)
+    try:
+        hour = int(flat or 0)
+    except (TypeError, ValueError):
+        return 0
+    return max(0, min(hour, int(getattr(src, "cache_creation_input_tokens", 0) or 0)))
+
+
 class Usage:
     """Tokens per serving model. ``usage.iterations`` (one entry per attempt, each with its own model) is the source of
-    truth when present — top-level usage then covers only the final attempt — so the two are never added together."""
+    truth when present — top-level usage then covers only the final attempt — so the two are never added together.
+    Each row also keeps ``CACHE_1H_KEY``, the 1-hour share of its cache writes (priced higher), outside the totals."""
 
     def __init__(self):
         self.by_model: Dict[str, Dict[str, int]] = {}
@@ -760,12 +803,13 @@ class Usage:
         row = self.by_model.setdefault(model, {k: 0 for k in TOKEN_KEYS})
         for k in TOKEN_KEYS:
             row[k] += int(getattr(src, k, 0) or 0)
+        row[CACHE_1H_KEY] = row.get(CACHE_1H_KEY, 0) + hour_writes(src)
 
     def merge(self, other: "Usage") -> None:
         for model, row in other.by_model.items():
             mine = self.by_model.setdefault(model, {k: 0 for k in TOKEN_KEYS})
-            for k in TOKEN_KEYS:
-                mine[k] += row.get(k, 0)
+            for k in (*TOKEN_KEYS, CACHE_1H_KEY):
+                mine[k] = mine.get(k, 0) + row.get(k, 0)
         self.calls += other.calls
         self.served += other.served
         self.fallbacks += other.fallbacks
@@ -775,6 +819,15 @@ class Usage:
         for row in self.by_model.values():
             for k in TOKEN_KEYS:
                 out[k] += row[k]
+        return out
+
+    def as_record(self) -> Dict[str, int]:
+        """``as_dict`` plus the 1-hour share of the cache writes (``CACHE_1H_KEY``) when there is one, for the records
+        (``CompileResult.usage``, compile.json)."""
+        out = self.as_dict()
+        hour = sum(row.get(CACHE_1H_KEY, 0) for row in self.by_model.values())
+        if hour:
+            out[CACHE_1H_KEY] = hour
         return out
 
     def tokens(self) -> int:
@@ -789,9 +842,11 @@ class Usage:
             price = PRICES.get(model)
             if price is None:
                 return None
-            pin, pout, pread, pwrite = price
-            total += (row["input_tokens"] * pin + row["output_tokens"] * pout
-                      + row["cache_read_input_tokens"] * pread + row["cache_creation_input_tokens"] * pwrite) / 1e6
+            pin, pout, pread, pwrite, pwrite_hour = price
+            writes = row["cache_creation_input_tokens"]
+            hour = max(0, min(row.get(CACHE_1H_KEY, 0), writes))
+            total += (row["input_tokens"] * pin + row["output_tokens"] * pout + row["cache_read_input_tokens"] * pread
+                      + (writes - hour) * pwrite + hour * pwrite_hour) / 1e6
         return total
 
     def line(self) -> str:
@@ -924,7 +979,10 @@ class CallBudget:
         self.exhausted_reason = reason
         raise BudgetExceeded(reason)
 
-    def _preflight(self, model: str, estimated_input: int, max_output: int) -> Tuple[int, Optional[float]]:
+    def _preflight(self, model: str, estimated_input: int, max_output: int,
+                   estimated_prefix: int = 0, cached_history: bool = True) -> Tuple[int, Optional[float]]:
+        """``estimated_prefix``: the part of the input (tools and system prompt) a 1-hour cache write may cover;
+        ``cached_history``: whether the rest may be a 5-minute cache write (not for a ``one_shot`` call)."""
         if self.exhausted_reason:
             raise BudgetExceeded(self.exhausted_reason)
         if self.calls >= self.max_calls:
@@ -939,9 +997,13 @@ class CallBudget:
                 self._stop(f"price unknown for {model}; cannot enforce an estimated USD recovery budget")
             cost_reservation = None
         else:
-            pin, pout, pread, pwrite = price
-            # A new prompt may be a cache write, which is more expensive than ordinary input.
-            cost_reservation = (estimated_input * max(pin, pread, pwrite) + max_output * pout) / 1e6
+            pin, pout, pread, pwrite, pwrite_hour = price
+            # A new prompt may be a cache write, dearer than ordinary input: for an hour on the tools and system
+            # prompt (SYSTEM_CACHE), for five minutes on the history after them unless the call caches no history.
+            prefix = max(0, min(estimated_prefix, estimated_input))
+            history_rate = max(pin, pread, pwrite) if cached_history else max(pin, pread)
+            cost_reservation = (prefix * max(pin, pread, pwrite, pwrite_hour)
+                                + (estimated_input - prefix) * history_rate + max_output * pout) / 1e6
         if self.max_cost_usd is not None:
             cost = self.estimated_cost_usd
             if cost is None:
@@ -976,7 +1038,7 @@ class CallBudget:
         if not any(seen.get(k) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")):
             seen["input_tokens"] = max(0, reservation[0] - max_output)
         seen["output_tokens"] = max(int(seen.get("output_tokens", 0) or 0), bound)
-        self.usage._add(model, SimpleNamespace(**{k: int(seen.get(k, 0) or 0) for k in TOKEN_KEYS}))
+        self.usage._add(model, SimpleNamespace(**{k: int(seen.get(k, 0) or 0) for k in (*TOKEN_KEYS, CACHE_1H_KEY)}))
         self._reserved_tokens -= reservation[0]
         if reservation[1] is None:
             self._unpriced_reservations -= 1
