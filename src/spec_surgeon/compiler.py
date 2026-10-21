@@ -389,6 +389,14 @@ words (ask when they did not give them).
 explicit author, to explicitly selected document paragraphs. Never invent a reason, citation, reviewer or comment. \
 List it after the requested edits, untracked; existing comments and pending revisions stay intact. \
 The reviewed outcome type is review_comments. Ask for missing wording and target choices.
+- Fields: "put the page number / date / file name where it says X" is insert_field {field, at_text: the placeholder \
+exactly as typed}; "add page numbers to the footer" is insert_field with position "end" (or "start"), a targeted \
+select.paragraphs and scope ["footers"]. Never write the number or date yourself: the field goes in empty and Word \
+fills it in. "Page X of Y" is two insert_field ops, PAGE then NUMPAGES (the app runs them as two steps). format is \
+arabic | roman | ROMAN | alphabetic | ALPHABETIC for the numbering fields, a Word date picture such as "MMMM d, yyyy" \
+for DATE/SAVEDATE; STYLEREF and DOCPROPERTY name a style or property the file has. Tracked by default.
+- reply_to_comments {text: the user's exact words, author: the name they give, which: all | authors | text_regex} and \
+resolve_comments {action: resolve | reopen, which} only when the user asks; neither is tracked.
 - remove_notes: build its rules from the profiles — the note style ids in styles_in_use, the colours in \
 styles_in_use / markup.run_colors, the words the notes begin with ("Retain", "Delete", "Specifier Note") — and state \
 them in assumptions. One rule per way a note is marked ({"style_in": ["CMT"]}, {"text_regex": "^(Retain|Delete)\\\\b", \
