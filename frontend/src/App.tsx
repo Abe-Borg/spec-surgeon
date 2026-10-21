@@ -1,18 +1,19 @@
 // Adapted from Build-a-Spec's frontend/src/App.tsx (copy-based reuse): the
 // layout and the one place the job stream's events dispatch.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
-import type { Attachment, Choice, JobEvent, View } from "./types";
+import type { Attachment, Choice, JobEvent, Update, View } from "./types";
 import * as api from "./lib/api";
 import { actionButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
 import { INITIAL_STATE, reduce } from "./lib/view";
 import { ACCEPT } from "./lib/workbench";
+import { checkSettled, updatePill, type HelpTopic } from "./lib/help";
 import Header from "./components/Header";
 import Chat from "./components/Chat";
 import Workbench from "./components/Workbench";
 import UpdateBanner from "./components/UpdateBanner";
 import SettingsModal from "./components/SettingsModal";
-import AboutModal from "./components/AboutModal";
+import HelpModal from "./components/HelpModal";
 import ZoomModal from "./components/ZoomModal";
 
 type PickKind = "documents" | "template" | "references";
@@ -33,7 +34,8 @@ export default function App() {
   const [prefill, setPrefill] = useState({ text: "", nonce: 0 });
   const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [aboutOpen, setAboutOpen] = useState(false);
+  const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
+  const [checkingUpdate, setCheckingUpdate] = useState(false);
   const [zoom, setZoom] = useState<{ src: string; title: string } | null>(null);
   const [dismissedUpdate, setDismissedUpdate] = useState("");
   const [dragDepth, setDragDepth] = useState(0);
@@ -246,42 +248,54 @@ export default function App() {
 
   const onPrefill = useCallback((text: string) => setPrefill((p) => ({ text, nonce: p.nonce + 1 })), []);
 
-  // --- Help: logs, updates, about ------------------------------------------
+  // --- About: logs, updates -------------------------------------------------
 
   const onOpenLogs = useCallback(() => {
     api.openLogs().catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
 
-  /** Follow the update block every 2 s for up to `tries` polls, or until it
-   *  settles (anything but "none" or "downloading"). Returns the stop. */
-  const pollUpdate = useCallback((tries: number) => {
+  /** Follow the update block every 2 s for up to `tries` polls, or until
+   *  `settled` says so. `done` runs once when it stops, however it stops.
+   *  Returns the stop. */
+  const pollUpdate = useCallback((tries: number, settled: (update: Update) => boolean, done?: () => void) => {
     let left = tries;
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      window.clearInterval(timer);
+      done?.();
+    };
     const timer = window.setInterval(() => {
       left -= 1;
       api
         .getUpdate()
         .then((update) => {
           dispatch({ type: "update", update });
-          if (update.state !== "downloading" && (update.state !== "none" || left <= 0)) {
-            window.clearInterval(timer);
-          }
+          if (settled(update)) stop();
         })
-        .catch(() => window.clearInterval(timer));
-      if (left <= 0) window.clearInterval(timer);
+        .catch(stop);
+      if (left <= 0) stop();
     }, 2000);
-    return () => window.clearInterval(timer);
+    return stop;
   }, []);
 
+  // About's Check for updates: the page says "Checking…" until the server
+  // writes this check's answer or finds an update (lib/help.checkSettled).
   const onCheckUpdates = useCallback(() => {
     setDismissedUpdate("");
+    setCheckingUpdate(true);
     api
       .checkUpdate()
       .then((update) => {
         dispatch({ type: "update", update });
-        setNotice("Checking for updates…");
-        pollUpdate(15);
+        if (checkSettled(update)) setCheckingUpdate(false);
+        else pollUpdate(15, checkSettled, () => setCheckingUpdate(false));
       })
-      .catch((failure: unknown) => setNotice(failureText(failure)));
+      .catch((failure: unknown) => {
+        setCheckingUpdate(false);
+        setNotice(failureText(failure));
+      });
   }, [pollUpdate]);
 
   // The download is followed by the effect below, which starts polling the
@@ -301,11 +315,11 @@ export default function App() {
   const downloading = view.update?.state === "downloading";
   useEffect(() => {
     if (!downloading) return;
-    return pollUpdate(600);
+    return pollUpdate(600, (update) => update.state !== "downloading");
   }, [downloading, pollUpdate]);
 
   const updateShown =
-    view.update &&
+    !!view.update &&
     view.update.state !== "none" &&
     !(dismissedUpdate && dismissedUpdate === `${view.update.state}:${view.update.version}`);
 
@@ -315,12 +329,12 @@ export default function App() {
         view={view}
         busy={busy}
         workbenchOpen={workbenchOpen}
+        updatePill={updatePill(view.update, updateShown)}
+        onDownloadUpdate={onDownloadUpdate}
         onToggleWorkbench={() => setWorkbenchOpen((o) => !o)}
         onNewConversation={onNewConversation}
         onOpenSettings={() => setSettingsOpen(true)}
-        onOpenAbout={() => setAboutOpen(true)}
-        onOpenLogs={onOpenLogs}
-        onCheckUpdates={onCheckUpdates}
+        onOpenHelp={setHelpTopic}
       />
       {updateShown && (
         <UpdateBanner
@@ -392,7 +406,20 @@ export default function App() {
           onSaved={() => void refresh()}
         />
       )}
-      {aboutOpen && <AboutModal onClose={() => setAboutOpen(false)} fallbackVersion={view.version} />}
+      <HelpModal
+        topic={helpTopic}
+        onClose={() => setHelpTopic(null)}
+        onNavigate={setHelpTopic}
+        version={view.version}
+        stepsPerPause={view.budget?.steps_per_pause ?? 48}
+        busy={busy}
+        update={view.update}
+        checkingUpdate={checkingUpdate}
+        onCheckUpdate={onCheckUpdates}
+        onDownloadUpdate={onDownloadUpdate}
+        onInstallUpdate={onInstallUpdate}
+        onOpenLogs={onOpenLogs}
+      />
       {zoom && <ZoomModal src={zoom.src} title={zoom.title} onClose={() => setZoom(null)} />}
     </div>
   );

@@ -21,7 +21,7 @@ It runs as a Windows desktop app, as a command line on Windows, macOS or Linux, 
 Start menu. The installer includes Python, the window (a local server and its page, shown in a native WebView2
 window; the WebView2 runtime ships with Windows 10/11), the editing engine, Word integration and the Anthropic
 client; no separate Python installation or terminal commands are needed. From then on the app keeps itself up to date:
-a banner offers each new version, and **Help → Check for updates** checks at any time. It installs for the current
+a banner offers each new version, and **About → Check for updates** checks at any time. It installs for the current
 user without administrator access, offers a desktop shortcut and includes an uninstaller. Example EditSpecs are
 available from **Spec Surgeon → Example edit specs** in the Start menu.
 
@@ -67,8 +67,12 @@ render checks are recorded as N/A with the reason.
 
 ![The conversation: Word documents, an optional template and a request](docs/conversation-start.png)
 
-The window is one conversation. On the left are your documents and, optionally, one template. On the right are the
-chat and one button.
+The window is one conversation. On the left is the chat; on the right are your documents (optionally with one
+template), the plan, the pages and one button. The top bar, in the style of Build-a-Spec, carries the in-app guide —
+**How to use**, **Workflows**, **How it works** and **About** (the version, the model, the release notes, the license,
+**Check for updates** and **Open diagnostic logs**) — beside a line saying what the conversation works on ("3
+documents · 1 template · building on your copies"), the estimated spending, the connection, **Hide plan**, **New
+conversation** and Settings.
 
 1. **Add Word documents.** Drop `.docx` files anywhere in the window, or use **Add Word documents**. Files can come
    from different folders, including files with the same name. Only the files you attach are edited; nothing is
@@ -94,7 +98,7 @@ chat and one button.
    opens the full list. Below it: rendered before/after pages for sample documents with their page counts, and
    **Left untouched**: any file the plan cannot cover, with the reason.
 6. **Create edited copies.** One button approves the displayed plan. The engine applies it to every file, verifies
-   each one independently, and lists the copies under **Your edited copies**; double-click one to open it in Word.
+   each one independently, and lists the copies under **Your edited copies**; click one to open it in Word.
    Originals are never written. A file that fails a check is not delivered; Spec Surgeon checks it again internally
    and comes back with a question or a new plan, never a method to choose.
 
