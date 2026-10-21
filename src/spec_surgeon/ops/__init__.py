@@ -45,3 +45,4 @@ from . import convert_numbering, convert_typed_numbers  # noqa: E402,F401  — b
 from . import hygiene  # noqa: E402,F401 — character hygiene, items 41–44
 from . import add_comments  # noqa: E402,F401 — literal approved review reasons
 from . import insert_section_break, remove_section_break  # noqa: E402,F401 — built-in batch 6 (sections)
+from . import move_paragraphs  # noqa: E402,F401 — built-in batch 6 (F9: moving)

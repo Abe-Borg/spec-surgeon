@@ -313,6 +313,20 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "an explicit style replaces the inherited one",
         "tracked insertion unless untracked was requested",
     ],
+    "move_paragraphs": [
+        "the paragraphs to move are one unbroken stretch in one place — the body, one table cell, a header, a footer "
+        "or a note — and the tables between them move with them; a stretch with a gap, or in two places, sets the file "
+        "aside; a whole article is its heading through the paragraph before the next heading",
+        "they go right before or right after the one destination paragraph 'to' names, in the same place; no such "
+        "paragraph, or several, or a place inside a table of contents sets the file aside; a stretch already there "
+        "is left as it is",
+        "tracked by default: deleted where they were and inserted where they go (Word shows a deletion and an "
+        "insertion, not 'Moved'); tables, fields, hyperlinks, content controls, comments, pictures, note references or "
+        "pending tracked changes among them need an untracked move, which moves everything exactly as it is",
+        "automatic list and heading numbers and footnote numbers follow the new order (Word renumbers; no number is "
+        "retyped); a section break in the stretch sets the file aside; text landing in another section takes its page "
+        "setup and headers (flagged)",
+    ],
     "fix_page_numbering": ["body page numbering restarts at 1 after the cover"],
     "replace_table": [
         "every replacement is exactly the user's wording; all pairs are found at once in the original text (two words "
