@@ -20,8 +20,10 @@ Definitions shared with the verifier (verify/moving.py re-implements them):
 * **Containers stay valid** (rule 0.5): once the range has left, the container must not end in a table nor hold two
   tables with only marks between them (``move-table-edge``). The range starts and ends with a paragraph, so where it
   goes it never makes either.
-* **Split ranges**: a bookmark, comment (its range marks and reference) or editing permission with one end in the range
-  and the other outside it refuses (``move-split-range``): moving would cut it.
+* **Split ranges**: a bookmark, comment (its range marks and reference), editing permission, pending Word move range or
+  complex field (its begin, separate and end) with one end in the range and the other outside it refuses
+  (``move-split-range``): moving would cut it. The destination never lies inside a complex field (``move-anchor``): what lands in a table of
+  contents' result Word replaces when it updates fields.
 * **Untracked**: the range's elements are taken out and put at the destination, in order, unchanged.
 * **Tracked**: the range holds only paragraphs and the bookmarks and proofing marks between them; each paragraph only
   runs (text, tabs, breaks, hyphens, symbols), bookmarks and proofing marks (``move-tracked-content``) and no pending
@@ -48,6 +50,7 @@ from ..ooxml import (RPR_ORDER, RevisionStamp, block_full_text, count_revisions,
 from ..package import W, DocxPackage
 from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
+from .fields import fields_of
 from .selectors import SCOPE_KINDS, StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts
 from .slots import nearest_p
 
@@ -61,7 +64,9 @@ PROPERTIES = {W + "tcPr", W + "sectPr"}
 # the paired marks a move must take whole: (family, id) for every end
 PAIRED = {W + "bookmarkStart": "bookmark", W + "bookmarkEnd": "bookmark", W + "commentRangeStart": "comment",
           W + "commentRangeEnd": "comment", W + "commentReference": "comment", W + "permStart": "permission",
-          W + "permEnd": "permission"}
+          W + "permEnd": "permission", W + "moveFromRangeStart": "pending move (from)",
+          W + "moveFromRangeEnd": "pending move (from)", W + "moveToRangeStart": "pending move (to)",
+          W + "moveToRangeEnd": "pending move (to)"}
 TRACKED_PARAGRAPH_CHILDREN = {W + "pPr", W + "r", W + "proofErr"} | BOOKMARKS
 TRACKED_RUN_CHILDREN = {W + t for t in ("rPr", "t", "tab", "br", "cr", "noBreakHyphen", "softHyphen", "sym", "ptab",
                                         "lastRenderedPageBreak")}
@@ -224,7 +229,8 @@ def _locate(part: str, root, pars: List[Any], chosen: List[int], to: Dict[str, A
     if tracked:
         _check_tracked(part, move_range, index)
     _check_split(part, root, move_range)
-    hits = [i for i, p in enumerate(pars) if paragraph_selected(to, p, i, block_full_text(p), sheet, all_pars=pars)]
+    _check_field_cut(part, root, move_range)
+    hits =[i for i, p in enumerate(pars) if paragraph_selected(to, p, i, block_full_text(p), sheet, all_pars=pars)]
     if not hits:
         raise JobException(f"{part}: no paragraph matches the destination {to}", "not-found",
                            {"part": part, "to": to})
@@ -249,6 +255,7 @@ def _locate(part: str, root, pars: List[Any], chosen: List[int], to: Dict[str, A
             what = "two tables would touch" if nxt is not None else f"the {_local(box)} would end in a table"
             raise JobException(f"{part}: once the paragraphs leave, {what}; include the table in the move or leave a "
                                f"paragraph beside it", "move-table-edge", {"part": part})
+        _check_field_destination(part, root, move)
     return move
 
 
@@ -285,6 +292,36 @@ def _check_split(part: str, root, move_range: Sequence[Any]) -> None:
             raise JobException(f"{part}: a {family} (id {rid}) starts or ends among the paragraphs to move and has its "
                                f"other end outside them; moving would cut it", "move-split-range",
                                {"part": part, "family": family, "id": rid})
+
+
+def _check_field_cut(part: str, root, move_range: Sequence[Any]) -> None:
+    """A complex field (ops/fields.py's reading) lies wholly in the stretch or wholly outside it."""
+    held = [x for el in move_range if isinstance(el.tag, str) for x in el.iter(W + "fldChar")]
+    if not held:
+        return
+    inside = {id(x) for x in held}                          # ``held`` keeps every proxy alive: ids are stable
+    for f in fields_of(root):
+        if len({id(m) in inside for m in (f.begin, f.separate, f.end) if m is not None}) > 1:
+            raise JobException(f"{part}: a {f.type or 'complex'} field starts or ends among the paragraphs to move and "
+                               f"has its other end outside them; moving would cut it", "move-split-range",
+                               {"part": part, "family": "field", "field": f.type})
+
+
+def _check_field_destination(part: str, root, move: "_Move") -> None:
+    """The destination does not lie inside a complex field: what lands in a field's result (a table of contents) Word
+    replaces when it updates fields."""
+    fields = [f for f in fields_of(root) if f.begin is not None]
+    if not fields:
+        return
+    everything = list(root.iter())
+    order = {id(el): i for i, el in enumerate(everything)}
+    point = (order[id(move.kids[move.at])] if move.at < len(move.kids)
+             else order[id(list(move.container.iter())[-1])] + 1)          # right after the container's last node
+    for f in fields:
+        if order[id(f.begin)] < point and (f.end is None or order[id(f.end)] >= point):
+            raise JobException(f"{part}: the destination lies inside a {f.type or 'complex'} field that runs over "
+                               f"several paragraphs; Word would replace the moved paragraphs when it updates fields — "
+                               f"choose a destination outside it", "move-anchor", {"part": part, "field": f.type})
 
 
 def _deleted_in_place(p, stamp: RevisionStamp, next_id: List[int]) -> None:

@@ -458,8 +458,21 @@ SELECTIONS = [
 ]
 
 
-@pytest.mark.parametrize("select,params", SELECTIONS)
+# the table of contents: a field begun in "Summary ..... 1" and ended in "Submittals ..... 2"
+SUMMARY, REFERENCES, ENTRIES = "Summary \\.+ 1$", "^References \\.+", "\\.{5} \\d$"
+TOC_SELECTIONS = [
+    ({"paragraphs": {"text_regex": SUMMARY}}, to("^1\\.1\\t", "after", tracked=False)),
+    ({"paragraphs": A13}, to(REFERENCES, "before", tracked=False)), ({"paragraphs": A13}, to(SUMMARY, "after")),
+    ({"paragraphs": A13}, to(SUMMARY, "before")), ({"paragraphs": A13}, to("^Submittals \\.+", "after")),
+    ({"paragraphs": {"text_regex": ENTRIES}}, to("^END OF SECTION$", "after", tracked=False)),
+    ({"paragraphs": {"text_regex": REFERENCES}}, to("^1\\.2\\t", "before", tracked=False)),
+]
+
+
+@pytest.mark.parametrize("select,params", SELECTIONS + [(s, {**p, "toc": True}) for s, p in TOC_SELECTIONS])
 def test_transform_and_verifier_decide_alike(src, select, params):
+    if params.get("toc"):
+        src = build_moving(toc=True)
     pkg, vpkg = DocxPackage(src), VPackage(src)
     root, vroot = pkg.xml(MAIN), vpkg.xml(MAIN)
     pars, view = list(root.iter(W + "p")), PartView(vroot)
@@ -540,6 +553,26 @@ def test_a_bookmark_cut_by_the_stretch_is_refused():
     assert rec.passed, rec.to_markdown()
 
 
+def test_a_table_of_contents_is_neither_cut_nor_a_destination():
+    """A field whose result runs over several paragraphs: moving its first paragraph alone would cut it; a destination
+    inside its result would be replaced when Word updates fields. Right before and right after it are outside; the
+    whole contents moves (untracked: a tracked move cannot copy a field); an entry may leave its result."""
+    data = build_moving(toc=True)
+    e = _refused(data, {"paragraphs": {"text_regex": SUMMARY}}, to("^1\\.1\\t", "after", tracked=False))
+    assert e.code == "move-split-range" and "TOC field" in e.reason
+    for destination in (to(REFERENCES, "before", tracked=False), to(SUMMARY, "after")):
+        e = _refused(data, {"paragraphs": A13}, destination)
+        assert e.code == "move-anchor" and "inside a TOC field" in e.reason
+    for select, params in (({"paragraphs": A13}, to(SUMMARY, "before")),
+                           ({"paragraphs": A13}, to("^Submittals \\.+", "after")),
+                           ({"paragraphs": {"text_regex": ENTRIES}}, to("^END OF SECTION$", "after", tracked=False)),
+                           ({"paragraphs": {"text_regex": REFERENCES}}, to("^1\\.2\\t", "before", tracked=False))):
+        plan, out, rec = move(data, select, params)
+        assert rec.passed, (select, rec.to_markdown())
+    assert _refused(data, {"paragraphs": {"text_regex": ENTRIES}},
+                    to("^END OF SECTION$", "after")).code == "move-tracked-content"
+
+
 @pytest.mark.parametrize("kw,select,expected", [
     ({}, {"paragraphs": A14}, "move-tracked-content"),                             # a table
     ({"hyperlink": True}, {"paragraphs": A15}, "move-tracked-content"),            # a hyperlink
@@ -565,6 +598,9 @@ def test_text_boxes_and_bound_content_controls_are_refused():
 @pytest.mark.parametrize("patch,data_kw,select,params", [
     ("_check_tracked", {}, {"paragraphs": A14}, to("^1\\.1\\t", "before")),
     ("_check_split", {"split_bookmark": True}, {"paragraphs": A13}, to("^1\\.5\\t", "before", tracked=False)),
+    ("_check_field_cut", {"toc": True}, {"paragraphs": {"text_regex": SUMMARY}},
+     to("^1\\.1\\t", "after", tracked=False)),
+    ("_check_field_destination", {"toc": True}, {"paragraphs": A13}, to(REFERENCES, "before", tracked=False)),
 ])
 def test_the_verifier_refuses_what_the_op_must_refuse(patch, data_kw, select, params, monkeypatch):
     data = build_moving(**data_kw)

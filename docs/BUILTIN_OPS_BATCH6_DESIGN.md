@@ -182,10 +182,14 @@ Nearest relatives: `set_page_setup` (the section selector), `remove_header_foote
 ## 10. `move_paragraphs` (F9)
 
 The selected paragraphs, which must form one contiguous range in one container (tables lying between them move too),
-go `before`/`after` the one anchor paragraph `to` selects, outside the range and in the same part. Untracked: the
-blocks move unchanged. Tracked: deleted where they were and inserted where they go (Word shows a deletion and an
-insertion); tables, fields, hyperlinks and comment anchors in a tracked move are refused. A section break in the range
-is refused. V10 kind `moved_paragraphs`.
+go `before`/`after` the one anchor paragraph `to` selects, outside the range and in the same container (the body, the
+same cell, header, footer, note or comment). Untracked: the blocks move unchanged. Tracked (the default): deleted where
+they were and inserted where they go (Word shows a deletion and an insertion); a tracked move copies only paragraphs of
+text runs, bookmarks and proofing marks — tables, fields, hyperlinks, content controls, comment anchors, pictures,
+note references and pending revisions in it are refused. A section break in the range is refused; so is anything a move
+would cut (a bookmark, comment, permission or field with one end inside), a destination inside a field's result (a
+table of contents) and an origin that would leave two tables touching or a container ending in a table (refused, not
+patched with a kept paragraph). V10 kind `moved_paragraphs`.
 
 ## Decisions for Abraham (each with the recommendation taken)
 
@@ -198,3 +202,32 @@ is refused. V10 kind `moved_paragraphs`.
 5. **Text boxes stay refused** with the rest of Tier 3.
 
 ## Built (fill in per item as it lands)
+
+### F9 — built (2026-10-21)
+
+`move_paragraphs` (`ops/move_paragraphs.py`; V10 kind `moved_paragraphs` in `verify/moving.py`, which builds the expected
+part from the source and compares it whole — `verified_parts` — after checking and masking the new revisions' ids and
+dates, and holds the plan's diffs and accepted views to its own). `select.paragraphs` + `params.to` (one paragraph) +
+`params.position` (`before`/`after`, required), `tracked` (default true), `author`, `allow_missing`. Decisions taken:
+
+* **Container**: the parent of the shallowest chosen paragraph; the range is its children from the first to the last
+  chosen child paragraph; the anchor must be a child of the same container (not merely the same part).
+* **Validity**: an origin that would leave two tables touching or the container ending in a table is refused
+  (`move-table-edge`), never patched with a kept paragraph; a stretch already in place is a noted no-op.
+* **Bookmarks**: untracked they move with the blocks; tracked they travel with the inserted copy (the originals lose
+  them), so accepting the move leaves every cross-reference pointing at the text — rejecting leaves them where the copy
+  was (flagged). A bookmark, comment, permission, pending move range or complex field with one end in the range is
+  refused (`move-split-range`); a destination inside a field's result (a table of contents) is refused (`move-anchor`).
+* **Tracked markup**: the originals as `delete_paragraphs` deletes (one `w:del` per unbroken run sequence, the mark
+  deleted); the copies as `insert_paragraph` inserts (one `w:ins` per unbroken run sequence, the mark inserted), each
+  copy without `w14:paraId`/`w14:textId`. A stretch ending its container, or copies landing at its end, is flagged
+  (Word keeps a container's last paragraph mark).
+* **Numbering**: automatic list and heading numbers and footnote marks follow the new position (flagged); content
+  controls (not data-bound), fields, comments and pending revisions move untracked as they are.
+* Known limit: `between_paragraphs` has no "start included, end excluded" form; an article (its heading through the
+  paragraph before the next heading) is `between_paragraphs` with `include_bounds` and a `text_regex` `^(?!<end>)`,
+  which `describe()` reads as "through the one before". Its bounds read the paragraph text without tabs.
+
+Tests: `tests/test_move_paragraphs.py` (fixtures `tests/fx_moving.py`, describe cases `tests/describe_cases/moving.py`).
+Still needs the owner's machine: a live request over real specifications, both modes, opened in Word (accept all,
+reject all).

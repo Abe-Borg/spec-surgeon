@@ -448,8 +448,10 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "move-anchor": (
         "Destination Paragraph Cannot Take the Move",
         "The paragraph the move should go before or after is one of the paragraphs being moved, or it is not in the "
-        "same place as them (it is in a table cell, a text box or another container while they are not). Name a "
-        "destination paragraph beside them — for a place after a table, the paragraph after the table, 'before'.",
+        "same place as them (it is in a table cell, a text box or another container while they are not), or the place "
+        "lies inside a field that runs over several paragraphs (a table of contents), whose text Word replaces when it "
+        "updates fields. Name a destination paragraph beside them — for a place after a table, the paragraph after the "
+        "table, 'before'.",
     ),
     "move-table-edge": (
         "Moving Would Leave Two Tables Touching",
@@ -458,10 +460,10 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "leave a paragraph beside it.",
     ),
     "move-split-range": (
-        "Moving Would Cut a Bookmark, Comment or Permission",
-        "A bookmark, comment or editing-permission range starts among the paragraphs to move and ends outside them (or "
-        "the reverse); moving them would cut it in two. Widen or narrow the stretch to take it whole, or remove it in "
-        "Word first.",
+        "Moving Would Cut a Bookmark, Comment, Field or Permission",
+        "A bookmark, comment, editing-permission range, pending moved text or a field that runs over several paragraphs "
+        "(a table of contents) starts among the paragraphs to move and ends outside them (or the reverse); moving them "
+        "would cut it in two. Widen or narrow the stretch to take it whole, or remove it in Word first.",
     ),
     "move-tracked-content": (
         "Content a Tracked Move Cannot Copy",

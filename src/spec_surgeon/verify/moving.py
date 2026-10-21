@@ -5,11 +5,13 @@ ops/move_paragraphs.py (rule 1). This module's own reading of the op:
   one of them and holds every one of them; **the stretch** is its children from the first of them it holds directly to
   the last. Every paragraph directly in the stretch is chosen, every chosen paragraph lies in the stretch; the stretch
   holds paragraphs, tables, content controls (untracked, not bound to data) and the marks between blocks — no text box,
-  no section break; no bookmark, comment or permission has one end in the stretch and the other outside.
+  no section break; no bookmark, comment, permission, pending move range or complex field (verify/fields.py's) has one
+  end in the stretch and the other outside.
 * **The anchor** is the one paragraph of the part ``to`` matches, a child of the holder outside the stretch; **the
   destination** is the place right after (``after``) or right before (``before``) it. When only marks lie between the
   destination and the stretch, nothing moves. Otherwise the holder, the stretch gone, must not end in a table nor have a
-  table follow a table with only marks between them.
+  table follow a table with only marks between them, and no complex field may be open at the destination (a walk in
+  document order: a begin opens one, an end closes one).
 * **Untracked**, the stretch's nodes are taken out and inserted at the destination, unchanged.
 * **Tracked**, the stretch holds only paragraphs, bookmarks and proofing marks, every paragraph only its properties,
   runs of text, tabs, breaks, hyphens and symbols, bookmarks and proofing marks, and no tracked change. Each original
@@ -36,6 +38,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 from lxml import etree
 
 from .edits import V_REVISION_TAGS, part_revision_ids
+from .fields import v_fields
 from .markup import tree_difference
 from .props import Ctx, PartView, element_path, para_matches, resolve_path
 from .reader import W
@@ -49,7 +52,9 @@ _HOLDERS = {"body", "tc", "hdr", "ftr", "footnote", "endnote", "comment"}
 _MARKS = {"bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "permStart", "permEnd", "proofErr"}
 _NOT_BLOCKS = _MARKS | {"tcPr", "sectPr"}
 _ENDS = {"bookmarkStart": "bookmark", "bookmarkEnd": "bookmark", "commentRangeStart": "comment",
-         "commentRangeEnd": "comment", "commentReference": "comment", "permStart": "permission", "permEnd": "permission"}
+         "commentRangeEnd": "comment", "commentReference": "comment", "permStart": "permission", "permEnd": "permission",
+         "moveFromRangeStart": "move-from range", "moveFromRangeEnd": "move-from range",
+         "moveToRangeStart": "move-to range", "moveToRangeEnd": "move-to range"}
 _BOOKMARK = {"bookmarkStart", "bookmarkEnd"}
 _TRACKED_BETWEEN = _BOOKMARK | {"proofErr"}
 _TRACKED_IN_PARAGRAPH = {"pPr", "r", "proofErr"} | _BOOKMARK
@@ -80,6 +85,22 @@ def _block(el) -> bool:
 
 def _holds(outer, el) -> bool:
     return any(a is outer for a in el.iterancestors())
+
+
+def _open_at(root, before, holder) -> int:
+    """How many complex fields are open at a place between blocks: right before ``before``, or (None) right after the
+    holder's last node — counted in one document-order walk, a begin opening one and an end closing one."""
+    last = None if before is not None else list(holder.iter())[-1]
+    depth = 0
+    for el in root.iter():
+        if el is before:
+            return depth
+        if _name(el) == "fldChar":
+            kind = el.get(W + "fldCharType")
+            depth += 1 if kind == "begin" else -1 if kind == "end" and depth else 0
+        if el is last:
+            return depth
+    return depth
 
 
 def _decide(root, view: PartView, chosen: List[int], to, position: str, tracked: bool, styles) -> Dict[str, Any]:
@@ -148,6 +169,11 @@ def _decide(root, view: PartView, chosen: List[int], to, position: str, tracked:
     cut = sorted(k for k, v in sides.items() if len(v) > 1)
     if cut:
         raise _Refuse(f"the stretch holds one end of a {cut[0][0]} ({cut[0][1]})")
+    fields = [f for f in v_fields(root) if f.begin is not None]
+    chars_in = [x for k in stretch if isinstance(k.tag, str) for x in k.iter(W + "fldChar")]
+    held = {id(x) for x in chars_in}
+    if any(len({id(m) in held for m in (f.begin, f.separate, f.end) if m is not None}) > 1 for f in fields):
+        raise _Refuse("the stretch holds one end of a complex field")
     moved = [q for k in stretch if isinstance(k.tag, str) for q in k.iter(W + "p")]
     targets = [i for i, p in enumerate(pars) if para_matches(to, p, i, view, styles)]
     if len(targets) != 1:
@@ -165,6 +191,8 @@ def _decide(root, view: PartView, chosen: List[int], to, position: str, tracked:
         right = [k for k in kids[hi + 1:] if _block(k)]
         if left and _name(left[-1]) == "tbl" and (not right or _name(right[0]) == "tbl"):
             raise _Refuse("a table would end the holder or touch another table once the stretch leaves")
+        if fields and _open_at(root, kids[gap_at] if gap_at < len(kids) else None, holder):
+            raise _Refuse("the destination lies inside a complex field")
     return {"holder": element_path(holder), "lo": lo, "hi": hi, "anchor_at": pos[id(anchor)], "still": still,
             "first": pars.index(moved[0]), "moved": moved, "anchor": targets[0],
             "tables": sum(1 for k in stretch if _name(k) == "tbl")}

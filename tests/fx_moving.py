@@ -4,6 +4,8 @@ by its text in the tests, never by index.
 ``build_moving()`` — a specification in two sections, in reading order:
 
 * "SECTION 21 13 13 - WET-PIPE SPRINKLER SYSTEMS" (with ``utc``: Jeremy's pending insertion " (rev)", w16du:dateUtc);
+  with ``toc``, then a table of contents — a TOC field begun in "Summary ..... 1" (its instruction is block text too),
+  showing "References ..... 1" and ended in "Submittals ..... 2";
 * "PART 1 - GENERAL" (Heading 1); "1.1⇥SUMMARY" (Heading 2), "A.⇥Section includes wet-pipe sprinkler systems.";
 * "1.2⇥REFERENCES", "A.⇥NFPA 13, 2025 edition." (with ``comment``: Jack's comment on "NFPA 13");
 * "1.3⇥SUBMITTALS" — its words inside the bookmark _Ref_Submittals, w14:paraId 1A2B3C01 — then two List Number
@@ -63,9 +65,27 @@ def _para_id(paragraph, value: str):
     paragraph._p.set("{%s}textId" % W14, "77777777")
 
 
-def build_moving(*, utc: bool = False, comment: bool = False, hyperlink: bool = False, sdt: bool = False,
-                 data_bound: bool = False, revision: bool = False, textbox: bool = False, field: bool = False,
-                 split_bookmark: bool = False) -> bytes:
+def _fld(paragraph, kind: str):
+    fc = OxmlElement("w:fldChar"); fc.set(qn("w:fldCharType"), kind)
+    paragraph.add_run()._r.append(fc)
+
+
+def _toc(doc, entries):
+    """A table of contents as Word writes one: a TOC field whose result runs over one paragraph per entry."""
+    first = doc.add_paragraph()
+    _fld(first, "begin")
+    it = OxmlElement("w:instrText"); it.set(qn("xml:space"), "preserve"); it.text = ' TOC \\o "1-3" \\h '
+    first.add_run()._r.append(it)
+    _fld(first, "separate")
+    first.add_run(entries[0])
+    for text in entries[1:-1]:
+        doc.add_paragraph(text)
+    _fld(doc.add_paragraph(entries[-1]), "end")
+
+
+def build_moving(*, utc: bool = False, toc: bool = False, comment: bool = False, hyperlink: bool = False,
+                 sdt: bool = False, data_bound: bool = False, revision: bool = False, textbox: bool = False,
+                 field: bool = False, split_bookmark: bool = False) -> bytes:
     doc = Document()
     hdr = doc.sections[0].header
     hdr.is_linked_to_previous = False
@@ -77,6 +97,8 @@ def build_moving(*, utc: bool = False, comment: bool = False, hyperlink: bool = 
     if utc:
         ins = _rev("ins", p.add_run(" (rev)"), 501, "Jeremy")
         ins.set("{%s}dateUtc" % W16DU, "2026-09-22T17:15:00Z")
+    if toc:
+        _toc(doc, ["Summary ..... 1", "References ..... 1", "Submittals ..... 2"])
     doc.add_paragraph("PART 1 - GENERAL", style="Heading 1")
     doc.add_paragraph("1.1\tSUMMARY", style="Heading 2")
     doc.add_paragraph("A.\tSection includes wet-pipe sprinkler systems.")

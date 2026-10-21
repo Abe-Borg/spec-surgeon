@@ -292,7 +292,8 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "or a note — and the tables between them move with them; a stretch with a gap, or in two places, sets the file "
         "aside; a whole article is its heading through the paragraph before the next heading",
         "they go right before or right after the one destination paragraph 'to' names, in the same place; no such "
-        "paragraph, or several, sets the file aside; a stretch already there is left as it is",
+        "paragraph, or several, or a place inside a table of contents sets the file aside; a stretch already there "
+        "is left as it is",
         "tracked by default: deleted where they were and inserted where they go (Word shows a deletion and an "
         "insertion, not 'Moved'); tables, fields, hyperlinks, content controls, comments, pictures, note references or "
         "pending tracked changes among them need an untracked move, which moves everything exactly as it is",
