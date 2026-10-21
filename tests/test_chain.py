@@ -1,8 +1,7 @@
 """Chains (chain.py, 2026-10-16): several specs run one after another, each stage a full verified run on the stage
 before it — the pin between stages, a file going as far as it passes, templates of any stage skipped, the order
 flagged where a later stage changes a part an earlier one added; the chain preview and its approval token over every
-stage; the library's chain kind under the one-name rule; and the command line. Chains are command-line only: the
-desktop's one conversation window never builds, previews or runs one."""
+stage."""
 from __future__ import annotations
 
 import json
@@ -12,15 +11,13 @@ from pathlib import Path
 
 import pytest
 
-from make_fixtures import build_sized
+from make_fixtures import build_sized, build_style_template, build_styles
 from spec_surgeon import batch as batch_module
-from spec_surgeon import library
 from spec_surgeon.batch import load_set_aside
-from spec_surgeon.chain import (ChainError, chain_from_specs, chain_intent, chain_key, chain_templates, load_chain_file,
-                                run_chain, validate_chain)
-from spec_surgeon.cli import main as cli_main
-from spec_surgeon.editspec import load_spec
-from spec_surgeon.library import LibraryError
+from spec_surgeon.chain import (ChainError, chain_from_specs, chain_intent, chain_key, chain_templates, run_chain,
+                                validate_chain)
+from spec_surgeon.editspec import load_spec, plan_spec
+from spec_surgeon.ops import JobException
 from spec_surgeon.package import DocxPackage
 from spec_surgeon.preview import approval_token, changed_since_preview, key_templates, make_chain_preview
 
@@ -224,9 +221,6 @@ def test_a_chain_never_reads_where_it_writes_and_refuses_a_bad_chain_before_anyt
     assert [st["name"] for st in chain_key(chain)["stages"]] == ["Match the font", "Match the header/footer"]
     assert key_templates(chain_key(chain)) == chain_templates(chain)
     assert chain_intent(chain).startswith("A CHAIN «Match the template spec» of 2 stage(s)") and "STAGE 2 — Match the header/footer" in chain_intent(chain)
-    # a chain file round-trips (its stages' relative templates resolve against the file)
-    (tmp_path / "c.json").write_text(json.dumps(chain), encoding="utf-8")
-    assert load_chain_file(tmp_path / "c.json")["stages"][1]["spec"] == _hf()
 
 
 def test_a_reused_results_folder_keeps_nothing_of_an_earlier_run(folder, tmp_path):
@@ -246,20 +240,6 @@ def test_a_reused_results_folder_keeps_nothing_of_an_earlier_run(folder, tmp_pat
     r3 = run_chain([str(folder)], chain_from_specs([("strip", _remove()), ("refuse", _refuse())]), tmp_path / "run",
                    workers=1, renderer="none", do_render=False)
     assert r3.counts()["PASS"] == 0 and not (tmp_path / "run" / "outputs").exists()
-
-
-def test_a_runs_chain_json_loads_back_as_the_chain(folder, tmp_path):
-    """Codex on #23: a run's chain.json wraps the chain beside the stages' results; the loader must unwrap it."""
-    chain = _template_chain()
-    run_chain([str(folder)], chain, tmp_path / "run", workers=1, renderer="none", do_render=False)
-    data = json.loads((tmp_path / "run" / "chain.json").read_text(encoding="utf-8"))
-    assert "chain" in data and "stages" in data and "files" in data          # the wrapper, with the results
-    assert load_chain_file(tmp_path / "run" / "chain.json") == chain
-    pv = make_chain_preview(chain, [str(folder)], tmp_path / "preview", renderer="none", do_render=False)
-    assert load_chain_file(tmp_path / "preview" / "chain.json") == chain      # the preview's: the chain itself
-    (tmp_path / "x.json").write_text(json.dumps({"counts": {}, "files": []}), encoding="utf-8")
-    with pytest.raises(ChainError, match="unknown chain key"):                  # neither shape: refused, not misread
-        load_chain_file(tmp_path / "x.json")
 
 
 # ---- the preview and its token ---------------------------------------------------------------------------------------
@@ -303,90 +283,43 @@ def test_the_chain_preview_runs_every_stage_on_the_samples_and_its_token_covers_
     assert "stage 1 PASS · stage 2 EXCEPTION [not-found] — EXCEPTION [not-found] stage 2 (refuse)" in pv2.to_text()
 
 
-# ---- the library -----------------------------------------------------------------------------------------------------
-
-def test_the_library_keeps_chains_under_the_one_name_rule(folder, tmp_path):
-    chain = _template_chain()
-    chain["stages"][0]["spec"]["applies_to"] = {"pattern_ids": ["abc"]}
-    item, notes = library.save_chain("Template chain", chain, "font, then header/footer")
-    assert item.kind == "chain" and item.label() == "Chain: Template chain" and item.path.name == "template-chain.json"
-    assert item.request == "Match the font → Match the header/footer" and item.description == "font, then header/footer"
-    assert notes == ["stage 1 (Match the font): the spec was pinned to this batch's structure patterns; the pin was "
-                     "dropped so stage 1 (Match the font) can run on other projects' files (it is still planned file by file)"]
-    assert (item.path.with_name("template-chain.meta.json")).is_file()
-    assert [i.label() for i in library.list_items()] == ["Chain: Template chain"]
-    loaded = library.load_chain("template CHAIN")
-    assert [st["name"] for st in loaded["stages"]] == ["Match the font", "Match the header/footer"]
-    assert loaded["stages"][0]["recipe"] == "Match the font" and "recipe" not in loaded["stages"][1]
-    assert "applies_to" not in loaded["stages"][0]["spec"] and loaded["stages"][1]["spec"] == _hf()
-    assert loaded["description"] == "font, then header/footer" and loaded["name"] == "Template chain"
-    # one name, one item: a recipe or an operation cannot take it, not even with replace; nor the reverse
-    with pytest.raises(LibraryError, match="a recipe cannot take that name, not even with replace"):
-        library.save_recipe("template chain", _font(), replace=True)
-    library.save_recipe("Match the font", _font())
-    with pytest.raises(LibraryError, match="a chain cannot take that name"):
-        library.save_chain("match the FONT", chain, replace=True)
-    with pytest.raises(LibraryError, match="already has a chain named 'Template chain' — replace it"):
-        library.save_chain("Template chain", chain)
-    library.save_chain("Template chain", chain, replace=True)
-    assert sorted(i.label() for i in library.list_items()) == ["Chain: Template chain", "Recipe: Match the font"]
-    with pytest.raises(LibraryError, match="there is no chain named 'nope'"):
-        library.load_chain("nope")
-    assert library.delete("template chain").kind == "chain" and [i.kind for i in library.list_items()] == ["recipe"]
-
-
-# ---- the command line ------------------------------------------------------------------------------------------------
-
-def test_the_command_line_chain_command_and_library_use(folder, tmp_path, capsys):
-    library.save_recipe("HF recipe", _hf())
-    assert cli_main(["chain", str(folder), "--out", str(tmp_path / "o0"), "--no-render"]) == 2
-    assert "give at least one --stage" in capsys.readouterr().err
-    assert cli_main(["chain", "--stage", "recipe:nope", str(folder), "--out", str(tmp_path / "o0"), "--no-render"]) == 2
-    assert "there is no recipe named 'nope'" in capsys.readouterr().err
-    assert cli_main(["chain", "--stage", str(FONT_SPEC), "--stage", "recipe:HF recipe", str(folder), "--name", "Template chain",
-                     "--out", str(tmp_path / "o1"), "--no-render", "--yes", "--save-as", "Template chain"]) == 0
-    out = capsys.readouterr().out
-    assert "PREVIEW — chain «Template chain»: 2 stage(s)" in out and "stage 1 PASS · stage 2 PASS" in out
-    assert "Saved to your library: Chain: Template chain" in out
-    assert "2 file(s): PASS 2 (every stage)  FAIL 0  EXCEPTION 0" in out and "[PASS · PASS]" in out
-    assert (tmp_path / "o1" / "run" / "CHAIN_REPORT.md").is_file() and (tmp_path / "o1" / "preview" / "chain.json").is_file()
-    assert sorted(p.name for p in (tmp_path / "o1" / "run" / "outputs").iterdir()) == sorted(f.name for f in folder.glob("21*.docx"))
-    # the saved chain: shown, listed, used, spliced into a longer chain, deleted
-    assert cli_main(["library", "show", "template chain"]) == 0
-    out = capsys.readouterr().out
-    assert "Chain: Template chain" in out and "1. match-template-spec-font" in out and "2. HF recipe (recipe 'HF recipe')" in out
-    assert cli_main(["library", "list", "--kind", "chain"]) == 0 and "Chain: Template chain" in capsys.readouterr().out
-    assert cli_main(["library", "use", "Template chain", str(folder), "--out", str(tmp_path / "o2"), "--no-render", "--yes"]) == 0
-    assert "Using your chain 'Template chain' on 2 file(s)." in capsys.readouterr().err
-    assert (tmp_path / "o2" / "run" / "outputs").is_dir()
-    assert cli_main(["chain", "--stage", "chain:Template chain", "--stage", json.dumps(_remove()), str(folder),
-                     "--out", str(tmp_path / "o3"), "--no-render", "--yes"]) == 0
-    out = capsys.readouterr().out
-    assert "3 stage(s)" in out and "stage 1 PASS · stage 2 PASS · stage 3 PASS" in out
-    # a stage that stops every file is exit 1 with the stage named; --save-as of a taken name is refused before anything
-    assert cli_main(["chain", "--stage", json.dumps(_refuse()), str(folder), "--out", str(tmp_path / "o4"), "--no-render",
-                     "--yes"]) == 1
-    assert "stopped at stage 1: [not-found]" in capsys.readouterr().out
-    assert cli_main(["chain", "--stage", str(FONT_SPEC), str(folder), "--out", str(tmp_path / "o5"), "--no-render", "--yes",
-                     "--save-as", "HF recipe"]) == 2
-    assert "--replace replaces only an item of the same kind, so a chain cannot take that name" in capsys.readouterr().err
-    assert not (tmp_path / "o5" / "run").exists()
-    assert cli_main(["library", "delete", "template chain", "--kind", "chain", "--yes"]) == 0
-    assert [i.kind for i in library.list_items()] == ["recipe"]
-    # without --yes and without a terminal: previewed, not run
-    assert cli_main(["chain", "--stage", str(FONT_SPEC), str(folder), "--out", str(tmp_path / "o6"), "--no-render"]) == 0
-    assert "Not run." in capsys.readouterr().out and not (tmp_path / "o6" / "run").exists()
-
-
 # ---- no window for the engine ----------------------------------------------------------------------------------------
 
-def test_the_engine_and_command_line_never_load_the_window_for_a_chain():
+def test_the_engine_never_loads_the_window_for_a_chain():
     import subprocess
     import sys
-    code = ("import sys, spec_surgeon.chain, spec_surgeon.cli, spec_surgeon.gui; "
+    code = ("import sys, spec_surgeon.chain, spec_surgeon.gui; "
             "bad = [m for m in sys.modules if m.split('.')[0] in ('fastapi', 'starlette', 'uvicorn', 'webview') "
             "or m.startswith('spec_surgeon.web')]; assert not bad, bad")
     r = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, timeout=60)
     assert r.returncode == 0, r.stderr
 
 
+def test_map_then_remove_unused_runs_as_a_chain(tmp_path):
+    """The workflow the prompt recommends: stage 1 maps the architect's ArchLines to the office CMT (imported from the
+    template), stage 2 removes the custom styles nothing uses any more — ArchLines among them. In a single spec the
+    order would decide whether ArchLines goes (remove_unused_styles judges the source, the mapping takes its uses away):
+    a plan-time conflict naming the chain (rule 9)."""
+    tpl = tmp_path / "OFFICE STYLES.docx"
+    tpl.write_bytes(build_style_template())
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "21 13 13 - WET-PIPE SPRINKLER SYSTEMS.docx").write_bytes(build_styles())
+    map_spec = {"request": "map", "summary": "map", "mode": "formatting",
+                "ops": [{"op": "map_styles", "params": {"map": [{"from": "ArchLines", "to": "CMT"}],
+                                                         "template": str(tpl)}}]}
+    clean_spec = {"request": "clean", "summary": "clean", "mode": "formatting",
+                  "ops": [{"op": "remove_unused_styles", "params": {"which": "custom"}}]}
+    chain = chain_from_specs([("map", map_spec), ("remove unused", clean_spec)], name="office styles")
+    result = run_chain([str(docs)], chain, tmp_path / "out", workers=1, do_render=False)
+    f = result.files[0]
+    assert f.status == "PASS" and f.stage_status == ["PASS", "PASS"], (f.status, f.stage_status, f.reason)
+    out = DocxPackage(Path(f.delivered_to).read_bytes())
+    ids = {s.get(W + "styleId") for s in out.xml("word/styles.xml").findall(W + "style")}
+    assert {"CMT", "CMTBase"} <= ids and "ArchLines" not in ids and "ArchUnused" not in ids
+    # in ONE spec, in either order: refused, with the chain as the way out
+    for ops in (map_spec["ops"] + clean_spec["ops"], clean_spec["ops"] + map_spec["ops"]):
+        with pytest.raises(JobException) as e:
+            plan_spec(DocxPackage(build_styles()), {"request": "both", "summary": "both", "mode": "formatting",
+                                                    "ops": ops})
+        assert e.value.code == "conflict" and "split out" in e.value.reason and "remove_unused_styles" in e.value.reason

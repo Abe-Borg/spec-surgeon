@@ -65,13 +65,13 @@ def test_longest_generated_evidence_path_from_120_character_root_is_below_240():
     assert max(len(str(path)) for path in paths) < 240
 
 
-def test_both_frozen_entry_points_have_long_path_aware_manifest():
+def test_the_frozen_app_has_a_long_path_aware_manifest():
     import xml.etree.ElementTree as ET
     packaging = Path(__file__).resolve().parents[1] / "packaging" / "windows"
     manifest = ET.fromstring((packaging / "app.manifest").read_bytes())
     setting = manifest.find(".//{http://schemas.microsoft.com/SMI/2016/WindowsSettings}longPathAware")
     assert setting is not None and setting.text == "true"
-    assert (packaging / "app.spec").read_text().count("manifest=manifest") == 2
+    assert (packaging / "app.spec").read_text().count("manifest=manifest") == 1
 
 
 def test_actual_recovery_render_uses_short_staged_names_from_a_deep_root(tmp_path, monkeypatch):

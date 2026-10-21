@@ -123,7 +123,7 @@ class RecoveryResult:
     review: Any = None
     review_ack: str = ""                       # never serialized; acknowledgement is preview-specific
     token: str = ""
-    approval_version: int = 2                # source-content preview pins; v1 checkpoints migrate on their next save
+    approval_version: int = 2                # source-content preview pins; a v1 checkpoint needs a new review
     token_inputs: Dict[str, Any] = field(default_factory=dict)
     questions: List[str] = field(default_factory=list)
     notes: List[str] = field(default_factory=list)
@@ -320,26 +320,11 @@ def _recovery_token(key, files):
 
 
 def _checkpoint_token_matches(result):
-    """Old recovery tokens already bound source SHA256; retain that exact proof until the next checkpoint.
-
-    Ordinary old preview tokens are never accepted here: recovery's outer digest also
-    pinned source bytes, the approved key, and the verified candidates. New checkpoints
-    use only the content-pinned preview digest and cannot fall back to the old format.
-    """
-    if not result.token:
+    """A checkpoint's token is the content-pinned preview digest; an older format's token never matches (it needs a
+    new review)."""
+    if not result.token or result.approval_version != 2:
         return False
-    sources = [f.source for f in result.files]
-    if result.approval_version == 2:
-        return _recovery_token(result.key, sources) == result.token
-    if result.approval_version != 1:
-        return False
-    from .preview import _legacy_approval_token
-    try:
-        token = _hash({"preview": _legacy_approval_token(result.key, sources),
-                       "contents": {str(p): _sha(p) for p in sources}})
-    except OSError:
-        return False
-    return token == result.token
+    return _recovery_token(result.key, [f.source for f in result.files]) == result.token
 
 
 def _prepared(files):

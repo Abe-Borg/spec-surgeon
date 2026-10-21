@@ -1,13 +1,11 @@
-"""Final requirements survive recovery translation and the saved-chain CLI surface."""
+"""Final requirements survive recovery translation."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
 from fake_claude import FakeClient, resp, tool
-from spec_surgeon import library, recovery
-from spec_surgeon.chain import chain_from_specs
-from spec_surgeon.cli import main as cli_main
+from spec_surgeon import recovery
 from test_chain_outcomes import _document, _font, _require_font
 from test_codegen import GOOD_OP
 
@@ -62,21 +60,3 @@ def test_allowed_custom_page_repair_passes_an_original_plan_frozen_before_genera
     plan = json.loads((record_path.parent.parent / "approved-plans" / "spec.json").read_text())
     assert plan["property_assertions"][0]["op"] == "set_page_setup"
     assert source.read_bytes() == before
-
-
-def test_cli_flattening_a_saved_chain_keeps_its_final_constraints(tmp_path):
-    source = tmp_path / "spec.docx"
-    before = _document()
-    source.write_bytes(before)
-    saved = chain_from_specs([("Arial", _font("Arial"))], assertions=[_require_font()])
-    library.save_chain("Keep Arial", saved)
-    out = tmp_path / "cli"
-    code = cli_main(["chain", "--stage", "chain:Keep Arial", "--stage", json.dumps(_font("Courier New")),
-                     str(source), "--out", str(out), "--no-render", "--yes", "--workers", "1"])
-    assert code == 1
-    preview = json.loads((out / "preview" / "chain.json").read_text())
-    assert preview["assertions"] == saved["assertions"]
-    report = json.loads((out / "run" / "chain.json").read_text())
-    assert report["files"][0]["stages"] == ["PASS", "PASS"]
-    assert report["files"][0]["code"] == "chain-outcome"
-    assert not (out / "run" / "outputs").exists() and source.read_bytes() == before

@@ -5,7 +5,7 @@ on every file (predict first; nothing is applied, nothing written). Each file ge
 human summary (``summarize_plan``) or the exception it would raise — the same diagnosis the real run would
 produce. Spec template files found among the inputs are skipped, as in a run.
 
-This is what ``spec-surgeon plan-spec`` prints and what the preview (Phase 4) shows before anything runs:
+This is what the preview (Phase 4) shows before anything runs:
 "58 of 60 files plan cleanly; 2 raise `inheritance` — here is why".
 """
 from __future__ import annotations

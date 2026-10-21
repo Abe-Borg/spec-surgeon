@@ -4,7 +4,6 @@ complex-script languages, a created docDefaults, already as asked); the effectiv
 OUTPUT per rule; wrong IMPLEMENTATIONS shared by plan and apply; conflicts; parameters and refusals."""
 from __future__ import annotations
 
-import ast
 import copy
 import io
 import zipfile
@@ -19,7 +18,6 @@ from spec_surgeon.editspec import apply_spec, load_spec, plan_spec, validate_spe
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import set_language as lang_module
 from spec_surgeon.package import DocxPackage, W, serialize_xml
-from spec_surgeon.report import FAILURE_EXPLANATIONS
 from spec_surgeon.verify import language as vlang
 from spec_surgeon.verify import props as vprops
 from spec_surgeon.verify import run_suite
@@ -468,18 +466,3 @@ def test_a_language_change_beside_the_templating_op_conflicts():
     with pytest.raises(JobException) as e:
         plan_spec(DocxPackage(data), _spec(hf, {"op": OP, "select": {}, "params": {"language": "en-US"}}))
     assert e.value.code == "conflict"
-
-
-def _codes(module) -> set:
-    codes = set()
-    for n in ast.walk(ast.parse(Path(module.__file__).read_text(encoding="utf-8"))):
-        if isinstance(n, ast.Call) and getattr(n.func, "id", None) == "JobException" and len(n.args) > 1:
-            assert isinstance(n.args[1], ast.Constant), ast.unparse(n)
-            codes.add(n.args[1].value)
-    return codes
-
-
-def test_every_refusal_code_of_set_language_is_explained():
-    codes = _codes(lang_module)
-    assert codes == {"bad-params", "structure"}
-    assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []

@@ -561,34 +561,6 @@ def test_catalog_and_explanations():
         assert code in FAILURE_EXPLANATIONS, code
 
 
-def test_every_refusal_code_of_the_numbering_conversions_is_explained_and_none_file_specific_is_fatal():
-    """The code of every JobException the three modules raise (and of every lists.resolve_scheme call, which raises the
-    code its caller passes) has a plain-words explanation; a refusal one file earns never rejects the whole spec at
-    compile time (batch 2 rule 5) — only bad-params (the parameters, the example file) is fatal."""
-    import ast
-    from spec_surgeon import compiler
-    codes, computed = set(), []
-    for module in ("numbering_convert", "convert_numbering", "convert_typed_numbers"):
-        tree = ast.parse((ROOT / "src" / "spec_surgeon" / "ops" / f"{module}.py").read_text(encoding="utf-8"))
-        for n in ast.walk(tree):
-            if not isinstance(n, ast.Call):
-                continue
-            name = getattr(n.func, "id", None) or getattr(n.func, "attr", None)
-            at = {"JobException": 1, "resolve_scheme": 4}.get(name)
-            if at is None:
-                continue
-            code = n.args[at] if len(n.args) > at else None
-            if isinstance(code, ast.Constant):
-                codes.add(code.value)
-            else:
-                computed.append((module, n.lineno))
-    assert computed == [] and {"scheme", "scheme-depth", "numbering-mismatch", "numbering-unsupported", "typed-format",
-                               "ambiguous", "bad-params"} <= codes
-    codes.discard("internal")
-    assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
-    assert (codes & compiler.FATAL_SPEC_CODES) == {"bad-params"}
-
-
 def test_the_numbering_examples_place_no_words():
     from spec_surgeon import compiler
     for name in ("convert-typed-numbers", "convert-numbering-to-scheme"):

@@ -22,7 +22,9 @@ from make_fixtures import build
 from spec_surgeon import compiler as compiler_module
 from spec_surgeon import llm
 from spec_surgeon.catalog import CUSTOM_TRANSFORM_LIMITS
-from spec_surgeon.conversation import ACCEPTED_RESULT, Conversation, ProtocolError, check_pairing
+from spec_surgeon.compiler import _Batch, check_submission, compile_request, placed_words, untraceable
+from spec_surgeon.conversation import (ACCEPTED_RESULT, Conversation, INVISIBLE_RANGES, ProtocolError, check_pairing,
+                                       clean_wording)
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 REMOVE = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
@@ -43,8 +45,8 @@ def folder(tmp_path) -> Path:
     return d
 
 
-def conv(folder, fake, **kw) -> Conversation:
-    return Conversation("remove all headers and footers", sorted(folder.glob("*.docx")), client=fake, **kw)
+def conv(folder, fake, request="remove all headers and footers", **kw) -> Conversation:
+    return Conversation(request, sorted(folder.glob("*.docx")), client=fake, **kw)
 
 
 def ask(tid="a1", **inp):
@@ -334,3 +336,220 @@ def test_the_client_is_resolved_when_the_first_call_is_made(folder, monkeypatch)
     c = Conversation("remove all headers and footers", sorted(folder.glob("*.docx")))
     monkeypatch.setattr(compiler_module, "_client", lambda: fake)
     assert c.start().status == "ok" and len(fake.requests) == 1
+
+
+# ---- wording: blank characters and empty sources ---------------------------------------------------------------------
+
+@pytest.mark.parametrize("cp", [0x1D159, 0x16FE4])
+def test_clean_wording_refuses_the_null_notehead_and_the_khitan_filler(cp):
+    with pytest.raises(ValueError, match=hex(cp)):
+        clean_wording("ISSUED" + chr(cp) + "FOR PERMIT")
+
+
+@pytest.mark.parametrize("space", [" ", " ", " ", " ", "　", "\t"])
+def test_clean_wording_keeps_spaces_that_show_as_spaces(space):
+    w = f"NFPA{space}13 (2025)"
+    assert clean_wording(w) == w
+
+
+def test_approved_words_hold_no_empty_source_and_trace_nothing_to_one(folder, tmp_path):
+    c = Conversation("remove all headers and footers", sorted(folder.glob("*.docx")), client=FakeClient(),
+                     answers=["sections 1-3 only", "", "   "])
+    rec = json.loads(c.save(tmp_path / "conversation.json").read_text(encoding="utf-8"))
+    assert rec["approved_words"] == c.sources == ["remove all headers and footers", "sections 1-3 only"]
+    placing = {"request": "r", "summary": "s", "mode": "content", "ops": [{"op": "replace_text",
+               "select": {"scope": ["document"]}, "params": {"find": "FM Global", "replace": "{}", "tracked": True,
+                                                            "author": "x"}}]}
+    assert untraceable(placing, c.sources) == ["{}"]            # an empty source once traced the words "{}"
+
+
+# ---- a malformed submission, questions and choices in the wrong shape, the user's request ----------------------------
+
+PERMIT_STAMP = "ISSUED FOR PERMIT 2026-11-02"
+MALFORMED = [
+    ({"review": [{"sample_files": 2}]}, "'review' must be an object"),
+    ({"review": ["sample_files"]}, "'review' must be an object"),
+    ({"review": "source"}, "'review' must be an object"),
+    ({"applies_to": [{"pattern_ids": ["p1"]}]}, "'applies_to' must be an object"),
+    ({"applies_to": "all"}, "'applies_to' must be an object"),
+    ({"assertions": True}, "'assertions' must be a list"),
+    ({"assertions": {"kind": "effective_font", "value": "Arial"}}, "'assertions' must be a list"),
+    ({"assumptions": "the cover is section 0"}, "'assumptions' must be a list of strings"),
+    ({"assumptions": 3}, "'assumptions' must be a list of strings"),
+    ({"assumptions": ["ok", 3]}, "'assumptions' must be a list of strings"),
+    ({"request": 7}, "'request' must be text"),
+    ({"summary": None}, "'summary' must be text"),
+    ({"proposal": ["x"]}, "'proposal' must be text"),
+    ({"applies_to": {"pattern_ids": "b20e6c1da8"}}, "pattern_ids must be a list"),
+    ({"applies_to": {"pattern_ids": [["b20e6c1da8"]]}}, "pattern_ids must be a list"),
+    ({"applies_to": {"or": "any"}}, "applies_to.or can only be"),
+    ({"review": {"sample_files": "two"}}, "sample_files must be a whole number"),
+    ({"review": {"sample_files": 0}}, "sample_files must be a whole number"),
+    ({"review": {"sample_files": -1}}, "sample_files must be a whole number"),
+    ({"review": {"sample_files": True}}, "sample_files must be a whole number"),
+    ({"mode": ["formatting"]}, "mode must be one of"),
+]
+
+
+INVISIBLE = [0x3164, 0x115F, 0x1160, 0xFFA0, 0x2800, 0xFE0F, 0xFE00, 0x034F, 0x17B4, 0x17B5, 0x180B, 0x180F, 0x061C,
+             0x2028, 0x2029, 0xE0100, 0xE01EF, 0xE0041, 0x1BCA0, 0x1D173, 0x00AD, 0x200B, 0x200D, 0x202E, 0x2060,
+             0x2066, 0xFEFF, 0xE000, 0x0378, 0x0007, 0x0085]
+CLAUDES = "Remove the headers and footers and replace NFPA 13 (2025) with NFPA 13 (2028) throughout"
+
+
+@pytest.mark.parametrize("change, message", MALFORMED[:6])
+def test_check_submission_answers_a_malformed_spec_with_errors(folder, change, message):
+    spec = {**copy.deepcopy(REMOVE), **change}
+    errs = check_submission(spec, _Batch(sorted(folder.glob("*.docx")), None), [spec["request"]])
+    assert errs and errs[0].startswith("[spec]") and message in errs[0]
+
+
+def test_a_malformed_spec_goes_back_to_claude_as_rejected_and_the_conversation_pairs(folder):
+    bad = {**copy.deepcopy(REMOVE), "review": [{"sample_files": 2}]}
+    fake = FakeClient(submit(bad, "s1"), submit(REMOVE, "s2"), ask("a3", questions=["Anything else?"]))
+    c = conv(folder, fake)
+    t = c.start()
+    assert t.status == "ok" and any("'review' must be an object" in e for e in t.errors)
+    rejected = fake.requests[1]["messages"][-1]["content"][0]
+    assert rejected["tool_use_id"] == "s1" and rejected["is_error"]
+    assert rejected["content"].startswith("REJECTED") and "'review' must be an object" in rejected["content"]
+    assert c.reply("also keep the logo").status == "questions"             # the next reply still pairs
+    assert_well_formed(fake)
+
+
+def test_a_check_that_raises_is_answered_as_rejected(folder, monkeypatch):
+    def boom(spec, batch, sources, patterns=None):
+        raise TypeError("unhashable type: 'dict'")
+    monkeypatch.setattr(compiler_module, "compose_submission", boom)
+    fake = FakeClient(submit(REMOVE, "s1"), ask("a2", questions=["Which sections?"]),
+                      ask("a3", questions=["And the cover?"]))
+    c = conv(folder, fake)
+    t = c.start()
+    assert t.status == "questions" and t.questions == ["Which sections?"]
+    rejected = fake.requests[1]["messages"][-1]["content"][0]
+    assert rejected["tool_use_id"] == "s1" and rejected["is_error"]
+    assert "the spec could not be checked (TypeError: unhashable type: 'dict')" in rejected["content"]
+    assert any("could not be checked" in e for e in t.errors)
+    assert c.reply("all of them").status == "questions"                    # no ProtocolError: s1 was answered
+    sent = fake.requests[2]["messages"][-1]["content"]
+    assert sent[0]["tool_use_id"] == "a2" and "all of them" in sent[0]["content"]
+    assert_well_formed(fake)
+
+
+def test_ask_user_questions_as_one_string_are_one_question(folder):
+    fake = FakeClient(ask(questions="Which sections?"))
+    t = conv(folder, fake).start()
+    assert t.questions == ["Which sections?"]
+    assert any("questions came as one text" in e for e in t.errors)
+
+
+def test_a_spec_s_questions_as_one_string_are_one_question(folder):
+    spec = {"request": "r", "summary": "s", "mode": "formatting", "ops": [], "questions": "Which sections?"}
+    fake = FakeClient(submit(spec))
+    t = conv(folder, fake).start()
+    assert t.status == "questions" and t.questions == ["Which sections?"]
+
+
+def test_non_list_questions_and_choices_are_dropped_and_said_never_raised(folder):
+    fake = FakeClient(ask(questions=3, choices="Use the permit stamp", message="Which stamp?"))
+    c = conv(folder, fake)
+    t = c.start()
+    assert t.status == "questions" and t.questions == [] and t.choices == [] and t.message == "Which stamp?"
+    assert any("questions were dropped" in e for e in t.errors)
+    assert any("choices were dropped" in e for e in t.errors)
+    fake2 = FakeClient(ask(questions=["Which?", 5], choices=[{"label": "A", "kind": "clarify"}, "B"]))
+    t2 = conv(folder, fake2).start()
+    assert t2.questions == ["Which?"] and [ch.label for ch in t2.choices] == ["A"]
+    assert any("were not text" in e for e in t2.errors) and any("not an object" in e for e in t2.errors)
+    spec = {"request": "r", "summary": "s", "mode": "formatting", "ops": [], "questions": 3}
+    t3 = conv(folder, FakeClient(submit(spec))).start()
+    assert t3.status == "questions" and t3.questions == ["(the model asked an empty question)"]
+    assert any("questions were dropped" in e for e in t3.errors)
+
+
+def test_the_choices_of_an_answered_turn_cannot_be_picked_after_the_next_turn_failed(folder):
+    fake = FakeClient(ask(message="Which stamp?", choices=[{"label": "The permit stamp", "kind": "clarify",
+                                                             "wording": PERMIT_STAMP}]),
+                      raise_on_enter(RuntimeError("a defect in the next turn")))
+    c = conv(folder, fake)
+    old = c.start().choices[0]
+    with pytest.raises(RuntimeError, match="a defect"):
+        c.reply("the other one")
+    assert c.turn is None
+    with pytest.raises(ValueError, match="not offered any more"):
+        c.choice(old.id)
+    with pytest.raises(ValueError, match="not offered any more"):
+        c.reply(choice_id=old.id)
+    assert PERMIT_STAMP not in c.sources
+
+
+@pytest.mark.parametrize("cp", INVISIBLE, ids=[f"U+{cp:04X}" for cp in INVISIBLE])
+def test_clean_wording_refuses_a_character_the_user_cannot_see(cp):
+    with pytest.raises(ValueError, match="invisible or control"):
+        clean_wording("ISSUED" + chr(cp) + " FOR PERMIT")
+
+
+def test_clean_wording_refuses_every_default_ignorable_code_point_and_keeps_visible_text():
+    for a, b in INVISIBLE_RANGES:
+        for cp in range(a, b + 1):
+            with pytest.raises(ValueError):
+                clean_wording("A" + chr(cp) + "B")
+    for ok in (PERMIT_STAMP, "ISSUED\tFOR PERMIT", "Révision 2", "été", "NFPA 13 (2025)", "ISSUED FOR",
+               "08 71 00 – DOOR HARDWARE", "§ 3.2 ½\""):
+        assert clean_wording(ok) == ok
+
+
+def test_a_choice_with_a_hidden_character_is_dropped_and_never_approved(folder):
+    hidden = "ISSUEDㅤ FOR PERMIT"
+    fake = FakeClient(ask(message="Which stamp?", choices=[{"label": "Use it", "kind": "alternative",
+                                                            "wording": hidden},
+                                                           {"label": "Other", "kind": "clarify"}]))
+    c = conv(folder, fake)
+    t = c.start()
+    assert [ch.label for ch in t.choices] == ["Other"]
+    assert any("Use it" in e and "0x3164" in e for e in t.errors)
+    assert all(hidden not in s for s in c.sources)
+
+
+def test_an_accepted_spec_carries_the_user_s_request_not_claude_s(folder):
+    fake = FakeClient(submit(dict(REMOVE, request=CLAUDES), "s1"))
+    c = conv(folder, fake)
+    t = c.start()
+    assert t.status == "ok" and t.spec["request"] == c.request == "remove all headers and footers"
+    assert {k: v for k, v in t.spec.items() if k != "request"} == {k: v for k, v in REMOVE.items() if k != "request"}
+    sent = [b for b in c.messages[1]["content"] if getattr(b, "type", None) == "tool_use"
+            or (isinstance(b, dict) and b.get("type") == "tool_use")]
+    claude_input = sent[0].input if not isinstance(sent[0], dict) else sent[0]["input"]
+    assert claude_input["spec"]["request"] == CLAUDES                     # the history keeps the call as made
+    # the advisor's sources (placed_words + the request + answers) no longer hold Claude's words
+    respec = {"request": "r", "summary": "s", "mode": "content", "ops": [{
+        "op": "replace_text", "select": {"scope": ["document"]},
+        "params": {"find": "NFPA 13 (2025)", "replace": "NFPA 13 (2028)", "tracked": True, "author": "x"}}]}
+    assert untraceable(respec, [*placed_words(t.spec), str(t.spec.get("request", ""))]) == ["NFPA 13 (2028)"]
+    assert c.compile_result(t).spec["request"] == c.request
+    assert json.loads(json.dumps(c.to_dict()))["turn"]["spec"]["request"] == c.request
+
+
+def test_compile_mode_and_unsupported_specs_carry_the_user_s_request(folder):
+    res = compile_request("strip every header and footer", sorted(folder.glob("*.docx")),
+                          client=FakeClient(submit(dict(REMOVE, request=CLAUDES))))
+    assert res.status == "ok" and res.spec["request"] == "strip every header and footer"
+    unsupported = {"request": CLAUDES, "summary": "s", "unsupported": "no op", "proposal": "p"}
+    c = conv(folder, FakeClient(submit(unsupported, custom_transform="possible")))
+    t = c.start()
+    assert t.status == "unsupported" and t.spec["request"] == c.request and c.unsupported["request"] == c.request
+    assert CLAUDES not in c.brief()
+
+
+def test_conversation_json_holds_the_approved_words_and_the_answers(folder, tmp_path):
+    fake = FakeClient(ask(message="Which stamp?", choices=[{"label": "Permit", "kind": "clarify",
+                                                            "wording": PERMIT_STAMP}]),
+                      ask("a2", questions=["Anything else?"]))
+    c = conv(folder, fake, answers=["sections 1-3 only"])
+    t = c.start()
+    c.reply("and the cover too", choice_id=t.choices[0].id)
+    rec = json.loads(c.save(tmp_path / "conversation.json").read_text(encoding="utf-8"))
+    assert rec["approved_words"] == c.sources
+    assert rec["approved_words"] == ["remove all headers and footers", "sections 1-3 only", PERMIT_STAMP,
+                                     "and the cover too"]
+    assert rec["answers"] == ["sections 1-3 only"]

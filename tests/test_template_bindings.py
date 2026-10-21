@@ -1,4 +1,4 @@
-"""Live-run regressions: placeholder decoration and source-bound, verbatim per-file fills."""
+"""Template slots: placeholder decoration and source-bound, verbatim per-file fills."""
 import copy
 import hashlib
 import io

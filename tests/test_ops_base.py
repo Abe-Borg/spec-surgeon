@@ -1,9 +1,20 @@
 """ops/base.py — fragment merge and conflict detection (no documents needed)."""
 from __future__ import annotations
 
+from lxml import etree
 import pytest
 
-from spec_surgeon.ops import JobException, PlanFragment, BlockDiff, merge_fragments
+from make_fixtures import build, build_rich, build_styles, patch_docx
+from spec_surgeon.editspec import apply_spec, plan_spec
+from spec_surgeon.ooxml import block_full_text, paragraphs
+from spec_surgeon.ops import (BlockDiff, JobException, PlanFragment, get_op, merge_fragments,
+                              selectors as selectors_module)
+from spec_surgeon.ops.selectors import StyleSheet, paragraph_selected
+from spec_surgeon.package import DocxPackage, W
+from spec_surgeon.verify import run_suite
+from spec_surgeon.verify.props import PartView, Styles, para_matches
+from spec_surgeon.verify.reader import STYLES_REL, VPackage
+from test_adaptive_messy import mutate_xml
 
 
 def _frag(op, touches=(), mode="formatting", **kw):
@@ -85,21 +96,13 @@ def test_revision_ids_are_disjoint_and_geometry_none_dominates():
     assert plan.geometry_reference == "none" and "reflow" in plan.geometry_reason
 
 
-# ---- the v0.1.0 jobs are thin aliases over ops ---------------------------------------------------------
+# ---- an op's own parameter checks ----------------------------------------------------------------------------------
 
-def test_jobs_are_aliases_of_ops(tmp_path):
+def test_replace_text_refuses_tracked_false_beside_mode_tracked():
     from make_fixtures import build
-    from spec_surgeon.jobs import get_job
     from spec_surgeon.ops import get_op
     from spec_surgeon.package import DocxPackage
     pkg = DocxPackage(build("21 05 00", "COMMON WORK RESULTS FOR FIRE SUPPRESSION"))
-    params = {"find": "FM Global", "replace": "GRC", "scope": ["document", "headers"], "author": "Abraham Borg"}
-    via_job = get_job("tracked-replace").plan(pkg, params)
-    via_op = get_op("replace_text").plan(pkg, {"scope": ["document", "headers"]},
-                                         {"find": "FM Global", "replace": "GRC", "tracked": True, "author": "Abraham Borg"})
-    assert [d.to_dict() for d in via_job.diffs] == [d.to_dict() for d in via_op.diffs]
-    assert via_job.rev_delta == via_op.rev_delta and via_job.rev_ids_needed == 9
-    assert via_job.job == "tracked-replace" and via_op.job == "replace_text"
     with pytest.raises(JobException):
         get_op("replace_text").plan(pkg, {}, {"find": "FM Global", "replace": "GRC", "tracked": False, "mode": "tracked"})
 
@@ -244,3 +247,178 @@ def test_incremental_uses_commute_in_one_direction_and_collide_in_opposite_ones(
         merge_fragments([_frag("x", [(*st, "uses")]), add1])
     from spec_surgeon.ops.base import incremental
     assert incremental("uses+") == ("uses", "+") and incremental("verify:uses-") is None and incremental("rPr") is None
+
+
+@pytest.fixture(scope="module")
+def src() -> bytes:
+    return build_styles()
+
+
+@pytest.mark.parametrize("op, params", [("set_properties", {"run": {"b": True}}), ("apply_style", {"style": "Heading2"}),
+                                        ("map_styles", {"map": [{"from": "ArchLines", "to": "ArchPara"}]}),
+                                        ("set_borders_shading", {"shading": {"fill": "D9D9D9"}})])
+def test_an_empty_scope_is_refused(src, op, params):
+    """Review A5/C7: the transform took [] for the document, the verifiers for no part — a clean plan, a V10 FAIL."""
+    with pytest.raises(JobException) as e:
+        get_op(op).plan(DocxPackage(src), {"scope": []}, params)
+    assert e.value.code == "bad-params" and "empty" in e.value.reason
+
+
+# ---- selectors on both sides; merging many touches -------------------------------------------------------------------
+
+MAIN = "word/document.xml"
+
+
+def _spec(*ops, mode="formatting"):
+    return {"request": "r", "summary": "r", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": list(ops)}
+
+
+def _empty_pstyle_in_section(data, section, val=""):
+    from spec_surgeon.ops.set_tab_stops import paragraph_sections
+
+    def edit(root):
+        for p, s in zip(list(root.iter(W + "p")), paragraph_sections(root)):
+            if s != section:
+                continue
+            ppr = p.find(W + "pPr")
+            if ppr is None:
+                ppr = etree.Element(W + "pPr")
+                p.insert(0, ppr)
+            if ppr.find(W + "pStyle") is None:
+                ps = etree.Element(W + "pStyle")
+                if val is not None:
+                    ps.set(W + "val", val)
+                ppr.insert(0, ps)
+    return patch_docx(data, {MAIN: edit})
+
+
+@pytest.mark.parametrize("val", ["", None])
+def test_an_empty_pstyle_names_no_style_on_both_sides(val):
+    """It names no style (batch 4's definition): the transform read it so, the verifier as the default style — a section
+    chosen by style_in differed and a valid plan failed V10."""
+    from make_fixtures import build_schedule
+    from spec_surgeon.ops.selectors import resolve_sections
+    from spec_surgeon.verify import props as vprops
+    from spec_surgeon.verify.reader import STYLES_REL, VPackage
+    data = _empty_pstyle_in_section(build_schedule(), 2, val)
+    for sel in ({"containing": {"style_in": ["Normal"]}}, {"containing": {"has_bold": True}},
+                {"containing": {"is_all_caps": True}}):
+        v = VPackage(data)
+        styles = vprops.Styles(v.xml(v.related(STYLES_REL)))
+        assert resolve_sections(DocxPackage(data), sel, content=True) == vprops._v_resolve_sections(v, sel, styles), sel
+    op = {"op": "set_page_setup", "select": {"sections": {"containing": {"style_in": ["Normal"]}}},
+          "params": {"orientation": "landscape"}}
+    plan, frags = plan_spec(DocxPackage(data), _spec(op))
+    out = apply_spec(DocxPackage(data), frags).output_bytes()
+    assert run_suite(data, out, plan.to_dict(), "a.docx", "b.docx").passed
+
+
+@pytest.mark.parametrize("pred", [{"style_in": "Normal"}, {"style_in": [1]}, {"index_range": ["a", 3]},
+                                  {"index_range": [0, True]}])
+def test_a_malformed_paragraph_selector_is_refused(pred):
+    """A bare string was read as a set of characters on one side and a substring test on the other; non-numbers
+    crashed."""
+    op = {"op": "set_page_setup", "select": {"sections": {"containing": pred}}, "params": {"orientation": "landscape"}}
+    with pytest.raises(JobException) as e:
+        plan_spec(DocxPackage(build_rich()), _spec(op))
+    assert e.value.code == "bad-params"
+
+
+def test_repeated_touches_merge_in_linear_time():
+    """One conversion over 2,000 paragraphs declared 16,000 touches, 6,000 distinct; the merge took 16 s."""
+    import time
+    from spec_surgeon.ops.base import PlanFragment, check_conflicts
+    a = PlanFragment(job="a", mode="formatting", params={}, intended_parts=[], op="a", op_index=0)
+    b = PlanFragment(job="b", mode="formatting", params={}, intended_parts=[], op="b", op_index=1)
+    a.touches = [("word/styles.xml", "style:Normal", "verify:pPr")] * 3000 + [("word/document.xml", "1", "rPr")]
+    b.touches = [("word/styles.xml", "style:Normal", "verify:pPr")] * 3000 + [("word/document.xml", "2", "rPr")]
+    t = time.perf_counter()
+    check_conflicts([a, b])
+    assert time.perf_counter() - t < 2.0
+    b.touches.append(("word/styles.xml", "style:Normal", "pPr"))         # still a conflict when there is one
+    with pytest.raises(JobException) as e:
+        check_conflicts([a, b])
+    assert e.value.code == "conflict"
+
+
+AUTHOR = "Abraham Borg"
+
+
+def run_op(src: bytes, op: str, select, params):
+    pkg = DocxPackage(src)
+    frag = get_op(op).plan(pkg, select, params)
+    plan = merge_fragments([frag])
+    work = pkg.copy()
+    get_op(op).apply(work, frag)
+    out = work.output_bytes()
+    return plan, out, run_suite(src, out, plan.to_dict(), "src.docx", "out.docx")
+
+
+def _edge_case_fixture() -> bytes:
+    def styles_mut(root):
+        for sid, kind, el in (("BoldHead", "paragraph", "b"), ("CapsHead", "paragraph", "caps"), ("BoldChar", "character", "b")):
+            st = etree.SubElement(root, W + "style"); st.set(W + "type", kind); st.set(W + "styleId", sid)
+            etree.SubElement(st, W + "name").set(W + "val", sid)
+            etree.SubElement(etree.SubElement(st, W + "rPr"), W + el)
+
+    def body_mut(root):
+        anchor = root.find(W + "body").findall(W + "p")[5]
+
+        def para(text, pstyle=None, rstyle=None, direct=(), deleted_bold_run=False):
+            p = etree.Element(W + "p")
+            if pstyle:
+                etree.SubElement(etree.SubElement(p, W + "pPr"), W + "pStyle").set(W + "val", pstyle)
+            r = etree.SubElement(p, W + "r")
+            if rstyle or direct:
+                rpr = etree.SubElement(r, W + "rPr")
+                if rstyle:
+                    etree.SubElement(rpr, W + "rStyle").set(W + "val", rstyle)
+                for tag, val in direct:
+                    e = etree.SubElement(rpr, W + tag)
+                    if val is not None:
+                        e.set(W + "val", val)
+            etree.SubElement(r, W + "t").text = text
+            if deleted_bold_run:
+                d = etree.SubElement(p, W + "del"); d.set(W + "id", "777"); d.set(W + "author", "Jack"); d.set(W + "date", "2026-01-01T00:00:00Z")
+                rd = etree.SubElement(d, W + "r"); etree.SubElement(etree.SubElement(rd, W + "rPr"), W + "b")
+                etree.SubElement(rd, W + "delText").text = "DELETED BOLD"
+            return p
+        new = [para("style bold heading", pstyle="BoldHead"), para("style caps heading", pstyle="CapsHead"),
+               para("char style bold", rstyle="BoldChar"), para("style bold but direct off", pstyle="BoldHead", direct=(("b", "0"),)),
+               para("plain with deleted bold run", deleted_bold_run=True), para("MIXED Case TITLE 123"), para("1.01"),
+               para("ALL CAPS NO STYLE"), para("bold val 1 explicit", direct=(("b", "1"),))]
+        for p in reversed(new):
+            anchor.addnext(p)
+    return mutate_xml(mutate_xml(build("21 05 00", "X"), "word/styles.xml", styles_mut), "word/document.xml", body_mut)
+
+
+def test_new_selectors_agree_between_transform_and_verifier_and_a_shared_bug_is_caught():
+    src = _edge_case_fixture()
+    pkg = DocxPackage(src); root = pkg.xml("word/document.xml"); pars = paragraphs(root); sheet = StyleSheet(pkg)
+    vp = VPackage(src); view = PartView(vp.xml("word/document.xml")); vstyles = Styles(vp.xml(vp.related(STYLES_REL)))
+    preds = [{"has_bold": True}, {"is_all_caps": True}, {"after_heading_regex": r"^GENERAL$"},
+             {"between_paragraphs": {"start_regex": r"^GENERAL$", "end_regex": r"^2\.01"}},
+             {"between_paragraphs": {"start_regex": r"^GENERAL$", "end_regex": r"^2\.01", "include_bounds": True}},
+             {"between_paragraphs": {"start_regex": r"^GENERAL$"}}, {"text_regex": r"^A\.\tThe Owner"},
+             {"has_bold": True, "is_all_caps": True}]
+    texts = [block_full_text(p) for p in pars]
+    for pred in preds:
+        t_sel = [i for i, p in enumerate(pars) if paragraph_selected(pred, p, i, texts[i], sheet, all_pars=pars)]
+        v_sel = [i for i, p in enumerate(view.pars) if para_matches(pred, p, i, view, vstyles)]
+        assert t_sel == v_sel, (pred, t_sel, v_sel)
+    bold = [texts[i] for i, p in enumerate(pars) if paragraph_selected({"has_bold": True}, p, i, texts[i], sheet, all_pars=pars)]
+    assert bold == ["style bold heading", "char style bold", "bold val 1 explicit"]
+    caps = [texts[i] for i, p in enumerate(pars) if paragraph_selected({"is_all_caps": True}, p, i, texts[i], sheet, all_pars=pars)]
+    assert "style caps heading" in caps and "MIXED Case TITLE 123" not in caps and "1.01" not in caps
+
+    good = selectors_module._paragraph_has_bold
+    selectors_module._paragraph_has_bold = lambda p, sheet: any(r.find(W + "rPr/" + W + "b") is not None
+                                                                for r in selectors_module._live_runs(p))
+    try:
+        _, _, bad_rec = run_op(src, "set_font", {"paragraphs": {"has_bold": True}}, {"font": "Courier New", "author": AUTHOR})
+    finally:
+        selectors_module._paragraph_has_bold = good
+    assert bad_rec.get("V10").status == "FAIL"
+    _, _, rec = run_op(src, "set_font", {"paragraphs": {"has_bold": True}}, {"font": "Courier New", "author": AUTHOR})
+    assert rec.passed, rec.to_markdown()

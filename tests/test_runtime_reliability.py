@@ -1,6 +1,7 @@
 """Archive fidelity, bounded intake, and explicit desktop-safe process creation."""
 from __future__ import annotations
 
+import contextlib
 import io
 import importlib.util
 import json
@@ -10,17 +11,22 @@ import zipfile
 from copy import copy
 from pathlib import Path
 from types import SimpleNamespace
+import types
 
 import pytest
 
 from make_fixtures import build
-from spec_surgeon import batch
+from spec_surgeon import batch, render as render_mod
+from spec_surgeon.batch import run_batch
 from spec_surgeon.editspec import plan_spec
 from spec_surgeon.package import DocxPackage
 from spec_surgeon.package_limits import ArchiveLimitError, ArchiveLimits, check_archive
-from spec_surgeon.render import word_com, word_worker
+from spec_surgeon.render import libreoffice, word_com, word_worker
 from spec_surgeon.verify.reader import VPackage
 from spec_surgeon.verify import run_suite
+
+CONTINUOUS = {"request": "Number the pages continuously", "summary": "Continuous page numbers", "mode": "formatting",
+              "ops": [{"op": "fix_page_numbering", "params": {"option": "continuous"}}]}
 
 
 def _archive(entries, comment=b""):
@@ -127,8 +133,8 @@ def test_archive_limit_is_a_per_file_refusal_without_source_mutation(tmp_path, m
     data = build("21 13 13", "WET-PIPE")
     source.write_bytes(data)
     monkeypatch.setenv("SPEC_SURGEON_ARCHIVE_MAX_MEMBERS", "1")
-    result = batch.run_batch([str(source)], "page-numbering", {"option": "continuous"},
-                             tmp_path / "results", workers=1, do_render=False)
+    result = batch.run_batch([str(source)], "edit-spec", {}, tmp_path / "results", workers=1, do_render=False,
+                             spec=CONTINUOUS)
     assert result.files[0].exception["code"] == "archive-limit"
     assert source.read_bytes() == data and result.files[0].delivered_to is None
 
@@ -211,8 +217,8 @@ def test_batch_uses_safe_workers_by_default_and_in_frozen_build(tmp_path, monkey
         source.write_bytes(build("21 13 13", f"WET-PIPE {index}"))
         sources.append(str(source))
     options = {} if worker_mode == "thread" else {"worker_mode": worker_mode}
-    result = batch.run_batch(sources, "page-numbering", {"option": "continuous"}, tmp_path / "run",
-                             workers=2, do_render=False, **options)
+    result = batch.run_batch(sources, "edit-spec", {}, tmp_path / "run", workers=2, do_render=False,
+                             spec=CONTINUOUS, **options)
     assert len(result.files) == 2 and all(file.output and file.output.exists() for file in result.files)
 
 
@@ -382,3 +388,71 @@ def test_word_process_handle_creation_time_prevents_pid_reuse(monkeypatch):
         GetProcessTimes=lambda handle: {"CreationTime": SimpleNamespace(isoformat=lambda: "different process")}))
     assert word_worker._open_private_handle({"pid": 42, "created": "original process"}) is None
     assert closed == [True]
+
+
+# ---- Word detection and renderer failures ----------------------------------------------------------------------------
+
+def _spec(mode, ops):
+    return {"request": "x", "summary": "x", "assumptions": [], "questions": [], "applies_to": {"or": "all"},
+            "mode": mode, "ops": ops}
+
+
+REPLACE = _spec("content", [{"op": "replace_text", "params": {"find": "FM Global", "replace": "FM Approved"}}])
+
+
+def test_word_is_picked_only_when_it_is_installed(monkeypatch):
+    monkeypatch.setattr(sys, "platform", "win32")
+    for name in ("win32com", "win32com.client", "pythoncom"):
+        monkeypatch.setitem(sys.modules, name, types.ModuleType(name))
+
+    class NoWord:                                   # pywin32 present (the installer bundles it), Word absent
+        HKEY_CLASSES_ROOT = 0
+
+        @staticmethod
+        def OpenKey(root, key):
+            raise OSError("key not found")
+    monkeypatch.setitem(sys.modules, "winreg", NoWord)
+    monkeypatch.setattr(libreoffice, "find_soffice", lambda: None)
+    assert word_com.available() is False
+    assert render_mod.pick("auto") is None and render_mod.pick("word") is None
+
+    class Word(NoWord):
+        @staticmethod
+        def OpenKey(root, key):
+            assert key == word_com.WORD_PROGID_KEY
+            return contextlib.nullcontext()
+    monkeypatch.setitem(sys.modules, "winreg", Word)
+    assert word_com.available() is True and render_mod.pick("auto") == "word"
+
+
+def test_a_renderer_failure_is_this_files_failed_render_never_a_crashed_batch(tmp_path, monkeypatch):
+    msgs = []
+    assert render_mod.render_pdfs([tmp_path / "x.docx"], tmp_path / "pdf", "word", log=msgs.append) == {}
+    assert msgs and "rendering with word failed" in msgs[0]
+
+    def convert(soffice, files, out_dir, profile_dir, timeout):      # soffice dies on one file of a chunk
+        if any(f.name == "bad.docx" for f in files):
+            raise RuntimeError("soffice crashed")
+        for f in files:
+            (out_dir / (f.stem + ".pdf")).write_bytes(b"%PDF")
+    monkeypatch.setattr(libreoffice, "find_soffice", lambda: "soffice")
+    monkeypatch.setattr(libreoffice, "_convert_batch", convert)
+    good, bad = tmp_path / "good.docx", tmp_path / "bad.docx"
+    good.write_bytes(b"x")
+    bad.write_bytes(b"x")
+    msgs = []
+    out = render_mod.render_pdfs([good, bad], tmp_path / "pdf2", "libreoffice", workers=1, log=msgs.append)
+    assert set(out) == {good} and any("bad.docx" in m for m in msgs)       # one bad file costs its own PDF only
+
+    f = tmp_path / "A.docx"
+    f.write_bytes(build("21 00 20", "OSCAR"))
+
+    def always_fails(*a, **k):
+        raise RuntimeError("soffice crashed")
+    monkeypatch.setattr(libreoffice, "_convert_batch", always_fails)
+    b = run_batch([str(f)], "edit-spec", {}, tmp_path / "out", workers=1, renderer="libreoffice", do_render=True,
+                  spec=REPLACE)
+    fr = b.files[0]
+    assert b.renderer == "libreoffice" and fr.status == "FAIL"
+    assert fr.record.get("V6").status == "FAIL" and "render failed" in fr.record.get("V6").summary
+    assert (tmp_path / "out" / "failed" / "A.docx").is_file() and (tmp_path / "out" / "BATCH_REPORT.md").is_file()

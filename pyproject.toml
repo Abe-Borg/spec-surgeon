@@ -30,9 +30,6 @@ word = ["pywin32>=306; sys_platform == 'win32'"]
 agent = ["anthropic>=1.13"]
 dev = ["pytest>=8", "python-docx>=1.1"]
 
-[project.scripts]
-spec-surgeon = "spec_surgeon.cli:main"
-
 [project.gui-scripts]
 spec-surgeon-gui = "spec_surgeon.gui:main"
 

@@ -1,7 +1,0 @@
-{
-  "find": "ISSUED FOR CONSTRUCTION  2026-01-01",
-  "replace": "ISSUED FOR CONSTRUCTION – REVISION 1  2026-02-15",
-  "scope": ["headers", "footers"],
-  "mode": "untracked",
-  "allow_missing": false
-}
