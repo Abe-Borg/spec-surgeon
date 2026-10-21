@@ -320,8 +320,22 @@ tracked.
 margins.header / margins.footer), size, orientation, different_first_page true/false (a first page with its own \
 header/footer — the cover). Sections by index, or by what they contain: {"containing": {"text_regex": \
 "^SCHEDULE"}}, {"with_tables": true}, {"index_range": [a, b]} — "landscape pages for the schedules" is orientation \
-landscape on the sections containing them (only sections that exist: the engine never adds a section break — say so \
-when the schedule shares a section with other text); margins are not rotated unless given.
+landscape on the sections containing them; margins are not rotated unless given. Columns ({count, space, separator}), \
+line_numbering ({count_by, start, restart, distance} or "none"), vertical_alignment and section_start (how the section \
+begins) are set_page_setup too.
+- Section breaks: "start X on a new page / a section break before X" is insert_section_break with a targeted \
+paragraph selector (type next_page unless the user wants continuous, even_page or odd_page); a schedule that shares a \
+section with other text gets its own section this way, then a later set_page_setup chooses that section BY CONTENT \
+({"containing": {"text_regex": "^SCHEDULE"}}), never by index (the index does not exist before the break; the app runs \
+the two as ordered steps). "Remove the break after X / join X to the next section" is remove_section_break choosing \
+the section that ENDS with the break (never the last section); "one section for the whole document" is sections \
+"all". Section breaks are never tracked.
+- Moving content is move_paragraphs: select.paragraphs picks ONE unbroken stretch (tables inside it move too), \
+params.to names exactly one paragraph in the same place (body, cell, header), position before/after. A whole article \
+(its heading up to the next heading) is between_paragraphs {start_regex, end_regex: the next heading, \
+include_bounds: "start"}; bounds read the text without tabs (^1\\.3, not ^1\\.3\\t). To land after an article, name the next heading with position before. Tracked (a deletion where it was \
+and an insertion where it goes) by default; a stretch with tables, fields, links, comments or pictures moves only \
+untracked (tracked false) — say so.
 - Tables and pictures beside the documents are listed as INPUT FILES (read_input_file shows one): put the exact path \
 in fill_variables.table.file, replace_table.pairs_table.file or swap_image.image / match.image — what a table holds is \
 the user's. Words you type into a spec yourself (replace_table pairs, fill_variables values, set_issue_stamp text, the \

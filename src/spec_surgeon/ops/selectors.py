@@ -14,7 +14,7 @@ Grammar:
                   has_bold bool        (has a non-empty live run with effective bold on)
                   is_all_caps bool     (live display text is all uppercase letters or has w:caps on)
                   after_heading_regex "…" (comes after the first paragraph matching the regex)
-                  between_paragraphs {"start_regex": "…", "end_regex": "…", "include_bounds": bool}
+                  between_paragraphs {"start_regex": "…", "end_regex": "…", "include_bounds": bool | "start" | "end"}
 * ``runs``        "all" or a dict: has_direct_font bool | font_in [names] | not_in_revisions bool |
                   color_in [colours] (the run's EFFECTIVE colour — the nearest level setting w:color, set_properties'
                   rule — has one of the listed theme names or values: 6 hex digits or auto, case-insensitive)
@@ -117,6 +117,10 @@ def check_paragraph_selector(pred) -> None:
         extra = set(bp) - {"start_regex", "end_regex", "include_bounds"}
         if extra:
             raise JobException(f"unknown between_paragraphs key(s) {sorted(extra)}", "bad-params")
+        bounds = bp.get("include_bounds", False)
+        if not (isinstance(bounds, bool) or bounds in BOUNDS):
+            raise JobException("between_paragraphs.include_bounds must be true, false, 'start' (the start paragraph "
+                               "included, the end one not) or 'end'", "bad-params")
         try:
             _selector_regex(bp["start_regex"], pred)
             if bp.get("end_regex") is not None:
@@ -494,13 +498,11 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
             ends = [i for i in range(s_idx + 1, len(texts)) if erx.search(texts[i])]
             if ends:
                 e_idx = ends[0]
-        inc = bool(bp.get("include_bounds", False))
-        if inc:
-            if not (s_idx <= index <= (e_idx if e_idx < len(texts) else len(texts) - 1)):
-                return False
-        else:
-            if not (s_idx < index < e_idx):
-                return False
+        inc = bp.get("include_bounds", False)
+        after_start = s_idx <= index if inc in (True, "start") else s_idx < index
+        before_end = index <= min(e_idx, len(texts) - 1) if inc in (True, "end") else index < e_idx
+        if not (after_start and before_end):
+            return False
     return True
 
 
@@ -552,6 +554,7 @@ def runs_by_paragraph(root: etree._Element, pars: List[etree._Element]) -> List[
 SECTION_KEYS = ("containing", "with_tables", "index_range")
 # paragraph predicates whose answer depends on the paragraphs' words (text_regex, the neighbours' text, emptiness, which
 # runs with text are bold or all caps) — a section chosen by them reads the main part's text (built-in batch 5)
+BOUNDS = ("start", "end")       # between_paragraphs.include_bounds: true (both), false (neither), or the one named
 TEXT_READING_KEYS = ("text_regex", "is_empty", "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs")
 
 

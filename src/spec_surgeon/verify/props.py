@@ -459,12 +459,11 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
             ends = [i for i in range(s_idx + 1, len(view.texts)) if erx.search(view.texts[i])]
             if ends:
                 e_idx = ends[0]
-        if bp.get("include_bounds", False):
-            if not (s_idx <= bi <= (e_idx if e_idx < len(view.texts) else len(view.texts) - 1)):
-                return False
-        else:
-            if not (s_idx < bi < e_idx):
-                return False
+        bounds = bp.get("include_bounds", False)             # True (both), False (neither), "start" or "end"
+        lo = s_idx if bounds is True or bounds == "start" else s_idx + 1
+        hi = (e_idx + 1 if e_idx < len(view.texts) else len(view.texts)) if bounds is True or bounds == "end" else e_idx
+        if not lo <= bi < hi:
+            return False
     return True
 
 

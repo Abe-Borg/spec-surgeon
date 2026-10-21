@@ -173,8 +173,10 @@ def _paragraph_words(pred: Any) -> str:
         clauses.append("after the first paragraph matching " + quote(pred["after_heading_regex"]))
     if isinstance(pred.get("between_paragraphs"), dict):
         bp = pred["between_paragraphs"]
-        clauses.append(f"between {quote(bp.get('start_regex', ''))} and {quote(bp.get('end_regex', ''))}"
-                       + (" inclusive" if bp.get("include_bounds") else ""))
+        start, end, bounds = quote(bp.get("start_regex", "")), quote(bp.get("end_regex", "")), bp.get("include_bounds")
+        clauses.append(f"from {start} up to, not including, {end}" if bounds == "start" else
+                       f"after {start} through {end}" if bounds == "end" else
+                       f"between {start} and {end}" + (" inclusive" if bounds else ""))
     if not adjectives and not clauses:
         return "every paragraph"
     return noun + (" " + " ".join(clauses) if clauses else "")

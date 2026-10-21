@@ -574,7 +574,9 @@ SELECTOR_GRAMMAR = {
                   "has_bold (bool), is_all_caps (bool), after_heading_regex (str), "
                   "case_insensitive (bool, default false), flexible_whitespace (bool, default false; literal whitespace "
                   "outside regex character classes matches one or more whitespace characters), "
-                  "between_paragraphs {start_regex, end_regex?, include_bounds?}",
+                  "between_paragraphs {start_regex, end_regex?, include_bounds?: true (both) | false (neither, the default) | "
+                  "'start' (the start paragraph included, the end one not: an article from its heading up to the next) "
+                  "| 'end'}",
     "runs": "'all' or {has_direct_font: bool, font_in: [names], not_in_revisions: bool, color_in: [colours]} — "
             "color_in: the run's effective colour (direct, else its character/paragraph style's) is one of the listed "
             "6-hex values, theme colour names (accent1, text2 …) or 'auto'",
