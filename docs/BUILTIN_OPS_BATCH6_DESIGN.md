@@ -213,7 +213,8 @@ otherwise; swap_image still reads PNG, JPEG and GIF only. Settled in the build:
 
 * every length from its decimal spelling, exact fractions, halves up; a size that rounds to 0 or exceeds the schema's
   largest drawing refuses (`image-size`, also a section without a usable page size); an unusable picture file refuses
-  with `image-format` (SVG, a quarter-turned JPEG, anything that is not PNG, JPEG, GIF or BMP);
+  with `image-format` (SVG, a quarter-turned JPEG, anything that is not PNG, JPEG, GIF or BMP); a picture at its own
+  size in a section with several text columns is flagged (it fills the whole text width);
 * the new paragraph carries only `w:pStyle` (a given style; `missing-style` / `style-mismatch`) and `w:jc`; its run
   `w:noProof` and Word's inline picture; drawing ids count up from the package's highest (a `docPr` touch, so two
   insertions in one spec are composed into steps);
