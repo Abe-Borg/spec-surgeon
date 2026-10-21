@@ -588,6 +588,9 @@ def test_a_spec_reads_only_files_the_user_attached(tmp_path):
     image = {"request": "r", "summary": "s", "mode": "content", "ops": [
         {"op": "insert_image", "select": {"paragraphs": {"text_regex": "^1\\.2 NOTES"}}, "params": {"image": str(picture)}}]}
     assert check_submission(image, batch, sources)[0].startswith("[input]")
+    garbled = copy.deepcopy(image)                                                # a path no file can have
+    garbled["ops"][0]["params"]["image"] = "logo\x00.png"
+    assert check_submission(garbled, batch, sources)[0].startswith("[input]")
 
 
 def test_a_template_is_the_attached_one_or_one_of_the_documents(tmp_path):

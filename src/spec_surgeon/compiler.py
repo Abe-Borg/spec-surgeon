@@ -1188,10 +1188,16 @@ def _attached_checks(spec: Dict[str, Any], batch: _Batch) -> List[str]:
     attached document as its template). A file nobody attached is not the user's: a table's cells and a picture are
     placed without passing the words gate, so a file the model found or wrote itself would place the model's words."""
     from .editspec import input_slots
+
+    def resolved(value) -> Optional[Path]:
+        try:
+            return Path(value).resolve()
+        except (OSError, ValueError, RuntimeError):     # a NUL in the path, a symlink loop: no file the user attached
+            return None
     inputs = {Path(p).resolve() for p in batch.inputs}
     templates = {Path(p).resolve() for p in [*([batch.template] if batch.template else []), *batch.files.values()]}
     named = [d[k] for o in spec.get("ops", []) for d, k in input_slots(o)
-             if Path(d[k]).resolve() not in (templates if d is o.get("params") and k == "template" else inputs)]
+             if resolved(d[k]) not in (templates if d is o.get("params") and k == "template" else inputs)]
     if named:
         return [f"[input] the spec names {named}, which the user did not attach: a table or picture must be one of the "
                 f"INPUT FILES (its exact path), a template the attached template or one of the documents. Use an "
