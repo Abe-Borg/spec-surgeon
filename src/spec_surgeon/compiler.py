@@ -314,6 +314,13 @@ the first cell) rather than by number. Never anchor a new table on a paragraph w
 or right after it (after), nor on the document's last paragraph. Tracked by default (Word's tracked rows); typed cells \
 are the user's exact words. A table holding comments: remove_comments first in the same request. \
 resolve_tracked_changes resolves tracked row insertions and deletions.
+- Table grid and cells: select.columns is "all" or {index: [grid columns, 0-based, a LIST — [1, 3] is columns 1 and 3], \
+header_regex: the first row's cell text}. delete_table_columns {tables, columns} (every column: use delete_tables); \
+set_table_cells {tables, rows?, columns?} sets shading (6 hex digits, or none), vertical_alignment (top | center | \
+bottom), no_wrap and width in inches (width only with every row) — "shade the header row" is rows {header: true}, \
+shading "D9D9D9"; merge_table_cells {tables, rows, columns} where rows and columns form one unbroken block (rows \
+{index_range: [0, 0]}, columns {index: [0, 1, 2]}), the cells' text kept in reading order. All three are never \
+tracked: a spec with delete_table_columns or merge_table_cells is mode untracked, set_table_cells formatting.
 - Numbering. The profiles' lists show each list's levels (format, styles, the first number shown) and which \
 paragraphs the engine does not evaluate and why; numbered_styles show what a numbered style's first paragraph would \
 show ("PART 1 -", "1.1", "A."); lists.typed_numbers how many paragraphs start with a typed number. "Convert to our \
