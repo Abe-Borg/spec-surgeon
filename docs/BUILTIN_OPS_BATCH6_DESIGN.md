@@ -223,16 +223,67 @@ Nearest relatives: `set_table_props` (the table selector), `delete_paragraphs` (
 
 ## 7. Table grid and cells (F6) — after F5 (the row selector)
 
-* **Column selector** (both sides, new): `{index: [grid column indices]` or `header_regex` (the first row's cell text)}.
-* **`delete_table_columns`**: the grid columns chosen go: `w:gridCol` removed, a cell covering only those columns
-  removed, a spanning cell's `gridSpan` and width reduced; a fixed table width shrinks by the columns' widths. Deleting
-  every column is refused (`delete_tables`). Untracked only. V10 kind `deleted_table_columns`.
-* **`set_table_cells`**: the cells chosen by table, rows and columns get `shading` (fill colour or `none`),
-  `vertical_alignment` (`top` | `center` | `bottom`), `no_wrap`, and their columns `width` (inches: the grid column
-  and every cell's `w:tcW` in it). Untracked. V10 kind `table_cells`.
-* **`merge_table_cells`**: the rectangle (rows a–b, columns c–d) becomes one cell (`gridSpan` across, `vMerge`
-  down); its content is the covered cells' paragraphs in reading order, empty cells' paragraphs dropped. A rectangle
-  cutting an existing merge is refused. Untracked. V10 kind `merged_table_cells`.
+Nearest relatives: `set_table_props` (cell elements written and checked in schema order, "already", the residual
+strips), F5's row ops (the row selector, the grid, `table_edit.removal` for what deleted cells may hold). As built:
+column selector and grid `ops/table_columns.py` ↔ `verify/tablecolumns.py`, V10 kinds in `verify/tablegrid.py`.
+Untracked only (`tracked` accepts only false): Word cannot track a column, a cell's properties or a merge.
+
+* **Grid** (both sides). The grid columns are the `w:gridCol` of the table's one `w:tblGrid`, numbered from 0, a
+  column's width its `w:w`. A row lays out `w:gridBefore` columns, its own cells over their spans (F5's), then
+  `w:gridAfter`; a cell **covers** its columns. A table whose rows, cells or grid cannot be numbered is refused before
+  anything is chosen (`table_columns.check_numbered`): no own row, rows or cells in a content control, a row without a
+  cell (`table-structure`); no single `w:tblGrid`, no grid column, a before/after count that is not a whole number, a
+  row running past its grid (`table-grid`) — the grid only when columns or a width are asked.
+* **Column selector** `select.columns`: `"all"` or `{index: [grid column numbers, distinct], header_regex}` — every
+  given key must hold. `index` is a LIST of columns, not a range (`[1, 3]` is columns 1 and 3). `header_regex` reads
+  the cell of the table's first own row covering the column (its paragraphs joined by a space); a column no first-row
+  cell covers has no header and is never chosen by it, and a header cell spanning columns brings them all.
+* **`delete_table_columns`** (`select.columns` required). A cell over chosen columns only goes with its content (V2: its
+  paragraphs deleted; a nested table goes with it and is not looked at); a cell over chosen and kept columns keeps its
+  content, its `w:gridSpan` less the chosen columns (gone at 1) and a `dxa` `w:tcW` less their widths; a row's
+  `w:gridBefore`/`w:gridAfter` less the chosen columns it counts (gone with `w:wBefore`/`w:wAfter` at 0, an emptied
+  `w:trPr` with them; else a `dxa` width less theirs); the chosen `w:gridCol` go; a fixed table width (`w:tblW` `dxa`
+  above 0) shrinks by their widths. Widths in percent stay (flagged: Word refits; a table in percent keeps its width,
+  so the columns left widen). Refused: every grid column (`every-column` — delete the table), Word's legacy
+  `w:hMerge` (`table-grid`), pending tracked changes of the table's structure or properties (`w:tblPrChange`,
+  `w:tblGridChange`, `w:trPrChange`, `w:tblPrExChange`, `w:tcPrChange`, `w:cellIns`/`cellDel`/`cellMerge` —
+  `existing-revisions`), a row left without a cell (`table-grid`: its other columns are gridBefore/After space — delete
+  the row first), a vertical merge some of whose cells go while others stay (`vertical-merge`), a width that would not
+  stay above 0 or a missing column width where one must be taken off (`table-grid`); over the deleted cells,
+  `table_edit.removal`'s untracked rules (a crossing bookmark keeps its outside end; its inside end takes the cell's
+  place in the row). Pending revisions inside deleted cells go with them (V4 negative delta). V10 builds the part
+  (F5's `_v_take` for the cells) and compares it whole.
+* **`set_table_cells`** (formatting, no text diffs). Cells: the chosen tables' own cells in the chosen rows (default
+  every row) that cover a chosen column (default every column) — a cell spanning a chosen column counts. `shading`
+  (RRGGBB → exactly `w:shd` `{clear, auto, fill}`; `"none"` → `{clear, auto, auto}` where the nearest table-style
+  level whose `w:tcPr` holds a `w:shd` shows shading, else no `w:shd`), `vertical_alignment` (always an explicit
+  `w:vAlign`), `no_wrap` (true `<w:noWrap/>`; false `w:val="0"` only where the style's `w:tcPr` turns it on, else
+  none), `width` (inches, with every row only — a row selection with a width is `bad-params`): each chosen `w:gridCol`
+  gets it; every cell over a chosen column gets `w:tcW` dxa = its columns' widths summed (new for chosen, the grid's
+  for others); a row's `w:wBefore`/`w:wAfter` over a chosen column likewise when present; **a fixed `w:tblW` follows
+  by the chosen columns' change** (decision added: otherwise Word would scale the asked widths to the old table
+  width); a table in percent keeps it (flagged). "Already as asked" per element. Unlike the other two it does not
+  claim the part: it touches each changed cell (`tc:k:r:c` `tcPr` + names), row (`trPr`), table (`tblProps`, `tblW`)
+  and grid (`tblGrid`), reads the style chain only for `none`/`no_wrap false`, and V10 checks each changed element
+  whole in schema order, then strips it from the residual — the grid by a new `ctx.strip_grid`.
+* **`merge_table_cells`** (`select.rows` and `select.columns` both required; any row and column selector, but what
+  they choose in a table must be one unbroken block a…b × c…d, else `table-shape`). The covered cells (each row's own
+  cells over c…d) must lie wholly inside (`merge-overlap`) and cover it (`table-shape`); a vertical merge partly inside,
+  or a cell just below a several-row block that continues a merge and would join it, is `merge-overlap`. Content: every
+  covered cell's children but `w:tcPr` (paragraphs, nested tables, range marks) in reading order into the anchor (the
+  first covered cell); an **empty** cell (only paragraphs of properties and bare runs, no tracked change) adds nothing,
+  an empty anchor's own paragraphs go too; when all are empty the anchor keeps its own. Each row keeps its first
+  covered cell with its `w:tcPr`: `w:gridSpan` the block's width, `w:tcW` the row's widths summed when they are all of
+  one type (`dxa` or `pct`; else the first cell's stays, flagged), `w:vMerge` restart/continue over several rows (none
+  over one); a continuing cell holds one new paragraph with its first paragraph's properties cleaned as F5's new rows
+  take them. A block that is already one cell (1×1 included) is left alone with a note. Also refused: `w:hMerge`
+  (`table-grid`), pending structure changes or a row of the block inserted/deleted as a tracked change
+  (`existing-revisions`), a covered cell without a paragraph (`table-structure`), and a range or field with one part
+  moving with the content and another staying between the anchor and it (`table-anchor`: the merge would put it out of
+  order). V2: dropped empty paragraphs are deletions, each continuing cell's paragraph an insertion, and a moved
+  paragraph that passes a paragraph staying put (a cell beside a several-row block) a deletion plus an insertion. The
+  op's mode is always `untracked` (a spec's mode must be predictable from its ops). V10 merges the cells itself and
+  compares the part whole.
 
 ## 8. Sections (F7)
 
@@ -461,3 +512,19 @@ touches. New refusal codes: `tables-join`, `field-crossing`, `comment-crossing`,
 deleted mark carrying a section break is refused on accept (`section-break`), and accepting deleted text that holds a
 comment or note reference is refused (`marks-in-change`). Tests: `tests/test_deletion.py`,
 `tests/test_remove_footnotes.py` (fixtures `tests/fx_deletion.py`). Real-file run: still the owner's.
+
+### F6 — built (2026-10-21)
+
+`delete_table_columns`, `set_table_cells`, `merge_table_cells` (§7 as refined above): the column selector and grid
+(`ops/table_columns.py` ↔ `verify/tablecolumns.py`), the V10 kinds `deleted_table_columns`, `table_cells` and
+`merged_table_cells` (`verify/tablegrid.py`), and `ctx.strip_grid` in `verify/props.py` (a table's `w:tblGrid` a kind
+compared whole leaves the residual). New refusal codes `every-column`, `table-grid`, `merge-overlap`; `table-shape`,
+`table-anchor` and `vertical-merge` explanations extended. Tests: `tests/test_table_grid.py` (fixtures
+`tests/fx_table_grid.py`, describe cases `tests/describe_cases/table_grid.py`): both sides of the column selector and the
+grid on every column and row of the fixture, each op end to end (fixed and percent widths, gridBefore/After, spanning
+and merged-down cells, a nested table merged inside a merge, the header part), refusals with codes, wrong outputs and
+shared wrong implementations caught, conflicts with `set_table_props`, `apply_table_style` and F5's row ops and their
+composition into steps, the catalog, the pipeline and a LibreOffice render. Known limits: a row's own table width
+(`w:tblPrEx/w:tblW`) is left as it is; Word's cached conditional formatting (`w:cnfStyle`) of cells that change column
+is left for Word to refresh. Needs the owner's machine: a live request per op on real specifications, opened in Word
+(a deleted Notes column, a shaded header row, column widths, a merged title row and a merged block down a column).
