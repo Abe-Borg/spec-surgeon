@@ -19,7 +19,8 @@ break — so ``tracked: true`` is refused.
 Flagged for review: the governing section shows a different first page (each new part's first page shows the first-page
 header and footer); its line numbers or its footnote/endnote numbers restart at each section; it has several columns
 (the columns of each part end at its break); its text is aligned vertically other than at the top (each part's last page
-is aligned so too). An even- or odd-page break is noted (Word may add a blank page).
+is aligned so too); the paragraph before a match ends with a manual page break and the break starts a new page (the two
+together leave a blank page). An even- or odd-page break is noted (Word may add a blank page).
 
 V10 (``inserted_section_breaks``): the user's select and params and the breaks the plan chose (match, carrier, section);
 the verifier re-derives the matches, the refusals and the expected main part, and compares it whole.
@@ -47,6 +48,21 @@ BREAK_WORDS = {"next_page": "a section break that starts a new page",
                "continuous": "a continuous section break (the new section starts on the same page)",
                "even_page": "a section break that starts on the next even-numbered page",
                "odd_page": "a section break that starts on the next odd-numbered page"}
+
+
+def ends_in_page_break(p: etree._Element) -> bool:
+    """The paragraph holds a manual page break (``w:br w:type="page"``) after the last thing it shows (words, a symbol,
+    a picture or object): the paragraph mark — which carries a new break — sits alone on a page of its own."""
+    shown = (W + "t", W + "sym", W + "drawing", W + "pict", W + "object")
+    after = False
+    for el in p.iter(W + "br", *shown):
+        if nearest_p(el) is not p or any(a.tag in (W + "del", W + "moveFrom") for a in el.iterancestors()):
+            continue
+        if el.tag == W + "br":
+            after = after or el.get(W + "type") == "page"
+        elif el.tag != W + "t" or (el.text or "").strip():
+            after = False
+    return after
 
 
 def snippet(p: etree._Element) -> str:
@@ -159,6 +175,10 @@ class InsertSectionBreak(Op):
                                    f"predicted — accept or reject it in Word first", "tracked-section",
                                    {**details, "section": g})
             breaks.append({"paragraph": bi, "carrier": where_of[prev], "section": g})
+            if kind != "continuous" and ends_in_page_break(prev):
+                frag.flags.append(f"the paragraph before {where} ends with a manual page break: a page break and a "
+                                  f"{kind.replace('_', '-')} section break together leave a blank page in Word; "
+                                  f"remove the page break, or use a continuous break")
         frag.property_assertions.append({
             # the user's own words and what the plan chose from them: V10 re-derives both and the whole main part
             "kind": "inserted_section_breaks", "part": main, "select": copy.deepcopy(select),

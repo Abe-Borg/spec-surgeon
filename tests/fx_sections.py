@@ -15,6 +15,8 @@
 
 ``build_single()`` — one section, its own header and footer and (``title_page``) a different first page with its own
 first-page header: "INTRODUCTION", three articles, "APPENDIX A", "APPENDIX B", each followed by a paragraph.
+
+``build_page_break()`` — one section whose appendix follows a paragraph holding only a manual page break.
 """
 from __future__ import annotations
 
@@ -22,6 +24,7 @@ import io
 
 from docx import Document
 from docx.enum.section import WD_ORIENT, WD_SECTION
+from docx.enum.text import WD_BREAK
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.shared import Pt, Twips
@@ -146,6 +149,23 @@ def build_single(title_page: bool = True) -> bytes:
     doc.add_paragraph("Appendix A text. " * 10)
     doc.add_paragraph("APPENDIX B", style="Heading 1")
     doc.add_paragraph("Appendix B text. " * 10)
+    return save(doc)
+
+
+def build_page_break(text_after: bool = False) -> bytes:
+    """One section: "INTRODUCTION", three paragraphs of body text, a paragraph holding only a manual page break (the
+    usual way an appendix is put on its own page; ``text_after``: the break followed by "Continued." in the same
+    paragraph), "APPENDIX A" and its text."""
+    doc = Document()
+    doc.add_paragraph("INTRODUCTION", style="Heading 1")
+    for _ in range(3):
+        doc.add_paragraph("Body text. " * 30)
+    p = doc.add_paragraph()
+    p.add_run().add_break(WD_BREAK.PAGE)
+    if text_after:
+        p.add_run("Continued.")
+    doc.add_paragraph("APPENDIX A", style="Heading 1")
+    doc.add_paragraph("Appendix text. " * 20)
     return save(doc)
 
 

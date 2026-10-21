@@ -523,8 +523,25 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "move-split-range": (
         "Moving Would Cut a Bookmark, Comment, Field or Permission",
         "A bookmark, comment, editing-permission range, pending moved text or a field that runs over several paragraphs "
-        "(a table of contents) starts among the paragraphs to move and ends outside them (or the reverse); moving them "
-        "would cut it in two. Widen or narrow the stretch to take it whole, or remove it in Word first.",
+        "(a table of contents) starts among the paragraphs to move and ends outside them (or the reverse), so moving "
+        "them would cut it in two; or the destination lies inside such a range (it runs on past the destination "
+        "paragraph) that the paragraphs are not in, so they would join it. Widen or narrow the stretch to take it "
+        "whole, choose a destination outside the range, or remove it in Word first.",
+    ),
+    "move-last-section": (
+        "Moving Would Empty the Last Section",
+        "The paragraphs to move are everything in the document's last section (after its last section break); moving "
+        "them out would leave that section without a paragraph, which Word shows as an empty last page. Nothing was "
+        "changed. Leave a paragraph in that section, move them within it, or remove the section break before them "
+        "first (remove_section_break), then run again.",
+    ),
+    "comment-last-paragraph": (
+        "A Comment's Last Paragraph Would Go",
+        "The paragraph to delete or move is the last paragraph of a comment, and Word records the comment's thread — "
+        "its replies and whether it is resolved — against that paragraph; removing it, moving it, or moving paragraphs "
+        "after it would leave the thread pointing at nothing. Nothing was changed. Take the whole comment (delete the "
+        "text it is anchored to, or remove the comment), leave its last paragraph where it is, or edit the comment in "
+        "Word, then run again.",
     ),
     "move-tracked-content": (
         "Content a Tracked Move Cannot Copy",

@@ -9,7 +9,8 @@ Grammar:
                   style_in [styleId…]  (no pStyle → the default paragraph style)
                   text_regex "…"       (re.search on the block text: w:t + w:delText + w:instrText + … — CLAUDE.md)
                   in_table bool        (has a w:tc ancestor)
-                  is_empty bool        (block text == "")
+                  is_empty bool        (block text == "" and no picture, drawing, embedded object, text box or
+                                        field in it: ``holds_object``)
                   index_range [a, b]   (a ≤ block index < b, over the part's w:p in document order)
                   has_bold bool        (has a non-empty live run with effective bold on)
                   is_all_caps bool     (live display text is all uppercase letters or has w:caps on)
@@ -33,7 +34,7 @@ from typing import Any, Dict, List, Optional, Sequence, Set
 from lxml import etree
 
 from ..ooxml import block_full_text
-from ..package import W, DocxPackage, REL_TYPE_BASE
+from ..package import NS, W, DocxPackage, REL_TYPE_BASE
 from .base import JobException, Touch
 
 STYLES_REL = REL_TYPE_BASE + "styles"
@@ -50,6 +51,11 @@ DEFAULT_PRESERVE_FONTS = ["Symbol", "Wingdings", "Wingdings 2", "Wingdings 3", "
                           "ZapfDingbats", "Zapf Dingbats", "Bookshelf Symbol 7", "MS Reference Specialty",
                           "MS Outlook"]
 FONT_ATTRS = ("ascii", "hAnsi", "eastAsia", "cs", "asciiTheme", "hAnsiTheme", "eastAsiaTheme", "cstheme")
+# what a paragraph without text may still hold, which makes it not empty for ``is_empty``: a picture or drawing (DrawingML,
+# VML, an Office choice of the two), an embedded object, a text box, a field (simple, or any mark of a complex one) —
+# built-in batch 6 review: deleting "empty" paragraphs took logos, figures and tables of pictures with them
+CONTENT_OBJECTS = (W + "drawing", W + "pict", W + "object", "{%s}AlternateContent" % NS["mc"], W + "txbxContent",
+                   W + "fldSimple", W + "fldChar")
 
 
 def scope_parts(pkg: DocxPackage, scope) -> List[str]:
@@ -68,6 +74,11 @@ def scope_parts(pkg: DocxPackage, scope) -> List[str]:
             if p not in parts:
                 parts.append(p)
     return parts
+
+
+def holds_object(p: etree._Element) -> bool:
+    """The paragraph holds a picture, drawing, embedded object, text box or field (``CONTENT_OBJECTS``)."""
+    return next(p.iter(*CONTENT_OBJECTS), None) is not None
 
 
 def is_targeted(select: Dict[str, Any]) -> bool:
@@ -468,7 +479,7 @@ def paragraph_selected(pred, p: etree._Element, index: int, text: str, sheet: St
             cell = cell.getparent()
         if (cell is not None) != bool(pred["in_table"]):
             return False
-    if "is_empty" in pred and (text == "") != bool(pred["is_empty"]):
+    if "is_empty" in pred and (text == "" and not holds_object(p)) != bool(pred["is_empty"]):
         return False
     if "index_range" in pred:
         lo, hi = pred["index_range"]

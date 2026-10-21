@@ -14,16 +14,24 @@ Definitions shared with the verifier (verify/moving.py re-implements them):
   data-bound) and the marks between blocks (bookmarks, comment and permission ranges, proofing marks); it never holds a
   section break (``section-break``) or a text box (``textbox``).
 * **Anchor**: the one paragraph of the same part ``to`` chooses (none: ``not-found``; several: ``ambiguous``), a child
-  of the same container outside the range (``move-anchor``). **Destination**: right after the anchor (``after``) or
-  right before it (``before``). A destination with nothing but marks between it and the range is where the range
-  already is: nothing moves (a note).
+  of the same container outside the range (``move-anchor``). **Destination**: right after the anchor and the range end
+  marks (``bookmarkEnd``, ``commentRangeEnd``, ``permEnd``, ``moveFromRangeEnd``, ``moveToRangeEnd``) that directly
+  follow it (``after``), or right before the anchor and the range start marks that directly precede it (``before``):
+  outside the ranges that end with the anchor or begin with it. A destination with nothing but marks between it and the
+  range is where the range already is: nothing moves (a note).
 * **Containers stay valid** (rule 0.5): once the range has left, the container must not end in a table nor hold two
-  tables with only marks between them (``move-table-edge``). The range starts and ends with a paragraph, so where it
-  goes it never makes either.
+  tables with only marks between them (``move-table-edge``), and the body's last section — its children after the last
+  paragraph carrying a section break — must keep a block (``move-last-section``: Word would show an empty page). The
+  range starts and ends with a paragraph, so where it goes it never makes either.
 * **Split ranges**: a bookmark, comment (its range marks and reference), editing permission, pending Word move range or
   complex field (its begin, separate and end) with one end in the range and the other outside it refuses
-  (``move-split-range``): moving would cut it. The destination never lies inside a complex field (``move-anchor``): what lands in a table of
-  contents' result Word replaces when it updates fields.
+  (``move-split-range``): moving would cut it; so does a destination inside such a range (its start before the
+  destination, its end at or after it) the range is not wholly in already — the moved text would join it. The
+  destination never lies inside a complex field (``move-anchor``): what lands in a table of contents' result Word
+  replaces when it updates fields.
+* **Comment threads**: in a comment one of whose paragraph ids a thread entry names (``deletion.thread_ends``), the
+  comment's last paragraph stays last — the range does not hold it and the destination is not after it
+  (``comment-last-paragraph``): Word names the thread by that paragraph.
 * **Untracked**: the range's elements are taken out and put at the destination, in order, unchanged.
 * **Tracked**: the range holds only paragraphs and the bookmarks and proofing marks between them; each paragraph only
   runs (text, tabs, breaks, hyphens, symbols), bookmarks and proofing marks (``move-tracked-content``) and no pending
@@ -50,6 +58,7 @@ from ..ooxml import (RPR_ORDER, RevisionStamp, block_full_text, count_revisions,
 from ..package import W, DocxPackage
 from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
+from .deletion import thread_ends
 from .fields import fields_of
 from .selectors import SCOPE_KINDS, StyleSheet, check_paragraph_selector, is_targeted, paragraph_selected, scope_parts
 from .slots import nearest_p
@@ -67,6 +76,11 @@ PAIRED = {W + "bookmarkStart": "bookmark", W + "bookmarkEnd": "bookmark", W + "c
           W + "permEnd": "permission", W + "moveFromRangeStart": "pending move (from)",
           W + "moveFromRangeEnd": "pending move (from)", W + "moveToRangeStart": "pending move (to)",
           W + "moveToRangeEnd": "pending move (to)"}
+# the marks that open and close a range of text (the paired marks but a comment's reference): a destination is put
+# outside those that end with or begin with the anchor, and refused inside any other the stretch is not in already
+RANGE_OF = {tag: family for tag, family in PAIRED.items() if tag != W + "commentReference"}
+RANGE_STARTS = {tag for tag in RANGE_OF if tag.endswith("Start")}
+RANGE_ENDS = {tag for tag in RANGE_OF if tag.endswith("End")}
 TRACKED_PARAGRAPH_CHILDREN = {W + "pPr", W + "r", W + "proofErr"} | BOOKMARKS
 TRACKED_RUN_CHILDREN = {W + t for t in ("rPr", "t", "tab", "br", "cr", "noBreakHyphen", "softHyphen", "sym", "ptab",
                                         "lastRenderedPageBreak")}
@@ -121,13 +135,22 @@ def run_groups(p, transparent: Set[str] = frozenset()) -> List[List[Any]]:
 
 
 def destination(kids: Sequence[Any], anchor, position: str) -> int:
-    """Where the range goes among the container's children (``kids``, the container as it is): right after or right
-    before the anchor."""
-    return kids.index(anchor) + (1 if position == "after" else 0)
+    """Where the range goes among the container's children (``kids``, the container as it is): right after the anchor
+    and the range ends that directly follow it, or right before the anchor and the range starts that directly precede
+    it — outside the ranges that end with the anchor or begin with it."""
+    at = kids.index(anchor)
+    if position == "after":
+        at += 1
+        while at < len(kids) and kids[at].tag in RANGE_ENDS:
+            at += 1
+    else:
+        while at > 0 and kids[at - 1].tag in RANGE_STARTS:
+            at -= 1
+    return at
 
 
 def place(elements: Sequence[Any], anchor, position: str) -> None:
-    """Put ``elements``, in order, right after (or right before) ``anchor``."""
+    """Put ``elements``, in order, right after (or right before) ``anchor`` (the destination's neighbour)."""
     if position == "after":
         ref = anchor
         for el in elements:
@@ -168,8 +191,9 @@ class _Move:
 
 
 def _locate(part: str, root, pars: List[Any], chosen: List[int], to: Dict[str, Any], position: str, tracked: bool,
-            sheet: StyleSheet) -> _Move:
-    """The range, the anchor and the destination in one part (module docstring), or the refusal."""
+            sheet: StyleSheet, ends: Optional[Dict[Any, str]] = None) -> _Move:
+    """The range, the anchor and the destination in one part (module docstring), or the refusal. ``ends``: the last
+    paragraph of each comment of the part a thread entry names (``deletion.thread_ends``)."""
     els = [pars[i] for i in chosen]
     index = {id(p): i for i, p in enumerate(pars)}
     for p in els:
@@ -255,8 +279,74 @@ def _locate(part: str, root, pars: List[Any], chosen: List[int], to: Dict[str, A
             what = "two tables would touch" if nxt is not None else f"the {_local(box)} would end in a table"
             raise JobException(f"{part}: once the paragraphs leave, {what}; include the table in the move or leave a "
                                f"paragraph beside it", "move-table-edge", {"part": part})
+        _check_last_section(part, move)
+        _check_thread_end(part, move, ends or {})
         _check_field_destination(part, root, move)
+        _check_range_destination(part, root, move)
     return move
+
+
+def _check_last_section(part: str, move: "_Move") -> None:
+    """The body's last section — the children after its last paragraph with a section break — keeps a block: a stretch
+    that is all of it does not leave it (Word would show an empty last page)."""
+    if move.container.tag != W + "body":
+        return
+    breaks = [i for i, k in enumerate(move.kids) if k.tag == W + "p" and k.find(f"{W}pPr/{W}sectPr") is not None]
+    if not breaks or move.first < breaks[-1] or move.at > breaks[-1]:
+        return                                       # one section, a stretch before the last break, or it stays there
+    rest = move.kids[breaks[-1] + 1:move.first] + move.kids[move.last + 1:]
+    if not any(_is_block(k) for k in rest):
+        raise JobException(f"{part}: the paragraphs to move are all of the document's last section; moving them out "
+                           f"would leave it without a paragraph (Word shows it as an empty page) — leave a paragraph "
+                           f"there, move them within the section, or remove the section break before them first",
+                           "move-last-section", {"part": part})
+
+
+def _check_thread_end(part: str, move: "_Move", ends: Dict[Any, str]) -> None:
+    """In a comment a thread entry names (its replies and resolved state point to its last paragraph), the move keeps
+    the comment's last paragraph last: the stretch does not hold it, and does not land after it."""
+    if move.container.tag != W + "comment":
+        return
+    pars = list(move.container.iter(W + "p"))
+    cid = ends.get(pars[-1]) if pars else None
+    if cid is None:
+        return
+    holder = pars[-1]
+    while holder.getparent() is not move.container:
+        holder = holder.getparent()
+    if any(p is pars[-1] for p in move.pars) or move.at > move.kids.index(holder):
+        raise JobException(f"{part}: the move would change which paragraph ends comment {cid}, and the comment's thread "
+                           f"entry names its last paragraph (its replies and resolved state point to it); leave the "
+                           f"comment's last paragraph last, or edit the comment in Word", "comment-last-paragraph",
+                           {"part": part, "comment": cid})
+
+
+def _check_range_destination(part: str, root, move: "_Move") -> None:
+    """No bookmark, comment, permission or pending move range is open at the destination unless the stretch lies in it
+    already: what lands inside a range joins it (a cross-reference to the bookmark would take the moved text)."""
+    marks = list(root.iter(*RANGE_OF))
+    if not marks:
+        return
+    everything = list(root.iter())
+    order = {id(el): i for i, el in enumerate(everything)}
+    point = (order[id(move.kids[move.at])] if move.at < len(move.kids)
+             else order[id(list(move.container.iter())[-1])] + 1)          # right after the container's last node
+    head = order[id(move.range[0])]
+    tail = order[id(list(move.range[-1].iter())[-1])]
+    spans: Dict[Tuple[str, str], List[Optional[int]]] = {}
+    for m in marks:                                  # document order: each range's first start and first end
+        span = spans.setdefault((RANGE_OF[m.tag], m.get(W + "id") or ""), [None, None])
+        k = 0 if m.tag in RANGE_STARTS else 1
+        if span[k] is None:
+            span[k] = order[id(m)]
+    for (family, rid), (start, end) in spans.items():
+        if start is None or end is None or start > end:
+            continue
+        if start < point <= end and not (start < head and tail < end):
+            raise JobException(f"{part}: the destination lies inside a {family} (id {rid}) that runs on past the "
+                               f"destination paragraph, and the paragraphs to move are not in it; moving them there "
+                               f"would put them inside it — choose a destination outside it, or change the {family} in "
+                               f"Word first", "move-split-range", {"part": part, "family": family, "id": rid})
 
 
 def _check_tracked(part: str, move_range: Sequence[Any], index: Dict[int, int]) -> None:
@@ -455,7 +545,8 @@ class MoveParagraphs(Op):
                       if paragraph_selected(para_pred, p, i, block_full_text(p), sheet, all_pars=pars)]
             if not chosen:
                 continue
-            move = _locate(part, root, pars, chosen, to, position, tracked, sheet)
+            ends = thread_ends(pkg, root) if root.tag == W + "comments" else {}
+            move = _locate(part, root, pars, chosen, to, position, tracked, sheet, ends)
             index = {id(p): i for i, p in enumerate(pars)}
             m0, n = index[id(move.pars[0])], len(move.pars)
             tables = sum(1 for el in move.range if isinstance(el.tag, str) and el.tag == W + "tbl")
@@ -486,7 +577,7 @@ class MoveParagraphs(Op):
                     frag.diffs.append(BlockDiff(part=part, block_index=out0 + k, before=None, after=text,
                                                 note=f"moved from block {m0 + k} (untracked)"))
             moves.append({"part": part, "container": _path(move.container), "first": move.first, "last": move.last,
-                          "anchor": move.kids.index(move.anchor)})
+                          "anchor": move.kids.index(move.anchor), "at": move.at})
             frag.touches.append((part, "*", "text"))
             frag.intended_parts.append(part)
             self._flags(frag, part, move, sheet, tracked, index)
@@ -588,7 +679,10 @@ class MoveParagraphs(Op):
             box = _at(root, move["container"])
             kids = list(box)
             elements = kids[move["first"]:move["last"] + 1]
-            anchor = kids[move["anchor"]]
+            # the destination's neighbour: what the stretch goes right after (the anchor, or the last range end that
+            # follows it) or right before (the anchor, or the first range start before it)
+            at = int(move["at"])
+            anchor = kids[at - 1] if position == "after" else kids[at]
             if tracked:
                 copies = [_inserted_copy(el, stamp, next_id) if isinstance(el.tag, str) else copy.deepcopy(el)
                           for el in elements]

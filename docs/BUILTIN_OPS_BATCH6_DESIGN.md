@@ -322,6 +322,11 @@ tests/fx_sections.py; describe cases tests/describe_cases/sections.py and pages.
 break adds and removes and of two columns. Needs the owner's machine: a live request over real specifications, opened
 in Word (a break before an appendix, a cover joined to the body, two columns).
 
+* Review fix (2026-10-21): `insert_section_break` flags a next-page, even- or odd-page break whose carrier paragraph ends
+  with a manual page break (`w:br w:type="page"` after the last thing it shows): the two together leave a blank page in
+  Word (remove the page break, or use a continuous break). A note only — the output is unchanged. Test:
+  `test_a_new_page_break_after_a_manual_page_break_is_flagged` (fixture `fx_sections.build_page_break`).
+
 ### F9 — built (2026-10-21)
 
 `move_paragraphs` (`ops/move_paragraphs.py`; V10 kind `moved_paragraphs` in `verify/moving.py`, which builds the expected
@@ -350,6 +355,18 @@ dates, and holds the plan's diffs and accepted views to its own). `select.paragr
 Tests: `tests/test_move_paragraphs.py` (fixtures `tests/fx_moving.py`, describe cases `tests/describe_cases/moving.py`).
 Still needs the owner's machine: a live request over real specifications, both modes, opened in Word (accept all,
 reject all).
+
+Review fixes (2026-10-21), both sides each:
+
+* **Ranges at the destination**: `after` goes past the range-end marks (bookmark, comment range, permission, pending
+  move range) right after the anchor, `before` before the range-start marks right before it — the stretch no longer
+  lands inside a bookmark that closes with the anchor; a destination still inside a range the stretch is not wholly in
+  already (an end mark at the start of the next paragraph, as Word ends a bookmark over whole paragraphs) is refused
+  (`move-split-range`). The plan carries the destination (`at`), apply places beside it.
+* **The last section**: a stretch that is all of the body's last section (after its last section-break paragraph),
+  moved before that break, is refused (`move-last-section`): Word would show an empty last page.
+* **Comment threads**: in a comment one of whose paragraph ids a commentsExtended or commentsIds entry names, a move
+  that takes the comment's last paragraph or lands after it is refused (`comment-last-paragraph`).
 
 ### F5 — built (2026-10-21)
 
@@ -461,3 +478,19 @@ touches. New refusal codes: `tables-join`, `field-crossing`, `comment-crossing`,
 deleted mark carrying a section break is refused on accept (`section-break`), and accepting deleted text that holds a
 comment or note reference is refused (`marks-in-change`). Tests: `tests/test_deletion.py`,
 `tests/test_remove_footnotes.py` (fixtures `tests/fx_deletion.py`). Real-file run: still the owner's.
+
+Review fixes (2026-10-21), both sides each:
+
+* **`is_empty`** (the selector, `ops/selectors.holds_object` ↔ `verify/props._v_is_empty`): a paragraph with no text
+  is empty only when it holds no picture, drawing, Office choice (`mc:AlternateContent`), embedded object, text box or
+  field (`w:fldSimple`, any `w:fldChar`) — deleting "empty paragraphs" took logos and tables of pictures. Every chosen
+  picture or object and every whole table a deletion takes is flagged in plain words ("2 pictures and 1 table go with
+  the deleted paragraphs"; tracked: "are deleted with the paragraphs").
+* **The last section** (keep rule 4): in the body, when every block after the last staying section-break paragraph is
+  chosen, its last chosen paragraph stays, emptied (tracked: runs deleted, mark kept), flagged "the last section is now
+  empty and shows a blank page; remove the section break before it to drop the page".
+* **Printer settings**: a printer-settings relationship only removed sectPrs named goes like a header's (the part, with
+  its content-type entry, when nothing else targets it) instead of refusing the deletion as `embedded-object`.
+* **Comment threads**: deleting the last paragraph of a comment a commentsExtended or commentsIds entry names, while the
+  comment stays, is refused (`comment-last-paragraph`); the whole comment going with its anchored text is not.
+

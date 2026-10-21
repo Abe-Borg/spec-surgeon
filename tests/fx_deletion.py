@@ -8,7 +8,9 @@ bookmark; ``build_sections()`` — three sections, the cover's header holding a 
 appendix's header inherited; ``build_marks()`` — comments (one inside a paragraph with a reply, one across two
 paragraphs), bookmarks (inside, across), footnotes (one plain, one holding a link and a picture, one with a custom mark),
 an endnote, a picture and a link in the body, a REF field to a bookmark; ``build_wipe()`` — everything at once over three
-sections, for deleting the whole body.
+sections, for deleting the whole body; ``build_pictures()`` — paragraphs without text that hold a picture, a text box, a
+field or a shape, and a table of pictures, between empty ones. ``with_printer_settings`` names a printer settings part
+from section breaks; ``with_last_comment_paragraph`` gives a threaded comment a last paragraph of its own.
 """
 from __future__ import annotations
 
@@ -374,3 +376,66 @@ def build_wipe() -> bytes:
     target = next(p for p in doc.paragraphs if p.text.startswith("A. Body text"))
     doc.add_comment(target.runs[0], text="Gone with the body.", author="Jeremy", initials="JS")
     return docx_bytes(doc)
+
+
+# ---- pictures in paragraphs without text (the built-in batch 6 review) ---------------------------------------------
+
+def build_pictures() -> bytes:
+    """Paragraphs without text that are not empty, between truly empty ones: "SECTION 21 13 13", an empty paragraph, a
+    logo picture alone in its paragraph, "Figure 1 - Riser diagram", a signature table (a picture in its first cell,
+    its second cell blank), "Signed.", a text box alone in its paragraph, a PAGE field with no result shown, a VML
+    shape alone in its paragraph, another empty paragraph, "END OF SECTION"."""
+    doc = Document()
+    doc.add_paragraph("SECTION 21 13 13")
+    doc.add_paragraph("")
+    doc.add_paragraph().add_run().add_picture(io.BytesIO(png((200, 30, 30), size=8)), width=Pt(72))
+    doc.add_paragraph("Figure 1 - Riser diagram")
+    t = doc.add_table(rows=1, cols=2)
+    t.cell(0, 0).paragraphs[0].add_run().add_picture(io.BytesIO(png((30, 30, 200), size=8)), width=Pt(72))
+    doc.add_paragraph("Signed.")
+    _textbox_run(doc.add_paragraph(), "Boxed words")
+    fs = OxmlElement("w:fldSimple"); fs.set(qn("w:instr"), " PAGE ")
+    doc.add_paragraph()._p.append(fs)
+    doc.add_paragraph()._p.append(etree.fromstring(
+        f'<w:r xmlns:w="{W_NS}" xmlns:v="urn:schemas-microsoft-com:vml"><w:pict><v:rect style="width:36pt;height:18pt"/>'
+        '</w:pict></w:r>'))
+    doc.add_paragraph("")
+    doc.add_paragraph("END OF SECTION")
+    return docx_bytes(doc)
+
+
+# ---- printer settings and comment threads (the built-in batch 6 review) ---------------------------------------------
+
+PRINTER = "word/printerSettings/printerSettings1.bin"
+PRINTER_REL = _REL + "printerSettings"
+
+
+def with_printer_settings(data: bytes, sections=(0,), rid: str = "rIdPS1") -> bytes:
+    """``data`` with a printer settings part (as Word on Windows writes one) named by the sectPr of each of ``sections``
+    (indices among the paragraph-level sectPrs, then the body's own)."""
+    data = add_parts(data, {PRINTER: b"\x00printer\x00" * 8},
+                     rels=[("word/_rels/document.xml.rels", rid, PRINTER_REL, "printerSettings/printerSettings1.bin")],
+                     overrides={PRINTER: "application/vnd.openxmlformats-officedocument.wordprocessingml."
+                                         "printerSettings"})
+
+    def name(root):
+        body = root.find(W + "body")
+        secs = [p.find(f"{W}pPr/{W}sectPr") for p in body.iter(W + "p") if p.find(f"{W}pPr/{W}sectPr") is not None]
+        secs.append(body.find(W + "sectPr"))
+        for i in sections:
+            etree.SubElement(secs[i], W + "printerSettings").set("{%s}id" % R_NS, rid)
+    return patch_docx(data, {DOC: name})
+
+
+def with_last_comment_paragraph(data: bytes) -> bytes:
+    """``build_marks()`` with comment 0 holding a second, last paragraph "Second line TBD." — the paragraph its
+    commentsExtended entry names (paraId 1A000001: Word names a thread by its comment's last paragraph); its first
+    paragraph takes another id."""
+    def two_paragraphs(root):
+        c0 = next(c for c in root.findall(W + "comment") if c.get(W + "id") == "0")
+        c0.find(W + "p").set("{%s}paraId" % W14, "3C000009")
+        p = etree.SubElement(c0, W + "p")
+        p.set("{%s}paraId" % W14, "1A000001")
+        p.set("{%s}textId" % W14, "77777777")
+        etree.SubElement(etree.SubElement(p, W + "r"), W + "t").text = "Second line TBD."
+    return patch_docx(data, {COMMENTS: two_paragraphs})

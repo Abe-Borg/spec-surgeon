@@ -18,7 +18,7 @@ from lxml import etree
 
 import fx_deletion as fx
 from fx_deletion import by_text, text_of
-from make_fixtures import build, patch_docx
+from make_fixtures import add_parts, build, patch_docx
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, op_catalog
 from spec_surgeon.editspec import apply_spec, plan_chain, split_into_stages, stage_cuts
 from spec_surgeon.ops import JobException, get_op, merge_fragments
@@ -616,8 +616,162 @@ def test_every_refusal_code_of_the_deletion_ops_is_explained():
     codes.discard("internal")
     assert {"textbox", "tables-join", "structure", "field-result", "table-structure", "field-crossing",
             "comment-crossing", "embedded-object", "existing-revisions", "custom-mark", "bad-params",
-            "not-found"} == codes
+            "not-found", "comment-last-paragraph"} == codes
     assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
+
+
+# ---- the batch-6 review: pictures, the last section, printer settings, comment threads ------------------------------
+
+OBJECTS = (W + "drawing", W + "pict", W + "object", W + "fldSimple", W + "fldChar", W + "txbxContent",
+           "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent")
+BEFORE_SIGNED = {"between_paragraphs": {"start_regex": "^SECTION", "end_regex": "^Signed"}}
+
+
+@pytest.fixture(scope="module")
+def pictures() -> bytes:
+    return fx.build_pictures()
+
+
+def test_is_empty_never_chooses_a_paragraph_holding_a_picture_object_or_field_on_either_side(pictures):
+    from spec_surgeon.ooxml import block_full_text
+    from spec_surgeon.ops.selectors import StyleSheet, paragraph_selected
+    from spec_surgeon.verify.props import PartView, Styles, para_matches
+    pkg, vpkg = DocxPackage(pictures), VPackage(pictures)
+    pars, view = deletion.paragraphs(pkg.xml(MAIN)), PartView(vpkg.xml(MAIN))
+    sheet, styles = StyleSheet(pkg), Styles(vpkg.xml("word/styles.xml"))
+    for pred in ({"is_empty": True}, {"is_empty": False}, {"is_empty": True, "in_table": True}):
+        ours = [i for i, p in enumerate(pars) if paragraph_selected(pred, p, i, block_full_text(p), sheet,
+                                                                    all_pars=pars)]
+        assert ours == [i for i, p in enumerate(view.pars) if para_matches(pred, p, i, view, styles)], pred
+    empty = [p for i, p in enumerate(pars) if paragraph_selected({"is_empty": True}, p, i, block_full_text(p), sheet,
+                                                                 all_pars=pars)]
+    # the two blank lines and the blank cell; the logo, the cell's picture, the text box, the field and the shape are
+    # paragraphs without text that are not empty
+    assert len(empty) == 3 and not any(next(p.iter(*OBJECTS), None) is not None for p in empty)
+    assert sum(1 for p in pars if block_full_text(p) == "") == 8
+
+
+@TRACKED
+def test_deleting_empty_paragraphs_keeps_every_picture_text_box_field_and_table(pictures, tracked):
+    plan, out = delete(pictures, {"is_empty": True}, tracked)
+    src, root = xml(pictures), xml(out)
+    for tag in OBJECTS + (W + "tbl",):
+        assert len(list(root.iter(tag))) == len(list(src.iter(tag))), tag
+    assert plan.members_removed == [] and not any("with the deleted paragraphs" in f or "deleted with the paragraphs"
+                                                  in f for f in plan.flags)
+    expected = plan.property_assertions[0]["expected"][MAIN]
+    assert (len(expected["delete"]), len(expected["keep"]), expected["tables"]) == (2, 1, [])   # the blank cell stays
+
+
+@TRACKED
+def test_the_pictures_and_tables_a_deletion_takes_are_flagged_in_plain_words(pictures, tracked):
+    plan, out = delete(pictures, BEFORE_SIGNED, tracked)
+    if tracked:
+        assert ("2 pictures and 1 table are deleted with the paragraphs (tracked: they go when the deletion is "
+                "accepted)") in plan.flags
+        return
+    assert "2 pictures and 1 table go with the deleted paragraphs" in plan.flags
+    assert [m for m in plan.members_removed if m.startswith("word/media/")] == ["word/media/image1.png",
+                                                                                 "word/media/image2.png"]
+    plan, out = delete(pictures, {"between_paragraphs": {"start_regex": "^SECTION", "end_regex": "^Figure"}}, False)
+    assert "1 picture goes with the deleted paragraphs" in plan.flags
+
+
+def test_an_emptiness_shared_by_plan_and_apply_that_ignores_pictures_is_caught(pictures, monkeypatch):
+    """A selector reading a paragraph with a picture as empty (text boxes still seen): the plan deletes the logo and the
+    signature table and apply does — the verifier's own selection does not."""
+    from spec_surgeon.ops import selectors
+    monkeypatch.setattr(selectors, "holds_object", lambda p: next(p.iter(W + "txbxContent"), None) is not None)
+    _shared(pictures, monkeypatch, {"is_empty": True}, False, [], "paragraph(s) selected here")
+
+
+@TRACKED
+def test_the_last_section_keeps_a_paragraph_and_its_blank_page_is_flagged(sections, tracked):
+    """Deleting all of the last section (the appendix: after the body's break) keeps its last paragraph, emptied —
+    not the break's paragraph alone at the end of the body, which Word and LibreOffice show as a blank page."""
+    plan, out = delete(sections, {"text_regex": "^APPENDIX A|^Attached"}, tracked)
+    expected = plan.property_assertions[0]["expected"][MAIN]
+    assert len(expected["delete"]) == 1 and len(expected["keep"]) == 1
+    assert any(f.startswith("the last section is now empty and shows a blank page") and
+               f.endswith("remove the section break before it to drop the page") for f in plan.flags)
+    body = xml(out).find(W + "body")
+    if not tracked:
+        assert [c.tag for c in body][-3:] == [W + "p", W + "p", W + "sectPr"]
+        assert body[-3].find(f"{W}pPr/{W}sectPr") is not None and text_of(body[-2]) == ""
+    plan, _ = delete(sections, {"text_regex": "^Attached"}, False)               # the heading stays: no blank page
+    assert not any("the last section" in f for f in plan.flags)
+    plan, out = delete(sections, "all", False)                                  # every break goes: one section left
+    assert body_texts(out) == [""] and not any("the last section" in f for f in plan.flags)
+
+
+def test_a_last_section_left_without_a_paragraph_is_caught(sections, monkeypatch):
+    plan, out = delete(sections, {"text_regex": "^APPENDIX A|^Attached"}, False)
+    caught(sections, plan, out, MAIN, lambda root: root.find(W + "body").remove(root.find(W + "body")[-2]),
+           "is not the source without exactly what the deletion removes")
+    _shared(sections, monkeypatch, {"text_regex": "^APPENDIX A|^Attached"}, False,
+            [(deletion, "last_section_keep", lambda *a: [])], "deletes")
+
+
+def test_printer_settings_only_a_removed_break_used_leave_the_package(sections):
+    """Word on Windows names a printer settings part from section breaks: an untracked deletion of a break takes it as
+    it takes the break's headers (it was refused as an embedded object)."""
+    data = fx.with_printer_settings(sections, (0,))
+    plan, out = delete(data, {"text_regex": "^End of the cover"}, False)
+    assert fx.PRINTER in plan.members_removed and fx.PRINTER not in names(out)
+    assert "rIdPS1" in plan.property_assertions[0]["expected_removal"]["rels"][MAIN]
+    assert not [r for r in xml(out, "word/_rels/document.xml.rels") if r.get("Id") == "rIdPS1"]
+    assert b"printerSettings1.bin" not in DocxPackage(out).read("[Content_Types].xml")
+    assert any(f.startswith("printer settings part(s)") for f in plan.flags)
+    plan, out = delete(fx.with_printer_settings(sections, (0, 1)), {"text_regex": "^End of the cover"}, False)
+    assert fx.PRINTER not in plan.members_removed and fx.PRINTER in names(out)   # the body's break still names it
+    plan, out = delete(data, {"text_regex": "^End of the cover"}, True)           # tracked: the break stays
+    assert plan.members_removed == [] and fx.PRINTER in names(out)
+
+
+def test_a_printer_settings_part_left_behind_is_caught(sections, monkeypatch):
+    data = fx.with_printer_settings(sections, (0,))
+    plan, out = delete(data, {"text_regex": "^End of the cover"}, False)
+    rec = run_suite(data, add_parts(out, {fx.PRINTER: b"\x00"}), plan.to_dict(), "src.docx", "out.docx")
+    assert "V1" in failed(rec), rec.to_markdown()                                # orphaned, and predicted gone
+    real = deletion.Removal._sections
+
+    def keep_printer(self):                       # the relationship goes, the part it targeted stays
+        real(self)
+        self.printers = []
+    _shared(data, monkeypatch, {"text_regex": "^End of the cover"}, False,
+            [(deletion.Removal, "_sections", keep_printer)], "the removal takes")
+
+
+def _plan_comments(data: bytes, paragraphs, tracked: bool, scope=("comments",)):
+    return get_op(OP).plan(DocxPackage(data), {"scope": list(scope), "paragraphs": paragraphs},
+                           {"tracked": tracked, "author": AUTHOR})
+
+
+def test_a_threaded_comments_last_paragraph_is_refused_unless_the_comment_goes(marks):
+    """commentsExtended names a comment's thread (its replies, its resolved state) by the comment's last paragraph:
+    deleting that paragraph alone would leave the thread and its reply pointing at nothing."""
+    data = fx.with_last_comment_paragraph(marks)
+    with pytest.raises(JobException) as e:
+        _plan_comments(data, {"text_regex": "TBD"}, False)
+    assert e.value.code == "comment-last-paragraph" and "comment 0" in e.value.reason
+    plan, out = delete(data, {"text_regex": "TBD"}, True, scope=["comments"])    # tracked: the mark stays (rule 2)
+    pids = {p.get("{%s}paraId" % fx.W14) for p in xml(out, fx.COMMENTS).iter(W + "p")}
+    assert "1A000001" in pids
+    plan, out = delete(data, {"text_regex": "^Check this"}, False, scope=["comments"])   # its first paragraph: fine
+    pids = {p.get("{%s}paraId" % fx.W14) for p in xml(out, fx.COMMENTS).iter(W + "p")}
+    assert "3C000009" not in pids and all(e.get("{%s}paraId" % fx.W15) in pids
+                                          for e in xml(out, "word/commentsExtended.xml"))
+    # the comment's anchored text and its paragraph together: the whole comment goes, its reply and entries with it
+    plan, out = delete(data, {"text_regex": "^A\\. Comment|TBD"}, False, scope=["document", "comments"])
+    assert [c.get(W + "id") for c in xml(out, fx.COMMENTS).findall(W + "comment")] == ["2"]
+
+
+def test_the_verifier_refuses_a_threaded_comments_last_paragraph_deleted(marks, monkeypatch):
+    data = fx.with_last_comment_paragraph(marks)
+    monkeypatch.setattr(dp, "refuse_thread_ends", lambda *a, **k: None)
+    plan, out, rec = run_ops(data, [(OP, {"scope": ["comments"], "paragraphs": {"text_regex": "TBD"}},
+                                     {"tracked": False, "author": AUTHOR})])
+    assert "V10" in failed(rec) and "comment-last-paragraph" in v10(rec) and "the op must refuse" in v10(rec)
 
 
 # ---- touches and composition ---------------------------------------------------------------------------------------
