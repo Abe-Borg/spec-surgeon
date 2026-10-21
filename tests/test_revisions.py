@@ -234,8 +234,7 @@ def test_a_file_with_nothing_chosen_is_left_as_it_is_by_default():
     ("bookmark", {"action": "accept"}, "paragraph-merge"),
     ("cell-last", {"action": "accept"}, "paragraph-merge"),
     ("section", {"action": "accept"}, "section-break"),
-    ("row", {"action": "accept"}, "revision-kind"),
-    ("row", {"action": "reject"}, "revision-kind"),
+    # a tracked row insertion or deletion is resolved since built-in batch 6 (tests/test_table_rows_resolve.py)
     ("math", {"action": "reject"}, "revision-kind"),
     ("sectchange", {"action": "reject"}, "revision-kind"),
     ("partial-move", {"action": "accept", "authors": ["Jeremy"]}, "partial-move"),

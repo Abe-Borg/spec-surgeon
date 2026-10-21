@@ -3,7 +3,8 @@
 conversation lists them in its first message (``listing``: path, kind, and an overview — a table's sheets and column
 headers, a picture's format and size) and Claude reads one with ``read_input_file`` — only a listed file, by its exact
 path, never any other path. A spec names them by that path (``fill_variables.table.file``,
-``replace_table.pairs_table.file``, ``swap_image.image`` / ``match.image``); the ops pin them by md5 (rule 12).
+``replace_table.pairs_table.file``, ``insert_table.table.file``, ``swap_image.image`` / ``match.image``); the ops pin
+them by md5 (rule 12).
 
 What a table holds is document content like the profiles' text: it goes to Claude only to write the spec. Values a
 table gives are the user's (they are not Claude's words — CLAUDE.md rule 13); typed values in a spec are traced as

@@ -591,6 +591,9 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
                     out.append(pair["replace"])
         if op == "set_issue_stamp" and isinstance(params.get("text"), str) and params["text"]:
             out.append(params["text"])
+        # built-in batch 6: the cells of typed table rows (a table file's cells are the user's file)
+        if op in ("insert_table_rows", "insert_table") and isinstance(params.get("rows"), list):
+            out += [t for row in params["rows"] if isinstance(row, list) for t in row if isinstance(t, str) and t]
         if op == "fill_variables" and isinstance(params.get("values"), dict):
             out += [v for v in params["values"].values() if isinstance(v, str) and v]
         if op == "ensure_end_of_section":

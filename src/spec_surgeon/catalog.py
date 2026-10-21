@@ -203,6 +203,49 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "no style definition (existing 'replace' included)",
         "a table in a text box is left alone (flagged); never tracked",
     ],
+    # built-in batch 6 (table rows and tables, docs/BUILTIN_OPS_BATCH6_DESIGN.md §6)
+    "delete_tables": [
+        "the tables are every table of the body unless a selection narrows them (position, table style, the first "
+        "row's text, any text in the table, nested or not); a table nested in a chosen one goes with it",
+        "tracked unless the user asked for it outright: every row and its text marked deleted, as Word records a "
+        "deleted table, so accepting removes it; untracked, the table is removed",
+        "a bookmark crossing the table's edge keeps its outside end (its inside end takes the table's place); one "
+        "wholly inside goes untracked (a cross-reference to it is flagged)",
+        "set aside for Word: a comment mark inside (remove the comments first, in the same request), a note mark when "
+        "untracked, a field crossing the edge, pending tracked changes inside a tracked deletion, or a deletion that "
+        "would join the tables around it",
+    ],
+    "delete_table_rows": [
+        "the rows are chosen by position (0-based in the spec, counted among the table's own rows, both ends "
+        "inclusive), by their text (cells joined by a tab) and/or as header rows; every given key must hold",
+        "a table losing every row is deleted whole; a table with no chosen row is left alone",
+        "tracked unless asked otherwise (rows and text marked deleted, as Word records it); untracked, the rows go",
+        "the first row of a cell merged down across rows cannot go without the rest of the merge (set aside); the "
+        "later rows of a merge can",
+        "comment marks, note marks (untracked) and fields crossing the edge set the file aside, as delete_tables",
+    ],
+    "insert_table_rows": [
+        "every cell text is the user's exact wording, one text per cell of the row the new rows copy ('' for an empty "
+        "cell); no tab or line break in a cell",
+        "the new rows go after (or before) the ONE row the row selection chooses in each table, or at_end after its "
+        "last row; a table where the selection chooses no row is left alone, several rows set it aside",
+        "each new row copies that row's formatting: row height and splitting, cell widths, shading, borders and "
+        "alignment, the first paragraph's style and the first text's font; it is never a repeating header row unless "
+        "repeat_header",
+        "a row with merged cells cannot be copied (set aside: place the rows by another row)",
+        "tracked unless asked otherwise (rows and text inserted, as Word records it)",
+    ],
+    "insert_table": [
+        "the table's text is the user's typed rows verbatim, or every row of the attached table file (a CSV, a sheet "
+        "of an Excel file, or a JSON list of rows) as it reads — empty trailing rows and columns left out",
+        "the table goes after (or before) each anchor paragraph of the body; one beside another table, inside a "
+        "table or after the document's last paragraph is set aside",
+        "full text width in equal columns unless column widths are given (inches); the style is a table style the "
+        "document has, else single-line borders around and between every cell; header_rows repeat at the top of each "
+        "page",
+        "the cells' paragraphs take the document's default paragraph style, one paragraph per cell",
+        "tracked unless asked otherwise (rows and text inserted)",
+    ],
     # built-in batch 5 (list levels and the audit, docs/BUILTIN_OPS_BATCH5_DESIGN.md §3, §4)
     "set_list_level": [
         "the level is the one the named paragraph style numbers with (level names another level of the same list); "
@@ -428,12 +471,12 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "authors are matched by the name Word shows on each change (case and spacing ignored); dates by Word's own clock "
         "on each change, on_or_after inclusive and before exclusive; under a date filter a change without a date stays "
         "(flagged)",
-        "accept: inserted and moved text stays as plain text, deleted text and paragraphs go, new formatting stays; "
-        "reject: inserted text and paragraphs go, deleted text comes back, moved text returns, the old formatting comes "
-        "back",
+        "accept: inserted and moved text stays as plain text, deleted text, paragraphs and table rows go, new "
+        "formatting stays; reject: inserted text, paragraphs and table rows go, deleted text comes back, moved text "
+        "returns, the old formatting comes back; a table whose every row goes goes whole",
         "the body, headers, footers, footnotes, endnotes and comments are covered (scope narrows it); tracked changes "
         "inside style or list definitions stay as they are",
-        "a file with no matching change is left as it is (allow_missing, the default); a table row/cell change, a change "
+        "a file with no matching change is left as it is (allow_missing, the default); a table cell change, a change "
         "in an equation, an accept that would join two paragraphs or take a footnote/comment anchor away sets the file "
         "aside",
         "it runs as its own ordered step: it changes the parts it touches as a whole",

@@ -345,9 +345,9 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "revision-kind": (
         "Tracked Change Left for Word",
-        "The file holds a tracked change this operation does not accept or reject: a table row or cell insertion or "
-        "deletion, a change inside an equation, or (when rejecting) a change of section or table properties. Accept or "
-        "reject that one in Word (Review tab), then run again — or name other authors or dates.",
+        "The file holds a tracked change this operation does not accept or reject: a table cell insertion, deletion "
+        "or merge, a moved table row, a change inside an equation, or (when rejecting) a change of section or table "
+        "properties. Accept or reject that one in Word (Review tab), then run again — or name other authors or dates.",
     ),
     "paragraph-merge": (
         "Accepting Would Join Paragraphs",
@@ -378,8 +378,38 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     "table-structure": (
         "The Table Cannot Be Changed Safely",
         "A selected table has fewer rows than the header rows asked, rows or cells wrapped in a content control or "
-        "custom XML (so they cannot be counted safely), or no table properties at all. Ask for fewer header rows, or "
-        "fix the table in Word (remove the content control around its rows), then run again.",
+        "custom XML (so they cannot be counted safely), no rows, a cell without a paragraph, or no table properties at "
+        "all — or deleting a table whole (or accepting the deletion of its every row) would leave its cell or the "
+        "document without a closing paragraph, or set the tables before and after it side by side, which Word joins "
+        "into one. Ask for fewer header rows, or fix the table in Word (remove the content control around its rows, "
+        "or delete the table there), then run again.",
+    ),
+    # built-in batch 6 (table rows and tables)
+    "table-anchor": (
+        "The Table Holds Something Anchored Elsewhere",
+        "The table or rows to delete hold a comment's mark (the comment would stay without its place in the text), a "
+        "footnote or endnote mark when the deletion is not tracked (the note would stay without its mark), or part of "
+        "a field, permission or range whose other part lies outside them. Remove the comments first (in the same "
+        "request), delete it as a tracked change, or delete it in Word.",
+    ),
+    "vertical-merge": (
+        "The Rows Would Cut a Merged Cell",
+        "The rows to delete include the first row of a cell merged down across several rows (its text is in that "
+        "row) but not all of the merged block, so the cell would be left without its content. Delete the whole merged "
+        "block, or unmerge the cells in Word first, then run again.",
+    ),
+    "table-shape": (
+        "The New Rows Do Not Fit the Table",
+        "A new row gives more or fewer texts than the table's row has cells, or the row the new rows copy has merged "
+        "cells (a cell spanning columns, or merged across rows), whose layout a new row cannot copy. Give one text per "
+        "cell, or place the rows by a row without merged cells.",
+    ),
+    "table-placement": (
+        "A New Table Cannot Go There",
+        "The paragraph the new table is placed by is inside a table, or the new table would stand directly beside "
+        "another table (Word joins two such tables into one), or after the document's last paragraph (a document ends "
+        "with a paragraph), or its section states no page width and margins to make it full width. Place it by "
+        "another paragraph, or give column widths.",
     ),
     # built-in batch 5 (list levels and the audit)
     "numbering-override": (

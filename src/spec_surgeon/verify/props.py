@@ -2687,3 +2687,6 @@ KINDS.update(TYPED_KINDS)
 KINDS.update(SECTION_KINDS)
 from .moving import MOVE_KINDS  # noqa: E402  — built-in batch 6 (F9: move_paragraphs)
 KINDS.update(MOVE_KINDS)
+# built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §6): table rows and tables
+from .tablestructure import TABLE_STRUCTURE_KINDS  # noqa: E402
+KINDS.update(TABLE_STRUCTURE_KINDS)

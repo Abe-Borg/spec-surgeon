@@ -213,3 +213,32 @@ def table_pairs(spec: Dict[str, Any]) -> List[Tuple[str, str]]:
             raise ValueError(f"an empty find or replacement ({f!r} → {r!r})")
         out.append((f, r))
     return out
+
+
+def table_grid(spec: Dict[str, Any]) -> List[List[str]]:
+    """A table file placed whole (built-in batch 6, insert_table): the rows of a CSV or a sheet, or the JSON list of rows
+    at the key; rows at the end and columns on the right empty in every cell left out, short rows padded with empty
+    cells. ValueError for an unusable cell, a JSON value that is not text, or nothing left."""
+    path = spec["file"]
+    if path.lower().endswith(".json"):
+        obj = json_at(path, spec.get("key"))
+        if not isinstance(obj, list) or any(not isinstance(row, list) for row in obj):
+            raise ValueError("the JSON at the key is not a list of rows")
+        rows = [[v if isinstance(v, str) else Unusable(f"not text ({type(v).__name__})") for v in row] for row in obj]
+    else:
+        rows = rows_of(path, spec.get("sheet"))
+    while rows and not any(isinstance(c, Unusable) or c != "" for c in rows[-1]):
+        rows = rows[:-1]
+    width = max([len(row) for row in rows] or [0])
+    while width > 0 and all(len(row) < width or (row[width - 1] == "" and not isinstance(row[width - 1], Unusable))
+                            for row in rows):
+        width -= 1
+    if not rows or width == 0:
+        raise ValueError("the table is empty")
+    out = []
+    for row in rows:
+        cells = list(row[:width]) + [""] * (width - len(row))
+        if any(isinstance(c, Unusable) or not isinstance(c, str) for c in cells):
+            raise ValueError(f"an unusable cell in {cells!r}")
+        out.append(cells)
+    return out

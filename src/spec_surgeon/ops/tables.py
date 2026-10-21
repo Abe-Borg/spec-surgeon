@@ -301,6 +301,35 @@ def variables(spec: Dict[str, Any], where: str = "table") -> Tuple[Dict[str, Any
     return out, str(path), md5
 
 
+def grid(spec: Dict[str, Any], where: str = "table") -> Tuple[List[List[str]], str, str]:
+    """(rows of cell texts, path, md5) of a table file placed whole as a Word table (built-in batch 6, insert_table): a
+    CSV's rows or a sheet's (``sheet``; its first row is a row like any other), or in JSON the list at ``key`` of rows,
+    each a list of texts. Rows (trailing) and columns (on the right) that are empty in every cell are left out; shorter
+    rows are padded with empty cells. A cell that cannot be used as text, a JSON value that is not text, or nothing left
+    → ``table-value``. Each text is checked by the caller (``table_edit.cell_text``)."""
+    path, data, md5 = load(spec, where)
+    where = f"{where} {path.name}"
+    if path.suffix.lower() == ".json":
+        obj = _json_at(data, spec.get("key"), where)
+        if not isinstance(obj, list) or not all(isinstance(row, list) for row in obj):
+            raise JobException(f"{where}: expected a list of rows, each a list of cell texts, at "
+                               f"{spec.get('key') or 'the top'}", "table-value")
+        rows: List[List[Any]] = [[v if isinstance(v, str) else Bad(f"a cell is not text ({type(v).__name__})")
+                                  for v in row] for row in obj]
+    else:
+        rows = _rows(path, data, spec, where)
+    while rows and all(c == "" for c in rows[-1]):
+        rows.pop()
+    width = max((len(row) for row in rows), default=0)
+    while width and all(_cell(row, width - 1) == "" for row in rows):
+        width -= 1
+    if not rows or not width:
+        raise JobException(f"{where}: the table is empty", "table-value")
+    out = [[used(_cell(row, k), f"{where} row {n} column {k + 1}") for k in range(width)]
+           for n, row in enumerate(rows, 1)]
+    return out, str(path), md5
+
+
 def pairs(spec: Dict[str, Any], where: str = "pairs table") -> Tuple[List[Tuple[str, str]], str, str]:
     """([(find, replace)], path, md5) — a list of {find, replace} / [find, replace] or an object in JSON; two columns
     (``find_column``, ``replace_column``; default the first two) in a CSV or a sheet. An empty replacement in a table is
