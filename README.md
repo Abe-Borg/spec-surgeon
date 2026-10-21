@@ -77,12 +77,12 @@ conversation** and Settings.
 1. **Add Word documents.** Drop `.docx` files anywhere in the window, or use **Add Word documents**. Files can come
    from different folders, including files with the same name. Only the files you attach are edited; nothing is
    picked up from their folders.
-2. **Read the note under each file.** The moment a file is attached, Spec Surgeon reads it (milliseconds, no model
-   call) and says what it found in one line each: typed numbers instead of automatic list numbering, no paragraph
+2. **Check the list of files.** The moment a file is attached, Spec Surgeon reads it (milliseconds, no model
+   call) and lists it by its name. What it finds (typed numbers instead of automatic list numbering, no paragraph
    styles, text boxes in the headers or footers, an older compatibility mode, editing restrictions, pending tracked
-   changes, comments, irregular spacing, an empty body. A file that does not open as a Word package, or has no
-   paragraph at all in its body, stays in the list greyed out with the reason and never enters a plan. A `.docm`,
-   `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`.
+   changes, comments, irregular spacing, an empty body) is not shown in the list. A file that does not open
+   as a Word package, or has no paragraph at all in its body, stays in the list greyed out with the reason and never
+   enters a plan. A `.docm`, `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`.
 3. **Optionally add a template.** One reference `.docx` for requests such as "Match the headers and fonts to this
    template. Keep our technical wording."
 4. **Describe the result.** Type what you want and press **Send** (Ctrl+Enter). Spec Surgeon inspects the documents,
@@ -134,7 +134,7 @@ the key: without one the window keeps your draft and asks you to connect one in 
 **Settings → Appearance** picks the window's colour scheme: Warm Clay (the default), Blueprint, Graphite & Teal,
 Carbon & Hi-Vis or Linen (the light one). The window changes at once and opens in the scheme you chose from then on.
 
-See [the window guide](docs/CONVERSATIONAL_DESKTOP.md) for triage notes, pictures and tables, layouts, previews,
+See [the window guide](docs/CONVERSATIONAL_DESKTOP.md) for triage, pictures and tables, layouts, previews,
 conversations and a clean start, recovery, resource use and verification limits.
 
 ## Without the window
