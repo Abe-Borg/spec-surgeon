@@ -572,6 +572,38 @@ def test_partial_recovery_can_export_again_after_an_answer(tmp_path, reopen, mon
     assert len(fake.requests) == 3
 
 
+def test_a_saved_copys_preview_leaves_while_the_rest_are_still_discussed(tmp_path):
+    """A partial save delivers the ready copies; their pages leave the window, and the conversation about the other
+    documents goes on without them. The pages come back for no document whose copy is saved, across a resume."""
+    from spec_surgeon import recovery
+    from test_recovery import candidate, margin, opts, spec, submit
+    from test_recovery_resume import distinct_failures
+    paths = [document(tmp_path / name) for name in ("First.docx", "Second.docx")]
+    goal = spec([margin()])
+    fake = FakeClient(submit(candidate(goal)),
+                      resp(tool("need_user", {"question": "Use these margins on the second document?"})),
+                      submit(candidate(goal)))
+    task = task_for(tmp_path, fake)
+    task.attach(paths)
+    task.decisions = task.word_sources = [goal["request"]]
+    result = recovery.recover(paths, goal["request"], tmp_path / "recovery", spec=goal, options=opts(),
+                              prior_failures=distinct_failures(paths), client=fake)
+    task.session._adopt_recovery(result)
+    task._settle(lambda _: None)
+    view = task.view()
+    assert view["action"] == "Save 1 ready copy"
+    assert [Path(sv.source).name for sv in view["samples"]] == ["First.docx"]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "question" and list(task.results) == [str(paths[0])]
+    assert any(sv.source == paths[0] for sv in task.session.recovery.samples)    # the evidence is kept
+    assert view["samples"] == []                                                  # the window shows none of it
+    task._recovery_options = lambda: opts(critic_review=False, visual_review=False)
+    view = task.perform("send", text="Yes, use those margins on the second document.")
+    assert view["stage"] == "preview"
+    assert [Path(sv.source).name for sv in task.session.recovery.samples] == ["First.docx", "Second.docx"]
+    assert [Path(sv.source).name for sv in view["samples"]] == ["Second.docx"]
+
+
 def test_a_mixed_batch_gets_one_plan_per_layout_and_one_decision(tmp_path):
     from make_fixtures import build, build_styles, build_rich
     from spec_surgeon.fingerprint import fingerprint

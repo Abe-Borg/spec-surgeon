@@ -279,3 +279,23 @@ def test_a_stream_before_any_conversation_call_neither_raises_nor_relays(tmp_pat
     task._on_stream({"type": "text_delta", "text": "Looking at page 1…"})
     task._on_stream({"type": "thinking_delta", "text": "…"})
     assert seen == []
+
+
+def test_pages_show_only_beside_a_plan_waiting_for_the_user(tmp_path):
+    """The pages and their findings belong to the plan awaiting approval: the run that finishes it takes them along,
+    and a stage with nothing to approve shows none of them, whatever preview the session still holds (a run that
+    delivered no copy does not advance the working set, and its preview stays in the session)."""
+    task = task_for(tmp_path, FakeClient(resp(tool("submit_editspec", {"spec": SPEC}))))
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    unrendered = "Page appearance was not checked"
+    assert view["stage"] == "preview" and len(view["samples"]) == 1
+    assert any(w.startswith(unrendered) for w in view["warnings"])
+    held = task.session.outcome().preview
+    task.stage = "done"
+    assert task.session.outcome().preview is held
+    view = task.view()
+    assert view["samples"] == [] and not any(w.startswith(unrendered) for w in view["warnings"])
+    task.stage = "preview"
+    view = task.perform("primary", token=task.action_token())
+    assert view["stage"] == "done" and view["results"] and view["samples"] == []

@@ -740,9 +740,16 @@ class DocumentTask:
                 "targets": review_display.recovery_targets(s.recovery) if s.recovery else review_display.spec_bindings(s.spec),
                 "set_aside": set_aside, "stages": stages if groups else 0}
 
+    def _undelivered_samples(self, preview) -> list:
+        """The preview's samples less the documents whose copies are already saved: a partial save during recovery
+        delivers the ready copies, and their pages leave while the conversation goes on about the rest."""
+        recovery = self.session.recovery
+        delivered = {str(f.source) for f in recovery.files if f.delivered_to} if recovery is not None else set()
+        return [sv for sv in getattr(preview, "samples", []) or [] if str(sv.source) not in delivered]
+
     def _samples_view(self) -> Dict[str, Any]:
         preview = self.session.outcome().preview
-        samples = list(getattr(preview, "samples", []) or [])
+        samples = self._undelivered_samples(preview)
         return {"samples": [{"source": str(sv.source), "name": Path(sv.source).name,
                              "images": [str(p) for p in sv.images if Path(p).is_file()],
                              "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed}
@@ -768,11 +775,14 @@ class DocumentTask:
             if not questions and not choices:
                 questions.append(outcome.message or "Tell me what you’d like to change or clarify.")
         preview = outcome.preview
-        samples = list(getattr(preview, "samples", []) or [])
-        warnings = list(getattr(preview, "warnings", []) or [])
+        # The pages and their findings show beside the plan they belong to, while it waits for the user; a run that
+        # finished takes them along.
+        pages = preview if self.stage in {"preview", "question"} else None
+        samples = self._undelivered_samples(pages)
+        warnings = list(getattr(pages, "warnings", []) or [])
         from .settings import output_root_warnings
         warnings.extend(output_root_warnings(s.out_root))
-        visual = getattr(preview, "review", None)
+        visual = getattr(pages, "review", None)
         if visual is not None:
             if visual.skipped:
                 warnings.append("Automated page review was unavailable: " + visual.skipped)
