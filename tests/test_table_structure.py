@@ -849,6 +849,16 @@ def test_catalog_sheet_and_assumptions():
                          "params": {"table": {"file": "C:/p/pumps.xlsx", "sheet": "Pumps"}, "header_rows": 1}}))
 
 
+def test_an_attached_table_file_is_an_input_of_the_spec(tmp_path):
+    from spec_surgeon.editspec import load_spec, spec_input_files
+    (tmp_path / "pumps.csv").write_text("Tag,Pump\n", encoding="utf-8")
+    spec = _spec({"op": "insert_table", "select": {"paragraphs": NOTES}, "params": {"table": {"file": "pumps.csv"}}})
+    (tmp_path / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
+    loaded = load_spec(str(tmp_path / "spec.json"))
+    assert spec_input_files(loaded) == [(tmp_path / "pumps.csv").resolve()]       # hashed by the approval token
+    assert Path(loaded["ops"][0]["params"]["table"]["file"]).is_absolute()
+
+
 def test_typed_cells_are_placed_words():
     spec = _spec({"op": "insert_table_rows", "params": {"rows": [["FP-3", "Booster pump", ""]]}},
                  {"op": "insert_table", "params": {"rows": [["Tag", "Size"], ["V-1", "4 in"]]}})

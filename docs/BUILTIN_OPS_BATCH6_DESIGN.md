@@ -112,26 +112,68 @@ Nearest relative: `swap_image` (the picture model `ops/images.py` ↔ `verify/im
 ## 6. Table rows and tables (F5)
 
 Nearest relatives: `set_table_props` (the table selector), `delete_paragraphs` (tracked deletion), `replace_table`
-(reading an attached table file through `inputs.py`).
+(reading an attached table file through `inputs.py`). As built: shared core `ops/table_edit.py`, verifier
+`verify/tablestructure.py` (each kind builds the changed part from the source and compares it whole,
+`ctx.verified_parts`; every op claims the parts it changes whole, `(part, "*", "text")`, so another op on that part —
+`set_table_props`, `apply_table_style` — is composed into a step of its own).
 
-* **Row selector** (both sides, new): `{index_range: [a, b]` (0-based, inclusive, among the table's own rows),
-  `text_regex` (the row's text, cells joined by a tab), `header: bool` (rows repeated as header rows)}; every given key
-  must hold.
-* **`delete_tables`**: the tables the table selector chooses; tracked (rows marked deleted, content deleted) or
-  untracked (the `w:tbl` goes). V10 kind `deleted_tables`.
-* **`delete_table_rows`**: the rows the row selector chooses in the chosen tables; tracked (`w:trPr/w:del`, content
-  deleted) or untracked. A vertical merge crossing the edge of the deletion is refused; deleting every row deletes the
-  table. V10 kind `deleted_table_rows`.
-* **`insert_table_rows`**: `rows: [[cell text, …], …]` (the user's words) `before`/`after` the one row the row selector
-  chooses per table, or `at_end`; each new row copies the reference row's row, cell, paragraph and first-run
-  formatting; a row of the wrong cell count, or a reference row with merged cells, is refused. Tracked
-  (`w:trPr/w:ins`, runs inserted) or untracked. V10 kind `inserted_table_rows`.
-* **`insert_table`**: a table from an attached CSV/XLSX (`table`, `sheet`) or typed `rows`, `before`/`after` each
-  anchor paragraph; `header_rows` repeated; `style` (a table style the document has; none: single-line borders);
-  full text width, equal columns unless `column_widths` (inches). One paragraph per cell, the text verbatim. Tracked
-  by default, as rows inserted. V10 kind `inserted_tables`.
+* **Row selector** (both sides: `ops/table_rows.py` ↔ `verify/tablerows.py`; F6 builds on it). `select.rows` is `"all"`
+  or an object whose given keys must all hold, over the table's **own rows** (the `w:tr` children of the `w:tbl`,
+  numbered from 0; a table whose rows sit in a content control or custom XML is refused, `table-structure`):
+  `index_range: [a, b]` (whole numbers, 0 ≤ a ≤ b, both inclusive); `text_regex` (`re.search` on the row's text: its
+  cells — `w:tc` whose nearest `w:tr` is the row — joined by a tab, each its paragraphs' — `w:p` whose nearest `w:tc` is
+  the cell — block texts joined by a space; `table_select.first_row_text`'s reading for any row); `header: bool` (the
+  row's own `w:trPr/w:tblHeader` decides when present, on unless 0/false/off; else the nearest level of the table
+  style chain whose `w:trPr` holds one; else not a header row). Reads: `text_regex` every own row's paragraphs'
+  `verify:text`, `header` every row's `(part, "tr:<k>:<r>", "verify-props:tblHeader")` and the style chain.
+  **Grid** (same modules): a cell's span `w:gridSpan` (≥ 1, default 1), its grid column the row's `w:gridBefore` plus
+  the spans before it (`grid_columns`); **merged**: span > 1, any `w:vMerge` or a `w:hMerge` (`is_merged`); a
+  **vertical merge** (`merge_groups`) runs down one grid column from a `restart` cell (or a continuing cell with none
+  open above) through the continuing cells below it; its content is its first row's cell.
+* **`delete_tables`**: the tables the table selector chooses (a table nested in a chosen one goes with it); tracked
+  (default: every `w:tr` in it, nested ones too, gets `w:trPr/w:del`, every paragraph's mark and runs are deleted —
+  `w:instrText` becomes `w:delInstrText`) or untracked (the `w:tbl` goes). V10 kind `deleted_tables`.
+* **What a deletion may take** (both deletion ops, `table_edit.removal`): a section break inside → `section-break`; a
+  comment mark → `table-anchor` (remove the comments first); untracked, a footnote/endnote mark → `table-anchor`
+  (tracked, the reference run is deleted as Word records it); a field, permission, move or custom-XML range with one
+  part inside → `table-anchor`; tracked, pending tracked changes inside → `existing-revisions`, a text box → `textbox`,
+  a paragraph holding more than runs, bookmarks and proofing marks → `structure`. **Bookmarks never refuse**: one
+  wholly inside goes untracked (a cross-reference elsewhere is flagged); an end whose partner is outside keeps its
+  place — untracked it takes the deleted element's place (allowed between blocks and between rows). **A table going
+  whole untracked** may not leave its container (body, cell, header …) empty, ending in something other than a
+  paragraph, or with two tables side by side that were not (`table-structure`). Pictures going with it leave their
+  media in the package (still referenced by its relationship) until Word saves; flagged.
+* **`delete_table_rows`**: `select.rows` (required) in the chosen tables; tracked (`w:trPr/w:del`, content deleted) or
+  untracked. Deleting every own row deletes the table (as `delete_tables`); a nested table inside a row that goes
+  goes with it. **Vertical merges** (decision changed from "crossing the edge"): only a deletion that takes a merge's
+  first row and keeps another of its rows is refused (`vertical-merge`, `merge_crossings`); taking later rows only
+  shortens the merge, taking it whole is fine. V10 kind `deleted_table_rows`.
+* **`insert_table_rows`**: `rows: [[cell text, …], …]` (the user's words, `compiler.placed_words`; no control
+  character) `before`/`after` the one row `select.rows` chooses per table (none: the table is left alone; more than
+  one: `ambiguous`), or `at_end` (no `select.rows`); `repeat_header` (default false). Each new row copies the
+  reference row, without attributes: `w:tblPrEx` less its change; `w:trPr` less `w:cnfStyle`, `w:ins`/`w:del`,
+  `w:trPrChange` and `w:tblHeader`, then `<w:tblHeader/>` with `repeat_header`, else `w:val="0"` where the style
+  chain turns it on (set_table_props' rule); each cell's `w:tcPr` less `w:cnfStyle` and cell revisions; the cell's
+  first paragraph's `w:pPr` less `w:cnfStyle`, `w:sectPr`, `w:pPrChange` and its mark's revisions; the first live text
+  run's `w:rPr` (no such run: the cleaned mark's — Word gives typed text the mark's formatting). A typed row of
+  another cell count, or a reference row with merged cells → `table-shape`. Tracked (`w:trPr/w:ins`, marks and runs
+  inserted) or untracked. V10 kind `inserted_table_rows`.
+* **`insert_table`**: from typed `rows` (equal lengths) or an attached file `table: {file, sheet?, key?}` (a CSV, a
+  sheet, or a JSON list of rows at `key`; trailing empty rows and columns left out, short rows padded; read by
+  `tables.grid` ↔ `verify/tables.table_grid`, pinned by md5), `before`/`after` each anchor paragraph of the **body**
+  (targeted selector). `header_rows` (`w:tblHeader`; `w:tblLook` firstRow on with them, firstColumn off); `style` (a
+  table style the document has: `missing-style` / `style-mismatch`; none: the six border sides single ½ pt as direct
+  borders); `w:tblW` 100 % (`pct` 5000) with `w:gridCol`/`w:tcW` of the section's text width (`pgSz@w` − left − right
+  margins; the gutter is not counted) in equal columns ⌊W(k+1)/n⌋ − ⌊Wk/n⌋, or `column_widths` (inches; `w:tblW`
+  their sum). Cells: one paragraph with no properties of its own. Refused: an anchor in a table, a new table beside
+  another table or after the body's last paragraph, a section without page width and margins (`table-placement`);
+  `after` a section break (`section-break`). Tracked by default. V10 kind `inserted_tables`.
 * **`resolve_tracked_changes`** accepts and rejects tracked row insertions and deletions (accept an inserted row: the
-  mark goes; accept a deleted row: the row goes; reject the reverse), both sides.
+  marker goes, an emptied `w:trPr` with it; accept a deleted row: the row goes with all it holds; reject the
+  reverse), both sides. A row that goes is content that goes for its anchor rules (a bookmark end inside whose
+  partner stays → `marks-in-change`, unlike the deletion ops' keep rule); a table whose every own row goes goes whole
+  under the container rule (`table-structure`); a row in a content control (`table-structure`) and a moved row, cell
+  insertions/deletions/merges (`revision-kind`) stay refused.
 
 ## 7. Table grid and cells (F6) — after F5 (the row selector)
 
@@ -198,3 +240,15 @@ is refused. V10 kind `moved_paragraphs`.
 5. **Text boxes stay refused** with the rest of Tier 3.
 
 ## Built (fill in per item as it lands)
+
+### F5 — built (2026-10-21)
+
+`delete_tables`, `delete_table_rows`, `insert_table_rows`, `insert_table` (§6 as refined above), the row selector and
+grid (`ops/table_rows.py` ↔ `verify/tablerows.py`), the shared core `ops/table_edit.py` and the V10 kinds in
+`verify/tablestructure.py`; `resolve_tracked_changes` resolves row insertions and deletions on both sides. New refusal
+codes `table-anchor`, `vertical-merge`, `table-shape`, `table-placement`; `table-structure` and `revision-kind`
+explanations updated. Tests: `tests/test_table_structure.py` (both sides of the row selector and the merge rule on every
+row and every subset of rows of the fixture, each op tracked and untracked, refusals, wrong outputs and shared wrong
+implementations, composition with `set_table_props`, the pipeline, LibreOffice) and `tests/test_table_rows_resolve.py`
+(accepting the tracked output equals the untracked one, rejecting equals the source). Needs the owner's machine: a live
+request per op on real specifications, opened in Word (the tracked table and row markup above all).
