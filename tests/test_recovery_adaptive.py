@@ -40,6 +40,8 @@ def test_critic_revision_replans_method_under_unchanged_goal_then_passes(tmp_pat
     assert result.key["adaptive_contract"] == goal
     assert result.session_state["plans"]
     assert "independently critique" in client.requests[1]["system"]
+    assert "cache_control" not in client.requests[1]                  # one call, never repeated: no history to cache
+    assert "cache_control" in client.requests[0]                      # the planner's history is read by its next call
     assert "original_goal" not in json.loads(client.requests[1]["messages"][0]["content"])
     loaded = recovery.load_recovery(result.out_dir)
     assert loaded.ready and loaded.session_state["critic_reviews"][1]["verdict"] == "accept"
