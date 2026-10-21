@@ -322,6 +322,31 @@ def test_without_the_gui_extra_a_message_box_only_when_there_is_no_console(monke
         assert gui.main() == 2 and len(shown) == 1 and "spec-surgeon[gui]" in shown[0]
 
 
+def test_a_clean_exit_says_so_in_the_app_log(monkeypatch):
+    """The window's app log ends with ``Spec Surgeon closed`` when the window closes normally, and the crash watch's
+    marker is gone (no "ended unexpectedly" at the next start)."""
+    import logging
+    pytest.importorskip("fastapi")
+    from spec_surgeon import gui, winapp
+    from spec_surgeon.settings import logs_dir
+    from spec_surgeon.web import shell
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    monkeypatch.setattr(winapp, "hold_app_mutex", lambda: False)
+    monkeypatch.setattr(shell, "run_window", lambda state, **kw: 0)
+    logger = logging.getLogger("spec_surgeon")
+    try:
+        assert gui.main() == 0
+        for h in logger.handlers:
+            h.flush()
+        lines = (logs_dir() / "spec-surgeon.log").read_text(encoding="utf-8").splitlines()
+        assert " started — " in lines[0] and lines[-1].endswith(" Spec Surgeon closed") and " INFO " in lines[-1]
+        assert not list(logs_dir().glob("session-*.json"))
+    finally:
+        for h in [h for h in logger.handlers if isinstance(h, logging.FileHandler)]:
+            logger.removeHandler(h)
+            h.close()
+
+
 def test_the_engine_and_command_line_never_load_the_window():
     import subprocess
     import sys
