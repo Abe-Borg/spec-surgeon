@@ -45,7 +45,8 @@ op each section names as its nearest relative.
 Nearest relatives: `remove_empty_paragraphs` (the keep rules), `remove_notes` (fields inside deleted paragraphs),
 `remove_header_footer` / `hf_common` (removing parts).
 
-* `select.paragraphs` may be `"all"` (and any predicate; the "targeted" requirement goes).
+* `select.paragraphs` may be `"all"` (and any predicate; the "targeted" requirement goes). A selector is still
+  required: a deletion names what it deletes. Paragraphs of a footnote/endnote separator are never chosen.
 * **Tables.** A table every paragraph of which is selected (nested tables included) is deleted whole: untracked, the
   `w:tbl` goes; tracked, each row is marked deleted (`w:trPr/w:del`) and its content deleted as Word records it. A
   table partly selected keeps every cell's last paragraph (emptied: untracked its runs go, tracked they are deleted
@@ -57,20 +58,38 @@ Nearest relatives: `remove_empty_paragraphs` (the keep rules), `remove_notes` (f
   the content before it joins the following section (Word's behaviour); header/footer parts no other section
   references leave the package. Tracked, the paragraph mark is marked deleted and the `sectPr` stays until the
   deletion is accepted. Flagged either way: the pages before the break take the next section's setup and headers.
-* **Comments and bookmarks.** A comment whose whole range lies inside the deletion goes with it (its `comments.xml`
-  entry and replies, as `remove_comments` removes them); a comment crossing the edge is refused. Bookmarks never
-  cause a refusal: one wholly inside goes; one crossing the edge keeps its outside half and its inside half moves to
-  the edge of the surviving neighbour. A `REF`/`PAGEREF` elsewhere pointing at a removed bookmark is flagged.
+* **Comments and bookmarks.** Untracked, a comment whose whole range lies inside the deletion goes with it (its
+  `comments.xml` entry and replies, as `remove_comments` removes them); a comment crossing the edge is refused
+  (`comment-crossing`). Tracked, comments stay anchored to the deleted text until the deletion is accepted (an
+  untracked removal inside a tracked deletion would not come back on reject), flagged — so nothing crosses. Bookmarks
+  never cause a refusal: one wholly inside goes; one crossing the edge keeps its outside half, and its inside half
+  takes the place of the outermost element removed around it (between blocks, at the edge of what stays). Permission,
+  move and custom-XML ranges are paired the same way. A `REF`/`PAGEREF`/`NOTEREF` field or a hyperlink elsewhere
+  pointing at a removed bookmark is flagged.
+* **Notes, pictures, links** (untracked; rule 0.6): a footnote or endnote referenced only from the deleted text goes
+  with it; an image or hyperlink relationship no remaining content uses leaves its part's relationships, and media no
+  relationship targets leaves the package. A chart, diagram, embedded object or control (its own part) in an untracked
+  deletion is refused (`embedded-object`). Tracked, all of them stay until the deletion is accepted.
 * **Kept paragraphs** (rule 0.5): when the selection would empty a container or leave it ending in a table, or join
-  two tables, the last selected paragraph there stays, emptied; flagged.
+  two tables, the last selected paragraph there stays, emptied; flagged. Tracked, a container's last paragraph keeps
+  its mark whenever it is chosen (Word cannot delete a container's final paragraph mark). Two tables with nothing but
+  chosen tables between them are refused (`tables-join`).
+* **Tracked runs.** The runs inside a hyperlink, smart tag, run-level content control or custom XML element are
+  deleted where they stand (a `w:del` inside the container), as Word records it; a simple field, an equation or other
+  content a tracked deletion is not written over is refused.
 * Text boxes stay refused.
 
 ## 2. `remove_footnotes` (F2)
 
-Remove footnotes and/or endnotes: `which` (`footnotes`, `endnotes`, `both`), optional `text_regex` on the note's own
-text, scope the parts that carry references. Untracked: the reference run and the note's entry go (separators stay;
-Word renumbers). Tracked: the reference run is deleted and the note's content deleted, as Word records it. A custom
-reference mark (`w:customMarkFollows`) is refused. V10 kind `removed_footnotes`.
+Remove footnotes and/or endnotes: `which` (`footnotes`, `endnotes`, `both`; default both), optional `text_regex` on
+the note's own text (its paragraphs, one per line), scope the parts that carry references (document — the default —,
+headers, footers, comments). Untracked: the reference (its run, when the run holds nothing else) and the note's entry
+go, with what only the note held (pictures, links, bookmarks, comments anchored in it) through the deletion's removal
+(separators stay; Word renumbers). Tracked: each reference run is deleted (one `w:del` each; a reference sharing its run
+with other content is refused) and every run and paragraph mark of the note is deleted, as Word records it. A custom
+reference mark (`w:customMarkFollows`, `custom-mark`), a reference in a text box, a note referenced twice or holding a
+text box are refused; a file with no such note is left alone by default (`allow_missing`). V10 kind
+`removed_footnotes`.
 
 ## 3. `set_properties` grows (F3)
 
@@ -198,3 +217,20 @@ is refused. V10 kind `moved_paragraphs`.
 5. **Text boxes stay refused** with the rest of Tier 3.
 
 ## Built (fill in per item as it lands)
+
+### F2 — built (2026-10-21)
+
+`delete_paragraphs` (grown) and `remove_footnotes` (new) share one transform core, `ops/deletion.py` (the chosen blocks,
+the keep rules, the tracked deletion and the untracked `Removal` cascade: notes → section breaks and header/footer parts
+→ comments → range marks → fields → relationships and media); its twin is `verify/deletion.py` (kind
+`deleted_paragraphs`, which replaces the old one in `verify/props.py`) with `verify/footnotes.py` (`removed_footnotes`).
+Untracked, every changed part is rebuilt from the source and compared whole (`verified_parts`), the comment side parts
+too, the relationships and `[Content_Types].xml` entry by entry; tracked, each changed paragraph is compared exactly
+(NEW revisions matched by author, an id the source lacks and a date) and each deleted row's `w:trPr/w:del` checked,
+the residual proving the rest (`strip_tr`). V4: a row's `w:trPr/w:del` counts as `del`. Untracked deletion claims each
+changed part whole (beside another op on it, it runs as its own composed step); tracked keeps per-paragraph and per-row
+touches. New refusal codes: `tables-join`, `field-crossing`, `comment-crossing`, `embedded-object`, `custom-mark`.
+`resolve_tracked_changes` does not yet resolve these deletions: a deleted row is refused (`revision-kind`, F5's), a
+deleted mark carrying a section break is refused on accept (`section-break`), and accepting deleted text that holds a
+comment or note reference is refused (`marks-in-change`). Tests: `tests/test_deletion.py`,
+`tests/test_remove_footnotes.py` (fixtures `tests/fx_deletion.py`). Real-file run: still the owner's.
