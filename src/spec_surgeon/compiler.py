@@ -397,8 +397,9 @@ hyperlinks, field types, a watermark, the document properties, whether it is mar
 file on your own); name the authors/dates it covers in assumptions, from the profiles. set_document_state (track changes on/off, mark as final) and \
 set_document_properties likewise only on request; a watermark's words and a property's value are the user's exact \
 words (ask when they did not give them).
-- add_review_comments is request-only: add exactly the user's supplied text and optional source text, with an \
-explicit author, to explicitly selected document paragraphs. Never invent a reason, citation, reviewer or comment. \
+- add_review_comments is request-only: add exactly the user's supplied text and optional source text, with the \
+author (and initials, only when they give them) exactly as the user typed them, to explicitly selected document \
+paragraphs. Never invent a reason, citation, reviewer or comment. \
 List it after the requested edits, untracked; existing comments and pending revisions stay intact. \
 The reviewed outcome type is review_comments. Ask for missing wording and target choices.
 - Fields: "put the page number / date / file name where it says X" is insert_field {field, at_text: the placeholder \
@@ -409,7 +410,8 @@ fills it in. "Page X of Y" in the footer is two insert_field ops, PAGE then NUMP
 and always give the scope (a page number belongs in a header or footer, never the body). format is \
 arabic | roman | ROMAN | alphabetic | ALPHABETIC for the numbering fields, a Word date picture such as "MMMM d, yyyy" \
 for DATE/SAVEDATE; STYLEREF and DOCPROPERTY name a style or property the file has. Tracked by default.
-- reply_to_comments {text: the user's exact words, author: the name they give, which: all | authors | text_regex} and \
+- reply_to_comments {text: the user's exact words, author: the name exactly as they give it, initials only when \
+they give them, which: all | authors | text_regex} and \
 resolve_comments {action: resolve | reopen, which} only when the user asks; neither is tracked.
 - remove_notes: build its rules from the profiles — the note style ids in styles_in_use, the colours in \
 styles_in_use / markup.run_colors, the words the notes begin with ("Retain", "Delete", "Specifier Note") — and state \
@@ -634,12 +636,16 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
                             if isinstance(seg, dict) and isinstance(seg.get("text"), str)]
                 if "".join(segments):
                     out.append("".join(segments))
+        # a comment's author and initials are the reviewer name Word shows on it: the user's words too, never a
+        # reviewer the model names
         if op == "add_review_comments":
-            for key in ("text", "source"):
+            for key in ("text", "source", "author", "initials"):
                 if isinstance(params.get(key), str) and params[key]:
                     out.append(params[key])
-        if op == "reply_to_comments" and isinstance(params.get("text"), str) and params["text"]:
-            out.append(params["text"])
+        if op == "reply_to_comments":
+            for key in ("text", "author", "initials"):
+                if isinstance(params.get(key), str) and params[key]:
+                    out.append(params[key])
         if op == "apply_header_footer_template":
             for rule in (params.get("slot_fills") or {}).values():
                 _extract_literal_rules(rule, out)
