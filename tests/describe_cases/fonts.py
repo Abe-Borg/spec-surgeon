@@ -48,6 +48,18 @@ CASES = {
          ["Remove bold", "dark blue", "new page", "without tracked changes", "bold paragraphs"]),
         ({"scope": ["headers", "footers"]}, {"run": {"i": True, "u": "double", "strike": True}, "include_paragraph_marks": False},
          ["italic", "double underline", "strikethrough", "headers and footers", "Paragraph marks are not changed"]),
+        # built-in batch 6 (F3): superscript/subscript, hidden, highlight, character spacing, double strikethrough
+        ({"paragraphs": {"text_regex": "^NOTE"}}, {"run": {"vertAlign": "superscript", "highlight": "darkYellow"}},
+         ["Make the text superscript", "highlight the text dark yellow", "“^NOTE”", "tracked change"]),
+        ({"runs": {"color_in": ["FF0000"]}}, {"run": {"vanish": True, "spacing": -0.5}},
+         ["Hide the text", "characters stay in the file", "condense the character spacing by 0.5 pt",
+          "text coloured red"]),
+        ({"styles": {"ids": ["Deleted"]}}, {"run": {"dstrike": True, "highlight": "none", "spacing": 0}},
+         ["double strikethrough (in place of any single strikethrough)", "remove highlighting",
+          "character spacing to normal", "“Deleted”"]),
+        ({}, {"run": {"vertAlign": "baseline", "vanish": False, "spacing": 1.5, "dstrike": False}},
+         ["Remove double strikethrough", "back on the baseline", "show hidden text again",
+          "expand the character spacing by 1.5 pt"]),
     ],
     "set_paragraph_props": [
         ({}, {"spacing": {"before": 240, "after": 120}}, ["space before to 12 pt", "space after to 6 pt", "every paragraph"]),

@@ -79,6 +79,14 @@ reference mark (`w:customMarkFollows`) is refused. V10 kind `removed_footnotes`.
 and `dstrike` (double strikethrough; turning it on turns `strike` off and the reverse, as Word does). Same selection,
 tracking and "already as asked" rules as the existing run properties; the `properties` V10 kind grows its twin.
 
+As built: `vanish` is a toggle (ECMA-376 §17.7.3); `dstrike` is read as one too (as `numbering_convert`'s look does —
+at two style levels it is ambiguous: set directly on text, refused on a style). The partner of `strike`/`dstrike` is an
+asked element like any (off on text only where it shows; in a style unless the style already says off); both on is
+`bad-params`. `vertAlign`, `highlight` and `spacing` are nearest-level values (defaults `baseline`, `none`, 0);
+`highlight: none` writes `w:val="none"` (explicitly off — `remove_highlight` is the op that takes the element away);
+`spacing` is a multiple of 0.05 pt within ±1584 pt, written in twentieths, and a measure with a unit (`"2pt"`) is never
+"already". `vanish`, `vertAlign` and `spacing` reflow (layout reference `none`); `highlight` and `dstrike` do not.
+
 ## 4. Richer text (F3)
 
 ### 4.1 `insert_paragraph`: tabs and line breaks
@@ -89,9 +97,23 @@ tracking and "already as asked" rules as the existing run properties; the `prope
 [{text, b?, i?, u?, vertAlign?}]` gives a paragraph bold/italic/underlined segments. Every text is the user's, verbatim,
 and is in `compiler.placed_words`.
 
+As built: exactly one of `text`, `runs`, `paragraphs`; no control character but `\t` and `\n`; every paragraph holds a
+visible character. A segment's own properties are written as direct formatting over the inherited run properties
+(set_properties' writer: `b`/`i` as their pairs, `u` keeping the inherited underline's other attributes), in schema
+order. A paragraph's own `style` replaces the op's (`inherit`/null: the anchor's). Tracked, each new paragraph's mark
+carries a `w:ins` and its runs sit in one `w:ins`. An anchor holding a text box takes paragraphs before it only
+(`textbox`: its box's paragraphs would come between). Placed words: each segment on its own; a phrase holding a tab or
+a line break traces when each stretch of words between them does (`compiler.untraceable`).
+
 ### 4.3 `replace_text`: tabs and line breaks in the new text
 The replacement may hold `\t` and `\n`, written as `w:tab` / `w:br` inside the inserted run(s); V3's structural counts
 are declared (`struct_after`). Both sides of the edit core (`ops/textedit.py` ↔ `verify/edits.py`).
+
+As built: the core learns it behind an explicit `breaks=True` (off by default — every other op on the core still refuses
+a control character); `replace_text` writes with the core's `text_children` / `place_text` (untracked: after the edited
+`w:t` in its run, the document's own characters never re-read as structure) and `literal_replacement` verifies with
+`breaks`; a `paragraph_edits` assertion carries `breaks: true`. A tracked replacement of only tabs or breaks declares a
+structure-only change. Any other control character (`\r` included) is `bad-params`.
 
 ## 5. Pictures (F4)
 
@@ -198,3 +220,17 @@ is refused. V10 kind `moved_paragraphs`.
 5. **Text boxes stay refused** with the rest of Tier 3.
 
 ## Built (fill in per item as it lands)
+
+### F3 — built (2026-10-21)
+
+`set_properties` takes `vertAlign`, `vanish`, `highlight`, `spacing` and `dstrike` on text and on style definitions
+(`ops/effective.py` ↔ the `properties` kind in `verify/props.py`); `insert_paragraph` takes tabs and line breaks,
+`runs` segments and several `paragraphs` (the `inserted_paragraphs` kind now compares each new paragraph's content
+exactly: one new `w:ins`, each segment's run, its `w:t` / `w:tab` / `w:br` in order); `replace_text`'s replacement takes
+tabs and line breaks through both sides of the edit core (`breaks=True`). The decisions the build settled are in §3,
+§4.2 and §4.3 ("As built"). No new refusal code (`textbox` and `section-break` reused). Tests:
+`tests/test_text_control.py` on `tests/fx_text.py` — end to end tracked and untracked, the "already as asked" no-ops,
+wrong outputs and shared wrong implementations caught by V10, the two resolvers compared, `RPR_ORDER` pinned to the
+bundled schema, parameters, placed words, the catalog, the batch pipeline and a LibreOffice render. Needs the owner's
+machine: a live request over real specifications opened in Word (superscript, hidden text, highlight, condensed spacing,
+double strikethrough; a numbered clause inserted with a tab after its number; a heading split by a line break).
