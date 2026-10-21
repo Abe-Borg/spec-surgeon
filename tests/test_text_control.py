@@ -928,15 +928,36 @@ def test_every_placed_text_is_traced_to_the_user():
         {"op": "insert_paragraph", "select": SUMMARY, "params": {"paragraphs": [
             {"text": "First"}, {"runs": [{"text": "Second", "i": True}, {"text": "\nThird"}]}]}},
         {"op": "replace_text", "params": {"find": "PART 1 GENERAL", "replace": "PART 1\nGENERAL"}}]}
-    assert compiler.placed_words(spec) == ["A.\tProvide calculations.", "Note:", " see drawings", "First", "Second",
-                                           "\nThird", "PART 1\nGENERAL"]
-    request = ("Add 'A. Provide calculations.' and a note 'Note:' in bold then 'see drawings', then the paragraphs First, "
-               "Second (italic) and Third; put GENERAL on its own line after PART 1 in 'PART 1 GENERAL'")
+    # a paragraph of segments is placed as it reads: its segments joined, traced as one phrase
+    assert compiler.placed_words(spec) == ["A.\tProvide calculations.", "Note: see drawings", "First",
+                                           "Second\nThird", "PART 1\nGENERAL"]
+    request = ("Add 'A. Provide calculations.' with a tab after A., a note 'Note: see drawings' with Note: in bold, "
+               "then the paragraphs First and 'Second Third' with Second in italic and Third on its own line; put "
+               "GENERAL on its own line in 'PART 1 GENERAL'")
     assert compiler.untraceable(spec, [request]) == []
-    # the words on each side of a tab or break must still be the user's
+    # a tab or a line break is whitespace like any other: the words around it trace only together, in order
     assert compiler.untraceable(spec, ["Add A. and Note: see drawings First Second Third PART 1 GENERAL"]) == \
         ["A.\tProvide calculations."]
+    assert compiler.untraceable(spec, ["Add 'Note:' in bold then 'see drawings'"]) == \
+        [w for w in compiler.placed_words(spec)]
     assert compiler.untraceable(spec, ["Add a note"]) == compiler.placed_words(spec)
+
+
+@pytest.mark.parametrize("placed", ["Provide shop drawings\nnot\nfor all piping.",   # a word spliced in from elsewhere
+                                    "for all piping.\tProvide shop drawings",        # the stretches reordered
+                                    "1.\tProvide shop drawings for all piping.",      # "1." from inside "1.2"
+                                    "2\tProvide shop drawings for all piping."])
+def test_words_around_a_tab_or_break_cannot_be_stitched_together(placed):
+    """Review on PR #53: tracing each stretch between tabs and breaks on its own let words be spliced from elsewhere in
+    the request, reordered, or lifted from inside a number."""
+    request = "In 1.2, add the paragraph 'Provide shop drawings for all piping.' Do not change anything else."
+    for spec in ({"ops": [{"op": "replace_text", "params": {"find": "x", "replace": placed}}]},
+                 {"ops": [{"op": "insert_paragraph", "params": {"text": placed}}]},
+                 {"ops": [{"op": "insert_paragraph", "params": {"runs": [{"text": part} for part in
+                                                                         placed.replace("\t", "\n").split("\n")]}}]}):
+        assert compiler.untraceable(spec, [request]), (placed, spec)
+    exact = {"ops": [{"op": "insert_paragraph", "params": {"text": "Provide shop drawings\tfor all piping."}}]}
+    assert compiler.untraceable(exact, [request]) == []          # the user's words in order, a tab between them
 
 
 def test_the_catalog_says_what_the_ops_now_take(src):
