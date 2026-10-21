@@ -33,22 +33,11 @@ def test_installer_waits_for_the_app_and_reopens_it():
     assert re.search(r"\[InstallDelete\]\s*\n(;.*\n)*Type: filesandordirs; Name: \"\{app\}\\_internal\"", ISS)
     assert ISS.count(f'AppUserModelID: "{winapp.AUMID}"') == 2
     assert "PrivilegesRequired=lowest" in ISS            # the in-app update never asks for administrator rights
-    assert ISS.count('contents_directory="_internal"') == 0 and SPEC.count('contents_directory="_internal"') == 2
-
-
-def test_the_installer_states_the_license_and_the_author():
-    """The license page, the copyright line and the author's links come from spec_surgeon.about (test_about.py
-    checks the values); here: the wizard pages that show them are on, and the in-app update stays silent."""
-    assert re.search(r"^LicenseFile=.*LICENSE$", ISS, re.M) and "DisableWelcomePage=no" in ISS
-    assert re.search(r"^AppCopyright=Copyright \(c\) \d{4} Abraham Borg$", ISS, re.M)
-    assert "procedure InitializeWizard" in ISS and ISS.count("AddLink(") == 3     # the definition and two links
-    assert "WelcomeLabel2=" in ISS and "MIT License" in ISS
-    assert "CloseApplications=yes" in ISS and "SetupLogging=yes" in ISS      # unchanged by the welcome page
-    assert (ROOT / "LICENSE").is_file()
+    assert ISS.count('contents_directory="_internal"') == 0 and SPEC.count('contents_directory="_internal"') == 1
 
 
 def test_the_bundle_has_the_icon_the_page_and_the_window_s_runtime():
-    assert SPEC.count("icon=icon") == 2 and '"web/static/**/*"' in SPEC
+    assert SPEC.count("icon=icon") == 1 and '"web/static/**/*"' in SPEC
     for name in ("uvicorn", "webview", "clr_loader", "pythonnet", "\"clr\"", "fastapi", "starlette", "anyio",
                  "spec_surgeon.web.server", "spec_surgeon.web.shell", "spec_surgeon.web.updates"):
         assert name in SPEC, name

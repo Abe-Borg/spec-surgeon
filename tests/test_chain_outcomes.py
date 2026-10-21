@@ -10,7 +10,6 @@ from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 
 from spec_surgeon import batch
-from spec_surgeon import library
 from spec_surgeon.chain import ChainError, chain_from_specs, chain_key, run_chain, validate_chain
 from spec_surgeon.preview import approval_token, make_chain_preview
 from spec_surgeon.verify.outcomes import assert_outcomes
@@ -99,14 +98,11 @@ def test_changed_final_requirement_changes_approval_token(tmp_path):
     assert approval_token(chain_key(chain), [source]) != before
 
 
-def test_library_round_trip_retains_requirements_and_preview_cannot_call_failed_outcome_passed(tmp_path):
+def test_the_preview_cannot_call_a_failed_final_requirement_passed(tmp_path):
     source = tmp_path / "source.docx"
     source.write_bytes(_document())
     chain = chain_from_specs([("courier", _font("Courier New"))], assertions=[_require_font()])
-    library.save_chain("Keep Arial", chain)
-    saved = library.load_chain("Keep Arial")
-    assert saved["assertions"] == chain["assertions"]
-    pv = make_chain_preview(saved, [str(source)], tmp_path / "preview", renderer="none", do_render=False)
+    pv = make_chain_preview(chain, [str(source)], tmp_path / "preview", renderer="none", do_render=False)
     sample = pv.samples[0]
     assert sample.stages[0]["passed"] is True and sample.passed is False
     assert sample.checks["FINAL"] == "FAIL" and sample.outcomes[0]["status"] == "FAIL"

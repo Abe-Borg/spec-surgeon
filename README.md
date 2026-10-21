@@ -10,9 +10,9 @@ deterministic Python over the document XML. The expected result is predicted *be
 verifier, sharing no code with the transform, reads only the before and after packages and asserts that prediction.
 A file is delivered only when every check passes and the source has not moved since it was read. No language model
 is in the per-file loop; Claude is optional, and its job is to turn a plain-English request into a specification you
-approve, to look at preview pages, and to advise on files the engine set aside.
+approve, to look at preview pages, and to investigate files the engine set aside.
 
-It runs as a Windows desktop app, as a command line on Windows, macOS or Linux, and as a Python library.
+It runs as a Windows desktop app and as a Python library (Windows, macOS or Linux). There is no command line.
 
 ## Install
 
@@ -27,8 +27,7 @@ available from **Spec Surgeon → Example edit specs** in the Start menu.
 
 Microsoft Word or LibreOffice is still needed for page rendering; neither is installed by this setup program. Typed
 requests need your Anthropic API key: enter it in the window's **Settings** and tick *Remember securely on this
-computer* to keep it in Windows Credential Manager. Saved EditSpecs run through the command line without one. The
-installer is unsigned, so Windows may show a publisher prompt on the first manual install.
+computer* to keep it in Windows Credential Manager. The installer is unsigned, so Windows may show a publisher prompt on the first manual install.
 
 **Python package / development setup** (Python 3.10+ on Windows, macOS or Linux; from the project folder):
 
@@ -36,12 +35,12 @@ installer is unsigned, so Windows may show a publisher prompt on the first manua
 py -3 -m pip install -e .            # core: lxml, pymupdf
 py -3 -m pip install -e ".[gui]"     # the window: FastAPI, uvicorn, pywebview (WebView2 on Windows) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
-py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests (`do`, the window), `advise`
+py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests in the window
 py -3 -m pip install -e ".[dev]"     # pytest + python-docx (fixtures)
 ```
 
 or `py -3 -m pip install -r requirements.txt` for everything. Start the window with `spec-surgeon-gui` (or
-`spec-surgeon gui`); a copy installed this way is not updated in-app, the banner shows the `pip install -U` command
+`py -3 -m spec_surgeon`); a copy installed this way is not updated in-app, the banner shows the `pip install -U` command
 instead. On Linux and macOS use `python3` in place of `py -3`. Without pywebview the window opens in the default
 browser instead of its own window.
 
@@ -58,10 +57,10 @@ render checks are recorded as N/A with the reason.
 |---|---|
 | `SPEC_SURGEON_AUTHOR` | default tracked-change author (else the OS user name) |
 | `SPEC_SURGEON_SOFFICE` | path to `soffice` / `soffice.exe` |
-| `ANTHROPIC_API_KEY` | typed requests, Claude's visual check, custom transforms and `advise`; or enter it in Settings |
-| `SPEC_SURGEON_MODEL` | the model every Claude call uses (default `claude-opus-5-5`; `--model` overrides per command) |
+| `ANTHROPIC_API_KEY` | typed requests, Claude's visual check, custom transforms and recovery; or enter it in Settings |
+| `SPEC_SURGEON_MODEL` | the model every Claude call uses (default `claude-opus-5-5`) |
 | `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own |
-| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json`, the saved conversation, the command-line library, downloaded updates and its logs |
+| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json`, the saved conversation, downloaded updates and its logs |
 
 ## The window: documents and a conversation
 
@@ -119,45 +118,30 @@ with room for its full 128,000-token answer (the conversation at the model's def
 methods at high; every operation's settings ride the cached prompt, so a plan is one or two calls). Instead, the
 header shows the estimated spending as it accrues, **Stop now** cuts off the AI step that is running at once, and
 work pauses after every 48 AI steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a
-passing reason (an overloaded service, a dropped connection) is sent again automatically. Typed requests need
-the key; saved specifications run through the command line without one.
+passing reason (an overloaded service, a dropped connection) is sent again automatically. Every request needs
+the key: without one the window keeps your draft and asks you to connect one in Settings.
 
 See [the window guide](docs/CONVERSATIONAL_DESKTOP.md) for triage notes, pictures and tables, layouts, previews,
 saved conversations, recovery, resource use and verification limits.
 
-## The command line
+## Without the window
 
-```powershell
-spec-surgeon ops --catalog                                   # every operation, its selectors and parameters, the EditSpec schema
-spec-surgeon profile "C:\Projects\AVC11\Specs"               # what the files look like, per structure pattern
-spec-surgeon plan-spec examples\specs\change-all-font-arial.json "C:\Projects\AVC11\Specs"   # dry run, nothing written
-spec-surgeon run-spec examples\specs\change-all-font-arial.json "C:\Projects\AVC11\Specs" --out C:\Temp\ss-fonts
-spec-surgeon run-spec examples\specs\remove-all-headers-footers.json "C:\Specs\21*.docx" --in-place --no-render
-spec-surgeon do "change all fonts to Arial" "C:\Projects\AVC11\Specs" --out C:\Temp\ss-run   # compile, preview, y/N, run
-spec-surgeon chain --stage match-font.json --stage "recipe:Architect header" "C:\Specs" --out C:\Temp\ss-chain
-spec-surgeon library list                                    # your recipes, chains, operations and snippets
-spec-surgeon library show NAME
-spec-surgeon library use NAME "C:\Specs" --out C:\Temp\ss-recipe
-spec-surgeon library delete NAME
-spec-surgeon workflows list                                  # built-in workflows, no API key needed
-spec-surgeon workflows show NAME
-spec-surgeon workflows use NAME "C:\Specs" --inputs @inputs.json --out C:\Temp\ss-workflow
-spec-surgeon profiles create OFFICE.docx --name "Office" --roles @roles.json --out C:\Profiles\office   # office standards
-spec-surgeon structure "C:\Specs"                            # read-only paragraph roles and unresolved evidence
-spec-surgeon audit "C:\Specs" --out SPEC_QA.md                # report-only specification QA
-spec-surgeon verify SOURCE.docx OUTPUT.docx --plan plan.json   # re-run the suite on any pair
-spec-surgeon diagnose OUT_DIR [--file NAME]                   # why a file did not pass
-spec-surgeon advise OUT_DIR                                   # Claude's recommendation per exception
-spec-surgeon retry OUT_DIR                                    # the next pass over the files a batch set aside
-spec-surgeon resolve OUT_DIR                                  # bounded investigation of the files still set aside, then export
-spec-surgeon workspace create "C:\Projects" --out C:\Temp\ss-workspace   # a persistent multi-project batch
+There is no command line. Developers and coding agents drive the engine from Python, and the test suite
+(`python -m pytest`) is how a change is checked; see [CLAUDE.md](CLAUDE.md). A batch from Python:
+
+```python
+from pathlib import Path
+from spec_surgeon.batch import run_batch
+from spec_surgeon.editspec import load_spec
+
+spec = load_spec(Path("examples/specs/change-all-font-arial.json"))
+result = run_batch([r"C:\Projects\AVC11\Specs"], "edit-spec", {}, Path(r"C:\Temp\ss-fonts"), spec=spec)
+print(result.counts())          # {'PASS': ..., 'FAIL': ..., 'EXCEPTION': ..., 'PENDING': ...}
 ```
 
-Inputs may be files, folders (every `*.docx`, lock files skipped) or globs, mixed. Every command exits 0 only when
-every file passed. `do` compiles with Claude, writes a preview under `OUT/preview/`, asks "Run this on N file(s)?"
-(`--yes` without a terminal) and refuses to run if any file or template changed since the preview. Office
-profiles, specification QA audits, project evidence (`spec-surgeon evidence`), built-in workflows, campaign
-workspaces and recovery workspaces are command-line features; the window does not show them.
+Inputs may be files, folders (every `*.docx`, lock files skipped) or globs, mixed. The results folder holds the
+verified copies under `outputs/`, a verification record per file under `records/`, `BATCH_REPORT.md` and
+`DIAGNOSTICS.md`; nothing is written over an original.
 
 ## The verification record
 
@@ -186,15 +170,15 @@ trace. The record distinguishes checks that were performed from checks that were
 a person looking at the pages: a PASS means the engine found exactly the predicted change and nothing else, not that
 the result is what you wanted.
 
-## EditSpecs, recipes and the keyless command line
+## EditSpecs
 
 An **EditSpec** is a JSON program over the operation library: a request, a summary, assumptions, a mode, a list of
 operations with their selectors and parameters, numeric expectations the plan must reproduce on every file, and
 post-conditions. Claude writes one from your request; you can also write one by hand or edit the `spec.json` a
 preview wrote. `examples/specs/` holds a worked example for every operation. Unknown keys, unknown operations,
 wrong parameter types, open questions and two operations that touch the same thing are refused before anything runs.
-A **layout plan** is several EditSpecs in one file (`"kind": "layouts"`, one spec per structure pattern); `plan-spec`
-and `run-spec` accept one, plan each spec on the files of its own pattern, and set aside a file no layout covers.
+A **layout plan** is several EditSpecs in one file (`"kind": "layouts"`, one spec per structure pattern): each spec is
+planned on the files of its own pattern, and a file no layout covers is set aside.
 
 Operations cover fonts and sizes; header/footer templating from a template or an architect's spec; page numbering;
 tracked text replacement and replacement tables; placeholders and site variables; MasterSpec option groups; tagged
@@ -203,21 +187,8 @@ specifier notes, blank paragraphs, hyperlinks, fields, watermarks, document prop
 Final; bold, caps, colour and pagination flags; tab stops; borders and shading; style spacing, style application and
 style mapping from a template; clearing direct formatting; the proofing language; unused styles; numbering schemes,
 typed numbers, list levels and a numbering audit; table properties and table styles; page setup and sections chosen
-by content; character hygiene; and review comments with wording you supply. `spec-surgeon ops` lists them all. Every
-operation also describes itself in one plain sentence; that sentence is what the window's plan shows.
-
-**Recipes.** `spec-surgeon do ... --save-as NAME` saves the previewed spec as a recipe; `spec-surgeon library use
-NAME` runs it again on another project. A **chain** is several recipes run one after another, each stage a full
-verified run on the files the stage before it verified. A **snippet** is a saved paragraph inserted after an anchor.
-One of **your operations** is a custom transform Claude wrote that passed verification; it is tried again on the
-current files before every use. The library lives under `%APPDATA%\Spec Surgeon\library\`; the window never shows
-or offers it.
-
-**Without an API key** the command line still runs saved specs, your library, built-in workflows, office profiles,
-verification, set-aside passes, reports and diagnostics; `do`, `advise`, custom transforms and Claude's visual
-check need a key and say so. The window needs a key for every request: without one it keeps your draft and asks you
-to connect one in Settings. Someone with a key can describe a change once, preview it and save it as a recipe;
-everyone else reuses it at the command line with no key at all.
+by content; character hygiene; and review comments with wording you supply. Every operation also describes itself
+in one plain sentence; that sentence is what the window's plan shows.
 
 ## Limits
 
@@ -233,15 +204,13 @@ everyone else reuses it at the command line with no key at all.
   from Word there.
 - Operations that touch the same part of a file are never ordered by guess inside one specification: the window
   composes them into ordered steps in the order they were listed, each step planned and verified on the one before
-  it; on the command line such a specification is refused and a chain runs them in order. Edits inside text boxes,
+  it. Edits inside text boxes,
   replacements across tabs or line breaks, tracked table or numbering changes, run and table-cell borders, and tab
   stops in styles are not supported.
 - Header/footer templating pins the properties it models; conditional table-style formatting, east-Asian and
   complex-script fonts and sizes are not modelled. A toggle set at more than one style level is refused.
 - Custom transforms are plain formatting on text parts and the styles part, write edited copies only, and run in a
   sandbox that is not an operating-system security boundary.
-- The command-line library is local to one computer and one Windows user; recipes reference template files by
-  absolute path.
 - The installer is unsigned: the checksum checks prove the download is the file the release lists, not who published it.
 - Costs shown for Claude calls are estimates from a built-in price table.
 
@@ -252,12 +221,13 @@ everyone else reuses it at the command line with no key at all.
 - [docs/audits/](docs/audits/) — independent audits, sweeps and their responses.
 - [docs/history/](docs/history/) — the previous [CLAUDE.md](docs/history/CLAUDE-2026-10-18.md) and
   [README.md](docs/history/README-2026-10-18.md), five days of design decisions, definitions and change notes, and
-  [the design and phased plan of the natural-language editor](docs/history/NL_SURGICAL_EDITOR_PLAN.md). The
-  current round's plan is `docs/PLAN-2026-10-19-ez-mode.md`.
+  [the design and phased plan of the natural-language editor](docs/history/NL_SURGICAL_EDITOR_PLAN.md), and the
+  guides to the command-line features removed on 2026-10-21 (workspaces, workflows, office profiles, spec QA audits,
+  project evidence, evaluations). The current round's plan is `docs/PLAN-2026-10-20-one-conversation.md`.
 - [docs/RELIABILITY.md](docs/RELIABILITY.md) — the review flow, what PASS means and the remaining evidence limits;
-  [docs/BUILTIN_WORKFLOWS.md](docs/BUILTIN_WORKFLOWS.md), [docs/OFFICE_PROFILES.md](docs/OFFICE_PROFILES.md),
-  [docs/RECOVERY.md](docs/RECOVERY.md), [docs/TEXT_HYGIENE_AND_SPEC_QA.md](docs/TEXT_HYGIENE_AND_SPEC_QA.md) — the
-  guides to those command-line features; the `docs/BUILTIN_OPS_BATCH*_DESIGN.md` notes define every operation.
+  [docs/RECOVERY.md](docs/RECOVERY.md) — how files a run set aside are investigated;
+  [docs/TEXT_HYGIENE.md](docs/TEXT_HYGIENE.md) — the character hygiene operations; the
+  `docs/BUILTIN_OPS_BATCH*_DESIGN.md` notes define every operation.
 - [src/spec_surgeon/skill/SKILL.md](src/spec_surgeon/skill/SKILL.md) — the `docx-surgical-edit` method the engine
   implements; its verification checklist is the suite.
 - [CLAUDE.md](CLAUDE.md) — the invariants and working notes for anyone changing the code.

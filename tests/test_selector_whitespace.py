@@ -60,3 +60,33 @@ def test_matching_options_compile_errors_are_plan_time_refusals(selector):
     with pytest.raises(JobException) as exception:
         check_paragraph_selector({**selector, "flexible_whitespace": True})
     assert exception.value.code == "bad-params"
+
+
+@pytest.mark.parametrize("case_insensitive,flexible,expected", [(True, True, 1), (False, True, 0), (True, False, 0)])
+def test_selectors_match_variation_and_verifier_rechecks_targets(case_insensitive, flexible, expected):
+    package = DocxPackage(build("21 13 13", "SPRINKLERS"))
+    part = "word/document.xml"
+    root = package.xml(part)
+    root.find(".//" + W + "t").text = "Section\u00a021\u00a0  13\t13.13"
+    package.write(part, serialize_xml(root))
+    original = package.output_bytes()
+    package = DocxPackage(original)
+    select = {"paragraphs": {"text_regex": r"^SECTION 21 13 13\.13$",
+                              "case_insensitive": case_insensitive, "flexible_whitespace": flexible}}
+    op = get_op("set_properties")
+    fragment = op.plan(package, select, {"paragraph": {"keepNext": True}, "tracked": False})
+    plan = merge_fragments([fragment])
+    output = package.copy()
+    op.apply(output, fragment)
+    record = run_suite(original, output.output_bytes(), plan.to_dict(), "before.docx", "after.docx")
+    assert record.passed, record.to_markdown()
+    changed = package.xml(part).xpath("count(.//w:pPr/w:keepNext)", namespaces={"w": W[1:-1]})
+    actual = output.xml(part).xpath("count(.//w:pPr/w:keepNext)", namespaces={"w": W[1:-1]})
+    assert actual - changed == expected
+    if expected:
+        wrong = output.copy()
+        badroot = wrong.xml(part)
+        child = badroot.find(".//" + W + "keepNext")
+        child.set(W + "val", "0")
+        wrong.write(part, serialize_xml(badroot))
+        assert not run_suite(original, wrong.output_bytes(), plan.to_dict(), "before.docx", "wrong.docx").passed

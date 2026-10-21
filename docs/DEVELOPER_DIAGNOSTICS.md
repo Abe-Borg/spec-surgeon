@@ -1,16 +1,10 @@
 # Investigating Spec Surgeon failures
 
-Diagnostics are enabled automatically in the desktop app and CLI. They are local files; this system does not upload telemetry. The readable reports explain document outcomes, while JSONL event journals reconstruct the work that led to those outcomes. Collect evidence from the same attempt before rerunning it into the same output folder.
+Diagnostics are enabled automatically in the desktop app. They are local files; this system does not upload telemetry. The readable reports explain document outcomes, while JSONL event journals reconstruct the work that led to those outcomes. Collect evidence from the same attempt before rerunning it into the same output folder.
 
 ## Collect the evidence
 
-Use **Help → Save diagnostics bundle…**, or:
-
-```console
-spec-surgeon diagnose OUT_DIR --bundle diagnostics.zip
-```
-
-`diagnose` also prints available event journals. The bundle includes run, preview, conversation, recovery and application journals, including retained application rotations. Documents and page images stay excluded. Reports, existing transcripts, exception messages and trace summaries can quote client text, so the bundle remains sensitive project material.
+Take the results folder's `DIAGNOSTICS.md`, `logs/` and `records/`, and the application logs folder (**Help → Open diagnostic logs** in the window). Leave out `outputs/`, `failed/`, `samples/` and anything else holding documents or page images. Reports, transcripts, exception messages and trace summaries can still quote client text, so treat the evidence as sensitive project material.
 
 | Evidence | Location | What it answers |
 | --- | --- | --- |
@@ -20,18 +14,18 @@ spec-surgeon diagnose OUT_DIR --bundle diagnostics.zip
 | Readable traces | `logs/run.log`, `logs/<output stem>.trace.log` | Stage messages, plan summaries, error details and native fault/hang stacks |
 | Conversation timeline | `<conversation work folder>/logs/events.jsonl` | Model calls, tool execution, validation and accepted/rejected submissions |
 | Preview/chain/recovery timeline | Their own `logs/events.jsonl`, including nested run folders | Sample processing, chain stages, repair trials, budgets, reviews and delivery |
-| Application timeline | Application logs folder, `app-events-<pid>.jsonl` and `.1`–`.3` | UI actions, background jobs, session state, CLI commands and failures before a run folder exists |
+| Application timeline | Application logs folder, `app-events-<pid>.jsonl` and `.1`–`.3` | UI actions, background jobs, session state and failures before a run folder exists |
 | Readable application log/crashes | `spec-surgeon.log`, `crash-*.log` | Activity, caught failures and native crashes |
 
 On Windows, the application logs folder is `%LOCALAPPDATA%\Spec Surgeon\logs`. Other platforms use `spec_surgeon.settings.logs_dir()`. `SPEC_SURGEON_CONFIG_DIR` overrides application storage for isolated development/tests.
 
-Application JSONL files rotate at 5 MiB with three backups per process. Startup keeps the five most recent inactive process journal groups plus all live ones. Separate process files avoid rotation races between a GUI and concurrent CLI commands. Run and worker journals are retained with their results without rotation; keep or remove those result folders according to the project's retention needs.
+Application JSONL files rotate at 5 MiB with three backups per process. Startup keeps the five most recent inactive process journal groups plus all live ones. Separate process files avoid rotation races between concurrent processes. Run and worker journals are retained with their results without rotation; keep or remove those result folders according to the project's retention needs.
 
 ## Follow one action
 
 Each JSON line is a complete event with `schema_version`, `event_id`, a full UTC `timestamp`, `monotonic_ns`, `pid`, `thread_id`, `thread`, and `session_id`. Scope fields link the work:
 
-- `action_id` or `command_id`: the initiating GUI action or CLI command.
+- `action_id`: the initiating window action.
 - `run_id`, `batch_id`, `chain_id`, `preview_id`: processing and nested runs.
 - `source`, `output_name`, `attempt`, `worker_id`: a document and its worker attempt.
 - `conversation_id`, `user_turn`, `model_turn`, `model_call_id`: conversations and individual requests.
@@ -64,7 +58,7 @@ A started span without a terminal event means the operation may still be running
 
 ## Read a combined timeline without extra packages
 
-Run this with one or more result/application-log folders. It also reads extracted bundles. It ignores incomplete JSON lines and deduplicates events mirrored into multiple journals.
+Run this with one or more result/application-log folders. It ignores incomplete JSON lines and deduplicates events mirrored into multiple journals.
 
 ```python
 # Save as a temporary developer script, then: python timeline.py RESULTS APP_LOGS
@@ -110,7 +104,7 @@ with diag.scope(run_id=diag.new_id()):
         outcome.update(status=result.status)
 ```
 
-`diag.scope(path_to_jsonl, **context)` selects a scoped journal; without a path it inherits the current destination. A library host should call `diag.setup_app_logging(log_directory)` or establish its own journal scope to capture failures before a result folder can safely be created; CLI/GUI entry points do this automatically. `diag.context()` returns a copy suitable for passing into spawned processes. New threads require `contextvars.copy_context().run`; do not enter one copied context concurrently in multiple threads. Verifier code imports `telemetry` directly to preserve its independence from transform/application modules.
+`diag.scope(path_to_jsonl, **context)` selects a scoped journal; without a path it inherits the current destination. A library host should call `diag.setup_app_logging(log_directory)` or establish its own journal scope to capture failures before a result folder can safely be created; the window does this automatically. `diag.context()` returns a copy suitable for passing into spawned processes. New threads require `contextvars.copy_context().run`; do not enter one copied context concurrently in multiple threads. Verifier code imports `telemetry` directly to preserve its independence from transform/application modules.
 
 Record starts before calls that can block, explicit reasons for skips/refusals/retries, terminal outcomes and durations. Preserve the original exception and processing policy. Catching an error for diagnostics is not a reason to swallow it or weaken verification. Record IDs, counts, hashes, paths and selected options; do not pass raw prompts, documents, images, arbitrary SDK objects, full arguments or environment dictionaries.
 

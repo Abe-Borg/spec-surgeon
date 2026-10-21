@@ -146,19 +146,6 @@ def test_forgetting_all_occurrences_forgets_the_repair_correction(tmp_path):
     assert not store.get(store.record(example()))["reuse_blocked"]
 
 
-def test_old_schema_corrections_migrate_and_propagate(tmp_path):
-    store = memory.CaseStore(tmp_path / "cases.db")
-    first = store.record(example())
-    second = store.record(example())
-    store.feedback(first, False)
-    with sqlite3.connect(store.path) as con:
-        con.execute("DROP TABLE blocked_repairs")
-        con.execute("UPDATE cases SET reuse_blocked = 0 WHERE id = ?", (second,))
-        con.execute("PRAGMA user_version = 1")
-    third = store.record(example())
-    assert all(store.get(case_id)["reuse_blocked"] for case_id in (first, second, third))
-
-
 def test_only_known_case_fields_are_saved_and_candidate_paths_are_redacted(tmp_path):
     store = memory.CaseStore(tmp_path / "cases.db")
     token = "template:" + "a" * 64

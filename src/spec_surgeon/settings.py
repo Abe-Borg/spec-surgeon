@@ -6,8 +6,7 @@
 
 ``SPEC_SURGEON_CONFIG_DIR`` moves all of it (settings at its root, the rest under ``data/``) — the tests use it.
 
-Plain JSON: the user can see and delete the file, and the updater and the command line read it without the
-window. Never stored:
+Plain JSON: the user can see and delete the file, and the updater reads it without the window. Never stored:
 the API key (Windows Credential Manager, ``credentials``), the safety-relevant switch (write back over the originals —
 off at every start), the conversation with Claude and any acknowledgement of Claude's visual check (both belong to one
 preview, never to the next start). Not settings at all (since the GUI rework after v0.4.1): the look (the page

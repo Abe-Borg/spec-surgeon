@@ -39,8 +39,8 @@ Rules:
   and refuses to store when the bytes moved in between.
 - **Where:** `cache_root_for(out_dir)` — `<default run root>/.render-cache` when the preview or run folder is
   under `settings.default_run_root()`; `<out_root>/.render-cache` when the folder's parent is a session folder
-  (`gui.Session` stamps them `YYYYMMDD-HHMMSS[-n]`) under a root the user chose; otherwise (the command line's
-  `--out`, a test folder) a `.render-cache` beside the output folder itself, never above a folder the caller named.
+  (`gui.Session` stamps them `YYYYMMDD-HHMMSS[-n]`) under a root the user chose; otherwise (a folder the caller
+  named, a test folder) a `.render-cache` beside the output folder itself, never above a folder the caller named.
 - **Off switch:** `SPEC_SURGEON_RENDER_CACHE=0` (also `false`, `no`, `off`).
 - `render.render_pdfs(files, out_dir, backend, workers, log, detail, cache=None)` serves hits, renders only the
   misses (a renderer failure still returns the hits), stores the fresh renders and trims. The preview

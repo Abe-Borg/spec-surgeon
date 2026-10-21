@@ -127,6 +127,7 @@ def test_a_colour_list_that_is_not_one_is_refused(tabs):
             get_op("set_properties").plan(DocxPackage(tabs), {"runs": {"color_in": cols}}, {"run": {"color": "auto"}})
         assert e.value.code == "bad-params", cols
     assert rpr_selected({"has_direct_font": True}, None, False) is False         # the old call shape still works
+    assert rpr_selected({"has_direct_font": False}, None, False) is True
     with pytest.raises(JobException) as e:
         rpr_selected({"color_in": ["0000FF"]}, None, False)                        # color_in needs its paragraph
     assert e.value.code == "internal"

@@ -1,4 +1,4 @@
-"""Built-in batch 2's shared machinery (docs/BUILTIN_OPS_BATCH2_DESIGN.md §1): structure-only declarations (V2/V3), the
+"""The verifier's shared hooks (docs/BUILTIN_OPS_BATCH2_DESIGN.md §1): structure-only declarations (V2/V3), the
 V10 hooks (verified parts and members, expected removals outside paragraphs, the member residual over settings.xml and
 the document-properties parts), and the both-sides definitions every batch-2 op relies on — fields, effective hidden and
 colour, block text and structure — each compared transform side against verifier side."""

@@ -7,9 +7,10 @@ or a batch that fails, the verification record's specifics (which paragraph, whi
 preview's log (and a page comparison that fails: a warning, never a lost preview) and the approval refusal that says
 what changed (for a spec and for a custom transform), the compiler's transcript and API errors (an API error is a failed
 turn, a defect propagates with what was said kept), the window session's folders and the records beside each preview,
-the Tier B sandbox's traceback, the bundle (never the documents), `spec-surgeon diagnose` and the crash watch."""
+the Tier B sandbox's traceback and the crash watch."""
 from __future__ import annotations
 
+import ast
 import faulthandler
 import json
 import os
@@ -26,7 +27,7 @@ from spec_surgeon import batch as batch_mod
 from spec_surgeon import diagnostics as diag
 from spec_surgeon.batch import run_batch
 from spec_surgeon.editspec import load_spec
-from spec_surgeon.report import explain_failure
+from spec_surgeon.report import FAILURE_EXPLANATIONS, explain_failure
 from spec_surgeon.verify.explain import failure_details, text_change, visible
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
@@ -138,6 +139,56 @@ def test_an_engine_failure_is_never_called_a_corrupt_file(tmp_path, monkeypatch)
     assert "Spec Surgeon itself failed on 1 file(s)" in diagnostics and "**Traceback**" in diagnostics
     assert "applying the edit to a copy (`apply`), op #1 `replace_text`" in diagnostics
     assert not list((out / "outputs").iterdir())
+
+
+# ---- every refusal an operation can raise reads in plain words --------------------------------------------------------
+
+OPS_DIR = Path(__file__).resolve().parent.parent / "src" / "spec_surgeon" / "ops"
+# codes that fall back to the generic "Refused for Safety" wording today; no new code may join them
+GENERIC_EXPLANATION = {"binding-source", "cardinality", "comment-overlap", "shared-part", "theme-font",
+                       "unsupported-comment-anchor"}
+
+
+def _refusal_codes():
+    """Every code literal an operation module refuses with — ``JobException(reason, code)`` and
+    ``resolve_scheme(..., code)`` — and the modules where a code is computed instead."""
+    codes, computed = set(), []
+    for py in sorted(OPS_DIR.glob("*.py")):
+        for n in ast.walk(ast.parse(py.read_text(encoding="utf-8"))):
+            if not isinstance(n, ast.Call):
+                continue
+            called = getattr(n.func, "id", None) or getattr(n.func, "attr", None)
+            at = {"JobException": 1, "resolve_scheme": 4}.get(called)
+            if at is None:
+                continue
+            code = n.args[at] if len(n.args) > at else next((k.value for k in n.keywords if k.arg == "code"), None)
+            if isinstance(code, ast.Constant):
+                codes.add(code.value)
+            else:
+                computed.append(py.stem)
+    return codes, sorted(set(computed))
+
+
+def test_every_refusal_code_of_every_operation_is_explained_and_only_spec_level_ones_are_fatal():
+    from spec_surgeon import compiler
+    from spec_surgeon.ops import fields
+    codes, computed = _refusal_codes()
+    # computed codes: end_of_section picks one of two literals; links raises a field's refusal (fields.REFUSAL_TEXT);
+    # the others re-raise the code of a refusal read above
+    assert computed == ["end_of_section", "links", "lists", "set_properties", "set_tab_stops", "style_import"]
+    codes |= set(fields.REFUSAL_TEXT) | {"name-collision"}            # batch.planned_names
+    codes.discard("internal")                                         # diagnostics.classify: an internal error
+    assert {"table-value", "spans-structure", "nested-options", "bad-name", "image-changed", "eos-not-last",
+            "revision-kind", "paragraph-merge", "partial-move", "marks-in-change", "watermark-exists", "no-header",
+            "watermark-size", "field-span", "nested-field", "form-field", "no-part", "protected", "property-type",
+            "malformed-properties", "tracked-format", "toggle-ambiguous", "field-result", "style-mismatch",
+            "style-import", "style-numbering", "missing-style", "conflict-property", "scheme", "scheme-depth",
+            "numbering-mismatch", "numbering-unsupported", "typed-format", "ambiguous", "tab-position",
+            "table-structure", "textbox"} <= codes                    # the scan reads every operation
+    assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == sorted(GENERIC_EXPLANATION)
+    # a refusal one file earns never rejects the whole spec at compile time
+    assert codes & compiler.FATAL_SPEC_CODES == {"bad-params", "conflict", "slot-overlap", "template-slot",
+                                                  "unknown-slot"}
 
 
 # ---- the trace, the run log, DIAGNOSTICS.md -------------------------------------------------------------------------
@@ -405,18 +456,6 @@ def test_a_refused_custom_transform_run_says_what_changed(tmp_path):
     assert "21 00 00 – A.docx: modified since the preview (size" in str(e.value)
 
 
-def test_run_spec_with_a_stale_approval_says_what_changed(tmp_path, capsys):
-    from spec_surgeon.cli import main as cli_main
-    from spec_surgeon.preview import make_preview
-    d = _folder(tmp_path, ["A"])
-    pv = make_preview(REPLACE, [str(d)], tmp_path / "pv", do_render=False)
-    (d / "21 00 00 – A.docx").write_bytes(build("21 00 00", "A CHANGED"))
-    rc = cli_main(["run-spec", str(tmp_path / "pv" / "spec.json"), str(d), "--approval", pv.token, "--no-render",
-                   "--out", str(tmp_path / "out")])
-    err = capsys.readouterr().err
-    assert rc == 2 and "approval token does not match" in err and "21 00 00 – A.docx: modified since the preview" in err
-
-
 def test_a_failing_page_comparison_is_a_warning_not_a_lost_preview(tmp_path, monkeypatch):
     """The before/after pictures are a convenience: a comparison that raises costs the pictures (a warning, its
     traceback in the preview log), never the sample, its PDFs, or the pages the visual check would look at."""
@@ -607,73 +646,6 @@ def test_the_sandbox_hands_back_the_generated_codes_traceback(tmp_path):
     assert "line" in t.problems[0]
 
 
-# ---- the bundle and `spec-surgeon diagnose` ---------------------------------------------------------------------------
-
-def test_the_bundle_holds_the_diagnostics_never_the_documents(tmp_path):
-    d = _folder(tmp_path, ["A"])
-    (d / "21 99 00 – BROKEN.docx").write_bytes(b"%PDF-1.4")
-    out = tmp_path / "out"
-    run_batch([str(d)], "edit-spec", {}, out, workers=1, renderer="none", do_render=False, spec=REPLACE)
-    app_logs = tmp_path / "applogs"
-    app_logs.mkdir()
-    (app_logs / "spec-surgeon.log").write_text("app log line", encoding="utf-8")
-    (app_logs / "session-1.json").write_text("{}", encoding="utf-8")
-    res = diag.make_bundle(tmp_path / "bundle.zip", out, app_logs)
-    with zipfile.ZipFile(res["path"]) as z:
-        names = z.namelist()
-    assert "results/DIAGNOSTICS.md" in names and "results/logs/run.log" in names and "results/BATCH_REPORT.md" in names
-    assert any(n.startswith("results/records/") for n in names) and "app-logs/spec-surgeon.log" in names
-    assert "environment.json" in names and "README.txt" in names and "app-logs/session-1.json" not in names
-    assert not [n for n in names if n.lower().endswith((".docx", ".pdf", ".png"))] and res["left_out"] >= 1
-
-
-def test_a_sessions_bundle_holds_its_compile_and_preview_beside_the_run(tmp_path, capsys):
-    """Codex review on #10: a `do` or window session keeps its run in <session>/run beside compile.json, preview/ and
-    codegen/ — the bundle of that run folder is the whole session's."""
-    from spec_surgeon.cli import main as cli_main
-    from spec_surgeon.gui import Session
-    from test_compiler import FakeClient, resp, tool
-    d = _folder(tmp_path, ["A"])
-    spec = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
-    s = Session(documents=sorted(d.glob("*.docx")), out_root=tmp_path / "out",
-                client=FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
-    s.compile("remove all headers and footers", lambda m: None)
-    s.make_preview(render=False, log=lambda m: None)
-    s.run(False, False, lambda m: None)
-    assert s.last_run_dir.name == "run" and diag.bundle_root(s.last_run_dir) == s.out_dir.resolve()
-    res = diag.make_bundle(tmp_path / "session.zip", s.last_run_dir)
-    with zipfile.ZipFile(res["path"]) as z:
-        names = z.namelist()
-    assert {"results/compile.json", "results/conversation.json", "results/preview/logs/preview.log",
-            "results/preview/preview.json", "results/run/DIAGNOSTICS.md", "results/run/logs/run.log"} <= set(names)
-    assert not [n for n in names if n.lower().endswith((".docx", ".pdf", ".png"))]
-    assert cli_main(["diagnose", str(s.out_dir), "--bundle", str(tmp_path / "cli.zip")]) == 0    # a `do` folder: run/
-    capsys.readouterr()
-    with zipfile.ZipFile(tmp_path / "cli.zip") as z:
-        assert "results/compile.json" in z.namelist() and "results/run/DIAGNOSTICS.md" in z.namelist()
-    plain = tmp_path / "plain" / "run"                       # a results folder merely called run: itself, nothing else
-    plain.mkdir(parents=True)
-    assert diag.bundle_root(plain) == plain.resolve()
-
-
-def test_diagnose_prints_why_and_writes_a_bundle(tmp_path, capsys):
-    from spec_surgeon.cli import main as cli_main
-    d = _folder(tmp_path, ["A"])
-    (d / "21 99 00 – BROKEN.docx").write_bytes(b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1")
-    out = tmp_path / "out"
-    assert cli_main(["run-spec", str(SPECS / "remove-all-headers-footers.json"), str(d), "--no-render",
-                     "--out", str(out)]) == 1
-    printed = capsys.readouterr().out
-    assert f"Diagnostics — why each file failed, where and how: {out / 'DIAGNOSTICS.md'}" in printed
-    assert cli_main(["diagnose", str(out), "--file", "BROKEN", "--bundle", str(tmp_path / "d.zip")]) == 0
-    printed = capsys.readouterr().out
-    assert "## 1. 21 99 00 – BROKEN.docx — Not a Readable Word Document" in printed and "password-protected" in printed
-    assert "Diagnostics bundle:" in printed and zipfile.is_zipfile(tmp_path / "d.zip")
-    (out / "DIAGNOSTICS.md").unlink()                          # a run that never finished: the log's end, the traces
-    assert cli_main(["diagnose", str(out)]) == 0
-    assert "has no DIAGNOSTICS.md" in capsys.readouterr().out
-
-
 # ---- the window's crash watch -------------------------------------------------------------------------------------------
 
 def test_the_crash_watch_reports_a_session_that_never_closed(tmp_path):
@@ -698,7 +670,7 @@ def test_the_crash_watch_reports_a_session_that_never_closed(tmp_path):
         assert w.previous() == []                                        # ours is alive: never reported
         w.stop()
         assert not w.marker.exists() and not w.crash_log.exists()        # a clean exit leaves nothing behind
-        assert (logs / "crash-old.log").exists()                         # the old report stays for the bundle
+        assert (logs / "crash-old.log").exists()                         # the old report stays in the logs
     finally:
         if was_enabled:
             faulthandler.enable()

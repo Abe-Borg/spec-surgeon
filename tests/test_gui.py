@@ -1,20 +1,24 @@
 """The window's logic (``gui.Session``) end to end with a scripted client — preview and run, stale previews, the
 conversation (Claude's questions and choices, replies, a custom transform), copies only, plain errors — plus what the
 window keeps beside the chat without a toolkit (the update flow, About over the server; the server itself is driven
-in ``test_web_server.py``), and that the web stack never leaks into the engine or the command line."""
+in ``test_web_server.py``), and that the web stack never leaks into the engine."""
 from __future__ import annotations
 
 import json
 import os
 from pathlib import Path
+import shutil
 
 import pytest
 
-from make_fixtures import build
+from fake_claude import api_error, raise_on_enter
+from make_fixtures import build, build_reference_spec
+from spec_surgeon import vision
 from spec_surgeon.editspec import load_spec
-from spec_surgeon.gui import Session
+from spec_surgeon.gui import Session, TransformFailed
 from test_codegen import GOOD_OP
 from test_compiler import FakeClient, resp, tool, generate_reviewed_custom
+from test_execution_delivery_safety import document, recipe
 
 SPECS = Path(__file__).resolve().parent.parent / "examples" / "specs"
 WEB_STACK = ("fastapi", "starlette", "uvicorn", "webview", "multipart", "python_multipart")   # the window's own
@@ -322,10 +326,10 @@ def test_without_the_gui_extra_a_message_box_only_when_there_is_no_console(monke
         assert gui.main() == 2 and len(shown) == 1 and "spec-surgeon[gui]" in shown[0]
 
 
-def test_the_engine_and_command_line_never_load_the_window():
+def test_the_engine_never_loads_the_window():
     import subprocess
     import sys
-    code = ("import sys, spec_surgeon.gui, spec_surgeon.document_task, spec_surgeon.cli, spec_surgeon.batch, "
+    code = ("import sys, spec_surgeon.gui, spec_surgeon.document_task, spec_surgeon.batch, "
             "spec_surgeon.updater, spec_surgeon.llm, spec_surgeon.conversation, "
             "spec_surgeon.settings, spec_surgeon.winapp, spec_surgeon.credentials; "
             f"stack = {WEB_STACK!r}; "
@@ -427,3 +431,430 @@ def test_a_layout_run_whose_only_set_aside_document_had_no_layout_has_nothing_to
     _stub_recovery(monkeypatch, calls)
     assert s.resolve_remaining(quiet).startswith("Nothing to resolve")
     assert calls == [] and s.recovery is None and s.pending_layout_recovery == []
+
+
+def test_resolve_with_no_exceptions_returns_without_model_calls(tmp_path, monkeypatch):
+    folder = tmp_path / "sources"
+    folder.mkdir()
+    source = document(folder / "spec.docx")
+    session = Session(documents=[source], out_root=tmp_path / "results", visual_check=False)
+    session._set_outcome(spec=recipe({"text_regex": "^Owner"}), source="compiled")
+    session.make_preview(False, lambda _: None)
+    def unexpected(*args, **kwargs):
+        pytest.fail("nothing to resolve must not invoke recovery")
+    monkeypatch.setattr("spec_surgeon.recovery.recover", unexpected)
+    monkeypatch.setattr("spec_surgeon.recovery.recover_from_run", unexpected)
+    assert "Nothing to resolve: 0" in session.resolve_remaining(lambda _: None)
+    session.run(False, False, lambda _: None)
+    assert "Nothing to resolve: 0" in session.resolve_remaining(lambda _: None)
+
+
+EXAMPLES = Path(__file__).resolve().parent.parent / "examples" / "specs"
+HF_SPEC = EXAMPLES / "match-template-spec-header-footer.json"
+
+
+@pytest.fixture
+def project(tmp_path):
+    """Two specs and the architect's spec as the template, with a spec file that names it."""
+    folder = tmp_path / "specs"
+    folder.mkdir()
+    (folder / "21 13 13 – WET-PIPE SPRINKLER SYSTEMS.docx").write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    (folder / "21 13 16 – DRY-PIPE SPRINKLER SYSTEMS.docx").write_bytes(build("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS"))
+    tpl = tmp_path / "ACME.docx"
+    tpl.write_bytes(build_reference_spec())
+    spec = load_spec(HF_SPEC)
+    spec["ops"][0]["params"]["template"] = str(tpl)
+    spec_file = tmp_path / "spec.json"
+    spec_file.write_text(json.dumps(spec), encoding="utf-8")
+    return folder, tpl, spec, spec_file
+
+
+def test_run_refuses_after_the_template_spec_was_edited_since_the_preview(project, tmp_path):
+    folder, tpl, spec, spec_file = project
+    s = Session(documents=sorted(folder.glob("*.docx")), template=tpl, out_root=tmp_path / "out")
+    s._set_outcome(spec=load_spec(spec_file), source=str(spec_file))
+    s.make_preview(render=False, log=lambda m: None)
+    # the architect sends a new version of their spec with another header line
+    tpl.write_bytes(build_reference_spec(extra_header_text="ISSUED FOR BID — DO NOT USE FOR CONSTRUCTION"))
+    with pytest.raises(ValueError, match="changed since the preview"):
+        s.run(in_place=False, render=False, log=lambda m: None)
+    assert s.last_batch is None
+    # a new preview of the new template is approved as usual
+    s.make_preview(render=False, log=lambda m: None)
+    s.run(in_place=False, render=False, log=lambda m: None)
+    assert s.last_batch is not None and all(f.status == "PASS" for f in s.last_batch.files)
+
+
+# ---- custom transforms in the session: errors, edited samples, the visual check --------------------------------------
+
+ROOT = Path(__file__).resolve().parent.parent
+REFERENCE = ROOT / "examples" / "templates" / "08 71 00 - DOOR HARDWARE (ACME).docx"
+UNSUPPORTED = {"request": "r", "summary": "s", "unsupported": "no op sets the header distance alone",
+               "proposal": "set_header_distance"}
+OFFER_TURN = resp(tool("submit_editspec", {"spec": UNSUPPORTED, "custom_transform": "possible"}))
+WRITER = resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}}, "w1"))
+
+
+def docx(d: Path):
+    return sorted(d.glob("*.docx"))
+
+
+def revise(f: Path) -> None:
+    """The user edits a spec and saves it: new content (still a good .docx), new modification time."""
+    st = f.stat()
+    f.write_bytes(build("21 00 00", "SPEC 0 REVISED"))
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 5_000_000_000))
+
+
+def offered(folder, tmp_path, *more) -> Session:
+    s = Session(documents=docx(folder), out_root=tmp_path / "out", client=FakeClient(OFFER_TURN, *more))
+    s.compile("put the header 0.625 in from the top", quiet)
+    assert [c.kind for c in s.turn.choices] == ["custom_transform"]
+    return s
+
+
+def create_approved_custom(s, *, choice_id=None, render=False):
+    message = s.reply(choice_id=choice_id or s.turn.choices[0].id, log=quiet, render=render)
+    assert s.pending_custom_transform is None and s.generated is not None
+    return message
+
+
+def saved_entries(s) -> list:
+    return json.loads((s.chat_dir / "conversation.json").read_text(encoding="utf-8"))["entries"]
+
+
+def sent_texts(fake) -> list:
+    return [b.get("text") for b in fake.requests[-1]["messages"][-1]["content"] if b.get("type") == "text"]
+
+
+def _template_spec(folder: Path):
+    tpl = folder / REFERENCE.name
+    shutil.copy(REFERENCE, tpl)
+    spec = json.loads((SPECS / "match-template-spec-header-footer.json").read_text(encoding="utf-8"))
+    spec["ops"][0]["params"]["template"] = str(tpl)
+    return tpl, spec
+
+
+def test_a_new_request_after_a_spec_that_names_a_folder_template_keeps_its_conversation(folder, tmp_path):
+    tpl, spec = _template_spec(folder)
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": spec}, "s1")),
+                      resp(tool("ask_user", {"questions": ["Which sections?"]}, "a2")),
+                      resp(tool("ask_user", {"questions": ["And the cover?"]}, "a3")))
+    s = Session(documents=docx(folder), out_root=tmp_path / "out", client=fake)   # the template is attached too
+    assert s.compile("match the template spec", quiet) == "Compiled."
+    assert tpl not in s.files() and tpl in s.conversation.files     # the accepted spec reads it: filtered, not refused
+    assert "needs your answer" in s.compile("now remove the footers", quiet)   # a new request, while that spec is out
+    assert s.spec is None
+    assert s.conversation.files == s.files() and tpl in s.conversation.files  # the batch a new conversation sees
+    assert s.conversation_matches("now remove the footers")
+    assert "needs your answer" in s.reply("every section", log=quiet)          # never "describe the change again"
+    assert len(fake.requests) == 3
+
+
+def test_a_new_request_over_a_folder_that_cannot_be_read_changes_nothing(folder, tmp_path):
+    s = Session(documents=docx(folder), out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("submit_editspec", {"spec": REMOVE}))))
+    assert s.compile("remove all headers and footers", quiet) == "Compiled."
+    s.make_preview(render=False, log=quiet)
+    conversation, preview = s.conversation, s.preview
+    shutil.move(str(folder), str(tmp_path / "moved"))
+    with pytest.raises((ValueError, OSError)):
+        s.compile("now remove the footers", quiet)
+    assert s.conversation is conversation and s.spec == REMOVE and s.preview is preview   # refused before anything moved
+
+
+def test_an_internal_error_while_making_the_transform_tells_claude_so_never_the_outcome_follows(folder, tmp_path,
+                                                                                               monkeypatch):
+    import spec_surgeon.preview as pv
+    s = offered(folder, tmp_path, WRITER, resp(tool("ask_user", {"questions": ["Shall I try another way?"]}, "a9")))
+    chosen = s.turn.choices[0]
+    real = pv.preview_generated
+
+    def broken(*a, **k):
+        raise OSError("disk full")
+    monkeypatch.setattr(pv, "preview_generated", broken)
+    with pytest.raises(OSError, match="disk full") as e:
+        create_approved_custom(s, choice_id=chosen.id)
+    assert not isinstance(e.value, TransformFailed)                 # a defect propagates as itself
+    notes = s.conversation.notes
+    assert any("internal error (OSError) before any result — nothing was applied" in note for note in notes)
+    assert not any("outcome follows" in n or "passed verification" in n or "disk full" in n for n in notes)
+    entries = saved_entries(s)                                      # the transcript is what the user saw: the choice
+    assert [entry for entry in entries if entry["role"] == "user"][-1]["text"].startswith("Chose: ")
+    monkeypatch.setattr(pv, "preview_generated", real)
+    s.reply("so did it work?")
+    sent = sent_texts(s.client)                                     # the next message Claude gets
+    assert all("[note from the app] " + note in sent for note in notes)
+    assert not any("outcome follows" in (t or "") for t in sent)
+
+
+def test_a_transform_that_comes_out_records_its_independently_verified_result(folder, tmp_path):
+    s = offered(folder, tmp_path, WRITER)
+    assert "passed verification" in create_approved_custom(s)
+    assert any("passed its independent sample verification" in n for n in s.conversation.notes)
+
+
+def test_a_sample_edited_while_the_transform_is_written_is_never_approved_with_its_new_stats(folder, tmp_path,
+                                                                                              monkeypatch):
+    import spec_surgeon.codegen as cg
+    real = cg.generate_op
+    edited = []
+
+    def written_while_edited(request, proposal, samples, *a, **k):
+        g = real(request, proposal, samples, *a, **k)               # its trials read the samples as they were
+        revise(samples[0])                                          # saved in Word before the writer was done
+        edited.append(samples[0])
+        return g
+    monkeypatch.setattr(cg, "generate_op", written_while_edited)
+    s = offered(folder, tmp_path, WRITER)
+    said = create_approved_custom(s)
+    assert "passed verification" in said and "press Preview to try it again" in said
+    assert edited and s.generated is not None
+    assert s.generated_token == ""                                  # its token: none until it is tried again
+    with pytest.raises(ValueError, match="press Preview again") as e:
+        s.run(False, False, quiet)                                  # never approved with the edited file's stats
+    assert f"{edited[0].name}: modified since the preview" in str(e.value)    # it names the file
+    with pytest.raises(ValueError, match="not the current one"):
+        s.acknowledge_review(s.generated_token)                     # nothing of it can be approved
+    lines = []
+    assert "transform verified" in s.make_preview(render=False, log=lines.append)
+    assert s.pending_custom_transform is None
+    assert all((s.out_dir / "retrial" / f"{i:02d}" / "result.json").is_file() for i in range(2))
+    assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
+
+
+def test_a_custom_transform_s_visual_findings_are_included_in_preview_consent(folder, tmp_path, monkeypatch):
+    import spec_surgeon.preview as pv
+    monkeypatch.setattr(pv, "render_samples", lambda *a, **k: None)  # no renderer in this test
+    intents = []
+
+    def review(intent, samples, work_dir, client_factory, *a, **k):
+        intents.append(intent)
+        return vision.VisualReview(summary="looked at the pages", findings=[
+            {"severity": "block", "file": "21 00 00 – SPEC 0.docx", "page": 1, "text": "the header moved off the page"}])
+    monkeypatch.setattr(vision, "review_samples", review)
+    s = offered(folder, tmp_path, WRITER)
+    assert "passed verification" in create_approved_custom(s, render=True)
+    assert len(intents) == 1 and intents[0].startswith("A ONE-OFF CUSTOM TRANSFORM (set_header_distance)")
+    assert s.generated_preview.review.blocking() and s.generated_token
+    assert s.run_blocked_reason() == ""
+    with pytest.raises(ValueError, match="not the current one"):
+        s.acknowledge_review("an old preview's token")
+    before = {f: f.read_bytes() for f in docx(folder)}
+    out = s.run(in_place=False, render=False, log=quiet)            # edited copies: the documents are never touched
+    assert "2 of 2 file(s) PASS" in out and "your files were not changed" in out
+    assert {f: f.read_bytes() for f in docx(folder)} == before
+    outputs = sorted((s.last_run_dir / "outputs").glob("*.docx"))
+    assert len(outputs) == 2 and all(o.read_bytes() not in before.values() for o in outputs)
+    assert [t.passed for t in s.last_trials] == [True, True]
+
+
+def test_turning_render_pages_on_makes_the_custom_transforms_preview_again_with_the_visual_check(folder, tmp_path,
+                                                                                                 monkeypatch):
+    """Codex on #12: a custom transform previewed with Render pages off, then previewed with it on, reused the old
+    preview — no page images, no visual check — while the window took the render-on key as current."""
+    import spec_surgeon.preview as pv
+    monkeypatch.setattr(pv, "render_samples", lambda *a, **k: None)   # no renderer in this test
+    reviews = []
+    monkeypatch.setattr(vision, "review_samples",
+                        lambda intent, samples, *a, **k: reviews.append(intent) or vision.VisualReview(summary="ok"))
+    s = offered(folder, tmp_path, WRITER)
+    assert "passed verification" in create_approved_custom(s, render=False)
+    first, token = s.generated_preview, s.generated_token
+    assert first.rendered is False and first.review is None and reviews == [] and token
+    s.make_preview(render=True, log=quiet)
+    again = s.generated_preview
+    assert again is not first and again.rendered is True and again.out_dir != first.out_dir
+    assert len(reviews) == 1 and again.review is not None            # the visual check ran this time
+    assert s.generated_token == token                               # same files, same transform: same approval
+    s.make_preview(render=True, log=quiet)                          # nothing changed: the preview is reused
+    assert s.generated_preview is again and len(reviews) == 1
+    s.make_preview(render=False, log=quiet)                         # and back: made again without pages
+    assert s.generated_preview.rendered is False and len(reviews) == 1
+    assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
+
+
+# ---- templates in the folder, vanished folders, a transform that does not come out, stale transforms -----------------
+
+@pytest.fixture
+def two_specs(tmp_path) -> Path:
+    d = tmp_path / "specs"
+    d.mkdir()
+    for i in range(2):
+        (d / f"21 0{i} 00 – SPEC {i}.docx").write_bytes(build(f"21 0{i} 00", f"SPEC {i}"))
+    return d
+
+
+def touch(f: Path) -> None:
+    """The user opens a spec in Word and saves it: the file's mtime moves."""
+    st = f.stat()
+    os.utime(f, ns=(st.st_atime_ns, st.st_mtime_ns + 10_000_000))
+
+
+def _offered(two_specs, tmp_path, *writer):
+    s = Session(documents=docx(two_specs), out_root=tmp_path / "out", client=FakeClient(OFFER_TURN, *writer))
+    s.compile("put the header 0.625 in from the top", quiet)
+    assert [c.kind for c in s.turn.choices] == ["custom_transform"]
+    return s
+
+
+def _saved(s):
+    return json.loads((s.chat_dir / "conversation.json").read_text(encoding="utf-8"))
+
+
+def test_a_template_spec_from_the_batch_folder_keeps_the_conversation(two_specs, tmp_path):
+    """The template spec is attached with the other documents; Claude's spec names it as its template. ``files()``
+    leaves it out ("the attached documents without the templates"; ``compile`` and ``conversation_matches`` compare
+    like with like through the same filter) — it is the spec's template, never a copy of the user's own, so it is
+    filtered, not refused, and the conversation keeps matching: nothing changed."""
+    tpl = two_specs / "08 71 00 - DOOR HARDWARE (ACME).docx"
+    shutil.copy(ROOT / "examples" / "templates" / "08 71 00 - DOOR HARDWARE (ACME).docx", tpl)
+    spec = json.loads((SPECS / "match-template-spec-header-footer.json").read_text(encoding="utf-8"))
+    spec["ops"][0]["params"]["template"] = str(tpl)
+    request = "make the header and footer match the template spec"
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": spec}, "s1")),
+                      resp(tool("ask_user", {"questions": ["Keep the logo?"]}, "a2")))
+    s = Session(documents=docx(two_specs), out_root=tmp_path / "out", client=fake)
+    assert s.compile(request, quiet) == "Compiled."
+    assert tpl in s.conversation.files and tpl not in s.files()      # the batch it started on held the template
+    assert s.conversation_matches(request)                           # nothing changed: the same conversation
+    assert "needs your answer" in s.reply("also keep the logo", log=quiet)
+    assert s.spec is None and s.conversation_matches(request)        # without a spec the template is a file again
+    new = two_specs / "21 99 00 – NEW.docx"
+    new.write_bytes(build("21 99 00", "NEW"))
+    s.documents.append(new)                                          # another document attached: a real
+    assert not s.conversation_matches(request)                       # change still ends the match
+    with pytest.raises(ValueError, match="describe the change again"):
+        s.reply("and the footer")
+
+
+def test_a_removed_file_still_ends_the_match_when_a_spec_names_a_template(two_specs, tmp_path):
+    tpl = two_specs / "08 71 00 - DOOR HARDWARE (ACME).docx"
+    shutil.copy(ROOT / "examples" / "templates" / "08 71 00 - DOOR HARDWARE (ACME).docx", tpl)
+    spec = json.loads((SPECS / "match-template-spec-header-footer.json").read_text(encoding="utf-8"))
+    spec["ops"][0]["params"]["template"] = str(tpl)
+    s = Session(documents=docx(two_specs), out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("submit_editspec", {"spec": spec}))))
+    s.compile("match the template spec", quiet)
+    assert s.conversation_matches("match the template spec")        # the match holds before a file goes
+    sorted(two_specs.glob("21 00*.docx"))[0].unlink()
+    assert not s.conversation_matches("match the template spec")
+
+
+def test_a_vanished_folder_is_no_match_never_an_exception(two_specs, tmp_path):
+    s = Session(documents=docx(two_specs), out_root=tmp_path / "out",
+                client=FakeClient(resp(tool("ask_user", {"questions": ["Which sections?"]}))))
+    s.compile("remove some headers", quiet)
+    assert s.conversation_matches("remove some headers")
+    shutil.move(str(two_specs), str(tmp_path / "moved"))                # renamed, or the network share dropped
+    assert s.conversation_matches("remove some headers") is False
+    with pytest.raises(ValueError, match="describe the change again"):
+        s.reply("all of them")
+    assert s.conversation is not None                                # nothing was thrown away
+
+
+def test_no_passing_attempt_is_told_to_claude_once_and_saved(two_specs, tmp_path):
+    bad = [resp(tool("submit_op", {"source": "x = 1"}, f"o{i}")) for i in range(3)]
+    s = _offered(two_specs, tmp_path, *bad,
+        resp(tool("need_user", {"question": "Which outcome should the replacement method preserve?"})))
+    s.reply(choice_id=s.turn.choices[0].id, log=quiet)
+    expected = ("No custom transform passed verification: no passing op after 3 attempt(s): "
+                "investigation stalled; equivalent rejected transforms repeated without new evidence")
+    assert s.conversation.notes[-1] == expected
+    assert sum("passed verification" in n for n in s.conversation.notes) == 1
+    assert any(e["role"] == "app" and e["text"] == expected for e in _saved(s)["entries"])
+    assert s.generated is None
+    assert s.conversation.recovery_active and s.turn.status == "questions"
+    assert expected in str(s.client.requests[-1]["messages"])
+    s.client.responses.append(resp(tool("need_user", {"question": "Which outcome?"}, "a9")))
+    s.reply("so did it work?")
+    assert "so did it work?" in str(s.client.requests[-1]["messages"])
+
+
+def test_an_api_error_while_writing_is_a_recorded_failure_told_to_claude(two_specs, tmp_path):
+    s = _offered(two_specs, tmp_path, raise_on_enter(api_error("Overloaded", 529, "req_7")))
+    with pytest.raises(TransformFailed, match="the call to the model failed"):
+        generate_reviewed_custom(s, log=quiet)
+    note = s.conversation.notes[-1]
+    assert note.startswith(TransformFailed.PREFIX) and "No AI-written" not in note and "529" in note
+    assert _saved(s)["entries"][-1]["text"] == note
+
+
+def test_a_defect_while_writing_is_never_told_to_claude_as_a_verification_result(two_specs, tmp_path):
+    s = _offered(two_specs, tmp_path, raise_on_enter(RuntimeError("a defect in the writer")))
+    with pytest.raises(RuntimeError, match="a defect in the writer") as e:
+        generate_reviewed_custom(s, log=quiet)
+    assert not isinstance(e.value, TransformFailed)
+    assert not any("passed verification" in n or "defect" in n for n in s.conversation.notes)
+    entries = _saved(s)["entries"]                                   # what was said is kept for the diagnosis
+    assert [e for e in entries if e["role"] == "user"][-1]["text"].startswith("Chose: ")
+    assert entries[-1]["role"] == "user"  # the failed method's choice is preserved; no second review ran
+    assert "internal error (RuntimeError) before any result" in s.conversation.notes[-1]
+
+
+def test_preview_tries_a_stale_custom_transform_again_and_run_then_runs(two_specs, tmp_path):
+    s = _offered(two_specs, tmp_path, WRITER)
+    assert "passed verification" in generate_reviewed_custom(s, log=quiet)
+    s.make_preview(render=False, log=quiet)
+    first = s.out_dir
+    touch(sorted(two_specs.glob("*.docx"))[0])
+    with pytest.raises(ValueError, match="press Preview again"):
+        s.run(False, False, quiet)
+    lines = []
+    text = s.make_preview(render=False, log=lines.append)
+    assert "transform verified" in text and s.pending_custom_transform is None
+    retrials = [s.out_dir / "retrial"]
+    assert s.out_dir != first and retrials[0].is_dir() and (s.out_dir / "preview").is_dir()
+    assert all(t.output.is_relative_to(retrials[0]) for t in s.generated.trials)
+    assert s.chat_dir == s.out_dir and (s.out_dir / "conversation.json").is_file()   # the records follow the preview
+    assert (first / "preview").is_dir() and (first / "codegen" / "history.json").is_file()   # the old one is kept
+    assert "2 of 2 file(s) PASS" in s.run(False, False, quiet)
+
+
+def test_a_current_custom_transform_is_not_tried_again(two_specs, tmp_path, monkeypatch):
+    s = _offered(two_specs, tmp_path, WRITER)
+    generate_reviewed_custom(s, log=quiet)
+    token, gp, out = s.generated_token, s.generated_preview, s.out_dir
+    import spec_surgeon.codegen as cg
+
+    def no_trial(*a, **k):
+        raise AssertionError("a current transform must not be tried again")
+    monkeypatch.setattr(cg, "trial", no_trial)
+    assert "AI-written transform verified" in s.make_preview(render=False, log=quiet)
+    assert (s.generated_token, s.generated_preview, s.out_dir) == (token, gp, out)
+
+
+def test_trying_again_with_rendering_runs_the_visual_check_again(two_specs, tmp_path, monkeypatch):
+    import spec_surgeon.preview as pv
+    monkeypatch.setattr(pv, "render_samples", lambda *a, **k: None)  # no renderer in this test
+    s = _offered(two_specs, tmp_path, WRITER)
+    generate_reviewed_custom(s, log=quiet)
+    checks = []
+    monkeypatch.setattr(Session, "_visual_check", lambda self, p, intent, where, log: checks.append((p, intent)))
+    touch(sorted(two_specs.glob("*.docx"))[0])
+    s.make_preview(render=True, log=quiet)
+    assert s.pending_custom_transform is None
+    assert len(checks) == 1 and checks[0][0] is s.generated_preview
+    assert checks[0][1].startswith("A ONE-OFF CUSTOM TRANSFORM (set_header_distance) for: put the header 0.625 in from the top")
+
+
+def test_a_reply_after_a_run_opens_a_newer_folder_and_the_run_keeps_its_records(two_specs, tmp_path):
+    """The run's session folder keeps its records as they were; a reply after the run goes to a new session folder."""
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": REMOVE})),
+                      resp(tool("ask_user", {"questions": ["What about the cover?"]}, "a2")))
+    s = Session(documents=docx(two_specs), out_root=tmp_path / "out", client=fake)
+    s.compile("remove all headers and footers", quiet)
+    s.make_preview(render=False, log=quiet)
+    s.run(False, False, quiet)
+    first = s.out_dir
+    s.reply("hmm, what about the cover?")
+    later = s.chat_dir
+    assert later != first and s.last_run_dir == first / "run"
+    for record in ("run/DIAGNOSTICS.md", "run/logs/run.log", "conversation.json", "compile.json",
+                   "preview/preview.json"):
+        assert (first / record).is_file(), record                                 # the last run, with its session
+    assert (later / "conversation.json").is_file() and (later / "compile.json").is_file()
+    newer = json.loads((later / "conversation.json").read_text(encoding="utf-8"))
+    older = json.loads((first / "conversation.json").read_text(encoding="utf-8"))
+    assert any("what about the cover" in (e.get("text") or "") for e in newer["entries"])
+    assert not any("what about the cover" in (e.get("text") or "") for e in older["entries"])

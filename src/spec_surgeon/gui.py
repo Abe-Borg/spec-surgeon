@@ -1,7 +1,7 @@
 """The engine behind the Spec Surgeon window (docs/history/NL_SURGICAL_EDITOR_PLAN.md Phase 7), and its entry point.
 
     spec-surgeon-gui            (no console window on Windows; the installed app's SpecSurgeon.exe)
-    spec-surgeon gui            (from a terminal)
+    python -m spec_surgeon      (from a terminal)
 
 ``Session`` is a toolbox of named steps over the attached documents (``documents=[...]``, from any folders) and one
 optional template: the conversation with Claude (``compile``, ``reply``), ``make_preview``, ``run`` (with the
@@ -12,7 +12,7 @@ sees belong to ``document_task.DocumentTask``, which also triages every attachme
 package: a local FastAPI server around one ``DocumentTask`` (``web/server.py``, contract ``docs/WEB_API.md``), the
 page built from ``frontend/`` into ``web/static/``, a native WebView2 window through pywebview (``web/shell.py``)
 and the headless update flow (``web/updates.py``). This module has no server and no window code, so it is tested
-on its own and the command line never loads them.
+on its own.
 
 ``main()`` below imports the ``web`` package lazily and, when its dependencies are missing, explains how to install
 them (``pip install "spec-surgeon[gui]"``) instead of crashing.
@@ -298,7 +298,7 @@ class Session:
         self._set_outcome()
         self.end_conversation()
         out = self.out_dir = self._next_session_dir()   # the session folder: conversation.json and compile.json,
-        self.chat_dir = self._compiled_dir = out        # then preview/, codegen/ and run/ beside them (bundle_root)
+        self.chat_dir = self._compiled_dir = out        # then preview/, codegen/ and run/ beside them
         log(f"Talking the request through with Claude over {len(files)} file(s)…")
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
                                          work_dir=out / "chat", log=log, continuous_recovery=True,
@@ -458,9 +458,8 @@ class Session:
     def _session_dir(self) -> Path:
         """The folder the next preview or custom transform goes into: the conversation's folder while nothing has used
         it yet, else a new one. The conversation's records
-        follow it, so every session folder holds the exchange that led to its preview and run (diagnostics.bundle_root
-        bundles them together); once used, a folder's records are frozen (``reply`` opens the next folder before
-        anything more is said)."""
+        follow it, so every session folder holds the exchange that led to its preview and run; once used, a folder's
+        records are frozen (``reply`` opens the next folder before anything more is said)."""
         if self.conversation is None:
             out = self.new_out_dir()
         else:
@@ -1107,8 +1106,7 @@ def open_folder(path: Path) -> None:
 # ---- the window ----------------------------------------------------------------------------------
 
 GUI_MISSING = ("The Spec Surgeon window needs its web dependencies (FastAPI, uvicorn, python-multipart; pywebview for "
-               "the native window). Install them with:\n\n    pip install \"spec-surgeon[gui]\"\n\n"
-               "The command line (spec-surgeon) works without them.")
+               "the native window). Install them with:\n\n    pip install \"spec-surgeon[gui]\"")
 
 
 def main(argv=None) -> int:
