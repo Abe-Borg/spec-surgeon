@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { View } from "../src/types.ts";
-import { APPROVE_TIP, BLOCKING_TIP, DRAFT_TIP, STOP_TIP, actionButton, defaultLabel } from "../src/lib/action.ts";
+import { APPROVE_TIP, BLOCKING_TIP, DRAFT_TIP, STOP_TIP, actionButton, actionSentence, defaultLabel, heldTip } from "../src/lib/action.ts";
 import { EMPTY_VIEW } from "../src/lib/view.ts";
 
 function view(overrides: Partial<View> = {}): View {
@@ -63,4 +63,31 @@ test("an action without a token cannot be clicked", () => {
 test("an unknown kind from a newer server shows no button rather than a wrong one", () => {
   const button = actionButton(view({ action: { label: "x", token: "t", kind: "deliver" as View["action"]["kind"] } }), false, false);
   assert.equal(button, null);
+});
+
+test("previews marked with the red X are counted on the approve label and explained in its tip", () => {
+  const two = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve", can_hold: true } }), false, false, 2);
+  assert.equal(two?.label, "Create edited copies (2 set aside)");
+  if (two && two.kind !== "stop") assert.equal(two.tip, heldTip(2));
+  assert.ok(heldTip(1).includes("the one marked") && heldTip(3).includes("the 3 marked"));
+  // the count never touches Continue or Save, nor the label while a draft holds the button
+  const cont = actionButton(view({ action: { label: "Continue", token: "t", kind: "continue" } }), false, false, 2);
+  assert.equal(cont?.label, "Continue");
+  const draft = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve" } }), false, true, 1);
+  assert.equal(draft?.label, "Create edited copies (1 set aside)");
+  if (draft && draft.kind !== "stop") assert.equal(draft.tip, DRAFT_TIP);
+  // the blocking variant keeps its own tip; the count still shows
+  const blocking = actionButton(view({ action: { label: "", token: "t", kind: "approve" }, blocking: true }), false, false, 1);
+  assert.equal(blocking?.label, "I reviewed the flagged pages — create copies (1 set aside)");
+  if (blocking && blocking.kind !== "stop") assert.equal(blocking.tip, BLOCKING_TIP);
+});
+
+test("the sentence beside the button says what it does, and counts the set-aside documents", () => {
+  const approve = actionButton(view({ action: { label: "Create edited copies", token: "t", kind: "approve" } }), false, false)!;
+  assert.equal(actionSentence(approve, 0), "If the pages look right, create the edited copies.");
+  assert.ok(actionSentence(approve, 1).startsWith("One document marked with the red X goes on your to-do list"));
+  assert.ok(actionSentence(approve, 3).startsWith("3 documents marked with the red X go on your to-do list"));
+  const cont = actionButton(view({ action: { label: "Continue", token: "t", kind: "continue" } }), false, false)!;
+  assert.ok(actionSentence(cont, 0).includes("checked against your request again"));
+  assert.equal(actionSentence({ kind: "stop", label: "Stop now", tip: STOP_TIP }, 0), "");
 });

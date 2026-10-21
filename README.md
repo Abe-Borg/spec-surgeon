@@ -95,11 +95,15 @@ conversation** and Settings.
 5. **Review the plan.** **Here's what will change** lists one sentence per change, written by the operation that will
    make it, in inches and points, never a setting name. Assumptions appear beneath the changes; **See every setting**
    opens the full list. Below it: rendered before/after pages for sample documents with their page counts, and
-   **Left untouched**: any file the plan cannot cover, with the reason.
-6. **Create edited copies.** One button approves the displayed plan. The engine applies it to every file, verifies
-   each one independently, and lists the copies under **Your edited copies**; click one to open it in Word.
-   Originals are never written. A file that fails a check is not delivered; Spec Surgeon checks it again internally
-   and comes back with a question or a new plan, never a method to choose.
+   **Left untouched**: any file the plan cannot cover, with the reason. Each preview carries a green checkmark
+   (looks good) and a red X (needs more work: set it aside for after the others).
+6. **Create edited copies.** One button, in the conversation above the box you type in, approves the displayed plan.
+   The engine applies it to every file you did not set aside, verifies each one independently, and lists the copies
+   under **Your edited copies**; click one to open it in Word. Originals are never written. A file that fails a
+   check is not delivered; Spec Surgeon checks it again internally and comes back with a question or a new plan,
+   never a method to choose. The documents you set aside wait on a to-do list; once the other copies are saved, the
+   conversation offers to work on them: they are planned alone, from the same request, and you say what should be
+   different.
 
 **Mixed batches.** Documents from different projects are often built differently: styled article titles in one,
 plain paragraphs with typed numbers in another. For such a batch the plan has one card per layout ("Styled, PR1

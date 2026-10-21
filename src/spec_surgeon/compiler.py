@@ -1245,11 +1245,14 @@ def check_submission(spec: Any, batch: _Batch, sources: Sequence[str],
 def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                    prior_failures: Optional[Sequence[Dict[str, Any]]] = None,
                    history: Optional[Sequence[str]] = None,
-                   fresh: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
+                   fresh: Optional[Sequence[str]] = None, context: Optional[str] = None) -> List[Dict[str, Any]]:
     """The first user message: the request, the user's answers, the changes already made to these copies (a request
     that builds on a result), any prior pass's set-aside diagnostics, the attached template, the input files a spec
-    names, and the batch's profiles per structure pattern."""
+    names, and the batch's profiles per structure pattern. ``context`` is the app's own account of how these
+    documents come to be planned (set aside after a preview, say); it is never the user's words."""
     parts = [f"REQUEST:\n{request}"]
+    if context and context.strip():
+        parts.append(context.strip())
     if answers:
         parts.append("THE USER'S ANSWERS TO EARLIER QUESTIONS:\n" + "\n".join(f"- {a}" for a in answers))
     if history:

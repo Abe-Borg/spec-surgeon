@@ -113,7 +113,14 @@ try {
   await shot(page, "help-about");
   await page.keyboard.press("Escape");
 
-  // 8. The narrow window: 1000 px wide, with the plan shown and hidden.
+  // 8. The to-do list: a document set aside with the red X, after the other copies were created.
+  await scenario("todo");
+  await page.reload();
+  await page.getByText("Set aside for more work").first().waitFor();
+  await page.waitForTimeout(800);
+  await shot(page, "todo");
+
+  // 9. The narrow window: 1000 px wide, the documents folded to their title line beside the plan.
   await scenario("preview");
   await page.setViewportSize({ width: 1000, height: 700 });
   await page.reload();
@@ -121,9 +128,6 @@ try {
   await page.waitForFunction(() => Array.from(document.images).every((i) => i.complete));
   await page.waitForTimeout(1000);
   await shot(page, "narrow-1000");
-  await page.getByRole("button", { name: /Hide plan/ }).click();
-  await page.waitForTimeout(300);
-  await shot(page, "narrow-1000-collapsed");
 
   await browser.close();
 } finally {

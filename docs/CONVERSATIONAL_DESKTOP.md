@@ -3,10 +3,13 @@
 Spec Surgeon is one window: a web page shown in a native window (Microsoft's WebView2 control through pywebview;
 the default browser when pywebview is not installed) and served by a local server on your computer — nothing
 leaves the machine but the model calls you ask for (the contract between the page and the server is
-`docs/WEB_API.md`). On the left is the conversation. On the right are the Word documents you attached,
-optionally one reference template and any pictures or tables you attached for the edit to use, then the plan, the
-pages and one button. You add documents, describe the result, read the plan, look at the before/after pages and
-create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
+`docs/WEB_API.md`). On the left is the conversation, with the one button above the box you type in. On the right
+are the Word documents you attached (a section that folds to one line once a plan exists; click its title to open
+it), optionally one reference template, any pictures or tables you attached for the edit to use, the plan and the
+before/after pages. You add documents, describe the result, read the plan, look at the pages, mark each preview with
+a green checkmark or a red X, and create edited copies. Nothing else is asked of you: no operations, methods or
+settings beyond an API key. Both panes render what the assistant writes as formatted text (lists, bold, links), in
+the chat and on the plan's cards alike.
 
 ![The conversation starts with Word documents, an optional template, and a request](conversation-start.png)
 
@@ -137,6 +140,28 @@ applied and verified in memory; sources are never touched. Rendering is requeste
 Microsoft Word when available, otherwise LibreOffice. If no renderer can provide usable page evidence, a card
 says that page appearance was not checked and asks you to check the edited copies in Word.
 
+## The green checkmark, the red X and the to-do list
+
+Every preview card carries two marks. The green checkmark says the pages look right. The red X says this
+document needs more work: it is **set aside**. When you create the edited copies, the documents you set aside
+get no copy; they go on a to-do list, and the button says so ("Create edited copies (2 set aside)"). Every
+other document is created and verified as usual, each one still held to the exact file the preview was made
+from; a document that is not part of the displayed plan can never be set aside or run.
+
+Once the other copies are saved, the conversation shows **Set aside for more work** with the documents'
+names and one button, **Work on them now** (the same as typing “Work on the documents I set aside”). The pass
+over them begins: they are the only documents in the plan, tagged **Working on** in the documents section; the
+request they were set aside from stands; the assistant is told that you looked at the preview of that plan and
+set these documents aside, and is shown the plan you saw. Tell it what should be different for them, or
+**Continue** to plan them again as before. The pass ends when their copies are created; the other copies stay
+as they are and the whole set is the working set again. A document you set aside once more goes back on the
+list. Documents set aside from different requests are worked on one request at a time, the oldest first; the
+others wait and are offered again. The assistant always hears what each copy carries: a change that some copies
+got and others did not is named per document, never claimed for all. Documents on the to-do list are tagged **To do** and are out of every plan until you work on them;
+removing one drops it from the list, and **Start over from the originals** clears the list. Setting every
+document aside creates nothing and begins the pass at once. The list and the pass are kept in the saved
+conversation.
+
 Claude's visual check of the rendered pages is advisory. Its findings appear under **About these checks** with
 their file and page. A finding it marks as blocking changes that card's title to **Please check** and the
 button to **I reviewed the flagged pages — create copies**; that is a separate, explicit decision on the
@@ -153,21 +178,24 @@ from the cache. `SPEC_SURGEON_RENDER_CACHE=0` turns the cache off (see `docs/REN
 
 ## One action
 
-Every path ends in the same button. Its label says what it does:
+Every path ends in the same button, in the conversation pane above the box you type in, with one sentence on
+what it does. Its label says what it does:
 
 - **Create edited copies**: approve the displayed plan and preview. The engine applies the specification to
-  every document, verifies each one independently, and delivers only the files that pass every check.
+  every document you did not set aside with the red X, verifies each one independently, and delivers only the
+  files that pass every check. "(N set aside)" on the label counts the documents that go on the to-do list.
 - **Continue**: the documents or the plan changed, or a saved conversation was reopened; the documents are
   checked against the request again before anything can be approved.
 - **Save N ready copies**: during recovery, save the copies that are already verified while a question about
   other files is still open.
 - **Continue** after a pause: the conversation has used 48 AI steps since you last said to go on, or the app
   closed while work was running (see below).
-- **Stop now**, while work runs: the kill switch (see below).
+- **Stop now**, while work runs: the kill switch, in the composer (see below).
 
 The button is tied to what is on screen. If a document, the template, the plan, a preview or a visual finding
 changes, the displayed action is void and the window says "The documents or plan changed. Review the updated
-plan first." Typing a new message disables the button until the message is sent.
+plan first." Typing a new message disables the button until the message is sent. The marks on the previews
+belong to the displayed plan too: a new plan or preview starts the review over.
 
 ## What is left untouched, and why
 
@@ -241,7 +269,8 @@ refuses is never sent again.
 The window writes `conversation.json` in its configuration folder (`%APPDATA%\Spec Surgeon` on Windows, or
 `SPEC_SURGEON_CONFIG_DIR` when set): the attachments with their triage state, the messages, your decisions and
 approved wording, the result locations, the working set (which copy stands for each original, and the changes
-already made to it), the spending ledger and the location of a recovery checkpoint. It can contain document
+already made to it), the to-do list and the pass over it, the spending ledger and the location of a recovery
+checkpoint. It can contain document
 text. It never contains the API key, an approval to deliver, or an acknowledgement of a visual finding; those
 belong to one displayed preview only. A reopened conversation whose copies can no longer be found says so and
 starts the next change from your originals.

@@ -10,6 +10,7 @@ import {
   COMPOSER_NO_DOCUMENTS,
   COMPOSER_NO_KEY,
   STARTERS,
+  WORK_TODO,
   composerState,
   costPill,
   liveHasContent,
@@ -17,6 +18,7 @@ import {
   promptsFor,
   spentText,
   statusLabel,
+  todoFor,
   transcript,
 } from "../src/lib/chat.ts";
 import { EMPTY_VIEW, INITIAL_STATE, emptyLive, reduce, type UiState } from "../src/lib/view.ts";
@@ -167,4 +169,23 @@ test("the three starters are requests in the user's own words, each with a title
     assert.ok(starter.title.length > 0);
     assert.ok(starter.text.length > 20);
   }
+});
+
+test("the to-do card closes the transcript once copies are saved and documents wait, never during a pass or a job", () => {
+  const done: Partial<View> = {
+    stage: "done",
+    messages: [message("u1", "user", "go"), message("a1", "app", "1 copy is ready.")],
+    todo: [{ path: "/b", name: "B.docx" }],
+  };
+  const items = transcript(state(done));
+  assert.deepEqual(items.map((i) => i.kind), ["message", "message", "todo"]);
+  const card = items[2];
+  if (card.kind === "todo") assert.deepEqual(card.names, ["B.docx"]);
+  assert.equal(todoFor(state({ ...done, focus: ["/b"] })), null);             // the pass is under way
+  assert.equal(todoFor(state({ ...done, busy: true })), null);
+  assert.equal(todoFor(state({ ...done, stage: "preview" })), null);
+  assert.equal(todoFor(state({ ...done, stage: "question" })), null);
+  assert.ok(todoFor(state({ ...done, stage: "resume" })));
+  assert.equal(todoFor(state({ ...done, todo: [] })), null);
+  assert.equal(WORK_TODO, "Work on the documents I set aside");               // the server's exact words
 });

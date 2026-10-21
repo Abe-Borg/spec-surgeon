@@ -5,6 +5,7 @@ import type { Attachment, Choice, JobEvent, Update, View } from "./types";
 import * as api from "./lib/api";
 import { actionButton } from "./lib/action";
 import { composerState, transcript } from "./lib/chat";
+import { canReview, heldSources, reviewKey, setMark, type Mark, type Reviews } from "./lib/review";
 import { INITIAL_STATE, reduce } from "./lib/view";
 import { ACCEPT } from "./lib/workbench";
 import { checkSettled, updatePill, type HelpTopic } from "./lib/help";
@@ -32,7 +33,6 @@ export default function App() {
   const [uploading, setUploading] = useState(false);
   const [draft, setDraft] = useState(false);
   const [prefill, setPrefill] = useState({ text: "", nonce: 0 });
-  const [workbenchOpen, setWorkbenchOpen] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [helpTopic, setHelpTopic] = useState<HelpTopic | null>(null);
   const [checkingUpdate, setCheckingUpdate] = useState(false);
@@ -117,15 +117,33 @@ export default function App() {
     (choice: Choice) => void runJob(api.choose(choice.id), choice.label),
     [runJob],
   );
-  const onAct = useCallback((token: string) => void runJob(api.primary(token), null), [runJob]);
   const onStop = useCallback(() => {
     api.stop().catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
 
-  const button = useMemo(() => actionButton(view, busy, draft), [view, busy, draft]);
+  // --- The review of the previews ------------------------------------------
+  // A green checkmark or a red X per preview; the marks belong to one set of
+  // previews and start over when a new plan or preview arrives.
+  const [reviews, setReviews] = useState<Reviews>({});
+  const key = reviewKey(view);
+  const keyRef = useRef(key);
+  useEffect(() => {
+    if (keyRef.current === key) return;
+    keyRef.current = key;
+    setReviews({});
+  }, [key]);
+  const onMark = useCallback((source: string, mark: Mark) => setReviews((r) => setMark(r, source, mark)), []);
+  const reviewing = canReview(view, busy);
+  const held = useMemo(() => (reviewing ? heldSources(reviews, view.samples) : []), [reviewing, reviews, view.samples]);
+
+  const onAct = useCallback(
+    (token: string) => void runJob(api.primary(token, view.action.kind === "approve" ? held : []), null),
+    [runJob, view.action.kind, held],
+  );
+
+  const button = useMemo(() => actionButton(view, busy, draft, held.length), [view, busy, draft, held.length]);
   const items = useMemo(() => transcript(state), [state]);
   const composer = useMemo(() => composerState(view), [view]);
-  const paused = items.some((item) => item.kind === "pause");
 
   // --- Attachments ---------------------------------------------------------
 
@@ -331,10 +349,8 @@ export default function App() {
       <Header
         view={view}
         busy={busy}
-        workbenchOpen={workbenchOpen}
         updatePill={updatePill(view.update, updateShown)}
         onDownloadUpdate={onDownloadUpdate}
-        onToggleWorkbench={() => setWorkbenchOpen((o) => !o)}
         onNewConversation={onNewConversation}
         onOpenSettings={() => setSettingsOpen(true)}
         onOpenHelp={setHelpTopic}
@@ -367,8 +383,11 @@ export default function App() {
           busy={busy}
           canSend={composer.canSend}
           sendReason={composer.reason}
+          button={button}
+          held={held.length}
           onSend={onSend}
           onChoose={onChoose}
+          onAct={onAct}
           onContinue={() => {
             if (view.action?.token) onAct(view.action.token);
           }}
@@ -377,22 +396,19 @@ export default function App() {
           onPrefill={onPrefill}
           onDraftChange={setDraft}
         />
-        {workbenchOpen && (
-          <Workbench
-            view={view}
-            busy={busy}
-            uploading={uploading}
-            button={button}
-            paused={paused}
-            onAdd={(kind) => void onAdd(kind)}
-            onRemove={onRemove}
-            onAct={onAct}
-            onStop={onStop}
-            onOpen={onOpen}
-            onStartOver={onStartOver}
-            onZoom={(src, title) => setZoom({ src, title })}
-          />
-        )}
+        <Workbench
+          view={view}
+          busy={busy}
+          uploading={uploading}
+          reviews={reviews}
+          canReview={reviewing}
+          onMark={onMark}
+          onAdd={(kind) => void onAdd(kind)}
+          onRemove={onRemove}
+          onOpen={onOpen}
+          onStartOver={onStartOver}
+          onZoom={(src, title) => setZoom({ src, title })}
+        />
       </main>
       <input
         ref={fileInputRef}

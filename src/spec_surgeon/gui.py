@@ -281,11 +281,12 @@ class Session:
 
     @_session_action
     def compile(self, request: str, log: Log, history: Optional[List[str]] = None,
-                fresh: Optional[List[str]] = None) -> str:
+                fresh: Optional[List[str]] = None, context: Optional[str] = None) -> str:
         """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
         Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user. It opens the session
         folder (``out_dir``): conversation.json and compile.json there after every turn, and the first preview or
-        custom transform beside them (``_session_dir``)."""
+        custom transform beside them (``_session_dir``). ``context`` is the app's own account of how these documents
+        come to be planned (set aside after a preview, say), never the user's words."""
         from .conversation import Conversation
         if not request.strip():
             raise ValueError("Type what you want done.")
@@ -303,7 +304,7 @@ class Session:
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
                                          work_dir=out / "chat", log=log, continuous_recovery=True,
                                          word_sources=self.replay_word_sources, input_files=self.inputs,
-                                         history=list(history or []), fresh=list(fresh or []))
+                                         history=list(history or []), fresh=list(fresh or []), context=context or "")
         try:
             turn = self.conversation.start()
         except Exception:
@@ -808,15 +809,40 @@ class Session:
                                        (f" Claude's visual check flagged {flagged} problem(s)." if flagged else ""))
         self._save_chat()
 
+    def _selected(self, files: List[Path], only) -> List[Path]:
+        """The approved files that run: all of them, or ``only`` — each one among the approved files (the user set the
+        others aside at approval). A file outside the approval is refused, never run; the approval token is still
+        taken over the whole batch, and the pins the run is held to are the approved ones (``narrow_approval_inputs``,
+        ``narrow_layout_inputs``)."""
+        if only is None:
+            return files
+        wanted: List[Path] = []
+        for value in only:
+            path = Path(value).resolve()
+            if path not in files:
+                diag.event("session.approval.refused", level="warning", gate="scope", reason="file_outside_approval",
+                           path=str(path))
+                raise ValueError("The documents or plan changed. Review the updated plan first.")
+            if path not in wanted:
+                wanted.append(path)
+        if not wanted:
+            raise ValueError("Every document was set aside; there is nothing to create.")
+        return [f for f in files if f in wanted]
+
     @_session_action
-    def run(self, in_place: bool, render: bool, log: Log) -> str:
+    def run(self, in_place: bool, render: bool, log: Log, only: Optional[List[Path]] = None) -> str:
+        """Apply the approved outcome to the approved files and deliver copies; ``only`` runs part of the approved
+        batch (the user set the other documents aside), every file still held to its approved identity."""
         from .batch import run_batch
-        from .preview import approval_inputs, _approval_token_from_inputs
+        from .preview import approval_inputs, _approval_token_from_inputs, narrow_approval_inputs
         blocked = self.run_blocked_reason()
         if blocked:
             diag.event("session.approval.refused", level="warning", gate="visual_review", reason=blocked)
             raise ValueError(blocked)
         if self.recovery is not None:
+            if only is not None:
+                raise ValueError("A document cannot be set aside while files are being checked again; save the ready "
+                                 "copies first.")
             if in_place:
                 diag.event("session.approval.refused", level="warning", gate="delivery_mode",
                            reason="recovery_copies_only")
@@ -852,11 +878,12 @@ class Session:
                            reason="generated_inputs_changed", changes=what)
                 raise ValueError("a file changed (or the folder changed) since the AI-written transform was tested — "
                                  "press Preview again" + ("".join(f"\n  • {w}" for w in what) if what else ""))
+            selected = self._selected(files, only)
             out = (self.out_dir or self.new_out_dir()) / "run"
             diag.event("session.approval.accepted", approval_digest=self.generated_token,
-                       file_count=len(files), in_place=False, run_dir=str(out))
-            res = run_generated(self.generated, [str(f) for f in files], out, log=log,
-                                approved_inputs=self.generated_inputs or current_inputs)
+                       file_count=len(selected), in_place=False, run_dir=str(out), set_aside=len(files) - len(selected))
+            res = run_generated(self.generated, [str(f) for f in selected], out, log=log,
+                                approved_inputs=narrow_approval_inputs(self.generated_inputs or current_inputs, selected))
             self.last_run_dir, self.last_trials, self.last_batch = out, res, None
             ok = sum(r.passed for r in res)
             return f"{ok} of {len(res)} file(s) PASS. Outputs: {out / 'outputs'} (your files were not changed)."
@@ -870,9 +897,9 @@ class Session:
         from .editspec import is_chain
         from .layouts import is_layout_plan
         if is_layout_plan(self.spec):
-            return self._run_layouts(files, in_place, render, log)
+            return self._run_layouts(files, in_place, render, log, only)
         if is_chain(self.spec):
-            return self._run_chain(files, render, log)
+            return self._run_chain(files, render, log, only)
         key = self.outcome_key()
         current_inputs = approval_inputs(key, files)
         try:
@@ -887,12 +914,13 @@ class Session:
                        reason="preview_inputs_changed", changes=what)
             raise ValueError("a file or the plan changed since the preview — check the documents again"
                              + ("".join(f"\n  • {w}" for w in what) if what else ""))
+        selected = self._selected(files, only)
         out = self.out_dir / "run"
         diag.event("session.approval.accepted", approval_digest=self.preview.token,
-                   file_count=len(files), in_place=in_place, run_dir=str(out))
+                   file_count=len(selected), in_place=in_place, run_dir=str(out), set_aside=len(files) - len(selected))
         self.last_run_dir = out                   # set before the run: a run that stops still has its logs there
-        approved_inputs = getattr(self.preview, "token_inputs", None) or current_inputs
-        batch = run_batch([str(f) for f in files], "edit-spec", {}, out, renderer="auto", do_render=render,
+        approved_inputs = narrow_approval_inputs(getattr(self.preview, "token_inputs", None) or current_inputs, selected)
+        batch = run_batch([str(f) for f in selected], "edit-spec", {}, out, renderer="auto", do_render=render,
                           in_place=False, progress=log, spec=self.spec, approved_inputs=approved_inputs)
         self.last_run_dir, self.last_batch, self.last_trials = out, batch, None
         c = batch.counts()
@@ -917,11 +945,11 @@ class Session:
         return "\n".join(lines)
 
     @_session_action
-    def _run_chain(self, files: List[Path], render: bool, log: Log) -> str:
+    def _run_chain(self, files: List[Path], render: bool, log: Log, only: Optional[List[Path]] = None) -> str:
         """Ordered steps (a chain the app composed, or the model submitted): every stage a verified batch on the stage
         before it (``chain.run_chain``), copies only; the token the user approved binds every stage and the files."""
         from .chain import run_chain
-        from .preview import approval_inputs, _approval_token_from_inputs
+        from .preview import approval_inputs, _approval_token_from_inputs, narrow_approval_inputs
         key = self.outcome_key()
         current_inputs = approval_inputs(key, files)
         try:
@@ -935,12 +963,15 @@ class Session:
                        reason="preview_inputs_changed", changes=what)
             raise ValueError("a file or the plan changed since the preview — check the documents again"
                              + ("".join(f"\n  • {w}" for w in what) if what else ""))
+        selected = self._selected(files, only)
         out = self.out_dir / "run"
-        diag.event("session.approval.accepted", approval_digest=self.preview.token, file_count=len(files),
-                   in_place=False, run_dir=str(out))
+        diag.event("session.approval.accepted", approval_digest=self.preview.token, file_count=len(selected),
+                   in_place=False, run_dir=str(out), set_aside=len(files) - len(selected))
         self.last_run_dir = out
-        result = run_chain([str(f) for f in files], self.spec, out, renderer="auto", do_render=render,
-                           in_place=False, progress=log, approved_inputs=getattr(self.preview, "token_inputs", None))
+        approved = getattr(self.preview, "token_inputs", None)
+        result = run_chain([str(f) for f in selected], self.spec, out, renderer="auto", do_render=render,
+                           in_place=False, progress=log,
+                           approved_inputs=narrow_approval_inputs(approved, selected) if approved else approved)
         self.last_run_dir, self.last_batch, self.last_trials = out, result, None
         c = result.counts()
         lines = [f"{len(result.files)} file(s) through {len(result.stages)} step(s): PASS {c['PASS']}  FAIL {c['FAIL']}  "
@@ -957,10 +988,11 @@ class Session:
         return "\n".join(lines)
 
     @_session_action
-    def _run_layouts(self, files: List[Path], in_place: bool, render: bool, log: Log) -> str:
+    def _run_layouts(self, files: List[Path], in_place: bool, render: bool, log: Log,
+                     only: Optional[List[Path]] = None) -> str:
         """A layout plan: every layout's spec on its own files (``layouts.run_layouts``), copies only; the token the
         user approved binds every layout, its files and the routing, and is checked again here."""
-        from .layouts import layout_token, run_layouts
+        from .layouts import layout_token, narrow_layout_inputs, run_layouts
         if in_place:
             diag.event("session.approval.refused", level="warning", gate="delivery_mode", reason="layouts_copies_only")
             raise ValueError("A plan per layout writes edited copies only; original files are not overwritten.")
@@ -973,12 +1005,13 @@ class Session:
                        reason="layout_inputs_changed")
             raise ValueError("a file, the plan or the way the files are grouped changed since the preview — "
                              "check the documents again before creating copies")
+        selected = self._selected(files, only)
         out = self.out_dir / "run"
-        diag.event("session.approval.accepted", approval_digest=self.preview.token, file_count=len(files),
-                   in_place=False, run_dir=str(out))
+        diag.event("session.approval.accepted", approval_digest=self.preview.token, file_count=len(selected),
+                   in_place=False, run_dir=str(out), set_aside=len(files) - len(selected))
         self.last_run_dir = out
-        result = run_layouts([str(f) for f in files], self.spec, out, renderer="auto", do_render=render,
-                             progress=log, approved_inputs=self.preview.token_inputs)
+        result = run_layouts([str(f) for f in selected], self.spec, out, renderer="auto", do_render=render,
+                             progress=log, approved_inputs=narrow_layout_inputs(self.preview.token_inputs, selected))
         self.last_run_dir, self.last_batch, self.last_trials = out, result, None
         c = result.counts()
         lines = [f"{len(result.files)} file(s) in {len(result.batches)} layout(s): PASS {c['PASS']}  FAIL {c['FAIL']}  "
