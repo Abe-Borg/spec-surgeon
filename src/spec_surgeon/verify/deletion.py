@@ -8,7 +8,10 @@ are ops/deletion.py's docstring, read again here:
 * **Kept** (per container, over its p/tbl/sdt/customXml/altChunk children): the first chosen paragraph between a table
   that stays and the next table that stays when only chosen blocks lie between; tracked, a chosen last block that is a
   paragraph; when the last block is chosen and what stays is nothing or ends in a non-paragraph, the last chosen
-  paragraph not kept yet.
+  paragraph not kept yet; in the body, when every block after the last section-break paragraph that stays is chosen
+  and none of them kept, the last chosen paragraph there (the last section keeps one).
+* **Comment threads**: a deleted paragraph that ends a comment whose paragraph ids a commentsExtended or commentsIds
+  entry names, while the comment itself stays: the op must refuse (``comment-last-paragraph``).
 * **Tracked**: the runs (directly in the paragraph or in hyperlinks, smart tags, run-level content controls, custom XML,
   dir, bdo) of each deleted or kept paragraph, each group of consecutive siblings in one NEW ``w:del``, text and field code
   as deleted text; a deleted paragraph's mark with a NEW ``w:del``, a kept one's without; each row of a deleted table
@@ -16,8 +19,8 @@ are ops/deletion.py's docstring, read again here:
   (``verified_blocks``), each row's ``w:trPr`` checked here and stripped of its ``w:del`` for the residual
   (``strip_tr``), which proves the rest.
 * **Untracked** (``_VRemoval``): the deleted blocks leave, a kept paragraph keeps its ``w:pPr`` alone; then, in this order,
-  the notes all of whose references are removed, the section breaks and the header/footer parts no relationship left
-  targets, the comments all of whose marks are removed (with their replies; a crossing one: refused), the range marks
+  the notes all of whose references are removed, the section breaks and the header/footer and printer-settings parts
+  no relationship left targets, the comments all of whose marks are removed (with their replies; a crossing one: refused), the range marks
   (all removed: gone; some: each removed one takes the place of the outermost removed element it was in), the fields
   (a crossing one: refused) and the relationships no remaining use names (image, media, hyperlink: gone; header/footer as
   above; anything else: refused), media nothing targets any more. Every changed part's expected tree is built here and
@@ -39,7 +42,7 @@ from .reader import REL, R, VPackage, W
 from .props import Ctx, PartView, para_matches, resolve_path, element_path
 from .edits import part_revision_ids, V_REVISION_TAGS
 from .fields import v_fields
-from .comments import _VComments, _v_side_expected
+from .comments import _V_CID, _V_EXTENDED, _V_IDS, _V_W14, _V_W15, _VComments, _v_side_expected
 from .markup import check_content_types, check_relationships, tree_difference
 
 _V_BASE = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/"
@@ -120,6 +123,25 @@ def _v_keep(blocks: Sequence[Any], chosen: Set[Any], tracked: bool) -> List[Any]
     return keep
 
 
+def _v_last_section(blocks: Sequence[Any], chosen: Set[Any], keep: List[Any]) -> None:
+    """The body's last section — what follows the last section-break paragraph that stays — keeps a paragraph: when
+    all of it is chosen and nothing of it is kept, its last chosen paragraph is kept too (appended to ``keep``)."""
+    end = None
+    for i, b in enumerate(blocks):
+        carries = b.tag == W + "p" and b.find(W + "pPr/" + W + "sectPr") is not None
+        if carries and (b not in chosen or any(b is k for k in keep)):
+            end = i
+    if end is None or end == len(blocks) - 1:
+        return
+    section = blocks[end + 1:]
+    if not all(b in chosen for b in section) or any(b is k for b in section for k in keep):
+        return
+    pars = [b for b in section if b.tag == W + "p"]
+    if not pars:
+        raise VRefuse("structure", "the last section would be emptied and holds no paragraph that can stay")
+    keep.append(pars[-1])
+
+
 def v_choose(root, selected: Sequence[Any], tracked: bool) -> Dict[str, List[Any]]:
     """{"tables", "deleted", "kept", "in_tables"} for the selected paragraphs of ``root`` (document order)."""
     for p in selected:
@@ -140,11 +162,46 @@ def v_choose(root, selected: Sequence[Any], tracked: bool) -> Dict[str, List[Any
             groups.append(c)
     kept: Set[Any] = set()
     for c in groups:
-        kept.update(_v_keep(_v_blocks(c), chosen, tracked))
+        blocks = _v_blocks(c)
+        keep = _v_keep(blocks, chosen, tracked)
+        if c.tag == W + "body":
+            _v_last_section(blocks, chosen, keep)
+        kept.update(keep)
     pars = list(root.iter(W + "p"))
     return {"tables": tables, "kept": [p for p in pars if p in kept],
             "deleted": [p for p in pars if p in chosen and p not in kept],
             "in_tables": [p for p in pars if p in inside]}
+
+
+def v_thread_ends(src: VPackage, root) -> Dict[Any, str]:
+    """{the last paragraph of each w:comment of ``root`` (a comments part) one of whose paragraph ids a thread entry
+    names — a commentsExtended entry's paraId or paraIdParent, a commentsIds entry's paraId: the comment's id}. Word
+    names a comment's thread by its last paragraph: it must not go while the comment stays."""
+    if root.tag != W + "comments":
+        return {}
+    named: Set[str] = set()
+    for rel, tag, attrs in ((_V_EXTENDED, _V_W15 + "commentEx", (_V_W15 + "paraId", _V_W15 + "paraIdParent")),
+                            (_V_IDS, _V_CID + "commentId", (_V_CID + "paraId",))):
+        member = src.related(rel)
+        if member:
+            for e in src.xml(member).iter(tag):
+                named.update(v for v in (e.get(a) for a in attrs) if v)
+    ends: Dict[Any, str] = {}
+    for c in root:
+        if c.tag != W + "comment":
+            continue
+        ps = list(c.iter(W + "p"))
+        if ps and named & {q.get(_V_W14 + "paraId") for q in ps}:
+            ends[ps[-1]] = c.get(W + "id")
+    return ends
+
+
+def v_refuse_thread_ends(src: VPackage, root, gone_paragraphs: Iterable[Any], comments_gone: Iterable[str]) -> None:
+    ends, gone = v_thread_ends(src, root), set(comments_gone)
+    for p in gone_paragraphs:
+        if p in ends and ends[p] not in gone:
+            raise VRefuse("comment-last-paragraph", f"the last paragraph of comment {ends[p]}, which its thread entry "
+                                                    f"names, goes while the comment stays")
 
 
 def v_tracked_runs(p) -> List[Any]:
@@ -378,6 +435,7 @@ class VRemoval:
         self.roots: Dict[str, Any] = {}
         self.tops: Dict[str, Set[Any]] = {}
         self.parts_gone: List[str] = []
+        self.printers: List[str] = []
         self.notes: Dict[str, List[str]] = {}
         self.sections: List[int] = []
         self.comments: List[str] = []
@@ -440,19 +498,30 @@ class VRemoval:
             self.sections = [i for i, sp in enumerate(secs) if self.gone(self.main, sp)]
             rels = v_part_rels(self.src, self.main)
             before, removed = _v_uses([root]), _v_uses(self.tops[self.main])
-            hf = sorted({ref.get(R + "id") for i in self.sections for ref in secs[i]
-                         if ref.tag in (W + "headerReference", W + "footerReference")
-                         and ref.get(R + "id") in rels and removed.get(ref.get(R + "id")) == before.get(ref.get(R + "id"))})
+            # the parts a removed sectPr names: headers, footers and its printer settings (a binary part: it only leaves)
+            printer: Set[str] = set()
+            hf: Set[str] = set()
+            for i in self.sections:
+                for ref in secs[i]:
+                    rid = ref.get(R + "id")
+                    if ref.tag not in (W + "headerReference", W + "footerReference", W + "printerSettings") \
+                            or rid not in rels or removed.get(rid) != before.get(rid):
+                        continue
+                    hf.add(rid)
+                    if ref.tag == W + "printerSettings":
+                        printer.add(rid)
+            hf = sorted(hf)
             if hf:
                 self.rels.setdefault(self.main, []).extend(hf)
             still = {t for owner, rid, _, t in _v_all_rels(self.src) if t and not (owner == self.main and rid in hf)}
             for rid in hf:
                 target = rels[rid][1]
-                if target and target in self.src.names and target not in still and target not in self.parts_gone:
+                if target and target in self.src.names and target not in still and target not in self.parts_gone \
+                        and target not in self.printers:
                     for typ, tg in v_part_rels(self.src, target).values():
                         if typ not in _V_MEDIA and not (typ == _V_HYPERLINK and tg is None):
                             raise VRefuse("structure", f"{target} has a relationship other than images and links")
-                    self.parts_gone.append(target)
+                    (self.printers if rid in printer else self.parts_gone).append(target)
         # 3. comments all of whose marks go, with their replies
         book = _VComments(self.src)
         if book.part and book.order and book.problems():
@@ -527,8 +596,8 @@ class VRemoval:
         remaining = {t for owner, rid, typ, t in everything
                      if t and owner not in self.parts_gone and (owner, rid) not in gone_rels}
         self.media = sorted(m for m in candidates if m in self.src.names and m not in remaining)
-        members = set(self.parts_gone) | {v_rels_member(p) for p in self.parts_gone
-                                          if v_rels_member(p) in self.src.names} | set(self.media)
+        whole = set(self.parts_gone) | set(self.printers)
+        members = whole | {v_rels_member(p) for p in whole if v_rels_member(p) in self.src.names} | set(self.media)
         self.members = [n for n in self.src.names if n in members]
 
     def summary(self) -> Dict[str, Any]:
@@ -641,6 +710,7 @@ def _deleted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             found[part] = (root, dec)
             if tracked:
                 derived[part]["rows"] = [list(x) for x in v_rows(root, dec["tables"])]
+                v_refuse_thread_ends(ctx.src, root, dec["deleted"] + dec["in_tables"], ())
     except VRefuse as e:
         errs.append(f"deleted_paragraphs: {e} — the op must refuse")
         return "deleted_paragraphs: the op must refuse"
@@ -661,6 +731,8 @@ def _deleted_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                         if c.tag != W + "pPr":
                             rm.drop(part, c)
             rm.settle()
+            for part, (root, dec) in found.items():
+                v_refuse_thread_ends(ctx.src, root, dec["deleted"] + dec["in_tables"], rm.comments)
         except VRefuse as e:
             errs.append(f"deleted_paragraphs: {e} — the op must refuse")
             return "deleted_paragraphs: the op must refuse"

@@ -13,8 +13,16 @@ deleted tables. Kept, in this order: (1) between a table that stays and the next
 table too and chosen blocks lie between them, the first chosen paragraph there (none: ``tables-join``); (2) tracked,
 the last block when it is a chosen paragraph (Word cannot delete a container's final paragraph mark); (3) when the last
 block is chosen and what stays would be nothing or would end in something other than a paragraph, the last chosen
-paragraph not kept yet (none, or what stays still ends in something else: ``structure``). A kept paragraph is emptied
-and flagged; every other chosen block is deleted.
+paragraph not kept yet (none, or what stays still ends in something else: ``structure``); (4) in the body, the *last
+section* — the blocks after the last paragraph that carries a section break (``w:pPr/w:sectPr``) and stays — keeps a
+paragraph: when every one of its blocks is chosen and none of them is kept yet, its last chosen paragraph (none:
+``structure``); flagged either way (the section shows a blank page). A kept paragraph is emptied and flagged; every
+other chosen block is deleted.
+
+**Comment threads.** A deleted paragraph that is the last paragraph of a comment some entry of the comments' side
+parts names (a ``w15:commentEx`` by its ``w15:paraId`` or ``w15:paraIdParent``, a ``w16cid:commentId`` by its
+``w16cid:paraId``, one of the comment's paragraph ids) is refused (``comment-last-paragraph``) unless the comment
+itself goes (untracked: all of its marks are removed): Word names a thread by its comment's last paragraph.
 
 **Tracked** (the default). The *runs* of a paragraph — its ``w:r`` directly in it or inside a hyperlink, smart tag,
 run-level content control, custom XML element, ``w:dir`` or ``w:bdo`` — are deleted, each group of consecutive sibling
@@ -34,9 +42,9 @@ held decides the rest (``Removal``), in this order:
 1. *notes* — a footnote (endnote) all of whose references in the text parts other than the notes parts are removed
    goes: its entry leaves the first footnotes (endnotes) part;
 2. *section breaks* — a removed paragraph's ``w:sectPr`` goes with it and the content before it joins the next section
-   (flagged); a header or footer relationship of the main part none of whose uses remains goes, and the part it targets,
-   when no relationship left targets it, leaves the package with its own relationships (images and hyperlinks only,
-   else ``structure``) and its content;
+   (flagged); a header, footer or printer-settings relationship a removed ``w:sectPr`` names, none of whose uses
+   remains, goes, and the part it targets, when no relationship left targets it, leaves the package with its own
+   relationships (images and hyperlinks only, else ``structure``) and its content;
 3. *comments* — a comment all of whose marks (range start, range end, reference; in every text part but the comments
    part) are removed goes with every reply below it, its entry and its side-part entries as ``remove_comments`` removes
    them; a comment some of whose marks are removed and some not, or a reply going with its parent whose marks are not
@@ -48,7 +56,7 @@ held decides the rest (``Removal``), in this order:
 5. *fields* — a complex field some of whose runs are removed and some not, or one that never ends and begins in what is
    removed: ``field-crossing``;
 6. *relationships* — in a changed part, a relationship none of whose uses (``r:`` attributes) remains: an image (any
-   media) or hyperlink one leaves the part's relationships, a header or footer one as in 2, any other (a chart, a
+   media) or hyperlink one leaves the part's relationships, one step 2 decides as there, any other (a chart, a
    diagram, an embedded object, a control) is refused (``embedded-object``); media no relationship left targets leaves
    the package.
 
@@ -64,9 +72,9 @@ from lxml import etree
 
 from ..ooxml import (RPR_ORDER, TRPR_ORDER, RevisionStamp, block_full_text, block_struct_counts, block_text_without,
                      count_revisions, insert_in_order, mark_rpr, paragraphs, to_del_text)
-from ..package import CT_PART, FOOTER_REL, HEADER_REL, MEDIA_REL_TYPES, R, W, DocxPackage
+from ..package import CT_PART, FOOTER_REL, HEADER_REL, MEDIA_REL_TYPES, NS, R, W, DocxPackage
 from .base import BlockDiff, JobException, PlanFragment
-from .comments import MARK_TAGS, CommentBook, side_removals
+from .comments import EXTENDED_REL, IDS_REL, MARK_TAGS, W14, W15, W16CID, CommentBook, side_removals
 from .fields import fields_of
 from .hf_common import HYPERLINK_REL, check_part_relationships, refs
 from .set_table_props import row_properties
@@ -97,6 +105,10 @@ BOOKMARK_FIELDS = ("REF", "PAGEREF", "NOTEREF")
 CONTAINER_WORDS = {W + "body": "the document body", W + "tc": "a table cell", W + "hdr": "a header",
                    W + "ftr": "a footer", W + "footnote": "a footnote", W + "endnote": "an endnote",
                    W + "comment": "a comment", W + "sdtContent": "a content control", W + "customXml": "a custom XML block"}
+# a removed sectPr's references to other parts: its headers and footers, its printer settings (Word on Windows writes one)
+SECTION_PART_REFS = (W + "headerReference", W + "footerReference", W + "printerSettings")
+# what a deleted paragraph may show besides text, counted for the flag: each outermost one once
+PICTURE_TAGS = (W + "drawing", W + "pict", W + "object", "{%s}AlternateContent" % NS["mc"])
 
 
 def nearest_p(el) -> Optional[Any]:
@@ -135,6 +147,7 @@ class Choice:
     deleted: List[Any] = field(default_factory=list)
     kept: List[Any] = field(default_factory=list)
     in_tables: List[Any] = field(default_factory=list)
+    last_section: List[Any] = field(default_factory=list)     # the kept paragraphs of an emptied last section
 
 
 def keep_rules(blocks: Sequence[Any], chosen: Set[Any], tracked: bool, where: str) -> List[Any]:
@@ -170,6 +183,83 @@ def keep_rules(blocks: Sequence[Any], chosen: Set[Any], tracked: bool, where: st
     return keep
 
 
+def last_section_keep(blocks: Sequence[Any], chosen: Set[Any], keep: List[Any], where: str) -> List[Any]:
+    """The body's last section keeps a paragraph (the module docstring's rule 4): when every block after the last
+    staying paragraph with a section break is chosen, its kept paragraphs — its last chosen paragraph added to ``keep``
+    when none is kept yet. [] when the last section keeps something of its own, or no section break stays."""
+    stays = [b for b in blocks if b not in chosen or b in keep]
+    breaks = [b for b in stays if b.tag == W + "p" and b.find(f"{W}pPr/{W}sectPr") is not None]
+    if not breaks:
+        return []
+    tail = list(blocks)[list(blocks).index(breaks[-1]) + 1:]
+    if not tail or any(b not in chosen for b in tail):
+        return []
+    held = [b for b in tail if b in keep]
+    if held:
+        return held
+    last = next((b for b in reversed(tail) if b.tag == W + "p"), None)
+    if last is None:
+        raise JobException(f"{where}: the deletion would empty the last section and none of its blocks is a paragraph "
+                           f"that can stay", "structure", {"where": where})
+    keep.append(last)
+    return [last]
+
+
+def held_objects(pars: Iterable[Any]) -> Tuple[int, int]:
+    """(pictures, embedded objects) in ``pars``: each outermost drawing, VML picture or Office choice of them
+    (``PICTURE_TAGS``) once, an embedded object when it is or holds a w:object."""
+    pictures = objects = 0
+    for p in pars:
+        for el in p.iter(*PICTURE_TAGS):
+            q = el.getparent()
+            while q is not None and q is not p and q.tag not in PICTURE_TAGS:
+                q = q.getparent()
+            if q is not None and q is not p:
+                continue                                       # inside another one: counted with it
+            if el.tag == W + "object" or next(el.iter(W + "object"), None) is not None:
+                objects += 1
+            else:
+                pictures += 1
+    return pictures, objects
+
+
+def thread_ends(pkg: DocxPackage, root) -> Dict[Any, str]:
+    """{the last paragraph of each comment of ``root`` (a tree of the comments part) that an entry of the comments' side
+    parts names: its comment id} — the module docstring's comment threads."""
+    rels = pkg.rels(pkg.main_part())
+    named: Set[str] = set()
+    for rel_type, tag, attrs in ((EXTENDED_REL, W15 + "commentEx", (W15 + "paraId", W15 + "paraIdParent")),
+                                 (IDS_REL, W16CID + "commentId", (W16CID + "paraId",))):
+        member = next((r.resolved for r in rels.values() if r.type == rel_type and r.resolved and pkg.has(r.resolved)),
+                      None)
+        if member is not None:
+            for e in pkg.xml(member).iter(tag):
+                named.update(e.get(a) for a in attrs if e.get(a))
+    out: Dict[Any, str] = {}
+    for c in root.findall(W + "comment"):
+        pars = paragraphs(c)
+        if pars and any(p.get(W14 + "paraId") in named for p in pars):
+            out[pars[-1]] = c.get(W + "id")
+    return out
+
+
+def refuse_thread_ends(pkg: DocxPackage, part: str, root, deleted: Iterable[Any], comments_gone: Iterable[str],
+                       what: str = "delete") -> None:
+    """``comment-last-paragraph`` for a paragraph of ``deleted`` (of ``root``, a comments part) that ends a comment the
+    side parts name, unless that comment is one of ``comments_gone``."""
+    if root.tag != W + "comments":
+        return
+    ends = thread_ends(pkg, root)
+    gone = set(comments_gone)
+    for p in deleted:
+        cid = ends.get(p)
+        if cid is not None and cid not in gone:
+            raise JobException(f"{part}: the paragraph to {what} ({shown(p)}) is the last paragraph of comment {cid}, "
+                               f"which the comment's thread entry names (its replies and resolved state point to it); "
+                               f"take the whole comment, leave its last paragraph where it is, or edit the comment in "
+                               f"Word", "comment-last-paragraph", {"part": part, "comment": cid})
+
+
 def choose(part: str, root, selected: Sequence[Any], tracked: bool) -> Choice:
     """The module docstring's chosen blocks and kept paragraphs for ``selected`` (paragraphs of ``root``)."""
     ch = Choice(part=part, root=root, selected=list(selected))
@@ -195,7 +285,11 @@ def choose(part: str, root, selected: Sequence[Any], tracked: bool) -> Choice:
     kept: Set[Any] = set()
     for c in containers:
         where = f"{part}: {CONTAINER_WORDS.get(c.tag, 'a ' + etree.QName(c).localname)}"
-        kept.update(keep_rules(blocks_of(c), chosen, tracked, where))
+        blocks = blocks_of(c)
+        keep = list(keep_rules(blocks, chosen, tracked, where))
+        if c.tag == W + "body":
+            ch.last_section = last_section_keep(blocks, chosen, keep, where)
+        kept.update(keep)
     ch.kept = [p for p in pars if p in kept]
     ch.deleted = [p for p in pars if p in chosen and p not in kept]
     return ch
@@ -347,6 +441,7 @@ class Removal:
         self.notes: Dict[str, List[str]] = {}         # notes part → ids of the notes that go
         self.sections: List[int] = []                 # sectPr ordinals that go
         self.parts_gone: List[str] = []               # header/footer parts that leave the package
+        self.printers: List[str] = []                 # printer settings parts that leave the package
         self.comments: List[str] = []                 # comment ids that go
         self.side: Dict[str, Tuple[Any, List[Any]]] = {}
         self.moved: Dict[str, Dict[Any, List[Any]]] = {}   # part → {removed element: marks taking its place}
@@ -432,17 +527,20 @@ class Removal:
         rels = self.pkg.rels(self.main)
         uses_before = rel_uses([root])
         uses_gone = rel_uses(self._tops[self.main])
-        gone_rids = sorted({rid for i in removed for _, _, rid, _ in refs(secs[i])
-                            if rid in rels and uses_gone.get(rid, 0) == uses_before.get(rid, 0)})
+        named = {el.get(R + "id"): el.tag for i in removed for el in secs[i]
+                 if el.tag in SECTION_PART_REFS and el.get(R + "id")}
+        gone_rids = sorted(rid for rid in named if rid in rels and uses_gone.get(rid, 0) == uses_before.get(rid, 0))
         if gone_rids:
             self.rels.setdefault(self.main, []).extend(gone_rids)
         targeted = {r.resolved for owner, r in self.pkg.relationships(source=True)
                     if r.resolved and not (owner == self.main and r.rid in gone_rids)}
         for rid in gone_rids:
             target = rels[rid].resolved
-            if target and self.pkg.has(target) and target not in targeted and target not in self.parts_gone:
+            if target and self.pkg.has(target) and target not in targeted and target not in self.parts_gone \
+                    and target not in self.printers:
                 check_part_relationships(self.pkg, target)
-                self.parts_gone.append(target)
+                # a printer settings part is a binary member, not a text part: it leaves, nothing in it is read
+                (self.printers if named[rid] == W + "printerSettings" else self.parts_gone).append(target)
 
     def _comments(self) -> None:
         try:
@@ -540,8 +638,8 @@ class Removal:
         remaining = {r.resolved for owner, r in self.pkg.relationships(source=True)
                      if r.resolved and owner not in self.parts_gone and (owner, r.rid) not in removed}
         self.media = sorted({m for m in candidates if self.pkg.has(m) and m not in remaining})
-        members = list(self.parts_gone) + [self.pkg.rels_path_for(p) for p in self.parts_gone
-                                           if self.pkg.has(self.pkg.rels_path_for(p))] + self.media
+        parts = self.parts_gone + self.printers
+        members = parts + [self.pkg.rels_path_for(p) for p in parts if self.pkg.has(self.pkg.rels_path_for(p))] + self.media
         order = {n: i for i, n in enumerate(self.pkg.member_names)}
         self.members = sorted(set(members), key=lambda n: order[n])
 

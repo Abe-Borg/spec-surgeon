@@ -16,7 +16,7 @@ from typing import List, Tuple
 import pytest
 from lxml import etree
 
-from fx_moving import build_moving
+from fx_moving import build_moving, with_article_bookmark, with_comment_thread
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, op_catalog
 from spec_surgeon.editspec import apply_spec, plan_chain, plan_spec, split_into_stages, stage_cuts
 from spec_surgeon.ooxml import block_full_text
@@ -622,6 +622,178 @@ def test_the_verifier_refuses_what_the_op_must_refuse(patch, data_kw, select, pa
     assert "V10" in failed(rec) and "the op must refuse" in v10(rec), rec.to_markdown()
 
 
+# ---- the batch-6 review: ranges at the destination, the last section, comment threads ------------------------------
+
+WARRANTY = {"text_regex": "^1\\.5\\t|^A\\.\\tTwo years"}
+NFPA = "^A\\.\\tNFPA"
+
+
+def _body_sequence(data: bytes) -> List[str]:
+    """The body's children: a paragraph by its text (tracked copies and originals alike), a mark by name and id."""
+    out = []
+    for c in DocxPackage(data).xml(MAIN).find(W + "body"):
+        if c.tag == W + "p":
+            out.append("".join(t.text or "" for t in c.iter(W + "t", W + "delText")))
+        else:
+            out.append(etree.QName(c).localname + (f" {c.get(W + 'id')}" if c.get(W + "id") else ""))
+    return out
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_after_an_anchor_a_bookmark_ends_with_the_paragraphs_land_past_its_end(tracked):
+    """A bookmark over article 1.2 ends between blocks right after its last paragraph: "after" that paragraph is after
+    the bookmark too — the moved article does not join it (a cross-reference to 1.2 would take it)."""
+    data = with_article_bookmark(build_moving())
+    plan, out, rec = move(data, {"paragraphs": WARRANTY}, to(NFPA, "after", tracked=tracked))
+    assert rec.passed, rec.to_markdown()
+    seq = _body_sequence(out)
+    at = seq.index("bookmarkEnd 40")
+    assert seq[at - 1] == "A.NFPA 13, 2025 edition." and seq[at + 1:at + 3] == ["1.5WARRANTY",
+                                                                                "A.Two years from Substantial Completion."]
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_before_an_anchor_a_bookmark_starts_at_the_paragraphs_land_before_its_start(tracked):
+    data = with_article_bookmark(build_moving(), start="between")
+    plan, out, rec = move(data, {"paragraphs": WARRANTY}, to("^1\\.2\\t", "before", tracked=tracked))
+    assert rec.passed, rec.to_markdown()
+    seq = _body_sequence(out)
+    at = seq.index("bookmarkStart 40")
+    assert seq[at + 1] == "1.2REFERENCES" and seq[at - 2:at] == ["1.5WARRANTY",
+                                                                 "A.Two years from Substantial Completion."]
+
+
+def test_a_destination_inside_a_range_the_paragraphs_are_not_in_is_refused():
+    """Word ends a bookmark over whole paragraphs at the start of the next one: no place between the article's
+    paragraphs and the next one lies outside it. Paragraphs already inside it may move within it."""
+    data = with_article_bookmark(build_moving(), end="next")
+    for destination in (to(NFPA, "after"), to("^1\\.3\\t", "before", tracked=False)):
+        e = _refused(data, {"paragraphs": WARRANTY}, destination)
+        assert e.code == "move-split-range" and "inside a bookmark (id 40)" in e.reason
+    wide = with_article_bookmark(build_moving(), first="1.1", end="next")
+    plan, out, rec = move(wide, {"paragraphs": {"text_regex": NFPA}}, to("^1\\.2\\t", "before", tracked=False))
+    assert rec.passed, rec.to_markdown()
+
+
+def test_a_stretch_put_inside_the_bookmark_is_caught():
+    data = with_article_bookmark(build_moving())
+    plan, out, rec = move(data, {"paragraphs": WARRANTY}, to(NFPA, "after", tracked=False))
+
+    def inside(root):                                   # the bookmark's end put after the moved paragraphs
+        end = next(b for b in root.find(W + "body") if b.tag == W + "bookmarkEnd" and b.get(W + "id") == "40")
+        root.find(W + "body").remove(end)
+        para(root, "A.Two years from Substantial Completion.").addnext(end)
+    _caught(data, plan, out, MAIN, inside, "not the source with exactly this move")
+
+
+def test_a_destination_shared_by_plan_and_apply_that_ignores_the_range_end_is_caught(monkeypatch):
+    data = with_article_bookmark(build_moving())
+    monkeypatch.setattr(mp, "destination", lambda kids, anchor, position: kids.index(anchor) + (position == "after"))
+    monkeypatch.setattr(mp, "_check_range_destination", lambda *a: None)
+    for tracked in (False, True):
+        plan, out, rec = move(data, {"paragraphs": WARRANTY}, to(NFPA, "after", tracked=tracked))
+        assert "V10" in failed(rec) and "not the source with exactly this move" in v10(rec), rec.to_markdown()
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_a_stretch_that_is_all_of_the_last_section_is_refused(tracked):
+    """Moving all of the last section out of it leaves the body's last break alone at its end: Word shows an empty last
+    page. Moving within the section, or leaving a paragraph in it, is fine."""
+    from fx_sections import build_sections
+    data = build_sections()
+    part3 = {"between_paragraphs": {"start_regex": "^PART 3", "include_bounds": True}}
+    e = _refused(data, {"paragraphs": part3}, to("^APPENDIX A", "before", tracked=tracked))
+    assert e.code == "move-last-section" and "last section" in e.reason
+    for select, params in (({"paragraphs": {"text_regex": "^END OF SECTION"}}, to("^PART 3", "before")),
+                           ({"paragraphs": {"text_regex": "^PART 3|^3\\.01"}}, to("^APPENDIX A", "before"))):
+        plan, out, rec = move(data, select, {**params, "tracked": tracked})
+        assert rec.passed, (select, rec.to_markdown())
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_a_threaded_comments_last_paragraph_stays_last(tracked):
+    """Word's thread entry (commentsExtended) names a comment's last paragraph: a move that takes it, or puts paragraphs
+    after it, would leave the thread pointing at a paragraph that no longer ends the comment."""
+    data = with_comment_thread(build_moving(comment=True))
+    comments = {"scope": ["comments"]}
+    for select, destination in (({"text_regex": "^Third note"}, to("^Confirm", "before", tracked=tracked)),
+                                ({"text_regex": "^Second note"}, to("^Third note", "after", tracked=tracked))):
+        e = _refused(data, {**comments, "paragraphs": select}, destination)
+        assert e.code == "comment-last-paragraph" and "comment 0" in e.reason
+    plan, out, rec = move(data, {**comments, "paragraphs": {"text_regex": "^Second note"}},
+                          to("^Confirm", "before", tracked=tracked))
+    assert rec.passed, rec.to_markdown()
+    last = list(DocxPackage(out).xml("word/comments.xml").iter(W + "p"))[-1]
+    assert last.get(W14 + "paraId") == "2B000003"
+    plain = with_comment_thread(build_moving(comment=True), threaded=False)       # no thread entry: nothing names it
+    plan, out, rec = move(plain, {**comments, "paragraphs": {"text_regex": "^Third note"}},
+                          to("^Confirm", "before", tracked=tracked))
+    assert rec.passed, rec.to_markdown()
+
+
+REVIEW_CASES = [
+    (lambda: with_article_bookmark(build_moving()), {"paragraphs": WARRANTY}, to(NFPA, "after")),
+    (lambda: with_article_bookmark(build_moving(), start="between"), {"paragraphs": WARRANTY},
+     to("^1\\.2\\t", "before")),
+    (lambda: with_article_bookmark(build_moving(), end="next"), {"paragraphs": WARRANTY}, to(NFPA, "after")),
+    (lambda: with_article_bookmark(build_moving(), first="1.1", end="next"), {"paragraphs": {"text_regex": NFPA}},
+     to("^1\\.2\\t", "before", tracked=False)),
+    (lambda: __import__("fx_sections").build_sections(),
+     {"paragraphs": {"between_paragraphs": {"start_regex": "^PART 3", "include_bounds": True}}},
+     to("^APPENDIX A", "before")),
+    (lambda: __import__("fx_sections").build_sections(), {"paragraphs": {"text_regex": "^PART 3|^3\\.01"}},
+     to("^APPENDIX A", "before")),
+    (lambda: with_comment_thread(build_moving(comment=True)),
+     {"scope": ["comments"], "paragraphs": {"text_regex": "^Third note"}}, to("^Confirm", "before")),
+    (lambda: with_comment_thread(build_moving(comment=True)),
+     {"scope": ["comments"], "paragraphs": {"text_regex": "^Second note"}}, to("^Confirm", "before")),
+]
+
+
+@pytest.mark.parametrize("data,select,params", REVIEW_CASES)
+def test_transform_and_verifier_decide_the_reviews_cases_alike(data, select, params):
+    from spec_surgeon.ops.deletion import thread_ends
+    from spec_surgeon.verify.deletion import v_thread_ends
+    src = data()
+    part = "word/comments.xml" if select.get("scope") == ["comments"] else MAIN
+    pkg, vpkg = DocxPackage(src), VPackage(src)
+    root, vroot = pkg.xml(part), vpkg.xml(part)
+    pars, view = list(root.iter(W + "p")), PartView(vroot)
+    sheet, styles = StyleSheet(pkg), Styles(vpkg.xml("word/styles.xml"))
+    tracked = params.get("tracked", True)
+    chosen = [i for i, p in enumerate(pars) if mp.paragraph_selected(select["paragraphs"], p, i, block_full_text(p),
+                                                                     sheet, all_pars=pars)]
+    try:
+        m = mp._locate(part, root, pars, chosen, params["to"], params["position"], tracked, sheet,
+                       thread_ends(pkg, root))
+        theirs = (pars.index(m.pars[0]), len(m.pars), m.anchor_index, m.noop, m.at)
+    except JobException:
+        theirs = "refused"
+    try:
+        d = vm._decide(vroot, view, chosen, params["to"], params["position"], tracked, styles,
+                       v_thread_ends(vpkg, vroot))
+        ours = (d["first"], len(d["moved"]), d["anchor"], d["still"], d["gap_at"])
+    except vm._Refuse:
+        ours = "refused"
+    assert theirs == ours
+
+
+@pytest.mark.parametrize("patch,data,select,params", [
+    ("_check_range_destination", lambda: with_article_bookmark(build_moving(), end="next"), {"paragraphs": WARRANTY},
+     to(NFPA, "after", tracked=False)),
+    ("_check_last_section", lambda: __import__("fx_sections").build_sections(),
+     {"paragraphs": {"between_paragraphs": {"start_regex": "^PART 3", "include_bounds": True}}},
+     to("^APPENDIX A", "before", tracked=False)),
+    ("_check_thread_end", lambda: with_comment_thread(build_moving(comment=True)),
+     {"scope": ["comments"], "paragraphs": {"text_regex": "^Third note"}}, to("^Confirm", "before", tracked=False)),
+])
+def test_the_verifier_refuses_the_reviews_cases_the_op_must_refuse(patch, data, select, params, monkeypatch):
+    src = data()
+    monkeypatch.setattr(mp, patch, lambda *a, **k: None)
+    plan, out, rec = move(src, select, params)
+    assert "V10" in failed(rec) and "the op must refuse" in v10(rec), rec.to_markdown()
+
+
 def test_every_refusal_code_of_the_move_is_explained():
     codes = set()
     for n in ast.walk(ast.parse(Path(mp.__file__).read_text(encoding="utf-8"))):
@@ -630,7 +802,7 @@ def test_every_refusal_code_of_the_move_is_explained():
             codes.add(n.args[1].value)
     assert codes == {"bad-params", "not-found", "ambiguous", "textbox", "structure", "section-break",
                      "existing-revisions", "move-gap", "move-container", "move-anchor", "move-table-edge",
-                     "move-split-range", "move-tracked-content"}
+                     "move-split-range", "move-tracked-content", "move-last-section", "comment-last-paragraph"}
     assert sorted(c for c in codes if c not in FAILURE_EXPLANATIONS) == []
 
 

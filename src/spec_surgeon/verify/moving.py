@@ -8,10 +8,14 @@ ops/move_paragraphs.py (rule 1). This module's own reading of the op:
   no section break; no bookmark, comment, permission, pending move range or complex field (verify/fields.py's) has one
   end in the stretch and the other outside.
 * **The anchor** is the one paragraph of the part ``to`` matches, a child of the holder outside the stretch; **the
-  destination** is the place right after (``after``) or right before (``before``) it. When only marks lie between the
-  destination and the stretch, nothing moves. Otherwise the holder, the stretch gone, must not end in a table nor have a
-  table follow a table with only marks between them, and no complex field may be open at the destination (a walk in
-  document order: a begin opens one, an end closes one).
+  destination** is the place right after it and the range-end marks (bookmark, comment range, permission, pending move
+  range) right after it (``after``), or right before it and the range-start marks right before it (``before``). When
+  only marks lie between the destination and the stretch, nothing moves. Otherwise the holder, the stretch gone, must
+  not end in a table nor have a table follow a table with only marks between them; a body's last section (after its
+  last section-break paragraph) must not lose all its blocks to a destination before it; in a comment a thread entry
+  names, the comment's last paragraph must stay last (not in the stretch, nothing landing after it); no complex field
+  may be open at the destination (a walk in document order: a begin opens one, an end closes one), nor a range the
+  stretch is not in already (begun before the destination, ended at or after it).
 * **Untracked**, the stretch's nodes are taken out and inserted at the destination, unchanged.
 * **Tracked**, the stretch holds only paragraphs, bookmarks and proofing marks, every paragraph only its properties,
   runs of text, tabs, breaks, hyphens and symbols, bookmarks and proofing marks, and no tracked change. Each original
@@ -37,6 +41,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 from lxml import etree
 
+from .deletion import v_thread_ends
 from .edits import V_REVISION_TAGS, part_revision_ids
 from .fields import v_fields
 from .markup import tree_difference
@@ -55,6 +60,8 @@ _ENDS = {"bookmarkStart": "bookmark", "bookmarkEnd": "bookmark", "commentRangeSt
          "commentRangeEnd": "comment", "commentReference": "comment", "permStart": "permission", "permEnd": "permission",
          "moveFromRangeStart": "move-from range", "moveFromRangeEnd": "move-from range",
          "moveToRangeStart": "move-to range", "moveToRangeEnd": "move-to range"}
+_RANGE_START = {"bookmarkStart", "commentRangeStart", "permStart", "moveFromRangeStart", "moveToRangeStart"}
+_RANGE_END = {"bookmarkEnd", "commentRangeEnd", "permEnd", "moveFromRangeEnd", "moveToRangeEnd"}
 _BOOKMARK = {"bookmarkStart", "bookmarkEnd"}
 _TRACKED_BETWEEN = _BOOKMARK | {"proofErr"}
 _TRACKED_IN_PARAGRAPH = {"pPr", "r", "proofErr"} | _BOOKMARK
@@ -103,8 +110,31 @@ def _open_at(root, before, holder) -> int:
     return depth
 
 
-def _decide(root, view: PartView, chosen: List[int], to, position: str, tracked: bool, styles) -> Dict[str, Any]:
-    """What the op must do in one part (module docstring), or ``_Refuse``."""
+def _ranges_open(root, before, holder) -> Set[Tuple[str, str]]:
+    """The ranges — bookmark, comment, permission, pending move: (family, id), each with both marks, its start first —
+    open at a place between blocks: right before ``before``, or (None) right after the holder's last node; begun before
+    the place and ended at or after it."""
+    last = None if before is not None else list(holder.iter())[-1]
+    starts: Dict[Tuple[str, str], int] = {}
+    ends: Dict[Tuple[str, str], int] = {}
+    place = None
+    for k, el in enumerate(root.iter()):
+        if el is before:
+            place = k
+        name = _name(el)
+        if name in _RANGE_START or name in _RANGE_END:
+            family = name.replace("Range", "").replace("Start", "").replace("End", "")
+            (starts if name in _RANGE_START else ends).setdefault((family, el.get(W + "id") or ""), k)
+        if el is last:
+            place = k + 1
+    return {key for key, s in starts.items()
+            if key in ends and s < ends[key] and place is not None and s < place <= ends[key]}
+
+
+def _decide(root, view: PartView, chosen: List[int], to, position: str, tracked: bool, styles,
+            ends: Optional[Dict[Any, str]] = None) -> Dict[str, Any]:
+    """What the op must do in one part (module docstring), or ``_Refuse``. ``ends``: the last paragraph of each comment
+    of the part a thread entry names (``deletion.v_thread_ends``)."""
     pars = view.pars
     picked = [pars[i] for i in chosen]
     picked_ids = {id(p) for p in picked}
@@ -183,7 +213,14 @@ def _decide(root, view: PartView, chosen: List[int], to, position: str, tracked:
         raise _Refuse("the destination is one of the paragraphs to move")
     if anchor.getparent() is not holder:
         raise _Refuse("the destination is not in the holder of the paragraphs to move")
-    gap_at = pos[id(anchor)] + (1 if position == "after" else 0)
+    gap_at = pos[id(anchor)]
+    if position == "after":                         # past the range ends right after the anchor
+        gap_at += 1
+        while gap_at < len(kids) and _name(kids[gap_at]) in _RANGE_END:
+            gap_at += 1
+    else:                                           # before the range starts right before it
+        while gap_at and _name(kids[gap_at - 1]) in _RANGE_START:
+            gap_at -= 1
     between = kids[gap_at:lo] if gap_at <= lo else kids[hi + 1:gap_at]
     still = not any(_block(k) for k in between)
     if not still:
@@ -191,9 +228,27 @@ def _decide(root, view: PartView, chosen: List[int], to, position: str, tracked:
         right = [k for k in kids[hi + 1:] if _block(k)]
         if left and _name(left[-1]) == "tbl" and (not right or _name(right[0]) == "tbl"):
             raise _Refuse("a table would end the holder or touch another table once the stretch leaves")
+        if _name(holder) == "body":
+            carriers = [i for i, k in enumerate(kids) if _name(k) == "p" and k.find(f"{W}pPr/{W}sectPr") is not None]
+            if carriers and lo > carriers[-1] >= gap_at and \
+                    not any(_block(k) for k in kids[carriers[-1] + 1:lo] + kids[hi + 1:]):
+                raise _Refuse("the stretch is all of the last section and leaves it (an empty last page)")
+        if _name(holder) == "comment" and ends:
+            last = list(holder.iter(W + "p"))[-1]
+            if last in ends:
+                top = last
+                while top.getparent() is not holder:
+                    top = top.getparent()
+                if any(q is last for q in moved) or gap_at > pos[id(top)]:
+                    raise _Refuse(f"the move changes the last paragraph of comment {ends[last]}, which its thread "
+                                  f"entry names")
         if fields and _open_at(root, kids[gap_at] if gap_at < len(kids) else None, holder):
             raise _Refuse("the destination lies inside a complex field")
-    return {"holder": element_path(holder), "lo": lo, "hi": hi, "anchor_at": pos[id(anchor)], "still": still,
+        inside = _ranges_open(root, stretch[0], holder)
+        landing = _ranges_open(root, kids[gap_at] if gap_at < len(kids) else None, holder)
+        if landing - inside:
+            raise _Refuse(f"the destination lies inside a {sorted(landing - inside)[0][0]} the stretch is not in")
+    return {"holder": element_path(holder), "lo": lo, "hi": hi, "gap_at": gap_at, "still": still,
             "first": pars.index(moved[0]), "moved": moved, "anchor": targets[0],
             "tables": sum(1 for k in stretch if _name(k) == "tbl")}
 
@@ -256,7 +311,7 @@ def _expected(src_root, d: Dict[str, Any], position: str, tracked: bool, author:
     holder = resolve_path(exp, d["holder"])
     kids = list(holder)
     stretch = kids[d["lo"]:d["hi"] + 1]
-    anchor = kids[d["anchor_at"]]
+    beside = kids[d["gap_at"]] if d["gap_at"] < len(kids) else None      # what the stretch goes right before
     if d["still"]:
         return exp, []
     if tracked:
@@ -270,7 +325,7 @@ def _expected(src_root, d: Dict[str, Any], position: str, tracked: bool, author:
         going = stretch
         for k in going:
             holder.remove(k)
-    at = holder.index(anchor) + (1 if position == "after" else 0)
+    at = holder.index(beside) if beside is not None else len(holder)
     for j, k in enumerate(going):
         holder.insert(at + j, k)
     return exp, [q for k in going if isinstance(k.tag, str) for q in k.iter(W + "p")]
@@ -331,7 +386,7 @@ def _moved_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             continue
         where = f"moved_paragraphs {part}"
         try:
-            d = _decide(src_root, view, chosen, to, position, tracked, ctx.src_styles)
+            d = _decide(src_root, view, chosen, to, position, tracked, ctx.src_styles, v_thread_ends(ctx.src, src_root))
         except _Refuse as why:
             errs.append(f"{where}: {why} — the op must refuse")
             continue

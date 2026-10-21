@@ -14,14 +14,30 @@ from ..ooxml import RevisionStamp, block_full_text, count_revisions, file_uses_d
 from ..package import W, DocxPackage
 from . import prose, register
 from .base import JobException, Op, PlanFragment
-from .deletion import (Choice, Removal, choose, dangling_flags, delete_mark, delete_row, delete_runs, in_separator,
-                       refuse_crossing_fields, remove_deletion, row_at, run_groups, section_flags, shown, table_rows,
-                       tracked_flags, tracked_runs)
+from .deletion import (Choice, Removal, choose, dangling_flags, delete_mark, delete_row, delete_runs, held_objects,
+                       in_separator, refuse_crossing_fields, refuse_thread_ends, remove_deletion, row_at, run_groups,
+                       section_flags, shown, table_rows, tracked_flags, tracked_runs)
 from .selectors import SCOPE_KINDS, StyleSheet, check_paragraph_selector, paragraph_selected, scope_parts
 
 
 def default_author() -> str:
     return os.environ.get("SPEC_SURGEON_AUTHOR") or getpass.getuser()
+
+
+def objects_flag(choices: List[Choice], tracked: bool) -> Optional[str]:
+    """The pictures, embedded objects and whole tables the deletion takes, in plain words (None when there are none):
+    deleting paragraphs that look empty must not take a logo or a table of pictures unremarked."""
+    pictures, objects = held_objects(p for ch in choices for p in ch.deleted + ch.kept + ch.in_tables)
+    tables = sum(len(ch.tables) for ch in choices)
+    words = [prose.count(n, what) for n, what in ((pictures, "picture"), (objects, "embedded object"), (tables, "table"))
+             if n]
+    if not words:
+        return None
+    one = pictures + objects + tables == 1
+    if tracked:
+        return (f"{prose.join(words)} {'is' if one else 'are'} deleted with the paragraphs (tracked: "
+                f"{'it goes' if one else 'they go'} when the deletion is accepted)")
+    return f"{prose.join(words)} {'goes' if one else 'go'} with the deleted paragraphs"
 
 
 # Paragraph children that carry no content and may stay in place (outside the w:del wrapper) when the paragraph's
@@ -126,12 +142,21 @@ class DeleteParagraphs(Op):
             ordinal = {t: k for k, t in enumerate(ch.root.iter(W + "tbl"))}
             expected[ch.part] = {"delete": [index[p] for p in ch.deleted], "keep": [index[p] for p in ch.kept],
                                  "tables": [ordinal[t] for t in ch.tables]}
+            stays = "keeps its paragraph mark and loses its text" if tracked else "stays, emptied"
             for p in ch.kept:
-                frag.flags.append(f"{ch.part} paragraph {index[p]} ({shown(p)}) "
-                                  + ("keeps its paragraph mark and loses its text" if tracked else "stays, emptied")
-                                  + " (a cell, a note or the document keeps its last paragraph, and two tables must "
-                                    "not join)")
+                if p not in ch.last_section:
+                    frag.flags.append(f"{ch.part} paragraph {index[p]} ({shown(p)}) {stays} (a cell, a note or the "
+                                      f"document keeps its last paragraph, and two tables must not join)")
+            if ch.last_section:
+                frag.flags.append(f"the last section is now empty and shows a blank page (paragraph "
+                                  f"{prose.join(str(index[p]) for p in ch.last_section)} {stays}); remove the section "
+                                  f"break before it to drop the page")
+        shown_objects = objects_flag(choices, tracked)
+        if shown_objects:
+            frag.flags.append(shown_objects)
         if tracked:
+            for ch in choices:
+                refuse_thread_ends(pkg, ch.part, ch.root, ch.deleted + ch.in_tables, ())
             self._plan_tracked(pkg, frag, choices, expected)
         else:
             self._plan_untracked(pkg, frag, removal, choices, expected)
@@ -202,12 +227,17 @@ class DeleteParagraphs(Op):
         for ch in choices:
             remove_deletion(removal, ch)
         removal.resolve()
+        for ch in choices:
+            refuse_thread_ends(pkg, ch.part, ch.root, ch.deleted + ch.in_tables, removal.comments)
         removal.predict(frag, "untracked paragraph deletion")
         main = pkg.main_part()
         if removal.sections:
             frag.flags += section_flags(pkg, removal.root(main), removal.sections, False)
         if removal.parts_gone:
             frag.flags.append(f"header/footer part(s) {removal.parts_gone} were used only by the removed section "
+                              f"break(s); they leave the package")
+        if removal.printers:
+            frag.flags.append(f"printer settings part(s) {removal.printers} were used only by the removed section "
                               f"break(s); they leave the package")
         if removal.comments:
             frag.flags.append(f"comment(s) {', '.join(removal.comments)} lay wholly in the deleted text; they go with "

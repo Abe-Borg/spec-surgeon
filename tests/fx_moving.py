@@ -26,6 +26,9 @@ by its text in the tests, never by index.
 
 The header holds "Header A", "Header B" and "Header C". ``split_bookmark``: the bookmark _Ref_Split starts in "1.2⇥
 REFERENCES" and ends in "1.3⇥SUBMITTALS".
+
+``with_article_bookmark`` puts a bookmark over article 1.2 whose marks sit between blocks or at a paragraph's start;
+``with_comment_thread`` gives the comment three paragraphs and a thread entry naming the last.
 """
 from __future__ import annotations
 
@@ -155,6 +158,70 @@ def build_moving(*, utc: bool = False, toc: bool = False, comment: bool = False,
     t.cell(0, 1).text = "Other cell"
     doc.add_paragraph("END OF SECTION")
     return save(doc)
+
+
+W = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+W15 = "http://schemas.microsoft.com/office/word/2012/wordml"
+MAIN = "word/document.xml"
+COMMENTS = "word/comments.xml"
+
+
+def _text(p) -> str:
+    return "".join(t.text or "" for t in p.iter(W + "t"))
+
+
+def _starting(root, text: str):
+    return next(p for p in root.iter(W + "p") if _text(p).startswith(text))
+
+
+def with_article_bookmark(data: bytes, first: str = "1.2", start: str = "in", end: str = "between") -> bytes:
+    """A bookmark _Ref_Article (id 40) from the paragraph starting with ``first`` — inside it, right after its
+    properties (``start="in"``), or right before it between blocks (``"between"``) — through "A.⇥NFPA 13, 2025
+    edition.": its end right after that paragraph between blocks (``end="between"``), or at the start of "1.3⇥
+    SUBMITTALS" (``"next"``, as Word ends a bookmark over whole paragraphs, their marks included)."""
+    from make_fixtures import patch_docx
+
+    def mark(root):
+        head, nfpa = _starting(root, first), _starting(root, "A.NFPA")
+        bs = etree.Element(W + "bookmarkStart"); bs.set(W + "id", "40"); bs.set(W + "name", "_Ref_Article")
+        be = etree.Element(W + "bookmarkEnd"); be.set(W + "id", "40")
+        if start == "in":
+            head.insert(1 if head.find(W + "pPr") is not None else 0, bs)
+        else:
+            head.addprevious(bs)
+        if end == "between":
+            nfpa.addnext(be)
+        else:
+            nxt = _starting(root, "1.3SUBMITTALS")
+            nxt.insert(1 if nxt.find(W + "pPr") is not None else 0, be)
+    return patch_docx(data, {MAIN: mark})
+
+
+def with_comment_thread(data: bytes, threaded: bool = True) -> bytes:
+    """``build_moving(comment=True)`` with Jack's comment in three paragraphs — "Confirm the edition.", "Second note.",
+    "Third note." (w14:paraId 2B000001–3) — and (``threaded``) a commentsExtended entry naming its last paragraph, as
+    Word writes a comment's thread entry."""
+    from make_fixtures import add_parts, patch_docx
+
+    def three(root):
+        c = root.find(W + "comment")
+        for text in ("Second note.", "Third note."):
+            p = etree.SubElement(c, W + "p")
+            etree.SubElement(etree.SubElement(p, W + "r"), W + "t").text = text
+        for k, p in enumerate(c.findall(W + "p")):
+            p.set("{%s}paraId" % W14, f"2B00000{k + 1}")
+            p.set("{%s}textId" % W14, "77777777")
+    data = patch_docx(data, {COMMENTS: three})
+    if not threaded:
+        return data
+    ex = (f'<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<w15:commentsEx xmlns:w15="{W15}">'
+          f'<w15:commentEx w15:paraId="2B000003" w15:done="0"/></w15:commentsEx>').encode()
+    return add_parts(data, {"word/commentsExtended.xml": ex},
+                     rels=[("word/_rels/document.xml.rels", "rId891",
+                            "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+                            "commentsExtended.xml")],
+                     overrides={"word/commentsExtended.xml":
+                                "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"})
 
 
 def _block_control(text: str, data_bound: bool):

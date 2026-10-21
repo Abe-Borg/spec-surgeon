@@ -17,8 +17,9 @@ from pathlib import Path
 import pytest
 from lxml import etree
 
-from fx_sections import (MAIN, W, body_paragraph, build_columns_text, build_sections, build_single, in_content_control,
-                         sect_prs, text_of, with_section_change, with_section_xml, with_textbox, with_tracked_mark)
+from fx_sections import (MAIN, W, body_paragraph, build_columns_text, build_page_break, build_sections, build_single,
+                         in_content_control, sect_prs, text_of, with_section_change, with_section_xml, with_textbox,
+                         with_tracked_mark)
 from make_fixtures import add_parts, build_schedule, patch_docx
 from spec_surgeon import editspec
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, SELECTOR_GRAMMAR, op_catalog
@@ -210,6 +211,26 @@ def test_odd_page_breaks_in_a_single_section_document():
     assert [_attrs(sp.find(W + "type")) for sp in got[1:]] == [{"val": "oddPage"}] * 2
     assert any("Word adds a blank page" in n for n in plan.notes)
     assert sum("different first page" in f for f in plan.flags) == 1             # one flag naming both breaks
+
+
+def test_a_new_page_break_after_a_manual_page_break_is_flagged():
+    """The usual manual page break before an appendix: a next-page (even, odd) section break carried by the paragraph
+    that holds it puts that paragraph's mark alone on a page — a blank page in Word. Flagged, nothing else changes; a
+    continuous break, or words after the page break, leave no blank page."""
+    needle = ("ends with a manual page break: a page break and a {} section break together leave a blank page in Word; "
+              "remove the page break, or use a continuous break")
+    data = build_page_break()
+    for kind in ("next_page", "odd_page", "even_page"):
+        plan, _, out, rec = _run(data, ins("^APPENDIX A", type=kind))
+        assert rec.passed, rec.to_markdown()
+        assert sum(needle.format(kind.replace("_", "-")) in f for f in plan.flags) == 1, plan.flags
+        assert len(list(_root(out).iter(W + "br"))) == 1                          # the page break stays
+    plan, _, _, rec = _run(data, ins("^APPENDIX A", type="continuous"))
+    assert rec.passed and not any("manual page break" in f for f in plan.flags)
+    plan, _, _, rec = _run(build_page_break(text_after=True), ins("^APPENDIX A"))
+    assert rec.passed and not any("manual page break" in f for f in plan.flags)
+    plan, _, _, rec = _run(SINGLE, ins("^APPENDIX A"))
+    assert rec.passed and not any("manual page break" in f for f in plan.flags)
 
 
 def test_allow_missing_makes_no_match_a_no_op():

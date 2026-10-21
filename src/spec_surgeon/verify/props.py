@@ -316,6 +316,16 @@ PARA_KEYS = {"style_in", "text_regex", "in_table", "is_empty", "index_range",
              "has_bold", "is_all_caps", "after_heading_regex", "between_paragraphs",
              "case_insensitive", "flexible_whitespace"}
 RUN_KEYS = {"has_direct_font", "font_in", "not_in_revisions", "color_in"}
+# is_empty: no block text, and nothing shown without text — a picture or drawing (w:drawing, VML w:pict, an
+# mc:AlternateContent choice), an embedded object, a text box, a field (w:fldSimple, any w:fldChar)
+_V_SHOWN_WITHOUT_TEXT = {W + "drawing", W + "pict", W + "object", W + "txbxContent", W + "fldSimple", W + "fldChar",
+                         "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"}
+
+
+def _v_is_empty(p, text: str) -> bool:
+    if text:
+        return False
+    return not any(isinstance(x.tag, str) and x.tag in _V_SHOWN_WITHOUT_TEXT for x in p.iter())
 
 
 def _v_selector_style(p, styles: Styles) -> Optional[str]:
@@ -431,7 +441,7 @@ def para_matches(pred, p, bi: int, view: PartView, styles: Styles) -> bool:
         return False
     if "in_table" in pred and _has_ancestor(p, {W + "tc"}, None) != bool(pred["in_table"]):
         return False
-    if "is_empty" in pred and (view.texts[bi] == "") != bool(pred["is_empty"]):
+    if "is_empty" in pred and _v_is_empty(p, view.texts[bi]) != bool(pred["is_empty"]):
         return False
     if "index_range" in pred:
         a, b = pred["index_range"]
