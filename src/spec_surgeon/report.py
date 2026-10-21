@@ -401,20 +401,24 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The Table Holds Something Anchored Elsewhere",
         "The table or rows to delete hold a comment's mark (the comment would stay without its place in the text), a "
         "footnote or endnote mark when the deletion is not tracked (the note would stay without its mark), or part of "
-        "a field, permission or range whose other part lies outside them. Remove the comments first (in the same "
-        "request), delete it as a tracked change, or delete it in Word.",
+        "a field, permission or range whose other part lies outside them — or, merging cells, part of a range or field "
+        "whose other part stays in a cell beside the block, which the merge would put out of order. Remove the "
+        "comments first (in the same request), delete it as a tracked change, or delete or merge it in Word.",
     ),
     "vertical-merge": (
         "The Rows Would Cut a Merged Cell",
         "The rows to delete include the first row of a cell merged down across several rows (its text is in that "
-        "row) but not all of the merged block, so the cell would be left without its content. Delete the whole merged "
-        "block, or unmerge the cells in Word first, then run again.",
+        "row) but not all of the merged block, so the cell would be left without its content — or the columns to "
+        "delete would take some of a merged-down cell's parts and keep others. Delete the whole merged block, or "
+        "unmerge the cells in Word first, then run again.",
     ),
     "table-shape": (
-        "The New Rows Do Not Fit the Table",
+        "The New Rows or the Cells to Merge Do Not Fit the Table",
         "A new row gives more or fewer texts than the table's row has cells, or the row the new rows copy has merged "
-        "cells (a cell spanning columns, or merged across rows), whose layout a new row cannot copy. Give one text per "
-        "cell, or place the rows by a row without merged cells.",
+        "cells (a cell spanning columns, or merged across rows), whose layout a new row cannot copy — or the cells to "
+        "merge are not one unbroken block of rows and columns, or part of the block has no cell (a row that starts "
+        "late or ends early). Give one text per cell, place the rows by a row without merged cells, or choose one "
+        "block of cells.",
     ),
     "table-placement": (
         "A New Table Cannot Go There",
@@ -422,6 +426,26 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "another table (Word joins two such tables into one), or after the document's last paragraph (a document ends "
         "with a paragraph), or its section states no page width and margins to make it full width. Place it by "
         "another paragraph, or give column widths.",
+    ),
+    # built-in batch 6 (table grid and cells)
+    "every-column": (
+        "Every Column of the Table Would Go",
+        "The columns to delete are all the table has; a table cannot be left without columns. Ask to delete the table "
+        "instead.",
+    ),
+    "table-grid": (
+        "The Table's Columns Cannot Be Counted Safely",
+        "The table has no column grid (or two), a row that runs past its grid or a count of empty grid columns that is "
+        "not a number, cells joined by Word's old horizontal merge, a column without a width where a width must be "
+        "taken off or added up, a width that would fall to nothing, or a deletion that would leave a row without a "
+        "cell. Fix the table in Word (Table Properties, or merge and split the cells again), or delete the row first, "
+        "then run again.",
+    ),
+    "merge-overlap": (
+        "The Cells to Merge Cut a Merged Cell",
+        "The block of cells to merge takes only part of a cell that already spans columns or is merged down across "
+        "rows, or the cell just below the block continues a merge and would join this one. Choose a block that takes "
+        "merged cells whole, or unmerge them in Word first.",
     ),
     # built-in batch 5 (list levels and the audit)
     "numbering-override": (

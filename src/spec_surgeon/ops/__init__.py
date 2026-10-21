@@ -47,6 +47,7 @@ from . import add_comments  # noqa: E402,F401 — literal approved review reason
 from . import insert_section_break, remove_section_break  # noqa: E402,F401 — built-in batch 6 (sections)
 from . import move_paragraphs  # noqa: E402,F401 — built-in batch 6 (F9: moving)
 from . import delete_table_rows, delete_tables, insert_table, insert_table_rows  # noqa: E402,F401 — built-in batch 6 (F5)
+from . import delete_table_columns, merge_table_cells, set_table_cells  # noqa: E402,F401 — built-in batch 6 (F6)
 from . import insert_image, remove_images, resize_images  # noqa: E402,F401 — built-in batch 6 (F4, pictures)
 from . import comment_threads, insert_field  # noqa: E402,F401 — built-in batch 6 (fields and comment threads, §9)
 from . import remove_footnotes  # noqa: E402,F401 — built-in batch 6 (F2; delete_paragraphs grew over ops/deletion.py)
