@@ -68,6 +68,26 @@ def test_one_hour_cache_writes_are_priced_as_such_and_kept_out_of_the_token_tota
     # the preflight reserves the 1-hour write price for the tools and system prompt alone, the 5-minute one after them
     tokens, cost = llm.CallBudget(max_cost_usd=None)._preflight("claude-opus-5-5", 10_000, 100, 4_000)
     assert tokens == 10_100 and cost == pytest.approx((4_000 * 8 + 6_000 * 5 + 100 * 20) / 1e6)
+    # a one-shot call caches nothing after the system prompt: the rest is reserved as ordinary input
+    _, one_shot = llm.CallBudget(max_cost_usd=None)._preflight("claude-opus-5-5", 10_000, 100, 4_000,
+                                                               cached_history=False)
+    assert one_shot == pytest.approx((4_000 * 8 + 6_000 * 4 + 100 * 20) / 1e6)
+
+
+def test_a_one_shot_call_inside_a_budget_reserves_its_content_as_ordinary_input():
+    seen = []
+    budget = llm.CallBudget(max_calls=48, max_cost_usd=None, max_total_tokens=None)
+    original = budget._preflight
+
+    def spy(*a, **k):
+        seen.append(k.get("cached_history", True))
+        return original(*a, **k)
+
+    budget._preflight = spy
+    with llm.budget_scope(budget):
+        llm.call(FakeClient(resp(text("a"), stop="end_turn")), **ARGS)
+        llm.call(FakeClient(resp(text("b"), stop="end_turn")), **ARGS, one_shot=True)
+    assert seen == [True, False]
 
 
 def test_the_stream_reports_its_one_hour_writes_for_a_stopped_call():

@@ -488,7 +488,8 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
             for budget in budgets:
                 budget.exhausted_reason = f"cannot estimate this request's input tokens: {e}"
             raise BudgetExceeded(budgets[-1].exhausted_reason) from e
-        reservations = [b._preflight(model, estimated_input, max_tokens, estimated_prefix) for b in budgets]
+        reservations = [b._preflight(model, estimated_input, max_tokens, estimated_prefix, cached_history=not one_shot)
+                        for b in budgets]
         # SDK retries are additional HTTP attempts invisible to this call site. ``call`` re-sends a transient failure
         # itself, so that every attempt passes the same preflight and counts against the same cap.
         options = getattr(client, "with_options", None)
@@ -979,8 +980,9 @@ class CallBudget:
         raise BudgetExceeded(reason)
 
     def _preflight(self, model: str, estimated_input: int, max_output: int,
-                   estimated_prefix: int = 0) -> Tuple[int, Optional[float]]:
-        """``estimated_prefix``: the part of the input (tools and system prompt) a 1-hour cache write may cover."""
+                   estimated_prefix: int = 0, cached_history: bool = True) -> Tuple[int, Optional[float]]:
+        """``estimated_prefix``: the part of the input (tools and system prompt) a 1-hour cache write may cover;
+        ``cached_history``: whether the rest may be a 5-minute cache write (not for a ``one_shot`` call)."""
         if self.exhausted_reason:
             raise BudgetExceeded(self.exhausted_reason)
         if self.calls >= self.max_calls:
@@ -997,10 +999,11 @@ class CallBudget:
         else:
             pin, pout, pread, pwrite, pwrite_hour = price
             # A new prompt may be a cache write, dearer than ordinary input: for an hour on the tools and system
-            # prompt (SYSTEM_CACHE), for five minutes on the history after them.
+            # prompt (SYSTEM_CACHE), for five minutes on the history after them unless the call caches no history.
             prefix = max(0, min(estimated_prefix, estimated_input))
+            history_rate = max(pin, pread, pwrite) if cached_history else max(pin, pread)
             cost_reservation = (prefix * max(pin, pread, pwrite, pwrite_hour)
-                                + (estimated_input - prefix) * max(pin, pread, pwrite) + max_output * pout) / 1e6
+                                + (estimated_input - prefix) * history_rate + max_output * pout) / 1e6
         if self.max_cost_usd is not None:
             cost = self.estimated_cost_usd
             if cost is None:
