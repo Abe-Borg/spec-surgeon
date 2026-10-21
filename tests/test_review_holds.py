@@ -46,7 +46,8 @@ def test_a_document_set_aside_at_approval_waits_on_the_to_do_list_while_the_othe
     assert Path(task.results[str(first)]).is_file()
     assert second.read_bytes() == before
     assert list(task.todo) == [str(second)] and task.todo[str(second)]["name"] == "B.docx"
-    assert len(task.todo[str(second)]["missed"]) == 1 and "bold" in task.todo[str(second)]["missed"][0]
+    assert len(task.todo[str(second)]["seen"]) == 1 and "bold" in task.todo[str(second)]["seen"][0]
+    assert list(task.applied) == [str(first)] and task.applied[str(first)] == task.history   # only A carries it
     assert task.documents() == [Path(task.results[str(first)])]   # the set-aside document is out of scope meanwhile
     view = task.view()
     assert view["todo"] == [{"path": str(second), "name": "B.docx"}] and view["focus"] == []
@@ -56,12 +57,13 @@ def test_a_document_set_aside_at_approval_waits_on_the_to_do_list_while_the_othe
 
 
 def test_the_pass_over_the_set_aside_documents_plans_them_alone_from_the_request_and_the_note(tmp_path):
-    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})), resp(tool("submit_editspec", {"spec": ITALIC})))
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})), resp(tool("submit_editspec", {"spec": ITALIC})),
+                      resp(tool("submit_editspec", {"spec": SPEC})))
     task, (first, second), view = previewed(tmp_path, fake)
     task.perform("primary", token=view["token"], hold=[str(second)])
     first_copy = Path(task.results[str(first)])
     view = task.perform("send", text=WORK_TODO)
-    assert task.focus == {"documents": [str(second)], "missed": task.history}
+    assert task.focus == {"documents": [str(second)], "seen": task.history}
     assert task.todo == {} and task.documents() == [second]        # the set-aside document alone, as it is
     assert task.decisions == [REQUEST]                              # the request it was set aside from stands
     assert view["stage"] == "resume" and view["focus"] == [str(second)] and WORK_TODO not in view["chips"]
@@ -83,6 +85,13 @@ def test_the_pass_over_the_set_aside_documents_plans_them_alone_from_the_request
     assert task.documents() == [first_copy, second_copy]            # both copies are the working set again
     assert task.generation == 2 and len(task.history) == 2
     assert WORK_TODO not in task.view()["chips"]
+    # each copy carries its own changes, and the next request is told per document, never a shared story
+    assert [s[:10] for s in task.applied[str(first)]] == ["Apply bold"] and [s[:12] for s in task.applied[str(second)]] == ["Apply italic"]
+    task.perform("send", text="Now make the title red.")
+    sent = fake.requests[2]["messages"][0]["content"]
+    block = sent.split("CHANGES ALREADY MADE")[1].split("\n\n")[0]
+    assert "(not in B.docx)" in block and "(not in A.docx)" in block
+    assert block.index("Apply bold") < block.index("Apply italic")
 
 
 def test_setting_every_document_aside_creates_nothing_and_begins_the_pass_at_once(tmp_path):
@@ -90,7 +99,7 @@ def test_setting_every_document_aside_creates_nothing_and_begins_the_pass_at_onc
     task, (first, second), view = previewed(tmp_path, fake)
     task.perform("primary", token=view["token"], hold=[str(first), str(second)])
     assert task.results == {} and task.generation == 0
-    assert task.focus == {"documents": [str(first), str(second)], "missed": []}
+    assert task.focus["documents"] == [str(first), str(second)] and len(task.focus["seen"]) == 1
     assert task.documents() == [first, second] and task.decisions == [REQUEST]
     assert any("every document aside" in m["text"] for m in task.messages if m["role"] == "app")
     assert task.view()["stage"] == "resume"
@@ -134,10 +143,17 @@ def test_the_journal_keeps_the_to_do_list_and_the_pass(tmp_path):
     again.perform("send", text=WORK_TODO)
     once_more = task_for(tmp_path, FakeClient(), journal=journal)
     assert once_more.restore()
-    assert once_more.focus == {"documents": [str(second)], "missed": task.history}
+    assert once_more.focus == {"documents": [str(second)], "seen": task.history}
     assert once_more.documents() == [second] and once_more.decisions == [REQUEST] and once_more.stage == "resume"
-    # a malformed record is refused, never guessed at
+    assert once_more.applied == {str(first): task.history}
+    # a journal from before per-copy histories: every copy carried every change
     import json
+    data = json.loads(journal.read_text(encoding="utf-8"))
+    del data["applied"]
+    journal.write_text(json.dumps(data), encoding="utf-8")
+    older = task_for(tmp_path, FakeClient(), journal=journal)
+    assert older.restore() and older.applied == {str(first): task.history}
+    # a malformed record is refused, never guessed at
     data = json.loads(journal.read_text(encoding="utf-8"))
     data["todo"] = {"x": "not a record"}
     journal.write_text(json.dumps(data), encoding="utf-8")
@@ -180,3 +196,52 @@ def test_the_narrowed_approval_inputs_are_a_fresh_approval_of_the_subset(tmp_pat
     assert narrow_approval_inputs(whole, [first, third]) == approval_inputs(key, [first, third])
     assert narrow_approval_inputs(whole, [second])["files"] == {str(second.resolve()): whole["files"][str(second.resolve())]}
     assert narrow_approval_inputs(whole, [second])["spec"] == whole["spec"]
+
+
+def test_documents_set_aside_from_different_requests_are_worked_on_one_request_at_a_time(tmp_path):
+    """B set aside from the first request, A from the second (made on the others): the pass takes B alone with the
+    first request and the plan B saw; A waits and gets its own pass with the second request and the changes its copy
+    does carry."""
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})), resp(tool("submit_editspec", {"spec": ITALIC})),
+                      resp(tool("submit_editspec", {"spec": SPEC})), resp(tool("submit_editspec", {"spec": ITALIC})))
+    task, (first, second, third), view = previewed(tmp_path, fake, names=("A.docx", "B.docx", "C.docx"))
+    task.perform("primary", token=view["token"], hold=[str(second)])                 # round 1: B waits
+    view = task.perform("send", text="Also make it italic.")                          # round 2 on A and C
+    assert task.session.files() == [Path(task.results[str(first)]), Path(task.results[str(third)])]
+    task.perform("primary", token=view["token"], hold=[str(task.current_of(first))])  # A waits too
+    assert [e["name"] for e in task.todo.values()] == ["B.docx", "A.docx"]
+    assert task.todo[str(second)]["decisions"] == [REQUEST] and task.todo[str(first)]["decisions"] == ["Also make it italic."]
+    task.perform("send", text=WORK_TODO)
+    assert task.focus["documents"] == [str(second)] and task.decisions == [REQUEST]    # B first, with its own request
+    assert list(task.todo) == [str(first)]                                             # A waits for the next pass
+    assert any("A.docx: set aside from a different request" in m["text"] for m in task.messages)
+    view = task.perform("send", text="Keep it as it is, just bold.")
+    sent = fake.requests[2]["messages"][0]["content"]
+    assert "CHANGES ALREADY MADE" not in sent and "Apply bold" in sent.split("THE PLAN THEY SAW")[1][:200]
+    assert "italic" not in sent.split("THE PLAN THEY SAW")[1].split("\n\n")[0].lower()
+    task.perform("primary", token=view["token"])
+    assert task.focus is None and list(task.todo) == [str(first)] and WORK_TODO in task.view()["chips"]
+    task.perform("send", text=WORK_TODO)
+    assert task.focus["documents"] == [str(first)] and task.decisions == ["Also make it italic."]
+    view = task.perform("send", text="Italic it is.")
+    sent = fake.requests[3]["messages"][0]["content"]
+    block = sent.split("CHANGES ALREADY MADE")[1].split("\n\n")[0]
+    assert "Apply bold" in block and "(" not in block.split("\n")[1]                   # A's copy carries the bold change
+    assert "Apply italic" in sent.split("THE PLAN THEY SAW")[1][:200]
+    task.perform("primary", token=view["token"])
+    assert task.todo == {} and task.focus is None
+    assert [s[:12] for s in task.applied[str(first)]] == ["Apply bold i", "Apply italic"]
+    assert [s[:10] for s in task.applied[str(second)]] == ["Apply bold"]
+    assert [s[:12] for s in task.applied[str(third)]] == ["Apply bold i", "Apply italic"]
+
+
+def test_removing_the_last_document_of_a_pass_ends_it_with_its_request(tmp_path):
+    fake = FakeClient(resp(tool("submit_editspec", {"spec": SPEC})))
+    task, (first, second), view = previewed(tmp_path, fake)
+    task.perform("primary", token=view["token"], hold=[str(second)])
+    task.perform("send", text=WORK_TODO)
+    assert task.decisions == [REQUEST]
+    task.remove(second)
+    assert task.focus is None and task.decisions == []                 # the request left with the document
+    assert task.documents() == [Path(task.results[str(first)])] and task.view()["stage"] == "empty"
+    assert any("that pass is over" in m["text"] for m in task.messages if m["role"] == "app")

@@ -135,7 +135,9 @@ request they were set aside from stands; the assistant is told that you looked a
 set these documents aside, and is shown the plan you saw. Tell it what should be different for them, or
 **Continue** to plan them again as before. The pass ends when their copies are created; the other copies stay
 as they are and the whole set is the working set again. A document you set aside once more goes back on the
-list. Documents on the to-do list are tagged **To do** and are out of every plan until you work on them;
+list. Documents set aside from different requests are worked on one request at a time, the oldest first; the
+others wait and are offered again. The assistant always hears what each copy carries: a change that some copies
+got and others did not is named per document, never claimed for all. Documents on the to-do list are tagged **To do** and are out of every plan until you work on them;
 removing one drops it from the list, and **Start over from the originals** clears the list. Setting every
 document aside creates nothing and begins the pass at once. The list and the pass are kept in the saved
 conversation.

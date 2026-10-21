@@ -9,8 +9,10 @@ Changes since v1.6.0.
   copies (2 set aside)"). Every file that runs is still held to the exact identity the user approved; a file
   outside the approval never runs. Once the other copies are saved, the chat shows **Set aside for more work**
   and offers **Work on them now**: the set-aside documents are planned alone, from the request they were set
-  aside from, with the assistant told that the user saw and set aside that plan and shown it; the pass ends when
-  their copies are created. The list and the pass survive a restart; Start over clears them.
+  aside from (one request at a time), with the assistant told that the user saw and set aside that plan and
+  shown it; the pass ends when their copies are created. The changes each copy carries are kept per document, so
+  a change some copies got and others did not is named per document in the next request. The list and the pass
+  survive a restart; Start over clears them.
 - The one button (**Create edited copies**, **Continue**, **Save N ready copies**) lives in the conversation,
   above the box you type in, with one sentence on what it does. The plan card carries no button.
 - **Your documents** folds to one line (its count and a summary) once a plan exists and opens on a click; a

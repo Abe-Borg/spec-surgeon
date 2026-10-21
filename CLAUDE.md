@@ -47,8 +47,9 @@ request builds on (`DocumentTask.working`, `history`, `START_OVER`); the model's
 `suggested_replies` are the chat's tap-to-reply chips. The one button lives in the chat pane; each
 preview carries a green checkmark and a red X: X'd documents are `hold` on the primary action, run
 on nothing (`Session.run(only=)` keeps every approved pin), wait on `DocumentTask.todo`, and the
-reply `WORK_TODO` begins a pass over them alone (`focus`), planned from the request they were set
-aside from with the model told what they missed.
+reply `WORK_TODO` begins a pass over them alone (`focus`, one request at a time), planned from the
+request they were set aside from; `applied` keeps the changes each copy carries, so the history the
+model hears is per document.
 `layouts.py` gives a mixed batch one EditSpec per structural layout, each planned, previewed
 and verified on its own documents, with one approval. `review_display.py` describes the actual
 previewed EditSpec in the sentences each operation writes for itself (`Op.describe`,
