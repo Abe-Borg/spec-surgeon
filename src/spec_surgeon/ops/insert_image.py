@@ -20,7 +20,7 @@ Definition (both sides; the picture file, its resolution and the placed size are
   width — ``pgSz`` w − ``pgMar`` left, right and gutter — of the anchor's section (a paragraph belongs to the section of
   the first ``w:sectPr`` at or after it: the paragraphs carrying one, in document order, then the body's), or in a header
   or footer the narrowest text width of every section. A section without a usable page size and margins refuses
-  (``image-size``).
+  (``image-size``); one with several text columns is flagged (the picture fills the whole width).
 * **The package**: ONE new media member ``word/media/image<N>.<png|jpeg|gif|bmp>`` (``pictures.free_media_name``) with
   the file's bytes; ONE new ``image`` relationship per part that gets the picture, the next ``rId<n>`` of its rels (the
   rels member created when the part has none); a ``[Content_Types].xml`` Default for the extension when it has none
@@ -66,6 +66,13 @@ def text_width(sect_pr) -> Optional[int]:
     page, left, right, gutter = (int(v) for v in values)
     twips = page - left - right - gutter
     return twips * EMU_PER_TWIP if twips > 0 else None
+
+
+def columns(sect_pr) -> int:
+    """How many text columns the section has (``w:cols/@w:num``, 1 when it states none)."""
+    cols = sect_pr.find(W + "cols")
+    num = cols.get(W + "num") if cols is not None else None
+    return int(num) if num is not None and re.fullmatch(r"[0-9]+", num) and int(num) > 1 else 1
 
 
 def section_of(pars: List[Any]) -> List[int]:
@@ -356,6 +363,11 @@ class InsertImage(Op):
         frag.touches.append((main, "docPr", "ids"))      # the new drawing ids count up from the package's highest
         frag.touches += [(main, f"sectPr:{i}", fam) for i in sorted(read_sections)
                          for fam in ("verify:pgSz", "verify:pgMar")]
+        many = [(i, columns(secs[i])) for i in sorted(read_sections) if columns(secs[i]) > 1]
+        if many:
+            frag.flags.append("insert_image: " + "; ".join(f"section {i + 1} has {n} columns" for i, n in many)
+                              + " — a picture at its own size is fitted to the full text width, wider than one "
+                                "column; give its width in inches to fit a column")
         if style and sheet.part:
             frag.touches.append((sheet.part, f"style:{style}", "verify"))
         if tracked:

@@ -22,8 +22,8 @@ from lxml import etree
 
 from fx_pictures import (A, BLUE, GREEN, PIC, R, RED, SVG, W, WP, alternate, bmp, build_pictures, cropped, docpr,
                          drawing_named, format_change, gif, in_field, in_hyperlink, in_insertion, in_textbox, jpeg,
-                         mutate, no_page_size, paragraph_with, png, rels_of, relative, text_of, turned, turned_jpeg,
-                         vml, watermark)
+                         mutate, no_page_size, paragraph_with, png, rels_of, relative, svg_blip, text_of, turned,
+                         turned_jpeg, vml, watermark)
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, op_catalog, op_sheet
 from spec_surgeon.editspec import apply_spec, plan_spec, spec_input_files, split_into_stages, stage_cuts
 from spec_surgeon.ops import JobException, get_op, merge_fragments
@@ -359,6 +359,14 @@ def test_an_anchor_in_a_table_cell_gets_its_picture_inside_the_cell(src, pics):
     assert "V10" in failed(rec) and "not right after its anchor" in v10(rec)
 
 
+def test_a_section_with_columns_is_flagged_for_a_picture_at_its_own_size(src, pics):
+    two = mutate(src, MAIN, lambda r: next(r.iter(W + "cols")).set(W + "num", "2"))
+    plan, _, rec = one(two, "insert_image", SITE, {"image": pics["wide.png"]})
+    assert rec.passed and any("section 1 has 2 columns" in f for f in plan.flags)
+    plan, _, rec = one(two, "insert_image", SITE, {"image": pics["wide.png"], "width": 3})
+    assert rec.passed and not any("columns" in f for f in plan.flags)
+
+
 def test_a_file_without_an_anchor_is_set_aside_unless_allowed(src, pics):
     with pytest.raises(JobException) as e:
         one(src, "insert_image", {"paragraphs": {"text_regex": "^NOWHERE"}}, {"image": pics["small.png"]})
@@ -435,6 +443,26 @@ def test_a_picture_with_a_hyperlink_takes_its_link_relationship_too(src):
     assert rec.passed, explain(rec)
     gone = set(before) - set(rels_of(out, MAIN))
     assert sorted(before[r][0] for r in gone) == ["hyperlink", "image"]
+
+
+def test_an_svg_picture_takes_both_its_files_with_it(src):
+    """Office 365's SVG picture: the blip shows a PNG copy and its svgBlip names the SVG — two relationships, two media
+    members (the SVG's content type an Override); untracked, all of it goes; tracked, none of it."""
+    from make_fixtures import add_parts
+    image = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/image"
+    data = add_parts(src, {"word/media/image9.svg": SVG}, rels=[("word/_rels/document.xml.rels", "rId90", image,
+                                                                 "media/image9.svg")],
+                     overrides={"word/media/image9.svg": "image/svg+xml"})
+    data = mutate(data, MAIN, svg_blip("Detail 1", "rId90"))
+    grey = _media_of(data, png(16, 8))
+    plan, out, rec = one(data, "remove_images", {}, {"match": {"name_regex": "^Detail"}, "tracked": False})
+    assert rec.passed, explain(rec)
+    assert sorted(plan.members_removed) == sorted([grey, "word/media/image9.svg"])
+    assert "image9.svg" not in read(out, CT).decode() and CT in plan.intended_parts
+    plan, out, rec = one(data, "remove_images", {}, {"match": {"name_regex": "^Detail"}})
+    assert rec.passed and plan.members_removed == [] and members(out) == members(data)
+    _, out, rec = one(data, "resize_images", {}, {"match": {"name_regex": "^Detail"}, "scale": 50})
+    assert rec.passed, explain(rec)
 
 
 def test_tracked_removal_marks_each_picture_deleted_and_splits_a_shared_run(src):
