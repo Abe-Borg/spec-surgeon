@@ -138,6 +138,7 @@ def with_notes(data: bytes, footnotes: str = "", endnotes: str = "", footnote_re
             '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\n<Relationships xmlns="http://schemas.'
             f'openxmlformats.org/package/2006/relationships">{footnote_rels}</Relationships>').encode()
     parts.update(media or {})
+    overrides.update({name: "image/png" for name in media or {}})
     return add_parts(data, parts, rels=rels, overrides=overrides)
 
 
@@ -307,6 +308,43 @@ def build_marks(textbox: bool = False) -> bytes:
                                         + _drawing("rId2", 951) + '</w:r>')
                  + _note("footnote", 3, '<w:r><w:t xml:space="preserve"> A custom-marked note.</w:t></w:r>'))
     endnotes = _note("endnote", 1, '<w:r><w:t xml:space="preserve"> The endnote.</w:t></w:r>')
+    rels = ('<Relationship Id="rId1" Type="' + _REL + 'hyperlink" Target="https://nfpa.org/" TargetMode="External"/>'
+            '<Relationship Id="rId2" Type="' + _REL + 'image" Target="media/note1.png"/>')
+    return with_notes(data, footnotes, endnotes, rels, {FOOTNOTE_IMAGE: png((20, 160, 20), size=3)})
+
+
+# ---- notes ----------------------------------------------------------------------------------------------------------
+
+def build_notes(custom: bool = False, twice: bool = False, shared_run: bool = False) -> bytes:
+    """Footnote 1 (plain, a bookmark inside), footnote 2 (a link and a picture), endnotes 1 and 2, each referenced from
+    its own body paragraph; ``custom`` adds footnote 3 with a custom mark, ``twice`` a second reference to footnote 1,
+    ``shared_run`` puts footnote 1's reference in one run with text."""
+    doc = Document()
+    doc.add_paragraph("SECTION 21 13 13")
+    note_reference(doc.add_paragraph("A. First reference."), "footnote", 1)
+    note_reference(doc.add_paragraph("B. Second reference."), "footnote", 2)
+    note_reference(doc.add_paragraph("C. Endnote reference."), "endnote", 1)
+    note_reference(doc.add_paragraph("D. Another endnote."), "endnote", 2)
+    doc.add_paragraph("E. Plain paragraph.")
+    if custom:
+        note_reference(doc.add_paragraph("F. Custom."), "footnote", 3, custom=True)
+    if twice:
+        note_reference(doc.add_paragraph("G. Again."), "footnote", 1)
+    data = docx_bytes(doc)
+    if shared_run:
+        def share(root):
+            ref = next(root.iter(W + "footnoteReference"))
+            t = etree.SubElement(ref.getparent(), W + "t")
+            t.text = "x"
+        data = patch_docx(data, {DOC: share})
+    footnotes = (_note("footnote", 1, '<w:bookmarkStart w:id="41" w:name="InNote"/><w:r><w:t xml:space="preserve"> '
+                                      'See NFPA 13.</w:t></w:r><w:bookmarkEnd w:id="41"/>')
+                 + _note("footnote", 2, '<w:r><w:t xml:space="preserve"> See </w:t></w:r><w:hyperlink r:id="rId1">'
+                                        '<w:r><w:t>nfpa.org</w:t></w:r></w:hyperlink><w:r>'
+                                        + _drawing("rId2", 952) + '</w:r>')
+                 + (_note("footnote", 3, '<w:r><w:t xml:space="preserve"> Custom note.</w:t></w:r>') if custom else ""))
+    endnotes = (_note("endnote", 1, '<w:r><w:t xml:space="preserve"> The first endnote.</w:t></w:r>')
+                + _note("endnote", 2, '<w:r><w:t xml:space="preserve"> The second endnote.</w:t></w:r>'))
     rels = ('<Relationship Id="rId1" Type="' + _REL + 'hyperlink" Target="https://nfpa.org/" TargetMode="External"/>'
             '<Relationship Id="rId2" Type="' + _REL + 'image" Target="media/note1.png"/>')
     return with_notes(data, footnotes, endnotes, rels, {FOOTNOTE_IMAGE: png((20, 160, 20), size=3)})

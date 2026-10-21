@@ -21,8 +21,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional, Tuple
 
-from ..ooxml import (RevisionStamp, block_full_text, count_revisions, file_uses_date_utc, max_revision_id,
-                     paragraphs)
+from ..ooxml import RevisionStamp, count_revisions, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import DocxPackage, W
 from . import prose, register
 from .base import JobException, Op, PlanFragment

@@ -20,7 +20,7 @@ import fx_deletion as fx
 from fx_deletion import by_text, text_of
 from make_fixtures import build, patch_docx
 from spec_surgeon.catalog import COMMON_ASSUMPTIONS, op_catalog
-from spec_surgeon.editspec import apply_spec, plan_chain, plan_spec, split_into_stages, stage_cuts
+from spec_surgeon.editspec import apply_spec, plan_chain, split_into_stages, stage_cuts
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import delete_paragraphs as dp
 from spec_surgeon.ops import deletion
@@ -310,6 +310,25 @@ def test_a_picture_and_a_link_in_deleted_text_leave_the_package(marks):
     plan, out = delete(marks, {"text_regex": "^L\\. Link"}, False)
     assert not [r for r in xml(out, "word/_rels/document.xml.rels") if r.get("Target") == "https://nfpa.org/"]
     assert plan.members_removed == []
+
+
+def test_deleting_in_the_headers_keeps_a_paragraph_and_drops_what_only_they_used(sections):
+    plan, out = delete(sections, "all", False, scope=["headers"])
+    pkg = DocxPackage(out)
+    for part in pkg.parts_by_kind()["headers"]:
+        assert [text_of(p) for p in pkg.xml(part).iter(W + "p")] == [""]       # each header keeps one, emptied
+    assert plan.members_removed == ["word/media/image1.png"]
+    assert list(pkg.xml("word/_rels/header1.xml.rels")) == []               # the picture's relationship went
+    assert body_texts(out) == body_texts(sections)
+
+
+def test_deleting_in_the_notes_never_touches_a_separator(marks):
+    plan, out = delete(marks, "all", False, scope=["footnotes"])
+    notes = list(xml(out, fx.FOOTNOTES))
+    assert [text_of(p) for e in notes[:2] for p in e.iter(W + "p")] == ["", ""]
+    assert [e.find(f"{W}p/{W}r/{W}separator") is not None for e in notes[:1]] == [True]
+    assert [len(e.findall(W + "p")) for e in notes[2:]] == [1, 1, 1]
+    assert plan.members_removed == [fx.FOOTNOTE_IMAGE]
 
 
 # ---- the whole body -----------------------------------------------------------------------------------------------

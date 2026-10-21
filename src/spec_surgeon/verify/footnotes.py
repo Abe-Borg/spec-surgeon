@@ -15,7 +15,7 @@ of ops/remove_footnotes.py (rule 1): this module's own reading of the notes, the
 from __future__ import annotations
 
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 from .reader import W
 from .props import Ctx

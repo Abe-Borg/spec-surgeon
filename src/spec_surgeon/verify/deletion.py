@@ -31,7 +31,6 @@ from __future__ import annotations
 
 import copy
 import posixpath
-import re
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
@@ -59,16 +58,11 @@ _V_HOLDER_PROPS = {W + "smartTagPr", W + "customXmlPr", W + "sdtPr", W + "sdtEnd
 _V_INERT = {W + "bookmarkStart", W + "bookmarkEnd", W + "proofErr", W + "commentRangeStart", W + "commentRangeEnd",
             W + "permStart", W + "permEnd"}
 _V_COMMENT_MARKS = (W + "commentRangeStart", W + "commentRangeEnd", W + "commentReference")
-_V_RANGES = {}
-for _fam, _names in (("bookmark", ("bookmarkStart", "bookmarkEnd")), ("permission", ("permStart", "permEnd")),
-                     ("moveFrom", ("moveFromRangeStart", "moveFromRangeEnd")),
-                     ("moveTo", ("moveToRangeStart", "moveToRangeEnd")),
-                     ("customXmlIns", ("customXmlInsRangeStart", "customXmlInsRangeEnd")),
-                     ("customXmlDel", ("customXmlDelRangeStart", "customXmlDelRangeEnd")),
-                     ("customXmlMoveFrom", ("customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd")),
-                     ("customXmlMoveTo", ("customXmlMoveToRangeStart", "customXmlMoveToRangeEnd"))):
-    for _n in _names:
-        _V_RANGES[W + _n] = _fam
+# paired range marks, by family: a mark's pair is the marks of its family with its w:id
+_V_RANGES = {W + family + end: family for family in ("bookmark", "perm") for end in ("Start", "End")}
+_V_RANGES.update({W + family + "Range" + end: family for family in
+                  ("moveFrom", "moveTo", "customXmlIns", "customXmlDel", "customXmlMoveFrom", "customXmlMoveTo")
+                  for end in ("Start", "End")})
 NEW = "NEW"
 
 
@@ -274,8 +268,8 @@ def check_tracked_paragraph(src_p, out_p, runs: Sequence[Any], mark: bool, autho
     ppr = got.find(W + "pPr")
     marks = [x for x in (ppr.find(W + "rPr") if ppr is not None and ppr.find(W + "rPr") is not None else [])
              if x.tag == W + "del" and x.get(W + "id") == NEW]
-    if mark and len(marks) != 1:
-        errs.append(f"{where}: the paragraph mark carries {len(marks)} new w:del by {author!r}, expected one")
+    if mark and (len(marks) != 1 or len(marks[0])):
+        errs.append(f"{where}: the paragraph mark carries {len(marks)} new w:del by {author!r}, expected one (empty)")
     if mark and marks:
         rpr = marks[0].getparent()
         rpr.remove(marks[0])
