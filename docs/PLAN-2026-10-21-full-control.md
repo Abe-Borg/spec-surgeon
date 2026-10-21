@@ -66,12 +66,12 @@ machine: a live request per item over real specifications, opened in Word.
 
 | Item | Status | Owner / branch | Last note |
 | --- | --- | --- | --- |
-| F1 — policy and docs | in progress | claude/vibrant-hopper-ru2375 | 2026-10-21: CLAUDE.md rewritten and trimmed; plan and design written. |
-| F2 — deletion | planned | | |
-| F3 — text and character formatting | planned | | |
-| F4 — pictures | planned | | |
-| F5 — table rows and tables | planned | | |
-| F6 — table grid and cells | planned | | |
-| F7 — sections | planned | | |
-| F8 — fields and comments | planned | | |
-| F9 — moving | planned | | |
+| F1 — policy and docs | implemented; live run pending | claude/vibrant-hopper-ru2375 | 2026-10-21: CLAUDE.md rewritten and trimmed (previous kept in docs/history); triage takes an empty body with a note (a body with no paragraph is still refused, review on PR #53); `between_paragraphs.include_bounds` "start"/"end" on both sides; the compiler prompt teaches every new op; the plan's titles, help, window guide, README and release notes updated, page rebuilt; `tests/test_batch6_round_trip.py`: every tracked op's output accepted reads like its untracked output, rejected like the source. Needs the owner's machine: a live request per family over real specifications. |
+| F2 — deletion | implemented; live run pending | claude/vibrant-hopper-ru2375 | 2026-10-21: `delete_paragraphs` over the shared core `ops/deletion.py` ("all", whole tables, fields, section breaks, comments, notes, bookmarks, kept paragraphs) and new `remove_footnotes`; V10 in `verify/deletion.py`, `verify/footnotes.py`; 103 fixture tests (both modes, planted defects, a 2,600-paragraph wipe, render). Needs Word: a real wipe and an article deletion. |
+| F3 — text and character formatting | implemented; live run pending | claude/vibrant-hopper-ru2375 | 2026-10-21: `set_properties` gains vertAlign, vanish, highlight, spacing, dstrike; `insert_paragraph` takes runs, paragraphs, tabs and line breaks; `replace_text`'s new text may hold tabs and line breaks (the edit core's opt-in `breaks`); 95 tests and a render. Needs Word. |
+| F4 — pictures | implemented; live run pending | claude/vibrant-hopper-ru2375 | 2026-10-21: `insert_image`, `remove_images`, `resize_images` (V10 in `verify/pictures.py`); BMP read on both sides; 129 tests incl. 6,000 fuzzed picture headers and a render. Needs Word: a logo and a detail inserted, resized, removed. |
+| F5 — table rows and tables | implemented; live run pending | claude/vibrant-hopper-ru2375 | 2026-10-21: `delete_tables`, `delete_table_rows`, `insert_table_rows`, `insert_table` (from an attached file or typed rows) over the row selector `ops/table_rows.py` ↔ `verify/tablerows.py`; resolve_tracked_changes settles row revisions; 140 tests (round trips, render). Needs Word: tracked rows accepted and rejected there. |
+| F6 — table grid and cells | in progress | | 2026-10-21: building on F5's row selector. |
+| F7 — sections | implemented; live run pending | claude/vibrant-hopper-ru2375 | 2026-10-21: `insert_section_break`, `remove_section_break`; `set_page_setup` gains columns, line_numbering, vertical_alignment, section_start; 93 tests incl. renders of page counts and two columns. Needs Word: a break before an appendix, a cover joined to the body. |
+| F8 — fields and comments | implemented; live run pending | claude/vibrant-hopper-ru2375 | 2026-10-21: `insert_field` (empty result, `w:dirty` where Word does not recompute at layout), `reply_to_comments`, `resolve_comments`; 140 tests, "Page 1 of 2" rendered by LibreOffice. Needs Word: dirty fields on open, replies in threads, whether Resolve marks replies. |
+| F9 — moving | implemented; live run pending | claude/vibrant-hopper-ru2375 | 2026-10-21: `move_paragraphs` (untracked; tracked as deletion + insertion), V10 `moved_paragraphs`; 103 tests and a render. Needs Word: accept all, reject all. |
