@@ -34,7 +34,7 @@ agent = ["anthropic>=1.13"]
 dev = ["pytest>=8", "pytest-xdist>=3.5", "python-docx>=1.1"]
 
 [project.gui-scripts]
-spec-surgeon-gui = "spec_surgeon.gui:main"
+spec-surgeon-gui = "spec_surgeon.gui:run"
 
 [tool.setuptools.packages.find]
 where = ["src"]
