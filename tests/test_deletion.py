@@ -533,9 +533,9 @@ def test_text_boxes_are_refused():
     assert refused(data, "all").code == "textbox"
 
 
-def test_pending_revisions_refuse_a_tracked_deletion_and_go_untracked():
+def test_pending_revisions_go_untracked_and_a_tracked_deletion_goes_over_them():
     src = build("21 05 00", "X")                                  # C. holds Jeremy's insertion, D. Jack's deletion
-    assert refused(src, {"text_regex": "^C\\.\\tSprinklers"}, True).code == "existing-revisions"
+    delete(src, {"text_regex": "^C\\.\\tSprinklers"}, True)     # as Word does (tests/test_deletion_over_revisions.py)
     plan, out = delete(src, {"text_regex": "^C\\.\\tSprinklers"}, False)
     assert plan.rev_delta["ins"] == -1 and any("pending tracked changes" in f for f in plan.flags)
 

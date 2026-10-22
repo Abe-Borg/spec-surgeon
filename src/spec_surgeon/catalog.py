@@ -398,9 +398,13 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "a section break in the deletion: untracked it goes and its pages join the next section, taking that section's "
         "page setup, headers and footers (headers no section uses any more leave the file); tracked it stays until the "
         "deletion is accepted — flagged either way",
-        "tracked (the default) wraps the text in deletions and marks the paragraph marks; it refuses paragraphs that "
-        "already hold pending tracked changes or a simple field (use tracked false, or resolve them first); "
-        "tracked false removes outright",
+        "tracked (the default) wraps the text in deletions and marks the paragraph marks; it refuses a simple field "
+        "(use tracked false); tracked false removes outright",
+        "over someone's pending tracked changes a tracked deletion deletes as Word does: text they inserted is deleted "
+        "inside it (rejecting their insertion still removes all of it), text they deleted stays as it was, a paragraph "
+        "mark they inserted gets its deletion beside theirs, formatting changes stay (flagged with their names); moved "
+        "text, an inserted or deleted table row or cell, and a paragraph that must stay whose mark someone deleted set "
+        "the file aside (use tracked false, or resolve them first)",
         "beside another operation on the same part (untracked), or on the same table rows (tracked), it runs as its own "
         "ordered step",
     ],

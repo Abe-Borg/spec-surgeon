@@ -48,6 +48,12 @@ Changes since v1.8.0.
 - **File Properties titles fixed for a whole batch in one request.** "Set every file's title to SECTION number – title"
   now puts each document's own section number and title in place, between your words. Before, every title had to be
   typed. A document whose number or title cannot be found is set aside, never guessed.
+- **Tracked deletions go through redlined paragraphs.** Deleting paragraphs as a tracked change no longer sets aside a
+  paragraph that holds someone's pending tracked changes. It deletes over them as Word does: text they inserted is
+  deleted inside their insertion (rejecting it still removes all of it), text they deleted stays as it was, their
+  formatting changes stay, and a note beside the preview names whose changes lay in the deleted text. Text moved with
+  tracked changes, an inserted or deleted table row or cell, and a paragraph that must stay whose paragraph mark
+  someone deleted are still set aside, with the reason.
 
 ## Fixes
 

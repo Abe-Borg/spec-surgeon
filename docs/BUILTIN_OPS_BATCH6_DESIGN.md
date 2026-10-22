@@ -77,6 +77,11 @@ Nearest relatives: `remove_empty_paragraphs` (the keep rules), `remove_notes` (f
 * **Tracked runs.** The runs inside a hyperlink, smart tag, run-level content control or custom XML element are
   deleted where they stand (a `w:del` inside the container), as Word records it; a simple field, an equation or other
   content a tracked deletion is not written over is refused.
+* **Over someone's pending revisions** (added 2026-10-22, docs/PLAN-2026-10-22-batch-consistency.md C6): text in a
+  pending insertion is deleted inside it (the new `w:del` nested in their `w:ins`), text already deleted stays as it
+  is, a paragraph mark someone inserted gets the new `w:del` beside their `w:ins`, property changes stay. Moved text,
+  an inserted or deleted row, a cell change, and a kept paragraph whose mark is already deleted are refused
+  (`existing-revisions`).
 * Text boxes stay refused.
 
 ## 2. `remove_footnotes` (F2)

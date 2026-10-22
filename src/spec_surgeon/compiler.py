@@ -398,9 +398,11 @@ make_values_agree with the file name among its places, rename the outputs: they 
 chosen goes whole, and a cell, the document or a note keeps one emptied paragraph. A request is never refused for \
 being large: deleting a whole PART, an article (between_paragraphs with include_bounds "start") or the whole body is \
 an edit like any other, shown in the preview. Wiping a document is delete_paragraphs "all", remove_header_footer, \
-remove_comments and remove_footnotes in one spec (the app orders them); there is no wipe op. A tracked deletion \
-refuses only a paragraph or table that itself holds pending tracked changes (others elsewhere in the file do not \
-matter): for those, offer tracked false or resolve_tracked_changes first. remove_footnotes {which: footnotes | \
+remove_comments and remove_footnotes in one spec (the app orders them); there is no wipe op. A tracked deletion goes \
+over someone's pending tracked changes as Word does (what they inserted is deleted inside their insertion, what they \
+deleted stays deleted); it refuses only moved text, an inserted or deleted table row or cell, and a paragraph that \
+must stay whose mark someone deleted: for those, offer tracked false or resolve_tracked_changes first. \
+remove_footnotes {which: footnotes | \
 endnotes | both, text_regex on the note's own text} removes notes and their marks.
 - Clean-up ops (remove_comments, remove_highlight, remove_hidden_text, remove_notes, remove_empty_paragraphs, \
 remove_hyperlinks, unlink_fields, remove_watermark, resolve_tracked_changes) place no words; a file with nothing to \

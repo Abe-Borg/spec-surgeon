@@ -18,6 +18,12 @@ are ops/deletion.py's docstring, read again here:
   with exactly one NEW ``w:trPr/w:del``. Each changed paragraph is compared whole with that expectation
   (``verified_blocks``), each row's ``w:trPr`` checked here and stripped of its ``w:del`` for the residual
   (``strip_tr``), which proves the rest.
+* **Tracked over someone's pending revisions** (docs/PLAN-2026-10-22-batch-consistency.md C6): a pending insertion is
+  read through like a holder (its runs deleted inside it: the new ``w:del`` nested in the ``w:ins``), a pending deletion
+  stays untouched, a mark someone inserted gets the NEW ``w:del`` beside it, one already deleted gets none, property
+  changes stay. The op must refuse: a move (``w:moveFrom``, ``w:moveTo`` or a move range mark) in a changed paragraph,
+  a kept paragraph whose mark is already deleted, and in a deleted table a pending change outside its paragraphs that
+  is no property change. A run in a pending deletion of a changed paragraph counts as deleted for a field's edges.
 * **Untracked** (``_VRemoval``): the deleted blocks leave, a kept paragraph keeps its ``w:pPr`` and nothing else but the
   range marks below; then, in this order, the notes all of whose references are removed, the section breaks and the
   header/footer and printer-settings parts no relationship left targets, the comments all of whose marks are removed
@@ -63,6 +69,10 @@ _V_HOLDER_PROPS = {W + "smartTagPr", W + "customXmlPr", W + "sdtPr", W + "sdtEnd
 _V_INERT = {W + "bookmarkStart", W + "bookmarkEnd", W + "proofErr", W + "commentRangeStart", W + "commentRangeEnd",
             W + "permStart", W + "permEnd"}
 _V_COMMENT_MARKS = (W + "commentRangeStart", W + "commentRangeEnd", W + "commentReference")
+_V_MOVES = {W + "moveFrom", W + "moveTo"} | {W + k + "Range" + e for k in ("moveFrom", "moveTo") for e in ("Start", "End")}
+# property changes: snapshots of formatting, which a deletion leaves where they are
+_V_PROPERTY_CHANGES = {W + t for t in ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange",
+                                       "tcPrChange", "tblGridChange", "tblPrExChange", "numberingChange")}
 # paired range marks, by family: a mark's pair is the marks of its family with its w:id
 _V_RANGES = {W + family + end: family for family in ("bookmark", "perm") for end in ("Start", "End")}
 _V_RANGES.update({W + family + "Range" + end: family for family in
@@ -220,13 +230,57 @@ def v_tracked_runs(p) -> List[Any]:
                 out.append(c)
             elif c.tag in _V_INERT or (el is not p and c.tag in _V_HOLDER_PROPS):
                 continue
-            elif c.tag in _V_RUN_HOLDERS:
+            elif c.tag in _V_RUN_HOLDERS or c.tag == W + "ins":
                 walk(c)
+            elif c.tag == W + "del":
+                continue
+            elif c.tag in _V_MOVES:
+                raise VRefuse("existing-revisions", "moved text cannot be deleted as a tracked change")
             elif c.tag == W + "fldSimple":
                 raise VRefuse("field-result", "a simple field cannot be deleted as a tracked change")
             else:
                 raise VRefuse("structure", f"w:{etree.QName(c).localname} cannot be deleted as a tracked change")
     walk(p)
+    return out
+
+
+def v_mark_deleted(p) -> bool:
+    ppr = p.find(W + "pPr")
+    rpr = ppr.find(W + "rPr") if ppr is not None else None
+    return rpr is not None and any(x.tag == W + "del" for x in rpr)
+
+
+def v_refuse_pending(p, kept: bool) -> None:
+    """VRefuse for a changed paragraph's pending revisions a tracked deletion is not written over."""
+    if any(isinstance(x.tag, str) and x.tag in _V_MOVES for x in p.iter()):
+        raise VRefuse("existing-revisions", "a paragraph to delete holds moved text")
+    if kept and v_mark_deleted(p):
+        raise VRefuse("existing-revisions", "a paragraph that stays has a mark someone already deleted")
+
+
+def v_refuse_table_pending(t) -> None:
+    """VRefuse for a pending change of a deleted table outside its paragraphs that is no property change."""
+    for x in t.iter():
+        if not isinstance(x.tag, str) or x.tag not in V_REVISION_TAGS or x.tag in _V_PROPERTY_CHANGES:
+            continue
+        if v_par(x) is None:
+            raise VRefuse("existing-revisions", f"a table to delete carries a pending w:{etree.QName(x).localname}")
+
+
+def v_deleted_before(p) -> List[Any]:
+    """The runs of ``p`` inside a pending deletion (below ``p``)."""
+    out = []
+    for r in p.iter(W + "r"):
+        if any(a.tag == W + "del" for a in _v_between(r, p)):
+            out.append(r)
+    return out
+
+
+def _v_between(el, top) -> List[Any]:
+    out, q = [], el.getparent()
+    while q is not None and q is not top:
+        out.append(q)
+        q = q.getparent()
     return out
 
 
@@ -761,15 +815,14 @@ def _check_tracked(ctx: Ctx, found, author: Optional[str], errs: List[str]) -> N
         changed = [p for p in sv.pars if p in marked or p in set(dec["kept"])]
         at = {p: i for i, p in enumerate(sv.pars)}
         runs_of = {}
+        kept = set(dec["kept"])
         try:
             for t in dec["tables"]:
-                if any(isinstance(x.tag, str) and x.tag in V_REVISION_TAGS for x in t.iter()):
-                    raise VRefuse("existing-revisions", "a table to delete carries pending revisions")
+                v_refuse_table_pending(t)
             for p in changed:
-                if any(isinstance(x.tag, str) and x.tag in V_REVISION_TAGS for x in p.iter()):
-                    raise VRefuse("existing-revisions", f"paragraph {at[p]} carries pending revisions")
+                v_refuse_pending(p, p in kept)
                 runs_of[p] = v_tracked_runs(p)
-            gone = {r for rs in runs_of.values() for r in rs}
+            gone = {r for rs in runs_of.values() for r in rs} | {r for p in changed for r in v_deleted_before(p)}
             v_field_cut(root, lambda r: r in gone)
         except VRefuse as e:
             errs.append(f"deleted_paragraphs: {part}: {e} — the op must refuse")
@@ -780,8 +833,8 @@ def _check_tracked(ctx: Ctx, found, author: Optional[str], errs: List[str]) -> N
             if oi is None or oi >= len(ov.pars):
                 errs.append(f"deleted_paragraphs: {part} block {bi} has no counterpart in the output")
                 continue
-            check_tracked_paragraph(p, ov.pars[oi], runs_of[p], p in marked, author, utc, old_ids,
-                                    f"deleted_paragraphs {part} block {bi}", errs)
+            check_tracked_paragraph(p, ov.pars[oi], runs_of[p], p in marked and not v_mark_deleted(p), author, utc,
+                                    old_ids, f"deleted_paragraphs {part} block {bi}", errs)
             ctx.verified_blocks.setdefault(part, {})[bi] = oi
         check_tracked_rows(ctx, part, v_rows(root, dec["tables"]), author, old_ids, "deleted_paragraphs", errs)
 

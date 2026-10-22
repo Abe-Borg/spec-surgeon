@@ -11,7 +11,7 @@ import pytest
 
 from make_fixtures import build
 from spec_surgeon.ooxml import block_full_text, paragraphs
-from spec_surgeon.ops import JobException, get_op, merge_fragments
+from spec_surgeon.ops import get_op, merge_fragments
 from spec_surgeon.package import W, DocxPackage
 from spec_surgeon.verify import run_suite
 
@@ -91,10 +91,10 @@ def test_accepting_reads_like_untracked_and_rejecting_like_the_source(case, tmp_
         assert _reading(resolved) == _reading(expected), (case, action)
 
 
-def test_a_tracked_deletion_over_someone_elses_pending_change_refuses_and_untracked_goes_through():
-    with pytest.raises(JobException) as e:
-        _run(SPEC, "delete_paragraphs", {"paragraphs": "all"}, {"tracked": True, "author": AUTHOR})
-    assert e.value.code == "existing-revisions"
+def test_a_tracked_deletion_goes_over_someone_elses_pending_change_and_untracked_goes_through():
+    # as Word deletes over them (C6); tests/test_deletion_over_revisions.py round-trips it
+    out, rec = _run(SPEC, "delete_paragraphs", {"paragraphs": "all"}, {"tracked": True, "author": AUTHOR})
+    assert rec.passed, rec.to_markdown()
     out, rec = _run(SPEC, "delete_paragraphs", {"paragraphs": "all"}, {"tracked": False})
     assert rec.passed, rec.to_markdown()
     assert all(not t for t in _reading(out)[0][DocxPackage(out).main_part()])

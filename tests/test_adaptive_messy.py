@@ -392,15 +392,13 @@ def test_chunk4_delete_paragraphs_tracked_and_untracked_and_planted_defects():
     assert len(plan_u.diffs) == 1 and plan_u.diffs[0].after is None
 
     # "all" is a selection like any other (batch 6, F2): the size of a deletion is never a refusal. This file holds
-    # pending tracked changes, so only a tracked deletion of everything is refused — for them; untracked it plans
-    with pytest.raises(JobException) as e:
-        get_op("delete_paragraphs").plan(pkg, {"paragraphs": "all"}, {})
-    assert e.value.code == "existing-revisions"
-    frag_a = get_op("delete_paragraphs").plan(pkg, {"paragraphs": "all"}, {"tracked": False})
-    work_a = pkg.copy()
-    get_op("delete_paragraphs").apply(work_a, frag_a)
-    rec_a = run_suite(src, work_a.output_bytes(), merge_fragments([frag_a]).to_dict(), "src.docx", "out.docx")
-    assert rec_a.passed, rec_a.to_markdown()
+    # pending tracked changes, and a tracked deletion of everything goes over them as Word does (C6); so does untracked
+    for tracked in (True, False):
+        frag_a = get_op("delete_paragraphs").plan(pkg, {"paragraphs": "all"}, {"tracked": tracked, "author": AUTHOR})
+        work_a = pkg.copy()
+        get_op("delete_paragraphs").apply(work_a, frag_a)
+        rec_a = run_suite(src, work_a.output_bytes(), merge_fragments([frag_a]).to_dict(), "src.docx", "out.docx")
+        assert rec_a.passed, rec_a.to_markdown()
     # without a selector at all it is still refused: a deletion names what it deletes
     with pytest.raises(JobException) as e:
         get_op("delete_paragraphs").plan(pkg, {}, {})
