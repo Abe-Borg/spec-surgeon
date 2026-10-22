@@ -42,6 +42,7 @@ RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RE
 # What the window says while the model uses a tool: one plain sentence per tool, never the tool's name.
 TOOL_ACTIVITY = {
     "inspect_profile": "Looking at how the documents are built", "list_styles": "Reading the styles",
+    "compare_files": "Comparing the documents side by side",
     "sample_paragraphs": "Reading sample paragraphs", "show_part_text": "Reading a header or footer",
     "read_template": "Reading the template", "read_input_file": "Reading the attached table",
     "view_pages": "Looking at the rendered pages", "describe_op": "Checking what an edit can do",

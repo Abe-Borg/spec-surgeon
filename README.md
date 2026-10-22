@@ -90,6 +90,10 @@ and Settings.
    goes ahead on sensible defaults (and says what it assumed), asks at most three questions, each with the answer it
    recommends, and prepares a plan — while you watch its words flow in as they are written, with one line above them
    naming each step as it happens (the steps and its thinking summary fold under that line once the reply is written).
+   Before it plans, it reads every document side by side (no model call): each one's section number and title, every
+   header and footer line, and the File Properties title. It names the document that differs from most of the others
+   (a footer title in other capitals, a header or footer line missing or extra, a Properties title naming another
+   section) and offers a fix; nothing changes until you ask for it.
    A question comes as a card with buttons and short replies you can tap: click one, type its number, or answer in
    your own words. A choice that would put words into the documents shows those exact words; picking it approves
    exactly those words (a tapped reply never does). Changes that touch the same parts of a file — the template's

@@ -82,7 +82,13 @@ refused is not attached either.
 
 The planner receives the same facts for each structural layout in the batch (styles, numbering, spacing,
 fragmentation, and how that layout marks its section title, PART headings and article titles), so it plans with
-them instead of discovering them. The check's findings describe the file, not the edit: a file with any of them
+them instead of discovering them. Before those, it reads an overview of every document side by side
+(`profile.batch_overview`, no model call): each file's section number and title as the reference fills read them, how
+the title shows, every displayed header/footer line (capitals by formatting marked), and the File Properties title,
+with flags naming the documents that differ from most — a title or header/footer line in other capitals, a line
+missing or extra, a Properties title naming another section or none of the file's title words. The flags describe and
+choose nothing; the assistant names the ones a request touches. `compare_files` shows every file's lines in full. The
+overview is computed whenever a batch is, so a request after a run reads the copies it made. The check's findings describe the file, not the edit: a file with any of them
 is edited like any other, and a file with none can still be set aside at plan time.
 
 Adding or removing a document after a plan exists voids that plan. The conversation says so, and the button

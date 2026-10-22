@@ -9,7 +9,10 @@ ambiguous. It can look closer with read-only tools (``inspect_profile``, ``list_
 verifies the spec per file. Files are shown and addressed by label (``file_labels``): the file name, or — for files
 that share a name in different folders — the name with as many parent folders as tell them apart (``a/Spec.docx``).
 
-The batch is shown per structure pattern, each profile with its ``roles`` — how that layout marks the section title,
+THE BATCH opens with the overview (``profile.batch_overview``): every file side by side — its section number and
+title as the reference fills read them, its displayed headers/footers, its File Properties title — with flags naming
+the files that differ from most; ``compare_files`` shows every file's lines in full. Then the batch is shown per
+structure pattern, each profile with its ``roles`` — how that layout marks the section title,
 the PART headings and the article titles (``structure.role_summary``) — so the selectors it writes are concrete, with
 required counts. When one spec cannot say the request for every pattern, the submission is a plan per layout
 (``layouts``: one complete EditSpec per layout, each validated and dry-planned on its own documents only; a pattern no
@@ -63,7 +66,7 @@ from .ops.selectors import StyleSheet
 from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
 from .inputs import overview as input_overview, read as read_input
-from .profile import profile, profile_batch, shown_case, template_spec_summary
+from .profile import batch_overview, profile, profile_batch, shown_case, template_spec_summary
 from .resources import DEFAULT_MAX_CALLS, positive_integer
 
 from . import diagnostics as diag
@@ -142,6 +145,14 @@ TOOLS = INSPECTION_TOOLS + [
     {"name": "inspect_profile", "description": "The full profile of one structure pattern of the batch (sections, "
      "what each header/footer shows, slots, styles in use with fonts, counts, hygiene).",
      "input_schema": {"type": "object", "properties": {"pattern_id": {"type": "string"}}, "required": ["pattern_id"]}},
+    {"name": "compare_files", "description": "Every file of the batch side by side, in full (THE BATCH's overview "
+     "names a header/footer that matches most files as such): each file's section number and title as the reference "
+     "fills read them, how its title shows, each header/footer it displays line by line (shown_in_capitals as in "
+     "the profiles), its File Properties title, and the overview's flags for it. Name files, or page through all of "
+     "them with start and count.",
+     "input_schema": {"type": "object", "properties": {
+         "files": {"type": "array", "items": {"type": "string"}, "description": "file names from THE BATCH"},
+         "start": {"type": "integer", "minimum": 0}, "count": {"type": "integer", "minimum": 1, "maximum": 40}}}},
     {"name": "list_styles", "description": "Every style defined in one batch file: id, type, name, basedOn, and the "
      "fonts/size it sets directly.",
      "input_schema": {"type": "object", "properties": {"file": {"type": "string", "description": "file name from the profiles"}},
@@ -450,6 +461,14 @@ file's own number and title exactly as typed: when the other files show the titl
 in lower case, its header/footer will differ — say so, and offer showing it in capitals (set_properties run.caps on \
 that paragraph, scope headers/footers: formatting, no letter retyped) or capitalised wording the user gives; never \
 retype it yourself.
+- THE BATCH opens with the overview: every file side by side (its section number and title as the reference fills \
+read them, how its title shows, each header/footer it displays, its File Properties title) and flags naming the files \
+that differ from most — a title or header/footer line shown in other capitals, a header/footer line missing or extra, \
+a Properties title naming another section or none of the file's title words. most_files_show is what most files' \
+headers/footers share, «SECTION NUMBER» and «SECTION TITLE» standing for each file's own; a file showing the same is \
+named so instead of repeating the lines; compare_files gives every file's lines in full. Before a header/footer, title \
+or File Properties request, read the flags and name each one that bears on it in your reply (which file, what \
+differs), with an offer the user can take or leave. The flags describe the files; they change and decide nothing.
 - mode: "formatting" unless an op places characters; "content" for tracked wording changes; "untracked" when \
 the user asked for untracked wording or a template has literal fills.
 - Inspect as deeply as needed before deciding. read_paragraphs, list_parts and read_xml_page have continuation \
@@ -760,6 +779,7 @@ class _Batch:
         self.files = {self.labels[str(f)]: f for f in paths}   # label → path
         self.prof = profile_batch(paths)
         self._relabel(paths)
+        self.overview = batch_overview(paths, labels=self.labels)    # every file side by side (C2)
         self.template = Path(template) if template else None
         self._pkgs: Dict[str, DocxPackage] = {}
         self.capitalization_proposals: Dict[str, Dict[str, Any]] = {}
@@ -833,6 +853,7 @@ class _Batch:
 
     def summary(self) -> Dict[str, Any]:
         return {"files": self.prof["files"],
+                "overview": self.overview.summary(),
                 "binding_sources": [{"file": label, "path": str(path.resolve()),
                                      "md5": hashlib.md5(path.read_bytes()).hexdigest()}
                                     for label, path in self.files.items()],
@@ -967,6 +988,9 @@ class _Batch:
             if p["pattern_id"] == pattern_id:
                 return p
         raise KeyError(f"no pattern {pattern_id!r}")
+
+    def compare_files(self, files: Optional[Sequence[str]] = None, start: int = 0, count: int = 20):
+        return self.overview.compare(files, start, count)
 
     def list_styles(self, file: str):
         sheet = StyleSheet(self.pkg(file))
@@ -1436,7 +1460,8 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str],
         parts.append("INPUT FILES beside the documents — tables and pictures an op can read (read_input_file shows one; "
                      "put the exact path in the op's params):\n"
                      + json.dumps([input_overview(p) for p in batch.inputs], ensure_ascii=False))
-    parts.append("THE BATCH (profiles per structure pattern):\n" + json.dumps(batch.summary(), ensure_ascii=False))
+    parts.append("THE BATCH (the overview of every file side by side, then the profiles per structure pattern):\n"
+                 + json.dumps(batch.summary(), ensure_ascii=False))
     return [{"role": "user", "content": "\n\n".join(parts)}]
 
 
