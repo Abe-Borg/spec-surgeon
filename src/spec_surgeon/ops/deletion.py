@@ -36,8 +36,9 @@ containers, bookmarks, permission ranges, proofing marks and comment range marks
 table that is not its table's own child (``table-structure``), a complex field some of whose runs (begin to end, in
 document order) are deleted and some not, or one that never ends and begins in them (``field-crossing``).
 
-**Untracked.** The deleted paragraphs and tables leave the tree; a kept paragraph keeps its ``w:pPr`` alone. What they
-held decides the rest (``Removal``), in this order:
+**Untracked.** The deleted paragraphs and tables leave the tree; a kept paragraph keeps its ``w:pPr`` and (step 4) the
+range marks of its own whose other end stays, nothing else. What they held decides the rest (``Removal``), in this
+order:
 
 1. *notes* — a footnote (endnote) all of whose references in the text parts other than the notes parts are removed
    goes: its entry leaves the first footnotes (endnotes) part;
@@ -50,9 +51,11 @@ held decides the rest (``Removal``), in this order:
    them; a comment some of whose marks are removed and some not, or a reply going with its parent whose marks are not
    all removed, is refused (``comment-crossing``);
 4. *range marks* — a bookmark (permission, move or custom-XML range: marks paired by kind and ``w:id``) all of whose
-   marks are removed goes; one with only some of them removed keeps the others, and each removed one takes the place of
-   the outermost removed element it was in, in document order — that element being a note's or a comment's entry:
-   ``structure``. A REF, PAGEREF or NOTEREF field, or a hyperlink, naming a bookmark that goes is flagged;
+   marks are removed goes; one with only some of them removed keeps the others, and each removed one stays: a kept
+   paragraph's own child (removed with the paragraph's content, its paragraph staying) stays where it is, in that
+   paragraph; any other takes the place of the outermost removed element it was in, in document order — that element
+   being a note's or a comment's entry: ``structure``. A REF, PAGEREF or NOTEREF field, or a hyperlink, naming a
+   bookmark that goes is flagged;
 5. *fields* — a complex field some of whose runs are removed and some not, or one that never ends and begins in what is
    removed: ``field-crossing``;
 6. *relationships* — in a changed part, a relationship none of whose uses (``r:`` attributes) remains: an image (any
@@ -445,6 +448,7 @@ class Removal:
         self.comments: List[str] = []                 # comment ids that go
         self.side: Dict[str, Tuple[Any, List[Any]]] = {}
         self.moved: Dict[str, Dict[Any, List[Any]]] = {}   # part → {removed element: marks taking its place}
+        self.held: Dict[str, List[Any]] = {}          # part → a kept paragraph's own range marks that stay in it
         self.bookmarks_gone: List[str] = []
         self.rels: Dict[str, List[str]] = {}          # owner part → relationship ids that go
         self.media: List[str] = []
@@ -604,6 +608,11 @@ class Removal:
                 if not g:
                     continue
                 top = next(a for a in [e, *e.iterancestors()] if a in tops)
+                if top is e:
+                    # removed as a kept paragraph's own child: the paragraph stays, so the mark stays in it, in place
+                    tops.discard(e)
+                    self.held.setdefault(part, []).append(e)
+                    continue
                 if top.tag in ENTRY_TAGS:
                     raise JobException(f"{part}: a {family} runs from a note or comment that goes into text that stays; "
                                        f"remove it in Word", "structure", {"part": part})
