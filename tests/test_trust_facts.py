@@ -103,7 +103,6 @@ def facts() -> dict:
 def expected() -> dict:
     """Each fact, read from the code that makes it true."""
     llm_src = source("llm.py")
-    task_src = source("document_task.py")
     return {
         "model": one(r'os\.environ\.get\("SPEC_SURGEON_MODEL", "([^"]+)"\)', llm_src, "llm.DEFAULT_MODEL"),
         "maxOutputTokens": const("resources.py", "DEFAULT_MAX_OUTPUT_TOKENS"),
@@ -116,8 +115,7 @@ def expected() -> dict:
         "retryAfterCapSeconds": const("llm.py", "RETRY_AFTER_CAP"),
         "stopPollSeconds": const("llm.py", "STOP_POLL_SECONDS"),
         "stoppedOutputTokensPerSecond": const("llm.py", "STOPPED_OUTPUT_RATE"),
-        "recoveryAttemptsPerGroup": int(one(r"RecoveryOptions\(max_cost_usd=None, max_calls=self\._budget\.max_calls, "
-                                            r"max_attempts=(\d+),", task_src, "DocumentTask._recovery_options")),
+        "recoveryAttemptsPerGroup": const("document_task.py", "RECOVERY_ATTEMPTS"),
         "stallRepetitions": const("resources.py", "DEFAULT_STALL_REPETITIONS"),
         "sampleFiles": const("resources.py", "DEFAULT_SAMPLE_FILES"),
         "visualPagesPerSample": int(one(r'getattr\(s, "look_pages", None\) or \[1\]\)\[:(\d+)\]', source("vision.py"),
@@ -214,9 +212,16 @@ def test_the_copy_s_cache_and_fallback_sentences_match_the_code():
     assert "cached by Anthropic for an hour" in dossier and "the default five minutes" in dossier
     assert 'fallbacks="default"' in source("llm.py")
     assert "Anthropic may answer it with another model" in dossier
-    # The effort rule the copy states: inside a budget scope the budget's effort wins, so what the conversation runs
-    # (the visual check, a custom method, an outcome plan) runs at the conversation's effort.
+    # The effort rule the copy states: inside a budget scope the innermost budget's effort wins. The visual check and
+    # a custom method have no budget of their own, so they run at the conversation's; the outcome planner and the
+    # recovery it starts have their own, at the conversation object's effort — resources.DEFAULT_EFFORT, since the
+    # window builds the conversation without one — which the copy quotes as recoveryEffort.
     assert "effort = budgets[-1].effort" in source("llm.py")
+    assert "with llm.budget_scope(budget):" in source("campaign_planner.py")
+    window_conversation = re.search(r"self\.conversation = Conversation\((.*?)\)\n", source("gui.py"), re.S).group(1)
+    assert "effort" not in window_conversation
+    assert const("resources.py", "DEFAULT_EFFORT") == facts()["recoveryEffort"]
+    assert "options.max_attempts = self.recovery_attempts" in source("gui.py"), "the outcome plan's recovery: 8 too"
 
 
 def test_the_copy_types_no_number_of_its_own():

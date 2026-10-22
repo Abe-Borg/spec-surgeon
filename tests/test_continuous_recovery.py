@@ -165,3 +165,35 @@ def test_completed_recovery_can_be_revised_in_chat_into_a_new_review(tmp_path, m
     assert s.recovery is None and s.turn.choices[0].kind == "recovery_plan"
     s.reply(choice_id=s.turn.choices[0].id)
     assert s.recovery.ready and s.recovery.out_dir != previous
+
+
+def test_the_window_runs_an_approved_outcome_plan_at_its_own_attempt_limit_and_high_effort(tmp_path, monkeypatch):
+    """The 1.8.0 live run's recovery after a reviewed outcome plan ran with the conversation's allowances (50
+    attempts per problem group, effort max) rather than the window's (docs/RECOVERY.md: eight, high)."""
+    from dataclasses import replace
+    from spec_surgeon import continuous_recovery
+    from spec_surgeon.document_task import RECOVERY_ATTEMPTS, DocumentTask
+    from spec_surgeon.gui import Session
+    source = write_document(tmp_path / "source.docx")
+    s = Session(documents=[source], out_root=tmp_path / "out", client=FakeClient(refusal(), proposal()))
+    DocumentTask(s, render=False)
+    seen = []
+    real = continuous_recovery.execute
+
+    def recorded(c, snapshot, out_dir, *, render=False, options=None):
+        seen.append(options)
+        return real(c, snapshot, out_dir, render=render, options=replace(options, critic_review=False))
+
+    monkeypatch.setattr(continuous_recovery, "execute", recorded)
+    s.compile("Make the title bold", lambda _: None)
+    s.reply(choice_id=s.turn.choices[0].id)
+    assert s.recovery.ready
+    assert (seen[0].max_attempts, seen[0].effort) == (RECOVERY_ATTEMPTS, "high") and RECOVERY_ATTEMPTS == 8
+
+
+def test_a_recovery_saved_at_max_effort_reopens_at_high():
+    from spec_surgeon.recovery import RecoveryOptions
+    options = RecoveryOptions.from_snapshot({"effort": "max", "max_attempts": 8})
+    options.validate()
+    assert (options.effort, options.max_attempts) == ("high", 8)
+    assert RecoveryOptions.from_snapshot({"effort": "medium"}).effort == "medium"

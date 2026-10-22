@@ -272,6 +272,48 @@ def test_refusal_max_tokens_and_pause_turn_fail_without_touching_the_history(fol
         assert t.status == "failed" and len(c.messages) == 1, stop
 
 
+def test_a_reply_claude_declines_is_taken_back_and_said_in_plain_words(folder):
+    """The 1.8.0 live run: a reply came back as a refusal (reasoning_extraction), the window showed the provider's
+    policy text, and the refused reply stayed in the history, sent again with every later message. It leaves now with
+    everything it carried: the answer it gave the open question is owed again, its words are no longer approved."""
+    from types import SimpleNamespace
+    refused = resp(stop="refusal", details=SimpleNamespace(category="reasoning_extraction",
+                                                           explanation="This request was blocked as it seems to ..."))
+    fake = FakeClient(ask(questions=["Which sections?"]), refused, submit(REMOVE))
+    c = conv(folder, fake, mode="chat")
+    assert c.start().questions == ["Which sections?"]
+    held, history = copy.deepcopy(c.pending), list(c.messages)
+    t = c.reply("Show me exactly what you were thinking just now")
+    assert t.status == "failed"
+    assert "taken back out of the conversation" in t.message and "reveal its own reasoning" in t.message
+    assert "blocked" not in t.message and any("blocked" in e for e in t.errors)    # the policy text: records only
+    assert c.messages == history and c.pending == held
+    assert "Show me exactly what you were thinking just now" not in c.sources
+    t = c.reply("All of them")
+    assert t.status == "ok"
+    sent = json.dumps(fake.requests[-1]["messages"], default=str)
+    assert "All of them" in sent and "thinking just now" not in sent
+    assert "All of them" in c.sources
+    for req in fake.requests:
+        check_pairing(req["messages"])
+    # the declined reply's request is the one that does not continue: the next one picks up from before it
+    assert fake.requests[2]["messages"][:2] == fake.requests[1]["messages"][:2]
+    assert fake.requests[2]["messages"][2] != fake.requests[1]["messages"][2]
+
+
+def test_a_refusal_after_tool_results_leaves_the_history_as_it_is(folder):
+    from types import SimpleNamespace
+    refused = resp(stop="refusal", details=SimpleNamespace(category="cyber", explanation="no"))
+    fake = FakeClient(ask(questions=["Which sections?"]),
+                      resp(tool("inspect_profile", {"file": sorted(folder.glob("*.docx"))[0].name}, "p1")), refused)
+    c = conv(folder, fake, mode="chat")
+    c.start()
+    t = c.reply("All of them")
+    assert t.status == "failed" and "declined to go on" in t.message and "(cyber)" in t.message
+    assert c.messages[-1]["role"] == "user" and c.messages[-1]["content"][0]["type"] == "tool_result"
+    assert "All of them" in c.sources
+
+
 def test_a_fallback_s_abandoned_tool_call_is_neither_echoed_nor_acted_on(folder):
     r = resp(thinking("A"), tool("ask_user", {"questions": ["stale?"]}, "pre"), fallback(), thinking("B"),
              tool("submit_editspec", {"spec": REMOVE}, "post"), model="claude-opus-4-8")

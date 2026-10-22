@@ -102,10 +102,11 @@ overrides it).
 - Output cap: 128,000 tokens (`resources.DEFAULT_MAX_OUTPUT_TOKENS`).
 - Streaming; thinking left to the model, with its summary shown in the window (`_THINKING_DISPLAY`).
 - No temperature is set.
-- Effort: medium for the conversation (`document_task.CONVERSATION_EFFORT`). Inside the window, everything nested in a
-  turn runs at medium too, because the budget's effort overrides the call's (`llm._call`). That covers the visual
-  check, the custom-method writer and the outcome planner. Recovery and everything nested in it run at high
-  (`RECOVERY_EFFORT`).
+- Effort: medium for the conversation (`document_task.CONVERSATION_EFFORT`). Inside a budget scope the innermost
+  budget's effort wins (`llm._call`), so what runs inside a turn without a budget of its own runs at medium too: the
+  visual check and the custom-method writer. The outcome planner (`campaign_planner`, its own budget at the
+  conversation object's effort, `resources.DEFAULT_EFFORT` = high, since `gui.Session.compile` builds the conversation
+  without one) and recovery (`RECOVERY_EFFORT`, high) run at high. No call runs at max (`resources.EFFORTS`, from #77).
 
 **Caching:**
 - The system prompt is cached for an hour (`SYSTEM_CACHE`).
@@ -202,7 +203,8 @@ How each is labelled:
 - **No spending ceiling.** Work pauses after every 48 model calls; failed attempts count (`STEPS_PER_PAUSE`,
   `CallBudget.calls`).
 - **Up to 6 internal steps per user action** (`AUTO_STEPS`).
-- **Recovery:** 8 attempts per group of files (`DocumentTask._recovery_options`). A group pauses after 3 equivalent
+- **Recovery:** 8 attempts per group of files (`document_task.RECOVERY_ATTEMPTS`, on every recovery path since #77,
+  the outcome plan's included). A group pauses after 3 equivalent
   rejected tries (`DEFAULT_STALL_REPETITIONS`).
 - **Custom method:** up to 50 submissions (`codegen.MAX_ITER`), each sandbox run 60 s (`SANDBOX_TIMEOUT`) and 2,048 MB
   (`process_limits.DEFAULT_MEMORY_MB`).
@@ -296,7 +298,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T13 | The key is scrubbed from logs | D(security) | `telemetry.redact_text` | existing: `tests/test_diagnostics*.py` |
 | T14 | No spending limit; a pause every 48 AI steps; Stop cuts off the running call | Lv1, D(money, runtime A11) | `STEPS_PER_PAUSE`, `llm._stop_on_cancel` | facts (`stepsPerPause`, `stopPollSeconds`) + existing: `tests/test_llm*.py` |
 | T15 | The spending shown is an estimate from a built-in price table; Anthropic bills the key | Lv1, D(money) | `llm.PRICES`, `CallBudget.spent_usd` | manual |
-| T16 | Model: Claude Opus 5.5 (`claude-opus-5-5`) by default (`SPEC_SURGEON_MODEL` replaces it; About and the records then name it), up to 128,000 output tokens per call, medium effort for the conversation and what it runs, high for recovery | D(engine) | `llm.DEFAULT_MODEL`, `resources.DEFAULT_MAX_OUTPUT_TOKENS`, `document_task.CONVERSATION_EFFORT`/`RECOVERY_EFFORT`, `llm._call` budget override | facts |
+| T16 | Model: Claude Opus 5.5 (`claude-opus-5-5`) by default (`SPEC_SURGEON_MODEL` replaces it; About and the records then name it), up to 128,000 output tokens per call, medium effort for the conversation, its visual check and its custom methods, high for outcome planning and recovery, never max | D(engine) | `llm.DEFAULT_MODEL`, `resources.DEFAULT_MAX_OUTPUT_TOKENS`, `document_task.CONVERSATION_EFFORT`/`RECOVERY_EFFORT`, `llm._call` budget override | facts |
 | T17 | A declined request may be answered by another model the provider chooses; the record names it | D(engine, limits) | `llm.FALLBACK_BETA`, `fallbacks="default"`, `llm.served` | facts (presence) |
 | T18 | Re-sends: 2, after 5 s and 20 s, honouring a retry-after up to 60 s | D(runtime B10) | `llm.RETRIES`, `RETRY_DELAYS`, `RETRY_AFTER_CAP` | facts |
 | T19 | A stopped call is settled at most 150 output tokens per second it ran | D(money) | `llm.STOPPED_OUTPUT_RATE` | facts |
@@ -316,7 +318,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T32 | Log sizes: app log 2 MiB × 3, event journal 5 MiB × 3 for 5 past sessions, render cache 2 GiB, repair memory 2,000 cases, newest 10 crash logs | D(security) | `diagnostics.setup_app_logging`, `telemetry`, `render/cache.py`, `repair_memory.MAX_CASES`, `CrashWatch.KEEP` | facts |
 | T33 | Recovery sends up to 5 past repair cases from earlier work with its request | D(provenance, boundary, limits) | `recovery._investigate` (`limit=5`) | facts (source text) |
 | T34 | The bundle holds 3 recent conversations and 5 recent runs' text files | D(runtime A19) | `diagnostics.BUNDLE_RECENT_*` | facts |
-| T35 | Recovery tries at most 8 attempts per group, pausing after 3 equivalent rejected tries | D(runtime B9) | `DocumentTask._recovery_options`, `DEFAULT_STALL_REPETITIONS` | facts |
+| T35 | Recovery tries at most 8 attempts per group, pausing after 3 equivalent rejected tries | D(runtime B8, B9) | `document_task.RECOVERY_ATTEMPTS`, `DEFAULT_STALL_REPETITIONS` | facts |
 | T36 | Pictures and tables over 20 MB are listed as too big, never read; a .docx is opened up to 256 MiB | D(runtime A3) | `inputs.MAX_BYTES`, `package_limits.ArchiveLimits.max_archive_bytes` | facts |
 | T37 | Word renders on your machine in a new invisible instance, never your open Word; else LibreOffice | D(no AI, engine) | `render/word_com.py` (DispatchEx, Visible False), `render/__init__.pick` | manual |
 | T38 | The watchdog: heartbeat 10 s, a page silent 45 s, a job quiet 300 s, a Stop not obeyed in 30 s; closing waits 60 s for a job | D(runtime B11, A11) | `web/watch.py`, `web/shell.shutdown` | facts |
@@ -371,6 +373,8 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
   - In the window a custom method prepared from the conversation runs at **medium**, because the conversation's
     budget effort overrides the call's (`llm._call`: `effort = budgets[-1].effort`). Custom methods inside recovery
     run at high.
+  - Still true after #77 (which made "high" the default and refused "max"): master's README says "custom methods at
+    high"; this branch's merge rewords it to the code's behaviour.
   - The new copy states the code's behaviour.
 - **F8. A custom method is written and tried without a separate click.**
   - When the conversation turns a request over to a custom method (`custom_transform` choice), the window takes it

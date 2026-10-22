@@ -3,7 +3,8 @@
 ``run_word`` runs one action (the accept/reject oracle) in one spawned worker with one deadline;
 ``run_word_batch`` renders a whole batch in one spawned worker that starts ONE private Word instance and
 renders every file in turn, the parent holding a deadline per file. No process-name or process-tree kill
-is used. A Windows process handle is retained only after DispatchEx reports a newly created Word PID and
+is used. A Windows process handle is retained only after DispatchEx yields a newly created Word PID (the
+instance's own main window, found by a caption only it carries, or else the one Word process started since) and
 its creation time matches. If ownership cannot be established, a timeout still stops our Python worker;
 Word is left alone and the missing cleanup evidence is reported.
 """
@@ -12,6 +13,7 @@ from __future__ import annotations
 import json
 import math
 import multiprocessing
+import ntpath
 import os
 import shutil
 import tempfile
@@ -49,17 +51,66 @@ def _timeout(value):
     return seconds
 
 
-def _private_identity(app, preceding):
-    """Only identify a process absent before DispatchEx; never adopt an existing Word PID."""
+WORD_WINDOW_CLASS = "OpusApp"    # the class of Word's main window, hidden or not
+
+
+def _caption_pid(app):
+    """The PID behind this instance's own main window. Word's Application has no ``Hwnd`` (Excel's has; asking Word
+    raises ``AttributeError: Word.Application.Hwnd``, which every worker of the 1.8.0 live run did), so the window is
+    found as Microsoft documents for Word: give the instance a caption no other window has, find the ``OpusApp``
+    window with that caption, put the caption back. None when no such window exists."""
+    import uuid
+    import win32gui
+    import win32process
+    original = app.Caption
+    marker = f"Spec Surgeon {uuid.uuid4().hex}"
+    app.Caption = marker
+    try:
+        hwnd = win32gui.FindWindow(WORD_WINDOW_CLASS, marker)
+    finally:
+        app.Caption = original
+    return win32process.GetWindowThreadProcessId(hwnd)[1] if hwnd else None
+
+
+def _new_word_pid(preceding):
+    """The one WINWORD.EXE that was not running before DispatchEx, or None when there is none or more than one (the
+    user started Word at the same moment: neither is adopted)."""
     import win32api
     import win32process
-    pid = win32process.GetWindowThreadProcessId(app.Hwnd)[1]
-    if pid in preceding:
+    found = []
+    for pid in set(win32process.EnumProcesses()) - set(preceding):
+        try:
+            handle = win32api.OpenProcess(0x0410, False, pid)   # PROCESS_QUERY_INFORMATION | PROCESS_VM_READ
+        except Exception:
+            continue                                           # gone already, or not ours to read
+        try:
+            name = ntpath.basename(str(win32process.GetModuleFileNameEx(handle, None)))
+        except Exception:
+            name = ""
+        finally:
+            handle.Close()
+        if name.lower() == "winword.exe":
+            found.append(pid)
+    return found[0] if len(found) == 1 else None
+
+
+def _private_identity(app, preceding):
+    """Only identify a process absent before DispatchEx; never adopt an existing Word PID. The instance's own window
+    names it; failing that, the single Word process that started since. None when neither proves which it is."""
+    import win32api
+    import win32process
+    try:
+        pid, found_by = _caption_pid(app), "window"
+    except Exception:
+        pid = None
+    if pid is None:
+        pid, found_by = _new_word_pid(preceding), "new process"
+    if pid is None or pid in preceding:
         return None
     handle = win32api.OpenProcess(0x0400, False, pid)  # PROCESS_QUERY_INFORMATION
     try:
         created = win32process.GetProcessTimes(handle)["CreationTime"].isoformat()
-        return {"pid": pid, "created": created}
+        return {"pid": pid, "created": created, "found_by": found_by}
     finally:
         handle.Close()
 
@@ -197,7 +248,8 @@ def run_word(action, source, *, pdf=None, timeout=None):
         started = False
         deadline = time.monotonic() + seconds
         try:
-            process.start()
+            with diag.com_quiet():
+                process.start()
             started = True
             send.close()
             finished = False
@@ -423,7 +475,8 @@ def _run_batch_worker(files: List[Path], out_dir: Path, seconds: float, batch: W
             else:
                 remaining = [f for f in files if f not in batch.results]
         try:
-            process.start()
+            with diag.com_quiet():
+                process.start()
             started = True
             send.close()
             finished = False

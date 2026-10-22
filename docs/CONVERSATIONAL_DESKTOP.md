@@ -256,10 +256,12 @@ says "Connect your Anthropic API key in Settings to start."
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
 conversation runs at medium reasoning effort (its sentences and plans are short and the operations' settings ride the
-cached prompt, so a plan is one or two calls), and so does everything it runs inside a turn — the visual check, a
-custom method, an outcome plan — because the conversation's budget sets the effort for every call inside it; recovery
-(and the custom methods it tries) thinks at high. The instructions and the operations' settings (the same for every conversation) are cached for an hour, so the
-next request after a run, a start over or a changed attachment reads them instead of paying for them again; the
+cached prompt, so a plan is one or two calls), and so do the visual check and a custom method it runs inside a turn,
+because the conversation's budget sets the effort for every call inside it. The outcome planning after a preview that
+set files aside, and recovery (with the custom methods it tries), think at high: their own budget sits inside the
+conversation's and wins. No step runs at max: `resources.EFFORTS` refuses it (the owner's decision, 2026-10-22). The
+instructions and the operations' settings (the same for every conversation) are cached for an hour, so the next
+request after a run, a start over or a changed attachment reads them instead of paying for them again; the
 conversation itself is cached for five minutes between its calls, and the one-call checks (the visual check, the
 recovery critic) are not cached at all beyond the instructions. Three things keep the spending in your hands instead:
 
@@ -277,7 +279,10 @@ recovery critic) are not cached at all beyond the instructions. Three things kee
 A call that fails for a passing reason (the service is overloaded or rate-limited, a server error, a dropped
 connection or a response cut off in transit) is sent again automatically, up to twice, after 5 and then 20
 seconds (longer when the service asks for it). Every attempt counts as an AI step. A request the service
-refuses is never sent again.
+refuses is never sent again. When Claude declines to answer a reply (Anthropic's checks flag it, for instance as
+asking Claude to reveal its own reasoning), the chat says so in plain words and the reply is taken back out of the
+conversation, its wording no longer approved, so it does not go out again with the next message; rephrase it and
+send it again.
 
 ## Conversations and a clean start
 

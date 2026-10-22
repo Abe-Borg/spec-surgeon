@@ -24,7 +24,10 @@ DEFAULT_ANALYSIS_SECONDS = 120
 DEFAULT_ANALYSIS_MEMORY_MB = 1024
 DEFAULT_ANALYSIS_OUTPUT_BYTES = 16 * 1024 * 1024
 DEFAULT_ANALYSIS_INPUT_BYTES = 128 * 1024 * 1024
-DEFAULT_EFFORT = "max"
+# The owner's decision (2026-10-22): no call runs at "max". High is the most any call asks for; the window's chat
+# asks for less (document_task.CONVERSATION_EFFORT). "max" is refused, not quietly lowered.
+DEFAULT_EFFORT = "high"
+EFFORTS = ("low", "medium", "high")
 DEFAULT_STALL_REPETITIONS = 3
 
 

@@ -32,7 +32,7 @@ from .recovery_state import atomic_json, exclusive_session, json_value, repair_i
 from .sampling import representative_samples
 from .storage import conversation_folder, disk_id
 from .resources import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_CALLS, DEFAULT_MAX_COST_USD,
-                        DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, DEFAULT_EFFORT,
+                        DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, DEFAULT_EFFORT, EFFORTS,
                         DEFAULT_STALL_REPETITIONS, DEFAULT_CONTEXT_TOKENS)
 
 
@@ -68,8 +68,8 @@ class RecoveryOptions:
                 isinstance(self.max_cost_usd, bool) or not isinstance(self.max_cost_usd, (int, float))
                 or not math.isfinite(self.max_cost_usd) or self.max_cost_usd <= 0):
             raise ValueError("max_cost_usd must be a finite positive amount, or None")
-        if self.effort not in ("low", "medium", "high", "max"):
-            raise ValueError("effort must be low, medium, high, or max")
+        if self.effort not in EFFORTS:
+            raise ValueError("effort must be low, medium or high")
         if self.renderer not in ("auto", "word", "libreoffice", "none"):
             raise ValueError("unknown renderer")
         if self.analysis_limits is not None:
@@ -90,9 +90,13 @@ class RecoveryOptions:
     @classmethod
     def from_snapshot(cls, values) -> "RecoveryOptions":
         """Options saved by an earlier version may name settings that no longer exist (for example the removed
-        neighboring-input discovery); they are ignored rather than refusing to reopen the investigation."""
+        neighboring-input discovery); they are ignored rather than refusing to reopen the investigation. An effort
+        no longer offered (``max``, saved by 1.8.0 and earlier) reopens at the default."""
         known = {f.name for f in dataclasses.fields(cls)}
-        return cls(**{k: v for k, v in dict(values or {}).items() if k in known})
+        kept = {k: v for k, v in dict(values or {}).items() if k in known}
+        if kept.get("effort") not in EFFORTS:
+            kept.pop("effort", None)
+        return cls(**kept)
 
 
 @dataclass
@@ -502,6 +506,21 @@ def _candidate(candidate, goal, request, sources, templates, assertions, aliases
     return chain
 
 
+def _plans_on_any(chain, files) -> bool:
+    """Whether the chain's first stage plans on at least one of ``files`` (predict only: nothing is written). A file
+    that cannot be read counts as planning, so the trial itself reports it."""
+    from .editspec import plan_spec
+    for f in files:
+        try:
+            plan_spec(DocxPackage.from_path(f.source), chain["stages"][0]["spec"])
+            return True
+        except JobException:
+            continue
+        except Exception:
+            return True
+    return False
+
+
 def _save(result):
     with diag.span("recovery.save", path=str(result.out_dir / "recovery.json"),
                    attempt_count=len(result.attempts)):
@@ -860,12 +879,18 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
                 continue
             attempted.add(_strategy_id(candidate))
             try:
-                _candidate(candidate, ctx["goal"], result.request, ctx["sources"], ctx["templates"],
-                           ctx["assertions"], ctx["aliases"], input_files=ctx.get("input_files", ()),
-                           adaptive_contract=adaptive.contract_of(result))
+                chain = _candidate(candidate, ctx["goal"], result.request, ctx["sources"], ctx["templates"],
+                                   ctx["assertions"], ctx["aliases"], input_files=ctx.get("input_files", ()),
+                                   adaptive_contract=adaptive.contract_of(result))
             except ValueError as e:
                 diag.event("recovery.memory.rejected", reason=str(e), case_id=case.get("id"))
                 result.notes.append(f"A remembered repair could not be reused for this request: {e}")
+                continue
+            if not _plans_on_any(chain, [f for f in group if f.status == "UNRESOLVED"]):
+                # A repair remembered from another file of the same structure pattern can name that file's own
+                # paragraphs (its text, its positions): it then plans on none of these and is no attempt at them
+                # (the 1.8.0 live run spent two of a group's attempts that way).
+                diag.event("recovery.memory.skipped", reason="plans on none of these files", case_id=case.get("id"))
                 continue
             used += 1
             state["used"], state["attempted"] = used, sorted(attempted)

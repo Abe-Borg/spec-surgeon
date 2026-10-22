@@ -69,8 +69,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `catalog.py` (op catalog, `COMMON_ASSUMPTIONS`, `op_sheet`), `profile.py`, `planner.py`, `structure.py`, `triage.py`.
   - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec. `llm.call` is the one call site: the
     system prompt carries its own 1-hour cache breakpoint, the history the automatic 5-minute one, and a `one_shot`
-    call caches nothing after the system prompt; keep system prompts and tools byte-stable.
-    `compiler.compose_submission` is the one gate a submission passes.
+    call caches nothing after the system prompt; keep system prompts and tools byte-stable. No call runs at effort
+    `max` (the owner's decision, 2026-10-22): `resources.EFFORTS` refuses it, the window's chat runs at medium and
+    every other call at high. `compiler.compose_submission` is the one gate a submission passes.
   - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files), `inventory.py` (the content digest that pins a file).

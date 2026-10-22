@@ -187,9 +187,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "proposal, carries it out without waiting for a pick, and tries methods on copies of your files. Each copy is " +
       "checked by the independent checker; the plan's effects and pages are shown before anything is delivered.",
     sent: "To the Anthropic API: the request, your decisions, the file names and profiles, and what its tools read.",
-    ai: conversationModel,
+    ai: recoveryModel,
     bounds:
-      "Counts toward the pause; works on copies only. The wording in Claude's proposed outcomes is treated as " +
+      `Counts toward the pause; the trials get at most ${F.recoveryAttemptsPerGroup} attempts per group of files, ` +
+      "on copies only. The wording in Claude's proposed outcomes is treated as " +
       "approved on this path without a separate pick: read the plan before you approve it.",
   },
   {

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import contextlib
+import faulthandler
 import io
 import importlib.util
 import json
@@ -16,7 +17,7 @@ import types
 import pytest
 
 from make_fixtures import build
-from spec_surgeon import batch, render as render_mod
+from spec_surgeon import batch, diagnostics as diag, render as render_mod
 from spec_surgeon.batch import run_batch
 from spec_surgeon.editspec import plan_spec
 from spec_surgeon.package import DocxPackage
@@ -258,7 +259,8 @@ def test_frozen_launcher_handles_spawn_before_app_mutex_or_ui(monkeypatch):
 
 
 def _fake_worker_context(monkeypatch, *, messages=None, result=None, alive=False, pdf=b"PDF", exitcode=0):
-    controls = SimpleNamespace(terminated=False, killed=False, closed=False, opened=[], cleanup=[])
+    controls = SimpleNamespace(terminated=False, killed=False, closed=False, opened=[], cleanup=[],
+                               fault_handler_at_start=[])
     pending = list(messages if messages is not None else [{"kind": "finished"}])
     receive = SimpleNamespace(poll=lambda timeout: bool(pending), recv=lambda: pending.pop(0), close=lambda: None)
     send = SimpleNamespace(close=lambda: None)
@@ -270,6 +272,7 @@ def _fake_worker_context(monkeypatch, *, messages=None, result=None, alive=False
             self.alive = alive
 
         def start(self):
+            controls.fault_handler_at_start.append(faulthandler.is_enabled())
             folder = Path(self.request["scratch"])
             (folder / "result.json").write_text(json.dumps(result or {"ok": True, "version": "mock"}))
             if pdf is not None:
@@ -297,6 +300,26 @@ def _fake_worker_context(monkeypatch, *, messages=None, result=None, alive=False
     monkeypatch.setattr(word_worker, "_open_private_handle", lambda identity: controls.opened.append(identity) or "private")
     monkeypatch.setattr(word_worker, "_close_private_handle", lambda handle, **kwargs: controls.cleanup.append((handle, kwargs)))
     return controls
+
+
+def test_the_crash_log_is_paused_while_the_word_worker_starts(tmp_path, monkeypatch):
+    """Starting the worker raised a handled access violation inside CreateProcess on every spawn of the 1.8.0 live
+    run, and the window's crash log took each for a crash (68 of them). The log is paused for the start alone."""
+    was_enabled = faulthandler.is_enabled()
+    watch = diag.CrashWatch(tmp_path / "logs")
+    try:
+        watch.start()
+        controls = _fake_worker_context(monkeypatch)
+        word_worker.run_word("render", tmp_path / "source.docx", pdf=tmp_path / "output.pdf", timeout=1)
+        controls_batch = _fake_worker_context(monkeypatch, messages=[{"kind": "started", "identity": None},
+                                                                     {"kind": "finished"}])
+        word_worker.run_word_batch([tmp_path / "one.docx"], tmp_path / "pdf", timeout_per_file=1)
+        assert controls.fault_handler_at_start == controls_batch.fault_handler_at_start == [False]
+        assert faulthandler.is_enabled()                       # watching again once the worker is running
+    finally:
+        watch.stop()
+        if was_enabled:
+            faulthandler.enable()
 
 
 def test_word_worker_success_publishes_only_completed_pdf(tmp_path, monkeypatch):
@@ -392,10 +415,95 @@ def test_word_render_raises_only_when_word_never_started_and_nothing_rendered(tm
     assert errors == ["two.docx: Word could not render it: DispatchEx failed"]
 
 
+class _WordApp:
+    """Word's Application as pywin32 shows it: a Caption, and no Hwnd (asking raises what the 1.8.0 live run logged)."""
+
+    def __init__(self):
+        self.Caption = "Word"
+        self.captions = []
+
+    def __setattr__(self, name, value):
+        if name == "Caption" and hasattr(self, "captions"):
+            self.captions.append(value)
+        object.__setattr__(self, name, value)
+
+    def __getattr__(self, name):
+        raise AttributeError(f"Word.Application.{name}")
+
+
+def _win32(monkeypatch, *, windows=None, processes=(), images=None, opened=None):
+    """Fake pywin32: ``windows`` maps (class, caption) to a window's PID, ``processes`` is what EnumProcesses lists,
+    ``images`` maps a PID to its executable."""
+    windows = {} if windows is None else windows
+    images = images or {}
+    opened = [] if opened is None else opened
+    handles = {}
+
+    def find_window(cls, caption):
+        pid = windows.get((cls, caption))
+        if pid is not None:
+            handles[1000 + pid] = pid
+            return 1000 + pid
+        return 0
+
+    def open_process(access, inherit, pid):
+        opened.append(pid)
+        return SimpleNamespace(pid=pid, Close=lambda: None)
+
+    monkeypatch.setitem(sys.modules, "win32gui", SimpleNamespace(FindWindow=find_window))
+    monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace(OpenProcess=open_process))
+    monkeypatch.setitem(sys.modules, "win32process", SimpleNamespace(
+        GetWindowThreadProcessId=lambda hwnd: (1, handles[hwnd]),
+        EnumProcesses=lambda: list(processes),
+        GetModuleFileNameEx=lambda handle, module: images.get(handle.pid, r"C:\Windows\System32\svchost.exe"),
+        GetProcessTimes=lambda handle: {"CreationTime": SimpleNamespace(isoformat=lambda: f"born {handle.pid}")}))
+    return opened
+
+
+def test_word_process_identity_comes_from_the_instances_own_window(monkeypatch):
+    """Word's Application has no Hwnd: the old lookup (``app.Hwnd``) raised on every worker of the live run, so a hung
+    Word could never be ended. The instance's main window is found by a caption only it carries, which is then put
+    back."""
+    app = _WordApp()
+    with pytest.raises(AttributeError, match="Word.Application.Hwnd"):
+        app.Hwnd                                           # what the old lookup read
+    marker = {}
+
+    class Windows(dict):
+        def get(self, key, default=None):
+            cls, caption = key
+            marker["caption"] = caption
+            return 77 if cls == word_worker.WORD_WINDOW_CLASS and caption == app.Caption else default
+
+    _win32(monkeypatch, windows=Windows())
+    assert word_worker._private_identity(app, {1, 2}) == {"pid": 77, "created": "born 77", "found_by": "window"}
+    assert app.captions == [marker["caption"], "Word"] and marker["caption"].startswith("Spec Surgeon ")
+    assert app.Caption == "Word"
+
+
 def test_word_process_identity_never_adopts_an_existing_pid(monkeypatch):
-    monkeypatch.setitem(sys.modules, "win32process", SimpleNamespace(GetWindowThreadProcessId=lambda hwnd: (1, 42)))
-    monkeypatch.setitem(sys.modules, "win32api", SimpleNamespace(OpenProcess=lambda *args: pytest.fail("must not open existing Word")))
-    assert word_worker._private_identity(SimpleNamespace(Hwnd=5), {42}) is None
+    app = _WordApp()
+
+    class Windows(dict):
+        def get(self, key, default=None):
+            return 42 if key[1] == app.Caption else default
+
+    opened = _win32(monkeypatch, windows=Windows(), processes=[42, 99], images={99: r"C:\Office\WINWORD.EXE"})
+    assert word_worker._private_identity(app, {42}) is None     # the window is an instance that was already running
+    assert opened == []
+
+
+def test_word_process_identity_falls_back_to_the_one_new_word_process(monkeypatch):
+    word = r"C:\Program Files\Microsoft Office\root\Office16\WINWORD.EXE"
+    _win32(monkeypatch, processes=[1, 2, 77, 88], images={77: word, 88: r"C:\Windows\notepad.exe", 2: word})
+    assert word_worker._private_identity(_WordApp(), {1, 2}) == {"pid": 77, "created": "born 77",
+                                                                  "found_by": "new process"}
+    # two Word processes started since (the user opened Word at the same moment): neither is adopted
+    _win32(monkeypatch, processes=[1, 2, 77, 78], images={77: word, 78: word})
+    assert word_worker._private_identity(_WordApp(), {1, 2}) is None
+    # no new Word at all (DispatchEx reached an instance that was already running)
+    _win32(monkeypatch, processes=[1, 2, 88], images={2: word})
+    assert word_worker._private_identity(_WordApp(), {1, 2}) is None
 
 
 def test_word_process_handle_creation_time_prevents_pid_reuse(monkeypatch):

@@ -349,17 +349,17 @@ function Dossier() {
               "Turning plain English into a plan of operations takes judgment; the plan is then checked by code.",
             ],
             [
-              "The visual check, a custom method, an outcome plan",
+              "The visual check, a custom method",
               <>
                 {MODEL_NAME}, at the conversation’s {F.conversationEffort} effort (they run inside the turn that started
                 them)
               </>,
-              "Looking at pages, writing a small formatting program, proposing outcomes.",
+              "Looking at pages, writing a small formatting program.",
             ],
             [
-              "Recovery of copies that failed",
+              "An outcome plan, and recovery of copies that failed",
               <>
-                {MODEL_NAME}, {F.recoveryEffort} effort
+                {MODEL_NAME}, {F.recoveryEffort} effort (no step runs at the model’s highest setting)
               </>,
               "The harder path keeps more depth.",
             ],

@@ -1080,7 +1080,7 @@ class _Batch:
 
     def read_template(self):
         if not self.template:
-            raise KeyError("no template was attached to this request")
+            raise ValueError("no template is attached to this request (the documents are in THE BATCH)")
         pkg = DocxPackage.from_path(self.template)
         return {"path": str(self.template), "template_spec": template_spec_summary(pkg), "profile": profile(pkg)}
 
@@ -1428,6 +1428,10 @@ def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                      f"template spec (e.g. the architect's) or a file holding the user's own styles (apply_style, "
                      f"map_styles); call read_template to see which (it lists the template's styles), and put this exact "
                      f"path in the op's 'template' param")
+    else:
+        parts.append("NO TEMPLATE FILE IS ATTACHED (read_template has nothing to read). If the request needs a "
+                     "template and one of the documents looks like one (its name or its folder says so), ask the user "
+                     "before treating it as the template: an attached document is edited like the others")
     if batch.inputs:
         parts.append("INPUT FILES beside the documents — tables and pictures an op can read (read_input_file shows one; "
                      "put the exact path in the op's params):\n"

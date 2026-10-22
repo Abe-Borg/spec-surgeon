@@ -642,3 +642,15 @@ def test_a_template_is_the_attached_one_or_one_of_the_documents(tmp_path):
     assert C._attached_checks(reads(doc), _Batch([doc], None)) == []        # an attached document read as the template
     assert C._attached_checks(reads(stray), _Batch([doc], template))[0].startswith("[input]")
     assert C._attached_checks(reads(template), _Batch([doc], None, input_files=[template]))[0].startswith("[input]")
+
+
+def test_the_opening_message_says_whether_a_template_is_attached(project):
+    """The 1.8.0 live run had no template attached and Claude called read_template twice looking for one."""
+    folder, tpl, _, _ = project
+    files = sorted(folder.glob("*.docx"))
+    without = build_messages("apply the template", _Batch(files, None), [], {})[0]["content"]
+    assert "NO TEMPLATE FILE IS ATTACHED" in without and "ask the user before treating it as the template" in without
+    with_template = build_messages("apply the template", _Batch(files, tpl), [], {})[0]["content"]
+    assert "A TEMPLATE FILE IS ATTACHED" in with_template and "NO TEMPLATE" not in with_template
+    with pytest.raises(ValueError, match="no template is attached"):
+        _Batch(files, None).read_template()

@@ -138,6 +138,8 @@ class Session:
     last_batch: Any = None                        # BatchResult of the last Run (the window's results table)
     last_trials: Any = None                       # List[codegen.FileTrial] of the last AI-written-transform run
     visual_check: bool = True                     # Claude reviews the rendered sample pages of each preview
+    recovery_attempts: Optional[int] = None       # candidate attempts per problem group in the recovery an approved
+                                                  # outcome plan runs (the window's); None: the conversation's own
     conversation: Any = None                      # conversation.Conversation of the current request
     turn: Any = None                              # its last conversation.Turn
     chat_dir: Optional[Path] = None               # the session folder holding the conversation's records
@@ -356,6 +358,8 @@ class Session:
             snapshot = approve(c, chosen.id)
             options = options_for(c, render=render)
             options.visual_review = self.visual_check
+            if self.recovery_attempts is not None:
+                options.max_attempts = self.recovery_attempts
             self.recovery_checkpoint = self.chat_dir / f"recovery-{chosen.id}"
             result = execute(c, snapshot, self.recovery_checkpoint, options=options)
             self._adopt_recovery(result, keep_conversation=True)
