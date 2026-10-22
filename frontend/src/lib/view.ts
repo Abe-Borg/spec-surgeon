@@ -5,6 +5,9 @@
  * the whole view, and the page renders it (docs/WEB_API.md). While a job
  * runs, the stream's presentation frames (status, activity, thinking and
  * text deltas) fill a live reply bubble that the `message` frame finalizes;
+ * a `thinking` status starts a new model call, and the words of the call
+ * before it are set aside among the reply's steps (the reply a turn ends
+ * with is its last call's words);
  * `plan`/`samples`/`results`/`question`/`cost` update the workbench at once,
  * and the view that ends the job replaces everything.
  *
@@ -19,20 +22,30 @@ import type {
   View,
 } from "../types.ts";
 
+/** One step of a reply's making, oldest first: a plain sentence of model activity ("Reading the template's
+ *  header"), or the words an earlier model call of the same turn wrote along the way. */
+export interface Step {
+  kind: "activity" | "said";
+  text: string;
+}
+
 /** The assistant bubble a running job writes into. */
 export interface LiveReply {
+  /** The words of the model call being written: the reply, once the call ends the turn. */
   text: string;
   thinking: string;
   status: Status | null;
-  /** Plain sentences of model activity, oldest first ("Reading the template's header"). */
-  activities: string[];
+  steps: Step[];
+  /** Where in `steps` the model call being written began: its words, set aside when the next call starts, go
+   *  back there, before the activity of the tools it called. */
+  call: number;
 }
 
 /** What a finalized reply keeps beside the server's message: its thinking
- *  summary and activity lines, shown folded under the message. */
+ *  summary and its steps, shown folded above the message. */
 export interface Aside {
   thinking: string;
-  activities: string[];
+  steps: Step[];
 }
 
 export interface UiState {
@@ -94,7 +107,12 @@ export const INITIAL_STATE: UiState = {
 };
 
 export function emptyLive(): LiveReply {
-  return { text: "", thinking: "", status: null, activities: [] };
+  return { text: "", thinking: "", status: null, steps: [], call: 0 };
+}
+
+/** The bubble a job starts with: the working line shows at once, before the first frame names the work. */
+export function startingLive(): LiveReply {
+  return { ...emptyLive(), status: { kind: "working", text: "" } };
 }
 
 /**
@@ -145,11 +163,11 @@ function localMessage(state: UiState, role: Message["role"], text: string): [Mes
   return [{ id: `local-${seq}`, role, text, at: Date.now() / 1000 }, seq];
 }
 
-/** The live reply's thinking and activities, kept under a message id. */
+/** The live reply's thinking and steps, kept under a message id. */
 function keepAside(asides: Record<string, Aside>, id: string, live: LiveReply | null) {
   if (!live) return asides;
-  if (!live.thinking && live.activities.length === 0) return asides;
-  return { ...asides, [id]: { thinking: live.thinking, activities: [...live.activities] } };
+  if (!live.thinking && live.steps.length === 0) return asides;
+  return { ...asides, [id]: { thinking: live.thinking, steps: [...live.steps] } };
 }
 
 /**
@@ -177,7 +195,7 @@ export function reduce(state: UiState, action: UiAction): UiState {
       // A view that says busy while no stream is attached (the page was
       // reopened mid-job) still gets a live bubble, so the window shows Stop
       // and a status rather than an idle page that refuses every click.
-      const live = view.busy ? (state.live ?? { ...emptyLive(), status: { kind: "working", text: "" } }) : null;
+      const live = view.busy ? (state.live ?? startingLive()) : null;
       // An empty conversation (a new one) carries no reply to keep an aside for.
       const asides = view.messages.length === 0 ? {} : state.asides;
       // A stream cut mid-job left a failure note; the server says the job still runs, so the note was wrong.
@@ -199,7 +217,7 @@ export function reduce(state: UiState, action: UiAction): UiState {
         ...state,
         localSeq: seq,
         error: null,
-        live: emptyLive(),
+        live: startingLive(),
         view: {
           ...state.view,
           busy: true,
@@ -230,21 +248,36 @@ export function reduce(state: UiState, action: UiAction): UiState {
   }
 }
 
+/** The live bubble as a new model call finds it: the words the last call wrote become a step, in the place that
+ *  call began. */
+function newCall(live: LiveReply): LiveReply {
+  const said = live.text.trim();
+  const thinking = live.thinking && !live.thinking.endsWith("\n\n") ? `${live.thinking.trimEnd()}\n\n` : live.thinking;
+  const at = Math.min(live.call, live.steps.length);
+  const steps = said ? [...live.steps.slice(0, at), { kind: "said" as const, text: said }, ...live.steps.slice(at)] : live.steps;
+  return { ...live, text: "", thinking, steps, call: steps.length };
+}
+
 function reduceEvent(state: UiState, event: JobEvent): UiState {
   const live = state.live ?? emptyLive();
   switch (event.type) {
     case "status": {
+      const status = { kind: event.kind, text: event.text ?? "" };
       // `retrying`: the attempt whose words are in the bubble was abandoned and is sent again from the start.
-      const abandoned = event.kind === "retrying" ? { text: "", thinking: "" } : {};
-      return {
-        ...state,
-        live: { ...live, ...abandoned, status: { kind: event.kind, text: event.text ?? "" } },
-      };
+      if (event.kind === "retrying") return { ...state, live: { ...live, text: "", thinking: "", status } };
+      // `thinking`: a new model call starts. The words of the call before it are not the reply the turn ends
+      // with; they stay in the bubble as a step, and the new call's thinking starts a paragraph of its own.
+      if (event.kind === "thinking") return { ...state, live: { ...newCall(live), status } };
+      return { ...state, live: { ...live, status } };
     }
     case "activity": {
       const text = (event.text ?? "").trim();
       if (!text) return state;
-      return { ...state, live: { ...live, activities: [...live.activities, text] } };
+      // The working line names the activity until the next frame says otherwise.
+      return {
+        ...state,
+        live: { ...live, steps: [...live.steps, { kind: "activity", text }], status: { kind: "working", text } },
+      };
     }
     case "thinking_delta":
       return { ...state, live: { ...live, thinking: live.thinking + (event.text ?? "") } };

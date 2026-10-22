@@ -16,9 +16,9 @@ import remarkGfm from "remark-gfm";
 /** One plugin array for every ReactMarkdown here: an inline `[remarkGfm]` is a
  *  fresh array per render, which reads as a changed prop to anything that
  *  compares it. */
-const REMARK_PLUGINS = [remarkGfm];
+export const REMARK_PLUGINS = [remarkGfm];
 
-const LINK = {
+export const LINK = {
   a: ({ node: _node, ...props }: ComponentProps<"a"> & { node?: unknown }) => (
     <a {...props} target="_blank" rel="noreferrer noopener" />
   ),

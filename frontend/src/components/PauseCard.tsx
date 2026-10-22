@@ -17,7 +17,7 @@ interface Props {
  */
 export default function PauseCard({ stepsPerPause, costText, canContinue, busy, onContinue }: Props) {
   return (
-    <div className="card-in rounded-2xl border border-warn/40 bg-warn/10 px-4 py-3" role="status">
+    <div className="chat-in rounded-2xl border border-warn/40 bg-warn/10 px-4 py-3" role="status">
       <p className="font-[family-name:var(--font-display)] text-base font-semibold text-ink">
         Work paused; your progress is saved
       </p>

@@ -27,6 +27,8 @@ whole view, and the page renders it (`src/lib/view.ts`). Streamed frames are pre
 | `src/lib/sse.ts` | the `data: <json>` frame parser and the stream reader |
 | `src/lib/view.ts` | the reducer over the view and the live reply bubble |
 | `src/lib/chat.ts`, `action.ts`, `workbench.ts`, `review.ts`, `help.ts` | the pure rules the components render (the review marks and `hold` live in `review.ts`; `help.ts`: the top bar's topics and context line, About's update line) |
+| `src/lib/reveal.ts`, `rehypeReveal.ts`, `useReveal.ts` | how a reply's words come onto the page: the reading pace, a finished reply carrying on from the words already shown, the blocks a reply renders as, the pieces that fade in and the caret; `useReveal` runs it frame by frame |
+| `src/components/MessageBubble.tsx`, `RevealMarkdown.tsx`, `Collapse.tsx` | one bubble per reply from its first status to the finished message (the working line, the log, the words); a reply's markdown block by block; the folds that open and close by height |
 | `src/lib/api.ts` | every route of the contract |
 | `src/lib/theme.ts` | the colour schemes Settings offers, and the one the page opens in |
 | `src/components/` | the header (the top bar), the chat, the workbench, the modals; `HelpModal.tsx` is the in-app guide and About |
@@ -46,7 +48,8 @@ npm install
 ```
 
 Start the mock server in one terminal. It answers every route with canned data and scripted jobs; the
-job a request runs is chosen by its text: `question` asks one thing with choices and chips, `fail` ends in an
+job a request runs is chosen by its text: `question` asks one thing with choices and chips (in two model calls, as
+the real server streams them: the first says what it will do and reads, the second writes the reply), `fail` ends in an
 error, `pause` ends in a budget pause, anything else plans and previews, and the primary action creates
 copies (the previews marked with the red X are sent as `hold` and land on the to-do list; the reply "Work on the
 documents I set aside" begins the pass over them).
@@ -88,7 +91,7 @@ npm run dev
 
 The pure rules (the frame parser, the reducer, the chat rules, the action label, the token and base
 resolution, the workbench rules, the review marks, the top bar's rules, the colour schemes against the
-stylesheet) run under `node --test`:
+stylesheet, the reveal's pace and blocks) run under `node --test`:
 
 ```
 cd frontend

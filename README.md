@@ -87,7 +87,8 @@ and Settings.
    template. Keep our technical wording."
 4. **Describe the result.** Type what you want and press **Send** (Ctrl+Enter). Spec Surgeon inspects the documents,
    goes ahead on sensible defaults (and says what it assumed), asks at most three questions, each with the answer it
-   recommends, and prepares a plan — while you watch its words, its thinking summary and each step as they happen.
+   recommends, and prepares a plan — while you watch its words flow in as they are written, with one line above them
+   naming each step as it happens (the steps and its thinking summary fold under that line once the reply is written).
    A question comes as a card with buttons and short replies you can tap: click one, type its number, or answer in
    your own words. A choice that would put words into the documents shows those exact words; picking it approves
    exactly those words (a tapped reply never does). Changes that touch the same parts of a file — the template's
