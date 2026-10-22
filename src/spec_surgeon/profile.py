@@ -17,6 +17,10 @@ edits, and the text alone cannot tell them apart.
 ``profile_batch(files)`` groups files by structure pattern (fingerprint.pattern_id) and profiles one
 representative per pattern — the compiler sees one profile per pattern, not one per file.
 
+``batch_overview(files)`` reads every file side by side instead (C2): its section number and title by the reference
+fills, how its title shows, each displayed header/footer line by line and its File Properties title, with flags
+naming the files that differ from most (``BatchOverview``). It describes; nothing in it chooses or plans an edit.
+
 ``fonts.body_text`` is what "the document's font" means to a reader: the body text's effective font and size by
 share of characters. ``template_spec_summary(pkg)`` is what a template file offers the compiler: prepared slots, or
 (an ordinary spec from another firm) its own section number/title by the catalog's ``REFERENCE_FILLS`` and every
@@ -1078,3 +1082,361 @@ def profile_batch(files: Sequence[Path]) -> Dict[str, Any]:
     if unreadable:
         out["unreadable"] = unreadable
     return out
+
+
+# ---- the batch overview (docs/PLAN-2026-10-22-batch-consistency.md C2) ----------------------------------------------
+
+OWN_NUMBER, OWN_TITLE = "«SECTION NUMBER»", "«SECTION TITLE»"
+MAX_OVERVIEW_BYTES = 12000
+OVERVIEW_FLAGS = 40          # flags THE BATCH lists (the rest are counted; compare_files names every one)
+COMPARE_PAGE = 40            # rows one compare_files call returns at most
+SAME_AS_MOST = "the same lines as most_files_show"
+OVERVIEW_LINES_CUT = "header/footer lines beyond the first two (compare_files shows them)"
+OVERVIEW_NOTE = (f"{OWN_NUMBER} and {OWN_TITLE} stand for each file's own section number and title; a header/footer "
+                 f"that shows {SAME_AS_MOST!r} matches most files line for line; compare_files shows every file's lines")
+_TITLE_STOP = {"a", "an", "and", "for", "in", "of", "on", "or", "the", "to", "with"}
+# a section number in a Properties title: 21 05 53, 21-05-53 or 210553 (one separator throughout, an optional .13),
+# or the digits after the word SECTION (with a prefix such as "PP-"): five-digit numbers are MasterFormat 1995's
+_SECTION_NUMBERS = re.compile(r"(?<!\d)(\d{2}([ .\-–]?)\d{2}\2\d{2}(?:\.\d{2})?)(?!\d)"
+                              r"|\bSECTION\s+[A-Z]{0,4}-?\s*(\d{5,6})(?!\d)", re.IGNORECASE)
+
+
+def letters_shown(p, props: PropResolver) -> Optional[str]:
+    """How a paragraph's letters look to a reader (its runs outside deletions, not those of a nested paragraph):
+    "capitals" when every letter shows as a capital — typed so, or lowercase under w:caps in effect —, "small
+    capitals" when the lowercase letters show in small capitals and none in lower case, "lower case" when no letter
+    shows as a capital, "mixed case" otherwise; None without a cased letter, or when a run's toggle resolves neither
+    way. Where ``shown_case`` names formatting only, this is the look the overview compares across files."""
+    seen = set()
+    for r in p.iter(W + "r"):
+        if nearest_p(r) is not p or any(a.tag in (W + "del", W + "moveFrom") for a in r.iterancestors()):
+            continue
+        letters = [c for t in r.findall(W + "t") for c in (t.text or "") if c.isupper() or c.islower()]
+        if any(c.isupper() for c in letters):
+            seen.add("upper")
+        if any(c.islower() for c in letters):
+            rpr = r.find(W + "rPr")
+            caps, small = props.run_prop(rpr, p, "caps")[0], props.run_prop(rpr, p, "smallCaps")[0]
+            if caps is None or (caps is not True and small is None):
+                return None
+            seen.add("upper" if caps is True else "small" if small is True else "lower")
+    if not seen:
+        return None
+    if "lower" in seen:
+        return "lower case" if seen == {"lower"} else "mixed case"
+    return "capitals" if seen == {"upper"} else "small capitals"
+
+
+def _own_marks(number: Optional[str], title: Optional[str]) -> List[Any]:
+    """(pattern, marker) pairs that find the file's own title and number in a line, as the reader sees them: the title
+    in any case, its words apart by any punctuation or spacing ("Fire-Suppression" for "Fire Suppression"); the
+    number with or without its separators."""
+    out = []
+    words = re.findall(r"[^\W_]+", title or "")
+    if words:
+        out.append((re.compile(r"(?<![^\W_])" + r"[\W_]+".join(map(re.escape, words)) + r"(?![^\W_])", re.IGNORECASE),
+                    OWN_TITLE))
+    digits = re.sub(r"\D", "", number or "")
+    if digits:
+        out.append((re.compile(r"(?<!\d)" + r"[\W_]*".join(digits) + r"(?!\d)"), OWN_NUMBER))
+    return out
+
+
+def _marked(text: str, marks) -> str:
+    for rx, mark in marks:
+        text = rx.sub(mark, text)
+    return text
+
+
+def _shape(marked: str) -> tuple:
+    """What two files' same line has in common: its words casefolded, every number one "#" (a page number, a date),
+    the file's own number and title as their markers; spacing and punctuation left out."""
+    return tuple(t if t.startswith("«") else "#" if t.isdecimal() else t.casefold()
+                 for t in re.findall(r"«[^»]*»|\d+|[^\W\d_]+", marked))
+
+
+def _quote(text: str) -> str:
+    return f"“{_clip(text, 70)}”"
+
+
+class _FileView:
+    """One file as the overview reads it: the row it shows, and per displayed header/footer its lines as
+    (shape, letters shown, as typed, with the own values marked)."""
+
+    def __init__(self, pkg: DocxPackage, label: str):
+        from .catalog import REFERENCE_FILLS
+        self.label = label
+        sheet = StyleSheet(pkg)
+        props = PropResolver(sheet)
+        own: Dict[str, Optional[str]] = {}
+        self.not_found: List[str] = []
+        for name in REFERENCE_FILLS:
+            try:
+                own[name] = extract_fill(pkg, name, REFERENCE_FILLS[name])
+            except JobException as e:
+                own[name] = None
+                self.not_found.append(f"{name.lower().replace('_', ' ')}: {e.reason}")
+        self.number, self.title = own.get("SECTION_NUMBER"), own.get("SECTION_TITLE")
+        marks = _own_marks(self.number, self.title)
+        root = pkg.xml(pkg.main_part())
+        self.title_case = None
+        if self.title:
+            title_mark = _own_marks(None, self.title)
+            for p in paragraphs(root):
+                if nearest_p(p) is None and OWN_TITLE in _marked(display_text(p), title_mark):
+                    self.title_case = letters_shown(p, props)
+                    break
+        row: Dict[str, Any] = {"file": label,
+                               "section_number": self.number or "(not found by the reference rules)",
+                               "section_title": _clip(self.title) if self.title else "(not found by the reference rules)"}
+        if self.title_case:
+            row["title_shown_in"] = self.title_case
+        try:
+            core = _package_part(pkg, CORE_REL)
+            el = pkg.xml(core).find(DC + "title") if core else None
+        except Exception:  # noqa: BLE001 — descriptive only: unreadable File Properties leave the title out
+            el = None
+        self.properties_title = (el.text or "").strip() if el is not None else ""
+        if self.properties_title:
+            row["properties_title"] = _clip(self.properties_title)
+        self.parts: Dict[str, List[tuple]] = {}
+        views: Dict[str, Any] = {}
+        first_key: Dict[str, str] = {}
+        secs = DocxPackage.sect_prs(root)
+        even = pkg.settings_flag("evenAndOddHeaders")
+        for i, (sp, shown) in enumerate(zip(secs, effective_refs(pkg, secs))):
+            tp = sp.find(W + "titlePg")
+            title_page = tp is not None and tp.get(W + "val") not in ("0", "false", "off")
+            for kind in KINDS:
+                for typ in TYPES:
+                    part = shown.get((kind, typ))
+                    if (typ == "first" and not title_page) or (typ == "even" and not even) or not part \
+                            or not pkg.has(part):
+                        continue                  # what Word shows: a first page only with titlePg, even pages
+                    key = f"{kind}.{typ}" + (f" (section {i + 1})" if i else "")   # only with evenAndOddHeaders
+                    if part in first_key:
+                        views[key] = {"same_as": first_key[part]}
+                        self.parts[key] = self.parts[first_key[part]]
+                        continue
+                    first_key[part] = key
+                    lines = [(t, p) for t, p in ((_shown_text(p), p) for p in paragraphs(pkg.xml(part))
+                                                 if nearest_p(p) is None) if t.strip()]
+                    self.parts[key] = [(_shape(_marked(t, marks)), letters_shown(p, props), t, _marked(t, marks))
+                                       for t, p in lines]
+                    view: Dict[str, Any] = {"part": part, "lines": [_clip(t) for t, _ in lines]}
+                    caps = {str(j): c for j, c in enumerate(shown_case(p, props) for _, p in lines) if c}
+                    if caps:
+                        view["shown_in_capitals"] = caps
+                    views[key] = view
+        row["headers_footers"] = views
+        self.row = row
+
+
+class BatchOverview:
+    """Every file of a batch side by side, and flags naming the files that differ from most (C2). Descriptive only:
+    nothing in it is used to plan an edit, and it chooses nothing — the assistant names the flags, the user decides.
+
+    A flag compares a file with most files — more than half of those it can be compared with: its title shown in
+    other capitals; a displayed header/footer most files show and it does not (or the other way round, first section
+    only); a header/footer line most files show and it lacks, or one it shows and most do not (paired in order as
+    "reads … where most files show …" when there are as many of each), or a line most files share shown in other
+    capitals. On its own, without a majority: a File Properties title naming another section number, or — naming
+    not the file's own — none of the words of its title. Lines are compared by ``_shape``, so each file's own number
+    and title, page numbers and dates do not make two lines differ."""
+
+    def __init__(self, views: List[_FileView], unreadable: List[Dict[str, str]]):
+        self.views, self.unreadable = views, unreadable
+        self.flags: List[Dict[str, str]] = []
+        self.flagged: set = set()                  # (file, key) whose header/footer a flag names
+        self.common: Dict[str, Dict[str, Any]] = {}
+        self._compare()
+        order = {v.label: i for i, v in enumerate(views)}
+        self.flags.sort(key=lambda f: order[f["file"]])
+
+    def _flag(self, v: _FileView, text: str, key: Optional[str] = None) -> None:
+        self.flags.append({"file": v.label, "flag": text})
+        if key:
+            self.flagged.add((v.label, key))
+
+    def _compare(self) -> None:
+        views = self.views
+        n = len(views)
+        most = lambda c, of: 2 * c > of
+        found = [v for v in views if v.number and v.title]
+        if most(len(found), n):
+            for v in views:
+                if v not in found:
+                    what = " or ".join(x.split(":")[0] for x in v.not_found)
+                    self._flag(v, f"the reference rules find no {what} in it (most files have theirs); its "
+                                  f"headers/footers are compared as typed")
+        cases = Counter(v.title_case for v in views if v.title_case)
+        if cases:
+            top, k = cases.most_common(1)[0]
+            of = sum(cases.values())
+            if most(k, of):
+                for v in views:
+                    if v.title_case and v.title_case != top:
+                        self._flag(v, f"its title {_quote(v.title)} shows in {v.title_case}; most files ({k} of {of}) "
+                                      f"show their title in {top}")
+        keys = list(dict.fromkeys(k for v in views for k in v.parts))
+        for key in keys:
+            having = [v for v in views if key in v.parts]
+            name = key.replace(".default", "").replace(".first", " (first page)").replace(".even", " (even pages)")
+            if " (section" not in key:
+                if most(len(having), n):
+                    for v in views:
+                        if key not in v.parts:
+                            self._flag(v, f"shows no {name}; most files ({len(having)} of {n}) show one", key)
+                elif 2 * len(having) < n:
+                    for v in having:
+                        self._flag(v, f"shows a {name} most files do not ({len(having)} of {n})", key)
+            h = len(having)
+            counts = Counter(s for v in having for s in {e[0] for e in v.parts[key]})
+            major = {s for s, c in counts.items() if most(c, h)}
+            rare = {s for s, c in counts.items() if 2 * c < h}
+            rep = next((v for v in having if major <= {e[0] for e in v.parts[key]}), None)
+            if not major or rep is None:
+                continue
+            shown = [e for e in rep.parts[key] if e[0] in major]
+            show = {e[0]: e[3] for e in shown}
+            every = sum(1 for v in having if major <= {e[0] for e in v.parts[key]})
+            self.common[key] = {"lines": [_clip(e[3]) for e in shown], "files_showing_every_line": f"{every} of {h}",
+                                "_shapes": [e[0] for e in shown]}
+            look: Dict[tuple, tuple] = {}
+            for s in major:
+                seen = Counter(next(e[1] for e in v.parts[key] if e[0] == s) for v in having
+                               if any(e[0] == s for e in v.parts[key]))
+                seen.pop(None, None)
+                if seen:
+                    top, k = seen.most_common(1)[0]
+                    if most(k, sum(seen.values())):
+                        look[s] = (top, k, sum(seen.values()))
+            for v in having:
+                mine = v.parts[key]
+                missing = [e[0] for e in shown if all(m[0] != e[0] for m in mine)]
+                extra = [m for m in mine if m[0] in rare]
+                if missing and len(missing) == len(extra):          # one in place of the other, in order
+                    for s, m in zip(missing, extra):
+                        case = f" (in {m[1]}, where most show {look[s][0]})" \
+                            if s in look and m[1] and m[1] != look[s][0] else ""
+                        self._flag(v, f"{name} reads {_quote(m[2])}{case} where most files ({counts[s]} of {h}) show "
+                                      f"{_quote(show[s])}", key)
+                else:
+                    for s in missing:
+                        self._flag(v, f"{name} has no line like {_quote(show[s])}; most files ({counts[s]} of {h}) "
+                                      f"show one", key)
+                    for m in extra:
+                        self._flag(v, f"{name} shows {_quote(m[2])}, a line most files do not", key)
+                for m in mine:
+                    if m[0] in look and m[1] and m[1] != look[m[0]][0]:
+                        top, k, of = look[m[0]]
+                        self._flag(v, f"{name} line {_quote(m[2])} shows in {m[1]}; most files ({k} of {of}) show "
+                                      f"that line in {top}", key)
+        words = lambda s: {w.casefold() for w in re.findall(r"[^\W\d_]+", s or "")} - _TITLE_STOP
+        for v in views:
+            if not v.properties_title:
+                continue
+            notes = []
+            own = re.sub(r"\D", "", v.number or "")[:6]
+            named = [m.group(1) or m.group(3) for m in _SECTION_NUMBERS.finditer(v.properties_title)]
+            other = [x for x in named if re.sub(r"\D", "", x)[:6] != own]
+            if v.number and other:
+                notes.append(f"names section {other[0]}, while the file is {v.number}")
+            mine = {w for w in words(v.title) if len(w) >= 3}
+            names_own = bool(own) and any(re.sub(r"\D", "", x)[:6] == own for x in named)
+            if mine and not names_own and not mine & words(v.properties_title):   # its own number identifies it
+                notes.append(f"has none of the words of its title {_quote(v.title)}")
+            if notes:
+                self._flag(v, f"its File Properties title {_quote(v.properties_title)} " + ", and ".join(notes))
+
+    # ---- what the assistant reads ----
+    def _same(self, v: _FileView, key: str) -> bool:
+        c = self.common.get(key)
+        return bool(c) and (v.label, key) not in self.flagged and [e[0] for e in v.parts[key]] == c["_shapes"]
+
+    def _common(self) -> Dict[str, Any]:
+        return {k: {kk: vv for kk, vv in c.items() if not kk.startswith("_")} for k, c in self.common.items()}
+
+    def _row(self, v: _FileView, compact: bool) -> Dict[str, Any]:
+        row = json.loads(json.dumps(v.row, ensure_ascii=False))
+        if compact:
+            for key, view in row["headers_footers"].items():
+                if "same_as" not in view and self._same(v, key):
+                    row["headers_footers"][key] = SAME_AS_MOST
+        return row
+
+    def summary(self, limit: int = MAX_OVERVIEW_BYTES) -> Dict[str, Any]:
+        """What THE BATCH carries: the flags first (``OVERVIEW_FLAGS``, the rest counted), what most files' headers
+        and footers show, and every file's row, a header/footer matching most files line for line named as such.
+        Bounded: rows are thinned to two lines per header/footer, then the last rows go — each cut said in
+        ``truncated``, never silently."""
+        out: Dict[str, Any] = {"files": len(self.views), "note": OVERVIEW_NOTE,
+                               "flags": self.flags[:OVERVIEW_FLAGS]}
+        if len(self.flags) > OVERVIEW_FLAGS:
+            out["flags_more"] = f"{len(self.flags) - OVERVIEW_FLAGS} more (compare_files lists every file's flags)"
+        out["most_files_show"] = self._common()
+        rows = [self._row(v, compact=True) for v in self.views]
+        out["rows"] = rows
+        if self.unreadable:
+            out["unreadable"] = self.unreadable
+        truncated: List[str] = []
+        size = lambda: len(json.dumps(out, ensure_ascii=False))
+        if size() > limit:
+            for row in rows:
+                for view in row["headers_footers"].values():
+                    if isinstance(view, dict) and len(view.get("lines") or []) > PART_LINES_THINNED:
+                        view["more_lines"] = len(view["lines"]) - PART_LINES_THINNED
+                        view["lines"] = view["lines"][:PART_LINES_THINNED]
+                        caps = {k: c for k, c in (view.pop("shown_in_capitals", None) or {}).items()
+                                if int(k) < PART_LINES_THINNED}
+                        if caps:
+                            view["shown_in_capitals"] = caps
+            truncated.append(OVERVIEW_LINES_CUT)
+        cut = 0
+        while size() > limit and rows:
+            rows.pop()
+            cut += 1
+            out["truncated"] = truncated + [f"the rows of the last {cut} file(s) (compare_files shows them)"]
+        if truncated and "truncated" not in out:
+            out["truncated"] = truncated
+        return out
+
+    def compare(self, files: Optional[Sequence[str]] = None, start: int = 0, count: int = 20) -> Dict[str, Any]:
+        """Rows in full (every line of every displayed header/footer) and each one's flags: the named files, or a page
+        of all of them from ``start``."""
+        if type(start) is not int or start < 0:
+            raise ValueError("start must be a non-negative integer")
+        if type(count) is not int or not 1 <= count <= COMPARE_PAGE:
+            raise ValueError(f"count must be between 1 and {COMPARE_PAGE}; continue with next_start")
+        by_label = {v.label: v for v in self.views}
+        if files:
+            unknown = [f for f in files if f not in by_label]
+            if unknown:
+                raise KeyError(f"no file {unknown[0]!r} in this batch; files: {sorted(by_label)[:12]}")
+            chosen, nxt = [by_label[f] for f in dict.fromkeys(files)], None
+        else:
+            chosen = self.views[start:start + count]
+            nxt = start + count if start + count < len(self.views) else None
+        names = {v.label for v in chosen}
+        return {"total": len(self.views), "next_start": nxt, "note": OVERVIEW_NOTE,
+                "most_files_show": self._common(),
+                "flags": [f for f in self.flags if f["file"] in names],
+                "rows": [self._row(v, compact=False) for v in chosen]}
+
+
+def batch_overview(files: Sequence[Path], labels: Optional[Dict[str, str]] = None) -> BatchOverview:
+    """Every file side by side (C2): per file, its section number and title as the catalog's ``REFERENCE_FILLS`` read
+    them, how its title shows, each header/footer Word displays (its lines as typed, capitals by formatting marked as
+    in the profiles) and its File Properties title; and the flags of ``BatchOverview``. ``labels`` (str(path) →
+    label) names the files as the tools address them. One package open at a time; a file the overview cannot read
+    is listed in ``unreadable``, never fatal. No model call: it is computed again whenever a batch is, so a request
+    after a run reads the copies it made."""
+    views: List[_FileView] = []
+    unreadable: List[Dict[str, str]] = []
+    for f in files:
+        label = (labels or {}).get(str(f), Path(f).name)
+        try:
+            views.append(_FileView(DocxPackage.from_path(f), label))
+        except Exception as e:  # noqa: BLE001 — descriptive only: the file is listed, the others still compare
+            unreadable.append({"file": label, "error": f"{type(e).__name__}: {e}"[:200]})
+    return BatchOverview(views, unreadable)

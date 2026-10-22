@@ -27,6 +27,16 @@ Changes since v1.8.0.
   was doing last (the final events of its journal) and whether its crash log caught a crash; an empty one means the
   app was ended from outside (Task Manager, signing out, a power cut) or stopped answering and was closed.
 
+## Seeing the whole batch
+
+- **Every document side by side, before anything is planned.** Spec Surgeon now reads each attached document's
+  section number and title, every header and footer line, and its File Properties title, and names the one that
+  differs from most of the others: a footer title shown in other capitals (21 05 53's mixed-case footer title in the
+  first Division 21 run), a header or footer line missing or extra, a File Properties title naming another section
+  or none of the words of the document's title. Before, only the first four layouts were summarised and nothing
+  compared the files. The comparison changes nothing; the assistant names what bears on your request and offers a
+  fix. After a run, the next request compares the edited copies.
+
 ## Fixes
 
 - **Each reply shows once.** A reply that asks nothing (plain words, a list of findings, a failure) used to show

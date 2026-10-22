@@ -245,7 +245,7 @@ def _tool(name, description, properties, required=()):
         "type": "object", "properties": properties, "required": list(required)}}
 
 
-READ_TOOLS = ("inspect_profile", "list_styles", "sample_paragraphs", "show_part_text", "read_template", "inspect_template_styles",
+READ_TOOLS = ("inspect_profile", "compare_files", "list_styles", "sample_paragraphs", "show_part_text", "read_template", "inspect_template_styles",
               "read_input_file", "list_parts", "read_paragraphs", "read_xml_page", "run_analysis", "read_analysis_result", "read_context_archive")
 TOOLS = [t for t in compiler.TOOLS if t["name"] in READ_TOOLS and t["name"] != "read_template"] + [
     compiler.VIEW_PAGES_TOOL,
