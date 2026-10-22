@@ -38,6 +38,7 @@ export const TRUST_FACTS = {
   maxInstallerMB: 500,
   noUpdateCheckEnv: "SPEC_SURGEON_NO_UPDATE_CHECK",
   modelEnv: "SPEC_SURGEON_MODEL",
+  apiAddressEnv: "ANTHROPIC_BASE_URL",
   // The window's local server (web/shell.py, web/server.py)
   loopback: "127.0.0.1",
   tokenHeader: "X-Spec-Surgeon-Token",

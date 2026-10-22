@@ -392,14 +392,20 @@ function Dossier() {
           catalog are cached by Anthropic for an hour, and the growing conversation for the default five minutes, so a
           follow-up reads them instead of paying full price again.
         </P>
-        <Note title="Two things about the model you should know" tone="warn">
+        <Note title="Three things about the model you should know" tone="warn">
           <Bullets
             items={[
               <>
-                The environment variable <Mono>{F.modelEnv}</Mono> replaces the model for every call. Nothing in the
-                window sets it.
+                {MODEL_NAME} is the default. The environment variable <Mono>{F.modelEnv}</Mono> replaces it for every
+                call, and the About page and the conversation’s record then name that model. Nothing in the window
+                sets it.
               </>,
               "If Anthropic’s safety filters decline a request, Anthropic may answer it with another model inside the same call. The app does not choose that model; the conversation’s record names the model that answered, and the spending pill says when the price table cannot estimate it.",
+              <>
+                The Anthropic SDK sends to <Mono>{F.anthropicHost}</Mono> unless the environment variable{" "}
+                <Mono>{F.apiAddressEnv}</Mono> names another address; then your requests, documents and key go there
+                instead. Nothing in the window sets it.
+              </>,
             ]}
           />
         </Note>
@@ -411,7 +417,8 @@ function Dossier() {
           leftTitle="Leaves your machine"
           left={[
             <>
-              <b className="text-ink">To Anthropic’s API</b> (<Mono>{F.anthropicHost}</Mono>, over HTTPS, with your key),
+              <b className="text-ink">To Anthropic’s API</b> (<Mono>{F.anthropicHost}</Mono>, or the address in{" "}
+              <Mono>{F.apiAddressEnv}</Mono> if you set one; over HTTPS, with your key),
               only while work you started runs: your request and answers; file names (and, in recovery, full paths); the
               full path of an attached template, picture or table; a profile of each kind of document (styles, headings,
               header and footer text, sample paragraphs); whatever Claude’s read tools return (paragraph text, a part’s
@@ -674,8 +681,8 @@ function Dossier() {
               nothing about whether the specification is right.
             </>,
             <>
-              <b className="text-ink">Only samples are rendered before you approve</b> — at least {F.sampleFiles} files
-              and one per layout — so a problem only another file shows may first appear in the copies. Every copy is
+              <b className="text-ink">Only samples are rendered before you approve</b> — {F.sampleFiles} files (or every file
+              in a smaller batch), and at least one per layout — so a problem only another file shows may first appear in the copies. Every copy is
               still checked.
             </>,
             <>

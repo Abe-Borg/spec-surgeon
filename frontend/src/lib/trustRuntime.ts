@@ -24,8 +24,9 @@ export interface RuntimeCard {
 
 export const NONE = "None.";
 
-const conversationModel = `${MODEL_NAME} (${F.model}), ${F.conversationEffort} effort, up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
-const recoveryModel = `${MODEL_NAME} (${F.model}), ${F.recoveryEffort} effort, up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
+/** The model as it ships; SPEC_SURGEON_MODEL replaces it (the dossier's engine section says so). */
+const conversationModel = `${MODEL_NAME} (${F.model}) by default, ${F.conversationEffort} effort, up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
+const recoveryModel = `${MODEL_NAME} (${F.model}) by default, ${F.recoveryEffort} effort, up to ${grouped(F.maxOutputTokens)} output tokens per call.`;
 
 export const RUNTIME_CARDS: RuntimeCard[] = [
   {
@@ -101,7 +102,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `with the reason. An accepted plan is turned into a preview automatically: up to ${F.autoSteps} internal steps ` +
       "per action (the preview, and when needed a custom method or an outcome plan; their own cards follow).",
     sent:
-      `To the Anthropic API (${F.anthropicHost}): your request and earlier answers, what the copies already carry, ` +
+      `To the Anthropic API (${F.anthropicHost}, unless ${F.apiAddressEnv} is set): your request and earlier answers, what the copies already carry, ` +
       "the file names, the full path of an attached template, picture or table, a profile of each kind of document " +
       "(styles, headings, header and footer text, sample paragraphs), and whatever Claude's tools read: paragraph " +
       "text, XML, table rows, and page images rendered on your computer.",
@@ -130,8 +131,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "Nothing: it follows a plan the app accepted.",
     runs:
       "Every attached file is planned from its original: the engine works out exactly what will change, or sets the " +
-      `file aside with a reason under Left untouched. Representative samples (at least ${F.sampleFiles} files, and at ` +
-      "least one per layout) are edited in memory and checked by the independent checker. Their before and after " +
+      `file aside with a reason under Left untouched. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
+      "at least one per layout, so more when there are more layouts) are edited in memory and checked by the independent checker. Their before and after " +
       "pages are rendered by Microsoft Word (a new, invisible instance, never the Word you have open) or, without " +
       "Word, LibreOffice.",
     sent: "Nothing. Planning, editing the samples, checking and rendering all run on your computer.",
@@ -237,7 +238,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `After a pause the allowance grows by ${F.stepsPerPause} more AI steps. Then the work goes on where it stopped: ` +
       "the conversation, a custom method being prepared, or a recovery.",
     sent: "What the step that resumes sends (see the cards above).",
-    ai: `${MODEL_NAME}, at the effort of the work it resumes.`,
+    ai: `${MODEL_NAME} by default, at the effort of the work it resumes.`,
     bounds: "The same pause, Stop now and copies-only rules. A recovery goes on only if its files have not changed since it started.",
   },
   {

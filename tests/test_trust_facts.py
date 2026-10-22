@@ -136,6 +136,7 @@ def expected() -> dict:
         "updateDownloadTimeoutSeconds": int(default("updater.py", "download_installer", "timeout")),
         "maxInstallerMB": const("updater.py", "MAX_INSTALLER_BYTES") // MIB,
         "noUpdateCheckEnv": const("updater.py", "NO_CHECK_ENV"),
+        "apiAddressEnv": "ANTHROPIC_BASE_URL",           # checked against the SDK below
         "modelEnv": one(r'os\.environ\.get\("(SPEC_SURGEON_MODEL)"', llm_src, "the model's environment variable"),
         "loopback": one(r'host="([\d.]+)", port=port', source("web/shell.py"), "web.shell.serve's host"),
         "tokenHeader": const("web/server.py", "TOKEN_HEADER"),
@@ -200,6 +201,9 @@ def test_the_anthropic_host_is_the_sdk_s_default(monkeypatch):
     client = anthropic.Anthropic(api_key="sk-ant-test-not-a-key")
     assert client.base_url.host == facts()["anthropicHost"]
     assert "base_url" not in source("llm.py").split("def client()")[1].split("def ")[0], "llm.client sets no address"
+    # the one switch that moves it, which the copy names: the SDK reads it from the environment
+    monkeypatch.setenv(facts()["apiAddressEnv"], "https://proxy.example.invalid")
+    assert anthropic.Anthropic(api_key="sk-ant-test-not-a-key").base_url.host == "proxy.example.invalid"
 
 
 def test_the_copy_s_cache_and_fallback_sentences_match_the_code():
@@ -231,6 +235,14 @@ def test_the_copy_types_no_number_of_its_own():
         pieces = [a or b for a, b in strings] + jsx
         offenders = [p for p in pieces if re.search(r"\d", allowed.sub("", p)) and not re.fullmatch(r"[AB]\d+", p)]
         assert not offenders, f"{path.name}: numbers typed into the copy instead of read from TRUST_FACTS: {offenders}"
+
+
+def test_the_sample_count_is_a_target_not_a_minimum():
+    """``representative_samples`` fills up to its target from the files there are: a batch of three has three samples."""
+    from spec_surgeon.sampling import representative_samples
+    assert len(representative_samples(["a", "b", "c"], pattern_key=lambda x: x)) == 3
+    for path in COPY_FILES[:3]:
+        assert not re.search(r"at least \$?\{F\.sampleFiles\}", path.read_text(encoding="utf-8")), path.name
 
 
 def test_the_ledger_covers_the_facts_and_the_rule():

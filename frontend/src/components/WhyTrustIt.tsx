@@ -68,7 +68,7 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
           },
           {
             t: "Your documents go to Anthropic, and nowhere else",
-            d: `To plan, ${MODEL_NAME} reads what it needs — text, structure, rendered pages — over HTTPS to Anthropic’s API, with your own key. There is no Spec Surgeon server, account or upload: copies, records and logs stay on this computer. One known gap: a picture link written into Claude’s reply would be loaded from the web — the long answer explains.`,
+            d: `To plan, ${MODEL_NAME} (the default model) reads what it needs — text, structure, rendered pages — over HTTPS to Anthropic’s API, with your own key; only the ${F.apiAddressEnv} environment variable, which the window never sets, could send them elsewhere. There is no Spec Surgeon server, account or upload: copies, records and logs stay on this computer. One known gap: a picture link written into Claude’s reply would be loaded from the web — the long answer explains.`,
           },
           {
             t: "Your key and your spending stay in view",
