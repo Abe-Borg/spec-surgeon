@@ -791,9 +791,13 @@ CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
         "of paragraphs or of paragraph styles": "properties",
         "tab stops of paragraphs (set, clear, clear the others)": "tab_stops",
         "paragraph borders and shading of paragraphs or of paragraph styles": "borders_shading",
+        "borders, cell margins, width, repeated header rows and row splitting of tables, the tables named by "
+        "position (one assertion per table)": "table_props",
+        "shading, width, vertical alignment and no-wrap of table cells, the tables, rows and columns named by "
+        "position (one assertion per table and row or column range)": "table_cells",
     },
-    "cannot": ["numbering and lists",
-               "tables", "images", "fields", "comments", "tracked changes", "any change of words"],
+    "cannot": ["numbering and lists", "table structure (rows, cells, merges, the grid) and table styles",
+               "images", "fields", "comments", "tracked changes", "any change of words"],
     "rules": ["plain (untracked) formatting only", "only the document's text parts (body, headers, footers, footnotes, "
               "endnotes, comments) and its styles part may change", "edited copies only — never written over the "
               "user's files"],

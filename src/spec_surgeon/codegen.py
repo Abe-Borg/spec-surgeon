@@ -59,7 +59,8 @@ from .resources import (DEFAULT_CONTEXT_TOKENS, DEFAULT_EFFORT, DEFAULT_MAX_ATTE
 ALLOWED_FROM: Dict[str, set] = {
     "spec_surgeon.ops.base": {"Op", "PlanFragment", "BlockDiff", "JobException"},
     "spec_surgeon.package": {"W", "NS", "R", "DocxPackage", "serialize_xml", "parse_xml"},
-    "spec_surgeon.ooxml": {"PPR_ORDER", "RPR_ORDER", "SECTPR_ORDER", "STYLE_ORDER", "insert_in_order", "get_or_add",
+    "spec_surgeon.ooxml": {"PPR_ORDER", "RPR_ORDER", "SECTPR_ORDER", "STYLE_ORDER", "TBLPR_ORDER", "TRPR_ORDER",
+                           "TCPR_ORDER", "insert_in_order", "get_or_add",
                            "paragraphs", "paragraph_ppr", "run_rpr", "mark_rpr", "set_rfonts", "block_full_text",
                            "count_revisions", "THEME_FONT_ATTR", "own_size", "set_size"},
     "spec_surgeon.ops.selectors": {"resolve_sections", "scope_parts", "paragraph_selected", "check_paragraph_selector",

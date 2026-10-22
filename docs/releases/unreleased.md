@@ -52,6 +52,10 @@ Changes since v1.8.0.
   write a one-off custom method for it, as it already could for bold, fonts or spacing. The list of what a custom
   method may do had fallen behind the checker: highlight, superscript and subscript, hidden text, character spacing
   and double strikethrough were already checked, but the list still said highlight could not be done.
+- **Custom methods can format tables.** Table borders, cell margins, widths, shading, vertical alignment, repeated
+  header rows and rows kept whole are now within a custom method's reach, on the tables, rows and cells it picks
+  ("shade every other row of the equipment schedules"). Every cell's text, the rows, the merged cells and the grid
+  are checked unchanged; a method that touches them is refused.
 - **Tracked deletions go through redlined paragraphs.** Deleting paragraphs as a tracked change no longer sets aside a
   paragraph that holds someone's pending tracked changes. It deletes over them as Word does: text they inserted is
   deleted inside their insertion (rejecting it still removes all of it), text they deleted stays as it was, their
