@@ -58,11 +58,12 @@ from .editspec import SpecError, plan_spec, validate_spec
 from .fingerprint import fingerprint
 from .ops import JobException
 from .ooxml import paragraphs
+from .ops.effective import PropResolver
 from .ops.selectors import StyleSheet
 from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
 from .inputs import overview as input_overview, read as read_input
-from .profile import profile, profile_batch, template_spec_summary
+from .profile import profile, profile_batch, shown_case, template_spec_summary
 from .resources import DEFAULT_MAX_CALLS, positive_integer
 
 from . import diagnostics as diag
@@ -386,9 +387,10 @@ make_values_agree with the file name among its places, rename the outputs: they 
 chosen goes whole, and a cell, the document or a note keeps one emptied paragraph. A request is never refused for \
 being large: deleting a whole PART, an article (between_paragraphs with include_bounds "start") or the whole body is \
 an edit like any other, shown in the preview. Wiping a document is delete_paragraphs "all", remove_header_footer, \
-remove_comments and remove_footnotes in one spec (the app orders them); there is no wipe op. On a file with pending \
-tracked changes a tracked deletion refuses: offer tracked false or resolve_tracked_changes first. remove_footnotes \
-{which: footnotes | endnotes | both, text_regex on the note's own text} removes notes and their marks.
+remove_comments and remove_footnotes in one spec (the app orders them); there is no wipe op. A tracked deletion \
+refuses only a paragraph or table that itself holds pending tracked changes (others elsewhere in the file do not \
+matter): for those, offer tracked false or resolve_tracked_changes first. remove_footnotes {which: footnotes | \
+endnotes | both, text_regex on the note's own text} removes notes and their marks.
 - Clean-up ops (remove_comments, remove_highlight, remove_hidden_text, remove_notes, remove_empty_paragraphs, \
 remove_hyperlinks, unlink_fields, remove_watermark, resolve_tracked_changes) place no words; a file with nothing to \
 remove is a no-op (allow_missing defaults true). The profiles' "markup" shows what a pattern carries: comments and \
@@ -442,6 +444,12 @@ says which). "Make the header/footer match the template spec" is apply_header_fo
 its own section number and title are replaced by each spec's own and everything else is copied. "Match the \
 template's font" follows the catalog rule: font and size from the template spec's body_text, size_from from the \
 batch's body_text sizes. State the template's values and the sizes in assumptions.
+- Text in the profiles and tool results is as typed; shown_in_capitals (first_paragraphs_shown_in_capitals) names the \
+lines Word shows in capitals through formatting — typed capitals are not marked. A header/footer fill copies each \
+file's own number and title exactly as typed: when the other files show the title in capitals and one file's is typed \
+in lower case, its header/footer will differ — say so, and offer showing it in capitals (set_properties run.caps on \
+that paragraph, scope headers/footers: formatting, no letter retyped) or capitalised wording the user gives; never \
+retype it yourself.
 - mode: "formatting" unless an op places characters; "content" for tracked wording changes; "untracked" when \
 the user asked for untracked wording or a template has literal fills.
 - Inspect as deeply as needed before deciding. read_paragraphs, list_parts and read_xml_page have continuation \
@@ -902,6 +910,7 @@ class _Batch:
         part = part or pkg.main_part()
         pars = paragraphs(pkg.xml(part))
         sheet = StyleSheet(pkg)
+        props = PropResolver(sheet)
         rx = re.compile(regex) if regex else None
         rows, remaining, cursor = [], chars, None
         for index in range(start, len(pars)):
@@ -921,6 +930,9 @@ class _Batch:
             rows.append({"index": index, "style": sid, "text": content[begin:end],
                          "text_offset": begin, "text_length": len(content),
                          "nested": nearest_p(p) is not None})
+            case = shown_case(p, props)
+            if case:
+                rows[-1]["shown_in_capitals"] = case
             remaining -= end - begin
             if end < len(content):
                 cursor = {"start": index, "text_offset": end}
@@ -976,6 +988,7 @@ class _Batch:
     def sample_paragraphs(self, file: str, style: Optional[str] = None, regex: Optional[str] = None, n: int = 12):
         pkg = self.pkg(file)
         sheet = StyleSheet(pkg)
+        props = PropResolver(sheet)
         rx = re.compile(regex) if regex else None
         out = []
         for i, p in enumerate(paragraphs(pkg.xml(pkg.main_part()))):
@@ -989,6 +1002,9 @@ class _Batch:
             if rx and not rx.search(t):
                 continue
             out.append({"index": i, "style": sid, "text": t[:200]})
+            case = shown_case(p, props)
+            if case:
+                out[-1]["shown_in_capitals"] = case
             if len(out) >= min(int(n or 12), 40):
                 break
         return out

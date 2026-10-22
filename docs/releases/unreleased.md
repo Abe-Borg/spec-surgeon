@@ -21,3 +21,7 @@ Changes since v1.7.0.
 - **Only files you attached are used.** A table, picture or template the assistant names in a plan must be one you
   attached; a file anywhere else on the computer is refused, so its contents can never reach your documents
   without you choosing it. The assistant asks you to attach the file instead.
+- **Bookmarks survive a deletion.** Deleting paragraphs without tracked changes no longer breaks a bookmark that
+  starts or ends in a paragraph Word must keep (the last paragraph of a table cell, of the document or of its last
+  section, or a paragraph between two tables): that end of the bookmark now stays, so cross-references to it keep
+  working.
