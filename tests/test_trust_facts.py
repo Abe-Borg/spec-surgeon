@@ -258,3 +258,31 @@ def test_the_ledger_covers_the_facts_and_the_rule():
     for key in ("STEPS_PER_PAUSE", "AUTO_STEPS", "CHECK_INTERVAL", "SANDBOX_TIMEOUT", "DEFAULT_MEMORY_MB",
                 "MAX_CASES", "STOPPED_OUTPUT_RATE", "RETRY_DELAYS", "CONVERSATION_EFFORT", "RECOVERY_EFFORT"):
         assert key in ledger, f"the ledger names no source for {key}"
+
+
+def test_the_copy_names_the_exceptions_the_code_has():
+    """Behaviours the copy states in words, each tied to the code that has it: a custom method under an outcome plan
+    is not held to formatting only; a reply Claude declines leaves the conversation; two documents of one name are
+    named in the chat."""
+    level1 = (FRONTEND / "components" / "WhyTrustIt.tsx").read_text(encoding="utf-8")
+    dossier = (FRONTEND / "components" / "TrustDossier.tsx").read_text(encoding="utf-8")
+    runtime = (FRONTEND / "lib" / "trustRuntime.ts").read_text(encoding="utf-8")
+    # the governed path: hard_limits returns before the formatting-only limits when an outcome contract governs
+    hard = source("codegen.py").split("def hard_limits(")[1].split("\ndef ")[0]
+    assert hard.index("if goal_contract is not None:") < hard.index("may not change text in surviving parts")
+    assert "formatting-only custom_transform_limits do not apply to this governed path" in source("recovery.py")
+    assert "formatting only, unless it carries\n                out an outcome plan" in level1
+    assert "Formatting only, except under an outcome plan" in dossier
+    assert "A custom method writes its own prediction." in dossier
+    assert "sb.plan" in source("codegen.py").split("def _trial(")[1], "a custom method's trial checks its own plan"
+    # a declined reply is taken back
+    assert 'if problem and getattr(resp, "stop_reason", None) == "refusal":' in source("conversation.py")
+    assert "def _take_back(self)" in source("conversation.py")
+    assert "the message is taken back out of " in runtime
+    # two attached documents of one name
+    assert "def _say_same_names(" in source("document_task.py")
+    assert "Two attached documents with the same name" in runtime
+    # the browser fallback, with the token in the address
+    shell = source("web/shell.py")
+    assert "webbrowser.open(url)" in shell and '?token={state.token}' in shell
+    assert "opens the page in\n                your default browser instead" in dossier

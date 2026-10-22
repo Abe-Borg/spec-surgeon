@@ -71,7 +71,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "and used from there. Each file is then checked on arrival: does it open as a Word package, is it a .docx (not " +
       ".doc or .docm, not a ~$ lock file), does any part carry an XML document type declaration, does the body have a " +
       "paragraph. A refused file stays greyed out with the reason and never enters a plan. The rest are listed, with " +
-      "notes such as typed numbers or tracked changes.",
+      "notes such as typed numbers or tracked changes. Two attached documents with the same name are named once in " +
+      "the chat, with both folders, in case one of them was meant as the template.",
     sent: "Nothing.",
     ai: NONE,
     bounds:
@@ -91,7 +92,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds: "The file itself is not deleted or changed, and neither is a copy made of it earlier.",
   },
   {
-    covers: ["A5", "B4"],
+    covers: ["A5", "B4", "B15"],
     title: "Sending a request or an answer",
     you: "Type what you want, then Send or Enter.",
     runs:
@@ -111,7 +112,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds:
       `No spending ceiling. Every call counts toward a pause after ${F.stepsPerPause} AI steps. Stop now cuts the ` +
       "running call off. A call that fails appends nothing to the conversation; the error is shown, and Continue " +
-      "goes on from where it stopped.",
+      "goes on from where it stopped. If Claude declines to answer your message, the message is taken back out of " +
+      "the conversation (so it is not sent again with your next one), the chat says so in plain words, and nothing " +
+      "else changes.",
   },
   {
     covers: ["A6"],
@@ -185,8 +188,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "Nothing beyond your request: when no ordinary plan fits, the app continues on its own.",
     runs:
       "Claude proposes the outcomes to reach (what should change, where, with what wording). The app checks the " +
-      "proposal, carries it out without waiting for a pick, and tries methods on copies of your files. Each copy is " +
-      "checked by the independent checker; the plan's effects and pages are shown before anything is delivered.",
+      "proposal, carries it out without waiting for a pick, and tries methods on copies of your files: built-in " +
+      "operations or, when they fall short, a custom method that may make exactly the changes the outcomes name, " +
+      "their wording included (not only formatting). Each copy is checked by the independent checker against those " +
+      "outcomes; the plan's effects and pages are shown before anything is delivered.",
     sent: "To the Anthropic API: the request, your decisions, the file names, the profiles and the overview of every " +
       "document, and what its tools read.",
     ai: recoveryModel,

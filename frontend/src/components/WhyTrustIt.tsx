@@ -37,8 +37,9 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
             d: (
               <>
                 Claude turns your words into a plan of built-in operations, and the plan is checked before you see it.
-                When no operation fits, Claude may write a small formatting-only program instead; it runs in a sandbox
-                on copies and must pass the same checker.
+                When no operation fits, Claude may write a small program instead — formatting only, unless it carries
+                out an outcome plan you are shown — which runs in a sandbox on copies, predicts its own change, and must pass
+                the same checker.
               </>
             ),
           },

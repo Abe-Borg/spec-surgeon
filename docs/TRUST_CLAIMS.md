@@ -10,8 +10,10 @@ each of those values to the constant in the Python code.
 in the same change. That covers a new user action, a new network call, a new automatic behaviour, a change to the
 model or its settings, and a new or changed limit.
 
-Written 2026-10-22 against `master` at 3d1799b (version 1.8.0), from the code rather than the docs. Paths are relative
-to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
+Written 2026-10-22 against `master` at 3d1799b (version 1.8.0), from the code rather than the docs. Re-audited the
+same day against `master` at 099ee91 (C2–C6, A1 and the licence change): every model call site, network import,
+thread, timer, `/api` route and outside reference in the built page checked again; what changed is marked
+"(re-audit)". Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
 - `facts` means `tests/test_trust_facts.py` pins the value to its source constant.
@@ -43,12 +45,17 @@ to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 | A15 | **Work on the documents I set aside** | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
 | A16 | Click a page to enlarge it | page only; the image comes from `GET /api/image` | none |
 | A17 | About → **Check for updates** | `POST /api/update/check` | none |
-| A18 | **Download** / **Download and install** / **Restart to update** / **Not now** | `/api/update/download`, `/install`, `/dismiss` | none |
+| A18 | **Download** / **Download and install** / **Restart to update** / **Not now** | `/api/update/download`, `/install`; **Not now** hides the banner in the page only (`App.tsx` `dismissedUpdate`) | none |
 | A19 | About → **Open diagnostic logs** / **Save a diagnostic bundle** | `/api/logs`, `/api/diagnostics/bundle` | none |
-| A20 | Click a link: in the chat, in release notes, About's links, the releases page | the system browser (`target=_blank`; `/api/update/releases` → `webbrowser.open`) | none |
+| A20 | Click a link: in the chat, in release notes, About's links, the releases page | the system browser (`target=_blank`) | none |
 | A21 | **Reload the window** (shown only when the page fails to draw) | `frontend/src/components/ErrorBoundary.tsx` | none |
 
 Count: 21 actions.
+
+(re-audit) The server also has `/api/update/cancel`, `/api/update/skip`, `/api/update/dismiss`, `/api/update/releases`
+and `/api/quit`, behind the same launch token. The page calls none of them (`frontend/src/lib/api.ts`), so no click
+reaches them; they make no network call of their own except `/api/update/releases`, which opens the releases page in
+your browser (N4).
 
 ### 1b. What runs without a click (each has a runtime card or a row in one)
 
@@ -56,7 +63,7 @@ Count: 21 actions.
 | --- | --- | --- | --- | --- |
 | B1 | At start: archive the last conversation, report a session that never closed, tidy old installer downloads | `gui.main`, `DocumentTask.archive`, `diag.CrashWatch`, `UpdateFlow.startup` | none | none |
 | B2 | Automatic update check, at most once every 24 h | `UpdateFlow.auto_check`, `updater.should_auto_check` | none | GitHub |
-| B3 | Every attachment checked on arrival (triage) | `triage.triage`, `triage_reference` | none | none |
+| B3 | Every attachment checked on arrival (triage); two attached documents of one name are named in the chat with both folders (re-audit) | `triage.triage`, `triage_reference`, `DocumentTask._say_same_names` | none | none |
 | B4 | After a reply, up to `AUTO_STEPS` internal steps: make the preview, prepare a custom method, carry out a recovery plan | `DocumentTask._settle`, `Session.outcome` (`auto`) | yes | Anthropic |
 | B5 | The preview: plan every file, apply and verify samples in memory, render them | `Session.make_preview`, `preview.make_preview` | none | none |
 | B6 | Claude's visual check of the preview pages | `Session._visual_check` → `vision.review_samples` | yes | Anthropic |
@@ -68,9 +75,10 @@ Count: 21 actions.
 | B12 | The page polls `/api/state` and `/api/update` every 2 s while a job or download runs | `frontend/src/App.tsx` | none | loopback only |
 | B13 | Repair memory: past repair cases searched, reused and recorded during recovery | `recovery._investigate`, `repair_memory.CaseStore` | yes (sent with the request) | Anthropic |
 | B14 | The render cache serves pages it has rendered before | `render/cache.py` | none | none |
+| B15 | (re-audit) A reply Claude declines (`stop_reason` refusal, after the provider's own fallback) is taken back out of the history, its words no longer approved, and the chat says so in plain words | `Conversation._take_back`, `conversation.declined_text`, `contexts.checkpoint_history(withdrawn=)` | follows a call | none of its own |
 
-Count: 14 automatic behaviours. B4–B10 and B13 run only inside work a click started. B1–B3, B11, B12 and B14 involve
-no model.
+Count: 15 automatic behaviours. B4–B10, B13 and B15 run only inside work a click started. B1–B3, B11, B12 and B14
+involve no model.
 
 ### 1c. Network destinations
 
@@ -118,7 +126,7 @@ overrides it).
 | Conversation | Tools | Validated by |
 | --- | --- | --- |
 | Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, compare_files, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies) |
-| Custom-method writer (`codegen.py`) | the inspection tools + show_xml, find_paragraphs, list_styles, show_part_text, submit_op | `codegen.check_source` (import whitelist, forbidden names and attributes), sandbox run, `hard_limits`, `verify.run_suite` |
+| Custom-method writer (`codegen.py`) | the inspection tools + show_xml, find_paragraphs, list_styles, show_part_text, submit_op | `codegen.check_source` (import whitelist, forbidden names and attributes), sandbox run, `hard_limits`, `verify.run_suite`. (re-audit) Under an approved outcome contract (recovery's `custom_transform`), `hard_limits` returns before its formatting-only rules, `allowed_imports` adds `GOAL_FROM`, and the copy must also pass `goals.verify_goal` → `verify/goals.py` or `verify/effects.py` (independent) |
 | Visual check (`vision.py`) | submit_review | findings about pages it was not shown are dropped; advisory only |
 | Outcome planner (`campaign_planner.py`) | read tools, view_pages, list_documents, inspect_goal_effect, propose_plan, need_user, unsupported | `goals.validate_contract`, template pin, invisible characters |
 | Recovery (`recovery.py`) | read tools, read_template, inspect_xml, view_result, view_pages, recovery_status, trial_results, submit_repair, replan_goal, plan_repair, review_candidate, need_user, unsupported, custom_transform (with an approved outcome contract) | `recovery._candidate` (pinned assertions, `untraceable`, attached templates and inputs), trials on copies, `verify.run_suite` |
@@ -189,7 +197,12 @@ Every source of content in a delivered copy:
 - **Your files:** an attached template, picture or table, and the document's own words (template fills).
 - **The operations:** formatting and structure, which add zero characters.
 - **Claude's plan:** which operations, where. It is never wording; `compiler.untraceable` refuses unapproved words.
-- **Claude's custom method:** formatting only, with no text change allowed (`codegen.hard_limits`).
+- **Claude's custom method:** formatting only, with no text change allowed (`codegen.hard_limits`), outside an
+  outcome plan. (re-audit) Under an outcome plan it may make that plan's changes, wording included
+  (`recovery.ADAPTIVE_SYSTEM`: "The catalog's legacy formatting-only custom_transform_limits do not apply to this
+  governed path"), checked by the independent outcome check.
+- **A file's own section number and title** in a File Properties value built around your words (re-audit, C5:
+  `set_document_properties` `from_document`; `verify/docprops.py`).
 - **Claude's outcome plan in recovery:** its wording becomes approved when the app carries the plan out automatically
   (F1).
 - **Remembered repair cases:** tried again, never trusted.
@@ -200,7 +213,8 @@ How each is labelled:
 - Claude's visual findings are listed as warnings with file and page.
 - Notes that a change kept to one place leaves the same words elsewhere, or that a header/footer fill will show in
   another case than the template, are listed as warnings with the file; the plan writes them, not Claude
-  (`ops/elsewhere.py`, `planner.left_elsewhere_warnings`, from #80 and C4).
+  (`ops/elsewhere.py`, `planner.left_elsewhere_warnings`, from #80 and C4). So is a deletion over someone's pending
+  tracked changes, naming whose (re-audit, C6: `ops/deletion.pending_flag`).
 - A custom method's summary is Claude's own proposal text.
 - An outcome plan is shown as its effects (`review_display.effects`).
 
@@ -247,6 +261,9 @@ How each is labelled:
   - Every `/api` request needs the launch token (`secrets.token_urlsafe(24)`, compared in constant time).
   - Pictures are served only as PNGs under the run folder or the config folder (`image_allowed`).
   - Cross-origin requests are allowed only in the developer mode (`SPEC_SURGEON_DEV`).
+  - (re-audit) If no native window can open (`web/shell.native_backend_problem`: pywebview or its WebView2 backend
+    missing), the page opens in the default browser at the same loopback address with `?token=` in the URL
+    (`web/shell.main`), which the browser keeps in its history (F12).
 - **Untrusted XML:** a part with `<!DOCTYPE` is refused; XML is read without entity resolution (`package.py`).
 - **Model-written code:**
   - Both sandboxes run in a separate Python process (`-I`) with a stripped environment and an import whitelist.
@@ -269,6 +286,8 @@ All in the dossier's "What this does not do":
 - Untested on real files beyond the owner's runs (README "Limits").
 - Out-of-reach content (shapes, charts and more).
 - Weak sandbox on Windows.
+- (re-audit) A custom method's prediction is written by the method itself (`codegen._trial` runs `run_suite` against
+  `sb.plan`), bounded by `hard_limits` and V10's residual identity.
 - Repair memory crosses projects.
 - Data grows.
 
@@ -297,7 +316,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T2 | Each change is predicted from the original before anything is changed | Lv1, D(terms) | CLAUDE.md invariant 1; `Op.plan` | existing: `tests/test_ops.py` and the op suites |
 | T3 | The checker shares no code with the editing | Lv1, D(engine, terms) | `verify/` imports | existing: `tests/test_independence.py` |
 | T4 | A copy that fails its check is never delivered; it goes to `failed\` | Lv1, D(runtime A8, limits) | `batch.py` | existing: `tests/test_batch*.py` |
-| T5 | Claude never edits a file; it writes a plan (or, for a custom method, a program that runs in a sandbox and must pass the same checker) | Lv1, D(engine, blast radius) | `conversation.py`, `codegen._trial`, `codegen.run_generated` | manual + existing: `tests/test_codegen*.py` |
+| T5 | Claude never edits a file; it writes a plan (or, for a custom method, a program that runs in a sandbox and must pass the same checker) — formatting only, unless it carries out an outcome plan you are shown (re-audit: softened from "formatting-only") | Lv1, D(engine, blast radius) | `conversation.py`, `codegen._trial`, `codegen.run_generated`, `codegen.hard_limits` (`goal_contract`) | facts (`test_the_copy_names_the_exceptions_the_code_has`) + existing: `tests/test_codegen*.py` |
 | T6 | Words placed in a document come from your request, answers, picked choices or attached files, with one exception (F1) | Lv1, D(provenance) | `compiler.untraceable`, `conversation.sources`, `continuous_recovery.approve` | existing: `tests/test_compiler*.py`, `tests/test_document_task.py::test_recovery_plan_and_preview_stay_in_same_task_without_json` |
 | T7 | A tapped suggested reply is a decision, never approved wording | Lv1, D(provenance, runtime A6) | `DocumentTask._send` (`chip`), `Conversation.reply(approve=False)` | existing: `tests/test_document_task.py` |
 | T8 | Nothing is delivered without your click on Create edited copies or Save ready copies, and the click approves the exact plan and files on screen | Lv1, D(runtime A8, terms) | `DocumentTask._primary` token check; `preview.approval_token`; `Session.run` re-checks | existing: `tests/test_approval_handoff.py` |
@@ -317,7 +336,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T22 | view_pages renders at most 3 pages per call, on your machine | D(blast radius) | `compiler._Batch.view_pages` (`[:3]`) | facts (source text) |
 | T23 | Read tools take a file's label, never a path; only attached documents, the template and attached pictures/tables can be read | D(blast radius) | `compiler._Batch.pkg`, `inputs.read_input_file` | manual |
 | T24 | Model-written analysis runs in a separate process for at most 120 s and 1,024 MB, with no file, network or process access | D(blast radius) | `investigation.run_analysis`, `analysis_runner.py`, `resources` | facts |
-| T25 | A custom method is formatting only, runs in a separate process for at most 60 s and 2,048 MB, writes only in its own folder, and must pass the checker; up to 50 tries | D(blast radius, runtime B7) | `codegen.SANDBOX_TIMEOUT`, `MAX_ITER`, `process_limits.DEFAULT_MEMORY_MB`, `hard_limits`, `catalog.CUSTOM_TRANSFORM_LIMITS` | facts |
+| T25 | A custom method is formatting only (except under an outcome plan, where it may make that plan's changes and must also pass the outcome check), runs in a separate process for at most 60 s and 2,048 MB, writes only in its own folder, and must pass the checker; up to 50 tries | D(origins, blast radius, runtime B7, B8) | `codegen.SANDBOX_TIMEOUT`, `MAX_ITER`, `process_limits.DEFAULT_MEMORY_MB`, `hard_limits`, `catalog.CUSTOM_TRANSFORM_LIMITS`, `goals.verify_goal` | facts |
 | T26a | Documents and the key go only to `api.anthropic.com`, unless `ANTHROPIC_BASE_URL` (read by the SDK, never set by the window) names another address | Lv1, D(engine, boundary, runtime A5) | `llm.client` (`anthropic.Anthropic()` with no address) | facts (`apiAddressEnv`: the SDK honours it) |
 | T26 | The model has no web search, no web fetch, no code execution on Anthropic's side, and no access to your file system or network | Lv1, D(blast radius) | tool lists; `llm.tool_uses` | manual |
 | T27 | The window's server listens on 127.0.0.1 only and refuses a request without the launch token | D(security) | `web/shell.serve`, `server.require_token` | facts (`loopback`, `tokenHeader`) + existing: `tests/test_web_server.py` |
@@ -336,6 +355,11 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T40 | Without a network, files still attach and are checked, copies open, logs and bundles work; nothing can be planned, because every request goes through Claude | D(no AI) | `DocumentTask._ready_to_talk`, triage | manual |
 | T41 | The sentences describing the plan are written by the operations' own code from the plan, not by Claude | D(provenance) | `review_display.spec_changes` → `change_sentence` (`Op.describe`) | existing: `tests/test_describe.py` |
 | T42 | Help's "Why trust it?" opens the dossier, which stacks on it; one Escape closes one dialog; focus returns | — | `HelpModal.tsx`, `dialogFocus.ts`, `dialogStack.ts` | trust.test, flows |
+| T43 | (re-audit) A message Claude declines is taken back out of the conversation, so it is not sent again with the next one; the chat says so; nothing else changes | D(runtime A5) | `Conversation._take_back`, `declined_text` | facts (source text) + existing: `tests/test_conversation.py::test_a_reply_claude_declines_is_taken_back_and_said_in_plain_words` |
+| T44 | (re-audit) Two attached documents with one name are named in the chat with both folders | D(runtime A3) | `DocumentTask._say_same_names` | facts (source text) + existing: `tests/test_document_task.py` ("are named") |
+| T45 | (re-audit) A custom method's prediction is its own program's; the app bounds it and V10 holds everything else unchanged | D(limits) | `codegen._trial` (`run_suite(..., sb.plan, ...)`), `hard_limits` | facts (source text) |
+| T46 | (re-audit) Without a native window the page opens in the default browser on the loopback address, the token in its URL | D(security) | `web/shell.native_backend_problem`, `main` | facts (source text) |
+| T47 | (re-audit) A File Properties value can be built from each file's own section number and title around your words | D(provenance) | `ops/docprops.py` `from_document`, `verify/docprops.py` | existing: `tests/test_properties_from_document.py` |
 
 ## 3. Findings (reported, not fixed in this change)
 
@@ -360,7 +384,10 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
   - But `chat\context\active-*.json`, `chat\context-catalog\*.json` and recovery `conversations\` are `.json` files in
     folders the bundle does not skip (`BUNDLE_SKIP_DIRS`). They hold the lossless provider history, including the
     base64 page images from `view_pages` and tool results with document text (files up to 25 MiB).
-  - The dossier says the bundle can contain them. The About tooltip and README still say otherwise.
+  - The dossier says the bundle can contain them.
+  - (re-audit) The About tooltip, the README, `docs/CONVERSATIONAL_DESKTOP.md` and (in this change) the release
+    notes now agree. The bundle's own `MANIFEST.txt` (`diagnostics.diagnostic_bundle`: "No document, picture or page image is
+    in it") still says otherwise.
 - **F4. Repair memory crosses projects and has no clear button.**
   - `repair-memory.sqlite3` keeps up to 2,000 cases across sessions: the request verbatim, candidate wording,
     generated code.
@@ -386,6 +413,8 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
   - Still true after #77 (which made "high" the default and refused "max"): master's README says "custom methods at
     high"; this branch's merge rewords it to the code's behaviour.
   - The new copy states the code's behaviour.
+  - (re-audit) Resolved in the docs: README, Help and `docs/CONVERSATIONAL_DESKTOP.md` now say medium for a custom
+    method inside a turn and high inside recovery. Only F11's docstring still disagrees.
 - **F8. A custom method is written and tried without a separate click.**
   - When the conversation turns a request over to a custom method (`custom_transform` choice), the window takes it
     automatically (`AUTO_STEPS`). Claude writes Python that runs in the sandbox on copies of sample files before you
@@ -399,4 +428,15 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
   - `campaign_planner.inspect_goal_effect` defaults `author="Abraham Borg"`.
 - **F11. A doc comment disagrees with the code.**
   - `document_task.py`'s module docstring says "every model call writes up to the model's maximum output at high
-    effort"; the conversation runs at medium.
+    effort"; the conversation runs at medium. (re-audit: still there.)
+- **F12. (re-audit) The browser fallback puts the launch token in the browser's history.**
+  - When no native window can open, `web/shell.main` opens `http://127.0.0.1:<port>/?token=…` in the default browser.
+    The token is good only for that launch and the address only on this computer, but the browser keeps it in its
+    history (and a browser that syncs history sends it to that browser's account). The installed app ships WebView2's
+    backend, so this needs WebView2 to be missing or broken. The dossier's security table says so.
+- **F13. (re-audit) A custom method predicts itself.**
+  - Not a contradiction of the code but of a reading of the copy: "every change is predicted, then proved" holds for a
+    custom method only against the program's own prediction. `hard_limits` (no text change in surviving parts, no new
+    member, no revision, text and styles parts only) and V10's residual identity bound it; the method's description
+    in the plan is Claude's text. The dossier's limits now say so, and Level 1's custom-method sentence says the
+    program predicts its own change.
