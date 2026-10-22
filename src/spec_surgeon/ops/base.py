@@ -76,6 +76,9 @@ GEOMETRY_REFERENCES = ("source", "template", "none")
 # consistency.md C3): the preview gathers these flags for every file, for the user and for the assistant. A flag
 # only — nothing is predicted from it, so the reads behind it are no ``touches``.
 LEFT_ELSEWHERE = "Not changed elsewhere: "
+# The start of a flag that says a header/footer fill will show in another case than the template's own text shows
+# (C4); gathered like ``LEFT_ELSEWHERE``.
+CASE_DIFFERS = "In another case than the template: "
 
 
 @dataclass

@@ -103,7 +103,10 @@ and Settings.
    sample documents with their page counts, and **Left untouched**: any file the plan cannot cover, with the reason.
    When a change is kept to one place and the same words remain elsewhere (the footer renamed while the first page
    keeps the old title, a header filled with a title the document does not have), a note beside the pages names the
-   document and where; Spec Surgeon offers to change those too when you reply, and never does it unasked.
+   document and where; Spec Surgeon offers to change those too when you reply, and never does it unasked. A header or
+   footer fill that will show in another case than the template's (a title typed "Identification for …" where the
+   template shows "DOOR HARDWARE") is noted the same way; "show it in capitals like the template" makes it look so
+   through formatting, without retyping a letter.
    Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
    others).
 6. **Create edited copies.** One button, in the conversation above the box you type in, approves the displayed plan.

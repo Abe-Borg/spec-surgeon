@@ -20,7 +20,8 @@
       styles/theme vs the TEMPLATE's) identical, tab stops rescaled by the declared rule; the run sequence equal
       to the template's with each run a slot touches cut at the slot's edges and each slot collapsed to one fill
       run (its highlight gone for highlight slots), every run's content (text and other children, in order) as
-      modelled;
+      modelled; a slot named in ``caps_fills`` (docs/PLAN-2026-10-22-batch-consistency.md C4) shows its fill in
+      capitals by formatting — its run's effective caps on, its letters and every other property as above;
     - ``wp:docPr`` ids of the part unique in the whole output.
 * ``styles_added`` — independently derive equivalent styles and the missing dependency closure; exactly those
   definitions may be added, with checked reference/identity remapping and extension markup removed.
@@ -805,6 +806,9 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
             return tag
     if fills != a.get("expected_fills"):
         errs.append(f"{tag}: fills re-extracted here {fills} differ from the plan's {a.get('expected_fills')}")
+    caps_fills = set(a.get("caps_fills") or [])          # C4: these slots' filled runs show in capitals (w:caps)
+    if caps_fills - set(fills):
+        errs.append(f"{tag}: caps_fills {sorted(caps_fills - set(fills))} name no fill")
     t_pars, o_pars = list(troot.iter(W + "p")), list(oroot.iter(W + "p"))
     slots: Dict[int, List[Dict[str, Any]]] = {}
     markers = a.get("slot_markers", ["highlight", "braces"])
@@ -902,6 +906,9 @@ def check_template_part(ctx, a: Dict[str, Any], errs: List[str]) -> str:
                         expected_rpr.remove(old_style)
                     if mapped_style is not None:
                         expected_rpr.append(etree.fromstring(etree.tostring(mapped_style)))
+                if slot and slot["name"] in caps_fills:
+                    # capitals by formatting: the filled run's caps is on, every other property as the template's
+                    expected_effective = dict(expected_effective, caps=True)
                 if _rpr_rest(expected_rpr) != _rpr_rest(orpr):
                     errs.append(f"{rw}: run properties outside the pinnable set differ from the template's"
                                 + (" (slot highlight must go)" if slot and slot["highlight"] else ""))

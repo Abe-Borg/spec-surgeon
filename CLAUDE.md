@@ -60,7 +60,7 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `ops/` — the operation library: `base.py` (`Op`, `PlanFragment`, `merge_fragments`, `JobException`),
     `selectors.py`, `table_select.py`, `prose.py` (the words of `describe()`), one module per op, shared cores
     (`textedit.py`, `slots.py`, `effective.py`, `lists.py`, `style_import.py`, `images.py`, `hf_common.py`),
-    `elsewhere.py` (flags naming where a change kept to one place leaves the same words; `plan_spec` runs it).
+    `elsewhere.py` (flags naming where a change kept to one place leaves the same words, and a fill in another case than the template; `plan_spec` runs it).
   - `verify/` — the INDEPENDENT verifier: `suite.py` (V1–V10 as a `VerificationRecord`), `props.py` (V10 dispatch, the
     residual identity check; each op family's kinds live in their own module, imported at its end), `reader.py`,
     `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py`, `explain.py`.

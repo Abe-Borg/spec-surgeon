@@ -45,7 +45,7 @@ from .base import BlockDiff, JobException, Op, PlanFragment
 from .effective import AmbiguousToggle, Resolver, rescale_tabs, text_width, theme_fonts, theme_part
 from .hf_common import (FOOTER_CT, HEADER_CT, KINDS, TYPES, apply_removal, check_part_relationships, effective_refs,
                         plan_removal, refs)
-from .selectors import StyleSheet
+from .selectors import DEFAULT_PRESERVE_FONTS, StyleSheet, is_symbol_rpr
 from .template_styles import reconcile_styles, remap_references, reference_parts
 from .slots import (apply_slot, display_segments, expected_block_text, extract_fill, field_runs, fill_reads, find_slots, mark_slots, nearest_p,
                     paragraph_runs, reference_values, rule_uses_literal)
@@ -117,6 +117,19 @@ def _slot_appearance(p, slots, slot, resolver):
             rpr.append(etree.fromstring(etree.tostring(value)))
     colour = resolver.run(donor.find(W + "rPr"), p)["color"] if donor is not None else resolver.run(rpr, p)["color"]
     return {"color": list(colour), "elements": [etree.tostring(e).decode() for e in rpr if e.tag in (W + "highlight", W + "shd")]}
+
+
+def _slot_run(p, slot):
+    """The run a slot starts in: the one its fill goes into, keeping its properties."""
+    _, segments = display_segments(p)
+    return next(r for _, r, a, b in segments if a <= slot.start < b)
+
+
+def _shown_case(p, slot, resolver) -> Optional[str]:
+    """How the template shows a slot's letters through formatting — "capitals" or "small capitals" when its run has
+    caps or smallCaps in effect, else None."""
+    eff = resolver.run(_slot_run(p, slot).find(W + "rPr"), p)
+    return "capitals" if eff.get("caps") else ("small capitals" if eff.get("smallCaps") else None)
 
 
 def pin_paragraph(p, pins: Dict[str, Any]) -> None:
@@ -284,6 +297,10 @@ class ApplyHeaderFooterTemplate(Op):
         "highlight_colors": {"type": "array", "items": {"type": "string"}, "default": ["yellow"]},
         "slot_formatting": {"type": "string", "enum": ["clear", "keep"], "default": "clear",
                             "description": "clear copies surrounding run colour/highlight/shading onto filled slots; keep preserves placeholder formatting"},
+        "caps_fills": {"type": "array", "items": {"type": "string"}, "default": [],
+                       "description": "slot names whose fill shows in capitals: w:caps on the filled run, a display "
+                                      "property — no letter is retyped, the fill stays the file's own words ('show "
+                                      "the title in capitals like the template'); each must have a fill rule"},
         "rescale_tabs": {"type": "boolean", "default": True},
         "align_header_footer_distance": {"type": "boolean", "default": True,
                                          "description": "set each section's pgMar header/footer to the template's"},
@@ -350,6 +367,10 @@ class ApplyHeaderFooterTemplate(Op):
         extras: List[str] = []
         if params.get("slot_formatting") == "keep":
             extras.append("placeholder formatting is kept")
+        caps = [str(n) for n in params.get("caps_fills") or []]
+        if caps:
+            extras.append(prose.join([prose.quote(n) for n in caps]) + " " + ("shows" if len(caps) == 1 else "show")
+                          + " in capitals (formatting only; no letter is retyped)")
         if params.get("rescale_tabs") is False:
             extras.append("tab stops are not rescaled")
         if params.get("align_header_footer_distance") is False:
@@ -384,6 +405,9 @@ class ApplyHeaderFooterTemplate(Op):
         binding_rules = params.get("slot_bindings") or {}
         if params.get("slot_formatting", "clear") not in ("clear", "keep"):
             raise JobException("slot_formatting must be 'clear' or 'keep'", "bad-params")
+        caps_fills = params.get("caps_fills") or []
+        if not isinstance(caps_fills, list) or not all(isinstance(n, str) for n in caps_fills):
+            raise JobException("caps_fills must be a list of slot names", "bad-params")
         if not isinstance(binding_rules, dict):
             raise JobException("slot_bindings must map slot names to source-bound literals", "bad-params")
         effective_fills = {**fills_spec, **binding_rules}
@@ -488,6 +512,9 @@ class ApplyHeaderFooterTemplate(Op):
         unfilled = sorted(all_slot_names - set(effective_fills))
         if unfilled:
             raise JobException(f"template slot(s) {unfilled} have no fill rule", "unfilled-slot", {"slots": unfilled})
+        unruled = sorted(set(caps_fills) - set(effective_fills))
+        if unruled:
+            raise JobException(f"caps_fills names {unruled}, which have no fill rule", "bad-params", {"caps_fills": unruled})
         # A rule is "unknown" only when it names a slot in NONE of the template sections the spec maps — not merely
         # none this document happens to use: a single-section spec in a batch mapped to a cover+body template uses
         # the cover's parts only, and the body's SECTION_NUMBER / SECTION_TITLE rules are still the batch's rules.
@@ -618,8 +645,26 @@ class ApplyHeaderFooterTemplate(Op):
                 after = expected_block_text(p, sl, fills) if sl else block_full_text(p)
                 frag.diffs.append(BlockDiff(part=c["part"], block_index=bi, before=None, after=after,
                                             note=f"from template {tp}" + (f"; slots {[s.name for s in sl]}" if sl else "")))
-            c["slots"] = {str(bi): [{"name": s.name, "marker": s.marker, "start": s.start, "end": s.end}
+            # what each slot shows in the template (its own text, in capitals or not) — for the case note
+            # (ops/elsewhere.py, C4); "caps" — the fill shows in capitals by formatting (caps_fills)
+            c["slots"] = {str(bi): [{"name": s.name, "marker": s.marker, "start": s.start, "end": s.end,
+                                     "template_text": s.placeholder, "shown": _shown_case(paragraphs(troot)[bi], s, tres),
+                                     **({"caps": True} if s.name in caps_fills else {})}
                                     for s in sl] for bi, sl in slots_by_copy[k].items()}
+            for bi, sl in c["slots"].items():
+                # as set_properties: caps never touch a symbol-font run (Word case-maps the code: another glyph)
+                symbol = sorted({s.name for s in slots_by_copy[k][int(bi)] if s.name in caps_fills and is_symbol_rpr(
+                    _slot_run(paragraphs(troot)[int(bi)], s).find(W + "rPr"), paragraphs(troot)[int(bi)], tsheet,
+                    DEFAULT_PRESERVE_FONTS)})
+                if symbol:
+                    raise JobException(f"caps_fills {symbol}: the template's slot is in a symbol font ({tp}); "
+                                       f"capitals would change its glyphs", "bad-params",
+                                       {"caps_fills": symbol, "part": tp})
+                small = sorted({e["name"] for e in sl if e.get("caps") and e["shown"] == "small capitals"})
+                if small:
+                    raise JobException(f"caps_fills {small}: the template shows {'this slot' if len(small) == 1 else 'these slots'} "
+                                       f"in small capitals ({tp}); Word shows a run in capitals or in small capitals, "
+                                       f"never both", "bad-params", {"caps_fills": small, "part": tp})
             if params.get("slot_formatting", "clear") == "clear":
                 for bi, sl in slots_by_copy[k].items():
                     for entry, slot in zip(c["slots"][str(bi)], sl):
@@ -704,6 +749,7 @@ class ApplyHeaderFooterTemplate(Op):
                 "target_sections": c["target_sections"], "rescale_tabs": rescale, "slot_markers": markers,
                 "highlight_colors": colors, "fills": effective_fills, "expected_fills": fills,
                 "template_fill_rules": fills_spec, "slot_formatting": params.get("slot_formatting", "clear"),
+                "caps_fills": sorted(set(caps_fills)),
                 "style_map": style_map, "style_parts": style_parts, "import_missing_styles": import_missing,
                 **({"template_values": ref_values} if reference else {})})
         if imported:
@@ -739,6 +785,9 @@ class ApplyHeaderFooterTemplate(Op):
                               + (f", tabs {c['template_width']}→{c['target_width']}" if c['template_width'] != c['target_width'] else "")
                               for c in copies))
         frag.notes.append("fills: " + "; ".join(f"{n} = {fills[n]!r} ({effective_fills[n].get('rule')})" for n in sorted(fills)))
+        if caps_fills:
+            frag.notes.append(f"shown in capitals by formatting (w:caps on the filled run; letters as filled): "
+                              f"{sorted(set(caps_fills))}")
         for name, binding in binding_rules.items():
             frag.notes.append(f"binding: {name} = {binding['value']!r} from {binding['part']} paragraph {binding['paragraph']} "
                               f"(source md5 {binding['source_md5']})")
@@ -798,6 +847,8 @@ class ApplyHeaderFooterTemplate(Op):
                         for xml in s["appearance"]["elements"]:
                             insert_in_order(rpr, etree.fromstring(xml.encode()), RPR_ORDER)
                         pin_rpr(rpr, {"color": s["appearance"]["color"]})
+                    if s.get("caps"):
+                        pin_rpr(run_rpr(filled), {"caps": True})     # capitals by formatting, no letter retyped
             for k, e in enumerate(troot.iter(WP + "docPr")):
                 e.set("id", str(c["docpr_start"] + k))
             payload[c["part"]] = (serialize_xml(troot), HEADER_CT if c["kind"] == "header" else FOOTER_CT)
