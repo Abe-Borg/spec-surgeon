@@ -9,6 +9,11 @@ the body, and ``roles`` — how the file encodes each specification role (styles
 with the concrete selector per role the file makes unambiguous (``structure.role_summary``). It is bounded
 (``MAX_PROFILE_BYTES``): long text is truncated and samples are dropped before structure is.
 
+Text is shown as typed. Where Word shows a line's lowercase letters as capitals through formatting (w:caps or
+w:smallCaps, direct or from a style), the line is named in ``shown_in_capitals`` (a header/footer view) or
+``first_paragraphs_shown_in_capitals`` (``shown_case``): typed capitals and displayed capitals call for different
+edits, and the text alone cannot tell them apart.
+
 ``profile_batch(files)`` groups files by structure pattern (fingerprint.pattern_id) and profiles one
 representative per pattern — the compiler sees one profile per pattern, not one per file.
 
@@ -29,7 +34,7 @@ from typing import Any, Dict, List, Optional, Sequence
 
 from .fingerprint import fingerprint
 from .ooxml import count_revisions, paragraphs
-from .ops.effective import AmbiguousToggle, Resolver, text_width, theme_fonts
+from .ops.effective import AmbiguousToggle, PropResolver, Resolver, text_width, theme_fonts
 from .ops.hf_common import KINDS, TYPES, effective_refs
 from .ops.selectors import StyleSheet
 from .ops.base import JobException
@@ -76,10 +81,45 @@ def _shown_text(p) -> str:
     return "".join(out)
 
 
-def _part_view(pkg: DocxPackage, part: str) -> Dict[str, Any]:
+CASE_WORDS = {"caps": "all capitals", "smallCaps": "small capitals"}
+
+
+def shown_case(p, props: PropResolver) -> Optional[str]:
+    """How Word shows the lowercase letters typed in a paragraph (its runs outside deletions, not those of a nested
+    paragraph): "all capitals" or "small capitals" when every run holding one has w:caps or w:smallCaps in effect —
+    directly or from its styles (``props``: set_properties' resolver) —, "partly capitals" when only some of them do,
+    "capitals and small capitals" for a mix of the two; None when none does, or when no letter is typed in lowercase
+    (typed capitals are the text itself, not formatting). Profiles show text as typed; this says how it looks."""
+    seen = []
+    for r in p.iter(W + "r"):
+        if nearest_p(r) is not p or any(a.tag in (W + "del", W + "moveFrom") for a in r.iterancestors()):
+            continue
+        if not any(c.islower() for t in r.findall(W + "t") for c in (t.text or "")):
+            continue
+        rpr = r.find(W + "rPr")
+        seen.append(next((e for e in ("caps", "smallCaps") if props.run_prop(rpr, p, e)[0] is True), None))
+    if not seen or set(seen) == {None}:
+        return None
+    if None in seen:
+        return "partly capitals"
+    return CASE_WORDS[seen[0]] if len(set(seen)) == 1 else "capitals and small capitals"
+
+
+PART_LINES = 6           # lines of a header/footer view (the rest counted in ``more_lines``)
+PART_LINES_THINNED = 2   # what the size bound leaves of each view before it drops the text
+PART_LINES_CUT = "header/footer lines beyond the first two (each view's more_lines counts them)"
+
+
+def _part_view(pkg: DocxPackage, part: str, props: PropResolver) -> Dict[str, Any]:
     root = pkg.xml(part)
-    lines = [_shown_text(p) for p in paragraphs(root) if nearest_p(p) is None]
-    view: Dict[str, Any] = {"part": part, "text": [_clip(t) for t in lines if t.strip()][:6]}
+    lines = [(_shown_text(p), p) for p in paragraphs(root) if nearest_p(p) is None]
+    lines = [(t, p) for t, p in lines if t.strip()]
+    view: Dict[str, Any] = {"part": part, "text": [_clip(t) for t, _ in lines[:PART_LINES]]}
+    if len(lines) > PART_LINES:
+        view["more_lines"] = len(lines) - PART_LINES
+    caps = {str(i): c for i, c in enumerate(shown_case(p, props) for _, p in lines[:PART_LINES]) if c}
+    if caps:
+        view["shown_in_capitals"] = caps
     f = _fields(root)
     if f:
         view["fields"] = f
@@ -240,6 +280,7 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
     sheet = StyleSheet(pkg)
     fonts = theme_fonts(pkg)
     res = Resolver(sheet, fonts)
+    props = PropResolver(sheet)
 
     sections = []
     for i, sp in enumerate(secs):
@@ -253,7 +294,7 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         for kind in KINDS:
             for v in s[kind + "s"].values():
                 if v["part"] not in parts_seen and pkg.has(v["part"]):
-                    parts_seen[v["part"]] = _part_view(pkg, v["part"])
+                    parts_seen[v["part"]] = _part_view(pkg, v["part"], props)
 
     body = [p for p in paragraphs(root) if nearest_p(p) is None]
     by_style: Dict[str, List[Any]] = {}
@@ -325,7 +366,9 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
     for k in ("footnotes", "endnotes", "comments"):
         if kinds.get(k):
             counts[k + "_parts"] = kinds[k]
-    first = [_clip(_shown_text(p)) for p in body if display_text(p).strip()][:8]
+    firsts = [p for p in body if display_text(p).strip()][:8]
+    first = [_clip(_shown_text(p)) for p in firsts]
+    first_caps = {str(i): c for i, c in enumerate(shown_case(p, props) for p in firsts) if c}
 
     prof: Dict[str, Any] = {
         "file": Path(pkg.name).name,
@@ -342,6 +385,8 @@ def profile(pkg: DocxPackage, fp: Optional[Dict[str, Any]] = None) -> Dict[str, 
         "counts": counts,
         "first_paragraphs": first,
     }
+    if first_caps:
+        prof["first_paragraphs_shown_in_capitals"] = first_caps
     if styles_unused is not None:      # not under counts: the size bound drops it before any section (counts stay)
         prof["styles_unused"] = styles_unused
     try:
@@ -800,9 +845,11 @@ def etree_local(qname: str) -> str:
 
 def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any]:
     """Shrink until the JSON fits ``limit`` — always. Samples go first (silently), then structure, each structural
-    cut recorded in ``truncated`` (what was omitted), and as a last resort only the file's identity, settings,
-    counts, the body text's font/size (``fonts.body_text`` — what "match the template's font" needs), the role
-    selectors and the omission list remain.
+    cut recorded in ``truncated`` (what was omitted). Header/footer lines are not a sample: a view thinned to its first
+    two lines counts the rest in its ``more_lines`` and the cut is recorded (``PART_LINES_CUT``) — read silently, a
+    footer of two lines looks like a different footer from one of four. As a last resort only the file's identity,
+    settings, counts, the body text's font/size (``fonts.body_text`` — what "match the template's font" needs), the
+    role selectors and the omission list remain.
 
     ``roles`` thins like a sample: its examples go with the style samples, then its markers and unresolved reasons
     with the hygiene signals, and the rest (counts, numbering, styles, selectors) after the list and table summaries
@@ -850,11 +897,33 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
             omitted.append(f"{len(parts) - n} header/footer part view(s)")
             prof["header_footer_parts"] = dict(list(parts.items())[:n])
 
+    def cut_first(n):                         # a sample: silently, with the capitals of the lines that go
+        prof["first_paragraphs"] = prof["first_paragraphs"][:n]
+        caps = {k: c for k, c in (prof.pop("first_paragraphs_shown_in_capitals", None) or {}).items() if int(k) < n}
+        if caps:
+            prof["first_paragraphs_shown_in_capitals"] = caps
+
+    def thin_part_text(n):                    # never silently: a missing footer line reads as a different footer
+        cut = False
+        for v in prof["header_footer_parts"].values():
+            if len(v.get("text") or []) > n:
+                v["more_lines"] = v.get("more_lines", 0) + len(v["text"]) - n
+                v["text"] = v["text"][:n]
+                caps = {k: c for k, c in (v.pop("shown_in_capitals", None) or {}).items() if int(k) < n}
+                if caps:
+                    v["shown_in_capitals"] = caps
+                cut = True
+        if cut:
+            omitted.append(PART_LINES_CUT)
+
     def drop_part_text():
         if any(v.get("text") for v in prof["header_footer_parts"].values()):
             omitted.append("header/footer text")
+        if PART_LINES_CUT in omitted:         # said by the line above now
+            omitted.remove(PART_LINES_CUT)
         for v in prof["header_footer_parts"].values():
-            v.pop("text", None)
+            for k in ("text", "more_lines", "shown_in_capitals"):
+                v.pop(k, None)
 
     def thin_styles():
         if len(prof["styles_in_use"]) > 6:
@@ -912,12 +981,12 @@ def bound(prof: Dict[str, Any], limit: int = MAX_PROFILE_BYTES) -> Dict[str, Any
             omitted.append("markup details beyond the first three of each kind")
 
     steps = [
-        lambda: prof.__setitem__("first_paragraphs", prof["first_paragraphs"][:3]),
+        lambda: cut_first(3),
         lambda: [st.pop("sample", None) for st in prof["styles_in_use"]],
         lambda: thin_role_examples(1),
         lambda: prof.__setitem__("styles_in_use", prof["styles_in_use"][:12]),
-        lambda: [v.__setitem__("text", v["text"][:2]) for v in prof["header_footer_parts"].values() if "text" in v],
-        lambda: prof.__setitem__("first_paragraphs", []),
+        lambda: thin_part_text(PART_LINES_THINNED),
+        lambda: cut_first(0),
         lambda: thin_role_examples(0),
         lambda: prof["fonts"].__setitem__("direct_in_runs", dict(list(prof["fonts"]["direct_in_runs"].items())[:4])),
         lambda: prof.pop("hygiene", None),
