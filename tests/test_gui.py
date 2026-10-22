@@ -651,8 +651,12 @@ def test_a_layout_run_whose_only_set_aside_document_had_no_layout_has_nothing_to
     s = Session(documents=docs, out_root=tmp_path / "out", visual_check=False)
     s._set_outcome(spec=plan, source="test")
     s.make_preview(False, quiet)
+    uncovered = {f.source for f in s.preview.batch_plan.exceptions}
+    assert len(uncovered) == 1
     s.run(False, False, quiet)
-    assert s.last_batch.counts() == {"PASS": 2, "FAIL": 0, "EXCEPTION": 1, "PENDING": 0}
+    # the document no layout covers was listed under Left untouched: Create leaves it as it is (never run, #91)
+    assert s.last_batch.counts() == {"PASS": 2, "FAIL": 0, "EXCEPTION": 0, "PENDING": 0}
+    assert not uncovered & {f.source for f in s.last_batch.files}
     calls = []
     _stub_recovery(monkeypatch, calls)
     assert s.resolve_remaining(quiet).startswith("Nothing to resolve")

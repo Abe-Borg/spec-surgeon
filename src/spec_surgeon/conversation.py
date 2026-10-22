@@ -859,7 +859,7 @@ class Conversation:
                           "verification; this fallback limit alone does not establish that a new built-in is needed.")
             return Turn("unsupported", message=msg, understanding=summary, choices=choices, spec=spec,
                         errors=list(rejections), images=images, custom_transform=verdict,
-                        custom_transform_reason=reason)
+                        custom_transform_reason=reason, leave_out=left_out)
         if spec.get("questions"):
             errors = list(rejections)
             questions = _texts(spec["questions"], "spec's questions", errors) or ["(the model asked an empty question)"]
