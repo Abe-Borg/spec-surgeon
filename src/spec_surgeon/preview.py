@@ -677,13 +677,13 @@ class ChainPreview(Preview):
             out.append(f"   {lab}: {sv.stages_text()} → verification {'PASS' if sv.passed else 'FAIL ' + str(failed)}"
                        + (f"; pages: {sv.pages_before} → {sv.pages_after}" if sv.pages_before is not None else "")
                        + (f"; images: {[i.name for i in sv.images]}" if sv.images else ""))
+            out += [f"     final requirement {entry['index']} {entry['status']}: {entry['summary']}"
+                    for entry in sv.outcomes]
         later = [(labels[str(Path(sv.source))], what) for sv in self.samples for what in sv.left_later]
         if later:
             out.append("\nWORDING LEFT ELSEWHERE BY THE LATER STEPS — on the sample files only (the later steps run on "
                        "the others once the step before them did; tell the user, and offer to change them too):")
             out += [f"   {lab}: {what}" for lab, what in later]
-            out += [f"     final requirement {entry['index']} {entry['status']}: {entry['summary']}"
-                    for entry in sv.outcomes]
         if self.review is not None:
             out.append("")
             out.append(self.review.to_text())
