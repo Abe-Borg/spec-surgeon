@@ -27,7 +27,7 @@ _DELETED = {W + "del", W + "moveFrom", W + "delText"}
 _BINDING_KEYS = {"source_sha256", "contract_sha256", "candidate_id", "target", "choice"}
 _REVISION_TAGS = {W + name for name in ("ins", "del", "moveFrom", "moveTo", "rPrChange", "pPrChange",
                   "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange",
-                  "numberingChange", "cellIns", "cellDel", "cellMerge")}
+                  "tblPrExChange", "numberingChange", "cellIns", "cellDel", "cellMerge")}
 
 
 def _hash_json(value: Any) -> str:

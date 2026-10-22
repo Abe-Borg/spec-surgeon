@@ -159,8 +159,9 @@ class VerificationRecord:
 
 CONTENT_REV = ("ins", "del", "moveFrom", "moveTo")
 OTHER_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange",
-             "numberingChange", "cellIns", "cellDel", "cellMerge")
-PROPERTY_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange")
+             "tblPrExChange", "numberingChange", "cellIns", "cellDel", "cellMerge")
+PROPERTY_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange",
+                "tblPrExChange")
 
 
 def structure_only(d: Dict[str, Any]) -> bool:
@@ -256,7 +257,7 @@ def _property_change_grammar(root, part: str) -> List[str]:
     the source's own baseline (Word itself omits w:id on some pPrChange elements)."""
     errs = []
     snapshot = {"rPrChange": "rPr", "pPrChange": "pPr", "sectPrChange": "sectPr", "tblPrChange": "tblPr",
-                "trPrChange": "trPr", "tcPrChange": "tcPr"}
+                "trPrChange": "trPr", "tcPrChange": "tcPr", "tblPrExChange": "tblPrEx"}
     for local, child in snapshot.items():
         for el in root.iter(W + local):
             where = f"{part}: w:{local} (id {el.get(W + 'id')})"

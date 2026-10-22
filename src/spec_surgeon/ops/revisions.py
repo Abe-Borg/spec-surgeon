@@ -5,11 +5,12 @@ resolves the SOURCE again with its own code (verify/revisions.py, kind ``resolve
 whole.
 
 **Revision elements** of a part: every ``w:ins``/``w:del``/``w:moveFrom``/``w:moveTo``, property change (``rPrChange``,
-``pPrChange``, ``sectPrChange``, ``tblPrChange``, ``trPrChange``, ``tcPrChange``, ``tblGridChange``, ``numberingChange``)
-and cell revision (``cellIns``, ``cellDel``, ``cellMerge``) that does not lie inside a property change (its snapshot is
-history, not a revision of its own). Where it sits decides what it is: ins/del/moveFrom/moveTo under a ``w:rPr`` are a
-paragraph mark's when that rPr is a ``w:pPr``'s (else an equation's: refused), under ``w:trPr`` a table row's (ins/del;
-a moved row is refused) and under ``w:numPr`` a numbering marker's (refused); anywhere else they wrap content.
+``pPrChange``, ``sectPrChange``, ``tblPrChange``, ``trPrChange``, ``tcPrChange``, ``tblGridChange``, ``tblPrExChange``
+— a row's table-property exceptions —, ``numberingChange``) and cell revision (``cellIns``, ``cellDel``, ``cellMerge``)
+that does not lie inside a property change (its snapshot is history, not a revision of its own). Where it sits decides
+what it is: ins/del/moveFrom/moveTo under a ``w:rPr`` are a paragraph mark's when that rPr is a ``w:pPr``'s (else an
+equation's: refused), under ``w:trPr`` a table row's (ins/del; a moved row is refused) and under ``w:numPr`` a numbering
+marker's (refused); anywhere else they wrap content.
 
 **Selected**: the author listed (casefolded, whitespace collapsed) — or no list — and the wall-clock ``w:date`` (its
 date and time, before a ``Z`` or an offset; never shifted) on or after ``on_or_after`` and before ``before``; under a
@@ -40,7 +41,8 @@ resolved, it holds nothing but ``w:pPr``, runs of ``w:rPr``/``w:lastRenderedPage
 wrappers holding nothing else and Word's ``_GoBack`` bookmark (both its ends go, wherever the other one is), a paragraph
 follows it in its container (block-level marks aside) and it carries no section break — otherwise two paragraphs would
 be joined and Word decides whose formatting the joined one keeps (``paragraph-merge``, ``section-break``); (6) a
-``w:rPr``, then a ``w:pPr``, that steps 4–5 left empty goes.
+``w:rPr``, then a ``w:pPr``, that steps 4–5 left empty goes (no other holder: a ``w:tblPrEx`` whose accepted
+``w:tblPrExChange`` was all it held stays, empty — valid, and it changes nothing).
 """
 from __future__ import annotations
 
@@ -63,7 +65,7 @@ from .table_select import own_rows
 
 CONTENT_TAGS = tuple(W + t for t in ("ins", "del", "moveFrom", "moveTo"))
 PROPERTY_CHANGE_TAGS = tuple(W + t for t in ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange",
-                                             "tcPrChange", "tblGridChange", "numberingChange"))
+                                             "tcPrChange", "tblGridChange", "tblPrExChange", "numberingChange"))
 CELL_TAGS = tuple(W + t for t in ("cellIns", "cellDel", "cellMerge"))
 REVISION_TAGS = CONTENT_TAGS + PROPERTY_CHANGE_TAGS + CELL_TAGS
 RANGE_START = {W + "moveFromRangeStart": "from", W + "moveToRangeStart": "to"}

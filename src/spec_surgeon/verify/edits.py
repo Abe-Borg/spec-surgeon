@@ -54,7 +54,7 @@ V_HIDING = {W + "del", W + "moveFrom"}
 V_TEXT = (W + "t", W + "delText", W + "instrText", W + "delInstrText", M + "t")
 V_REVISION_TAGS = {W + "ins", W + "del", W + "moveFrom", W + "moveTo", W + "rPrChange", W + "pPrChange",
                    W + "sectPrChange", W + "tblPrChange", W + "trPrChange", W + "tcPrChange", W + "tblGridChange",
-                   W + "numberingChange", W + "cellIns", W + "cellDel", W + "cellMerge"}
+                   W + "tblPrExChange", W + "numberingChange", W + "cellIns", W + "cellDel", W + "cellMerge"}
 
 
 @dataclass

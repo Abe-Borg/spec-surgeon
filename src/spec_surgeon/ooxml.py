@@ -411,7 +411,7 @@ def insert_ppr_child_in_order(ppr: etree._Element, child: etree._Element) -> Non
 
 CONTENT_REV_TAGS = ("ins", "del", "moveFrom", "moveTo")
 PROPERTY_REV_TAGS = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange",
-                     "tblGridChange", "numberingChange")
+                     "tblGridChange", "tblPrExChange", "numberingChange")
 CELL_REV_TAGS = ("cellIns", "cellDel", "cellMerge")
 
 

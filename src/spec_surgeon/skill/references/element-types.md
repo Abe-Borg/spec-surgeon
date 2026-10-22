@@ -54,7 +54,7 @@ Collect text per block as the concatenation of all of these in document order, a
 
 * `w:tbl` → `w:tblPr`, `w:tblGrid` (one `w:gridCol` per logical column), `w:tr` → optional `w:trPr`, `w:tc` → `w:tcPr` (`tcW`, `gridSpan`, `vMerge`, borders, shading, `vAlign` — schema order enforced like `pPr`) → block content. Every `w:tc` must end with a `w:p`; an empty cell is a cell with one empty paragraph. A cell with no paragraph is a repair prompt.
 * Inserting a column means every row gets a cell at the right grid position AND `w:tblGrid` gets a `w:gridCol`; `gridSpan` and `vMerge` mean the cell count per row is not the column count — walk the grid, not the cell index.
-* Tracked table changes have their own grammar: row insert/delete is `w:ins`/`w:del` inside `w:trPr`; cell changes are `w:cellIns`/`w:cellDel`/`w:cellMerge` inside `w:tcPr`; property changes are `tblPrChange`/`trPrChange`/`tcPrChange`. V4 must count these too, or a tracked row deletion looks like a silent deletion.
+* Tracked table changes have their own grammar: row insert/delete is `w:ins`/`w:del` inside `w:trPr`; cell changes are `w:cellIns`/`w:cellDel`/`w:cellMerge` inside `w:tcPr`; property changes are `tblPrChange`/`trPrChange`/`tcPrChange`/`tblGridChange`, and `tblPrExChange` inside a row's `w:tblPrEx` (its exceptions to the table's properties). V4 must count these too, or a tracked row deletion looks like a silent deletion.
 * Cell-paragraph spacing: see the LibreOffice pitch lesson in `ooxml-lessons.md` §6 — pin transplanted table-cell paragraphs explicitly.
 
 ## Sections
