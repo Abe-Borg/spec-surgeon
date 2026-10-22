@@ -1,8 +1,9 @@
 // Adapted from Build-a-Spec's frontend/src/components/HelpModal.tsx (copy-based reuse): the dialog, its tab strip and
-// the presentational helpers. The words are Spec Surgeon's own (docs/CONVERSATIONAL_DESKTOP.md); Why trust it is
-// not here yet. About takes over the old About box (release notes, license) and the old Help menu's Check for
-// updates and Open diagnostic logs.
-import { useEffect, useRef, useState, type ReactNode } from "react";
+// the presentational helpers (now in helpParts.tsx). The words are Spec Surgeon's own (docs/CONVERSATIONAL_DESKTOP.md).
+// Why trust it (WhyTrustIt.tsx) opens the "I'm not convinced" dossier (TrustDossier.tsx), which stacks on this dialog;
+// both are pinned to the code by docs/TRUST_CLAIMS.md and its tests. About takes over the old About box (release
+// notes, license) and the old Help menu's Check for updates and Open diagnostic logs.
+import { useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { About, Update } from "../types";
@@ -11,6 +12,9 @@ import { useDialogFocus } from "../lib/dialogFocus";
 import { HELP_TITLES, HELP_TOPICS, modelLabel, releaseNotesBody, updateStatus, type HelpTopic } from "../lib/help";
 import { primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
+import { Guide, Lead, Points, Recipe, Steps, Tag } from "./helpParts";
+import WhyTrustIt from "./WhyTrustIt";
+import TrustDossier from "./TrustDossier";
 
 interface Props {
   topic: HelpTopic | null;
@@ -41,82 +45,6 @@ const REMARK_PLUGINS = [remarkGfm];
 const MARKDOWN_COMPONENTS = {
   a: ({ node: _node, ...props }: React.ComponentProps<"a"> & { node?: unknown }) => <a {...props} {...EXTERNAL} />,
 };
-
-/* --- small presentational helpers, all on the existing palette --- */
-
-function Lead({ children }: { children: ReactNode }) {
-  return <p className="text-sm leading-relaxed text-ink-dim">{children}</p>;
-}
-
-/** A label the window shows, set apart in the text. */
-function Tag({ children }: { children: ReactNode }) {
-  return <span className="rounded bg-raised px-1.5 py-0.5 text-[12px] text-ink">{children}</span>;
-}
-
-/** Numbered, badge-led steps (getting started). */
-function Steps({ items }: { items: { t: string; d?: ReactNode }[] }) {
-  return (
-    <ol className="mt-3 space-y-3">
-      {items.map((s, i) => (
-        <li key={i} className="flex gap-3">
-          <span className="mt-0.5 flex h-5 w-5 flex-none items-center justify-center rounded-full bg-accent/15 text-[11px] font-semibold text-accent tabular-nums">
-            {i + 1}
-          </span>
-          <div className="text-sm leading-relaxed text-ink-dim">
-            <span className="font-medium text-ink">{s.t}</span>
-            {s.d ? <> — {s.d}</> : null}
-          </div>
-        </li>
-      ))}
-    </ol>
-  );
-}
-
-/** Bulleted point list. */
-function Points({ items }: { items: { t: string; d?: ReactNode }[] }) {
-  return (
-    <ul className="mt-3 space-y-3">
-      {items.map((p, i) => (
-        <li key={i} className="flex gap-2.5">
-          <span className="mt-[7px] h-1.5 w-1.5 flex-none rounded-full bg-accent" />
-          <div className="text-sm leading-relaxed text-ink-dim">
-            <span className="font-medium text-ink">{p.t}</span>
-            {p.d ? <> — {p.d}</> : null}
-          </div>
-        </li>
-      ))}
-    </ul>
-  );
-}
-
-/** A titled workflow recipe card. */
-function Recipe({ title, tagline, steps }: { title: string; tagline: string; steps: ReactNode[] }) {
-  return (
-    <div className="rounded-xl border border-edge bg-raised/40 p-4">
-      <h4 className="font-[family-name:var(--font-display)] text-[15px] font-semibold text-ink">{title}</h4>
-      <p className="mt-0.5 text-xs text-ink-faint">{tagline}</p>
-      <ol className="mt-3 space-y-1.5">
-        {steps.map((s, i) => (
-          <li key={i} className="flex gap-2.5 text-sm text-ink-dim">
-            <span className="text-ink-faint tabular-nums">{i + 1}.</span>
-            <span className="leading-relaxed">{s}</span>
-          </li>
-        ))}
-      </ol>
-    </div>
-  );
-}
-
-/** A bordered guide box with a title and a line under it. */
-function Guide({ title, tagline, children }: { title: string; tagline: string; children: ReactNode }) {
-  return (
-    <section className="rounded-xl border border-edge bg-raised/40 p-4">
-      <h4 className="font-[family-name:var(--font-display)] text-[15px] font-semibold text-ink">{title}</h4>
-      <p className="mt-0.5 text-xs text-ink-faint">{tagline}</p>
-      {children}
-    </section>
-  );
-}
 
 /* --- per-topic content --- */
 
@@ -168,7 +96,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
           },
           {
             t: "Describe the result",
-            d: "Type what you want and press Enter (Shift+Enter starts a new line). Spec Surgeon reads the documents before asking anything they can answer, goes ahead on sensible defaults and says what it assumed, and asks at most three questions, each with the answer it recommends. Click a choice, type its number, tap a suggested reply, or answer in your own words.",
+            d: "Type what you want and press Enter (Shift+Enter starts a new line). Spec Surgeon reads the documents before asking anything they can answer, goes ahead on sensible defaults and says what it assumed, and is told to ask at most three questions, each with the answer it recommends. Click a choice, type its number, tap a suggested reply, or answer in your own words.",
           },
           {
             t: "Look at the pages",
@@ -296,7 +224,7 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         steps={[
           "Ask: “Change ‘Issued for Bid’ to ‘Issued for Construction’ everywhere.”",
           "Check the new text on a sample’s pages before you approve.",
-          "Words that go into a document are always ones you typed or picked. A choice that would place words shows them beneath its button, and picking it approves exactly those words; a suggested reply you tap answers a question but never becomes document wording.",
+          "Words that go into a document are ones you typed or picked. A choice that would place words shows them beneath its button, and picking it approves exactly those words; a suggested reply you tap answers a question but never becomes document wording. The one exception: when no ordinary plan fits and the app carries out an outcome plan Claude proposed, that plan’s wording is used without a separate pick — it is shown in the plan you approve.",
         ]}
       />
       <Recipe
@@ -380,7 +308,7 @@ function HowItWorks() {
           },
           {
             t: "One model, with room to think",
-            d: "Every AI step runs Claude Opus 5.5 with room for its full answer: the conversation at the model’s default effort, the harder recovery work at a higher one. A plan usually takes one or two calls.",
+            d: "Every AI step runs Claude Opus 5.5 with room for its full answer: the conversation, and the visual check and custom methods it runs, at medium effort; recovery at high. A plan usually takes one or two calls.",
           },
           {
             t: "A clean start every time",
@@ -501,7 +429,7 @@ function AboutTopic({
               Open diagnostic logs
             </button>
           </Tip>
-          <Tip tip="Saves one zip with the app’s logs, its settings, your recent conversations and the logs and records of your recent runs, and shows it in Explorer: the one file to send when something went wrong. No document, picture or page image goes in it; conversations and records can quote your words and your documents’ text.">
+          <Tip tip="Saves one zip with the app’s logs, its settings, your recent conversations and the logs and records of your recent runs, and shows it in Explorer: the one file to send when something went wrong. Folders of copies and page pictures are left out, but conversations and records can quote your words and your documents’ text, and a conversation’s saved history can hold page images.">
             <button type="button" onClick={onSaveBundle} className={quietBtn}>
               Save a diagnostic bundle
             </button>
@@ -675,7 +603,15 @@ export default function HelpModal({
   onSaveBundle,
   bundleNote,
 }: Props) {
-  // Escape, Tab containment and focus restoration through the one hook every dialog uses.
+  // The "I'm not convinced" dossier stacks above this dialog. Local state, so leaving the topic or closing help drops
+  // it too.
+  const [deepDive, setDeepDive] = useState(false);
+  useEffect(() => {
+    if (topic !== "why-trust-it") setDeepDive(false);
+  }, [topic]);
+
+  // Escape, Tab containment and focus restoration through the one hook every dialog uses. The dossier uses the same
+  // hook; the shared dialog stack makes one Escape close only the topmost of the two.
   const panelRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
   useDialogFocus(Boolean(topic), panelRef, panelRef, onClose);
@@ -688,6 +624,7 @@ export default function HelpModal({
   if (!topic) return null;
 
   return (
+    <>
     <div
       className="fixed inset-0 z-[70] flex items-start justify-center bg-black/50 p-6 pt-16"
       onClick={onClose}
@@ -741,6 +678,7 @@ export default function HelpModal({
           {topic === "how-to-use" && <HowToUse stepsPerPause={stepsPerPause} />}
           {topic === "workflows" && <Workflows stepsPerPause={stepsPerPause} />}
           {topic === "how-it-works" && <HowItWorks />}
+          {topic === "why-trust-it" && <WhyTrustIt onDeepDive={() => setDeepDive(true)} />}
           {topic === "about" && (
             <AboutTopic
               version={version}
@@ -759,5 +697,8 @@ export default function HelpModal({
         </div>
       </div>
     </div>
+    {/* A sibling, not a child: a click on the dossier's own backdrop closes only the dossier. */}
+    <TrustDossier open={deepDive} onClose={() => setDeepDive(false)} />
+    </>
   );
 }

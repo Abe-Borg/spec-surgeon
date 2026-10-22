@@ -9,13 +9,14 @@ import type { Update, View } from "../types.ts";
 import { kindTag } from "./workbench.ts";
 
 /** The help topics the top bar opens. */
-export type HelpTopic = "how-to-use" | "workflows" | "how-it-works" | "about";
+export type HelpTopic = "how-to-use" | "workflows" | "how-it-works" | "why-trust-it" | "about";
 
 /** One list for the top bar's buttons and the help dialog's tab strip. */
 export const HELP_TOPICS: { id: HelpTopic; label: string }[] = [
   { id: "how-to-use", label: "How to use" },
   { id: "workflows", label: "Workflows" },
   { id: "how-it-works", label: "How it works" },
+  { id: "why-trust-it", label: "Why trust it" },
   { id: "about", label: "About" },
 ];
 
@@ -23,6 +24,7 @@ export const HELP_TITLES: Record<HelpTopic, string> = {
   "how-to-use": "How to use Spec Surgeon",
   workflows: "Typical workflows",
   "how-it-works": "How it works",
+  "why-trust-it": "Why trust it?",
   about: "About",
 };
 

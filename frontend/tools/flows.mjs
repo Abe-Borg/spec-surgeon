@@ -179,8 +179,8 @@ try {
   // 10. The top bar's help topics: one dialog, a tab strip, Escape closes it.
   const topBar = page.locator("header nav[aria-label='Help']");
   check(
-    "the top bar names the help topics, without Why trust it yet",
-    JSON.stringify(await topBar.getByRole("button").allInnerTexts()) === JSON.stringify(["How to use", "Workflows", "How it works", "About"]),
+    "the top bar names the help topics, Why trust it before About",
+    JSON.stringify(await topBar.getByRole("button").allInnerTexts()) === JSON.stringify(["How to use", "Workflows", "How it works", "Why trust it", "About"]),
     JSON.stringify(await topBar.getByRole("button").allInnerTexts()),
   );
   check("the old Help menu is gone", (await page.getByRole("button", { name: "Help ▾" }).count()) === 0);
@@ -197,6 +197,31 @@ try {
   await page.keyboard.press("Escape");
   await page.waitForTimeout(200);
   check("Escape closes the help dialog", (await page.getByRole("dialog").count()) === 0);
+
+  // 10b. Why trust it → the "I'm not convinced" dossier: it stacks on help, one Escape closes one dialog, focus returns.
+  await topBar.getByRole("button", { name: "Why trust it" }).click();
+  const trust = page.getByRole("dialog", { name: "Why trust it?" });
+  await trust.waitFor();
+  check("Why trust it opens with its claims", await trust.getByText("Your originals are never written").isVisible());
+  const notConvinced = trust.getByRole("button", { name: "I’m not convinced — show me exactly what runs →" });
+  await notConvinced.click();
+  const dossier = page.getByRole("dialog", { name: "How Spec Surgeon actually works" });
+  await dossier.waitFor();
+  check("the button opens the dossier on top of Why trust it", (await page.getByRole("dialog").count()) === 2);
+  check("focus moves into the dossier", await dossier.evaluate((el) => el.contains(document.activeElement)));
+  const cards = await dossier.locator("article").count();
+  const rows = await dossier.locator("article dt").allInnerTexts();
+  check("every runtime card answers the five rows", cards >= 12 && rows.length === cards * 5, `${cards} cards, ${rows.length} rows`);
+  check("the dossier's diagram says itself in words", ((await dossier.getByRole("img").first().getAttribute("aria-label")) ?? "").startsWith("Data flow."));
+  for (let i = 0; i < 4; i++) await page.keyboard.press("Shift+Tab");
+  check("Tab stays inside the dossier", await dossier.evaluate((el) => el.contains(document.activeElement)));
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  check("one Escape closes only the dossier", (await page.getByRole("dialog").count()) === 1 && (await trust.isVisible()));
+  check("focus returns to the button that opened it", await notConvinced.evaluate((el) => el === document.activeElement));
+  await page.keyboard.press("Escape");
+  await page.waitForTimeout(200);
+  check("a second Escape closes Why trust it", (await page.getByRole("dialog").count()) === 0);
 
   // 11. About: the version, the model, the release notes, the license; a check that finds nothing says so.
   await scenario("up-to-date");

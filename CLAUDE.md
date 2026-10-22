@@ -80,7 +80,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `render/` (Word COM, LibreOffice), `schemas/` (ECMA-376 XSDs), `skill/`, `examples/`.
 - `tests/` — pytest; `make_fixtures.py` and `fx_*.py` build synthetic documents; `fake_claude.py` scripts Claude;
   `conftest.py` seals keys, config dir and model; `describe_cases/` feeds `test_describe.py`.
-- `docs/` — design notes (`BUILTIN_OPS_BATCH*_DESIGN.md`), plans, `releases/`, `audits/`, `history/`.
+- `docs/` — design notes (`BUILTIN_OPS_BATCH*_DESIGN.md`), plans, `releases/`, `audits/`, `history/`; `TRUST_CLAIMS.md`
+  (the ledger behind the trust surfaces).
 - `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests.
 
 ## How to run
@@ -116,6 +117,18 @@ the newest runs' records.
    every new rule: a wrong output, and a wrong implementation shared by plan and apply.
 6. Every new refusal code in `report.FAILURE_EXPLANATIONS`; the op in `compiler.placed_words` if it places typed
    text; a `COMMON_ASSUMPTIONS` entry in `catalog.py`; at least one case in `tests/describe_cases/`.
+
+## The trust surfaces
+
+Help → **Why trust it?** (`frontend/src/components/WhyTrustIt.tsx`) and the "I'm not convinced" dossier it opens
+(`TrustDossier.tsx`, its cards in `lib/trustRuntime.ts`, its diagram in `TrustDiagram.tsx`) describe what the app does
+action by action. **The trust surfaces are a contract. Any change to a behaviour they describe updates them in the same
+change:** a new user action or button, a new network call or destination, a new automatic behaviour (a model call
+without its own click, a timer, a background job), a model, effort or caching change, a new or changed limit, or
+anything new kept on disk. Update `docs/TRUST_CLAIMS.md` (the ledger: every claim, its source, its test) with it. Every
+number the copy quotes lives in `frontend/src/lib/trustFacts.ts`, and `tests/test_trust_facts.py` pins each to its
+constant in the code; the copy never types a number itself. A trust document that has drifted from the code is worse
+than none.
 
 ## Session protocol
 

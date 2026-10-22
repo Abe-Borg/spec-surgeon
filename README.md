@@ -124,8 +124,8 @@ insert, a schedule to place as a table, or a spreadsheet of project values to fi
 beside your documents is ever looked for.
 
 Connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
-with room for its full 128,000-token answer (the conversation at the model's default effort, recovery and custom
-methods at high; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is
+with room for its full 128,000-token answer (the conversation, and the visual check and custom methods it runs, at
+medium effort, recovery at high; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is
 cached for an hour, so a follow-up request reads it instead of paying for it again). Instead, the
 header shows the estimated spending as it accrues, **Stop now** cuts off the AI step that is running at once, and
 work pauses after every 48 AI steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a
@@ -137,13 +137,20 @@ Carbon & Hi-Vis or Linen (the light one). The window changes at once and opens i
 
 **When something goes wrong.** **About → Save a diagnostic bundle** writes one zip (and shows it in Explorer) with
 everything a diagnosis reads: the app's log and its event journals, crash logs, its settings, your current and last
-conversations, and the logs, records and reports of your recent runs. No document, picture or page image goes in
-it; conversations and records can quote your words and your documents' text, so it is yours to share or not. The
+conversations, and the logs, records and reports of your recent runs. Folders of copies and
+page pictures are left out, but conversations and records can quote your words and your documents' text, and a
+conversation's saved history can hold the page images Claude was shown, so it is yours to share or not. The
 log says what the window itself went through: each request and job as it starts and ends, every error in the window's
 page, a page that stopped answering (a frozen window) with where every part of the app was at that moment, a job
 that stopped moving or did not obey Stop, the window closing, and at the next start what a session that never closed
 was doing last. If the window ever fails to draw, it shows **Reload the window** instead of going blank: the app
 behind it keeps running, so the conversation and any work in progress carry on.
+
+**Help → Why trust it** says in eight points why the copies can be trusted and what runs without you, and **I'm not
+convinced — show me exactly what runs →** opens the long answer: every action with what runs, what is sent, which AI
+(if any) is involved and what bounds it, what leaves your computer, what Claude may touch, and how to check all of it
+yourself. [docs/TRUST_CLAIMS.md](docs/TRUST_CLAIMS.md) is the ledger behind it: every claim, the code that makes it
+true, and the test that checks it — and the findings where the code falls short of what one would hope.
 
 See [the window guide](docs/CONVERSATIONAL_DESKTOP.md) for triage, pictures and tables, layouts, previews,
 conversations and a clean start, recovery, resource use, verification limits and what the window logs about itself.
@@ -256,6 +263,7 @@ recorded for the requests that follow.
 ## Where everything else is
 
 - [docs/CONVERSATIONAL_DESKTOP.md](docs/CONVERSATIONAL_DESKTOP.md) — the window guide.
+- [docs/TRUST_CLAIMS.md](docs/TRUST_CLAIMS.md) — the claims ledger behind Help → Why trust it and its long answer.
 - [docs/DEVELOPER_DIAGNOSTICS.md](docs/DEVELOPER_DIAGNOSTICS.md) — investigating a failure: what each log and journal
   holds, how to follow one action through them, and what the window records about itself.
 - [docs/releases/](docs/releases/) — release notes per version, what the update banner shows.
