@@ -380,6 +380,7 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "never tracked",
     ],
     "replace_text": ["the replacement wording is exactly the user's", "text inside fields is never edited",
+                     "whole words and exact case unless the user says otherwise: 'NFPA 13' leaves 'NFPA 13R' alone",
                      "tracked unless the user said otherwise",
                      "a tab (\\t) or a line break (\\n) in the replacement is written as Word's own tab or line break "
                      "(Shift+Enter, the same paragraph), in the replaced text's formatting"],

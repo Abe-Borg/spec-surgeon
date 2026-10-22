@@ -15,6 +15,9 @@ CASES = {
         # built-in batch 6 (F3): a tab and line breaks in the new text are named between its quoted stretches
         ({}, {"find": "1.01 SUMMARY", "replace": "1.01\tSUMMARY"},
          ["Replace “1.01 SUMMARY” with “1.01”, a tab and “SUMMARY”", "tracked change"]),
+        # whole words by default; only the user's own "also inside longer words" is said
+        ({}, {"find": "NFPA 13", "replace": "NFPA 13 (2025 edition)", "whole_word": False},
+         ["Replace “NFPA 13” with “NFPA 13 (2025 edition)”", "even inside longer words", "tracked change"]),
         ({"scope": ["headers"]}, {"find": "PROJECT NAME", "replace": "LINCOLN HIGH SCHOOL\n\nMODERNIZATION", "tracked": False},
          ["with “LINCOLN HIGH SCHOOL”, 2 line breaks and “MODERNIZATION”", "in the headers", "without tracked changes"]),
     ],

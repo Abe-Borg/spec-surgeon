@@ -46,6 +46,14 @@ follows from it. The full-control round (`docs/PLAN-2026-10-21-full-control.md`)
 
 Order: C2 and C3 first (the misses of this run), then C4, C6, C5, C7.
 
+Added the same day from a comparison with the owner's docx-find-and-replace tool (which learned the same lessons on
+the same kind of files):
+
+| Item | Goal | Expected outcome |
+| --- | --- | --- |
+| C8 — whole words in `replace_text` | "NFPA 13" → "NFPA 13 (2025 edition)" leaves "NFPA 13R" and "NFPA 13D" alone | `replace_text.whole_word` (default true, the rule `replace_table` already has): a match whose first (last) character is a letter, digit or `_` must not have one right before (after) it in what a reader sees — a tab, a line break, a picture or a field mark between keeps two words apart although the op's live text runs the characters together. What whole words left alone is flagged ("also occurs 3× inside longer words ('NFPA 13R', 'NFPA 13D'), not changed"), and a refusal for want of a whole word says so. V10 (`verify/replacement.py`) re-finds the whole words in its own run text first |
+| C9 — revision ids above every `w:id` | No file set aside for an id clash the engine made | `ooxml.max_revision_id` takes the highest numeric `w:id` on any element of every text part (the tool's rule), not a list of tags: the list left out `w:tblGridChange`, so new ids reused a tracked column resize's and V4 set the file aside. Transform side only; V4 already counts every revision kind |
+
 ## Acceptance
 
 Each item on fixtures: the flag or the change end to end (plan → merge → apply → `run_suite` passes for the op
@@ -72,3 +80,5 @@ the old title; "capitals like the others" is one plan with one sentence.
 | C5 — properties from the document | planned | — | — |
 | C6 — tracked deletion over pending revisions | planned | — | — |
 | C7 — numbering evidence beside redlines | planned | — | — |
+| C8 — whole words in `replace_text` | implemented; live run pending | claude/busy-brown-75jr39 | 2026-10-22: `whole_word` (default true) on both sides — `ops/replace_text.whole_word` reads a neighbour across a w:t edge only when no tab, break, picture or field mark stands between (`Segment.gap_before`) ↔ `verify/replacement._v_whole_word` reads its own run text; a plan flag and the not-found refusal name the longer words left alone; describe case, catalog assumption, README. `tests/test_whole_word.py` (fixture `fx_text.build_words`): tracked and untracked, `whole_word: false`, the first occurrence, a tab and a line break between words, a word glued across runs, a punctuation edge, a wrong output and two shared wrong rules (substring matching; every run edge taken for a boundary) caught by V10. Needs the owner's machine: a real batch where a code reference sits beside its R/D variants ("NFPA 13" and "NFPA 13R") and a request whose word also appears in plurals ("Owner"/"Owners"), to see the flag read back. |
+| C9 — revision ids above every `w:id` | implemented; live run pending | claude/busy-brown-75jr39 | 2026-10-22: `ooxml.max_revision_id` counts every numeric `w:id` in the text parts. `tests/test_ops.py::test_new_revision_ids_start_above_a_tracked_column_resize` (fixture `fx_revisions.tracked_column_resize`): on the old seed V4 failed with "DUPLICATE ids ['1']"; now it passes, the new ids 2–5 above the resize's 1. Needs the owner's machine: a tracked edit on a redlined specification whose tables were resized with Track Changes on. |

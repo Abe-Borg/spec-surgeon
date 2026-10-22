@@ -1,6 +1,7 @@
 """Independent source-derived proof for the original literal replacement operation.
 
-Matching uses the user's words and selectors, never the transform's offset list.
+Matching uses the user's words and selectors, never the transform's offset list,
+and whole words unless ``whole_word`` is false, judged in this module's own run text.
 The item comparison retains each character's formatting, inline anchors, links,
 structural characters and revision context. Optional paragraph-local coalescing
 is derived here from source siblings, with the explicitly requested noise rule.
@@ -10,11 +11,11 @@ from __future__ import annotations
 import copy
 import re
 
-from .edits import check_edited_paragraph, part_revision_ids, v_check_edits, v_items
+from .edits import check_edited_paragraph, part_revision_ids, v_check_edits, v_items, v_run_text
 from .props import para_matches, sig
 from .reader import W
 from .template import _v_field_runs
-from .textops import _v_flexible
+from .textops import _v_flexible, _v_word
 
 
 _INERT = {W + "proofErr", W + "lastRenderedPageBreak"}
@@ -79,6 +80,18 @@ def _characters(paragraph):
     return [item for item in v_items(paragraph) if item.kind == "t"]
 
 
+def _v_whole_word(shown, a, b):
+    """A whole word in the verifier's own reading: ``shown`` is the paragraph's run text (a tab, a line break, a
+    picture, a field mark or a note mark holds a position of its own and is no letter; deleted text is not there) and
+    [a, b) the match's positions in it. A match whose first (last) character is a letter, digit or ``_`` has none right
+    before (after) it; an edge that is punctuation needs no boundary ("(2022)" is whole inside "x(2022)")."""
+    if a > 0 and _v_word(shown[a]) and _v_word(shown[a - 1]):
+        return False
+    if b < len(shown) and _v_word(shown[b - 1]) and _v_word(shown[b]):
+        return False
+    return True
+
+
 def _single_text_node(chars, match):
     return chars[match.start()].el is chars[match.end() - 1].el
 
@@ -138,8 +151,14 @@ def literal_replacement(ctx, assertion, errors):
                 break
             if not para_matches(select.get("paragraphs"), paragraph, index, source_view, ctx.src_styles):
                 continue
-            chars = _characters(paragraph)
+            items = v_items(paragraph)
+            chars = [item for item in items if item.kind == "t"]
             hits = list(regex.finditer("".join(item.value for item in chars)))
+            if params.get("whole_word", True):
+                # "NFPA 13" is not found inside "NFPA 13R"; the neighbours are read in the run text, where a tab or a
+                # picture between two words keeps them apart although the characters alone run together
+                shown = v_run_text(items)
+                hits = [m for m in hits if _v_whole_word(shown, chars[m.start()].pos, chars[m.end() - 1].pos + 1)]
             if not hits:
                 continue
             base = paragraph
