@@ -62,7 +62,7 @@ Arial"), offered as a custom method, passes, opens in Word without a repair prom
 
 | Item | Status | Owner / branch | Last note |
 | --- | --- | --- | --- |
-| A1 — the limits say what the checker proves | planned | — | — |
+| A1 — the limits say what the checker proves | implemented; live run pending | claude/beautiful-cannon-dk2862 | 2026-10-22: the `properties` family names double strikethrough, superscript and subscript, hidden text, character spacing and highlight (of selected text only: Word shows none set in a style, and the kind refuses it there); `cannot` loses highlight. `tests/test_custom_envelope.py`: a scripted method highlighting the paragraphs it picks by its own logic (naming each by `index_range`) passes the real trial; a wrong colour and an unlisted paragraph fail V10, a changed word V2; every `set_properties` run and paragraph property is accepted by the kind and named in the family's words, so adding one without naming it fails. No trust-surface change: still formatting only, the same parts. Needs the owner's machine: a highlight request no built-in op expresses, offered as a custom method. |
 | A2 — table appearance | planned | — | — |
 | A3 — list label formatting | planned | — | — |
 | A4 — the words around it | planned | — | — |

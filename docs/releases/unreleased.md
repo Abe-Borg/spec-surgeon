@@ -48,6 +48,10 @@ Changes since v1.8.0.
 - **File Properties titles fixed for a whole batch in one request.** "Set every file's title to SECTION number – title"
   now puts each document's own section number and title in place, between your words. Before, every title had to be
   typed. A document whose number or title cannot be found is set aside, never guessed.
+- **Custom methods can highlight.** When no built-in operation can express a highlight request, Spec Surgeon can now
+  write a one-off custom method for it, as it already could for bold, fonts or spacing. The list of what a custom
+  method may do had fallen behind the checker: highlight, superscript and subscript, hidden text, character spacing
+  and double strikethrough were already checked, but the list still said highlight could not be done.
 - **Tracked deletions go through redlined paragraphs.** Deleting paragraphs as a tracked change no longer sets aside a
   paragraph that holds someone's pending tracked changes. It deletes over them as Word does: text they inserted is
   deleted inside their insertion (rejecting it still removes all of it), text they deleted stays as it was, their

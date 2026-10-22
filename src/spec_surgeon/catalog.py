@@ -785,13 +785,14 @@ CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
         "paragraph spacing, indents and alignment of paragraphs or of paragraph styles": "paragraph_props",
         "page size, margins, orientation and different first page of sections": "section_props",
         "which header/footer each section shows": "section_hf_refs",
-        "bold, italic, caps, small caps, strikethrough, underline and text colour of selected text or of styles; "
-        "keep-with-next, keep lines together, widow control and page break before of paragraphs or of paragraph "
-        "styles": "properties",
+        "bold, italic, caps, small caps, strikethrough, double strikethrough, underline, text colour, superscript "
+        "and subscript, hidden text and character spacing of selected text or of styles; highlight of selected text "
+        "(Word shows none set in a style); keep-with-next, keep lines together, widow control and page break before "
+        "of paragraphs or of paragraph styles": "properties",
         "tab stops of paragraphs (set, clear, clear the others)": "tab_stops",
         "paragraph borders and shading of paragraphs or of paragraph styles": "borders_shading",
     },
-    "cannot": ["highlight", "numbering and lists",
+    "cannot": ["numbering and lists",
                "tables", "images", "fields", "comments", "tracked changes", "any change of words"],
     "rules": ["plain (untracked) formatting only", "only the document's text parts (body, headers, footers, footnotes, "
               "endnotes, comments) and its styles part may change", "edited copies only — never written over the "
