@@ -730,7 +730,9 @@ class CrashWatch:
 @contextmanager
 def com_quiet() -> Iterator[None]:
     """Word automation (COM) raises first-chance RPC exceptions that Windows' fault handler logs as "Windows fatal
-    exception" although they are handled; the window's crash log is paused around it, so it keeps only real crashes."""
+    exception" although they are handled; the window's crash log is paused around it, so it keeps only real crashes.
+    Starting the Word worker process does too: on the owner's machine every one of the 1.8.0 live run's 68 spawns
+    logged an access violation inside CreateProcess, and every worker then ran and finished."""
     w = _ACTIVE[0]
     paused = w is not None and w._fh is not None and faulthandler.is_enabled()
     if paused:
