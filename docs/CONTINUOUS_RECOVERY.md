@@ -1,8 +1,13 @@
 # Continue a request and reuse what worked
 
 The conversation window continues into outcome planning when
-the compiler cannot offer a supported method. A failed ordinary preview or a failed
-custom-method trial also feeds its evidence into that investigation. The
+the compiler cannot offer a supported method. A failed ordinary preview (its plan covers
+no file, or a sample fails its check) or a failed custom-method trial also feeds its
+evidence into that investigation. A preview in which some files plan and others are
+refused is not a failed preview: the refused files wait under Left untouched, the preview
+of the others stands, and the conversation stays with the assistant (the 1.9.0 live run of
+2026-10-22, where one file's even-page footers handed a twelve-file plan to the outcome
+planner). The
 conversation keeps the original request, actual answers, template and source pins.
 
 The plan is carried out internally and its result is shown as the ordinary plan view, with

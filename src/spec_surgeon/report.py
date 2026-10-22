@@ -26,6 +26,12 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "number or title is formatted on a single line, in a table, or missing). Re-running on set-aside files "
         "lets the compiler use a fallback extraction rule for this layout.",
     ),
+    "binding-source": (
+        "Per-File Value Bound to Other Bytes",
+        "A value given for this one file (a title quoted from it, or the wording you approved for it) was pinned to "
+        "the file's exact bytes when it was planned, and the file is not those bytes now: it changed, or it is "
+        "another file. Nothing was placed; the request is planned again on the file as it is.",
+    ),
     "ambiguous": (
         "Ambiguous Match in Document",
         "The extraction pattern or anchor matched multiple conflicting values in this document. A narrower "

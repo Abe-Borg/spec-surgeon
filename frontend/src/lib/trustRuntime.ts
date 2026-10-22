@@ -136,7 +136,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "Nothing: it follows a plan the app accepted.",
     runs:
       "Every attached file is planned from its original: the engine works out exactly what will change, or sets the " +
-      `file aside with a reason under Left untouched. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
+      "file aside with a reason under Left untouched. A document you asked to leave out of the request is not " +
+      `planned, and is named there too. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
       "at least one per layout, so more when there are more layouts) are edited in memory and checked by the independent checker. Their before and after " +
       "pages are rendered by Microsoft Word (a new, invisible instance, never the Word you have open) or, without " +
       "Word, LibreOffice.",
@@ -186,7 +187,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     covers: ["B8"],
     title: "An outcome plan, when the built-in plan cannot be made",
     automatic: true,
-    you: "Nothing beyond your request: when no ordinary plan fits, the app continues on its own.",
+    you:
+      "Nothing beyond your request: when no ordinary plan fits (Claude finds no operation for it, the plan covers no " +
+      "file, or a sample fails its check), the app continues on its own. A file the plan refuses while the others " +
+      "plan does not start it: that file waits under Left untouched beside the preview of the others.",
     runs:
       "Claude proposes the outcomes to reach (what should change, where, with what wording). The app checks the " +
       "proposal, carries it out without waiting for a pick, and tries methods on copies of your files: built-in " +
