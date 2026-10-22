@@ -201,6 +201,18 @@ def test_a_reply_the_chat_did_not_say_still_reaches_the_card(tmp_path):
     assert view["questions"] == [message]
 
 
+def test_an_older_bubble_with_the_same_words_does_not_hide_a_reply_the_chat_did_not_say(tmp_path):
+    words = "Planning paused after APIStatusError: Overloaded"     # what the recovery turn below will say
+    fake = FakeClient(resp(text(words), stop="end_turn"), raise_on_enter(api_error("Overloaded", 529)))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.perform("send", text=REQUEST)
+    task.session.conversation.recovery_active = True
+    view = task.perform("send", text="FIRE SUPPRESSION")
+    assert task.session.turn.message == words and said(view) == [words]   # the bubble answers the first request
+    assert view["questions"] == [words]                                    # the card answers the second
+
+
 def test_readable_review_preserves_exact_wording_and_every_effect(tmp_path):
     contract = copy.deepcopy(CONTRACT)
     contract["effects"].append({"id": "words", "type": "replace_text", "target": {"all": True},

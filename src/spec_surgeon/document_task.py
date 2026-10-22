@@ -260,6 +260,9 @@ class DocumentTask:
         self._telling: Dict[int, MessageWords] = {}   # its tool calls that carry a message, by content block
         self._seen = 0
         self._conversation_id = None
+        # Claude's latest reply as the chat said it; None when the chat did not say it (a recovery turn's): the
+        # clarification card carries those words instead (``view``)
+        self._replied: Optional[str] = None
         self._revision = 0
         self._resume_recovery = None
         self._resume_layouts = []           # layout batch folders still to recover, from the journal
@@ -722,17 +725,19 @@ class DocumentTask:
         if c is None:
             return
         if c.id != self._conversation_id:
-            self._conversation_id, self._seen = c.id, 0
+            self._conversation_id, self._seen, self._replied = c.id, 0, None
         for entry in c.entries[self._seen:]:
             # App notes carry implementation telemetry; the coordinator renders its own state instead.
             if entry.role != "claude":
                 continue
+            self._replied = None
             if c.recovery_active or any(choice.get("kind") in {"custom_transform", "recovery_plan", "recovery_target"}
                                         for choice in entry.choices):
                 continue
             # Questions and choices are shown once, in the clarification card, never twice: the chat says Claude's
             # words alone (its own "• " lines included; a question of several lines stays whole in the card).
             self.say(entry.message, "assistant")
+            self._replied = entry.message
         self._seen = len(c.entries)
 
     def _settle(self, log):
@@ -1077,12 +1082,12 @@ class DocumentTask:
             questions.extend(outcome.questions)
             if not questions and not choices:
                 # A reply with nothing to pick (plain words, a failure) is the chat's, said there once; the card
-                # carries it only when the chat has not (a recovery turn's), and never repeats the latest bubble.
+                # carries it only when the chat did not say that reply (a recovery turn's), whatever an older
+                # bubble said.
                 message = (outcome.message or "").strip()
-                said = next((m["text"] for m in reversed(self.messages) if m["role"] == "assistant"), None)
                 if not message:
                     questions.append("Tell me what you’d like to change or clarify.")
-                elif message != said:
+                elif message != self._replied:
                     questions.append(message)
         preview = outcome.preview
         # The pages and their findings show beside the plan they belong to, while it waits for the user; a run that
