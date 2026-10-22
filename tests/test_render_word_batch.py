@@ -1,5 +1,6 @@
-"""One spawned worker, one private Word, every file of a batch (render/word_worker.run_word_batch) — the parent
-side: per-file results, the per-file deadline the parent enforces (a stuck file ends the worker and its private
+"""One spawned worker, one private Word, every file of a batch (render/word_worker.run_word_batch), and several such
+workers side by side over shares of a batch (run_word_batches: merged in order, a stuck share, a share whose Word
+cannot start) — the parent side: per-file results, the per-file deadline the parent enforces (a stuck file ends the worker and its private
 Word, the rest go on in a fresh one), a worker that dies, an instance that is lost, a Word that never starts, and
 the private-instance cleanup accounting. The COM calls cannot run here, so a fake worker stands in for
 ``_batch_worker`` behind a REAL spawned process and pipe: it speaks the worker's protocol and misbehaves on cue

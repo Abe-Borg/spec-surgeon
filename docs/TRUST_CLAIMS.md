@@ -10,7 +10,9 @@ each of those values to the constant in the Python code.
 in the same change. That covers a new user action, a new network call, a new automatic behaviour, a change to the
 model or its settings, and a new or changed limit.
 
-Written 2026-10-22 against `master` at 3d1799b (version 1.8.0), from the code rather than the docs. Re-audited the
+Written 2026-10-22 against `master` at 3d1799b (version 1.8.0), from the code rather than the docs. Fast responses
+(A22, B17, T48, T49) and the worker processes and Word instances side by side (B16, T50, T51) added 2026-10-22 with
+the change that made them. Re-audited the
 same day against `master` at 099ee91 (C2–C6, A1 and the licence change): every model call site, network import,
 thread, timer, `/api` route and outside reference in the built page checked again; what changed is marked
 "(re-audit)". Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
@@ -49,8 +51,9 @@ thread, timer, `/api` route and outside reference in the built page checked agai
 | A19 | About → **Open diagnostic logs** / **Save a diagnostic bundle** | `/api/logs`, `/api/diagnostics/bundle` | none |
 | A20 | Click a link: in the chat, in release notes, About's links, the releases page | the system browser (`target=_blank`) | none |
 | A21 | **Reload the window** (shown only when the page fails to draw) | `frontend/src/components/ErrorBoundary.tsx` | none |
+| A22 | Settings → **Fast responses**: on with the second click on the button that names the price, off with one click | `POST /api/settings` `{fast_mode}` → `llm.set_fast_mode`, kept in `settings.json` | none (changes the speed of later calls) |
 
-Count: 21 actions.
+Count: 22 actions.
 
 (re-audit) The server also has `/api/update/cancel`, `/api/update/skip`, `/api/update/dismiss`, `/api/update/releases`
 and `/api/quit`, behind the same launch token. The page calls none of them (`frontend/src/lib/api.ts`), so no click
@@ -77,8 +80,11 @@ your browser (N4).
 | B14 | The render cache serves pages it has rendered before | `render/cache.py` | none | none |
 | B15 | (re-audit) A follow-up reply Claude declines on the first call after it (`stop_reason` refusal, after the provider's own fallback) is taken back out of the history, its words no longer approved; any decline is said in plain words. A first request, or a reply declined after a tool call, stays (`_take_back` needs the reply's mark as the last message) | `Conversation._take_back`, `conversation.declined_text`, `contexts.checkpoint_history(withdrawn=)` | follows a call | none of its own |
 
-Count: 15 automatic behaviours. B4–B10, B13 and B15 run only inside work a click started. B1–B3, B11, B12 and B14
-involve no model.
+| B16 | A batch of 3 or more files is edited and checked in the app's own worker processes, one per core up to 8, each file whole in one worker; a preview plans 12 or more files, and checks 3 or more samples, the same way; Word renders over up to 3 private instances side by side | `batch.worker_plan` (`DEFAULT_WORKER_MODE` "auto"), `batch.map_files`, `planner.PLAN_PROCESS_MIN_FILES`, `render/word_worker.run_word_batches` | none | none |
+| B17 | With Fast responses on: a fast call the fast capacity cannot take (429, 529) is re-sent at once at standard speed; a key refused fast mode (a 400 or 403 naming the speed) runs at standard speed until the setting is turned on again | `llm.call` (`_fast_capacity`, `_speed_refused`, `_fast_unavailable`) | follows a call | Anthropic |
+
+Count: 17 automatic behaviours. B4–B10, B13, B15 and B17 run only inside work a click started. B1–B3, B11, B12, B14
+and B16 involve no model.
 
 ### 1c. Network destinations
 
@@ -110,6 +116,12 @@ overrides it).
 - Output cap: 128,000 tokens (`resources.DEFAULT_MAX_OUTPUT_TOKENS`).
 - Streaming; thinking left to the model, with its summary shown in the window (`_THINKING_DISPLAY`).
 - No temperature is set.
+- Speed: standard, unless the user turned Fast responses on (Settings; `settings.fast_mode`, applied by
+  `web/server.WindowState` through `llm.set_fast_mode`). Then every call to a model in `llm.FAST_PRICES`
+  (`claude-opus-5-5`, `claude-opus-5`, `claude-opus-4-8`) carries `speed="fast"` (the research-preview models add beta
+  `fast-mode-2026-02-01`): the same model, effort and thinking, up to 2.5 times the output speed
+  (`FAST_SPEEDUP`), at 2 times every price (`FAST_PRICE_FACTOR`). A fast call is sent with the SDK's own retries off,
+  so a 429 or 529 comes back at once and `llm.call` re-sends it at standard speed (B17).
 - Effort: medium for the conversation (`document_task.CONVERSATION_EFFORT`). Inside a budget scope the innermost
   budget's effort wins (`llm._call`), so what runs inside a turn without a budget of its own runs at medium too: the
   visual check and the custom-method writer. The outcome planner (`campaign_planner`, its own budget at the
@@ -159,7 +171,7 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 | Location | Holds | Your words or document text? | Kept |
 | --- | --- | --- | --- |
 | Windows Credential Manager, `Spec Surgeon/ANTHROPIC_API_KEY` | the API key, if you ticked Remember | — | until you delete it (no button in the window) |
-| `config_dir()\settings.json` | folders, colour scheme, update bookkeeping | paths only | overwritten |
+| `config_dir()\settings.json` | folders, colour scheme, whether Fast responses is on, update bookkeeping | paths only | overwritten |
 | `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results, estimated spending | yes | archived at each start; **never pruned** (F5) |
 | `config_dir()\attachments\<time>\` | full copies of files you dropped on the window | yes, whole files | **never deleted** (F5) |
 | `config_dir()\repair-memory.sqlite3` | past repair cases: your request, candidate plans, wording and generated code | yes | 2,000 cases, oldest dropped; no clear button (F4) |
@@ -175,16 +187,16 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 ### 1f. The deterministic parts (no model, no network)
 
 - Triage.
-- The operation library and its planning (`Op.plan`).
+- The operation library and its planning (`Op.plan`), in the app's process or its own worker processes (B16).
 - Composition into ordered steps (`editspec.stage_cuts`).
 - Layout routing.
 - Apply and repack (`DocxPackage.repack`).
 - The independent verifier V1–V10 (`verify/`).
-- Rendering (Word or LibreOffice on your machine).
+- Rendering (Word, up to 3 private instances side by side, or LibreOffice on your machine).
 - Rasterising page images.
 - Approval tokens and the delivery guard (`guard.py`, `preview.approval_token`).
 - The plan's sentences (`Op.describe` through `review_display.spec_changes`).
-- Cost estimates (`llm.PRICES`).
+- Cost estimates (`llm.PRICES`, `llm.FAST_PRICES`).
 - Logs, the diagnostic bundle.
 - The update check and its integrity checks.
 - The render cache.
@@ -234,12 +246,17 @@ How each is labelled:
 - **Stop:**
   - A running call is cut within 0.25 s polling (`STOP_POLL_SECONDS`, `_sever`).
   - Its spending is settled from what the stream reported, plus at most 150 output tokens per second it ran
-    (`STOPPED_OUTPUT_RATE`).
+    (`STOPPED_OUTPUT_RATE`; 2.5 times that, `FAST_SPEEDUP`, for a fast call, priced fast).
   - Source files are never changed.
 - **Failure:** a copy that fails its check is moved to `failed\` and never delivered (`batch.py`). A failed call
   appends nothing to the history (`conversation.py`).
 - **Renderers:** Word 120 s per file (`word_worker.DEFAULT_TIMEOUT`), LibreOffice 600 s per batch
-  (`libreoffice.render_pdfs`).
+  (`libreoffice.render_pdfs`). Word: up to 3 private instances side by side (`WORD_INSTANCES`), at most one per two
+  cores and one per 2 files (`word_instances`); `SPEC_SURGEON_WORD_INSTANCES` replaces the 3 (1: one instance).
+- **Worker processes:** a batch of 3 or more files (`batch.PROCESS_MIN_FILES`), a preview's 12 or more plans
+  (`planner.PLAN_PROCESS_MIN_FILES`) and 3 or more samples, one process per core up to 8
+  (`batch.MAX_PROCESS_WORKERS`); they end with the work. A worker that stops abruptly costs its own file (recorded, as
+  before) or, for a plan or a sample, the call is made again in the app's process (`batch.map_files`).
 - **Closing:** closing the window stops a running job and waits up to 60 s for it (`web/shell.shutdown`).
 
 ### 1i. Cost
@@ -248,6 +265,10 @@ How each is labelled:
 - The pill is an estimate from `llm.PRICES` (per model: input, output, cache read, 5-minute and 1-hour cache write). A
   model missing from the table (for example an unnamed fallback model) shows "an amount the price table cannot
   estimate".
+- Fast responses: tokens a response reports as served fast (`usage.speed`) are their own row (`llm.FAST_ROW`), priced
+  from `llm.FAST_PRICES`, 2 times every standard price. A fallback attempt inside a fast response is priced fast when
+  its model has a fast price (an estimate that errs high). The pill says "Fast" while the setting is on
+  (`DocumentTask._cost`). Settings quotes the standard and fast prices from the same tables (`server.fast_offer`).
 - A failed call keeps its reservation (`CallBudget._abandon`).
 - A stopped call is settled from the stream plus the 150 tokens/s bound.
 - Re-sent attempts are counted and billed.
@@ -349,7 +370,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T34 | The bundle holds 3 recent conversations and 5 recent runs' text files | D(runtime A19) | `diagnostics.BUNDLE_RECENT_*` | facts |
 | T35 | Recovery tries at most 8 attempts per group, pausing after 3 equivalent rejected tries | D(runtime B8, B9) | `document_task.RECOVERY_ATTEMPTS`, `DEFAULT_STALL_REPETITIONS` | facts |
 | T36 | Pictures and tables over 20 MB are listed as too big, never read; a .docx is opened up to 256 MiB | D(runtime A3) | `inputs.MAX_BYTES`, `package_limits.ArchiveLimits.max_archive_bytes` | facts |
-| T37 | Word renders on your machine in a new invisible instance, never your open Word; else LibreOffice | D(no AI, engine) | `render/word_com.py` (DispatchEx, Visible False), `render/__init__.pick` | manual |
+| T37 | Word renders on your machine in new invisible instances (up to 3 side by side, T51), never your open Word; else LibreOffice | D(no AI, engine) | `render/word_com.py` (DispatchEx, Visible False), `render/__init__.pick` | manual |
 | T38 | The watchdog: heartbeat 10 s, a page silent 45 s, a job quiet 300 s, a Stop not obeyed in 30 s; closing waits 60 s for a job | D(runtime B11, A11) | `web/watch.py`, `web/shell.shutdown` | facts |
 | T39 | Opening the app starts a clean conversation; the last one is archived on this computer and never reopened | D(runtime B1) | `gui.main`, `DocumentTask.archive` | existing: `tests/test_document_task.py` |
 | T40 | Without a network, files still attach and are checked, copies open, logs and bundles work; nothing can be planned, because every request goes through Claude | D(no AI) | `DocumentTask._ready_to_talk`, triage | manual |
@@ -360,6 +381,10 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T45 | (re-audit) A custom method's prediction is its own program's; the app bounds it and V10 holds everything else unchanged | D(limits) | `codegen._trial` (`run_suite(..., sb.plan, ...)`), `hard_limits` | facts (source text) |
 | T46 | (re-audit) Without a native window the page opens in the default browser on the loopback address, the token in its URL | D(security) | `web/shell.native_backend_problem`, `main` | facts (source text) |
 | T47 | (re-audit) A File Properties value can be built from each file's own section number and title around your words | D(provenance) | `ops/docprops.py` `from_document`, `verify/docprops.py` | existing: `tests/test_properties_from_document.py` |
+| T48 | Fast responses is off until you turn it on in Settings, with a second click that names the price; on, the same model, effort and thinking write up to 2.5 times faster at 2 times the price on every token; the pill then says Fast | Lv1, D(engine, money, runtime A22) | `llm.set_fast_mode`, `fast_for`, `FAST_PRICES`, `FAST_SPEEDUP`, `FAST_PRICE_FACTOR`, `settings.Settings.fast_mode`, `SettingsModal.FastSection`, `DocumentTask._cost` | facts (`fastSpeedup`, `fastPriceFactor`, `test_fast_mode_is_off_until_turned_on_and_priced_from_the_table`), flows (9c) + existing: `tests/test_fast_mode.py`, `tests/test_web_server.py`, `frontend/tests/fastMode.test.ts` |
+| T49 | When the fast capacity is busy a call runs at once at standard speed and price; a key refused fast mode runs at standard speed and Settings says why | D(engine, runtime B17) | `llm.call` (`_fast_capacity`, `_speed_refused`), `llm.fast_unavailable`, `server.fast_offer` | existing: `tests/test_fast_mode.py` |
+| T50 | A batch of 3 or more files is edited and checked in the app's own worker processes, one per core up to 8, each file whole in one worker; a preview plans 12 or more files and checks 3 or more samples the same way; the results are those of running them one by one | D(engine, runtime B5, A8) | `batch.worker_plan`, `batch.map_files`, `planner.plan_batch`, `preview._preview_sample` | facts (`processMinFiles`, `maxProcessWorkers`, `planProcessMinFiles`) + existing: `tests/test_runtime_reliability.py` (`test_an_auto_batch_of_three_runs_in_worker_processes_with_the_same_results_as_inline`, `test_the_preview_plans_and_checks_its_samples_side_by_side_with_the_same_results`) |
+| T51 | Word renders over up to 3 new invisible instances side by side, never your open Word | D(engine, runtime B5, A8) | `render/word_worker.run_word_batches`, `word_instances`, `WORD_INSTANCES` | facts (`wordInstances`, `wordInstancesEnv`) + existing: `tests/test_render_word_batch.py` |
 
 ## 3. Findings (reported, not fixed in this change)
 

@@ -130,7 +130,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds: `As for a request: the ${F.stepsPerPause}-step pause, Stop now, and nothing changes in a file.`,
   },
   {
-    covers: ["B5"],
+    covers: ["B5", "B16"],
     title: "The preview",
     automatic: true,
     you: "Nothing: it follows a plan the app accepted.",
@@ -138,13 +138,15 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Every attached file is planned from its original: the engine works out exactly what will change, or sets the " +
       `file aside with a reason under Left untouched. Representative samples (${F.sampleFiles} files, or every file in a smaller batch; ` +
       "at least one per layout, so more when there are more layouts) are edited in memory and checked by the independent checker. Their before and after " +
-      "pages are rendered by Microsoft Word (a new, invisible instance, never the Word you have open) or, without " +
-      "Word, LibreOffice.",
+      `pages are rendered by Microsoft Word (new, invisible instances, up to ${F.wordInstances} side by side, never the Word you have open) or, without ` +
+      `Word, LibreOffice. From ${F.planProcessMinFiles} files the plans, and from ${F.processMinFiles} samples the samples, are worked out side by ` +
+      "side in the app's own worker processes, each file whole in one of them.",
     sent: "Nothing. Planning, editing the samples, checking and rendering all run on your computer.",
     ai: NONE,
     bounds:
       `Word has ${F.wordTimeoutSeconds} s per file, LibreOffice ${F.libreOfficeTimeoutSeconds} s per batch. A render ` +
-      "that fails is reported and the preview stands without that page. Nothing is written to your files.",
+      `that fails is reported and the preview stands without that page. At most ${F.maxProcessWorkers} worker processes, ` +
+      "one per core, ending with the work. Nothing is written to your files.",
   },
   {
     covers: ["B6"],
@@ -217,7 +219,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       "The click approves exactly the plan and files on screen: if a file or the plan changed since the preview, it " +
       "is refused. Every approved file is edited from its original, checked by the independent checker (its checks " +
-      "V1–V10) and rendered. A copy that passes goes to a new timestamped folder; one that fails is moved to failed " +
+      `V1–V10) and rendered; ${F.processMinFiles} files or more are shared over the app's own worker processes, one per ` +
+      `core (at most ${F.maxProcessWorkers}), each file edited and checked whole in one of them, and Word renders over ` +
+      `up to ${F.wordInstances} instances side by side. A copy that passes goes to a new timestamped folder; one that fails is moved to failed ` +
       "and never delivered. Then, if any copy failed, the app looks at those files again on its own (recovery) and " +
       "comes back with a question or a new plan.",
     sent:
@@ -335,6 +339,21 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds:
       "Folders of copies, samples and page pictures are left out, but the conversations' saved histories can hold " +
       "page images and document text: treat a bundle like your documents.",
+  },
+  {
+    covers: ["A22", "B17"],
+    title: "Fast responses",
+    you: "Settings → Fast responses → the button that names the price; one click on the switch turns it off.",
+    runs:
+      "The choice is kept in settings.json and applies from the next AI step: each call to a model Anthropic serves " +
+      "fast asks for its fast mode, the same model at the same effort. A fast call Anthropic's fast capacity cannot " +
+      "take is sent again at once at standard speed and price; if Anthropic refuses fast mode for your key, every call " +
+      "runs at standard speed and Settings says why.",
+    sent: "Nothing when you switch it. Later requests carry one more setting, the speed; what they carry does not change.",
+    ai: NONE,
+    bounds:
+      `Up to ${F.fastSpeedup} times faster writing, at ${F.fastPriceFactor} times the price on every token; the ` +
+      "spending pill uses the fast prices and says Fast. Off until you turn it on.",
   },
   {
     covers: ["A2", "A21"],

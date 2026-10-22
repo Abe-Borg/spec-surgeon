@@ -191,9 +191,13 @@ their file and page. A finding it marks as blocking changes that card's title to
 button to **I reviewed the flagged pages — create copies**; that is a separate, explicit decision on the
 displayed preview.
 
-Rendering. Word renders a whole batch in one private, invisible instance (never your open Word), with a
-deadline per file: a file Word gets stuck on is reported as not rendered and the rest carry on in a fresh
-instance. LibreOffice keeps its user profiles under the app's config folder (`render-profiles`) instead of
+Rendering. Word renders a batch in up to three private, invisible instances side by side (one per two cores, one
+more per two files; never your open Word; `SPEC_SURGEON_WORD_INSTANCES=1` keeps it to one), each with a deadline per
+file: a file Word gets stuck on is reported as not rendered and the rest of its share carry on in a fresh
+instance. The engine's own work is shared the same way: a batch of three or more documents is edited and checked in
+the app's worker processes (one per core, at most eight; each document whole in one of them, so its copy and record
+are those it would have alone), and a preview plans twelve or more documents, and checks three or more samples, side
+by side (`docs/RUNTIME_RELIABILITY.md`, "Desktop-safe workers"). LibreOffice keeps its user profiles under the app's config folder (`render-profiles`) instead of
 creating one per run. Rendered pages are kept in a cache beside the session folders (`<output root>/.render-cache`,
 at most 2 GB, oldest first out), keyed by the document's exact bytes and the renderer's version: the run does not
 render again what the preview rendered, and a source you attach again unchanged is not rendered again either — a
@@ -261,8 +265,8 @@ you accept it.
 Typed requests need an Anthropic API key. **Settings** opens one dialog. **AI connection**: paste the key and
 tick **Remember securely on this computer** to keep it in Windows Credential Manager. **Appearance**: the window's
 colour scheme, one of Warm Clay (the default), Blueprint, Graphite & Teal, Carbon & Hi-Vis and Linen (the light
-one); a click recolours the window at once and `settings.json` keeps it, so the next start opens in it. Nothing
-else is configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer
+one); a click recolours the window at once and `settings.json` keeps it, so the next start opens in it. **Fast
+responses**: Claude's fast mode, off until you turn it on (below). Nothing else is configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer
 says "Connect your Anthropic API key in Settings to start."
 
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
@@ -287,6 +291,19 @@ recovery critic) are not cached at all beyond the instructions. Three things kee
   conversation up where it stopped.
 - **A pause every 48 AI steps.** Work pauses with its progress saved and the button reads **Continue**;
   continuing allows 48 more and the conversation goes on where it stopped, with everything it had found.
+
+**Fast responses** (Settings) is the one way to trade money for time, and it is yours to choose: off until you turn
+it on, with both sides on screen first. On, every call to a model Anthropic serves fast (`llm.FAST_PRICES`) asks for
+its fast mode (`speed="fast"`): the same model at the same effort, writing its answer and its thinking up to 2.5
+times faster, at twice the price on every token (the cache discounts apply on top; Settings quotes the prices from the
+app's own table). Turning it on takes a second click on a button that names the price; one click turns it off;
+`settings.json` keeps the choice and the window applies it from its start (`llm.set_fast_mode`). It does not speed up
+the moment before Claude starts writing, nor anything done on your computer. When Anthropic's fast capacity is busy
+(a 429 or 529), the step is sent again at once at standard speed and price instead of waiting; if Anthropic refuses
+fast mode for your key, every step runs at standard speed until you turn the setting off and on, and Settings says
+why. While it is on, the spending pill prices the calls served fast at the fast rates and says **Fast**, and a stopped
+fast call is estimated at 2.5 times the stopped-call rate. Switching it during a conversation costs one cache refill:
+the two speeds are cached separately.
 
 A call that fails for a passing reason (the service is overloaded or rate-limited, a server error, a dropped
 connection or a response cut off in transit) is sent again automatically, up to twice, after 5 and then 20

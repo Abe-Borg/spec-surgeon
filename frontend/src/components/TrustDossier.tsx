@@ -365,8 +365,12 @@ function Dossier() {
             ],
             [
               "Editing the document",
-              "The operation library, on your computer",
-              "Code working directly on the document’s XML, with no model involved: it does what the plan says, or refuses with a reason.",
+              <>
+                The operation library, on your computer: a batch of {F.processMinFiles} or more files is shared over the
+                app’s own worker processes (one per core, at most {F.maxProcessWorkers}), each file edited and checked
+                whole by one of them
+              </>,
+              "Code working directly on the document’s XML, with no model involved: it does what the plan says, or refuses with a reason. A file’s result does not depend on which worker had it.",
             ],
             [
               "Checking every copy",
@@ -375,7 +379,10 @@ function Dossier() {
             ],
             [
               "Rendering pages",
-              "Microsoft Word (a new, invisible instance) or LibreOffice, on your computer",
+              <>
+                Microsoft Word (new, invisible instances, up to {F.wordInstances} side by side, never the Word you have
+                open) or LibreOffice, on your computer
+              </>,
               "So you and the visual check can see the result.",
             ],
             [
@@ -392,7 +399,7 @@ function Dossier() {
           catalog are cached by Anthropic for an hour, and the growing conversation for the default five minutes, so a
           follow-up reads them instead of paying full price again.
         </P>
-        <Note title="Three things about the model you should know" tone="warn">
+        <Note title="Four things about the model you should know" tone="warn">
           <Bullets
             items={[
               <>
@@ -406,6 +413,7 @@ function Dossier() {
                 <Mono>{F.apiAddressEnv}</Mono> names another address; then your requests, documents and key go there
                 instead. Nothing in the window sets it.
               </>,
+              `Fast responses (Settings) is off until you turn it on, with a second click that names the price. On, each call to a model Anthropic serves fast asks for its fast mode: the same model, effort and thinking, writing up to ${F.fastSpeedup} times faster, at ${F.fastPriceFactor} times the price on every token. When Anthropic’s fast capacity is busy, the call runs at once at standard speed and price instead of waiting; if Anthropic refuses fast mode for your key, every call runs at standard speed and Settings says why.`,
             ]}
           />
         </Note>
@@ -664,7 +672,8 @@ function Dossier() {
             "You pay Anthropic for the API calls, through your own key. Spec Surgeon has no account, subscription or bill of its own.",
             "The pill in the top bar is an estimate: the tokens Anthropic reports for each call, priced from a table built into the app. The table can be out of date; a model it does not list shows “an amount the price table cannot estimate” instead of a guess. Anthropic’s console is the exact figure.",
             `There is no spending limit. Instead, work pauses after every ${F.stepsPerPause} AI steps and waits for Continue, and Stop now cuts off the running step at once.`,
-            `Stopped work: the stopped call is estimated from what Anthropic reported plus at most ${F.stoppedOutputTokensPerSecond} output tokens per second it ran. Anthropic may bill what was produced before the stop.`,
+            `Fast responses, if you turn it on in Settings, costs ${F.fastPriceFactor} times as much on every token (the cache discounts apply on top), for answers written up to ${F.fastSpeedup} times faster. The pill prices those calls at the fast rates and says Fast while it is on.`,
+            `Stopped work: the stopped call is estimated from what Anthropic reported plus at most ${F.stoppedOutputTokensPerSecond} output tokens per second it ran (${F.fastSpeedup} times that for a fast call). Anthropic may bill what was produced before the stop.`,
             "Failed work: a failed call keeps its estimate, because it may have been billed. A call that failed for a passing reason is sent again, and each attempt costs.",
             "The preview, the checker, rendering and creating copies cost nothing: they run on your computer. Recovery after a failed copy and the visual check are AI steps and are counted.",
           ]}

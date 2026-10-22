@@ -65,14 +65,19 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     residual identity check; each op family's kinds live in their own module, imported at its end), `reader.py`,
     `textcheck.py`, `edits.py`, `xsd.py`, `geometry.py`, `explain.py`.
   - `editspec.py` — load, validate, plan, merge, apply; composition (`stage_cuts`, `compose_chain`, `plan_chain`).
-  - `batch.py` (per-file pipeline, guarded delivery, records), `guard.py`, `chain.py`, `report.py`
+  - `batch.py` (per-file pipeline, guarded delivery, records; `worker_plan`/`map_files`: three or more files go to
+    spawned worker processes, each file whole in one, in the packaged app too — a test's patches never reach one,
+    so `tests/conftest.py` runs threads), `guard.py`, `chain.py`, `report.py`
     (`FAILURE_EXPLANATIONS`: every refusal code in plain words), `diagnostics.py`.
   - `catalog.py` (op catalog, `COMMON_ASSUMPTIONS`, `op_sheet`), `profile.py`, `planner.py`, `structure.py`, `triage.py`.
   - `compiler.py`, `conversation.py`, `llm.py`, `vision.py` — request → EditSpec. `llm.call` is the one call site: the
     system prompt carries its own 1-hour cache breakpoint, the history the automatic 5-minute one, and a `one_shot`
     call caches nothing after the system prompt; keep system prompts and tools byte-stable. No call runs at effort
     `max` (the owner's decision, 2026-10-22): `resources.EFFORTS` refuses it, the window's chat runs at medium and
-    every other call at high. `compiler.compose_submission` is the one gate a submission passes.
+    every other call at high. Fast mode (`speed="fast"`, Settings → Fast responses, `llm.set_fast_mode`) is the
+    user's choice, off by default: it changes speed and price (`FAST_PRICES`), never the model, effort or prompt; a
+    fast call the fast capacity cannot take is re-sent at standard speed. `compiler.compose_submission` is the one
+    gate a submission passes.
   - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files), `inventory.py` (the content digest that pins a file).

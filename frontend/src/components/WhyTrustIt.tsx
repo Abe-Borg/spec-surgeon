@@ -73,7 +73,7 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
           },
           {
             t: "Your key and your spending stay in view",
-            d: `The key stays in Windows Credential Manager (if you ask it to be remembered) and goes only to Anthropic. There is no spending limit: the top bar shows an estimate as it accrues, Stop now cuts off the running step at once, and work pauses every ${F.stepsPerPause} AI steps until you continue.`,
+            d: `The key stays in Windows Credential Manager (if you ask it to be remembered) and goes only to Anthropic. There is no spending limit: the top bar shows an estimate as it accrues, Stop now cuts off the running step at once, and work pauses every ${F.stepsPerPause} AI steps until you continue. Fast responses, off until you turn it on in Settings, has the same model write up to ${F.fastSpeedup} times faster at ${F.fastPriceFactor} times the price, and the top bar then says Fast.`,
           },
         ]}
       />
