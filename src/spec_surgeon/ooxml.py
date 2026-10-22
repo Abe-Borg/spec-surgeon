@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import copy
 import datetime as _dt
+import posixpath
 import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -183,24 +184,35 @@ def paragraphs(root: etree._Element) -> List[etree._Element]:
 # ---- revision bookkeeping ----------------------------------------------------------------------
 
 def max_revision_id(pkg: DocxPackage) -> int:
-    """w:id values must be unique across every part that carries revisions."""
+    """The highest numeric w:id on any element of any XML part: new revision ids count up from it.
+
+    w:id values must be unique across the document, and no list of revision tags stays complete (one that left out
+    w:tblGridChange and w:tblPrExChange handed out an id the file already carried, and V4 set the file aside). So
+    every w:id counts, in every XML part (styles and numbering can carry property changes too): a bookmark's, a
+    comment's or a note's id only raises the seed, which is harmless. A part that is not well-formed XML is skipped
+    (it is kept byte for byte); a text part that is not still raises, as everywhere else."""
+    text = set(pkg.text_parts())
+    defaults, overrides = pkg.content_types()
     mx = 0
-    for part in pkg.text_parts():
-        root = pkg.xml(part)
+    for name in pkg.member_names:
+        media_type = overrides.get(name, defaults.get(posixpath.splitext(name)[1].lstrip(".").lower())) or ""
+        if name not in text and not name.endswith(".xml") and not media_type.endswith(("+xml", "/xml")):
+            continue
+        try:
+            root = pkg.xml(name)
+        except etree.XMLSyntaxError:
+            if name in text:
+                raise
+            continue
         for el in root.iter():
             if not isinstance(el.tag, str):
                 continue
-            if el.tag in (W + "ins", W + "del", W + "pPrChange", W + "rPrChange", W + "sectPrChange",
-                          W + "tblPrChange", W + "trPrChange", W + "tcPrChange", W + "cellIns",
-                          W + "cellDel", W + "cellMerge", W + "moveFrom", W + "moveTo",
-                          W + "moveFromRangeStart", W + "moveToRangeStart", W + "bookmarkStart",
-                          W + "commentRangeStart", W + "numberingChange"):
-                v = el.get(W + "id")
-                if v is not None:
-                    try:
-                        mx = max(mx, int(v))
-                    except ValueError:
-                        pass
+            v = el.get(W + "id")
+            if v is not None:
+                try:
+                    mx = max(mx, int(v))
+                except ValueError:
+                    pass
     return mx
 
 
