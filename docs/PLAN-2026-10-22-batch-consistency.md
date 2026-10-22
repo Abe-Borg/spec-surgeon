@@ -43,8 +43,12 @@ follows from it. The full-control round (`docs/PLAN-2026-10-21-full-control.md`)
 | C5 — properties from the document | Stale Properties titles fixed for a whole batch in one request | `set_document_properties` takes a value built from the file's own section number and title (the reference fill rules, read as a template fill reads them) with the user's own words between them (`compiler.placed_words` traces those); a file whose number or title the rules do not find is set aside (`not-found`). V10 in `verify/docprops.py` reads the fills with the verifier's own template reading |
 | C6 — tracked deletion over pending revisions | Fewer refusals in redlined files | The deletion core deletes as Word does over someone's pending revisions: text in a pending insertion gets a deletion nested inside it (`replace_text`'s grammar), text already deleted stays as it is, a paragraph mark inserted by someone gets a deletion beside its insertion. Still refused: move ranges, pending row and cell changes, and anything whose accept-all and reject-all views cannot both be predicted. Both sides (`ops/deletion.py` ↔ `verify/deletion.py`); round trips as in `tests/test_batch6_round_trip.py` (accept-all reads like the untracked deletion of the accepted source, reject-all like the source) |
 | C7 — numbering evidence beside redlines | Lists in redlined files read their numbers again | In `structure.py` a list is disturbed only by revisions that can change a number: an inserted, deleted or moved paragraph mark, a tracked paragraph-property change, a numbering change. A wording redline inside a run no longer makes the list unresolved, and a paragraph with one still takes part in roles when both views fit the same role. Roles are planning evidence only (never the authority of an edit); the verifier is unchanged |
+| C8 — settings through the relationship | Every read of the settings part finds it as Word does | `DocxPackage.settings_part()` resolves the main part's settings relationship; `settings_flag` (`evenAndOddHeaders`, `trackRevisions`) and `docprops.settings_member` read through it, as the verifier already did; a stray `word/settings.xml` the document does not relate is not read |
+| C9 — revision ids in one id space | A new tracked change never reuses an id, and never passes the largest Word reads | `ooxml.max_revision_id` reads every WordprocessingML part (`DocxPackage.wordprocessing_xml_parts`: styles and numbering too) and every annotation id (the whole revision family with its range markers, bookmarks, comments, permission ranges; not note ids or web-settings divs); `assign_revision_ids` refuses a range past 2,147,483,647 (`revision-ids`). V4 first: a new revision id may reuse no annotation id of the source in any part and may not pass the ceiling |
+| C10 — XML document type declarations | A part with `<!DOCTYPE …>` is refused, never misread | `parse_xml` refuses it (`xml-dtd`, kind unreadable) whatever its encoding; triage refuses at attach for any document part (pictures excepted: an SVG may carry one); the verifier's reader refuses on its own; an attached workbook with one is refused on both sides (`table-value`) |
 
-Order: C2 and C3 first (the misses of this run), then C4, C6, C5, C7.
+Order: C2 and C3 first (the misses of this run), then C4, C6, C5, C7. C8–C10 (carried over from the Spec Template
+Normalizer's lessons, 2026-10-22) are hardening of the package layer and stand alone.
 
 ## Acceptance
 
@@ -53,6 +57,11 @@ items), a wrong output and a shared wrong implementation caught for every new ru
 for new parameters. On the owner's machine: the same Division 21 batch again. Before anything runs, the assistant
 names 21 05 53's footer title and the stale Properties titles; a footer-only rename says the first page still reads
 the old title; "capitals like the others" is one plan with one sentence.
+
+C8–C10 on the owner's machine: a tracked request over a batch of real redlined specifications (bookmarks, comments,
+pending tracked changes) opens in Word without a repair prompt, and its tracked changes accept and reject as listed;
+no real file is refused for a document type declaration it does not have (triage over the owner's whole folder of
+specifications, templates included, refuses none for `xml-dtd`).
 
 ## Do not, in this round
 
@@ -72,3 +81,6 @@ the old title; "capitals like the others" is one plan with one sentence.
 | C5 — properties from the document | planned | — | — |
 | C6 — tracked deletion over pending revisions | planned | — | — |
 | C7 — numbering evidence beside redlines | planned | — | — |
+| C8 — settings through the relationship | implemented; live run pending | claude/amazing-wozniak-9c7gtn | 2026-10-22: `DocxPackage.settings_part()`; `settings_flag` and `docprops.settings_member` read through it; triage's own lookup removed for it. `tests/test_package_hardening.py`: a renamed settings part read (and `set_page_setup` says the same even-page note, verified), a stray unrelated `word/settings.xml` not read; the old by-name lookup fails both. Needs the owner's machine: the C8–C10 batch run. |
+| C9 — revision ids in one id space | implemented; live run pending | claude/amazing-wozniak-9c7gtn | 2026-10-22: `max_revision_id` over `wordprocessing_xml_parts` and `ANNOTATION_ID_TAGS`; `assign_revision_ids` refuses past 2,147,483,647 (`revision-ids`, explained). V4: `new_ids_reusing_source_annotation_ids`, `new_ids_out_of_range` (own part listing `VPackage.document_xml_parts`, own element list). Tests: ids above a style's revision and a permission range, a web-settings div ignored, non-numbers passed over; planted: the old scan shared by plan and apply, the ceiling removed, a new id renumbered to a header bookmark's, one past the ceiling, each caught by V4 alone. Needs the owner's machine: the C8–C10 batch run. |
+| C10 — XML document type declarations | implemented; live run pending | claude/amazing-wozniak-9c7gtn | 2026-10-22: `XmlDoctype` (`xml-dtd`) from `parse_xml`, `DocxPackage.check_no_doctype` in triage, `VDoctype` in the verifier's reader, both table readers. Tests: UTF-8 and UTF-16 parts (a byte search misses the second), a part triage does not otherwise read, an SVG picture's DOCTYPE left alone, a batch sets the file aside as unreadable with the code; planted: the transform's check removed, the verifier refuses on its own. Needs the owner's machine: the C8–C10 batch run (no false refusals). |

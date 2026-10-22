@@ -182,25 +182,38 @@ def paragraphs(root: etree._Element) -> List[etree._Element]:
 
 # ---- revision bookkeeping ----------------------------------------------------------------------
 
+# Word reads a w:id as a signed 32-bit integer: no new revision id may pass it (ops.base.assign_revision_ids refuses).
+MAX_REVISION_ID = 2 ** 31 - 1
+
+# Elements whose w:id is an annotation id, one space in which a new revision's id must be new: every revision element
+# (ECMA-376 §17.13.5, range markers included), bookmarks, comment ranges, references and the comments themselves, and
+# permission ranges. Not here: a footnote's or endnote's id (the note's number, which w:footnoteReference names), a
+# content control's w:id (an element, not this attribute) and a w:div's id in webSettings.xml, which a page pasted
+# from the web carries at random values near 2**31.
+ANNOTATION_ID_TAGS = frozenset(W + n for n in (
+    "ins", "del", "moveFrom", "moveTo", "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
+    "customXmlInsRangeStart", "customXmlInsRangeEnd", "customXmlDelRangeStart", "customXmlDelRangeEnd",
+    "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
+    "cellIns", "cellDel", "cellMerge", "rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "tblPrExChange",
+    "tblGridChange", "trPrChange", "tcPrChange", "numberingChange",
+    "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "commentReference", "comment",
+    "permStart", "permEnd"))
+_WHOLE_NUMBER = re.compile(r"[+-]?[0-9]+")
+
+
 def max_revision_id(pkg: DocxPackage) -> int:
-    """w:id values must be unique across every part that carries revisions."""
+    """The highest annotation id (``ANNOTATION_ID_TAGS``) in the package's WordprocessingML parts
+    (``DocxPackage.wordprocessing_xml_parts``: the text parts, and the styles and numbering parts too, which can carry
+    property revisions of their own), 0 when there is none: new revision ids start above it. A reviewer's ids can be
+    anywhere, so every part is read, not only the ones a revision is usually in. Only an id that reads as a whole
+    number counts: a permission range may be named instead, which takes no number a revision could be given."""
     mx = 0
-    for part in pkg.text_parts():
-        root = pkg.xml(part)
-        for el in root.iter():
-            if not isinstance(el.tag, str):
-                continue
-            if el.tag in (W + "ins", W + "del", W + "pPrChange", W + "rPrChange", W + "sectPrChange",
-                          W + "tblPrChange", W + "trPrChange", W + "tcPrChange", W + "cellIns",
-                          W + "cellDel", W + "cellMerge", W + "moveFrom", W + "moveTo",
-                          W + "moveFromRangeStart", W + "moveToRangeStart", W + "bookmarkStart",
-                          W + "commentRangeStart", W + "numberingChange"):
-                v = el.get(W + "id")
-                if v is not None:
-                    try:
-                        mx = max(mx, int(v))
-                    except ValueError:
-                        pass
+    for part in pkg.wordprocessing_xml_parts():
+        for el in pkg.xml(part).iter():
+            if el.tag in ANNOTATION_ID_TAGS:
+                v = (el.get(W + "id") or "").strip()
+                if _WHOLE_NUMBER.fullmatch(v):
+                    mx = max(mx, int(v))
     return mx
 
 

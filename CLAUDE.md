@@ -18,7 +18,10 @@ files go to clients, so the one failure that matters is content lost or invented
    (`tests/test_independence.py`). It has its own readers, text extraction, selectors, style chains and definitions.
    Do not deduplicate the twin implementations: the duplication is the point.
 3. **Repack by member substitution.** `DocxPackage.repack` keeps every untouched member byte-identical, in source
-   order. Never pretty-print, regex-edit XML or `zip -r`; serialize with `serialize_xml()` only.
+   order. Never pretty-print, regex-edit XML or `zip -r`; serialize with `serialize_xml()` only. Read parts with
+   `DocxPackage.xml()` (`parse_xml` refuses a `<!DOCTYPE`, `xml-dtd`) and find them through relationships
+   (`main_part`, `text_parts`, `settings_part`), never by their usual names; new revision ids come from
+   `assign_revision_ids`, above every annotation id in every document part (`ooxml.max_revision_id`).
 4. **Never write back blind.** In-place delivery goes through `guard.write_back` and nothing else. It refuses a source
    whose size, mtime or md5 moved, a lock file, or a read-only file. No `force` flag exists and none may be added.
 5. **Refuse what cannot be predicted, not what is large.** A case an op cannot predict exactly raises `JobException`

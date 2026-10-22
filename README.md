@@ -81,8 +81,8 @@ conversation** and Settings.
    call) and lists it by its name. What it finds (typed numbers instead of automatic list numbering, no paragraph
    styles, text boxes in the headers or footers, an older compatibility mode, editing restrictions, pending tracked
    changes, comments, irregular spacing, an empty body) is not shown in the list. A file that does not open
-   as a Word package, or has no paragraph at all in its body, stays in the list greyed out with the reason and never
-   enters a plan. A `.docm`, `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`.
+   as a Word package, has a part with an XML document type declaration (which Word never writes), or has no
+   paragraph at all in its body, stays in the list greyed out with the reason and never enters a plan. A `.docm`, `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`.
 3. **Optionally add a template.** One reference `.docx` for requests such as "Match the headers and fonts to this
    template. Keep our technical wording."
 4. **Describe the result.** Type what you want and press **Send** (Ctrl+Enter). Spec Surgeon inspects the documents,
@@ -167,7 +167,7 @@ when someone asks "how do I know nothing else changed?"
 | **V1** Package whitelist | only the plan's intended parts changed; members removed or added exactly as predicted; member order kept; no new dangling relationship or content-type override |
 | **V2** Text preservation | per-paragraph text across every text part (body, headers, footers, footnotes, endnotes, comments) differs from the source exactly as the predicted diff list says, count and content |
 | **V3** Structural children | per-paragraph counts of tabs, breaks, hyphens, symbols, field characters, references and drawings identical, or changed exactly as declared |
-| **V4** Revision accounting | every kind of tracked change moves by its predicted delta (default 0); every new revision id unique |
+| **V4** Revision accounting | every kind of tracked change moves by its predicted delta (default 0); every new revision id unique, reusing no id of a bookmark, comment or revision anywhere in the source (styles and numbering included), and no larger than the largest Word reads (2,147,483,647) |
 | **V5a** Schema vs baseline | changed parts validated against the vendored ECMA-376 schemas; zero errors the source did not already have |
 | **V5b** Untracked-edit check | tracked edits: the reject-all view of the output equals the source character for character; formatting edits: no insertions or deletions added |
 | **V5c** Revision grammar | deleted text only inside deletions, id and author on every wrapper, `xml:space` on edge whitespace |

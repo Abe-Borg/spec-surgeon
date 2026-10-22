@@ -161,6 +161,39 @@ CONTENT_REV = ("ins", "del", "moveFrom", "moveTo")
 OTHER_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange",
              "numberingChange", "cellIns", "cellDel", "cellMerge")
 PROPERTY_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange")
+# The elements whose w:id shares one space with a revision's (the verifier's own list): the whole revision family with
+# its range markers, bookmarks, comments (range, reference, the comment itself) and permission ranges. A note's id, a
+# content control's and a web-settings div's are other spaces.
+ANNOTATION_ELEMENTS = frozenset(CONTENT_REV + OTHER_REV + (
+    "tblPrExChange", "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
+    "customXmlInsRangeStart", "customXmlInsRangeEnd", "customXmlDelRangeStart", "customXmlDelRangeEnd",
+    "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
+    "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "commentReference", "comment",
+    "permStart", "permEnd"))
+WORD_ID_LIMIT = 2147483647          # Word reads a w:id as a signed 32-bit number
+
+
+def _id_number(value: Optional[str]) -> Optional[int]:
+    """A w:id as a whole number (sign and surrounding spaces allowed, as xsd:integer allows), else None."""
+    text = (value or "").strip()
+    digits = text[1:] if text[:1] in "+-" else text
+    if not digits or not all("0" <= ch <= "9" for ch in digits):
+        return None
+    return int(text)
+
+
+def _annotation_ids(pkg: VPackage, parsed: Dict[str, Any]) -> set:
+    """Every annotation id (``ANNOTATION_ELEMENTS``) the package uses, as numbers, in all its document XML parts
+    (``VPackage.document_xml_parts``); ``parsed`` holds parts already read."""
+    found = set()
+    for part in pkg.document_xml_parts():
+        root = parsed[part] if part in parsed else pkg.xml(part)
+        for el in root.iter():
+            if isinstance(el.tag, str) and el.tag.startswith(W) and el.tag[len(W):] in ANNOTATION_ELEMENTS:
+                n = _id_number(el.get(W + "id"))
+                if n is not None:
+                    found.add(n)
+    return found
 
 
 def structure_only(d: Dict[str, Any]) -> bool:
@@ -477,23 +510,34 @@ def _run_suite(source: bytes, output: bytes, plan: Dict[str, Any], source_name: 
                 if i is not None:
                     src_id_count[i] = src_id_count.get(i, 0) + 1
         dup_all = sorted(i for i, n in id_count.items() if n > 1 and n > src_id_count.get(i, 0))
+        # A NEW revision's id is new in the whole id space: not one any annotation of the source uses in any of its
+        # document parts (a bookmark, a comment, a revision in the styles part …), and no larger than Word reads.
+        new_ids = sorted({i for _, _, i in new_elems}, key=_total_key)
+        src_annotations = _annotation_ids(src, src_xml) if new_ids else set()
+        reused = [i for i in new_ids if _id_number(i) is not None and _id_number(i) in src_annotations]
+        out_of_range = [i for i in new_ids if _id_number(i) is None or not 0 <= _id_number(i) <= WORD_ID_LIMIT]
         others = [f"{k} {cnt_b.get(k, 0)}→{cnt_a.get(k, 0)} (Δ{delta[k]:+d}, predicted {pred.get(k, 0):+d})"
                   for k in kinds if k not in ("ins", "del") and (delta[k] or pred.get(k, 0))]
         rec.set(CheckResult("V4", "Revision accounting",
-                            "PASS" if (not wrong and not dup and not collide and not dup_all) else "FAIL",
+                            "PASS" if (not wrong and not dup and not collide and not dup_all and not reused
+                                       and not out_of_range) else "FAIL",
                             f"w:ins {ins_b}→{ins_a} (Δ{d_ins:+d}, predicted {pred.get('ins', 0):+d}); "
                             f"w:del {del_b}→{del_a} (Δ{d_del:+d}, predicted {pred.get('del', 0):+d})"
                             + (f"; {'; '.join(others)}" if others else "")
                             + (f"; UNPREDICTED deltas {wrong}" if wrong else "")
                             + (f"; DUPLICATE ids {sorted(set(dup) | set(dup_all), key=_total_key)[:5]}"
                                if (dup or dup_all) else "; ids unique")
-                            + (f"; NEW revision ids collide {collide[:5]}" if collide else ""),
+                            + (f"; NEW revision ids collide {collide[:5]}" if collide else "")
+                            + (f"; NEW revision ids reuse an annotation id of the source {reused[:5]}" if reused else "")
+                            + (f"; NEW revision ids not a whole number up to {WORD_ID_LIMIT} {out_of_range[:5]}"
+                               if out_of_range else ""),
                             {"ins_before": ins_b, "ins_after": ins_a, "del_before": del_b, "del_after": del_a,
                              "counts_before": cnt_b, "counts_after": cnt_a, "unpredicted": wrong,
-                             "duplicate_ids": dup, "duplicate_ids_all_kinds": dup_all, "colliding_new_ids": collide}))
+                             "duplicate_ids": dup, "duplicate_ids_all_kinds": dup_all, "colliding_new_ids": collide,
+                             "new_ids_reusing_source_annotation_ids": reused, "new_ids_out_of_range": out_of_range}))
         check.update(revisions_before=sum(cnt_b.values()), revisions_after=sum(cnt_a.values()),
                      unpredicted_deltas=len(wrong), duplicate_ids=len(set(dup) | set(dup_all)),
-                     colliding_new_ids=len(collide))
+                     colliding_new_ids=len(collide), reused_annotation_ids=len(reused), ids_out_of_range=len(out_of_range))
 
     # V5a — XSD against the source baseline (changed and added members)
     with _check(rec, "V5a", "XSD vs source baseline") as check:

@@ -146,6 +146,12 @@ def _v4(d: Dict[str, Any], rec: Any) -> List[str]:
         out.append(f"revision ids used more often than in the source: {dup[:10]}")
     if d.get("colliding_new_ids"):
         out.append(f"new revision ids that collide with ids already in use: {list(d['colliding_new_ids'])[:10]}")
+    if d.get("new_ids_reusing_source_annotation_ids"):
+        out.append(f"new revision ids that a bookmark, comment or revision of the source already uses (in any part): "
+                   f"{list(d['new_ids_reusing_source_annotation_ids'])[:10]}")
+    if d.get("new_ids_out_of_range"):
+        out.append(f"new revision ids that are not whole numbers up to 2147483647, the largest Word reads: "
+                   f"{list(d['new_ids_out_of_range'])[:10]}")
     return out
 
 
