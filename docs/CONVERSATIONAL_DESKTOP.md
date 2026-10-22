@@ -66,7 +66,8 @@ to-do list is in use):
   headers, footers and page setup). The server still reports these as the attachment's `notes`; the window does
   not show them.
 - Refused, greyed out with the reason: the file cannot be opened as a Word package, is a Strict Open XML
-  document, is larger than the app opens, or has no paragraph at all in its body. The reason says what to do,
+  document, is larger than the app opens, has a part with an XML document type declaration (`<!DOCTYPE …>`, which
+  Word never writes; the reason names the part), or has no paragraph at all in its body. The reason says what to do,
   usually to open the file in Word and save it again as `.docx`. A refused file never enters a plan.
 
 A `.docm`, `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`. A template that would be

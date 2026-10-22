@@ -19,6 +19,14 @@ Changes since v1.7.0.
 
 ## Fixes
 
+- **Tracked edits beside resized table columns.** A file in which someone resized table columns (or changed a row's
+  table settings) with Track Changes on is no longer set aside after a tracked edit: the new tracked changes now take
+  numbers no mark already in the file uses, where before they could take that column change's number and fail the
+  revision check.
+- **A row's tracked table-settings change counts as a tracked change.** Accepting tracked changes now accepts a
+  change someone made to one row's own table settings with Track Changes on, where before it stayed pending after
+  "accept all"; rejecting one is left for Word, as for a whole table's settings. The revision check counts it too,
+  so an edit that took its number, or removed it without saying so, is caught instead of delivered.
 - **New wording must be your own whole words.** Words the assistant places in a document are checked against what
   you typed as whole words: a piece cut out of a longer word or number ("shall not" out of "shall notify", "50" out of
   "500") is no longer taken as yours, so the assistant asks you for the wording instead.

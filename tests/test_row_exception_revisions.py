@@ -33,8 +33,7 @@ OLD_PROPERTY_TAGS = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "t
 def build(exceptions: str = CENTRED + CHANGE, insertion: bool = False) -> bytes:
     """A schedule table whose first row starts with ``<w:tblPrEx>`` + ``exceptions``, then four paragraphs "The Owner
     shall review.". ``insertion``: an earlier paragraph holds Q's tracked insertion (w:id 9) — a second revision for
-    resolve_tracked_changes, and an id above the exceptions' change, so the revision-id seed of this branch (which reads
-    w:ins but not w:tblPrExChange) starts clear of 7."""
+    resolve_tracked_changes."""
     d = docx.Document()
     t = d.add_table(rows=3, cols=2)
     for r, (a, b) in enumerate((("Tag", "Description"), ("FP-1", "Fire pump"), ("FP-2", "Jockey pump"))):
@@ -111,8 +110,8 @@ def test_both_sides_count_it_as_a_property_change():
 
 @pytest.mark.parametrize("seed, collides", [(0, ["7"]), (7, [])])
 def test_a_new_revision_reusing_its_id_fails_v4(monkeypatch, seed, collides):
-    # the shared defect: the seed that does not read w:tblPrExChange (plan and apply both use the ids it gives — the
-    # plan records them in transform_data); the seed that reads it (7, R1's) starts after it
+    # the shared defect: a seed that does not read w:tblPrExChange (plan and apply both use the ids it gives — the
+    # plan records them in transform_data); the seed that reads it (7: R1's and C9's) starts after it
     monkeypatch.setattr(replace_module, "max_revision_id", lambda pkg: seed)
     src = build()
     plan, out, rec = rename(src)

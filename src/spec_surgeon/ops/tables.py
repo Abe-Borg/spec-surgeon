@@ -24,6 +24,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from lxml import etree
 
+from ..package import has_doctype
 from .base import JobException
 
 SSML = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
@@ -45,7 +46,11 @@ class Bad:
 
 
 def _parse(data: bytes):
-    return etree.fromstring(data, etree.XMLParser(resolve_entities=False, huge_tree=True))
+    root = etree.fromstring(data, etree.XMLParser(resolve_entities=False, huge_tree=True))
+    if has_doctype(root):        # an entity left unresolved would silently shorten a cell's text
+        raise ValueError("a part of the workbook carries an XML document type declaration (<!DOCTYPE …>), which Excel "
+                         "never writes, so its text cannot be read exactly; save the workbook again in Excel")
+    return root
 
 
 def _col_index(ref: str) -> int:
