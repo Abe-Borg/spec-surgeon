@@ -186,18 +186,21 @@ def paragraphs(root: etree._Element) -> List[etree._Element]:
 MAX_REVISION_ID = 2 ** 31 - 1
 
 # Elements whose w:id is an annotation id, one space in which a new revision's id must be new: every revision element
-# (ECMA-376 §17.13.5, range markers included), bookmarks, comment ranges, references and the comments themselves, and
-# permission ranges. Not here: a footnote's or endnote's id (the note's number, which w:footnoteReference names), a
-# content control's w:id (an element, not this attribute) and a w:div's id in webSettings.xml, which a page pasted
-# from the web carries at random values near 2**31.
-ANNOTATION_ID_TAGS = frozenset(W + n for n in (
+# (ECMA-376 §17.13.5, range markers included), bookmarks, comment ranges, references and the comments themselves,
+# permission ranges, and Word 2010's co-authoring conflict markup (w14:conflictIns/conflictDel and its custom-XML
+# conflict ranges, which carry a w:id too: schemas/microsoft/wml-2010.xsd). Not here: a footnote's or endnote's id
+# (the note's number, which w:footnoteReference names), a content control's w:id (an element, not this attribute) and
+# a w:div's id in webSettings.xml, which a page pasted from the web carries at random values near 2**31.
+ANNOTATION_ID_TAGS = frozenset([W + n for n in (
     "ins", "del", "moveFrom", "moveTo", "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
     "customXmlInsRangeStart", "customXmlInsRangeEnd", "customXmlDelRangeStart", "customXmlDelRangeEnd",
     "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
     "cellIns", "cellDel", "cellMerge", "rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "tblPrExChange",
     "tblGridChange", "trPrChange", "tcPrChange", "numberingChange",
     "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "commentReference", "comment",
-    "permStart", "permEnd"))
+    "permStart", "permEnd")] + ["{%s}%s" % (NS["w14"], n) for n in (
+    "conflictIns", "conflictDel", "customXmlConflictInsRangeStart", "customXmlConflictInsRangeEnd",
+    "customXmlConflictDelRangeStart", "customXmlConflictDelRangeEnd")])
 _WHOLE_NUMBER = re.compile(r"[+-]?[0-9]+")
 
 

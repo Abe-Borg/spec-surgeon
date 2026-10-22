@@ -432,23 +432,25 @@ class DocxPackage:
 
     def wordprocessing_xml_parts(self) -> List[str]:
         """Every current member that holds the document's own XML, in member order: the text parts wherever their
-        relationships put them, and every XML member in the main part's folder (usually ``word/``, subfolders
-        included) — styles, numbering, settings, theme, the glossary, the comment side parts. A member is XML by its
-        declared content type (its Override, part names compared case-insensitively as OPC compares them, else its
-        extension's Default) ending in ``xml``, or, with none declared, by a ``.xml`` extension in any case.
-        Relationship parts are not included, nor pictures: an SVG (``image/svg+xml``) is XML and often carries a
-        DOCTYPE."""
+        relationships put them, and every XML member the main part relates (wherever its relationship puts it) or
+        that lies in the main part's folder (usually ``word/``, subfolders included) — styles, numbering, settings,
+        theme, the glossary, the comment side parts. A member is XML by its declared content type (its Override, part
+        names compared case-insensitively as OPC compares them, else its extension's Default) ending in ``xml``, or,
+        with none declared, by a ``.xml`` extension in any case. Relationship parts are not included, nor pictures:
+        an SVG (``image/svg+xml``) is XML and often carries a DOCTYPE."""
         defaults, overrides = self.content_types() if self.has(CT_PART) else ({}, {})
         folded = {name.casefold(): ctype for name, ctype in overrides.items()}
-        folder = posixpath.dirname(self.main_part())
+        main = self.main_part()
+        folder = posixpath.dirname(main)
         prefix = folder + "/" if folder else ""
         text = set(self.text_parts())
+        related = {r.resolved for r in self.rels(main).values() if r.target_mode == "Internal" and r.resolved}
         out = []
         for name in self.member_names:
             if name in text:
                 out.append(name)
                 continue
-            if not name.startswith(prefix) or posixpath.basename(posixpath.dirname(name)) == "_rels":
+            if posixpath.basename(posixpath.dirname(name)) == "_rels" or not (name in related or name.startswith(prefix)):
                 continue
             ctype = folded.get(name.casefold()) or defaults.get(posixpath.splitext(name)[1].lstrip(".").lower())
             if ctype is None:

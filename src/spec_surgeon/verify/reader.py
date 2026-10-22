@@ -174,21 +174,25 @@ class VPackage:
 
     def document_xml_parts(self) -> List[str]:
         """The members holding the document's own XML, read independently of the transform: every text part (by its
-        relationship, whatever its name), and in the main part's folder each member whose declared content type — the
-        Override for its name (case-insensitive, as OPC compares part names), else the Default for its extension — is
-        an XML type and not a picture's (``image/svg+xml``), or which, with no type declared, is named ``*.xml`` in
-        any case. Relationship parts are left out."""
+        relationship, whatever its name), and among the members the main part relates (wherever they lie) and those in
+        its folder, each one whose declared content type — the Override for its name (case-insensitive, as OPC
+        compares part names), else the Default for its extension — is an XML type and not a picture's
+        (``image/svg+xml``), or which, with no type declared, is named ``*.xml`` in any case. Relationship parts are
+        left out."""
         defaults, overrides = self.content_types()
         override_of = {name.lower(): ctype for name, ctype in overrides.items()}
-        home = posixpath.dirname(self.main_part())
+        main = self.main_part()
+        home = posixpath.dirname(main)
         text = self.text_parts()
+        related = {r["target"] for r in self.rels_targets(main).values()}
         found = []
         for name in self.names:
             if name in text:
                 found.append(name)
                 continue
             folder = posixpath.dirname(name)
-            if (home and folder != home and not folder.startswith(home + "/")) or posixpath.basename(folder) == "_rels":
+            outside = home and folder != home and not folder.startswith(home + "/")
+            if (outside and name not in related) or posixpath.basename(folder) == "_rels":
                 continue
             ctype = override_of.get(name.lower())
             if ctype is None:

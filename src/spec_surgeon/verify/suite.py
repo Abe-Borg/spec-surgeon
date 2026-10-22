@@ -162,14 +162,19 @@ OTHER_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChang
              "numberingChange", "cellIns", "cellDel", "cellMerge")
 PROPERTY_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange")
 # The elements whose w:id shares one space with a revision's (the verifier's own list): the whole revision family with
-# its range markers, bookmarks, comments (range, reference, the comment itself) and permission ranges. A note's id, a
-# content control's and a web-settings div's are other spaces.
+# its range markers, bookmarks, comments (range, reference, the comment itself) and permission ranges, and Word 2010's
+# co-authoring conflict markup in its own namespace (W14_ANNOTATION_ELEMENTS). A note's id, a content control's and a
+# web-settings div's are other spaces.
 ANNOTATION_ELEMENTS = frozenset(CONTENT_REV + OTHER_REV + (
     "tblPrExChange", "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
     "customXmlInsRangeStart", "customXmlInsRangeEnd", "customXmlDelRangeStart", "customXmlDelRangeEnd",
     "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
     "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "commentReference", "comment",
     "permStart", "permEnd"))
+W14 = "{http://schemas.microsoft.com/office/word/2010/wordml}"
+W14_ANNOTATION_ELEMENTS = frozenset(("conflictIns", "conflictDel", "customXmlConflictInsRangeStart",
+                                     "customXmlConflictInsRangeEnd", "customXmlConflictDelRangeStart",
+                                     "customXmlConflictDelRangeEnd"))
 WORD_ID_LIMIT = 2147483647          # Word reads a w:id as a signed 32-bit number
 
 
@@ -189,7 +194,10 @@ def _annotation_ids(pkg: VPackage, parsed: Dict[str, Any]) -> set:
     for part in pkg.document_xml_parts():
         root = parsed[part] if part in parsed else pkg.xml(part)
         for el in root.iter():
-            if isinstance(el.tag, str) and el.tag.startswith(W) and el.tag[len(W):] in ANNOTATION_ELEMENTS:
+            if not isinstance(el.tag, str):
+                continue
+            if (el.tag.startswith(W) and el.tag[len(W):] in ANNOTATION_ELEMENTS) or (
+                    el.tag.startswith(W14) and el.tag[len(W14):] in W14_ANNOTATION_ELEMENTS):
                 n = _id_number(el.get(W + "id"))
                 if n is not None:
                     found.add(n)

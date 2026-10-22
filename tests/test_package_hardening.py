@@ -317,6 +317,66 @@ def test_a_tracked_change_past_the_largest_id_word_reads_is_refused_and_one_just
     assert rec.passed, rec.to_markdown()                                   # an untracked change needs no id
 
 
+W14 = "{http://schemas.microsoft.com/office/word/2010/wordml}"
+
+
+def test_coauthoring_conflict_markup_is_in_the_id_space(monkeypatch):
+    """Word 2010's co-authoring conflict markup (w14:conflictIns, its own namespace) carries a w:id in the same space.
+    Counted on both sides; the scan blind to it, shared by plan and apply, is caught by V4."""
+    base = ooxml.max_revision_id(DocxPackage(PLAIN))
+
+    def document(root):
+        last = list(root.iter(W + "p"))[-1]
+        conflict = etree.SubElement(last, W14 + "conflictIns")
+        conflict.set(W + "id", str(base + 1))
+        conflict.set(W + "author", "Reviewer")
+        conflict.set(W + "date", "2026-01-02T00:00:00Z")
+    data = patch_docx(PLAIN, {MAIN: document})
+    assert ooxml.max_revision_id(DocxPackage(data)) == base + 1
+    plan, out, rec = _run(data, _tracked_replace("FM Global", "the Owner's risk consultant"))
+    assert rec.passed, rec.to_markdown()
+    assert min(int(i) for i in _new_ins_ids(data, out)) > base + 1
+    monkeypatch.setattr(ooxml, "ANNOTATION_ID_TAGS", frozenset(t for t in ooxml.ANNOTATION_ID_TAGS if t.startswith(W)))
+    plan, out, rec = _run(data, _tracked_replace("FM Global", "the Owner's risk consultant"))
+    assert _failed(rec) == ["V4"], rec.to_markdown()
+    assert _v4(rec).data["new_ids_reusing_source_annotation_ids"] == [str(base + 1)]
+
+
+def _relocate_styles(data: bytes, new: str = "parts/styles.xml") -> bytes:
+    """The styles part moved out of the main part's folder: its relationship (``../parts/styles.xml``) and its
+    content-type Override follow, as OPC allows."""
+    rels = _read(data, "word/_rels/document.xml.rels").replace(b'Target="styles.xml"', f'Target="../{new}"'.encode())
+    types = _read(data, "[Content_Types].xml").replace(b'PartName="/word/styles.xml"', f'PartName="/{new}"'.encode())
+    assert rels != _read(data, "word/_rels/document.xml.rels") and types != _read(data, "[Content_Types].xml")
+    return _rewrite(data, {"word/_rels/document.xml.rels": rels, "[Content_Types].xml": types},
+                    rename={"word/styles.xml": new})
+
+
+def test_a_part_the_main_part_relates_outside_its_folder_is_read(monkeypatch):
+    """A styles part the main part relates from outside its folder is a document part all the same: its revision ids
+    count, the verifier's own listing finds it, a DOCTYPE in it is refused at attach time, and a folder-only listing
+    shared by plan and apply is caught by V4."""
+    base = ooxml.max_revision_id(DocxPackage(PLAIN))
+    data = _relocate_styles(_annotated(PLAIN, {"style": base + 1}))
+    pkg = DocxPackage(data)
+    assert "parts/styles.xml" in pkg.wordprocessing_xml_parts()
+    assert "parts/styles.xml" in VPackage(data).document_xml_parts()
+    assert ooxml.max_revision_id(pkg) == base + 1
+    plan, out, rec = _run(data, _tracked_replace("FM Global", "the Owner's risk consultant"))
+    assert rec.passed, rec.to_markdown()
+    assert min(int(i) for i in _new_ins_ids(data, out)) > base + 1
+    with pytest.raises(XmlDoctype) as e:
+        DocxPackage(_rewrite(data, {"parts/styles.xml": _with_doctype(_read(data, "parts/styles.xml"))})
+                    ).check_no_doctype()
+    assert e.value.part == "parts/styles.xml"
+    listed = DocxPackage.wordprocessing_xml_parts
+    monkeypatch.setattr(DocxPackage, "wordprocessing_xml_parts",
+                        lambda self: [p for p in listed(self) if p.startswith("word/")])
+    plan, out, rec = _run(data, _tracked_replace("FM Global", "the Owner's risk consultant"))
+    assert _failed(rec) == ["V4"], rec.to_markdown()
+    assert _v4(rec).data["new_ids_reusing_source_annotation_ids"] == [str(base + 1)]
+
+
 def test_planted_a_transform_without_the_ceiling_is_caught_by_v4(monkeypatch):
     """A wrong implementation shared by plan and apply: the ceiling gone, the ids run past 2147483647; V4 says so."""
     monkeypatch.setattr(base_module, "MAX_REVISION_ID", 10 ** 12)
