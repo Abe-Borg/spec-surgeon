@@ -42,7 +42,9 @@ The desktop is one window: the page in `web/static/` (built from `frontend/`), s
 `document_task.DocumentTask` (contract `docs/WEB_API.md`) and shown by `web/shell.py`. The user attaches Word files, an
 optional template and pictures or tables for the edit to use; `triage.py` checks each on arrival without a model call.
 `layouts.py` gives a mixed batch one EditSpec per structural layout with one approval; `review_display.py` describes
-the previewed spec in the sentences each op writes for itself (`Op.describe`). The one button lives in the chat pane;
+the previewed spec in the sentences each op writes for itself (`Op.describe`); the window shows no plan card (the chat
+says what will change, the previews show it), and those sentences record each copy's changes in `applied`. The one
+button lives in the chat pane;
 each preview carries a checkmark and an X: X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
 every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
 request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document.
@@ -98,7 +100,7 @@ for one pair, `gui.Session` for the window's steps with a scripted client (`test
 1. Copy `src/spec_surgeon/ops/set_font.py`; keep `@register`, `name`, `mode`, `params_schema`, `select_schema`,
    `verification_profile`, `describe()`, `plan()`, `apply()`; import it at the bottom of `ops/__init__.py`.
    `describe(select, params)` returns one or two sentences built with `ops/prose.py` (inches and points, quoted exact
-   text, no identifiers, no JSON): the line the user reads in the plan.
+   text, no identifiers, no JSON): the line that records the change in the history the model hears.
 2. `plan()` fills the fragment analytically from the source: `intended_parts`, `diffs`, members, `rev_delta`,
    `property_assertions`, and honest `touches` (what it changes and what it reads).
 3. Write the V10 assertion kind in `verify/` first, with its own selection and an "exactly this change" check.
