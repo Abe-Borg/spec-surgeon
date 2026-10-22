@@ -278,7 +278,9 @@ def test_the_copy_names_the_exceptions_the_code_has():
     # a declined reply is taken back
     assert 'if problem and getattr(resp, "stop_reason", None) == "refusal":' in source("conversation.py")
     assert "def _take_back(self)" in source("conversation.py")
-    assert "the message is taken back out of " in runtime
+    assert "self._reply_mark = (self.messages[-1], before)" in source("conversation.py").split("def reply(")[1].split("\n    def ")[0]
+    assert "self._reply_mark" not in source("conversation.py").split("def start(")[1].split("\n    def ")[0]
+    assert "that reply is taken back" in runtime and "a first request, or a reply declined" in runtime
     # two attached documents of one name
     assert "def _say_same_names(" in source("document_task.py")
     assert "Two attached documents with the same name" in runtime

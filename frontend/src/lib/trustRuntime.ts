@@ -112,9 +112,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds:
       `No spending ceiling. Every call counts toward a pause after ${F.stepsPerPause} AI steps. Stop now cuts the ` +
       "running call off. A call that fails appends nothing to the conversation; the error is shown, and Continue " +
-      "goes on from where it stopped. If Claude declines to answer your message, the message is taken back out of " +
-      "the conversation (so it is not sent again with your next one), the chat says so in plain words, and nothing " +
-      "else changes.",
+      "goes on from where it stopped. If Claude declines to answer, the chat says so in plain words and nothing is " +
+      "changed. When it declines a follow-up reply straight away, before reading anything, that reply is taken back " +
+      "out of the conversation, so it is not sent again with your next one; a first request, or a reply declined " +
+      "after Claude has read something, stays in the history and goes out with what follows.",
   },
   {
     covers: ["A6"],
