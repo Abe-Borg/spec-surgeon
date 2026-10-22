@@ -20,7 +20,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 from .editspec import is_template_file, plan_spec, spec_templates, validate_spec
 from .fingerprint import fingerprint
 from .ops import Plan
-from .ops.base import LEFT_ELSEWHERE, text_diffs
+from .ops.base import CASE_DIFFERS, LEFT_ELSEWHERE, text_diffs
 from .package import DocxPackage
 
 
@@ -43,12 +43,15 @@ def left_notes(flags: Sequence[str], superseded: Sequence[str] = ()) -> List[str
 
 def left_elsewhere_warnings(bp: "BatchPlan") -> List[str]:
     """What the window shows beside the previews: each file where a change kept to one place leaves the same words
-    elsewhere, in the flag's own plain words (C3); the assistant has every file in the plan's text."""
-    left = bp.left_elsewhere()
-    out = [f"{name}: {what}" for name, what in left[:LEFT_WARNINGS]]
-    if len(left) > LEFT_WARNINGS:
-        out.append(f"{len(left) - LEFT_WARNINGS} more place(s) like these keep the old words; ask in the chat to see "
-                   f"them all or to change them too.")
+    elsewhere (C3), and each file whose header/footer fill will show in another case than the template (C4), in the
+    flags' own plain words; the assistant has every file in the plan's text."""
+    out: List[str] = []
+    for notes, more in ((bp.left_elsewhere(), "place(s) like these keep the old words"),
+                        (bp.case_notes(), "file(s) like these show a fill in another case than the template")):
+        out += [f"{name}: {what}" for name, what in notes[:LEFT_WARNINGS]]
+        if len(notes) > LEFT_WARNINGS:
+            out.append(f"{len(notes) - LEFT_WARNINGS} more {more}; ask in the chat to see them all or to change "
+                       f"them too.")
     return out
 
 
@@ -157,6 +160,12 @@ class BatchPlan:
         return [(f.source.name, what) for f in self.files if f.status == "planned"
                 for what in left_notes(f.summary, self.superseded)]
 
+    def case_notes(self) -> List[Tuple[str, str]]:
+        """(file name, what) for every planned file's flag that a header/footer fill will show in another case than
+        the template's own text (``CASE_DIFFERS``, C4)."""
+        return [(f.source.name, line.split(CASE_DIFFERS, 1)[1]) for f in self.files if f.status == "planned"
+                for line in f.summary if CASE_DIFFERS in line]
+
     def to_dict(self):
         return {"request": self.spec.get("request"), "files": [f.to_dict() for f in self.files],
                 "skipped": self.skipped, "seconds": round(self.seconds, 2),
@@ -188,6 +197,14 @@ class BatchPlan:
             if len(left) > LEFT_LINES:                  # every file still named; read them with the tools
                 rest = list(dict.fromkeys(name for name, _ in left[LEFT_LINES:]))
                 out.append(f"   … and {len(left) - LEFT_LINES} more note(s) of the same kind, in: {', '.join(rest)}")
+        cases = self.case_notes()
+        if cases:
+            out.append("\nFILLS IN ANOTHER CASE THAN THE TEMPLATE — every file (tell the user; caps_fills shows a fill "
+                       "in capitals through formatting, without retyping a letter):")
+            out += [f"   {name}: {what}" for name, what in cases[:LEFT_LINES]]
+            if len(cases) > LEFT_LINES:
+                rest = list(dict.fromkeys(name for name, _ in cases[LEFT_LINES:]))
+                out.append(f"   … and {len(cases) - LEFT_LINES} more, in: {', '.join(rest)}")
         # Hygiene changes must be reviewable for EVERY file, even when other summaries
         # are grouped by structure pattern. JSON quoting exposes ordinary/NBSP differences.
         import json

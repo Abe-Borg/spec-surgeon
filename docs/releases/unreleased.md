@@ -40,6 +40,11 @@ Changes since v1.8.0.
   the pages, every document whose first page (or header, or note) still reads the old words, and the assistant offers
   to change them too. A header or footer filled with a section number or title you typed notes a document whose own
   differs. A rename that finds nothing where you asked says where the words are instead. Nothing extra is changed.
+- **Capitals like the template, in one step.** A header or footer filled with a document's own title now shows it in
+  capitals when you ask ("show the title in capitals like the template"), through formatting: no letter is retyped,
+  so the words are still the document's own. A note beside the pages names each document whose title would otherwise
+  show in another case than the template's (21 05 53's "Identification for Fire Suppression Systems" where the
+  template shows "DOOR HARDWARE").
 
 ## Fixes
 

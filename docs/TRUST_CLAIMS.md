@@ -198,8 +198,9 @@ How each is labelled:
 - The plan's sentences come from the operation code.
 - Claude's assumptions are listed as assumptions.
 - Claude's visual findings are listed as warnings with file and page.
-- Notes that a change kept to one place leaves the same words elsewhere are listed as warnings with the file; the plan
-  writes them, not Claude (`ops/elsewhere.py`, `planner.left_elsewhere_warnings`, from #80).
+- Notes that a change kept to one place leaves the same words elsewhere, or that a header/footer fill will show in
+  another case than the template, are listed as warnings with the file; the plan writes them, not Claude
+  (`ops/elsewhere.py`, `planner.left_elsewhere_warnings`, from #80 and C4).
 - A custom method's summary is Claude's own proposal text.
 - An outcome plan is shown as its effects (`review_display.effects`).
 

@@ -5,16 +5,21 @@ before the merge), so a place another op of the spec changes is never named:
 * ``replace_text``: each place its ``find`` (the same matching) also occurs and no ``replace_text`` of the spec edits —
   the plan records the occurrences it reads (``transform_data["left_elsewhere"]``);
 * ``apply_header_footer_template``: a literal fill of a reference slot (SECTION_NUMBER, SECTION_TITLE) whose words
-  differ from the document's own, read by ``REFERENCE_FILLS`` (a difference of case alone is not this flag's).
+  differ from the document's own, read by ``REFERENCE_FILLS`` (a difference of case alone is not this flag's);
+* ``apply_header_footer_template`` (C4, ``CASE_DIFFERS``): a fill whose letters will show in another case than the
+  template's own text in that slot (a template spec's title, a highlighted placeholder's words; a {{NAME}} is a name,
+  not text), where the template shows neither capitals nor small capitals by formatting and ``caps_fills`` does not
+  name the slot: "Identification for …" where the template shows "DOOR HARDWARE".
 
-Flags only (``LEFT_ELSEWHERE``): nothing is predicted from them, so the reads behind them are no ``touches``.
+Flags only (``LEFT_ELSEWHERE``, ``CASE_DIFFERS``): nothing is predicted from them, so the reads behind them are no
+``touches``.
 """
 from __future__ import annotations
 
 from typing import Any, Dict, List
 
 from ..package import DocxPackage
-from .base import LEFT_ELSEWHERE, JobException, PlanFragment
+from .base import CASE_DIFFERS, LEFT_ELSEWHERE, JobException, PlanFragment
 from .slots import REFERENCE_FILLS, extract_fill, value_tokens
 
 
@@ -78,8 +83,43 @@ def _template_fills(pkg: DocxPackage, ops: List[Dict[str, Any]], frags: List[Pla
                                f"is.")
 
 
+def letters_case(text: str) -> str:
+    """ "capitals", "lower case", "mixed case", or "" without a cased letter — the letters as typed."""
+    cased = [c for c in text or "" if c.isupper() or c.islower()]
+    if not cased:
+        return ""
+    if all(c.isupper() for c in cased):
+        return "capitals"
+    return "lower case" if all(c.islower() for c in cased) else "mixed case"
+
+
+def _fill_case(ops: List[Dict[str, Any]], frags: List[PlanFragment]) -> None:
+    for o, f in zip(ops, frags):
+        if o.get("op") != "apply_header_footer_template":
+            continue
+        caps = set(f.params.get("caps_fills") or [])
+        fills = f.transform_data.get("fills") or {}
+        noted = set()
+        for c in f.transform_data.get("copies") or []:
+            for entry in (e for sl in (c.get("slots") or {}).values() for e in sl):
+                name = entry["name"]
+                if name in noted or name in caps or entry.get("shown") or entry.get("marker") == "braces" \
+                        or name not in fills:
+                    continue
+                theirs, ours = letters_case(entry.get("template_text", "")), letters_case(fills[name])
+                if not theirs or not ours or theirs == ours:
+                    continue
+                noted.add(name)
+                what = name.lower().replace("_", " ")
+                offer = (" It can show in capitals like the template's through formatting, without retyping a "
+                         "letter." if theirs == "capitals" else "")
+                f.flags.append(f"{CASE_DIFFERS}the {what} “{fills[name]}” will show in {ours} in the headers/footers, "
+                               f"where the template shows “{entry.get('template_text')}” in {theirs}.{offer}")
+
+
 def flag_left_elsewhere(pkg: DocxPackage, ops: List[Dict[str, Any]], frags: List[PlanFragment]) -> None:
     """Add the C3 flags to a spec's fragments (``ops`` and ``frags`` in spec order): two replacements that rename the
     footer and the body leave nothing to say; one that renames only the footer says the body keeps the old words."""
     _replacements(ops, frags)
     _template_fills(pkg, ops, frags)
+    _fill_case(ops, frags)

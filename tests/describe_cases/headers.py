@@ -4,6 +4,11 @@ set_issue_stamp and ensure_end_of_section. Each case is (select, params, [expect
 CASES = {
     "apply_header_footer_template": [
         ({"sections": "all"},
+         {"template": "C:/Projects/hf-template.docx", "template_sections": {"all": 0}, "slot_markers": ["reference"],
+          "slot_fills": {"SECTION_TITLE": {"rule": "paragraph_after", "anchor_regex": "^SECTION \\d{2} \\d{2} \\d{2}$"}},
+          "caps_fills": ["SECTION_TITLE"]},
+         ["“SECTION_TITLE” shows in capitals (formatting only; no letter is retyped)"]),
+        ({"sections": "all"},
          {"template": "C:/Projects/hf-template.docx", "template_sections": {"cover": 0, "body": 1},
           "slot_fills": {"SECTION NUMBER": {"rule": "regex", "pattern": "^SECTION (\\d{2} \\d{2} \\d{2})",
                                             "source": "document"},

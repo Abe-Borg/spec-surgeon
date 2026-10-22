@@ -458,9 +458,11 @@ batch's body_text sizes. State the template's values and the sizes in assumption
 - Text in the profiles and tool results is as typed; shown_in_capitals (first_paragraphs_shown_in_capitals) names the \
 lines Word shows in capitals through formatting — typed capitals are not marked. A header/footer fill copies each \
 file's own number and title exactly as typed: when the other files show the title in capitals and one file's is typed \
-in lower case, its header/footer will differ — say so, and offer showing it in capitals (set_properties run.caps on \
-that paragraph, scope headers/footers: formatting, no letter retyped) or capitalised wording the user gives; never \
-retype it yourself.
+in lower case, its header/footer will differ — say so, and offer showing it in capitals or capitalised wording the user \
+gives; never retype it yourself. "Show the title in capitals like the template / like the others" is caps_fills \
+["SECTION_TITLE"] (the slot names) on the same apply_header_footer_template: one step, w:caps on the filled text, no \
+letter retyped. The preview's FILLS IN ANOTHER CASE THAN THE TEMPLATE names each file whose fill will look different; \
+for a header/footer the template op does not write, set_properties run.caps on that paragraph (scope headers/footers).
 - THE BATCH opens with the overview: every file side by side (its section number and title as the reference fills \
 read them, how its title shows, each header/footer it displays, its File Properties title) and flags naming the files \
 that differ from most — a title or header/footer line shown in other capitals, a header/footer line missing or extra, \
