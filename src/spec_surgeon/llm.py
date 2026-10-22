@@ -2,7 +2,8 @@
 recovery and the visual check of the preview samples).
 
 * ``call`` **streams** (``client.beta.messages.stream`` + ``get_final_message``): the output cap is 128,000 tokens (the
-  most Opus 5.5 writes), and the SDK refuses a non-streaming request that large. Effort ``max``; thinking is left to the
+  most Opus 5.5 writes), and the SDK refuses a non-streaming request that large. Effort ``high`` unless a budget asks
+  for less; ``max`` is refused (``resources.EFFORTS``, the owner's decision 2026-10-22); thinking is left to the
   model (Opus 5.5 always thinks — sending a ``thinking`` setting, a forced ``tool_choice`` or an assistant prefill is a
   400 there). The server-side refusal fallback is on (``fallbacks="default"``): a request the model's safety filters
   decline is re-run on another model inside the same call.
@@ -55,7 +56,7 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import diagnostics as diag
 from .resources import (DEFAULT_EFFORT, DEFAULT_MAX_CALLS, DEFAULT_MAX_COST_USD,
-                        DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, positive_integer)
+                        DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, EFFORTS, positive_integer)
 
 _CANCEL_EVENT = ContextVar("spec_surgeon_cancel_event", default=None)
 _CALL_OBSERVER = ContextVar("spec_surgeon_call_observer", default=None)
@@ -472,8 +473,8 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
     if max_tokens > MAX_TOKENS:
         raise ValueError(f"max_output_tokens must not exceed {MAX_TOKENS}")
     effort = EFFORT if effort is None else effort
-    if effort not in ("low", "medium", "high", "max"):
-        raise ValueError("effort must be low, medium, high or max")
+    if effort not in EFFORTS:
+        raise ValueError("effort must be low, medium or high")
     retries_disabled = False
     tools = list(tools)
     record.update(phase="preflight", message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets))
@@ -928,8 +929,8 @@ class CallBudget:
                  max_cost_usd: Optional[float] = DEFAULT_MAX_COST_USD):
         if model is not None and (not isinstance(model, str) or not model.strip() or model != model.strip()):
             raise ValueError("model must be a non-empty model name without surrounding whitespace, or None")
-        if not isinstance(effort, str) or effort not in ("low", "medium", "high", "max"):
-            raise ValueError("effort must be low, medium, high or max")
+        if not isinstance(effort, str) or effort not in EFFORTS:
+            raise ValueError("effort must be low, medium or high")
         for name, value in (("max_calls", max_calls), ("max_output_tokens", max_output_tokens),
                             ("max_total_tokens", max_total_tokens)):
             if name == "max_total_tokens" and value is None:

@@ -124,9 +124,9 @@ insert, a schedule to place as a table, or a spreadsheet of project values to fi
 beside your documents is ever looked for.
 
 Connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
-with room for its full 128,000-token answer (the conversation at the model's default effort, recovery and custom
-methods at high; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is
-cached for an hour, so a follow-up request reads it instead of paying for it again). Instead, the
+with room for its full 128,000-token answer (the conversation at the model's default effort, recovery — the planning
+after a preview that set files aside included — and custom methods at high, and no step at max; every operation's
+settings ride the cached prompt, so a plan is one or two calls; that prompt is cached for an hour, so a follow-up request reads it instead of paying for it again). Instead, the
 header shows the estimated spending as it accrues, **Stop now** cuts off the AI step that is running at once, and
 work pauses after every 48 AI steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a
 passing reason (an overloaded service, a dropped connection) is sent again automatically. Every request needs

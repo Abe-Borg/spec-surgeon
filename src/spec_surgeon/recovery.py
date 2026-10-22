@@ -32,7 +32,7 @@ from .recovery_state import atomic_json, exclusive_session, json_value, repair_i
 from .sampling import representative_samples
 from .storage import conversation_folder, disk_id
 from .resources import (DEFAULT_MAX_ATTEMPTS, DEFAULT_MAX_CALLS, DEFAULT_MAX_COST_USD,
-                        DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, DEFAULT_EFFORT,
+                        DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_MAX_TOTAL_TOKENS, DEFAULT_EFFORT, EFFORTS,
                         DEFAULT_STALL_REPETITIONS, DEFAULT_CONTEXT_TOKENS)
 
 
@@ -68,8 +68,8 @@ class RecoveryOptions:
                 isinstance(self.max_cost_usd, bool) or not isinstance(self.max_cost_usd, (int, float))
                 or not math.isfinite(self.max_cost_usd) or self.max_cost_usd <= 0):
             raise ValueError("max_cost_usd must be a finite positive amount, or None")
-        if self.effort not in ("low", "medium", "high", "max"):
-            raise ValueError("effort must be low, medium, high, or max")
+        if self.effort not in EFFORTS:
+            raise ValueError("effort must be low, medium or high")
         if self.renderer not in ("auto", "word", "libreoffice", "none"):
             raise ValueError("unknown renderer")
         if self.analysis_limits is not None:
