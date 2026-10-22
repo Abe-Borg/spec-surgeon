@@ -156,3 +156,266 @@ def test_highlight_is_no_longer_out_of_reach_and_the_writer_is_told():
     assert not any("highlight" in c for c in CUSTOM_TRANSFORM_LIMITS["cannot"])
     assert "highlight of selected text" in codegen.system_prompt()
     assert "highlight of selected text" in str(op_catalog(examples=False)["custom_transform_limits"])
+
+
+# ---- A2 — table appearance: table_props and table_cells, the targets named by position -----------------------------
+
+SHADE_OP = '''
+from __future__ import annotations
+from lxml import etree
+from spec_surgeon.ops.base import Op, JobException
+from spec_surgeon.package import W
+from spec_surgeon.ooxml import TCPR_ORDER, insert_in_order, block_full_text
+
+
+def own(el, tag):
+    return [c for c in el if c.tag == W + tag]
+
+
+def first_cell(tbl):
+    rows = own(tbl, "tr")
+    cells = own(rows[0], "tc") if rows else []
+    return " ".join(block_full_text(p) for p in own(cells[0], "p")).strip() if cells else None
+
+
+class ShadeEveryOtherRow(Op):
+    name = "shade_every_other_row"
+    mode = "formatting"
+    description = "Shade every other row of the revision tables (the tables whose first cell reads Rev)."
+    params_schema = {"type": "object", "properties": {"fill": {"type": "string"}, "first_cell": {"type": "string"}}}
+    select_schema = {}
+
+    def plan(self, pkg, select, params):
+        fill, first = params.get("fill", "D9D9D9").upper(), params.get("first_cell", "Rev")
+        main = pkg.main_part()
+        frag = self.fragment(select, params)
+        targets = []
+        want = {W + "val": "clear", W + "color": "auto", W + "fill": fill}
+        for k, tbl in enumerate(pkg.xml(main).iter(W + "tbl")):
+            if first_cell(tbl) != first:
+                continue
+            rows = own(tbl, "tr")
+            for r in range(1, len(rows), 2):
+                cells = []
+                for c, tc in enumerate(own(rows[r], "tc")):
+                    pr = tc.find(W + "tcPr")
+                    shd = pr.find(W + "shd") if pr is not None else None
+                    if shd is None or dict(shd.attrib) != want:
+                        cells.append(c)
+                frag.property_assertions.append({
+                    "kind": "table_cells", "parts": [main],
+                    "select": {"scope": ["document"], "tables": {"index_range": [k, k]},
+                               "rows": {"index_range": [r, r]}},
+                    "params": {"shading": fill}, "expected_tables": 1 if cells else 0,
+                    "expected_cells": len(cells), "expected_columns": 0,
+                    "changed": {main: {"cells": [[k, r, c, ["shd"]] for c in cells]}} if cells else {}})
+                targets += [[k, r, c] for c in cells]
+                frag.touches.append((main, "tr:" + str(k) + ":" + str(r), "tcPr"))
+        if not frag.property_assertions:
+            raise JobException("no revision table in this file", "not-found")
+        frag.intended_parts = [main] if targets else []
+        frag.transform_data = {"main": main, "targets": targets, "fill": fill}
+        frag.geometry_reference = "source"
+        return frag
+
+    def apply(self, pkg, frag):
+        td = frag.transform_data
+        if not td["targets"]:
+            return
+        root = pkg.xml(td["main"])
+        tables = list(root.iter(W + "tbl"))
+        for k, r, c in td["targets"]:
+            tc = own(own(tables[k], "tr")[r], "tc")[c]
+            pr = tc.find(W + "tcPr")
+            if pr is None:
+                pr = etree.Element(W + "tcPr")
+                tc.insert(0, pr)
+            old = pr.find(W + "shd")
+            if old is not None:
+                pr.remove(old)
+            insert_in_order(pr, etree.Element(W + "shd", {W + "val": "clear", W + "color": "auto",
+                                                          W + "fill": td["fill"]}), TCPR_ORDER)
+        pkg.write_xml(td["main"], root)
+'''
+
+HEADER_OP = '''
+from __future__ import annotations
+from lxml import etree
+from spec_surgeon.ops.base import Op, JobException
+from spec_surgeon.package import W
+from spec_surgeon.ooxml import TRPR_ORDER, insert_in_order, block_full_text
+
+
+def own(el, tag):
+    return [c for c in el if c.tag == W + tag]
+
+
+def plain_on(pr, name):
+    els = pr.findall(W + name) if pr is not None else []
+    return len(els) == 1 and not els[0].attrib
+
+
+class RepeatRevisionHeader(Op):
+    name = "repeat_revision_header"
+    mode = "formatting"
+    description = "Repeat the first row of the revision tables on every page and keep their rows whole."
+    params_schema = {"type": "object", "properties": {}}
+    select_schema = {}
+
+    def plan(self, pkg, select, params):
+        main = pkg.main_part()
+        frag = self.fragment(select, params)
+        rows_changed = []
+        for k, tbl in enumerate(pkg.xml(main).iter(W + "tbl")):
+            rows = own(tbl, "tr")
+            cells = own(rows[0], "tc") if rows else []
+            if not cells or " ".join(block_full_text(p) for p in own(cells[0], "p")).strip() != "Rev":
+                continue
+            changed = []
+            for r, tr in enumerate(rows):
+                pr = tr.find(W + "trPr")
+                names = [n for n in (["tblHeader"] if r == 0 else []) + ["cantSplit"] if not plain_on(pr, n)]
+                if r > 0 and pr is not None and pr.find(W + "tblHeader") is not None:
+                    raise JobException("a body row is marked as a header row", "structure")
+                if names:
+                    changed.append([k, r, sorted(names)])
+            frag.property_assertions.append({
+                "kind": "table_props", "parts": [main],
+                "select": {"scope": ["document"], "tables": {"index_range": [k, k]}},
+                "params": {"repeat_header_rows": 1, "cant_split": True},
+                "expected_tables": 1 if changed else 0, "expected_rows": len(changed), "expected_cells": 0,
+                "changed": {main: {"rows": changed}} if changed else {}})
+            rows_changed += changed
+            frag.touches.append((main, "tbl:" + str(k), "trPr"))
+        if not frag.property_assertions:
+            raise JobException("no revision table in this file", "not-found")
+        frag.intended_parts = [main] if rows_changed else []
+        frag.transform_data = {"main": main, "rows": rows_changed}
+        frag.geometry_reference = "none"
+        frag.geometry_reason = "rows kept whole may move to the next page"
+        return frag
+
+    def apply(self, pkg, frag):
+        td = frag.transform_data
+        if not td["rows"]:
+            return
+        root = pkg.xml(td["main"])
+        tables = list(root.iter(W + "tbl"))
+        for k, r, names in td["rows"]:
+            tr = own(tables[k], "tr")[r]
+            pr = tr.find(W + "trPr")
+            if pr is None:
+                pr = etree.Element(W + "trPr")
+                ex = tr.find(W + "tblPrEx")
+                tr.insert(tr.index(ex) + 1 if ex is not None else 0, pr)
+            for n in names:
+                for old in pr.findall(W + n):
+                    pr.remove(old)
+                insert_in_order(pr, etree.Element(W + n), TRPR_ORDER)
+        pkg.write_xml(td["main"], root)
+'''
+
+SHADE_LOOP = 'for k, r, c in td["targets"]:'
+SHADE_PLANTED = {
+    # a row the plan never named shaded too
+    "an unlisted row": SHADE_OP.replace(SHADE_LOOP, 'for k, r, c in td["targets"] + [[td["targets"][0][0], 2, 0]]:'),
+    # a cell's words changed beside its shading
+    "a changed cell text": SHADE_OP.replace(
+        "        pkg.write_xml(td[\"main\"], root)",
+        "        for t in tables[td[\"targets\"][0][0]].iter(W + \"t\"):\n"
+        "            t.text = (t.text or \"\").replace(\"Issued\", \"Withdrawn\")\n"
+        "        pkg.write_xml(td[\"main\"], root)"),
+    # the merged cell of row 3 split back into two cells
+    "a merged cell split": SHADE_OP.replace(
+        "        pkg.write_xml(td[\"main\"], root)",
+        "        for tc in own(own(tables[td[\"targets\"][0][0]], \"tr\")[3], \"tc\"):\n"
+        "            span = tc.find(W + \"tcPr/\" + W + \"gridSpan\")\n"
+        "            if span is not None:\n"
+        "                span.getparent().remove(span)\n"
+        "                tc.addnext(etree.fromstring(etree.tostring(tc)))\n"
+        "                break\n"
+        "        pkg.write_xml(td[\"main\"], root)"),
+    # a grid column added to the table
+    "a grid column added": SHADE_OP.replace(
+        "        pkg.write_xml(td[\"main\"], root)",
+        "        grid = tables[td[\"targets\"][0][0]].find(W + \"tblGrid\")\n"
+        "        grid.append(etree.Element(W + \"gridCol\", {W + \"w\": \"720\"}))\n"
+        "        pkg.write_xml(td[\"main\"], root)"),
+}
+
+
+@pytest.fixture
+def schedule(tmp_path) -> Path:
+    """The revision table with five rows (Rev, then 0–3), row 3's last two cells merged."""
+    doc = Document(io.BytesIO(build("21 05 00", "COMMON WORK RESULTS")))
+    tbl = doc.tables[0]
+    for n, (date, what) in enumerate((("2026-02-01", "Addendum 1"), ("2026-03-01", "Addendum 2"),
+                                      ("2026-04-01", "Issued for Permit")), start=1):
+        cells = tbl.add_row().cells
+        cells[0].text, cells[1].text, cells[2].text = str(n), date, what
+    merged = tbl.rows[3].cells[1].merge(tbl.rows[3].cells[2])
+    merged.text = "2026-03-01 Addendum 2"
+    f = tmp_path / "21 05 00 - COMMON WORK RESULTS.docx"
+    doc.save(f)
+    return f
+
+
+def shaded_rows(docx: bytes):
+    tbl = Document(io.BytesIO(docx)).tables[0]
+    out = []
+    for r, row in enumerate(tbl.rows):
+        fills = {tc._tc.tcPr.find(W_ + "shd").get(W_ + "fill") if tc._tc.tcPr is not None
+                 and tc._tc.tcPr.find(W_ + "shd") is not None else None for tc in row.cells}
+        if fills == {"D9D9D9"}:
+            out.append(r)
+    return out
+
+
+W_ = "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}"
+
+
+def test_a_custom_method_shades_every_other_row_it_picks(schedule, tmp_path):
+    assert check_source(SHADE_OP) == []
+    t = trial(SHADE_OP, schedule, {}, {"fill": "d9d9d9"}, tmp_path / "sb")
+    assert t.passed, t.problems
+    assert "table_cells" in t.record.get("V10").summary
+    assert shaded_rows(Path(t.output).read_bytes()) == [1, 3]      # the merged cell of row 3 shaded with its row
+
+
+def test_a_custom_method_repeats_the_header_row_and_keeps_rows_whole(schedule, tmp_path):
+    assert check_source(HEADER_OP) == []
+    t = trial(HEADER_OP, schedule, {}, {}, tmp_path / "sb")
+    assert t.passed, t.problems
+    assert "table_props" in t.record.get("V10").summary
+    rows = Document(io.BytesIO(Path(t.output).read_bytes())).tables[0].rows
+    flags = [(tr._tr.trPr.find(W_ + "tblHeader") is not None, tr._tr.trPr.find(W_ + "cantSplit") is not None)
+             for tr in rows]
+    assert flags == [(True, True)] + [(False, True)] * 4
+
+
+@pytest.mark.parametrize("case", sorted(SHADE_PLANTED))
+def test_a_custom_method_that_touches_table_content_fails_the_trial(case, schedule, tmp_path):
+    t = trial(SHADE_PLANTED[case], schedule, {}, {"fill": "D9D9D9"}, tmp_path / "sb")
+    assert not t.passed, case
+    assert any(p.startswith(("V10 FAIL", "V2 FAIL", "V3 FAIL")) for p in t.problems), t.problems
+
+
+def test_table_appearance_is_a_custom_method_family_and_structure_is_not():
+    families = CUSTOM_TRANSFORM_LIMITS["families"]
+    assert {"table_props", "table_cells"} <= set(families.values())
+    assert not any(c == "tables" for c in CUSTOM_TRANSFORM_LIMITS["cannot"])
+    assert any("table structure" in c for c in CUSTOM_TRANSFORM_LIMITS["cannot"])
+    assert {"TBLPR_ORDER", "TRPR_ORDER", "TCPR_ORDER"} <= codegen.ALLOWED_FROM["spec_surgeon.ooxml"]
+
+
+def test_a_semantic_selector_is_re_derived_by_the_kind_not_trusted(schedule, tmp_path):
+    """Naming targets by position is guidance, not the boundary (Codex on #87): the kinds re-derive any selector they
+    take with their own code, so a method selecting by text is checked the same way, and one whose selector does not
+    pick what it changed fails."""
+    by_text = HEADER_OP.replace('"tables": {"index_range": [k, k]}', '"tables": {"first_row_regex": "^Rev"}')
+    t = trial(by_text, schedule, {}, {}, tmp_path / "sb1")
+    assert t.passed, t.problems
+    # rows named by a text the shaded row does not hold: the kind picks row 4 ("Issued for Permit"), the method shaded 1
+    wrong = SHADE_OP.replace('"rows": {"index_range": [r, r]}', '"rows": {"text_regex": "Permit"}')
+    t = trial(wrong, schedule, {}, {"fill": "D9D9D9"}, tmp_path / "sb2")
+    assert not t.passed and any(p.startswith("V10 FAIL") for p in t.problems), t.problems
