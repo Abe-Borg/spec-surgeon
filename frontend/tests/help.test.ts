@@ -36,10 +36,10 @@ const update = (overrides: Partial<Update> = {}): Update => ({
   ...overrides,
 });
 
-test("the top bar names four topics, Why trust it not among them yet, each with a title", () => {
+test("the top bar names five topics, Why trust it before About, each with a title", () => {
   assert.deepEqual(
     HELP_TOPICS.map((t) => t.label),
-    ["How to use", "Workflows", "How it works", "About"],
+    ["How to use", "Workflows", "How it works", "Why trust it", "About"],
   );
   for (const t of HELP_TOPICS) assert.ok(HELP_TITLES[t.id], t.id);
   assert.equal(new Set(HELP_TOPICS.map((t) => t.id)).size, HELP_TOPICS.length);

@@ -1,0 +1,392 @@
+# The trust claims ledger
+
+Every factual claim made by the window's two trust surfaces, with the code that makes it true and how it is checked:
+**Why trust it?** (Help → Why trust it, `frontend/src/components/WhyTrustIt.tsx`) and the **"I'm not convinced"
+dossier** (`frontend/src/components/TrustDossier.tsx`, its runtime cards in `frontend/src/lib/trustRuntime.ts`).
+Every number those surfaces quote comes from `frontend/src/lib/trustFacts.ts`, and `tests/test_trust_facts.py` pins
+each of those values to the constant in the Python code.
+
+**The rule.** The trust surfaces are a contract. A change to a behaviour they describe updates them, and this ledger,
+in the same change. That covers a new user action, a new network call, a new automatic behaviour, a change to the
+model or its settings, and a new or changed limit.
+
+Written 2026-10-22 against `master` at 3d1799b (version 1.8.0), from the code rather than the docs. Paths are relative
+to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
+
+**Verification column:**
+- `facts` means `tests/test_trust_facts.py` pins the value to its source constant.
+- `trust.test` means `frontend/tests/trust.test.ts`.
+- `flows` means `frontend/tools/flows.mjs`, run in a real browser.
+- `existing: <test>` names a test that already pins the behaviour.
+- `manual` means read from the code for this ledger, with no test of its own.
+
+## 1. Inventory
+
+### 1a. Actions the user triggers (each has a runtime card)
+
+| # | Action (the window's words) | Route / handler | AI involved |
+| --- | --- | --- | --- |
+| A1 | Settings → paste the key, **Save** (optional **Remember securely on this computer**) | `POST /api/settings` → `credentials.save` | none |
+| A2 | Settings → **Appearance** (colour scheme) | `POST /api/settings` `{theme}` | none |
+| A3 | **Add Word documents**, **Add a template (optional)**, **Add a picture or table (optional)**, or a drop anywhere in the window | `POST /api/pick` → `/api/attach`; a drop → `POST /api/upload` → `DocumentTask.attach` → `triage` | none |
+| A4 | Remove an attachment (✕) | `POST /api/remove` | none |
+| A5 | Type a request or answer, then **Send** or Enter | `POST /api/send` → `DocumentTask._send` | conversation |
+| A6 | Pick a choice, type its number, or tap a suggested reply | `POST /api/choose` or `/api/send` (`chip`) | conversation |
+| A7 | Mark a preview ✓ / ✗ | page state only; ✗ is sent as `hold` with A8 | none |
+| A8 | **Create edited copies** (or **I reviewed the flagged pages — create copies**) | `POST /api/primary` → `DocumentTask._primary` → `Session.run` | none to make and check the copies; recovery afterwards if a copy fails |
+| A9 | **Save N ready copies** | `POST /api/primary` during recovery | none |
+| A10 | **Continue** (after a pause, a stop, a failure or a restored conversation) | `POST /api/primary` → `_resume` | conversation or recovery |
+| A11 | **Stop now**, and closing the window while work runs | `POST /api/stop`; `web/shell.on_closing` | cuts the running call off |
+| A12 | Open a copy, or the copies' folder | `POST /api/open` → `os.startfile` | none |
+| A13 | **Start over from the originals** | `POST /api/start-over` (or the typed reply) | none |
+| A14 | **New conversation** | `POST /api/new-conversation` | none |
+| A15 | **Work on the documents I set aside** | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
+| A16 | Click a page to enlarge it | page only; the image comes from `GET /api/image` | none |
+| A17 | About → **Check for updates** | `POST /api/update/check` | none |
+| A18 | **Download** / **Download and install** / **Restart to update** / **Not now** | `/api/update/download`, `/install`, `/dismiss` | none |
+| A19 | About → **Open diagnostic logs** / **Save a diagnostic bundle** | `/api/logs`, `/api/diagnostics/bundle` | none |
+| A20 | Click a link: in the chat, in release notes, About's links, the releases page | the system browser (`target=_blank`; `/api/update/releases` → `webbrowser.open`) | none |
+| A21 | **Reload the window** (shown only when the page fails to draw) | `frontend/src/components/ErrorBoundary.tsx` | none |
+
+Count: 21 actions.
+
+### 1b. What runs without a click (each has a runtime card or a row in one)
+
+| # | Behaviour | Where | AI | Network |
+| --- | --- | --- | --- | --- |
+| B1 | At start: archive the last conversation, report a session that never closed, tidy old installer downloads | `gui.main`, `DocumentTask.archive`, `diag.CrashWatch`, `UpdateFlow.startup` | none | none |
+| B2 | Automatic update check, at most once every 24 h | `UpdateFlow.auto_check`, `updater.should_auto_check` | none | GitHub |
+| B3 | Every attachment checked on arrival (triage) | `triage.triage`, `triage_reference` | none | none |
+| B4 | After a reply, up to `AUTO_STEPS` internal steps: make the preview, prepare a custom method, carry out a recovery plan | `DocumentTask._settle`, `Session.outcome` (`auto`) | yes | Anthropic |
+| B5 | The preview: plan every file, apply and verify samples in memory, render them | `Session.make_preview`, `preview.make_preview` | none | none |
+| B6 | Claude's visual check of the preview pages | `Session._visual_check` → `vision.review_samples` | yes | Anthropic |
+| B7 | A custom method when no built-in operation fits | `Session._generate_custom` → `codegen.generate_op` | yes | Anthropic |
+| B8 | An outcome plan and its trials when the built-in plan cannot be made | `continuous_recovery.propose` / `execute`, `campaign_planner` | yes | Anthropic |
+| B9 | Recovery of copies that failed their check after Create edited copies | `DocumentTask._primary` → `Session.resolve_remaining` | yes | Anthropic |
+| B10 | A call that failed for a passing reason is re-sent | `llm.call`, `RETRIES` | yes | Anthropic |
+| B11 | The page reports itself (load, errors, a 10 s heartbeat) to the local server; the watchdog | `frontend/src/lib/diagnostics.ts`, `web/watch.py` | none | loopback only |
+| B12 | The page polls `/api/state` and `/api/update` every 2 s while a job or download runs | `frontend/src/App.tsx` | none | loopback only |
+| B13 | Repair memory: past repair cases searched, reused and recorded during recovery | `recovery._investigate`, `repair_memory.CaseStore` | yes (sent with the request) | Anthropic |
+| B14 | The render cache serves pages it has rendered before | `render/cache.py` | none | none |
+
+Count: 14 automatic behaviours. B4–B10 and B13 run only inside work a click started. B1–B3, B11, B12 and B14 involve
+no model.
+
+### 1c. Network destinations
+
+| # | Destination | Triggered by | Sends | Authenticates with | Class |
+| --- | --- | --- | --- | --- | --- |
+| N1 | The Anthropic API, `api.anthropic.com` by default (the `anthropic` SDK's address; `ANTHROPIC_BASE_URL` changes it) | A5, A6, A8 (recovery), A10, and B4–B10, B13 inside them | See §1d | Your API key (`x-api-key`) or an `ant auth login` profile | routine, only while work you started runs |
+| N2 | `api.github.com/repos/Abe-Borg/spec-surgeon/releases/latest`, with a fallback to the `github.com/…/releases/latest` redirect | B2 (24 h), A17 | A GET with `User-Agent: SpecSurgeon/<version> (+https://github.com/Abe-Borg/spec-surgeon)`; nothing about documents | none | automatic; off with `SPEC_SURGEON_NO_UPDATE_CHECK` |
+| N3 | `github.com/Abe-Borg/spec-surgeon/releases/download/<tag>/…` (the installer and `SHA256SUMS`, redirected to GitHub's file host) | A18 Download | A GET | none | only when you click |
+| N4 | Any web address, opened in your own browser | A20 | Whatever your browser sends | — | only when you click |
+| N5 | Any web address named by a Markdown picture (`![](https://…)`) in Claude's chat text or in GitHub's release notes | Rendering that text (react-markdown draws `<img>`) | A GET of the picture's address, from the window | — | **finding F2**: possible, not intended |
+| N6 | `127.0.0.1:<random port>` (the window's own server) | every page action | the page's requests and reports | the launch token (`X-Spec-Surgeon-Token`) | loopback, never leaves the machine |
+
+Count: 6 destinations (3 outbound by design, 1 through your browser, 1 unintended, 1 loopback).
+
+No other network code exists. A grep of `src/spec_surgeon` for `urllib`, `requests`, `httpx`, `socket`, `http.client`,
+`webbrowser` and `smtplib` finds the updater, the shell's loopback health check (proxies off), the two `webbrowser.open`
+calls, and the sandboxes' block lists. `telemetry.py` says "Never sends telemetry over the network", and nothing
+uploads logs or bundles.
+
+### 1d. Model calls
+
+**One model by default:** `claude-opus-5-5` (`llm.DEFAULT_MODEL`; the environment variable `SPEC_SURGEON_MODEL`
+overrides it).
+- Server-side refusal fallback: every request carries `fallbacks="default"` with beta `server-side-fallback-2026-07-01`
+  (`llm.FALLBACK_BETA`). A request the model's safety filters decline is re-run on another model inside the same
+  call. **The code does not name that model**; `llm.served` records which model answered.
+
+**Settings (`llm._call`):**
+- Output cap: 128,000 tokens (`resources.DEFAULT_MAX_OUTPUT_TOKENS`).
+- Streaming; thinking left to the model, with its summary shown in the window (`_THINKING_DISPLAY`).
+- No temperature is set.
+- Effort: medium for the conversation (`document_task.CONVERSATION_EFFORT`). Inside a budget scope the innermost
+  budget's effort wins (`llm._call`), so what runs inside a turn without a budget of its own runs at medium too: the
+  visual check and the custom-method writer. The outcome planner (`campaign_planner`, its own budget at the
+  conversation object's effort, `resources.DEFAULT_EFFORT` = high, since `gui.Session.compile` builds the conversation
+  without one) and recovery (`RECOVERY_EFFORT`, high) run at high. No call runs at max (`resources.EFFORTS`, from #77).
+
+**Caching:**
+- The system prompt is cached for an hour (`SYSTEM_CACHE`).
+- The history is cached for the default five minutes (`MESSAGES_CACHE`).
+- One-call checks cache nothing past the system prompt (`one_shot`).
+
+**Conversations and their tools:**
+
+| Conversation | Tools | Validated by |
+| --- | --- | --- |
+| Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies) |
+| Custom-method writer (`codegen.py`) | the inspection tools + show_xml, find_paragraphs, list_styles, show_part_text, submit_op | `codegen.check_source` (import whitelist, forbidden names and attributes), sandbox run, `hard_limits`, `verify.run_suite` |
+| Visual check (`vision.py`) | submit_review | findings about pages it was not shown are dropped; advisory only |
+| Outcome planner (`campaign_planner.py`) | read tools, view_pages, list_documents, inspect_goal_effect, propose_plan, need_user, unsupported | `goals.validate_contract`, template pin, invisible characters |
+| Recovery (`recovery.py`) | read tools, read_template, inspect_xml, view_result, view_pages, recovery_status, trial_results, submit_repair, replan_goal, plan_repair, review_candidate, need_user, unsupported, custom_transform (with an approved outcome contract) | `recovery._candidate` (pinned assertions, `untraceable`, attached templates and inputs), trials on copies, `verify.run_suite` |
+| Critic (`recovery_adaptive.py`) | review_repair | can withhold a candidate, never pass one |
+
+**What a request carries:**
+- The request, your answers and decisions.
+- What the copies already carry.
+- File names, or trailing folders where two files share a name (`compiler.file_labels`). Recovery requests carry full
+  paths.
+- The full local path of an attached template and of attached pictures and tables.
+- The batch's profiles: styles, section titles, header and footer text, sample paragraphs.
+- Whatever the read tools return: paragraph text, XML of a part, table rows.
+- Page images: `view_pages`, the visual check, recovery's views.
+- In recovery, up to 5 past repair cases from the local repair memory.
+
+The model has no web search, web fetch, code execution or MCP tools: `llm.tool_uses` acts on `tool_use` blocks only,
+and no server tool is configured.
+
+**Count:** one configured model (plus the provider's unnamed refusal fallback), in six kinds of conversation.
+
+### 1e. Data at rest
+
+On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPPDATA%\Spec Surgeon`.
+`SPEC_SURGEON_CONFIG_DIR` moves both (`settings.py`).
+
+| Location | Holds | Your words or document text? | Kept |
+| --- | --- | --- | --- |
+| Windows Credential Manager, `Spec Surgeon/ANTHROPIC_API_KEY` | the API key, if you ticked Remember | — | until you delete it (no button in the window) |
+| `config_dir()\settings.json` | folders, colour scheme, update bookkeeping | paths only | overwritten |
+| `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results, estimated spending | yes | archived at each start; **never pruned** (F5) |
+| `config_dir()\attachments\<time>\` | full copies of files you dropped on the window | yes, whole files | **never deleted** (F5) |
+| `config_dir()\repair-memory.sqlite3` | past repair cases: your request, candidate plans, wording and generated code | yes | 2,000 cases, oldest dropped; no clear button (F4) |
+| `config_dir()\render-profiles\` | LibreOffice's own profiles | not inspected | kept |
+| `data_dir()\logs\spec-surgeon.log` | the app log: job start/end, progress lines, errors | file names; error messages can quote document text | 2 MiB × 3 backups |
+| `data_dir()\logs\app-events-<pid>.jsonl` | event journal: metadata of model calls (never prompts), refusal reasons | refusal reasons can quote text | 5 MiB × 3 per process, 5 past processes |
+| `data_dir()\logs\crash-*.log`, `session-*.json` | crash stacks, session markers | no | newest 10 crash logs |
+| `data_dir()\updates\` | downloaded installers, install logs | no | old installers deleted at start; 3 logs |
+| `data_dir()\diagnostics\*.zip` | bundles you saved | yes (see F3) | **never deleted** |
+| run folders under `data_dir()\runs\` (or the chosen folder) | delivered copies, failed copies, records, plans, previews, page images, conversation transcripts (`conversation.json`, `compile.json`, `chat\context\*.json` with page images), custom-method history and sandbox copies, recovery checkpoints | yes | **never deleted** (F5) |
+| `runs\.render-cache\` | PDFs of rendered documents, by content hash | yes | 2 GiB, least recently used dropped |
+
+### 1f. The deterministic parts (no model, no network)
+
+- Triage.
+- The operation library and its planning (`Op.plan`).
+- Composition into ordered steps (`editspec.stage_cuts`).
+- Layout routing.
+- Apply and repack (`DocxPackage.repack`).
+- The independent verifier V1–V10 (`verify/`).
+- Rendering (Word or LibreOffice on your machine).
+- Rasterising page images.
+- Approval tokens and the delivery guard (`guard.py`, `preview.approval_token`).
+- The plan's sentences (`Op.describe` through `review_display.spec_changes`).
+- Cost estimates (`llm.PRICES`).
+- Logs, the diagnostic bundle.
+- The update check and its integrity checks.
+- The render cache.
+
+### 1g. Provenance
+
+Every source of content in a delivered copy:
+- **Your words:** the request, typed answers, a picked choice's exact wording (`conversation.sources`;
+  `DocumentTask.word_sources`).
+- **Your files:** an attached template, picture or table, and the document's own words (template fills).
+- **The operations:** formatting and structure, which add zero characters.
+- **Claude's plan:** which operations, where. It is never wording; `compiler.untraceable` refuses unapproved words.
+- **Claude's custom method:** formatting only, with no text change allowed (`codegen.hard_limits`).
+- **Claude's outcome plan in recovery:** its wording becomes approved when the app carries the plan out automatically
+  (F1).
+- **Remembered repair cases:** tried again, never trusted.
+
+How each is labelled:
+- The plan's sentences come from the operation code.
+- Claude's assumptions are listed as assumptions.
+- Claude's visual findings are listed as warnings with file and page.
+- A custom method's summary is Claude's own proposal text.
+- An outcome plan is shown as its effects (`review_display.effects`).
+
+### 1h. Bounds and failure behaviour
+
+- **No spending ceiling.** Work pauses after every 48 model calls; failed attempts count (`STEPS_PER_PAUSE`,
+  `CallBudget.calls`).
+- **Up to 6 internal steps per user action** (`AUTO_STEPS`).
+- **Recovery:** 8 attempts per group of files (`document_task.RECOVERY_ATTEMPTS`, on every recovery path since #77,
+  the outcome plan's included). A group pauses after 3 equivalent
+  rejected tries (`DEFAULT_STALL_REPETITIONS`).
+- **Custom method:** up to 50 submissions (`codegen.MAX_ITER`), each sandbox run 60 s (`SANDBOX_TIMEOUT`) and 2,048 MB
+  (`process_limits.DEFAULT_MEMORY_MB`).
+- **Analysis:** 120 s and 1,024 MB per run (`DEFAULT_ANALYSIS_SECONDS`, `DEFAULT_ANALYSIS_MEMORY_MB`).
+- **Retries:** 2 re-sends after 5 s and 20 s; a provider's retry-after is honoured up to 60 s (`RETRIES`,
+  `RETRY_DELAYS`, `RETRY_AFTER_CAP`).
+- **Stop:**
+  - A running call is cut within 0.25 s polling (`STOP_POLL_SECONDS`, `_sever`).
+  - Its spending is settled from what the stream reported, plus at most 150 output tokens per second it ran
+    (`STOPPED_OUTPUT_RATE`).
+  - Source files are never changed.
+- **Failure:** a copy that fails its check is moved to `failed\` and never delivered (`batch.py`). A failed call
+  appends nothing to the history (`conversation.py`).
+- **Renderers:** Word 120 s per file (`word_worker.DEFAULT_TIMEOUT`), LibreOffice 600 s per batch
+  (`libreoffice.render_pdfs`).
+- **Closing:** closing the window stops a running job and waits up to 60 s for it (`web/shell.shutdown`).
+
+### 1i. Cost
+
+- Anthropic bills the API key directly; Spec Surgeon has no account and no billing.
+- The pill is an estimate from `llm.PRICES` (per model: input, output, cache read, 5-minute and 1-hour cache write). A
+  model missing from the table (for example an unnamed fallback model) shows "an amount the price table cannot
+  estimate".
+- A failed call keeps its reservation (`CallBudget._abandon`).
+- A stopped call is settled from the stream plus the 150 tokens/s bound.
+- Re-sent attempts are counted and billed.
+
+### 1j. Security
+
+- **API key:** Credential Manager (`CRED_PERSIST_LOCAL_MACHINE`) or the session only. It is put into the process
+  environment and redacted from logs by value and by pattern (`telemetry.redact_text`).
+- **Local server:**
+  - It binds `127.0.0.1` on a free port (`web/shell.free_port`, `serve`).
+  - Every `/api` request needs the launch token (`secrets.token_urlsafe(24)`, compared in constant time).
+  - Pictures are served only as PNGs under the run folder or the config folder (`image_allowed`).
+  - Cross-origin requests are allowed only in the developer mode (`SPEC_SURGEON_DEV`).
+- **Untrusted XML:** a part with `<!DOCTYPE` is refused; XML is read without entity resolution (`package.py`).
+- **Model-written code:**
+  - Both sandboxes run in a separate Python process (`-I`) with a stripped environment and an import whitelist.
+  - An audit hook blocks processes, sockets and native code; writes are allowed only in the run's own folder.
+  - On Linux, analysis also gets a syscall filter. On Windows there is a job object only (F6).
+  - Not an operating-system security boundary (`sandbox_runner.py` says so).
+- **Updates:** HTTPS only, redirects included. Only an asset named `SpecSurgeon-<version>-Setup-x64.exe`, at most
+  500 MiB, whose SHA-256 is in the release's `SHA256SUMS` and in GitHub's digest. That proves integrity, not the
+  publisher: the installer is unsigned (`updater.py`).
+- **Links in model text** open in your browser, not in the window (`Markdown.tsx`). Pictures do not (F2).
+
+### 1k. Known limits
+
+All in the dossier's "What this does not do":
+- PASS proves the predicted change, not that the request was right.
+- Claude can misread a request.
+- The visual check is advisory and can be wrong both ways.
+- Only samples are rendered before approval.
+- LibreOffice differs from Word.
+- Untested on real files beyond the owner's runs (README "Limits").
+- Out-of-reach content (shapes, charts and more).
+- Weak sandbox on Windows.
+- Repair memory crosses projects.
+- Data grows.
+
+### 1l. Audit hooks
+
+- **The run folder:** `records\*.record.md` and `.json` (V1–V10), `BATCH_REPORT.md`, `DIAGNOSTICS.md`,
+  `exceptions\`, `plans\`.
+- **The conversation's records:** `conversation.json` with `exchange` (every request as sent and every answer, with
+  its served model, tokens and request id), `compile.json`, `visual_review.json`, `codegen\history.json`.
+- **The logs:** `spec-surgeon.log` (one line per job with its model calls and estimated cost).
+- **The bundle:** About → Save a diagnostic bundle.
+- **Anthropic's console:** its usage page for the key.
+- **The source:** MIT, on GitHub.
+
+## 2. Claims
+
+Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in brackets).
+
+| # | Claim | Where | Source | Verified by |
+| --- | --- | --- | --- | --- |
+| T1 | The window never writes over an original: it delivers copies, each run in its own folder | Lv1, D(summary, terms, runtime A8) | `gui.Session.run` raises on `in_place`; `DocumentTask._primary` calls `s.run(False, …)`; `guard.write_back` reached only through `in_place` | existing: `tests/test_document_task.py` (`source.read_bytes() == before`), `tests/test_execution_delivery_safety.py` |
+| T2 | Each change is predicted from the original before anything is changed | Lv1, D(terms) | CLAUDE.md invariant 1; `Op.plan` | existing: `tests/test_ops.py` and the op suites |
+| T3 | The checker shares no code with the editing | Lv1, D(engine, terms) | `verify/` imports | existing: `tests/test_independence.py` |
+| T4 | A copy that fails its check is never delivered; it goes to `failed\` | Lv1, D(runtime A8, limits) | `batch.py` | existing: `tests/test_batch*.py` |
+| T5 | Claude never edits a file; it writes a plan (or, for a custom method, a program that runs in a sandbox and must pass the same checker) | Lv1, D(engine, blast radius) | `conversation.py`, `codegen._trial`, `codegen.run_generated` | manual + existing: `tests/test_codegen*.py` |
+| T6 | Words placed in a document come from your request, answers, picked choices or attached files, with one exception (F1) | Lv1, D(provenance) | `compiler.untraceable`, `conversation.sources`, `continuous_recovery.approve` | existing: `tests/test_compiler*.py`, `tests/test_document_task.py::test_recovery_plan_and_preview_stay_in_same_task_without_json` |
+| T7 | A tapped suggested reply is a decision, never approved wording | Lv1, D(provenance, runtime A6) | `DocumentTask._send` (`chip`), `Conversation.reply(approve=False)` | existing: `tests/test_document_task.py` |
+| T8 | Nothing is delivered without your click on Create edited copies or Save ready copies, and the click approves the exact plan and files on screen | Lv1, D(runtime A8, terms) | `DocumentTask._primary` token check; `preview.approval_token`; `Session.run` re-checks | existing: `tests/test_approval_handoff.py` |
+| T9 | Every AI step runs inside work you started; one action can chain up to 6 internal steps | Lv1, D(summary, runtime) | `DocumentTask.perform`, `_settle`, `AUTO_STEPS` | facts (`autoSteps`) |
+| T10 | The only request the app makes without a click is the update check, at most once every 24 h, to GitHub, carrying nothing about your documents; `SPEC_SURGEON_NO_UPDATE_CHECK` turns it off | Lv1, D(boundary, runtime B2) | `updater.should_auto_check`, `CHECK_INTERVAL`, `_request` headers; `gui.main` | facts (`updateCheckHours`, `noUpdateCheckEnv`, hosts) + existing: `tests/test_updater.py` |
+| T11 | Checking a file when it arrives makes no AI call and no network call | Lv1, D(no AI, runtime A3) | `triage.py` docstring and imports | manual |
+| T12 | The key lives in Windows Credential Manager under `Spec Surgeon/ANTHROPIC_API_KEY` (if you tick Remember), never in `settings.json`, and is sent only to the Anthropic API | Lv1, D(security) | `credentials.py`, `settings.Settings` fields, `llm.client` | facts (`credentialTarget`) + existing: `tests/test_settings.py` |
+| T13 | The key is scrubbed from logs | D(security) | `telemetry.redact_text` | existing: `tests/test_diagnostics*.py` |
+| T14 | No spending limit; a pause every 48 AI steps; Stop cuts off the running call | Lv1, D(money, runtime A11) | `STEPS_PER_PAUSE`, `llm._stop_on_cancel` | facts (`stepsPerPause`, `stopPollSeconds`) + existing: `tests/test_llm*.py` |
+| T15 | The spending shown is an estimate from a built-in price table; Anthropic bills the key | Lv1, D(money) | `llm.PRICES`, `CallBudget.spent_usd` | manual |
+| T16 | Model: Claude Opus 5.5 (`claude-opus-5-5`) by default (`SPEC_SURGEON_MODEL` replaces it; About and the records then name it), up to 128,000 output tokens per call, medium effort for the conversation, its visual check and its custom methods, high for outcome planning and recovery, never max | D(engine) | `llm.DEFAULT_MODEL`, `resources.DEFAULT_MAX_OUTPUT_TOKENS`, `document_task.CONVERSATION_EFFORT`/`RECOVERY_EFFORT`, `llm._call` budget override | facts |
+| T17 | A declined request may be answered by another model the provider chooses; the record names it | D(engine, limits) | `llm.FALLBACK_BETA`, `fallbacks="default"`, `llm.served` | facts (presence) |
+| T18 | Re-sends: 2, after 5 s and 20 s, honouring a retry-after up to 60 s | D(runtime B10) | `llm.RETRIES`, `RETRY_DELAYS`, `RETRY_AFTER_CAP` | facts |
+| T19 | A stopped call is settled at most 150 output tokens per second it ran | D(money) | `llm.STOPPED_OUTPUT_RATE` | facts |
+| T20 | The visual check sees up to 2 pages per sample, before and after; it is advisory; a blocking finding asks you to confirm | D(runtime B6, terms) | `vision.review_samples` (`[:2]`), `vision.py` docstring, `DocumentTask.view` | facts (`visualPagesPerSample` pinned by source text) |
+| T21 | Samples: 8 representative files (or every file in a smaller batch), at least one per layout, so more when there are more layouts | D(runtime B5, limits) | `sampling.representative_samples`, `DEFAULT_SAMPLE_FILES` | facts |
+| T22 | view_pages renders at most 3 pages per call, on your machine | D(blast radius) | `compiler._Batch.view_pages` (`[:3]`) | facts (source text) |
+| T23 | Read tools take a file's label, never a path; only attached documents, the template and attached pictures/tables can be read | D(blast radius) | `compiler._Batch.pkg`, `inputs.read_input_file` | manual |
+| T24 | Model-written analysis runs in a separate process for at most 120 s and 1,024 MB, with no file, network or process access | D(blast radius) | `investigation.run_analysis`, `analysis_runner.py`, `resources` | facts |
+| T25 | A custom method is formatting only, runs in a separate process for at most 60 s and 2,048 MB, writes only in its own folder, and must pass the checker; up to 50 tries | D(blast radius, runtime B7) | `codegen.SANDBOX_TIMEOUT`, `MAX_ITER`, `process_limits.DEFAULT_MEMORY_MB`, `hard_limits`, `catalog.CUSTOM_TRANSFORM_LIMITS` | facts |
+| T26a | Documents and the key go only to `api.anthropic.com`, unless `ANTHROPIC_BASE_URL` (read by the SDK, never set by the window) names another address | Lv1, D(engine, boundary, runtime A5) | `llm.client` (`anthropic.Anthropic()` with no address) | facts (`apiAddressEnv`: the SDK honours it) |
+| T26 | The model has no web search, no web fetch, no code execution on Anthropic's side, and no access to your file system or network | Lv1, D(blast radius) | tool lists; `llm.tool_uses` | manual |
+| T27 | The window's server listens on 127.0.0.1 only and refuses a request without the launch token | D(security) | `web/shell.serve`, `server.require_token` | facts (`loopback`, `tokenHeader`) + existing: `tests/test_web_server.py` |
+| T28 | Updates: HTTPS only; only an installer named for the version, at most 500 MiB, whose SHA-256 matches the release's `SHA256SUMS`; unsigned | D(security, runtime A18) | `updater.py` | facts + existing: `tests/test_updater.py` |
+| T29 | Nothing is uploaded: no telemetry, no crash reports; the bundle is saved on your computer | Lv1, D(boundary) | `telemetry.py`, `server.diagnostics_bundle` | manual (grep in §1c) |
+| T30 | The page loads no outside script, font or picture of its own | D(boundary) | `frontend/index.html`, `index.css`, built `web/static` | trust.test (trust components); manual (built page) |
+| T31 | Run folders, conversations, attachments copies and bundles are never deleted by the app | D(security, limits) | §1e | manual |
+| T32 | Log sizes: app log 2 MiB × 3, event journal 5 MiB × 3 for 5 past sessions, render cache 2 GiB, repair memory 2,000 cases, newest 10 crash logs | D(security) | `diagnostics.setup_app_logging`, `telemetry`, `render/cache.py`, `repair_memory.MAX_CASES`, `CrashWatch.KEEP` | facts |
+| T33 | Recovery sends up to 5 past repair cases from earlier work with its request | D(provenance, boundary, limits) | `recovery._investigate` (`limit=5`) | facts (source text) |
+| T34 | The bundle holds 3 recent conversations and 5 recent runs' text files | D(runtime A19) | `diagnostics.BUNDLE_RECENT_*` | facts |
+| T35 | Recovery tries at most 8 attempts per group, pausing after 3 equivalent rejected tries | D(runtime B8, B9) | `document_task.RECOVERY_ATTEMPTS`, `DEFAULT_STALL_REPETITIONS` | facts |
+| T36 | Pictures and tables over 20 MB are listed as too big, never read; a .docx is opened up to 256 MiB | D(runtime A3) | `inputs.MAX_BYTES`, `package_limits.ArchiveLimits.max_archive_bytes` | facts |
+| T37 | Word renders on your machine in a new invisible instance, never your open Word; else LibreOffice | D(no AI, engine) | `render/word_com.py` (DispatchEx, Visible False), `render/__init__.pick` | manual |
+| T38 | The watchdog: heartbeat 10 s, a page silent 45 s, a job quiet 300 s, a Stop not obeyed in 30 s; closing waits 60 s for a job | D(runtime B11, A11) | `web/watch.py`, `web/shell.shutdown` | facts |
+| T39 | Opening the app starts a clean conversation; the last one is archived on this computer and never reopened | D(runtime B1) | `gui.main`, `DocumentTask.archive` | existing: `tests/test_document_task.py` |
+| T40 | Without a network, files still attach and are checked, copies open, logs and bundles work; nothing can be planned, because every request goes through Claude | D(no AI) | `DocumentTask._ready_to_talk`, triage | manual |
+| T41 | The sentences describing the plan are written by the operations' own code from the plan, not by Claude | D(provenance) | `review_display.spec_changes` → `change_sentence` (`Op.describe`) | existing: `tests/test_describe.py` |
+| T42 | Help's "Why trust it?" opens the dossier, which stacks on it; one Escape closes one dialog; focus returns | — | `HelpModal.tsx`, `dialogFocus.ts`, `dialogStack.ts` | trust.test, flows |
+
+## 3. Findings (reported, not fixed in this change)
+
+- **F1. An outcome plan's wording becomes "approved" without a pick.**
+  - When the built-in plan cannot be made, the outcome planner (Claude) proposes a contract, and the app offers it as
+    the `recovery_plan` choice "Use these outcomes and continue".
+  - `Session.outcome` returns `auto` for that choice and `DocumentTask._settle` takes it, which adds the contract's
+    wording to the approved sources (`continuous_recovery.approve`: `c.sources.extend(choice.words)`). Trials then
+    run on copies with that wording.
+  - The user still sees the effects and the pages and must press Create edited copies. But CLAUDE.md invariant 6
+    ("Claude's words are never the user's") and Help's "Words that go into a document are always ones you typed or
+    picked" are not true on this path.
+  - The copy names this exception.
+- **F2. A Markdown picture in model text loads from the internet.**
+  - The chat, the plan's cards and the About/update release notes render Markdown with react-markdown 9, which draws
+    `![](https://…)` as an `<img>`. The page has no Content-Security-Policy.
+  - A reply that contains a picture link, for example one prompted by text inside a document, would make the window
+    fetch that address. The query string could carry text.
+  - The copy names this.
+- **F3. The diagnostic bundle can contain page images and document text.**
+  - Its manifest and About's tooltip say "No document, picture or page image goes in it".
+  - But `chat\context\active-*.json`, `chat\context-catalog\*.json` and recovery `conversations\` are `.json` files in
+    folders the bundle does not skip (`BUNDLE_SKIP_DIRS`). They hold the lossless provider history, including the
+    base64 page images from `view_pages` and tool results with document text (files up to 25 MiB).
+  - The dossier says the bundle can contain them. The About tooltip and README still say otherwise.
+- **F4. Repair memory crosses projects and has no clear button.**
+  - `repair-memory.sqlite3` keeps up to 2,000 cases across sessions: the request verbatim, candidate wording,
+    generated code.
+  - Recovery sends up to 5 matching cases with its request to Claude, so wording from an earlier project can go out
+    with a later one.
+  - `CaseStore.forget` exists but nothing in the window calls it.
+- **F5. Unbounded local data.**
+  - Run folders (copies, page images, transcripts, sandbox copies), `conversations\` archives, `attachments\` (full
+    copies of every file dropped on the window, in the Roaming profile) and saved bundles are never deleted.
+- **F6. Windows sandboxes are weaker than Linux's.**
+  - Model-written analysis on Linux gets a syscall filter and CPU and file-size limits. On Windows it gets a job object
+    (memory, one process) plus the language and audit guards.
+  - The custom-method sandbox has no syscall filter on any system; reads are kept out by the import whitelist, not
+    by the audit hook (`sandbox_runner.py` says it "is still not a complete security boundary").
+  - Generated transform code may call `etree.fromstring` with lxml's default parser; analysis code gets a hardened
+    wrapper.
+- **F7. The custom method's effort.**
+  - README ("recovery and custom methods at high") and docs/CONVERSATIONAL_DESKTOP.md ("recovery and custom methods
+    think at high") disagree with the code.
+  - In the window a custom method prepared from the conversation runs at **medium**, because the conversation's
+    budget effort overrides the call's (`llm._call`: `effort = budgets[-1].effort`). Custom methods inside recovery
+    run at high.
+  - Still true after #77 (which made "high" the default and refused "max"): master's README says "custom methods at
+    high"; this branch's merge rewords it to the code's behaviour.
+  - The new copy states the code's behaviour.
+- **F8. A custom method is written and tried without a separate click.**
+  - When the conversation turns a request over to a custom method (`custom_transform` choice), the window takes it
+    automatically (`AUTO_STEPS`). Claude writes Python that runs in the sandbox on copies of sample files before you
+    have seen anything.
+  - Delivery still needs your click. The copy says so.
+- **F9. No in-process time limit on model-supplied regular expressions.**
+  - read_paragraphs, sample_paragraphs and find_paragraphs run them in the app process.
+- **F10. Stale or personal details in the code.**
+  - `codegen.py`'s docstring names a `do --allow-codegen` flag that no longer exists.
+  - `inputs.py`'s docstring describes folder discovery the code no longer does.
+  - `campaign_planner.inspect_goal_effect` defaults `author="Abraham Borg"`.
+- **F11. A doc comment disagrees with the code.**
+  - `document_task.py`'s module docstring says "every model call writes up to the model's maximum output at high
+    effort"; the conversation runs at medium.

@@ -27,6 +27,12 @@ tab strip:
 - **Workflows** — recipes for the usual jobs: fonts across a set, headers and footers from a template, a logo, values
   from a sheet, an issue stamp, a mixed batch, one change after another, a file left untouched, stopped or paused work.
 - **How it works** — the mechanics in plain words.
+- **Why trust it** — eight claims, each with the mechanism that makes it true, and **I'm not convinced — show me
+  exactly what runs →**, which opens the long answer on top of it: where every change comes from, what the engine is,
+  what leaves the computer (a diagram), one card per action answering the same five questions (you do, what runs,
+  what is sent, AI involved, bounded by), what Claude may touch, what the key words mean, the parts with no AI,
+  security, money, what the app does not do, and how to check all of it. Escape closes the long answer and leaves
+  Why trust it open. Every claim in both is in `docs/TRUST_CLAIMS.md` with its source in the code and its test.
 - **About** — the version, the model, the release notes, the license and the open-source components, the author's
   links, **Check for updates** (it says "Checking for updates…" until the check answers, then the answer or the update
   with **Download and install**), **Open diagnostic logs** and **Save a diagnostic bundle** (below, "When the window
@@ -249,11 +255,13 @@ says "Connect your Anthropic API key in Settings to start."
 
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
-conversation runs at the model's default reasoning effort (medium: its sentences and plans are short and the
-operations' settings ride the cached prompt, so a plan is one or two calls); recovery (the outcome planning after a
-preview that set files aside included) and custom methods think at high. No step runs at max: `resources.EFFORTS`
-refuses it (the owner's decision, 2026-10-22). The instructions and the operations' settings (the same for every
-conversation) are cached for an hour, so the next request after a run, a start over or a changed attachment reads them instead of paying for them again; the
+conversation runs at medium reasoning effort (its sentences and plans are short and the operations' settings ride the
+cached prompt, so a plan is one or two calls), and so do the visual check and a custom method it runs inside a turn,
+because the conversation's budget sets the effort for every call inside it. The outcome planning after a preview that
+set files aside, and recovery (with the custom methods it tries), think at high: their own budget sits inside the
+conversation's and wins. No step runs at max: `resources.EFFORTS` refuses it (the owner's decision, 2026-10-22). The
+instructions and the operations' settings (the same for every conversation) are cached for an hour, so the next
+request after a run, a start over or a changed attachment reads them instead of paying for them again; the
 conversation itself is cached for five minutes between its calls, and the one-call checks (the visual check, the
 recovery critic) are not cached at all beyond the instructions. Three things keep the spending in your hands instead:
 
@@ -319,9 +327,10 @@ folder (`%LOCALAPPDATA%\Spec Surgeon\logs`): `spec-surgeon.log` for a person, `a
 - **Save a diagnostic bundle** (About, or the error screen) writes `spec-surgeon-diagnostics-<time>.zip` under
   `%LOCALAPPDATA%\Spec Surgeon\diagnostics` and shows it in Explorer: the logs folder, `settings.json`, the current
   and last three conversations, and from the five newest run folders their logs, records, reports and conversation
-  records. `MANIFEST.txt` lists what is in it and what was left out. Documents, pictures, page images and the folders
-  that hold them (`outputs`, `failed`, `samples` and the like) never go in; conversations and records can quote your
-  words and your documents' text.
+  records. `MANIFEST.txt` lists what is in it and what was left out. The folders
+  that hold documents and pictures (`outputs`, `failed`, `samples`, `pages`, `images` and the like) are left out, but
+  conversations and records can quote your words and your documents' text, and a conversation's saved provider
+  history (`chat\context\*.json`) can hold the page images Claude was shown: treat a bundle like your documents.
 
 ## Capability and verification limits
 
