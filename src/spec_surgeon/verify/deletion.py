@@ -18,10 +18,12 @@ are ops/deletion.py's docstring, read again here:
   with exactly one NEW ``w:trPr/w:del``. Each changed paragraph is compared whole with that expectation
   (``verified_blocks``), each row's ``w:trPr`` checked here and stripped of its ``w:del`` for the residual
   (``strip_tr``), which proves the rest.
-* **Untracked** (``_VRemoval``): the deleted blocks leave, a kept paragraph keeps its ``w:pPr`` alone; then, in this order,
-  the notes all of whose references are removed, the section breaks and the header/footer and printer-settings parts
-  no relationship left targets, the comments all of whose marks are removed (with their replies; a crossing one: refused), the range marks
-  (all removed: gone; some: each removed one takes the place of the outermost removed element it was in), the fields
+* **Untracked** (``_VRemoval``): the deleted blocks leave, a kept paragraph keeps its ``w:pPr`` and nothing else but the
+  range marks below; then, in this order, the notes all of whose references are removed, the section breaks and the
+  header/footer and printer-settings parts no relationship left targets, the comments all of whose marks are removed
+  (with their replies; a crossing one: refused), the range marks (all removed: gone; some: a removed one that is itself
+  dropped — a kept paragraph's own mark — stays in that paragraph where it stands, any other takes the place of the
+  outermost removed element it was in), the fields
   (a crossing one: refused) and the relationships no remaining use names (image, media, hyperlink: gone; header/footer as
   above; anything else: refused), media nothing targets any more. Every changed part's expected tree is built here and
   compared whole (``verified_parts``), the comment side parts likewise (``verified_members``), each changed relationships
@@ -571,7 +573,11 @@ class VRemoval:
                 for e, f in zip(els, flags):
                     if not f:
                         continue
-                    top = e if e in tops else next(a for a in e.iterancestors() if a in tops)
+                    if e in tops:
+                        # dropped on its own (a kept paragraph's content): its parent stays, and so does it, untouched
+                        tops.discard(e)
+                        continue
+                    top = next(a for a in e.iterancestors() if a in tops)
                     if top.tag in _V_ENTRIES:
                         raise VRefuse("structure", f"a {fam} runs out of a note or comment that goes")
                     self.moved.setdefault(part, {}).setdefault(top, []).append(e)

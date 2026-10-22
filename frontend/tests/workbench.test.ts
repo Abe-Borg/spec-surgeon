@@ -1,6 +1,6 @@
 /**
- * The workbench's small rules (lib/workbench.ts): card titles, page counts,
- * the run folder, the kind tags.
+ * The workbench's small rules (lib/workbench.ts): page counts, the run
+ * folder, the kind tags.
  */
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -8,14 +8,12 @@ import test from "node:test";
 import type { Attachment, Plan, PlanGroup } from "../src/types.ts";
 import {
   ACCEPT,
-  groupTitle,
   kindTag,
   pageCount,
   parentFolder,
   planHasContent,
   runFolder,
   scopeTag,
-  stagesNote,
   traySummary,
   trayTitle,
 } from "../src/lib/workbench.ts";
@@ -47,19 +45,6 @@ test("the page count reads 'Pages: 12 → 13 (+1)' and flags growth only", () =>
   assert.deepEqual(pageCount({ pages_before: 12, pages_after: 12 }), { text: "Pages: 12 → 12", flag: "", grew: false });
   assert.deepEqual(pageCount({ pages_before: 12, pages_after: 10 }), { text: "Pages: 12 → 10 (−2)", flag: "−2", grew: false });
   assert.deepEqual(pageCount({ pages_before: null, pages_after: 10 }), { text: "", flag: "", grew: false });
-});
-
-test("one layout reads as the plan; several read as '<label> · N documents'", () => {
-  assert.equal(groupTitle(group({ label: "Styled, PR1 articles", count: 8 }), false), "Here’s what will change");
-  assert.equal(groupTitle(group({ label: "Styled, PR1 articles", count: 8 }), true), "Styled, PR1 articles · 8 documents");
-  assert.equal(groupTitle(group({ label: "Typed numbers", count: 1 }), true), "Typed numbers · 1 document");
-  assert.equal(groupTitle(group({ label: "  ", files: ["a", "b"], count: undefined as unknown as number }), true), "One layout · 2 documents");
-});
-
-test("the ordered-steps note appears only past one stage", () => {
-  assert.equal(stagesNote({ stages: 1 }), "");
-  assert.equal(stagesNote({ stages: 3 }), "in 3 ordered steps");
-  assert.equal(stagesNote(null), "");
 });
 
 test("a plan has content when any group has a change or an assumption, or a target or a file set aside exists", () => {

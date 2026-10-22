@@ -48,6 +48,7 @@ import copy
 import hashlib
 import json
 import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
@@ -57,11 +58,12 @@ from .editspec import SpecError, plan_spec, validate_spec
 from .fingerprint import fingerprint
 from .ops import JobException
 from .ooxml import paragraphs
+from .ops.effective import PropResolver
 from .ops.selectors import StyleSheet
 from .ops.slots import display_text, nearest_p
 from .package import W, DocxPackage
 from .inputs import overview as input_overview, read as read_input
-from .profile import profile, profile_batch, template_spec_summary
+from .profile import profile, profile_batch, shown_case, template_spec_summary
 from .resources import DEFAULT_MAX_CALLS, positive_integer
 
 from . import diagnostics as diag
@@ -385,9 +387,10 @@ make_values_agree with the file name among its places, rename the outputs: they 
 chosen goes whole, and a cell, the document or a note keeps one emptied paragraph. A request is never refused for \
 being large: deleting a whole PART, an article (between_paragraphs with include_bounds "start") or the whole body is \
 an edit like any other, shown in the preview. Wiping a document is delete_paragraphs "all", remove_header_footer, \
-remove_comments and remove_footnotes in one spec (the app orders them); there is no wipe op. On a file with pending \
-tracked changes a tracked deletion refuses: offer tracked false or resolve_tracked_changes first. remove_footnotes \
-{which: footnotes | endnotes | both, text_regex on the note's own text} removes notes and their marks.
+remove_comments and remove_footnotes in one spec (the app orders them); there is no wipe op. A tracked deletion \
+refuses only a paragraph or table that itself holds pending tracked changes (others elsewhere in the file do not \
+matter): for those, offer tracked false or resolve_tracked_changes first. remove_footnotes {which: footnotes | \
+endnotes | both, text_regex on the note's own text} removes notes and their marks.
 - Clean-up ops (remove_comments, remove_highlight, remove_hidden_text, remove_notes, remove_empty_paragraphs, \
 remove_hyperlinks, unlink_fields, remove_watermark, resolve_tracked_changes) place no words; a file with nothing to \
 remove is a no-op (allow_missing defaults true). The profiles' "markup" shows what a pattern carries: comments and \
@@ -441,6 +444,12 @@ says which). "Make the header/footer match the template spec" is apply_header_fo
 its own section number and title are replaced by each spec's own and everything else is copied. "Match the \
 template's font" follows the catalog rule: font and size from the template spec's body_text, size_from from the \
 batch's body_text sizes. State the template's values and the sizes in assumptions.
+- Text in the profiles and tool results is as typed; shown_in_capitals (first_paragraphs_shown_in_capitals) names the \
+lines Word shows in capitals through formatting — typed capitals are not marked. A header/footer fill copies each \
+file's own number and title exactly as typed: when the other files show the title in capitals and one file's is typed \
+in lower case, its header/footer will differ — say so, and offer showing it in capitals (set_properties run.caps on \
+that paragraph, scope headers/footers: formatting, no letter retyped) or capitalised wording the user gives; never \
+retype it yourself.
 - mode: "formatting" unless an op places characters; "content" for tracked wording changes; "untracked" when \
 the user asked for untracked wording or a template has literal fills.
 - Inspect as deeply as needed before deciding. read_paragraphs, list_parts and read_xml_page have continuation \
@@ -676,14 +685,38 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
     return out
 
 
+def _word_char(c: str) -> bool:
+    # a combining mark (a decomposed accent, an Indic vowel sign) belongs to the word it follows
+    return c.isalnum() or c == "_" or unicodedata.category(c).startswith("M")
+
+
+def _traced(phrase: str, source: str) -> bool:
+    """``phrase`` occurs in ``source`` as whole words: an occurrence that starts or ends with a letter, digit,
+    underscore or combining mark counts only where the source has none of those right beside it, so "shall not" is
+    not in "shall notify", "50" is not in "500" and "Own" is not in "Owner". A phrase that starts or ends with punctuation
+    ("(SPRINKLERS)") is bounded by that punctuation. Every occurrence is tried: the phrase may be lifted from inside
+    a longer word once and stand alone later. Whitespace alone (a tab, a line break) places no words."""
+    if not phrase:
+        return True
+    start = source.find(phrase)
+    while start >= 0:
+        end = start + len(phrase)
+        if (not (_word_char(phrase[0]) and start > 0 and _word_char(source[start - 1]))
+                and not (_word_char(phrase[-1]) and end < len(source) and _word_char(source[end]))):
+            return True
+        start = source.find(phrase, start + 1)
+    return False
+
+
 def untraceable(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
-    """The words the spec would place that appear verbatim (whitespace-normalised) in none of the sources. Each source
-    is searched on its own: a phrase may not be stitched together from the end of one and the start of the next, nor
-    from pieces of one source. A tab or a line break in a phrase (built-in batch 6) is whitespace like any other: the
-    phrase traces only as a whole, in order — wording the user described rather than typed ("then a tab") is offered
-    back to them as a choice's exact wording, and their pick approves it."""
+    """The words the spec would place that appear verbatim (whitespace-normalised, as whole words: ``_traced``) in
+    none of the sources. Each source is searched on its own: a phrase may not be stitched together from the end of one
+    and the start of the next, nor from pieces of one source, nor lifted from inside a longer word or number. A tab or
+    a line break in a phrase (built-in batch 6) is whitespace like any other: the phrase traces only as a whole, in
+    order — wording the user described rather than typed ("then a tab") is offered back to them as a choice's exact
+    wording, and their pick approves it."""
     hay = [_norm(s) for s in sources if s]
-    return [w for w in placed_words(spec) if not any(_norm(w) in h for h in hay)]
+    return [w for w in placed_words(spec) if not any(_traced(_norm(w), h) for h in hay)]
 
 
 def file_labels(files: Sequence[Path]) -> Dict[str, str]:
@@ -877,6 +910,7 @@ class _Batch:
         part = part or pkg.main_part()
         pars = paragraphs(pkg.xml(part))
         sheet = StyleSheet(pkg)
+        props = PropResolver(sheet)
         rx = re.compile(regex) if regex else None
         rows, remaining, cursor = [], chars, None
         for index in range(start, len(pars)):
@@ -896,6 +930,9 @@ class _Batch:
             rows.append({"index": index, "style": sid, "text": content[begin:end],
                          "text_offset": begin, "text_length": len(content),
                          "nested": nearest_p(p) is not None})
+            case = shown_case(p, props)
+            if case:
+                rows[-1]["shown_in_capitals"] = case
             remaining -= end - begin
             if end < len(content):
                 cursor = {"start": index, "text_offset": end}
@@ -951,6 +988,7 @@ class _Batch:
     def sample_paragraphs(self, file: str, style: Optional[str] = None, regex: Optional[str] = None, n: int = 12):
         pkg = self.pkg(file)
         sheet = StyleSheet(pkg)
+        props = PropResolver(sheet)
         rx = re.compile(regex) if regex else None
         out = []
         for i, p in enumerate(paragraphs(pkg.xml(pkg.main_part()))):
@@ -964,6 +1002,9 @@ class _Batch:
             if rx and not rx.search(t):
                 continue
             out.append({"index": i, "style": sid, "text": t[:200]})
+            case = shown_case(p, props)
+            if case:
+                out[-1]["shown_in_capitals"] = case
             if len(out) >= min(int(n or 12), 40):
                 break
         return out
@@ -1188,6 +1229,30 @@ def _planner_for(outcome: Any):
     return lambda pkg, pid: plan_spec(pkg, outcome, pid)
 
 
+def _attached_checks(spec: Dict[str, Any], batch: _Batch) -> List[str]:
+    """Every file the spec reads beside the documents (``editspec.input_slots``) is one the user attached: a table or
+    a picture is one of the INPUT FILES, a template the attached template or one of the documents (a spec may read an
+    attached document as its template). A file nobody attached is not the user's: a table's cells and a picture are
+    placed without passing the words gate, so a file the model found or wrote itself would place the model's words."""
+    from .editspec import input_slots
+
+    def resolved(value) -> Optional[Path]:
+        try:
+            return Path(value).resolve()
+        except (OSError, ValueError, RuntimeError):     # a NUL in the path, a symlink loop: no file the user attached
+            return None
+    inputs = {Path(p).resolve() for p in batch.inputs}
+    templates = {Path(p).resolve() for p in [*([batch.template] if batch.template else []), *batch.files.values()]}
+    named = [d[k] for o in spec.get("ops", []) for d, k in input_slots(o)
+             if resolved(d[k]) not in (templates if d is o.get("params") and k == "template" else inputs)]
+    if named:
+        listed = "; ".join(map(str, named))           # the paths as written, never a list's repr (it doubles a backslash)
+        return [f"[input] the spec names {listed}, which the user did not attach: a table or picture must be one of the "
+                f"INPUT FILES (its exact path), a template the attached template or one of the documents. Use an "
+                f"attached file, or call ask_user to have the user attach it."]
+    return []
+
+
 def _content_checks(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
     """The checks a spec's content must pass before any dry run: case-only replacements go through picked
     capitalization records, each capitalization record was picked, and every placed word is the user's."""
@@ -1215,7 +1280,8 @@ def _content_checks(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
     bad = untraceable(spec, sources)
     if bad:
         return [f"these words would be placed in the documents but the user never gave them verbatim: {bad}. Use "
-                f"the user's exact words, or call ask_user for them."]
+                f"the user's exact words, whole (never a piece cut out of a longer word or number), or call ask_user "
+                f"for them."]
     return []
 
 
@@ -1297,7 +1363,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
         except SpecError as e:
             return spec, [f"[{e.code}] {e.reason}"]
         for st in chain["stages"]:
-            errs = _content_checks(st["spec"], sources)
+            errs = _attached_checks(st["spec"], batch) or _content_checks(st["spec"], sources)
             if errs:
                 return spec, errs
         return chain, _dry_errors(chain, batch, patterns)
@@ -1305,7 +1371,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
         validate_spec(spec)
     except SpecError as e:
         return spec, [f"[{e.code}] {e.reason}"]
-    errs = _content_checks(spec, sources)
+    errs = _attached_checks(spec, batch) or _content_checks(spec, sources)
     if errs:
         return spec, errs
     errs = _dry_errors(spec, batch, patterns)

@@ -1,7 +1,7 @@
 """remove_hidden_text and remove_notes (docs/BUILTIN_OPS_BATCH2_DESIGN.md §5, §6): end to end tracked and untracked (the
 whole suite must pass), every refusal, the container rules (the last section keeps a paragraph too) and the field
-rules, nothing-to-do files, and planted defects the verifier must catch — a wrong output, and a wrong rule shared by
-plan and apply."""
+rules, the range marks running out of what goes (they stay where it was), nothing-to-do files, and planted defects the
+verifier must catch — a wrong output, and a wrong rule shared by plan and apply."""
 from __future__ import annotations
 
 from typing import Any, Dict, List
@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 import pytest
 from lxml import etree
 
-from fx_removal import W, build_hidden, build_hidden_case, build_last_section, build_notes
+from fx_removal import W, build_crossing_marks, build_hidden, build_hidden_case, build_last_section, build_notes
 from spec_surgeon.editspec import apply_spec, plan_spec
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import hidden as hidden_module
@@ -511,3 +511,196 @@ def test_shared_defect_the_last_section_measured_before_the_undeletable_are_kept
     assert outline(out) == ["Cover", "§", "Body text", "§"]                     # the kept break did not count
     assert failed(rec) == ["V10"], rec.to_markdown()
     assert any("removed_hidden_text" in e and "the plan predicted" in e for e in v10_errors(rec))
+
+
+# ---- both: range marks running out of what goes (2026-10-21 review fix) -------------------------------------------
+
+CROSSING = [("remove_notes", "notes", NOTE_TEXT), ("remove_hidden_text", "hidden", {})]
+IN_A_FIELD = [("remove_notes", "notes", {**NOTE_TEXT, "runs": {"hidden": True}}), ("remove_hidden_text", "hidden", {})]
+KEPT = "bookmark or range mark(s) in the removed"
+MARK_TAGS = (W + "bookmarkStart", W + "bookmarkEnd", W + "permStart", W + "permEnd")
+SOURCE_LAYOUT = ["Lead. [Back", "NOTE: starts the bookmark. [Inner Inner] [B [Wholly [perm5", "Visible text. B] perm5]",
+                 "NOTE: ends two bookmarks. Wholly] Back]", "See Visible text. and Lead..", "END OF SECTION"]
+# "B" and the permission range start in the first note, "Back" ends in the second: each stays where its note was
+KEPT_LAYOUT = ["Lead. [Back", "[B", "[perm5", "Visible text. B] perm5]", "Back]", "See Visible text. and Lead..",
+               "END OF SECTION"]
+
+
+def layout(data: bytes) -> List[str]:
+    """The body as its bookmarks see it, block by block: a paragraph's text with its range marks where they stand — "[B"
+    the start of the bookmark "B", "B]" its end (named by its start; "#id]" when it has none: an orphan), "[perm5" and
+    "perm5]" the permission range's — and a mark between paragraphs on its own."""
+    body = DocxPackage(data).xml(DOC).find(W + "body")
+    names = {e.get(W + "id"): e.get(W + "name") for e in body.iter(W + "bookmarkStart")}
+
+    def token(e) -> str:
+        i = e.get(W + "id")
+        if e.tag == W + "bookmarkStart":
+            return f"[{names[i]}"
+        if e.tag == W + "bookmarkEnd":
+            return f"{names.get(i, '#' + i)}]"
+        return f"[perm{i}" if e.tag == W + "permStart" else f"perm{i}]"
+
+    out = []
+    for c in body:
+        if c.tag == W + "p":
+            pieces: List[str] = []
+            for e in c.iter(W + "t", W + "delText", *MARK_TAGS):
+                if e.tag in MARK_TAGS:
+                    pieces.append(token(e))
+                elif pieces and not pieces[-1].endswith("]") and not pieces[-1].startswith("["):
+                    pieces[-1] += e.text or ""
+                else:
+                    pieces.append(e.text or "")
+            out.append(" ".join(pieces))
+        elif c.tag in MARK_TAGS:
+            out.append(token(c))
+    return out
+
+
+def orphans(data: bytes) -> List[str]:
+    """Range marks whose pair lacks its other end."""
+    root = DocxPackage(data).xml(DOC)
+    ends: Dict[str, List[str]] = {}
+    for e in root.iter(*MARK_TAGS):
+        fam = "perm" if "perm" in e.tag else "bookmark"
+        ends.setdefault(f"{fam} {e.get(W + 'id')}", []).append("start" if e.tag.endswith("Start") else "end")
+    return sorted(k for k, v in ends.items() if sorted(v) != ["end", "start"])
+
+
+@pytest.mark.parametrize("name,kind,params", CROSSING)
+def test_a_mark_running_out_of_a_deleted_paragraph_stays_where_it_was(name, kind, params):
+    """The start of "B" and of the permission range sit in a note (a hidden paragraph) that goes, their ends in
+    "Visible text.", which stays; the end of "Back" sits in the other one, its start in "Lead.". Untracked, each stays
+    where its paragraph was, so the REF fields still find both bookmarks — they used to go with the paragraph, leaving
+    the other end an orphan. "Inner" and "Wholly" lie wholly in what goes, and go."""
+    src = build_crossing_marks(kind)
+    assert layout(src) == SOURCE_LAYOUT
+    plan, out, rec = run_op(name, src, {**params, "tracked": False})
+    assert rec.passed, rec.to_markdown()
+    assert orphans(out) == []
+    expected = plan.property_assertions[0]["expected"][DOC]
+    assert expected == {"delete": [1, 3], "runs": {}, "simple": {}, "marks": {"1": [2, 4], "3": [1]}}
+    assert layout(out) == KEPT_LAYOUT
+    assert [t for t in texts(out) if t] == ["Lead.", "Visible text.", "See Visible text. and Lead..", "END OF SECTION"]
+    assert [f for f in plan.flags if KEPT in f] == [
+        f"{DOC} paragraph 1: 2 {KEPT} paragraph run on into text that stays; each stays where the paragraph was, "
+        f"so its bookmark keeps both ends",
+        f"{DOC} paragraph 3: 1 {KEPT} paragraph run on into text that stays; each stays where the paragraph was, "
+        f"so its bookmark keeps both ends"]
+
+
+@pytest.mark.parametrize("name,kind,params", CROSSING)
+def test_tracked_the_deleted_paragraphs_keep_their_marks(name, kind, params):
+    """Tracked, nothing moves: each deleted paragraph keeps its bookmarks where they stand until the deletion is
+    accepted (a permission range there is refused as before: a tracked deletion is written only over runs, bookmarks
+    and proofing marks)."""
+    src = build_crossing_marks(kind, permission=False)
+    plan, out, rec = run_op(name, src, {**params, "tracked": True})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"][DOC] == {"delete": [1, 3], "runs": {}, "simple": {}}
+    assert layout(out) == layout(src) == [x.replace(" [perm5", "").replace(" perm5]", "") for x in SOURCE_LAYOUT]
+    assert orphans(out) == [] and not any(KEPT in f for f in plan.flags)
+    assert [t for t in texts(out) if t] == ["Lead.", "Visible text.", "See Visible text. and Lead..", "END OF SECTION"]
+
+
+@pytest.mark.parametrize("name,kind,params", CROSSING)
+def test_marks_wholly_inside_what_goes_still_go(name, kind, params):
+    """"Visible text." goes too (a note by its own rule; hidden): now "B" and the permission range lie wholly in deleted
+    paragraphs, with "Inner" and "Wholly" — all four go. Only "Back", whose start stays in "Lead.", keeps its end."""
+    src = build_crossing_marks(kind)
+    if kind == "notes":
+        params = {"rules": [{"text_regex": "^NOTE|^Visible"}]}
+    else:
+        src = mutate(src, DOC, _hide_the_visible_text)
+    plan, out, rec = run_op(name, src, {**params, "tracked": False})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"][DOC]["marks"] == {"3": [1]}
+    assert layout(out) == ["Lead. [Back", "Back]", "See Visible text. and Lead..", "END OF SECTION"]
+    assert orphans(out) == []
+
+
+def _hide_the_visible_text(root):
+    p = next(p for p in root.iter(W + "p") if "".join(t.text or "" for t in p.iter(W + "t")) == "Visible text.")
+    for r in p.findall(W + "r"):
+        rpr = r.find(W + "rPr")
+        if rpr is None:
+            rpr = etree.Element(W + "rPr")
+            r.insert(0, rpr)
+        rpr.append(etree.Element(W + "vanish"))
+    ppr = p.find(W + "pPr")
+    if ppr is None:
+        ppr = etree.Element(W + "pPr")
+        p.insert(0, ppr)
+    etree.SubElement(etree.SubElement(ppr, W + "rPr"), W + "vanish")
+
+
+@pytest.mark.parametrize("name,kind,params", IN_A_FIELD)
+def test_a_mark_running_out_of_a_removed_simple_field_stays_where_the_field_was(name, kind, params):
+    """A hidden simple field goes whole (untracked): "InField" lies wholly in it and goes; the start of "FieldMark",
+    whose end is in the next paragraph, stays in the paragraph where the field was."""
+    src = build_crossing_marks(kind, simple=True)
+    assert layout(src)[5:7] == ["Title:  [InField InField] [FieldMark Spec title end.", "After the field. FieldMark]"]
+    plan, out, rec = run_op(name, src, {**params, "tracked": False})
+    assert rec.passed, rec.to_markdown()
+    assert plan.property_assertions[0]["expected"][DOC]["marks"]["5"] == [2]
+    title = next(p for p in DocxPackage(out).xml(DOC).iter(W + "p") if accepted_text(p) == "Title:  end.")
+    assert [c.tag for c in title if c.tag != W + "pPr"] == [W + "r", W + "bookmarkStart", W + "r"]
+    assert layout(out)[-3:] == ["Title:  [FieldMark  end.", "After the field. FieldMark]", "END OF SECTION"]
+    assert orphans(out) == []
+    assert any(f.startswith(f"{DOC} paragraph 5: 1 {KEPT} field run on into text that stays; each stays where the "
+                            f"field was") for f in plan.flags)
+
+
+# ---- planted defects: range marks ----------------------------------------------------------------------------------
+
+def _orphan_b(root):
+    """Today's output before the fix: the start of "B" gone with its paragraph."""
+    root.find(W + "body").remove(next(e for e in root.find(W + "body") if e.get(W + "name") == "B"))
+
+
+def _b_into_the_next_paragraph(root):
+    """The start of "B" kept, but inside the paragraph after it rather than where its own paragraph was."""
+    body = root.find(W + "body")
+    start = next(e for e in body if e.get(W + "name") == "B")
+    nxt = next(p for p in body.iter(W + "p") if "".join(t.text or "" for t in p.iter(W + "t")) == "Visible text.")
+    nxt.insert(1 if nxt.find(W + "pPr") is not None else 0, start)
+
+
+@pytest.mark.parametrize("wrong", [_orphan_b, _b_into_the_next_paragraph])
+@pytest.mark.parametrize("name,kind,params", CROSSING)
+def test_defect_a_kept_mark_dropped_or_misplaced_in_the_output(name, kind, params, wrong):
+    src = build_crossing_marks(kind)
+    plan, out, rec = run_op(name, src, {**params, "tracked": False})
+    assert rec.passed, rec.to_markdown()
+    bad = mutate(out, DOC, wrong)
+    assert layout(bad) != KEPT_LAYOUT
+    rec = run_suite(src, bad, plan.to_dict(), "s", "o")
+    assert "V10" in failed(rec), rec.to_markdown()
+    assert any("unpredicted change" in e for e in v10_errors(rec))
+
+
+def test_defect_a_field_mark_dropped_in_the_output():
+    src = build_crossing_marks("hidden", simple=True)
+    plan, out, rec = run_op("remove_hidden_text", src, {"tracked": False})
+    assert rec.passed, rec.to_markdown()
+
+    def drop(root):
+        start = next(e for e in root.iter(W + "bookmarkStart") if e.get(W + "name") == "FieldMark")
+        start.getparent().remove(start)
+    rec = run_suite(src, mutate(out, DOC, drop), plan.to_dict(), "s", "o")
+    assert "V10" in failed(rec), rec.to_markdown()
+    assert any("removed_hidden_text" in e and "block 5" in e for e in v10_errors(rec))
+
+
+@pytest.mark.parametrize("name,kind,params", IN_A_FIELD)
+def test_shared_defect_the_old_rule_drops_the_crossing_marks(name, kind, params, monkeypatch):
+    """The old rule shared by plan and apply: nothing stays — every mark goes with its paragraph or field."""
+    monkeypatch.setattr(hidden_module, "kept_marks", lambda root, removed: {})
+    src = build_crossing_marks(kind, simple=True)
+    plan, out, rec = run_op(name, src, {**params, "tracked": False})
+    assert orphans(out) == ["bookmark 1", "bookmark 4", "bookmark 6", "perm 5"]     # plan and apply agree …
+    assert not any(KEPT in f for f in plan.flags)
+    assert failed(rec) == ["V10"], rec.to_markdown()                               # … the verifier does not
+    assert any(f"removed_{'notes' if kind == 'notes' else 'hidden_text'}" in e and "the plan predicted" in e
+               for e in v10_errors(rec))

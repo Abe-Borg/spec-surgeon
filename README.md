@@ -37,7 +37,7 @@ py -3 -m pip install -e .            # core: lxml, PyMuPDF 1.x (2.0 loads an AI 
 py -3 -m pip install -e ".[gui]"     # the window: FastAPI, uvicorn, pywebview (WebView2 on Windows) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
 py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests in the window
-py -3 -m pip install -e ".[dev]"     # pytest + python-docx (fixtures)
+py -3 -m pip install -e ".[dev]"     # pytest, pytest-xdist (pytest -n auto: every core) + python-docx (fixtures)
 ```
 
 or `py -3 -m pip install -r requirements.txt` for everything. Start the window with `spec-surgeon-gui` (or
@@ -61,18 +61,18 @@ render checks are recorded as N/A with the reason.
 | `ANTHROPIC_API_KEY` | typed requests, Claude's visual check, custom transforms and recovery; or enter it in Settings |
 | `SPEC_SURGEON_MODEL` | the model every Claude call uses (default `claude-opus-5-5`) |
 | `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own |
-| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json`, the saved conversation, downloaded updates and its logs |
+| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json`, the current and archived conversations, downloaded updates and its logs |
 
 ## The window: documents and a conversation
 
 ![The conversation: Word documents, an optional template and a request](docs/conversation-start.png)
 
-The window is one conversation. On the left is the chat; on the right are your documents (optionally with one
-template), the plan, the pages and one button. The top bar, in the style of Build-a-Spec, carries the in-app guide —
+The window is one conversation. On the left is the chat, with the one button above the box you type in; on the right
+are your documents (optionally with one template) and the before/after pages. The top bar, in the style of Build-a-Spec, carries the in-app guide —
 **How to use**, **Workflows**, **How it works** and **About** (the version, the model, the release notes, the license,
 **Check for updates** and **Open diagnostic logs**) — beside a line saying what the conversation works on ("3
-documents · 1 template · building on your copies"), the estimated spending, the connection, **Hide plan**, **New
-conversation** and Settings.
+documents · 1 template · building on your copies"), the estimated spending, the connection, **New conversation**
+and Settings.
 
 1. **Add Word documents.** Drop `.docx` files anywhere in the window, or use **Add Word documents**. Files can come
    from different folders, including files with the same name. Only the files you attach are edited; nothing is
@@ -94,11 +94,10 @@ conversation** and Settings.
    exactly those words (a tapped reply never does). Changes that touch the same parts of a file — the template's
    header and footer beside its font, say — are composed into ordered steps by the engine; nothing is asked of you
    in two steps.
-5. **Review the plan.** **Here's what will change** lists one sentence per change, written by the operation that will
-   make it, in inches and points, never a setting name. Assumptions appear beneath the changes; **See every setting**
-   opens the full list. Below it: rendered before/after pages for sample documents with their page counts, and
-   **Left untouched**: any file the plan cannot cover, with the reason. Each preview carries a green checkmark
-   (looks good) and a red X (needs more work: set it aside for after the others).
+5. **Look at the pages.** The chat says in plain words what will change. Beside it: rendered before/after pages for
+   sample documents with their page counts, and **Left untouched**: any file the plan cannot cover, with the reason.
+   Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
+   others).
 6. **Create edited copies.** One button, in the conversation above the box you type in, approves the displayed plan.
    The engine applies it to every file you did not set aside, verifies each one independently, and lists the copies
    under **Your edited copies**; click one to open it in Word. Originals are never written. A file that fails a
@@ -108,16 +107,16 @@ conversation** and Settings.
    different.
 
 **Mixed batches.** Documents from different projects are often built differently: styled article titles in one,
-plain paragraphs with typed numbers in another. For such a batch the plan has one card per layout ("Styled, PR1
-articles · 8 documents"), each with its own changes, assumptions and preview. One button still approves all of
-them. A document built differently from every layout the plan covers is left untouched with a sentence.
+plain paragraphs with typed numbers in another. For such a batch the plan has one specification per layout, and the
+previews cover at least one sample of each. One button still approves all of them. A document built differently
+from every layout the plan covers is left untouched with a sentence.
 
 Keep chatting: the next thing you ask for is made on the copies the last run created, your originals stay as they
 are, and **Start over from the originals** is one tap away. Each run's copies go into their own folder, so earlier
-copies remain. The conversation, your decisions, the attachments, the working copies and the result locations are
-saved locally and come back when you reopen the app, with every attachment checked again.
+copies remain. Every start of the app is a clean one: the last conversation is archived on this computer (the
+`conversations` folder beside `settings.json`) and never reopened, and the copies stay where they were saved.
 
-![The plan in prose and before/after pages, with one action](docs/conversation-preview.png)
+![The plan in the conversation and before/after pages, with one action](docs/conversation-preview.png)
 
 Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
@@ -132,13 +131,17 @@ work pauses after every 48 AI steps until you press **Continue**, which picks th
 passing reason (an overloaded service, a dropped connection) is sent again automatically. Every request needs
 the key: without one the window keeps your draft and asks you to connect one in Settings.
 
+**Settings → Appearance** picks the window's colour scheme: Warm Clay (the default), Blueprint, Graphite & Teal,
+Carbon & Hi-Vis or Linen (the light one). The window changes at once and opens in the scheme you chose from then on.
+
 See [the window guide](docs/CONVERSATIONAL_DESKTOP.md) for triage, pictures and tables, layouts, previews,
-saved conversations, recovery, resource use and verification limits.
+conversations and a clean start, recovery, resource use and verification limits.
 
 ## Without the window
 
 There is no command line. Developers and coding agents drive the engine from Python, and the test suite
-(`python -m pytest`) is how a change is checked; see [CLAUDE.md](CLAUDE.md). A batch from Python:
+(`python -m pytest -n auto`, one worker per core) is how a change is checked; see [CLAUDE.md](CLAUDE.md). A batch
+from Python:
 
 ```python
 from pathlib import Path
@@ -208,7 +211,8 @@ direct formatting; the proofing language; unused styles; numbering schemes, type
 numbering audit; table properties and table styles; page setup, columns, line numbers and section breaks inserted or
 removed; character hygiene; and review comments with wording you supply. A large change is an edit like any other:
 deleting a whole PART, or everything, is planned, previewed and verified the same way.
-Every operation also describes itself in one plain sentence; that sentence is what the window's plan shows.
+Every operation also describes itself in one plain sentence; those sentences are how each edited copy's changes are
+recorded for the requests that follow.
 
 ## Limits
 
@@ -248,7 +252,8 @@ Every operation also describes itself in one plain sentence; that sentence is wh
   design decisions, definitions and change notes, [the design and phased plan of the natural-language
   editor](docs/history/NL_SURGICAL_EDITOR_PLAN.md), and the guides to the command-line features removed on 2026-10-21
   (workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations). The current round's plan is
-  `docs/PLAN-2026-10-21-full-control.md`.
+  `docs/PLAN-2026-10-22-batch-consistency.md` (what the first live run found); the full-control round's,
+  `docs/PLAN-2026-10-21-full-control.md`, waits on its live runs.
 - [docs/RELIABILITY.md](docs/RELIABILITY.md) — the review flow, what PASS means and the remaining evidence limits;
   [docs/RECOVERY.md](docs/RECOVERY.md) — how files a run set aside are investigated;
   [docs/TEXT_HYGIENE.md](docs/TEXT_HYGIENE.md) — the character hygiene operations; the

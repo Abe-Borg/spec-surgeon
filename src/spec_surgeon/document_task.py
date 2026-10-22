@@ -1148,6 +1148,17 @@ class DocumentTask:
                 "blocking": blocking}
 
     # ---- the journal ----
+    def archive(self) -> Optional[Path]:
+        """Set the journal aside under ``conversations/`` beside it, kept for inspection and never reopened; returns
+        where it went (None when there was none). The window starts every launch and every New conversation clean."""
+        if not self.journal or not self.journal.exists():
+            return None
+        folder = self.journal.parent / "conversations"
+        folder.mkdir(parents=True, exist_ok=True)
+        target = folder / f"{time.time_ns()}.json"
+        self.journal.replace(target)
+        return target
+
     def save(self, *, in_progress=False):
         if not self.journal:
             return

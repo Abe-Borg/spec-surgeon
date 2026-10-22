@@ -5,15 +5,15 @@ the default browser when pywebview is not installed) and served by a local serve
 leaves the machine but the model calls you ask for (the contract between the page and the server is
 `docs/WEB_API.md`). On the left is the conversation, with the one button above the box you type in. On the right
 are the Word documents you attached (a section that folds to one line once a plan exists; click its title to open
-it), optionally one reference template, any pictures or tables you attached for the edit to use, the plan and the
-before/after pages. You add documents, describe the result, read the plan, look at the pages, mark each preview with
-a green checkmark or a red X, and create edited copies. Nothing else is asked of you: no operations, methods or
-settings beyond an API key. Both panes render what the assistant writes as formatted text (lists, bold, links), in
-the chat and on the plan's cards alike.
+it), optionally one reference template, any pictures or tables you attached for the edit to use, and the before/after
+pages. You add documents, describe the result, look at the pages, mark each preview with a green checkmark or a red
+X, and create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
+Both panes render what the assistant writes as formatted text (lists, bold, links), in the chat and on the cards
+beside it alike.
 
 ![The conversation starts with Word documents, an optional template, and a request](conversation-start.png)
 
-![A readable plan and rendered before-and-after pages, followed by one action to create copies](conversation-preview.png)
+![The plan in the conversation and rendered before-and-after pages, followed by one action to create copies](conversation-preview.png)
 
 ## The top bar
 
@@ -31,7 +31,7 @@ tab strip:
   links, **Check for updates** (it says "Checking for updates…" until the check answers, then the answer or the update
   with **Download and install**) and **Open diagnostic logs**. These replace the old Help menu and About box.
 
-On the right: the estimated spending of the conversation, the connection pill (it opens Settings), **Hide plan**,
+On the right: the estimated spending of the conversation, the connection pill (it opens Settings),
 **New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
 ("v1.7.0 available — install") from 1280 px wide; below that, About offers it.
 
@@ -97,7 +97,7 @@ turn, each with the answer it recommends, and offers short replies you can tap. 
 and is sent as your reply, but it is never approved wording: words that go into a document are always ones you
 typed or picked. Changes that touch the same parts of a file — a font change beside a header/footer template,
 restyling beside direct formatting — are composed into ordered steps by the engine itself, each step planned and
-verified on the step before it; the plan says "in N ordered steps" and nothing is asked of you in two steps.
+verified on the step before it; nothing is asked of you in two steps.
 
 **The next request builds on the result.** After copies are created, the next thing you ask for is made on those
 copies; your originals stay as they are, and the assistant is told what was already done so it plans only what is
@@ -106,19 +106,15 @@ after a run is an original beside the copies: the window says so, and it gets on
 
 While work runs you see it: the assistant's words as they are written, flowing in at a reading pace; above them
 one line naming what it is doing ("Reading your documents…", "Writing the plan…"), which folds into a summary of
-its steps, the words it said along the way and its thinking once the reply is written; the plan the moment it is
-ready, the pages as they render and the copies as they are written. **Stop now** keeps what landed.
+its steps, the words it said along the way and its thinking once the reply is written; the pages as they render
+and the copies as they are written. **Stop now** keeps what landed.
 
-## The plan in prose
+## The plan
 
-When the plan is ready, the card **Here's what will change** lists one sentence per change. Each sentence is
-written by the operation that will make the change, from the same specification the preview ran: units are
-inches and points, exact text is quoted, and selections read as "paragraphs in the Normal style". Assumptions
-the plan rests on appear beneath the changes as "Assuming: …". **Every setting** opens every setting of every
-change for the reader who wants it all (a long pattern is not spelled out in the sentence; it is here). **Where
-exactly** lists the passages each document contributes, such as the value a template field takes from each file.
-A plan the engine composed into ordered steps says so under its title ("in 2 ordered steps"); it is still one plan
-with one button.
+When the plan is ready, the assistant says in the chat, in plain words, what will change and where, and the
+window shows the rendered before/after pages of sample documents. The window has no separate card listing the
+changes: the pages are what you review. A plan the engine composed into ordered steps is still one plan with one
+button.
 
 JSON, approval hashes, operation catalogs and recovery internals are not part of the window.
 
@@ -130,10 +126,7 @@ of them. When one specification cannot express the request for every structure p
 has one specification per layout. Each is validated and dry-planned on that layout's documents only; every
 delivered file still has exactly one specification, and the independent verifier is unchanged.
 
-The window then shows **Your documents use N layouts** and one card per layout, titled with how you would
-recognise those documents and how many there are ("Styled, PR1 articles · 8 documents"), each with its own
-changes, assumptions and the names of its files. The preview covers at least one sample per layout. One button
-approves all of them. A document whose structure no layout covers is listed under **Left untouched** with a
+The preview covers at least one sample per layout, and one button approves all of them. A document whose structure no layout covers is listed under **Left untouched** with a
 sentence: attach it on its own, or ask for a plan that covers it.
 
 ## Previews and page counts
@@ -194,8 +187,8 @@ what it does. Its label says what it does:
 - **Create edited copies**: approve the displayed plan and preview. The engine applies the specification to
   every document you did not set aside with the red X, verifies each one independently, and delivers only the
   files that pass every check. "(N set aside)" on the label counts the documents that go on the to-do list.
-- **Continue**: the documents or the plan changed, or a saved conversation was reopened; the documents are
-  checked against the request again before anything can be approved.
+- **Continue**: the documents or the plan changed; the documents are checked against the request again before
+  anything can be approved.
 - **Save N ready copies**: during recovery, save the copies that are already verified while a question about
   other files is still open.
 - **Continue** after a pause: the conversation has used 48 AI steps since you last said to go on, or the app
@@ -244,10 +237,12 @@ you accept it.
 
 ## Connection and resource use
 
-Typed requests need an Anthropic API key. **Settings** opens one dialog, **AI connection**: paste the key and
-tick **Remember securely on this computer** to keep it in Windows Credential Manager. Nothing else is
-configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer says
-"Connect your Anthropic API key in Settings to start."
+Typed requests need an Anthropic API key. **Settings** opens one dialog. **AI connection**: paste the key and
+tick **Remember securely on this computer** to keep it in Windows Credential Manager. **Appearance**: the window's
+colour scheme, one of Warm Clay (the default), Blueprint, Graphite & Teal, Carbon & Hi-Vis and Linen (the light
+one); a click recolours the window at once and `settings.json` keeps it, so the next start opens in it. Nothing
+else is configurable there. Without a key the composer keeps your draft, **Send** stays disabled and the footer
+says "Connect your Anthropic API key in Settings to start."
 
 There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether for the conversation, a
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
@@ -274,24 +269,22 @@ connection or a response cut off in transit) is sent again automatically, up to 
 seconds (longer when the service asks for it). Every attempt counts as an AI step. A request the service
 refuses is never sent again.
 
-## Saved conversations
+## Conversations and a clean start
 
 The window writes `conversation.json` in its configuration folder (`%APPDATA%\Spec Surgeon` on Windows, or
-`SPEC_SURGEON_CONFIG_DIR` when set): the attachments with their triage state, the messages, your decisions and
-approved wording, the result locations, the working set (which copy stands for each original, and the changes
-already made to it), the to-do list and the pass over it, the spending ledger and the location of a recovery
-checkpoint. It can contain document
-text. It never contains the API key, an approval to deliver, or an acknowledgement of a visual finding; those
-belong to one displayed preview only. A reopened conversation whose copies can no longer be found says so and
-starts the next change from your originals.
+`SPEC_SURGEON_CONFIG_DIR` when set) as the conversation goes: the attachments with their triage state, the
+messages, your decisions and approved wording, the result locations, the working set (which copy stands for each
+original, and the changes already made to it), the to-do list and the pass over it, the spending ledger and the
+location of a recovery checkpoint. It can contain document text. It never contains the API key, an approval to
+deliver, or an acknowledgement of a visual finding; those belong to one displayed preview only.
 
-On reopening, the conversation and the result links come back. Every attachment is triaged again, since a file
-may have changed, moved or been fixed; a file that is gone is marked with where it used to be. The button
-reads **Continue**: the documents are checked against the request again before any new approval, and a
-recovery checkpoint is reloaded and revalidated. If the app closed in the middle of work, before the last
-step's usage was recorded, the conversation reopens paused and continuing needs your **Continue**. **New
-conversation** archives the current journal under
-`conversations\` and starts empty. An unsent draft is kept in `settings.json`.
+Every start of the app is a clean one: an empty conversation, nothing attached. The last conversation's journal
+is moved under `conversations\` (named by the time it was set aside) and never reopened; the edited copies stay
+in their run folders. **New conversation** does the same mid-session. A journal that cannot be moved (another
+program holds the file open) is left exactly as it is, and that session keeps no journal of its own rather than
+write over it. After a crash the first message says the
+previous session ended unexpectedly, where Python's fault handler wrote what it saw, and where its conversation
+was archived.
 
 ## Capability and verification limits
 

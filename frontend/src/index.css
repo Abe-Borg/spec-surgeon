@@ -1,6 +1,9 @@
 /* Adapted from Build-a-Spec's frontend/src/index.css (copy-based reuse): the
-   same warm dark chrome, paper-toned content, Georgia display face, system
-   sans body, radii, shadows and animations. No light/dark toggle. */
+   same chrome around paper-toned content, Georgia display face, system sans
+   body, radii, shadows and animations. The colours are tokens: @theme holds
+   Warm Clay, the default scheme, and each other scheme below redefines every
+   token under <html data-theme="…"> (src/lib/theme.ts lists them; Settings
+   picks one). A component never names a colour of its own. */
 @import "tailwindcss";
 
 @theme {
@@ -22,8 +25,7 @@
   --color-ok: #7fa650;
   --color-warn: #d4a04c;
   --color-err: #c65b4e;
-  /* Tints on the paper: a block the latest change touched, an error card. */
-  --color-changed: #f8ecd6;
+  /* The tint of an error card on the paper. */
   --color-err-tint: #fbeeec;
 
   --font-display: "Georgia", "Cambria", serif;
@@ -32,6 +34,104 @@
 
   /* The conversation's one easing: quick to start, long to settle. */
   --ease-glide: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* The other colour schemes: every colour token of @theme, redefined. Their
+   text reads at 4.5:1 on its surface and their marks at 3:1 on the paper. */
+/* Blueprint */
+:root[data-theme="blueprint"] {
+  color-scheme: dark;
+  --color-bg: #121a26;
+  --color-surface: #18212f;
+  --color-raised: #212c3d;
+  --color-edge: #2f3d53;
+  --color-ink: #e3e9f2;
+  --color-ink-dim: #9aa8bc;
+  --color-ink-faint: #6e7d93;
+  --color-accent: #2e8aee;
+  --color-accent-hover: #4da0f5;
+  --color-on-accent: #08111d;
+  --color-paper: #f8fafc;
+  --color-paper-edge: #dbe2ec;
+  --color-paper-ink: #1b2433;
+  --color-paper-dim: #66748a;
+  --color-paper-faint: #a5b0c0;
+  --color-ok: #428a5e;
+  --color-warn: #e2ad4f;
+  --color-err: #dc4739;
+  --color-err-tint: #fcefee;
+}
+
+/* Graphite & Teal */
+:root[data-theme="graphite"] {
+  color-scheme: dark;
+  --color-bg: #1b1d1f;
+  --color-surface: #222528;
+  --color-raised: #2b2f33;
+  --color-edge: #3a3f45;
+  --color-ink: #e7e9eb;
+  --color-ink-dim: #a3a9b0;
+  --color-ink-faint: #767d85;
+  --color-accent: #269c9b;
+  --color-accent-hover: #37acaa;
+  --color-on-accent: #061b1b;
+  --color-paper: #fbfbfa;
+  --color-paper-edge: #e1e4e6;
+  --color-paper-ink: #1f2326;
+  --color-paper-dim: #6c747c;
+  --color-paper-faint: #a8afb5;
+  --color-ok: #5f8f3a;
+  --color-warn: #e0a54a;
+  --color-err: #d94b3c;
+  --color-err-tint: #fcefed;
+}
+
+/* Carbon & Hi-Vis */
+:root[data-theme="carbon"] {
+  color-scheme: dark;
+  --color-bg: #0b0b0c;
+  --color-surface: #121214;
+  --color-raised: #1b1b1e;
+  --color-edge: #2c2c31;
+  --color-ink: #f4f4f5;
+  --color-ink-dim: #a9a9b0;
+  --color-ink-faint: #7a7a82;
+  --color-accent: #f55b00;
+  --color-accent-hover: #ff7d30;
+  --color-on-accent: #140700;
+  --color-paper: #ffffff;
+  --color-paper-edge: #e2e2e4;
+  --color-paper-ink: #141416;
+  --color-paper-dim: #66666d;
+  --color-paper-faint: #a6a6ad;
+  --color-ok: #318c52;
+  --color-warn: #e8b230;
+  --color-err: #e12c31;
+  --color-err-tint: #fdecec;
+}
+
+/* Linen */
+:root[data-theme="linen"] {
+  color-scheme: light;
+  --color-bg: #f5f1ea;
+  --color-surface: #ece6dc;
+  --color-raised: #fffdf9;
+  --color-edge: #dcd3c5;
+  --color-ink: #2a2620;
+  --color-ink-dim: #5f564b;
+  --color-ink-faint: #877e72;
+  --color-accent: #a64b29;
+  --color-accent-hover: #8d3f22;
+  --color-on-accent: #ffffff;
+  --color-paper: #fffdf9;
+  --color-paper-edge: #e6dfd3;
+  --color-paper-ink: #2a2620;
+  --color-paper-dim: #6c6459;
+  --color-paper-faint: #aaa293;
+  --color-ok: #3c7e39;
+  --color-warn: #9d671b;
+  --color-err: #b33d2c;
+  --color-err-tint: #fbeceb;
 }
 
 html,
@@ -166,19 +266,7 @@ body {
     box-shadow 0.6s ease;
 }
 
-/* Blocks touched by the latest change, tinted on the paper surface and
-   settling over 0.6 s (the "something just landed here" cue). */
-.changed-block {
-  background: var(--color-changed);
-  box-shadow: inset 2px 0 0 var(--color-accent);
-  transition: background 0.6s ease;
-}
-.changed-block.is-settled {
-  background: transparent;
-  box-shadow: none;
-}
-
-/* A card that has just arrived (a plan, a preview) rises in, once. */
+/* A card that has just arrived (a preview, the copies) rises in, once. */
 .card-in {
   animation: card-in 0.24s ease-out both;
 }
@@ -494,15 +582,14 @@ body {
   .said-in {
     animation: none;
   }
-  .changed-block,
   .fold,
   .chev {
     transition: none;
   }
 }
 
-/* Markdown on the paper cards (the plan's sentences, assumptions, findings,
-   reasons): the same rules in the paper's tones. */
+/* Markdown on the paper cards (findings, reasons): the same rules in the
+   paper's tones. */
 .md-paper h1,
 .md-paper h2,
 .md-paper h3,

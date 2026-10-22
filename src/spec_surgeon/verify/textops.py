@@ -18,6 +18,7 @@ from .template import _v_field_runs, display_of, fill_value, slots_of
 from .edits import (check_deleted_paragraph, check_edited_paragraph, part_revision_ids, ppr_norm, v_deletable,
                     v_items, v_paragraph_text, v_run_text, v_shown)
 from .tables import table_md5, table_pairs, table_variables, usable_text
+from .removal import v_hold_marks, v_kept_marks, v_range_marks
 
 
 def _v_owner(el):
@@ -393,6 +394,15 @@ def _tagged_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         if sorted(stripped) != list((a.get("expected_stripped") or {}).get(part, [])):
             errs.append(f"tagged_paragraphs: {part}: strips tags from {sorted(stripped)} here, the plan predicted "
                         f"{(a.get('expected_stripped') or {}).get(part, [])}")
+        # untracked: a deleted paragraph's range marks whose pair reaches a paragraph that stays stay in its place
+        held: Dict[str, List[int]] = {}
+        if not tracked:
+            for m, owner in v_kept_marks(sv.root, [sv.pars[bi] for bi in deleted]):
+                bi = next(i for i in deleted if sv.pars[i] is owner)
+                held.setdefault(str(bi), []).append(next(k for k, x in enumerate(v_range_marks(owner)) if x is m))
+        if held != (a.get("expected_marks") or {}).get(part, {}):
+            errs.append(f"tagged_paragraphs: {part}: keeps the range marks {held} of deleted paragraphs here, the plan "
+                        f"predicted {(a.get('expected_marks') or {}).get(part, {})}")
         if tracked:
             if len(ov.pars) != len(sv.pars):
                 errs.append(f"tagged_paragraphs: {part} has {len(ov.pars)} paragraphs, the source {len(sv.pars)}")
@@ -413,6 +423,7 @@ def _tagged_paragraphs(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
                 ctx.verified_blocks.setdefault(part, {})[bi] = bi
             else:
                 ctx.deleted_src_blocks.setdefault(part, set()).add(bi)
+                v_hold_marks(ctx, part, bi, sv.pars[bi], held.get(str(bi), []))
         for bi, edit in sorted(stripped.items()):
             n_strip += 1
             check_edited_paragraph(sv.pars[bi], ov.pars[to_out[bi]], [edit], tracked, author, in_field, old_ids,

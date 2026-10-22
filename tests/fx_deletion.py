@@ -9,8 +9,10 @@ appendix's header inherited; ``build_marks()`` — comments (one inside a paragr
 paragraphs), bookmarks (inside, across), footnotes (one plain, one holding a link and a picture, one with a custom mark),
 an endnote, a picture and a link in the body, a REF field to a bookmark; ``build_wipe()`` — everything at once over three
 sections, for deleting the whole body; ``build_pictures()`` — paragraphs without text that hold a picture, a text box, a
-field or a shape, and a table of pictures, between empty ones. ``with_printer_settings`` names a printer settings part
-from section breaks; ``with_last_comment_paragraph`` gives a threaded comment a last paragraph of its own.
+field or a shape, and a table of pictures, between empty ones; ``build_kept_marks(shape)`` — a paragraph the deletion
+keeps and empties (a cell's last, one between two tables, the body's last, the last section's) holding one end of a
+bookmark whose other end stays. ``with_printer_settings`` names a printer settings part from section breaks;
+``with_last_comment_paragraph`` gives a threaded comment a last paragraph of its own.
 """
 from __future__ import annotations
 
@@ -401,6 +403,81 @@ def build_pictures() -> bytes:
         '</w:pict></w:r>'))
     doc.add_paragraph("")
     doc.add_paragraph("END OF SECTION")
+    return docx_bytes(doc)
+
+
+# ---- range marks in a paragraph the deletion keeps -------------------------------------------------------------------
+
+KEPT_SHAPES = {"cell": "^Q\\. ", "between": "^R\\. ", "body": "^S\\. ", "section": "^T\\. "}
+
+
+def _range_mark(paragraph, tag: str, mid: int, first: bool = False) -> None:
+    """A ``w:permStart`` / ``w:permEnd`` (``tag``) in the paragraph: after its properties (``first``) or at its end."""
+    el = OxmlElement(f"w:{tag}"); el.set(qn("w:id"), str(mid))
+    if tag == "permStart":
+        el.set(qn("w:edGrp"), "everyone")
+    p = paragraph._p
+    ppr = p.find(qn("w:pPr"))
+    if first:
+        (ppr.addnext(el) if ppr is not None else p.insert(0, el))
+    else:
+        p.append(el)
+
+
+def build_kept_marks(shape: str) -> bytes:
+    """One paragraph to delete (its text starts with the letter ``KEPT_SHAPES`` selects) that the deletion must keep,
+    emptied, holding one end of a bookmark whose other end is in text that stays:
+
+    * ``cell`` — "Q. Gone …" and "Q. Kept …", the two paragraphs of a cell: the second is the cell's last. It holds
+      the start of "KeptCell" (its end in the next cell, a REF field to it below the table) and of a permission range
+      (its end in the next cell too), all of "Inner", and the end of "Wholly", which starts in "Q. Gone": both ends of
+      those two lie in the deleted text;
+    * ``between`` — "R. Between the tables.", alone between two tables, holds the end of "Span" (its start in
+      "Lead.");
+    * ``body`` — "S. Last of the body.", after a table, holds the end of "ToEnd" (its start in "Lead.");
+    * ``section`` — "T. Appendix text.", all of the last section, holds the end of "IntoAppendix" (its start in
+      "Lead.", before the section break)."""
+    doc = Document()
+    doc.add_paragraph("SECTION 21 13 13")
+    if shape == "cell":
+        t = doc.add_table(rows=1, cols=2)
+        gone = t.cell(0, 0).paragraphs[0]
+        gone.add_run("Q. Gone with its cell's text.")
+        kept = t.cell(0, 0).add_paragraph("Q. Kept, the cell's last.")
+        nxt = t.cell(0, 1).paragraphs[0]
+        nxt.add_run("Next cell.")
+        bookmark(gone, "Wholly", 30, "start")
+        bookmark(kept, "Wholly", 30, "end")
+        bookmark(kept, "Inner", 31)
+        _range_mark(kept, "permStart", 33, first=True)
+        bookmark(kept, "KeptCell", 32, "start")
+        bookmark(nxt, "KeptCell", 32, "end")
+        _range_mark(nxt, "permEnd", 33)
+        p = doc.add_paragraph("A. See ")
+        field(p, " REF KeptCell \\h ", "Q.")
+        doc.add_paragraph("END OF SECTION")
+    elif shape == "between":
+        lead = doc.add_paragraph("Lead.")
+        doc.add_table(rows=1, cols=1).cell(0, 0).paragraphs[0].add_run("Alpha")
+        between = doc.add_paragraph("R. Between the tables.")
+        doc.add_table(rows=1, cols=1).cell(0, 0).paragraphs[0].add_run("Beta")
+        doc.add_paragraph("END OF SECTION")
+        bookmark(lead, "Span", 34, "start")
+        bookmark(between, "Span", 34, "end")
+    elif shape == "body":
+        lead = doc.add_paragraph("Lead.")
+        doc.add_table(rows=1, cols=1).cell(0, 0).paragraphs[0].add_run("Gamma")
+        last = doc.add_paragraph("S. Last of the body.")
+        bookmark(lead, "ToEnd", 35, "start")
+        bookmark(last, "ToEnd", 35, "end")
+    elif shape == "section":
+        lead = doc.add_paragraph("Lead.")
+        doc.add_section(WD_SECTION.NEW_PAGE)
+        appendix = doc.add_paragraph("T. Appendix text.")
+        bookmark(lead, "IntoAppendix", 36, "start")
+        bookmark(appendix, "IntoAppendix", 36, "end")
+    else:
+        raise ValueError(shape)
     return docx_bytes(doc)
 
 

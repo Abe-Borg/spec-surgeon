@@ -336,7 +336,8 @@ const SCENARIOS = {
 };
 
 let view = emptyView();
-let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs" };
+let settings = { key_present: true, origin: "saved", can_remember: true, out_root: "C:/Users/abe/AppData/Local/Spec Surgeon/runs", logs_dir: "C:/Users/abe/AppData/Roaming/Spec Surgeon/logs", theme: "clay" };
+const THEMES = ["clay", "blueprint", "graphite", "carbon", "linen"];
 let running = null; // { stop: boolean }
 let downloadTimer = null;
 let updateFound = true; // what the next check for updates finds; the up-to-date scenario turns it off
@@ -919,6 +920,11 @@ async function handle(req, res) {
       return json(res, 200, settings);
     case "POST /api/settings": {
       const body = await readJson(req);
+      if ("theme" in body) {
+        if (!THEMES.includes(body.theme)) return json(res, 400, { error: "There is no such colour scheme." });
+        settings = { ...settings, theme: body.theme };
+        if (!("api_key" in body)) return json(res, 200, settings);
+      }
       const key = String(body.api_key || "");
       if (!key.startsWith("sk-")) return json(res, 400, { error: "That does not look like an Anthropic API key; it starts with sk-ant-." });
       settings = { ...settings, key_present: true, origin: body.remember ? "saved" : "session" };

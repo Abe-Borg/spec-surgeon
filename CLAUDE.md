@@ -42,7 +42,9 @@ The desktop is one window: the page in `web/static/` (built from `frontend/`), s
 `document_task.DocumentTask` (contract `docs/WEB_API.md`) and shown by `web/shell.py`. The user attaches Word files, an
 optional template and pictures or tables for the edit to use; `triage.py` checks each on arrival without a model call.
 `layouts.py` gives a mixed batch one EditSpec per structural layout with one approval; `review_display.py` describes
-the previewed spec in the sentences each op writes for itself (`Op.describe`). The one button lives in the chat pane;
+the previewed spec in the sentences each op writes for itself (`Op.describe`); the window shows no plan card (the chat
+says what will change, the previews show it), and those sentences record each copy's changes in `applied`. The one
+button lives in the chat pane;
 each preview carries a checkmark and an X: X'd documents are `hold` on the primary action (`Session.run(only=)` keeps
 every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
 request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document.
@@ -81,7 +83,7 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
 
 ```sh
 pip install -e ".[dev,gui,agent]"            # Windows: py -3 -m pip install -e ".[dev,gui,agent,word]"
-python3 -m pytest -q                          # Windows: py -3 -m pytest -q -s
+python3 -m pytest -q -n auto                  # every core, as CI; Windows: py -3 -m pytest -q -n auto
 python3 -m pytest -q tests/test_ops.py        # one module (in a git worktree: PYTHONPATH=src python3 -m pytest …)
 cd frontend && npm ci && npm run build        # rebuild the window's page (Node 22) into web/static; commit it
 python3 tests/make_fixtures.py OUT            # fixtures; --rich, --template, --reference, --styles-template, --numbering-scheme, --dirty
@@ -98,7 +100,7 @@ for one pair, `gui.Session` for the window's steps with a scripted client (`test
 1. Copy `src/spec_surgeon/ops/set_font.py`; keep `@register`, `name`, `mode`, `params_schema`, `select_schema`,
    `verification_profile`, `describe()`, `plan()`, `apply()`; import it at the bottom of `ops/__init__.py`.
    `describe(select, params)` returns one or two sentences built with `ops/prose.py` (inches and points, quoted exact
-   text, no identifiers, no JSON): the line the user reads in the plan.
+   text, no identifiers, no JSON): the line that records the change in the history the model hears.
 2. `plan()` fills the fragment analytically from the source: `intended_parts`, `diffs`, members, `rev_delta`,
    `property_assertions`, and honest `touches` (what it changes and what it reads).
 3. Write the V10 assertion kind in `verify/` first, with its own selection and an "exactly this change" check.
@@ -110,8 +112,9 @@ for one pair, `gui.Session` for the window's steps with a scripted client (`test
 
 ## Session protocol
 
-Current round: `docs/PLAN-2026-10-21-full-control.md` (design: `docs/BUILTIN_OPS_BATCH6_DESIGN.md`). Read it before
-any work and take items from its status table. New operations go into a plan before they are built. Nothing is done on
-fixtures alone: the plan's acceptance names a real-file run, which the user performs. Before ending, update the rows
-you worked in the status table with a dated one-line note: what changed, what is tested, what still needs the user's
-machine.
+Current round: `docs/PLAN-2026-10-22-batch-consistency.md` (what the first live run found); the full-control round,
+`docs/PLAN-2026-10-21-full-control.md` (design: `docs/BUILTIN_OPS_BATCH6_DESIGN.md`), waits on its live runs. Read both
+before any work and take items from the current round's status table. New operations go into a plan before they are
+built. Nothing is done on fixtures alone: the plan's acceptance names a real-file run, which the user performs. Before
+ending, update the rows you worked in the status table with a dated one-line note: what changed, what is tested, what
+still needs the user's machine.

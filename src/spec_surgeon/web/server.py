@@ -30,7 +30,7 @@ from .. import __version__, about, credentials, llm
 from .. import diagnostics as diag
 from ..document_task import STEPS_PER_PAUSE, DocumentTask
 from ..gui import Session
-from ..settings import Settings, config_dir, logs_dir, save_settings
+from ..settings import THEMES, Settings, config_dir, logs_dir, save_settings
 
 STATIC = Path(__file__).resolve().parent / "static"
 TOKEN_HEADER = "X-Spec-Surgeon-Token"
@@ -259,10 +259,7 @@ class WindowState:
 
     def new_conversation(self) -> None:
         task = self.task
-        if task.journal and task.journal.exists():
-            archive = task.journal.parent / "conversations"
-            archive.mkdir(parents=True, exist_ok=True)
-            task.journal.replace(archive / f"{time.time_ns()}.json")
+        task.archive()
         session = Session(out_root=task.session.out_root, client=task.session.client,
                           visual_check=task.session.visual_check)
         self.task = DocumentTask(session, journal=task.journal, render=task.render)
@@ -444,11 +441,16 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     def get_settings():
         return {"key_present": state.task.session.claude_ready(), "origin": state.key_origin,
                 "can_remember": credentials.available(), "out_root": str(state.task.session.out_root),
-                "logs_dir": str(logs_dir()), "steps_per_pause": STEPS_PER_PAUSE}
+                "logs_dir": str(logs_dir()), "steps_per_pause": STEPS_PER_PAUSE, "theme": state.settings.theme}
 
     @app.post("/api/settings")
     async def set_settings(request: Request):
         body = await request.json()
+        if "theme" in body:
+            if body["theme"] not in THEMES:
+                return error("There is no such colour scheme.")
+            state.settings.theme = body["theme"]
+            state.save_settings()
         key = str(body.get("api_key") or "").strip()
         remember = bool(body.get("remember"))
         if key:

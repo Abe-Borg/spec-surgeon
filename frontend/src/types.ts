@@ -208,6 +208,8 @@ export interface Settings {
   can_remember: boolean;
   out_root: string;
   logs_dir: string;
+  /** The colour scheme kept in settings.json: one of src/lib/theme.ts's ids. */
+  theme: string;
 }
 
 export interface Component {
