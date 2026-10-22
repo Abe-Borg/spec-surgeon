@@ -208,11 +208,22 @@ def max_revision_id(pkg: DocxPackage) -> int:
     """The highest annotation id (``ANNOTATION_ID_TAGS``) in the package's WordprocessingML parts
     (``DocxPackage.wordprocessing_xml_parts``: the text parts, and the styles and numbering parts too, which can carry
     property revisions of their own), 0 when there is none: new revision ids start above it. A reviewer's ids can be
-    anywhere, so every part is read, not only the ones a revision is usually in. Only an id that reads as a whole
-    number counts: a permission range may be named instead, which takes no number a revision could be given."""
+    anywhere, so every part is read, not only the ones a revision is usually in. The list is every element the schemas
+    give an annotation id (tests/test_package_hardening.py derives it from the vendored XSDs), not every w:id: a
+    w:fitText's, a w:eastAsianLayout's or a web-settings w:div's id is no annotation's, and Word writes those at large
+    values a seed must not climb to. Only an id that reads as a whole number counts: a permission range may be named
+    instead, which takes no number a revision could be given. A part that is not well-formed XML is skipped (it is kept
+    byte for byte); a text part that is not still raises, as everywhere else."""
+    text = set(pkg.text_parts())
     mx = 0
     for part in pkg.wordprocessing_xml_parts():
-        for el in pkg.xml(part).iter():
+        try:
+            root = pkg.xml(part)
+        except etree.XMLSyntaxError:
+            if part in text:
+                raise
+            continue
+        for el in root.iter():
             if el.tag in ANNOTATION_ID_TAGS:
                 v = (el.get(W + "id") or "").strip()
                 if _WHOLE_NUMBER.fullmatch(v):

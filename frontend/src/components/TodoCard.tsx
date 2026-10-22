@@ -17,7 +17,7 @@ interface Props {
 export default function TodoCard({ names, busy, onSend }: Props) {
   const several = names.length > 1;
   return (
-    <div className="card-in rounded-2xl border border-warn/40 bg-warn/10 px-4 py-3" role="status" aria-label="Your to-do list">
+    <div className="chat-in rounded-2xl border border-warn/40 bg-warn/10 px-4 py-3" role="status" aria-label="Your to-do list">
       <p className="text-[11px] font-medium tracking-wide text-ink-faint uppercase">Set aside for more work</p>
       <ul className="mt-1 space-y-0.5">
         {names.map((name) => (

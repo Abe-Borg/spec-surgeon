@@ -49,8 +49,10 @@ jobs:
         run: python -m pip install -e ".[gui,word,agent,dev]" "pyinstaller>=6.11,<7" jsonschema
       - name: Build the window's page
         working-directory: frontend
+        # --no-audit: npm ci otherwise ends by asking npm's retiring audit endpoint, which has taken up to npm's
+        # 5-minute fetch timeout to answer; the build needs no audit.
         run: |
-          npm ci
+          npm ci --no-audit --no-fund
           npm run build
       - name: Check the committed page is the one the source builds
         # The bundle collects src/spec_surgeon/web/static, which is committed. When this step fails, the committed
@@ -70,7 +72,7 @@ jobs:
         run: npm test
       - name: Run Windows tests
         if: inputs.run_tests
-        run: python -m pytest -q --junitxml=windows-tests.xml
+        run: python -m pytest -q -n auto --junitxml=windows-tests.xml
       - name: Bundle the desktop app
         shell: pwsh
         run: |

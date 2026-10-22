@@ -299,3 +299,71 @@ def test_pages_show_only_beside_a_plan_waiting_for_the_user(tmp_path):
     task.stage = "preview"
     view = task.perform("primary", token=task.action_token())
     assert view["stage"] == "done" and view["results"] and view["samples"] == []
+
+
+def test_the_words_of_a_question_or_a_submission_stream_as_the_model_writes_them(tmp_path):
+    """The reply's words in an ask_user or submit_editspec ``message`` reach the page as they are written, a
+    paragraph after the call's plain text: what streamed is the reply the turn ends with."""
+    ask = {"understanding": "Arial in the headers too?", "message": "The headers use “Times New Roman” at 9 pt.",
+           "questions": ["Should the headers change too?"], "suggested_replies": ["Yes, the headers too"]}
+    fake = FakeClient(resp(text("I read the three documents."), tool("ask_user", ask)), live=True)
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    events = []
+    view = task.perform("send", text=REQUEST, events=events.append)
+    assert view["stage"] == "question"
+    words = "".join(e["text"] for e in events if e["type"] == "text_delta")
+    reply = [e["message"] for e in events if e["type"] == "message" and e["message"]["role"] == "assistant"][-1]
+    assert words == reply["text"] == "I read the three documents.\n\nThe headers use “Times New Roman” at 9 pt."
+    assert "Should the headers" not in words and "Arial in the headers" not in words   # the rest stays unshown
+
+
+def test_a_message_is_read_from_its_json_however_the_pieces_fall():
+    from spec_surgeon.document_task import MessageWords
+    payload = json.dumps({"spec": {"message": "not this", "ops": [{"message": "nor this"}]},
+                          "message": "  Line one — “quoted” \\ / \"x\"\n\nLine two\t😀  ", "choices": ["message"]})
+    for size in range(1, 9):
+        words = MessageWords()
+        got = "".join(words.feed(payload[i:i + size]) for i in range(0, len(payload), size))
+        assert got == "Line one — “quoted” \\ / \"x\"\n\nLine two\t😀"
+    assert MessageWords().feed(json.dumps({"message": "   ", "questions": ["q"]})) == ""
+    assert MessageWords().feed(json.dumps({"message": None, "x": "message"})) == ""
+    assert MessageWords().feed(json.dumps({"questions": ["q"]}, ensure_ascii=False)) == ""
+    # outside the conversation, or for a tool that tells the user nothing, nothing is relayed
+    task = DocumentTask.__new__(DocumentTask)
+    task._events, task._talking, task._said, task._plain, task._telling = [].append, False, False, "", {}
+    seen = []
+    task._events = seen.append
+    task._on_stream({"type": "tool", "name": "ask_user", "index": 0})
+    task._on_stream({"type": "tool_input", "index": 0, "json": '{"message": "hidden"}'})
+    with task._conversation():
+        task._on_stream({"type": "tool", "name": "read_paragraphs", "index": 1})
+        task._on_stream({"type": "tool_input", "index": 1, "json": '{"message": "hidden"}'})
+        task._on_stream({"type": "tool", "name": "ask_user", "index": 2})
+        task._on_stream({"type": "tool_input", "index": 2, "json": '{"message": "Shown."}'})
+    assert [e for e in seen if e["type"] == "text_delta"] == [{"type": "text_delta", "text": "Shown."}]
+
+
+def test_a_message_that_repeats_a_part_already_written_streams_once_as_the_reply_keeps_it(tmp_path):
+    """The reply keeps each of its parts once (``dict.fromkeys``): a message that repeats the call's plain text, or
+    an earlier question's message, is held while it matches and dropped, so what streamed is still the reply."""
+    said = "The headers use Times New Roman at 9 pt."
+    fake = FakeClient(resp(text(said), tool("ask_user", {"message": said, "questions": ["Change them too?"]})),
+                      live=True)
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    events = []
+    task.perform("send", text=REQUEST, events=events.append)
+    words = "".join(e["text"] for e in events if e["type"] == "text_delta")
+    reply = [e["message"] for e in events if e["type"] == "message" and e["message"]["role"] == "assistant"][-1]
+    assert words == reply["text"] == said
+    # two questions in one call, the second saying the first's words again, then a message that only begins alike
+    seen = []
+    task._events = seen.append
+    with task._conversation():
+        task._on_stream({"type": "started"})
+        for index, message in enumerate(["Body only?", "Body only?", "Body only? Or the headers too?"]):
+            task._on_stream({"type": "tool", "name": "ask_user", "index": index})
+            task._on_stream({"type": "tool_input", "index": index, "json": json.dumps({"message": message})})
+    assert "".join(e["text"] for e in seen if e["type"] == "text_delta") == \
+        "Body only?\n\nBody only? Or the headers too?"

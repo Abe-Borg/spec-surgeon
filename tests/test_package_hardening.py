@@ -318,6 +318,66 @@ def test_a_tracked_change_past_the_largest_id_word_reads_is_refused_and_one_just
 
 
 W14 = "{http://schemas.microsoft.com/office/word/2010/wordml}"
+XS = "{http://www.w3.org/2001/XMLSchema}"
+SCHEMAS = Path(ooxml.__file__).resolve().parent / "schemas"
+# Elements the schemas give a w:id that is no annotation's, each for its reason: a web-settings div (a pasted web page's
+# ids, random values near 2**31); a run's fitText and eastAsianLayout (they group runs, and Word writes large values);
+# a note and its reference (the note's own number, another space); a table cell (a string id).
+NOT_ANNOTATIONS = {"div", "fitText", "eastAsianLayout", "footnote", "endnote", "footnoteReference", "endnoteReference",
+                   "tc"}
+
+
+def _schema_id_elements() -> set:
+    """Every element of WordprocessingML (wml.xsd) and Word 2010's additions (wml-2010.xsd) whose type, through its
+    extensions, declares an ``id`` attribute: the list as the schemas state it."""
+    wml = etree.parse(str(SCHEMAS / "ISO-IEC29500-4_2016" / "wml.xsd")).getroot()
+    w14 = etree.parse(str(SCHEMAS / "microsoft" / "wml-2010.xsd")).getroot()
+    types = {ct.get("name"): ct for ct in wml.iter(XS + "complexType") if ct.get("name")}
+
+    def has_id(name, seen=()):
+        ct = types.get(name)
+        if ct is None or name in seen:
+            return False
+        if any(a.get("name") == "id" for a in ct.iter(XS + "attribute")):
+            return True
+        return any(has_id(e.get("base", "").split(":")[-1], seen + (name,)) for e in ct.iter(XS + "extension"))
+
+    def named(root, ns):
+        return {ns + el.get("name") for el in root.iter(XS + "element")
+                if el.get("name") and el.get("type") and has_id(el.get("type").split(":")[-1])}
+    return named(wml, W) | named(w14, W14)
+
+
+def test_the_annotation_lists_are_the_schemas_own():
+    """No hand-kept list stays complete (a short one handed out a w:tblGridChange's id again), so both sides' lists are
+    held to the schemas: every element the vendored XSDs give an id, less the named non-annotations, and nothing else."""
+    from spec_surgeon.verify import suite as vsuite
+    stated = _schema_id_elements()
+    assert {W + "div", W + "fitText", W + "tblGridChange", W + "tblPrExChange", W14 + "conflictIns"} <= stated
+    expected = stated - {W + n for n in NOT_ANNOTATIONS}
+    assert ooxml.ANNOTATION_ID_TAGS == expected
+    verifier = {W + n for n in vsuite.ANNOTATION_ELEMENTS} | {W14 + n for n in vsuite.W14_ANNOTATION_ELEMENTS}
+    assert verifier == expected
+
+
+def test_run_grouping_and_note_ids_do_not_raise_the_seed():
+    """A w:fitText id at a value Word writes (large) and a footnote's number leave the seed where the annotations put
+    it, so a tracked edit beside them is not pushed toward the ceiling."""
+    base = ooxml.max_revision_id(DocxPackage(PLAIN))
+
+    def document(root):
+        r = next(root.iter(W + "r"))
+        rpr = r.find(W + "rPr")
+        if rpr is None:
+            rpr = etree.Element(W + "rPr")
+            r.insert(0, rpr)
+        fit = etree.SubElement(rpr, W + "fitText")
+        fit.set(W + "val", "1680")
+        fit.set(W + "id", "2147483000")
+    data = patch_docx(PLAIN, {MAIN: document})
+    assert ooxml.max_revision_id(DocxPackage(data)) == base
+    plan, out, rec = _run(data, _tracked_replace("FM Global", "the Owner's risk consultant"))
+    assert rec.passed, rec.to_markdown()
 
 
 def test_coauthoring_conflict_markup_is_in_the_id_space(monkeypatch):

@@ -6,15 +6,24 @@
  * Pure, so `node --test` can pin every rule.
  */
 import type { Choice, Message, View } from "../types.ts";
-import type { Aside, LiveReply, UiState } from "./view.ts";
+import type { Aside, LiveReply, Step, UiState } from "./view.ts";
 
+/** Every item carries the key the chat renders it under. Messages are keyed by their place in the conversation,
+ *  not their id: the optimistic user bubble (`local-…`) and the server's copy of it (`m…`) are one bubble, and the
+ *  live bubble takes the key of the message it becomes, so a finished reply carries on in the same bubble. */
 export type ChatItem =
-  | { kind: "message"; message: Message; aside: Aside | null }
-  | { kind: "live"; live: LiveReply }
-  | { kind: "error"; text: string }
-  | { kind: "prompts"; questions: string[]; choices: Choice[]; chips: string[] }
-  | { kind: "pause"; stepsPerPause: number; costText: string; canContinue: boolean }
-  | { kind: "todo"; names: string[] };
+  | { kind: "message"; key: string; message: Message; aside: Aside | null }
+  /** `leaving`: the bubble of a job that ended without a message in its place, kept while it folds away. */
+  | { kind: "live"; key: string; live: LiveReply; leaving?: boolean }
+  | { kind: "error"; key: string; text: string }
+  | { kind: "prompts"; key: string; questions: string[]; choices: Choice[]; chips: string[] }
+  | { kind: "pause"; key: string; stepsPerPause: number; costText: string; canContinue: boolean }
+  | { kind: "todo"; key: string; names: string[] };
+
+/** The key of the conversation's entry at `index` (a message, or the live bubble after the last one). */
+export function entryKey(index: number): string {
+  return `entry-${index}`;
+}
 
 /** The reply that begins the pass over the to-do list; the server recognises these exact words
  *  (`document_task.WORK_TODO`). Sent as a chip: the user's decision, never their wording. */
@@ -27,7 +36,7 @@ export function todoFor(state: UiState): ChatItem | null {
   if (view.busy || state.live) return null;
   if ((view.todo ?? []).length === 0 || (view.focus ?? []).length > 0) return null;
   if (view.stage !== "done" && view.stage !== "empty" && view.stage !== "resume") return null;
-  return { kind: "todo", names: view.todo.map((item) => item.name) };
+  return { kind: "todo", key: "todo", names: view.todo.map((item) => item.name) };
 }
 
 /** The choices and chips to offer right now, or null when none apply. */
@@ -39,7 +48,7 @@ export function promptsFor(state: UiState): ChatItem | null {
   const choices = view.choices ?? [];
   const chips = view.chips ?? [];
   if (questions.length === 0 && choices.length === 0 && chips.length === 0) return null;
-  return { kind: "prompts", questions, choices, chips };
+  return { kind: "prompts", key: "prompts", questions, choices, chips };
 }
 
 /** The pause card: work paused with its progress saved; Continue picks it up. */
@@ -49,6 +58,7 @@ export function pauseFor(state: UiState): ChatItem | null {
   if (view.stage !== "budget" && !view.budget?.paused) return null;
   return {
     kind: "pause",
+    key: "pause",
     stepsPerPause: view.budget?.steps_per_pause ?? 48,
     costText: spentText(view.cost),
     canContinue: view.action?.kind === "continue" && !!view.action.token,
@@ -61,13 +71,14 @@ export function pauseFor(state: UiState): ChatItem | null {
  * latest assistant message when a question is open.
  */
 export function transcript(state: UiState): ChatItem[] {
-  const items: ChatItem[] = state.view.messages.map((message) => ({
+  const items: ChatItem[] = state.view.messages.map((message, index) => ({
     kind: "message",
+    key: entryKey(index),
     message,
     aside: state.asides[message.id] ?? null,
   }));
-  if (state.live) items.push({ kind: "live", live: state.live });
-  if (state.error) items.push({ kind: "error", text: state.error });
+  if (state.live) items.push({ kind: "live", key: entryKey(state.view.messages.length), live: state.live });
+  if (state.error) items.push({ kind: "error", key: "error", text: state.error });
   const prompts = promptsFor(state);
   if (prompts) items.push(prompts);
   const pause = pauseFor(state);
@@ -77,10 +88,38 @@ export function transcript(state: UiState): ChatItem[] {
   return items;
 }
 
+/** The live bubble of `before` that is gone from `after` with nothing in its place (its job ended without a
+ *  message under its key), when it showed anything: the chat folds it away instead of dropping it. */
+export function endedLive(before: readonly ChatItem[], after: readonly ChatItem[]): { key: string; live: LiveReply } | null {
+  const live = before.find((item) => item.kind === "live");
+  if (!live || live.kind !== "live" || live.leaving || !liveHasContent(live.live)) return null;
+  if (after.some((item) => item.key === live.key || item.kind === "live")) return null;
+  return { key: live.key, live: live.live };
+}
+
+/** The transcript with a bubble that is folding away kept where it was, after the messages, until its key is
+ *  taken again (the next job's first message). */
+export function withLeaving(items: ChatItem[], leaving: { key: string; live: LiveReply } | null): ChatItem[] {
+  if (!leaving || items.some((item) => item.key === leaving.key)) return items;
+  const at = items.findIndex((item) => item.kind !== "message");
+  const cut = at === -1 ? items.length : at;
+  return [...items.slice(0, cut), { kind: "live", key: leaving.key, live: leaving.live, leaving: true }, ...items.slice(cut)];
+}
+
 /** True when a live bubble has anything to show; an empty one after a
  *  `message` frame renders nothing until the next status or delta. */
 export function liveHasContent(live: LiveReply): boolean {
-  return !!(live.text || live.thinking || live.status || live.activities.length);
+  return !!(live.text || live.thinking || live.status || live.steps.length);
+}
+
+/** The folded line above a reply that names its making: "3 steps · thinking", "Thinking", "1 step". */
+export function stepsLabel(steps: readonly Step[], thinking: string): string {
+  const n = steps.filter((step) => step.kind === "activity").length;
+  const count = n > 0 ? `${n} ${n === 1 ? "step" : "steps"}` : "";
+  if (count && thinking) return `${count} · thinking`;
+  if (count) return count;
+  if (thinking) return "Thinking";
+  return steps.length > 0 ? "Working notes" : "";
 }
 
 export const COMPOSER_NO_KEY = "Connect your Anthropic API key in Settings to start.";

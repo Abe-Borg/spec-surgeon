@@ -11,6 +11,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional
 
+from lxml import etree
+
 from .. import telemetry as diag
 from .reader import VPackage, W
 from .textcheck import blocks, diff_blocks, accept_view, reject_view, view_texts
@@ -189,10 +191,14 @@ def _id_number(value: Optional[str]) -> Optional[int]:
 
 def _annotation_ids(pkg: VPackage, parsed: Dict[str, Any]) -> set:
     """Every annotation id (``ANNOTATION_ELEMENTS``) the package uses, as numbers, in all its document XML parts
-    (``VPackage.document_xml_parts``); ``parsed`` holds parts already read."""
+    (``VPackage.document_xml_parts``); ``parsed`` holds parts already read. A part that is not well-formed XML and is
+    no text part carries no id anyone can read (the edit keeps it byte for byte) and is passed over."""
     found = set()
     for part in pkg.document_xml_parts():
-        root = parsed[part] if part in parsed else pkg.xml(part)
+        try:
+            root = parsed[part] if part in parsed else pkg.xml(part)
+        except etree.XMLSyntaxError:
+            continue
         for el in root.iter():
             if not isinstance(el.tag, str):
                 continue

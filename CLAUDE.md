@@ -86,7 +86,7 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
 
 ```sh
 pip install -e ".[dev,gui,agent]"            # Windows: py -3 -m pip install -e ".[dev,gui,agent,word]"
-python3 -m pytest -q                          # Windows: py -3 -m pytest -q -s
+python3 -m pytest -q -n auto                  # every core, as CI; Windows: py -3 -m pytest -q -n auto
 python3 -m pytest -q tests/test_ops.py        # one module (in a git worktree: PYTHONPATH=src python3 -m pytest …)
 cd frontend && npm ci && npm run build        # rebuild the window's page (Node 22) into web/static; commit it
 python3 tests/make_fixtures.py OUT            # fixtures; --rich, --template, --reference, --styles-template, --numbering-scheme, --dirty
@@ -117,7 +117,8 @@ for one pair, `gui.Session` for the window's steps with a scripted client (`test
 
 Current round: `docs/PLAN-2026-10-22-batch-consistency.md` (what the first live run found); the full-control round,
 `docs/PLAN-2026-10-21-full-control.md` (design: `docs/BUILTIN_OPS_BATCH6_DESIGN.md`), waits on its live runs. Read both
-before any work and take items from the current round's status table. New operations go into a plan before they are
+before any work and take items from the current round's status table. Beside them, `docs/PLAN-2026-10-22-word-judge.md`
+(real Word judges the tracked changes the engine writes and reads; test evidence only) has its own status table. New operations go into a plan before they are
 built. Nothing is done on fixtures alone: the plan's acceptance names a real-file run, which the user performs. Before
 ending, update the rows you worked in the status table with a dated one-line note: what changed, what is tested, what
 still needs the user's machine.
