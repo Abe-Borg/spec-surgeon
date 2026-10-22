@@ -796,12 +796,16 @@ CUSTOM_TRANSFORM_LIMITS: Dict[str, Any] = {
         "shading, width, vertical alignment and no-wrap of table cells (the kind's table, row and column selectors "
         "pick them; targets the method chooses by its own logic are named by index_range, one assertion per table "
         "and row or column range)": "table_cells",
+        "the fonts, size, bold, italic and colour of list labels (the numbers and bullets) at the list levels named "
+        "(a w:abstractNum or a w:num override and its w:ilvl); a font written clears that slot's theme font":
+            "numbering_labels",
     },
-    "cannot": ["numbering and lists", "table structure (rows, cells, merges, the grid) and table styles",
+    "cannot": ["list structure (levels, number formats, starts, restarts, which list a paragraph is in), picture "
+               "bullets and symbol-font bullets", "table structure (rows, cells, merges, the grid) and table styles",
                "images", "fields", "comments", "tracked changes", "any change of words"],
     "rules": ["plain (untracked) formatting only", "only the document's text parts (body, headers, footers, footnotes, "
-              "endnotes, comments) and its styles part may change", "edited copies only — never written over the "
-              "user's files"],
+              "endnotes, comments), its styles part and, for list labels, its numbering part may change",
+              "edited copies only — never written over the user's files"],
 }
 
 

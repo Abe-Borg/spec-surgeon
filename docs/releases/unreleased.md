@@ -56,6 +56,11 @@ Changes since v1.8.0.
   header rows and rows kept whole are now within a custom method's reach, on the tables, rows and cells it picks
   ("shade every other row of the equipment schedules"). Every cell's text, the rows, the merged cells and the grid
   are checked unchanged; a method that touches them is refused.
+- **Custom methods can format list numbers.** The font, size, bold, italic and colour of list labels (the numbers
+  and bullets) are now within a custom method's reach, at the list levels it picks ("make the list numbers Arial 10
+  where the list text is Arial"). A theme font on a label is cleared so Word shows the font asked for. Every number
+  Word shows is checked unchanged — the number format, the level text, the starts and restarts, the indents — and
+  bullets in a symbol font or a picture are left alone.
 - **Tracked deletions go through redlined paragraphs.** Deleting paragraphs as a tracked change no longer sets aside a
   paragraph that holds someone's pending tracked changes. It deletes over them as Word does: text they inserted is
   deleted inside their insertion (rejecting it still removes all of it), text they deleted stays as it was, their
