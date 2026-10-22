@@ -18,6 +18,10 @@ from .. import diagnostics as diag
 from .server import Shell, WindowState, create_app
 
 WINDOW_SIZE = (1440, 900)
+# The window's background before the page paints, per colour scheme: each scheme's --color-bg in
+# frontend/src/index.css (tests/test_settings.py checks them), so a light scheme never opens on a dark frame.
+BACKGROUNDS = {"clay": "#262624", "blueprint": "#121a26", "graphite": "#1b1d1f", "carbon": "#0b0b0c",
+               "linen": "#f5f1ea"}
 MIN_SIZE = (1100, 700)
 FILE_TYPES = {"documents": ("Word documents (*.docx)",), "template": ("Word documents (*.docx)",),
               "references": ("Pictures and tables (*.png;*.jpg;*.jpeg;*.gif;*.bmp;*.xlsx;*.csv;*.json)",)}
@@ -141,7 +145,8 @@ def run_window(state: WindowState, *, dev: bool = False, page_url: Optional[str]
     port = free_port()
     server = serve(state, port, dev=dev)
     base = f"http://127.0.0.1:{port}"
-    url = (page_url or base + "/") + f"?token={state.token}&api={base}"
+    theme = state.settings.theme
+    url = (page_url or base + "/") + f"?token={state.token}&api={base}&theme={theme}"
     try:
         problem = native_backend_problem()
         if problem is None:
@@ -153,7 +158,8 @@ def run_window(state: WindowState, *, dev: bool = False, page_url: Optional[str]
             except Exception:  # noqa: BLE001 — older pywebview without the settings dict
                 pass
             shell.window = webview.create_window(about.APP_NAME, url, width=WINDOW_SIZE[0], height=WINDOW_SIZE[1],
-                                                 min_size=MIN_SIZE, text_select=True)
+                                                 min_size=MIN_SIZE, text_select=True,
+                                                 background_color=BACKGROUNDS.get(theme, BACKGROUNDS["clay"]))
             shell.window.events.closing += lambda: on_closing(state)
             webview.start(debug=dev)
         else:

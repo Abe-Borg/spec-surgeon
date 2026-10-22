@@ -1,6 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import type { Settings } from "../types";
-import { getSettings, saveSettings } from "../lib/api";
+import { getSettings, saveSettings, saveTheme } from "../lib/api";
+import { THEMES, applyTheme, resolveTheme } from "../lib/theme";
 import { ModalShell, primaryBtn } from "./ModalShell";
 import Tip from "./Tip";
 
@@ -12,10 +13,11 @@ interface Props {
 }
 
 /**
- * Connection setup, separate from the document task. One dialog, "AI
- * connection": the key, whether to remember it securely, and the sentence
- * on spending (docs/CONVERSATIONAL_DESKTOP.md, "Connection and resource
- * use"). No model tuning controls.
+ * Connection setup, separate from the document task: "AI connection" (the
+ * key, whether to remember it securely, and the sentence on spending;
+ * docs/CONVERSATIONAL_DESKTOP.md, "Connection and resource use") and
+ * "Appearance" (the colour scheme, applied at once and kept for the next
+ * start). No model tuning controls.
  */
 export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -24,6 +26,9 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const [saved, setSaved] = useState(false);
+  const [themeError, setThemeError] = useState("");
+  /** The latest click: an answer to an earlier one arriving after it is ignored. */
+  const themeTurn = useRef(0);
 
   useEffect(() => {
     let alive = true;
@@ -32,6 +37,8 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
         if (!alive) return;
         setSettings(s);
         setRemember(s.can_remember);
+        // The kept scheme is the truth: a page opened without it (the dev server) takes it now.
+        if (document.documentElement.dataset.theme !== resolveTheme(s.theme)) applyTheme(s.theme);
       })
       .catch((failure: unknown) => {
         if (alive) setError(failure instanceof Error ? failure.message : String(failure));
@@ -56,6 +63,25 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
       setError(failure instanceof Error ? failure.message : String(failure));
     } finally {
       setSaving(false);
+    }
+  };
+
+  /** Recolour at once; keep it for the next start. A scheme the server did not keep is taken back. */
+  const pickTheme = async (id: string) => {
+    if (!settings || id === resolveTheme(settings.theme)) return;
+    const previous = resolveTheme(settings.theme);
+    const turn = ++themeTurn.current;
+    applyTheme(id);
+    setSettings({ ...settings, theme: id });
+    setThemeError("");
+    try {
+      const next = await saveTheme(id);
+      if (turn === themeTurn.current) setSettings(next);
+    } catch (failure) {
+      if (turn !== themeTurn.current) return;
+      applyTheme(previous);
+      setSettings((s) => (s ? { ...s, theme: previous } : s));
+      setThemeError(failure instanceof Error ? failure.message : String(failure));
     }
   };
 
@@ -139,6 +165,49 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
             </button>
           </Tip>
         </div>
+        <section className="border-t border-edge pt-4">
+          <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">Appearance</h3>
+          <p className="mt-0.5 text-xs text-ink-dim">The colour scheme changes at once and is kept for the next start.</p>
+          <div role="radiogroup" aria-label="Colour scheme" className="mt-3 grid grid-cols-5 gap-2">
+            {THEMES.map((t) => {
+              const chosen = !!settings && resolveTheme(settings.theme) === t.id;
+              return (
+                <Tip key={t.id} tip={t.blurb}>
+                  <button
+                    type="button"
+                    role="radio"
+                    aria-checked={chosen}
+                    aria-label={t.name}
+                    disabled={!settings}
+                    onClick={() => void pickTheme(t.id)}
+                    className={`w-full rounded-lg border p-1.5 text-left transition-colors disabled:pointer-events-none ${
+                      chosen ? "border-accent bg-accent/10" : "border-edge bg-raised hover:border-accent/60"
+                    }`}
+                  >
+                    <span aria-hidden className="relative block h-11 overflow-hidden rounded-md" style={{ background: t.swatch.bg }}>
+                      <span
+                        className="absolute top-2 right-2 bottom-0 left-2 rounded-t-[4px]"
+                        style={{ background: t.swatch.paper }}
+                      />
+                      <span
+                        className="absolute top-3.5 left-4 h-1.5 w-7 rounded-full"
+                        style={{ background: t.swatch.accent }}
+                      />
+                    </span>
+                    <span className={`mt-1.5 block truncate text-[11px] ${chosen ? "text-accent" : "text-ink-dim"}`}>
+                      {t.name}
+                    </span>
+                  </button>
+                </Tip>
+              );
+            })}
+          </div>
+          {themeError && (
+            <p className="mt-2 text-xs text-err" role="alert">
+              {themeError}
+            </p>
+          )}
+        </section>
       </div>
     </ModalShell>
   );

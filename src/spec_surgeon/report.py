@@ -407,10 +407,11 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
     ),
     "vertical-merge": (
         "The Rows Would Cut a Merged Cell",
-        "The rows to delete include the first row of a cell merged down across several rows (its text is in that "
-        "row) but not all of the merged block, so the cell would be left without its content — or the columns to "
-        "delete would take some of a merged-down cell's parts and keep others. Delete the whole merged block, or "
-        "unmerge the cells in Word first, then run again.",
+        "The rows to delete — or the tracked rows that accepting a deletion or rejecting an insertion would remove — "
+        "include the first row of a cell merged down across several rows (its text is in that row) but not all of the "
+        "merged block, so the cell would be left without its content — or the columns to delete would take some of a "
+        "merged-down cell's parts and keep others. Delete the whole merged block, resolve that tracked row in Word, "
+        "or unmerge the cells in Word first, then run again.",
     ),
     "table-shape": (
         "The New Rows or the Cells to Merge Do Not Fit the Table",

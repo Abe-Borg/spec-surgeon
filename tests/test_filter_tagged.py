@@ -1,6 +1,7 @@
 """filter_tagged_paragraphs (docs/BUILTIN_OPS_BATCH1_DESIGN.md §4): keep or delete the paragraphs tagged for a system,
 the tag taken off the ones that stay — end to end tracked and untracked (V2 pairs a stripped paragraph beside a deleted
-one), keep vs delete lists, the refusals, and planted defects caught by the verifier."""
+one), keep vs delete lists, the refusals, a bookmark running out of a deleted paragraph (it stays where the paragraph
+was), and planted defects caught by the verifier."""
 from __future__ import annotations
 
 import io
@@ -171,3 +172,88 @@ def test_defect_an_extra_paragraph_removed(doc):
                 break
     rec = run_suite(doc, mutate(out, "word/document.xml", drop), plan.to_dict(), "s", "o")
     assert "V2" in failed(rec) and "V10" in failed(rec)
+
+
+# ---- range marks running out of a deleted paragraph (2026-10-21 review fix) ----------------------------------------
+
+KEPT = "bookmark or range mark(s) in the deleted paragraph run on into text that stays"
+
+
+def _tagged_marks() -> bytes:
+    """"[DRY] Dry text." holds all of "Gone", then the start of "DryRef", whose end is in "Shared text." (untagged:
+    it stays); "See ⟨REF DryRef⟩." cross-refers to it."""
+    d = Document()
+    d.add_paragraph("Intro.")
+    dry = d.add_paragraph("[DRY] Dry text.")
+    shared = d.add_paragraph("Shared text.")
+    d.add_paragraph("[WET] Wet text.")
+    see = d.add_paragraph("See ")
+    r = see.add_run()
+    for tag, val in (("fldChar", "begin"), ("instrText", " REF DryRef \\h "), ("fldChar", "separate")):
+        el = OxmlElement(f"w:{tag}")
+        el.set(qn("w:fldCharType"), val) if tag == "fldChar" else setattr(el, "text", val)
+        r._r.append(el)
+    see.add_run("Shared text.")
+    end = see.add_run()._r
+    el = OxmlElement("w:fldChar"); el.set(qn("w:fldCharType"), "end"); end.append(el)
+    for p, tag, mid, name in ((dry, "bookmarkStart", "8", "Gone"), (dry, "bookmarkEnd", "8", ""),
+                              (dry, "bookmarkStart", "9", "DryRef"), (shared, "bookmarkEnd", "9", "")):
+        el = OxmlElement(f"w:{tag}"); el.set(qn("w:id"), mid)
+        if name:
+            el.set(qn("w:name"), name)
+        p._p.append(el)
+    buf = io.BytesIO(); d.save(buf)
+    return buf.getvalue()
+
+
+def _tagged(plan) -> Dict[str, Any]:
+    return next(a for a in plan.property_assertions if a["kind"] == "tagged_paragraphs")
+
+
+def _bookmarks(data: bytes) -> List[str]:
+    """The body's children: a paragraph by its text, a bookmark mark between paragraphs by its kind and id."""
+    body = DocxPackage(data).xml("word/document.xml").find(W + "body")
+    return [accepted_text(c) if c.tag == W + "p" else f"{etree.QName(c).localname} {c.get(W + 'id')}"
+            for c in body if c.tag in (W + "p", W + "bookmarkStart", W + "bookmarkEnd")]
+
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_a_bookmark_running_out_of_a_deleted_paragraph_stays_where_it_was(tracked):
+    """Untracked, the start of "DryRef" stays where its deleted paragraph was, so the REF field still finds it; "Gone"
+    (both ends in the deleted paragraph) goes. Tracked, the deleted paragraph keeps its bookmarks until accepted."""
+    src = _tagged_marks()
+    plan, out, rec = run_op(src, {"keep": ["wet"], "tracked": tracked})
+    assert rec.passed, rec.to_markdown()
+    root = DocxPackage(out).xml("word/document.xml")
+    assert sorted(b.get(W + "id") for b in root.iter(W + "bookmarkEnd")) == \
+        sorted(b.get(W + "id") for b in root.iter(W + "bookmarkStart"))
+    if tracked:
+        assert _tagged(plan)["expected_marks"] == {}
+        assert [b.get(W + "name") for b in root.iter(W + "bookmarkStart")] == ["Gone", "DryRef"]
+        assert not any(KEPT in f for f in plan.flags)
+        return
+    assert _tagged(plan)["expected_marks"] == {"word/document.xml": {"1": [2]}}
+    assert _bookmarks(out) == ["Intro.", "bookmarkStart 9", "Shared text.", "Wet text.", "See Shared text."]
+    assert [f for f in plan.flags if KEPT in f] == [
+        f"word/document.xml paragraph 1: 1 {KEPT}; each stays where the paragraph was, so its bookmark keeps both ends"]
+
+
+def test_shared_defect_the_old_rule_drops_a_crossing_bookmark(monkeypatch):
+    monkeypatch.setattr(tagged_module, "kept_marks", lambda root, removed: {})
+    src = _tagged_marks()
+    plan, out, rec = run_op(src, {"keep": ["wet"], "tracked": False})
+    assert [b.get(W + "id") for b in DocxPackage(out).xml("word/document.xml").iter(W + "bookmarkStart")] == []
+    assert failed(rec) == ["V10"], rec.to_markdown()                  # plan and apply agree; the verifier does not
+    assert any("tagged_paragraphs" in e and "the plan predicted" in e for e in v10_errors(rec))
+
+
+def test_defect_the_kept_bookmark_dropped_from_the_output():
+    src = _tagged_marks()
+    plan, out, rec = run_op(src, {"keep": ["wet"], "tracked": False})
+    assert rec.passed, rec.to_markdown()
+
+    def orphan(root):
+        body = root.find(W + "body")
+        body.remove(body.find(W + "bookmarkStart"))
+    rec = run_suite(src, mutate(out, "word/document.xml", orphan), plan.to_dict(), "s", "o")
+    assert "V10" in failed(rec) and any("unpredicted change" in e for e in v10_errors(rec))

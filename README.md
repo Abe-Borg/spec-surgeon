@@ -61,7 +61,7 @@ render checks are recorded as N/A with the reason.
 | `ANTHROPIC_API_KEY` | typed requests, Claude's visual check, custom transforms and recovery; or enter it in Settings |
 | `SPEC_SURGEON_MODEL` | the model every Claude call uses (default `claude-opus-5-5`) |
 | `SPEC_SURGEON_NO_UPDATE_CHECK` | any value: the window never checks for updates on its own |
-| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json`, the saved conversation, downloaded updates and its logs |
+| `SPEC_SURGEON_CONFIG_DIR` | where the app keeps `settings.json`, the current and archived conversations, downloaded updates and its logs |
 
 ## The window: documents and a conversation
 
@@ -113,8 +113,8 @@ them. A document built differently from every layout the plan covers is left unt
 
 Keep chatting: the next thing you ask for is made on the copies the last run created, your originals stay as they
 are, and **Start over from the originals** is one tap away. Each run's copies go into their own folder, so earlier
-copies remain. The conversation, your decisions, the attachments, the working copies and the result locations are
-saved locally and come back when you reopen the app, with every attachment checked again.
+copies remain. Every start of the app is a clean one: the last conversation is archived on this computer (the
+`conversations` folder beside `settings.json`) and never reopened, and the copies stay where they were saved.
 
 ![The plan in prose and before/after pages, with one action](docs/conversation-preview.png)
 
@@ -131,8 +131,11 @@ work pauses after every 48 AI steps until you press **Continue**, which picks th
 passing reason (an overloaded service, a dropped connection) is sent again automatically. Every request needs
 the key: without one the window keeps your draft and asks you to connect one in Settings.
 
+**Settings → Appearance** picks the window's colour scheme: Warm Clay (the default), Blueprint, Graphite & Teal,
+Carbon & Hi-Vis or Linen (the light one). The window changes at once and opens in the scheme you chose from then on.
+
 See [the window guide](docs/CONVERSATIONAL_DESKTOP.md) for triage, pictures and tables, layouts, previews,
-saved conversations, recovery, resource use and verification limits.
+conversations and a clean start, recovery, resource use and verification limits.
 
 ## Without the window
 

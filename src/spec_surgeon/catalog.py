@@ -456,6 +456,8 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "paragraphs that stay unless asked to keep it",
         "a tagged paragraph carrying a section break, a field or a text box sets the file aside; tracked deletion (the "
         "default) also refuses one holding pending revisions or a hyperlink",
+        "a bookmark lying wholly in deleted paragraphs goes with them; one that runs on into a paragraph that stays "
+        "keeps both ends (untracked, the inside one stays where the deleted paragraph was, flagged)",
         "only tagged paragraphs are deleted — the untagged paragraphs of a system's article are not (delete those with "
         "delete_paragraphs and a between_paragraphs selector)",
     ],
@@ -590,6 +592,8 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "mark and loses its hidden words",
         "a hidden field goes whole; hidden text inside a field that is otherwise shown, or in a text box, sets the file "
         "aside",
+        "a bookmark lying wholly in what goes goes with it; one that runs on into text that stays keeps both ends "
+        "(untracked, the inside one stays where the deleted paragraph or field was, flagged)",
         "tracked unless the user asked for clean copies; a file with no hidden text is left as it is",
     ],
     "remove_notes": [
@@ -601,6 +605,8 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "when the document's last section holds nothing but notes, its last note stays as an empty paragraph (a blank "
         "page, flagged)",
         "a note paragraph with a section break, a field or a text box sets the file aside",
+        "a bookmark lying wholly in the notes goes with them; one that runs on into text that stays keeps both ends "
+        "(untracked, the inside one stays where the note was, flagged)",
         "tracked unless the user asked for clean copies; a file without notes is left as it is",
     ],
     "add_watermark": [

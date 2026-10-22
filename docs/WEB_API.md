@@ -3,8 +3,10 @@
 Spec Surgeon's desktop window is a web page (React, built once into `src/spec_surgeon/web/static/`) hosted in a
 native WebView2 window by `pywebview`, talking to a local FastAPI server (`spec_surgeon.web.server`) that wraps one
 `DocumentTask`. The server binds `127.0.0.1` on a free port; every request carries the launch token
-(`X-Spec-Surgeon-Token`, also accepted as `?token=` on image URLs and the SSE endpoints), which the shell injects into
-the page as `window.SPEC_SURGEON = {token, version}` (the dev page reads it from `?token=`). Without the right token
+(`X-Spec-Surgeon-Token`, also accepted as `?token=` on image URLs and the SSE endpoints), which the shell hands the
+page in its address, `?token=…&api=http://127.0.0.1:<port>&theme=<scheme>` (an injected
+`window.SPEC_SURGEON = {token, version, api}` would win over the address). `theme` is the colour scheme kept in
+`settings.json`; the page's inline script applies it before the first paint. Without the right token
 every `/api` route answers 401. One job runs at a time: a second `send`, `choose`, `primary` or `attach` while
 `busy` is true answers 409 `{"error": "busy"}`.
 
@@ -105,8 +107,8 @@ Rules the page relies on:
 | POST | `/api/new-conversation` | | the view (archives the journal, starts empty) |
 | POST | `/api/open` | `{"path": "..."}` | opens a result in Word / a folder with the OS (`{"ok": true}`); 404 if gone |
 | GET | `/api/image` | `?path=…` | the PNG (only files under the app's run folders are served; else 404) |
-| GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "out_root": "…", "logs_dir": "…"}` |
-| POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` | the settings; 400 with `{"error"}` |
+| GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "out_root": "…", "logs_dir": "…", "steps_per_pause": 48, "theme": "clay"}` |
+| POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` and/or `{"theme": "linen"}` | the settings; 400 with `{"error"}` (an unknown scheme included). `theme` is one of `clay`, `blueprint`, `graphite`, `carbon`, `linen` and is saved to `settings.json` at once |
 | GET | `/api/about` | | `{"version", "name", "tagline", "license", "license_name", "license_summary": [...], "release_notes", "credits": [...], "copyright", "author", "email", "github", "linkedin", "model", "components": [{"name", "license", "url"}]}` — every value from `about.py` (and `model` from `llm.DEFAULT_MODEL`); `credits` is the same as plain lines |
 | GET | `/api/update` | | the `update` block |
 | POST | `/api/update/check` | | the `update` block (starts a background check) |

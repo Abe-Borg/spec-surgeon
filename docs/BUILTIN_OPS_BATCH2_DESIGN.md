@@ -87,6 +87,14 @@ Hidden text, inline notes and blank paragraphs are removed by whole runs / whole
   Refused: a section break (`section-break`), a field (`field-result`), a text box (`textbox`); tracked also existing
   revisions (`existing-revisions`) and content other than runs, bookmarks and proofing marks (`structure`); untracked a
   table cell's last paragraph (`table-cell`).
+* **Range marks an untracked removal keeps** (added 2026-10-21; `removal.kept_marks` ↔ `verify/removal.v_kept_marks`,
+  batch 6's step 4 read for whole paragraphs and whole simple fields): a bookmark, permission, move or custom-XML range
+  mark in a deleted paragraph or a removed simple field, some mark of whose pair lies in what stays, stays in the place
+  of that paragraph or field (flagged), so the bookmark keeps both ends and a REF field to it still finds it; a pair
+  wholly removed goes. The plan names the kept marks (`marks` / `expected_marks`: per paragraph, their indices among its
+  range marks); the verifier derives them again, checks a removed field's paragraph item by item and has the residual
+  put a deleted paragraph's kept marks in its place (`ctx.kept_marks`). Used by `remove_hidden_text`, `remove_notes` and
+  `filter_tagged_paragraphs`; a blank paragraph holds no mark.
 
 ### 1.5 Fields (`ops/fields.py`, verifier `verify/fields.py`)
 
