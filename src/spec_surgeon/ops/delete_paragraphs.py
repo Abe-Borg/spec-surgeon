@@ -10,13 +10,14 @@ import getpass
 import os
 from typing import Any, Dict, List, Optional
 
-from ..ooxml import RevisionStamp, block_full_text, count_revisions, file_uses_date_utc, max_revision_id, paragraphs
+from ..ooxml import RevisionStamp, block_full_text, file_uses_date_utc, max_revision_id, paragraphs
 from ..package import W, DocxPackage
 from . import prose, register
 from .base import JobException, Op, PlanFragment
-from .deletion import (Choice, Removal, choose, dangling_flags, delete_mark, delete_row, delete_runs, held_objects,
-                       in_separator, refuse_crossing_fields, refuse_thread_ends, remove_deletion, row_at, run_groups,
-                       section_flags, shown, table_rows, tracked_flags, tracked_runs)
+from .deletion import (Choice, Removal, already_deleted, choose, dangling_flags, delete_mark, delete_row, delete_runs,
+                       held_objects, in_separator, mark_deleted, pending_flag, refuse_crossing_fields, refuse_pending,
+                       refuse_table_pending, refuse_thread_ends, remove_deletion, row_at, run_groups, section_flags,
+                       shown, table_rows, tracked_flags, tracked_runs)
 from .selectors import SCOPE_KINDS, StyleSheet, check_paragraph_selector, paragraph_selected, scope_parts
 
 
@@ -183,24 +184,21 @@ class DeleteParagraphs(Op):
             marked, kept = set(ch.deleted) | set(ch.in_tables), set(ch.kept)
             changed = [p for p in pars if p in marked or p in kept]
             for t in ch.tables:
-                if count_revisions(t):
-                    raise JobException(f"{ch.part}: a table to delete already carries pending revisions; accept or "
-                                       f"reject them first, or delete untracked", "existing-revisions",
-                                       {"part": ch.part})
+                refuse_table_pending(t, ch.part)
             runs_of = {}
             for p in changed:
                 where = f"{ch.part} paragraph {index[p]} ({shown(p)})"
-                if count_revisions(p):
-                    raise JobException(f"{where} already carries pending revisions; accept or reject them first, or "
-                                       f"delete untracked", "existing-revisions", {"part": ch.part,
-                                                                                  "paragraph": index[p]})
+                refuse_pending(p, where, p in kept)
                 runs_of[p] = tracked_runs(p, where)
             gone = {r for runs in runs_of.values() for r in runs}
-            refuse_crossing_fields(ch.part, ch.root, lambda r: r in gone, "delete")
+            # someone's deletions in the changed paragraphs are deleted already: a field over them is not cut
+            deleted_already = {r for p in changed for r in already_deleted(p)}
+            refuse_crossing_fields(ch.part, ch.root, lambda r: r in gone or r in deleted_already, "delete")
             rows = table_rows(ch.root, ch.tables, ch.part)
+            new_mark = {p: p in marked and not mark_deleted(p) for p in changed}
             for p in changed:
                 d_del += len(run_groups(runs_of[p]))
-                d_mark += p in marked
+                d_mark += new_mark[p]
                 frag.accepted_views.append({"part": ch.part, "block_index": index[p], "accepted_view": ""})
                 frag.touches.append((ch.part, str(index[p]), "text"))
             d_del += len(rows)
@@ -208,9 +206,12 @@ class DeleteParagraphs(Op):
             expected[ch.part]["rows"] = [[k, r] for k, r in rows]
             if ch.part not in frag.intended_parts:
                 frag.intended_parts.append(ch.part)
-            targets[ch.part] = {"paragraphs": {str(index[p]): p in marked for p in changed},
+            targets[ch.part] = {"paragraphs": {str(index[p]): new_mark[p] for p in changed},
                                 "rows": [[k, r] for k, r in rows]}
             frag.flags += tracked_flags(pkg, ch.part, gone)
+            pending = pending_flag(ch.part, changed + ch.tables)
+            if pending:
+                frag.flags.append(pending)
             if ch.part == pkg.main_part():
                 secs = DocxPackage.sect_prs(ch.root)
                 frag.flags += section_flags(pkg, ch.root, [i for i, sp in enumerate(secs)

@@ -228,7 +228,8 @@ planned on the files of its own pattern, and a file no layout covers is set asid
 Operations cover fonts and sizes; header/footer templating from a template or an architect's spec; page numbering;
 tracked text replacement (whole words unless you say otherwise; new text may hold tabs and line breaks) and replacement tables; inserting paragraphs, with
 styles and bold, italic or superscript segments; deleting paragraphs, from one to the whole body, with the tables,
-fields, section breaks, comments and notes inside them; moving paragraphs and the tables between them; placeholders
+fields, section breaks, comments and notes inside them (tracked, over someone's pending tracked changes as Word
+deletes over them); moving paragraphs and the tables between them; placeholders
 and site variables; MasterSpec option groups; tagged paragraphs; issue stamps; END OF SECTION lines; output names;
 inserting, removing, resizing and swapping pictures; inserting and deleting tables, rows and columns, cell shading,
 alignment and widths, and merged cells; comments (adding, replying, resolving, removing), highlighting, hidden text,

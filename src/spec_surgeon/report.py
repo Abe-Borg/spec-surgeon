@@ -80,10 +80,11 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "document's section layout. Select a neighbouring paragraph or insert before it.",
     ),
     "existing-revisions": (
-        "Paragraph Already Has Pending Revisions",
-        "Tracked deletion of a paragraph that already carries someone's tracked changes would stack revisions — or a "
-        "field or watermark to change lies in someone's pending tracked change. Accept or reject them in Word first, "
-        "or use an untracked deletion.",
+        "Pending Tracked Changes in the Way",
+        "The change would be written over someone's pending tracked change it cannot settle exactly: text moved with "
+        "tracked changes, an inserted or deleted table row or cell, a paragraph that must stay whose mark is already "
+        "deleted — or, for an operation that does not write over pending changes, a paragraph, field or watermark "
+        "inside one. Accept or reject them in Word first, or make the change untracked.",
     ),
     "structure": (
         "Paragraph Holds Unsupported Content",

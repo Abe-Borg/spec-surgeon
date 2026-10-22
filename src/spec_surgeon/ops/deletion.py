@@ -30,11 +30,22 @@ runs in one new ``w:del``, their ``w:t`` becoming ``w:delText`` (edge spaces pre
 ``w:delInstrText``; every paragraph of a deleted table and every other deleted paragraph gets a new ``w:del`` on its mark,
 a kept one keeps its mark; each row of a deleted table, nested tables' rows too, gets a new ``w:trPr/w:del`` (the
 ``w:trPr`` created right after the row's ``w:tblPrEx``, first otherwise). Nothing else changes: comments, notes,
-bookmarks and section breaks stay until the deletion is accepted (flagged). Refused: a pending revision in what is
-deleted (``existing-revisions``), a simple field (``field-result``), paragraph content other than runs, those
-containers, bookmarks, permission ranges, proofing marks and comment range marks (``structure``), a row of a deleted
-table that is not its table's own child (``table-structure``), a complex field some of whose runs (begin to end, in
-document order) are deleted and some not, or one that never ends and begins in them (``field-crossing``).
+bookmarks and section breaks stay until the deletion is accepted (flagged). Refused: a simple field (``field-result``),
+paragraph content other than runs, those containers, pending revisions (below), bookmarks, permission ranges, proofing
+marks and comment range marks (``structure``), a row of a deleted table that is not its table's own child
+(``table-structure``), a complex field some of whose runs (begin to end, in document order) are deleted and some not,
+or one that never ends and begins in them (``field-crossing``; a run in a pending deletion of a changed paragraph
+counts as deleted).
+
+**Over someone's pending revisions** (docs/PLAN-2026-10-22-batch-consistency.md C6), as Word deletes over them: a run
+in a pending insertion (a ``w:ins`` wrapping content, walked like a container) is deleted inside it, its new ``w:del``
+nested in the ``w:ins`` (``replace_text``'s grammar: rejecting the insertion still removes all of it); a pending deletion
+(a ``w:del`` wrapping content) stays as it is, nothing in it walked; a paragraph mark someone inserted gets its new
+``w:del`` beside their ``w:ins``, one already deleted gets none; property changes stay where they are. Refused
+(``existing-revisions``): moved text in a changed paragraph (``w:moveFrom``, ``w:moveTo`` or a move range mark;
+``MOVE_TAGS``), a kept paragraph whose mark carries a pending deletion (accepting it would join what the keep rules
+keep apart), and in a deleted table a pending revision outside its paragraphs that is no property change (an inserted
+or deleted row, a cell insertion, deletion or merge).
 
 **Untracked.** The deleted paragraphs and tables leave the tree; a kept paragraph keeps its ``w:pPr`` and (step 4) the
 range marks of its own whose other end stays, nothing else. What they held decides the rest (``Removal``), in this
@@ -73,8 +84,9 @@ from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
 from lxml import etree
 
-from ..ooxml import (RPR_ORDER, TRPR_ORDER, RevisionStamp, block_full_text, block_struct_counts, block_text_without,
-                     count_revisions, insert_in_order, mark_rpr, paragraphs, to_del_text)
+from ..ooxml import (PROPERTY_REV_TAGS, RPR_ORDER, TRPR_ORDER, RevisionStamp, block_full_text, block_struct_counts,
+                     block_text_without, count_revisions, insert_in_order, mark_rpr, paragraphs, revision_kind,
+                     to_del_text)
 from ..package import CT_PART, FOOTER_REL, HEADER_REL, MEDIA_REL_TYPES, NS, R, W, DocxPackage
 from .base import BlockDiff, JobException, PlanFragment
 from .comments import EXTENDED_REL, IDS_REL, MARK_TAGS, W14, W15, W16CID, CommentBook, side_removals
@@ -112,6 +124,9 @@ CONTAINER_WORDS = {W + "body": "the document body", W + "tc": "a table cell", W 
 SECTION_PART_REFS = (W + "headerReference", W + "footerReference", W + "printerSettings")
 # what a deleted paragraph may show besides text, counted for the flag: each outermost one once
 PICTURE_TAGS = (W + "drawing", W + "pict", W + "object", "{%s}AlternateContent" % NS["mc"])
+# tracked over pending revisions: moved text is refused wherever it lies in a changed paragraph
+MOVE_TAGS = (W + "moveFrom", W + "moveTo", W + "moveFromRangeStart", W + "moveFromRangeEnd", W + "moveToRangeStart",
+             W + "moveToRangeEnd")
 
 
 def nearest_p(el) -> Optional[Any]:
@@ -312,8 +327,12 @@ def tracked_runs(p, where: str) -> List[Any]:
                 out.append(c)
             elif c.tag in INERT_MARKS or (el is not p and c.tag in CONTAINER_PROPERTIES):
                 continue
-            elif c.tag in RUN_CONTAINERS:
-                walk(c)
+            elif c.tag in RUN_CONTAINERS or c.tag == W + "ins":
+                walk(c)                                    # someone's insertion: its runs are deleted inside it
+            elif c.tag == W + "del":
+                continue                                   # someone's deletion stays as it is
+            elif c.tag in MOVE_TAGS:
+                raise moved(c, where)
             elif c.tag == W + "fldSimple":
                 raise JobException(f"{where} holds a simple field ({(c.get(W + 'instr') or '').split()[:1]}); a simple "
                                    f"field cannot be deleted as a tracked change — delete untracked, or in Word",
@@ -324,6 +343,66 @@ def tracked_runs(p, where: str) -> List[Any]:
                                    "structure", {"where": where})
     walk(p)
     return out
+
+
+def moved(el, where: str) -> JobException:
+    return JobException(f"{where} holds text moved with tracked changes (w:{etree.QName(el).localname}); a deletion is "
+                        f"not written over a pending move — accept or reject the move first, or delete untracked",
+                        "existing-revisions", {"where": where})
+
+
+def mark_deleted(p) -> bool:
+    """The paragraph mark already carries a pending deletion."""
+    return p.find(f"{W}pPr/{W}rPr/{W}del") is not None
+
+
+def refuse_pending(p, where: str, kept: bool) -> None:
+    """Tracked: the pending revisions of a changed paragraph a deletion is not written over (the module docstring)."""
+    for el in p.iter(*MOVE_TAGS):
+        raise moved(el, where)
+    if kept and mark_deleted(p):
+        raise JobException(f"{where} stays (a container keeps its last paragraph, two tables must not join), but its "
+                           f"paragraph mark already carries a pending deletion; accept or reject it first, or delete "
+                           f"untracked", "existing-revisions", {"where": where})
+
+
+def refuse_table_pending(t, where: str) -> None:
+    """Tracked: a pending revision of a deleted table outside its paragraphs that is no property change — an inserted
+    or deleted row, a cell insertion, deletion or merge."""
+    for el in t.iter():
+        kind = revision_kind(el)
+        if kind and kind not in PROPERTY_REV_TAGS and nearest_p(el) is None:
+            raise JobException(f"{where}: a row or cell of a table to delete carries a pending tracked change "
+                               f"(w:{etree.QName(el).localname}); accept or reject it first, or delete untracked",
+                               "existing-revisions", {"where": where})
+
+
+def already_deleted(p) -> List[Any]:
+    """The runs of ``p`` in a pending deletion: deleted already, they count as deleted for a field's edges."""
+    out = []
+    for r in p.iter(W + "r"):
+        q = r.getparent()
+        while q is not p and q.tag != W + "del":
+            q = q.getparent()
+        if q is not p:
+            out.append(r)
+    return out
+
+
+def pending_flag(part: str, changed: Sequence[Any]) -> Optional[str]:
+    """Whose pending insertions, deletions and formatting changes lie in ``changed`` (the changed paragraphs and the
+    deleted tables), and what the deletion does over them."""
+    def by(*tags: str) -> List[str]:
+        return sorted({el.get(W + "author") or "an unnamed author" for p in changed for el in p.iter(*tags)})
+    inserted, deleted = by(W + "ins"), by(W + "del")
+    formatted = by(*(W + t for t in PROPERTY_REV_TAGS))
+    clauses = ([f"what {', '.join(inserted)} inserted is deleted inside the insertion (rejecting it still removes all "
+                f"of it)"] if inserted else []) + \
+              ([f"what {', '.join(deleted)} deleted stays as it was"] if deleted else []) + \
+              ([f"the formatting changes by {', '.join(formatted)} stay with it"] if formatted else [])
+    if not clauses:
+        return None
+    return f"{part}: the deleted text holds someone's pending tracked changes: {'; '.join(clauses)}"
 
 
 def run_groups(runs: Sequence[Any]) -> List[List[Any]]:
