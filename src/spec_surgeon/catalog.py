@@ -658,6 +658,7 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "fields that show a changed property (TITLE, DOCPROPERTY …) keep their saved value until Word updates fields "
         "(flagged); custom properties are matched by name without case; a file without custom properties gets them",
         "a custom property that holds a number, a date or yes/no in a file sets that file aside",
+            "from_document puts each file's own section number and title (the reference fill rules) where {number} and {title} stand; a file without them is set aside",
     ],
     "set_document_state": [
         "only on the user's request: track changes off/on is the setting the file opens with — pending tracked changes "

@@ -23,6 +23,14 @@ they run only when the user asks for them by name, and change exactly the named 
   a custom part gets ``docProps/custom.xml`` (only that member: its package relationship and content-type override with
   it; CLAUDE.md rule 10's third case — the op's purpose is the property).
 * a value is the user's words: text, not blank, one line, no control or invisible character, at most 255 characters.
+* ``from_document`` (docs/PLAN-2026-10-22-batch-consistency.md C5): a core/app property whose value is the user's
+  words with ``{number}`` and/or ``{title}`` (each at most once, and no other brace: ``{title:uppercase}`` would be
+  written as typed) in place of the file's own section number and title,
+  read by the reference fill rules (``slots.REFERENCE_FILLS``, as a template fill reads them) — one request fixes a
+  batch's stale titles. A file whose number or title the rules do not find (or find twice, differing) is set aside
+  with the rules' own code (``not-found``, ``ambiguous``); a built value that is not a property value
+  (``placeable_value``) is set aside (``property-value``). The paragraphs the rules read are ``touches``: another op of
+  the spec changing that title is a plan-time conflict.
 * "already as asked" (the same text, an absent element to clear) changes nothing and is noted.
 
 **Settings and Mark as Final**:
@@ -47,6 +55,10 @@ from ..package import CT_PART, REL_TYPE_BASE, W, DocxPackage, serialize_xml
 from . import prose, register
 from .base import JobException, Op, PlanFragment
 from .fields import fields_of
+from .slots import REFERENCE_FILLS, extract_fill, fill_reads
+
+PLACEHOLDERS = {"number": "SECTION_NUMBER", "title": "SECTION_TITLE"}   # {name} → the reference fill rule it reads
+PLACEHOLDER = re.compile(r"\{(\w+)\}")
 
 CP_NS = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
 DC_NS = "http://purl.org/dc/elements/1.1/"
@@ -469,6 +481,11 @@ class SetDocumentProperties(Op):
                       "description": "properties to remove (e.g. author, last_modified_by)"},
             "custom": {"type": "object", "description": "custom text property name → the user's exact value "
                                                        "(created when missing)"},
+            "from_document": {"type": "object", "properties": {k: {"type": "string"} for k in PROPERTIES},
+                              "description": "property → the user's words with {number} and/or {title} (each at most "
+                                             "once) where each file's own section number and title go, read by the "
+                                             "reference fill rules — e.g. {\"title\": \"SECTION {number} - {title}\"}; "
+                                             "a file whose number or title is not found is set aside"},
             "clear_custom": {"type": "array", "items": {"type": "string"},
                              "description": "custom property names to remove"},
         },
@@ -501,6 +518,10 @@ class SetDocumentProperties(Op):
         if clear_custom:
             clauses.append(("remove the custom property " if len(clear_custom) == 1 else "remove the custom properties ")
                            + prose.join(prose.quote(n) for n in clear_custom))
+        built = params.get("from_document") if isinstance(params.get("from_document"), dict) else {}
+        if built:
+            clauses.append("set " + prose.join(f"the {_property_word(k)} to {prose.quote(v)}" for k, v in built.items())
+                           + " with each file's own section number and title in place")
         if not clauses:
             return prose.sentence("set or clear the file's document properties (title, author, company and the like), "
                                   "as shown under File → Info")
@@ -516,18 +537,43 @@ class SetDocumentProperties(Op):
         clears = list(params.get("clear") or [])
         custom = params.get("custom") or {}
         clear_custom = list(params.get("clear_custom") or [])
-        if not isinstance(sets, dict) or not isinstance(custom, dict):
-            raise JobException("'set' and 'custom' are objects of name → value", "bad-params")
-        if not (sets or clears or custom or clear_custom):
+        built = params.get("from_document") or {}
+        if not isinstance(sets, dict) or not isinstance(custom, dict) or not isinstance(built, dict):
+            raise JobException("'set', 'custom' and 'from_document' are objects of name → value", "bad-params")
+        if not (sets or clears or custom or clear_custom or built):
             raise JobException("say which properties to set or clear", "bad-params")
-        unknown = sorted((set(sets) | set(clears)) - set(PROPERTIES))
+        unknown = sorted((set(sets) | set(clears) | set(built)) - set(PROPERTIES))
         if unknown:
             raise JobException(f"unknown properties {unknown} (known: {list(PROPERTIES)})", "bad-params")
-        both = sorted(set(sets) & set(clears))
+        both = sorted((set(sets) & set(clears)) | (set(built) & (set(sets) | set(clears))))
         if both or len(set(clears)) != len(clears):
-            raise JobException(f"{both or 'a property'} is both set and cleared, or cleared twice", "bad-params")
+            raise JobException(f"{both or 'a property'} is asked for twice (set, cleared or built from the "
+                               f"document), or cleared twice", "bad-params")
         for k, v in sets.items():
             placeable_value(v, f"set.{k}")
+        reads: List[Tuple[str, int]] = []
+        for k, text in built.items():
+            names = PLACEHOLDER.findall(text) if isinstance(text, str) else []
+            if not names or set(names) - set(PLACEHOLDERS) or len(set(names)) != len(names) \
+                    or re.search(r"[{}]", PLACEHOLDER.sub("", text)):
+                raise JobException(f"from_document.{k}: the words need {{number}} and/or {{title}}, each at most once, "
+                                   f"and no other {{…}} or brace, got {text!r}", "bad-params")
+            placeable_value(PLACEHOLDER.sub("x", text), f"from_document.{k}")      # the user's own words
+            values = {}
+            for n in names:
+                try:
+                    values[n] = extract_fill(pkg, PLACEHOLDERS[n], REFERENCE_FILLS[PLACEHOLDERS[n]])
+                except JobException as e:
+                    raise JobException(f"from_document.{k}: this file's section {n} is not found by the reference "
+                                       f"rules ({e.reason})", e.code, {**e.details, "property": k}) from e
+                reads += [r for r in fill_reads(pkg, REFERENCE_FILLS[PLACEHOLDERS[n]]) if r not in reads]
+            value = PLACEHOLDER.sub(lambda m: values[m.group(1)], text)
+            try:
+                placeable_value(value, f"from_document.{k}")
+            except JobException as e:
+                raise JobException(f"{e.reason} (built from this file's own section number and title)",
+                                   "property-value", {"property": k, "value": value[:300]}) from e
+            sets = {**sets, k: value}
         seen: Dict[str, str] = {}
         for n in list(custom) + clear_custom:
             _name_ok(n, "custom property")
@@ -554,8 +600,10 @@ class SetDocumentProperties(Op):
         td["custom_member"] = ch.custom.member
         frag.transform_data = td
         frag.geometry_reference = "source"
+        frag.touches += [(part, ordinal, "verify:text") for part, ordinal in reads]   # the title it reads (C5)
+        typed = {k: v for k, v in sets.items() if k not in built}
         frag.property_assertions.append({
-            "kind": "document_properties", "set": dict(sets), "clear": clears,
+            "kind": "document_properties", "set": typed, "clear": clears, "from_document": dict(built),
             "custom": [[n, v] for n, v in custom.items()],
             "clear_custom": clear_custom, "changed": sorted(ch.changed_keys)})
         changed_props = [k for k in list(sets) + clears if any(e.endswith("|" + PROPERTIES[k][1])
@@ -573,7 +621,8 @@ class SetDocumentProperties(Op):
         if {"author", "last_modified_by"} & set(clears):
             frag.flags += author_flags(pkg)
         frag.notes.append("set_document_properties: " + (", ".join(
-            [f"{k} = {v!r}" for k, v in sets.items()] + [f"{k} cleared" for k in clears]
+            [f"{k} = {v!r}" + (" (the file's own section number and title in place)" if k in built else "")
+             for k, v in sets.items()] + [f"{k} cleared" for k in clears]
             + [f"custom {n!r} = {v!r}" for n, v in custom.items()] + [f"custom {n!r} cleared" for n in clear_custom]))
             + ("; docProps/custom.xml created" if td.get("create") else ""))
         return frag

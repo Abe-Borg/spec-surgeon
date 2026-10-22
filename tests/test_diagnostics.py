@@ -175,9 +175,10 @@ def test_every_refusal_code_of_every_operation_is_explained_and_only_spec_level_
     codes, computed = _refusal_codes()
     # computed codes: end_of_section picks one of two literals; links raises a field's refusal (fields.REFUSAL_TEXT);
     # insert_table_rows and table_edit check cell texts with the caller's code (bad-params for typed rows, table-value
-    # for a table file's — both literals scanned); the others re-raise the code of a refusal read above
-    assert computed == ["end_of_section", "insert_table_rows", "links", "lists", "set_properties", "set_tab_stops",
-                        "style_import", "table_edit"]
+    # for a table file's — both literals scanned); the others re-raise the code of a refusal read above (docprops: a
+    # from_document fill rule's own refusal, slots.extract_fill — not-found, ambiguous)
+    assert computed == ["docprops", "end_of_section", "insert_table_rows", "links", "lists", "set_properties",
+                        "set_tab_stops", "style_import", "table_edit"]
     codes |= set(fields.REFUSAL_TEXT) | {"name-collision"}            # batch.planned_names
     codes.discard("internal")                                         # diagnostics.classify: an internal error
     assert {"table-value", "spans-structure", "nested-options", "bad-name", "image-changed", "eos-not-last",
