@@ -331,7 +331,7 @@ def test_a_message_is_read_from_its_json_however_the_pieces_fall():
     assert MessageWords().feed(json.dumps({"questions": ["q"]}, ensure_ascii=False)) == ""
     # outside the conversation, or for a tool that tells the user nothing, nothing is relayed
     task = DocumentTask.__new__(DocumentTask)
-    task._events, task._talking, task._said, task._telling = [].append, False, False, {}
+    task._events, task._talking, task._said, task._plain, task._telling = [].append, False, False, "", {}
     seen = []
     task._events = seen.append
     task._on_stream({"type": "tool", "name": "ask_user", "index": 0})
@@ -342,3 +342,28 @@ def test_a_message_is_read_from_its_json_however_the_pieces_fall():
         task._on_stream({"type": "tool", "name": "ask_user", "index": 2})
         task._on_stream({"type": "tool_input", "index": 2, "json": '{"message": "Shown."}'})
     assert [e for e in seen if e["type"] == "text_delta"] == [{"type": "text_delta", "text": "Shown."}]
+
+
+def test_a_message_that_repeats_a_part_already_written_streams_once_as_the_reply_keeps_it(tmp_path):
+    """The reply keeps each of its parts once (``dict.fromkeys``): a message that repeats the call's plain text, or
+    an earlier question's message, is held while it matches and dropped, so what streamed is still the reply."""
+    said = "The headers use Times New Roman at 9 pt."
+    fake = FakeClient(resp(text(said), tool("ask_user", {"message": said, "questions": ["Change them too?"]})),
+                      live=True)
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    events = []
+    task.perform("send", text=REQUEST, events=events.append)
+    words = "".join(e["text"] for e in events if e["type"] == "text_delta")
+    reply = [e["message"] for e in events if e["type"] == "message" and e["message"]["role"] == "assistant"][-1]
+    assert words == reply["text"] == said
+    # two questions in one call, the second saying the first's words again, then a message that only begins alike
+    seen = []
+    task._events = seen.append
+    with task._conversation():
+        task._on_stream({"type": "started"})
+        for index, message in enumerate(["Body only?", "Body only?", "Body only? Or the headers too?"]):
+            task._on_stream({"type": "tool", "name": "ask_user", "index": index})
+            task._on_stream({"type": "tool_input", "index": index, "json": json.dumps({"message": message})})
+    assert "".join(e["text"] for e in seen if e["type"] == "text_delta") == \
+        "Body only?\n\nBody only? Or the headers too?"

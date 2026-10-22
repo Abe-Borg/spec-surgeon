@@ -22,7 +22,7 @@ import re
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from . import llm, review_display
 from .gui import Session
@@ -60,9 +60,12 @@ class MessageWords:
     """The words of a tool call's top-level ``"message"`` string, decoded, as the call's input JSON streams in.
 
     Every other part of the input (the spec, the questions, the choices) is read past and never returned. Whitespace
-    before the first word and after the last is held back, as the reply drops it (``inp["message"].strip()``)."""
+    before the first word and after the last is held back, as the reply drops it (``inp["message"].strip()``). So is a
+    message that may repeat a part of the reply already written (``known``: the call's plain text, an earlier
+    question's message): the reply keeps each part once (``dict.fromkeys``), so the words are held while they match
+    one, returned once they part from it, and dropped when they turn out the same."""
 
-    def __init__(self) -> None:
+    def __init__(self, known: Sequence[str] = ()) -> None:
         self.depth = 0
         self.expect_key = False
         self.key: Optional[str] = None      # the last key read at the top level
@@ -71,7 +74,11 @@ class MessageWords:
         self.chars: List[str] = []
         self.escape = ""
         self.high = 0                       # a high surrogate waiting for its pair
+        self.known = [part for part in known if part]
+        self.matching = bool(self.known)    # the words so far could still be a part already written
+        self.words = ""                     # the message's words read so far
         self.told = False                   # a word was returned
+        self.done = False                   # the message's string has ended
         self.held = ""
 
     def feed(self, piece: str) -> str:
@@ -109,7 +116,10 @@ class MessageWords:
             if self.reading == "key":
                 self.key = "".join(self.chars)
             elif self.reading == "message":
-                self.key, self.held = None, ""
+                self.key, self.held, self.done = None, "", True
+                if self.matching and self.words and self.words not in self.known:
+                    self._return(self.words, out)       # it began like an earlier part, and is not one
+                self.matching = False
             return
         else:
             text = ch
@@ -117,10 +127,19 @@ class MessageWords:
             self.chars.append(text)
         elif self.reading == "message" and text:
             if text.isspace():
-                self.held += text if self.told else ""
+                self.held += text if self.words else ""
                 return
-            out.append(self.held + text)
-            self.held, self.told = "", True
+            piece, self.held = self.held + text, ""
+            self.words += piece
+            if self.matching:
+                if any(part.startswith(self.words) for part in self.known):
+                    return
+                self.matching, piece = False, self.words
+            self._return(piece, out)
+
+    def _return(self, piece: str, out: List[str]) -> None:
+        out.append(piece)
+        self.told = True
 
     def _unescape(self, escape: str) -> str:
         if not escape.startswith("\\u"):
@@ -237,6 +256,7 @@ class DocumentTask:
         self._events = None                 # the window's live channel for the job that is running (perform)
         self._talking = False               # inside a call of the conversation itself: its words are the reply
         self._said = False                  # the model call that is streaming has written words to the user
+        self._plain = ""                    # its plain text so far
         self._telling: Dict[int, MessageWords] = {}   # its tool calls that carry a message, by content block
         self._seen = 0
         self._conversation_id = None
@@ -318,21 +338,25 @@ class DocumentTask:
         of an earlier call in the same turn are not part of the reply the turn ends with."""
         kind = event.get("type")
         if kind == "started":
-            self._said, self._telling = False, {}
+            self._said, self._plain, self._telling = False, "", {}
             self._emit({"type": "status", "kind": "thinking", "text": "Thinking…"})
         elif kind == "retry":
             # the attempt is abandoned and sent again: the page drops the words it had from it
-            self._said, self._telling = False, {}
+            self._said, self._plain, self._telling = False, "", {}
             self._emit({"type": "status", "kind": "retrying", "text": "Sending again…"})
         elif kind in ("text_delta", "thinking_delta"):
             if self._talking:
                 text = event.get("text", "")
-                self._said = self._said or (kind == "text_delta" and bool(str(text).strip()))
+                if kind == "text_delta":
+                    self._plain += str(text)
+                    self._said = self._said or bool(str(text).strip())
                 self._emit({"type": kind, "text": text})
         elif kind == "tool":
             name = str(event.get("name") or "")
             if self._talking and name in TELLING_TOOLS and isinstance(event.get("index"), int):
-                self._telling[event["index"]] = MessageWords()
+                # the parts of the reply already written, which the reply would not repeat
+                known = [self._plain.strip()] + [words.words for words in self._telling.values() if words.done]
+                self._telling[event["index"]] = MessageWords(known)
             if name == "submit_editspec":
                 self._emit({"type": "status", "kind": "planning", "text": "Writing the plan…"})
             else:

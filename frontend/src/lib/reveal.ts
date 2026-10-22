@@ -68,12 +68,16 @@ export interface Block {
 const FENCE_OPEN = /^ {0,3}(`{3,}|~{3,})/;
 /** An indented line after a blank line carries on the block above (a list item's paragraph, indented code). */
 const CONTINUES = /^(?: {2,}|\t)/;
+/** A link reference or footnote definition (`[doc]: https://…`, `[^1]: …`): what refers to it may be in any block. */
+const DEFINITION = /^ {0,3}\[[^\]\n]+\]:/m;
 
 /**
  * The reply's markdown cut at its blank lines into blocks that render the
  * same apart as together: a fenced code block stays whole, and an indented
- * line after a blank line stays with the block above it. Each block keeps
- * its offset, which names it while the text grows.
+ * line after a blank line stays with the block above it. A reply that
+ * defines a link reference or a footnote stays one block, since what refers
+ * to the definition can be anywhere in it. Each block keeps its offset,
+ * which names it while the text grows.
  */
 export function splitBlocks(text: string): Block[] {
   const blocks: Block[] = [];
@@ -107,6 +111,10 @@ export function splitBlocks(text: string): Block[] {
     pos = nl + 1;
   }
   if (start >= 0) blocks.push({ start, text: text.slice(start, end) });
+  if (blocks.length > 1 && DEFINITION.test(text)) {
+    const last = blocks[blocks.length - 1];
+    return [{ start: blocks[0].start, text: text.slice(blocks[0].start, last.start + last.text.length) }];
+  }
   return blocks;
 }
 

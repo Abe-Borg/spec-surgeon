@@ -97,6 +97,9 @@ test("a reply is cut into blocks at its blank lines, keeping fences and indented
   assert.deepEqual(splitBlocks("\n\n  \n"), []);
   // An open fence (the reply is still being written) holds everything after it.
   assert.deepEqual(splitBlocks("Intro\n\n```\nx\n\ny").map((b) => b.text), ["Intro", "```\nx\n\ny"]);
+  // A link reference or footnote definition keeps the reply whole: what refers to it can be in any block.
+  const linked = "\nSee [the guide][doc].\n\nMore.[^1]\n\n[doc]: https://example.com\n[^1]: A note.\n";
+  assert.deepEqual(splitBlocks(linked), [{ start: 1, text: linked.slice(1, -1) }]);
 });
 
 test("marks are found per block, and a piece fades while it is younger than the fade", () => {
@@ -169,6 +172,7 @@ test("a reply rendered block by block reads as the same markdown rendered whole"
     "## Plan\n\nThree changes:\n\n1. The fonts\n2. The footer line\n3. The logo\n\nIf the pages look right, create the copies.",
     "Here is the table:\n\n| Part | Font |\n| --- | --- |\n| Body | Arial |\n\n> Your originals stay intact.",
     "Code:\n\n```\nline one\n\nline two\n```\n\nThat's all.",
+    "See [the guide][doc] and the note.[^1]\n\nThat's all.\n\n[doc]: https://example.com\n\n[^1]: The note.",
   ];
   for (const reply of replies) {
     const whole = shape(hast(reply).children);
