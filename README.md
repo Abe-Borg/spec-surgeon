@@ -249,7 +249,8 @@ Every operation also describes itself in one plain sentence; that sentence is wh
   design decisions, definitions and change notes, [the design and phased plan of the natural-language
   editor](docs/history/NL_SURGICAL_EDITOR_PLAN.md), and the guides to the command-line features removed on 2026-10-21
   (workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations). The current round's plan is
-  `docs/PLAN-2026-10-21-full-control.md`.
+  `docs/PLAN-2026-10-22-batch-consistency.md` (what the first live run found); the full-control round's,
+  `docs/PLAN-2026-10-21-full-control.md`, waits on its live runs.
 - [docs/RELIABILITY.md](docs/RELIABILITY.md) — the review flow, what PASS means and the remaining evidence limits;
   [docs/RECOVERY.md](docs/RECOVERY.md) — how files a run set aside are investigated;
   [docs/TEXT_HYGIENE.md](docs/TEXT_HYGIENE.md) — the character hygiene operations; the
