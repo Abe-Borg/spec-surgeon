@@ -145,3 +145,29 @@ def test_redacted_remembered_table_path_does_not_consume_the_only_attempt(batch,
     assert warm.budget["calls"] == 1
     assert len(warm.attempts) == 1
     assert any("remembered repair could not be reused" in note for note in warm.notes)
+
+
+def test_a_remembered_repair_naming_another_files_paragraphs_does_not_consume_the_only_attempt(tmp_path, monkeypatch):
+    """The 1.8.0 live run reused the repair just recorded for one file of a structure pattern on another file of it:
+    its selector quoted the first file's paragraph, planned on neither file and cost the group two attempts."""
+    from make_fixtures import build
+    first_file, second_file = tmp_path / "21 13 19.docx", tmp_path / "21 13 16.docx"
+    first_file.write_bytes(build("21 13 19", "SPRINKLERS"))
+    second_file.write_bytes(build("21 13 16", "DRY-PIPE SYSTEMS"))
+    store = CaseStore(tmp_path / "repairs.sqlite3")
+    monkeypatch.setattr("spec_surgeon.repair_memory.CaseStore", lambda: store)
+    request = "Delete the paragraph under the section number"
+
+    def deleting(title):
+        return {"request": request, "mode": "untracked", "summary": "Delete the title", "ops": [
+            {"op": "delete_paragraphs", "select": {"scope": ["document"],
+                                                   "paragraphs": {"text_regex": f"\\A{title}\\Z"}},
+             "params": {"tracked": False}}]}
+
+    first = recovery.recover([first_file], request, tmp_path / "first", options=_options(use_memory=True),
+                             client=FakeClient(_submit(deleting("SPRINKLERS"))))
+    assert first.ready, first.to_text()
+    second = recovery.recover([second_file], request, tmp_path / "second", options=_options(use_memory=True),
+                              client=FakeClient(_submit(deleting("DRY-PIPE SYSTEMS"))))
+    assert second.ready, second.to_text()
+    assert second.budget["calls"] == 1 and len(second.attempts) == 1

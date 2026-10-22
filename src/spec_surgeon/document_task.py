@@ -37,6 +37,7 @@ START_OVER = "Start over from the originals"   # the reply (a chip, a button) th
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
+RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RECOVERY.md), on every recovery path
 
 # What the window says while the model uses a tool: one plain sentence per tool, never the tool's name.
 TOOL_ACTIVITY = {
@@ -231,6 +232,7 @@ def _same_file_key(path) -> str:
 class DocumentTask:
     def __init__(self, session=None, *, journal=None, render=True):
         self.session = session or Session()
+        self.session.recovery_attempts = RECOVERY_ATTEMPTS   # the recovery a reviewed outcome plan starts, too
         self.render = render
         self.journal = Path(journal) if journal else None
         self.messages: List[Dict[str, str]] = []
@@ -767,7 +769,7 @@ class DocumentTask:
 
     def _recovery_options(self):
         from .recovery import RecoveryOptions
-        return RecoveryOptions(max_cost_usd=None, max_calls=self._budget.max_calls, max_attempts=8,
+        return RecoveryOptions(max_cost_usd=None, max_calls=self._budget.max_calls, max_attempts=RECOVERY_ATTEMPTS,
                                max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_total_tokens=None,
                                effort=RECOVERY_EFFORT, render=self.render, visual_review=self.session.visual_check)
 

@@ -149,7 +149,8 @@ def test_duplicate_successful_memories_do_not_consume_retries_on_the_same_failur
     result = recovery.recover([source], goal["request"], tmp_path / "after-change", spec=goal,
                               options=options(), client=client)
     assert len(client.requests) == 1, "Duplicate memories exhausted all attempts before the model could investigate"
-    assert result.ready and len(result.attempts) == 2
+    # the remembered repair's expectation no longer plans on the changed file: it is skipped, not tried
+    assert result.ready and len(result.attempts) == 1
 
 
 def test_rejecting_a_repair_blocks_older_duplicate_cases_for_the_same_repair(tmp_path):
