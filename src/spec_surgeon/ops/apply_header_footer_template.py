@@ -789,7 +789,9 @@ class ApplyHeaderFooterTemplate(Op):
             frag.notes.append(f"shown in capitals by formatting (w:caps on the filled run; letters as filled): "
                               f"{sorted(set(caps_fills))}")
         for name, binding in binding_rules.items():
-            frag.notes.append(f"binding: {name} = {binding['value']!r} from {binding['part']} paragraph {binding['paragraph']} "
+            frag.notes.append(f"binding: {name} = {binding['value']!r} as the user worded it for this file"
+                              if binding.get("rule") == "typed" else
+                              f"binding: {name} = {binding['value']!r} from {binding['part']} paragraph {binding['paragraph']} "
                               f"(source md5 {binding['source_md5']})")
         if reference:
             frag.notes.append("template spec (reference slots): its own " + ", ".join(

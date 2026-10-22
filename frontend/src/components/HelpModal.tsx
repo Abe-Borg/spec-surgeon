@@ -252,7 +252,8 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         tagline="Left out with a reason, never delivered half-right."
         steps={[
           "When it arrives: a refused file is greyed out with the reason and the fix.",
-          "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs.",
+          "When you ask: a document you leave out of a request (“leave out 20”) is not planned or changed, and is listed under Left untouched; the next request covers it again.",
+          "At plan time: a file whose result cannot be predicted is listed under Left untouched before anything runs, and the preview of the others stands; the assistant says why in its next reply.",
           "At delivery: a copy that fails a check is never delivered. Spec Surgeon looks at it again on its own and comes back with a question or a new plan, never a method for you to choose.",
           "While that question is open, Save N ready copies keeps the copies that already passed.",
         ]}

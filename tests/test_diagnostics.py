@@ -145,8 +145,7 @@ def test_an_engine_failure_is_never_called_a_corrupt_file(tmp_path, monkeypatch)
 
 OPS_DIR = Path(__file__).resolve().parent.parent / "src" / "spec_surgeon" / "ops"
 # codes that fall back to the generic "Refused for Safety" wording today; no new code may join them
-GENERIC_EXPLANATION = {"binding-source", "cardinality", "comment-overlap", "shared-part", "theme-font",
-                       "unsupported-comment-anchor"}
+GENERIC_EXPLANATION = {"cardinality", "comment-overlap", "shared-part", "theme-font", "unsupported-comment-anchor"}
 
 
 def _refusal_codes():

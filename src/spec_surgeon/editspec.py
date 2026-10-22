@@ -29,6 +29,7 @@ import copy
 import hashlib
 import json
 import re
+import unicodedata
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
@@ -267,8 +268,17 @@ def _validate_bindings(bindings: Any) -> None:
         if not isinstance(slots, dict) or not slots:
             raise SpecError("binding.slots must be a non-empty slot-name mapping", "spec")
         for name, slot in slots.items():
+            if isinstance(name, str) and name and isinstance(slot, dict) and set(slot) == {"typed"}:
+                # the user's own wording for this file's slot (title case like the template, say): placed as typed,
+                # traced to their words by compiler.placed_words; one line of visible text
+                typed = slot["typed"]
+                if (not isinstance(typed, str) or not typed.strip()
+                        or any(unicodedata.category(c).startswith("C") and c != "\t" for c in typed)):
+                    raise SpecError("a typed slot's wording must be non-empty text on one line", "spec")
+                continue
             if not isinstance(name, str) or not name or not isinstance(slot, dict) or set(slot) != {"value", "part", "paragraph"}:
-                raise SpecError("each bound slot needs exactly value, part and paragraph", "spec")
+                raise SpecError("each bound slot needs exactly value, part and paragraph (quoted from the file), or "
+                                "typed (the user's own wording for this file)", "spec")
             if not isinstance(slot["value"], str) or not slot["value"] or not isinstance(slot["part"], str) or not slot["part"]:
                 raise SpecError("bound slot value and part must be non-empty text", "spec")
             if type(slot["paragraph"]) is not int or slot["paragraph"] < 0:
@@ -282,7 +292,9 @@ def _file_bindings(pkg: DocxPackage, spec: Dict[str, Any]) -> Dict[str, Any]:
         return {}
     if hashlib.md5(pkg.data).hexdigest() != entry["md5"]:
         raise JobException(f"bound source changed since inspection: {entry['file']}", "binding-source")
-    return {name: {"rule": "binding", **slot, "source_md5": entry["md5"]} for name, slot in entry["slots"].items()}
+    return {name: ({"rule": "typed", "value": slot["typed"], "source_md5": entry["md5"]} if "typed" in slot
+                   else {"rule": "binding", **slot, "source_md5": entry["md5"]})
+            for name, slot in entry["slots"].items()}
 
 
 def validate_spec(spec: Dict[str, Any]) -> None:
