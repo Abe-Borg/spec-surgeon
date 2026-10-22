@@ -137,7 +137,9 @@ than none.
 Current round: `docs/PLAN-2026-10-22-batch-consistency.md` (what the first live run found); the full-control round,
 `docs/PLAN-2026-10-21-full-control.md` (design: `docs/BUILTIN_OPS_BATCH6_DESIGN.md`), waits on its live runs. Read both
 before any work and take items from the current round's status table. Beside them, `docs/PLAN-2026-10-22-word-judge.md`
-(real Word judges the tracked changes the engine writes and reads; test evidence only) has its own status table. New operations go into a plan before they are
+(real Word judges the tracked changes the engine writes and reads; test evidence only) has its own status table, and so
+has `docs/PLAN-2026-10-22-custom-envelope.md` (Option A: more kinds of formatting a custom method may do, each behind a
+V10 kind that proves the content it touches untouched; never more kinds of change). New operations go into a plan before they are
 built. Nothing is done on fixtures alone: the plan's acceptance names a real-file run, which the user performs. Before
 ending, update the rows you worked in the status table with a dated one-line note: what changed, what is tested, what
 still needs the user's machine.
