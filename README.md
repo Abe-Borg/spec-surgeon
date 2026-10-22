@@ -151,8 +151,8 @@ instead of $4 per million input tokens and $40 instead of $20 per million output
 on top). Turning it on takes a second click on a button that names the price; one click turns it off. It speeds up
 Claude's writing, not the moment before it starts and not the work on your computer. When Anthropic's fast capacity
 is busy, a step runs at standard speed and price at once instead of waiting; if Anthropic refuses fast mode for your
-key, every step runs at standard speed and Settings says why. While it is on, the spending estimate in the top bar is
-priced at the fast rates and says **Fast**. The choice is kept for the next start. Switching it during a
+key, every step runs at standard speed and Settings says why. While it is in effect, the spending estimate in the top
+bar is priced at the fast rates and says **Fast**. The choice is kept for the next start. Switching it during a
 conversation makes the next step re-read the conversation once without the cache discount (the two speeds are
 cached separately).
 

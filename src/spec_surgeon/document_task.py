@@ -652,8 +652,9 @@ class DocumentTask:
         cost = self._budget.spent_usd
         text = ("an amount the price table cannot estimate" if cost is None else
                 "less than $0.01" if cost < 0.005 else f"about ${cost:.2f}")
-        # ``fast``: Settings → "Fast responses" is on, so the next AI step is priced at the fast table (llm.FAST_PRICES)
-        return {"usd": cost, "text": text, "calls": self._budget.calls, "fast": llm.FAST_MODE}
+        # ``fast``: the next AI step will ask for fast mode and be priced at the fast table (llm.FAST_PRICES) — the
+        # setting is on, the model is served fast, and Anthropic has not refused fast mode for this key
+        return {"usd": cost, "text": text, "calls": self._budget.calls, "fast": llm.fast_for(llm.DEFAULT_MODEL)}
 
     def _ready_to_talk(self):
         self.session.files(outcome=False)  # reject missing attachments before consuming an answer

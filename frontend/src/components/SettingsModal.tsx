@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Settings } from "../types";
 import { getSettings, saveFastMode, saveSettings, saveTheme } from "../lib/api";
-import { fastWords } from "../lib/fastMode";
+import { fastStatus, fastWords } from "../lib/fastMode";
 import { THEMES, applyTheme, resolveTheme } from "../lib/theme";
 import { ModalShell, primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
@@ -273,6 +273,7 @@ function FastSection({
   onCancel: () => void;
   onSet: (on: boolean) => void;
 }) {
+  const status = fastStatus(on, words);
   return (
     <section className="border-t border-edge pt-4">
       <div className="flex items-center justify-between gap-3">
@@ -322,9 +323,9 @@ function FastSection({
           </button>
         </div>
       )}
-      {on && (
-        <p className="mt-2 text-xs text-ok" role="status">
-          On: AI steps from now on are fast, at the fast price. Kept for the next start.
+      {status && (
+        <p className={`mt-2 text-xs ${status.tone === "ok" ? "text-ok" : "text-warn"}`} role="status">
+          {status.text}
         </p>
       )}
       {error && (

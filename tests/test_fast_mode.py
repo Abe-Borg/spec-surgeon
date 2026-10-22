@@ -257,3 +257,23 @@ def test_set_fast_mode_is_what_the_window_turns_on():
     finally:
         llm.set_fast_mode(False)
     assert not llm.fast_for("claude-opus-5-5")
+
+
+def test_the_pill_says_fast_only_while_fast_mode_is_in_effect(tmp_path, monkeypatch):
+    """``cost.fast`` follows what the next call will do, not the saved preference alone: on but refused for the key,
+    or on with a model Anthropic does not serve fast, the pill does not say Fast."""
+    from spec_surgeon import document_task
+    from spec_surgeon.gui import Session
+    task = document_task.DocumentTask(Session(client=FakeClient(), out_root=tmp_path / "out", visual_check=False),
+                                      render=False)
+    assert task._cost()["fast"] is False
+    llm.set_fast_mode(True)
+    try:
+        assert task._cost()["fast"] is True
+        monkeypatch.setattr(llm, "_fast_unavailable", "speed not allowed")
+        assert task._cost()["fast"] is False
+        monkeypatch.setattr(llm, "_fast_unavailable", None)
+        monkeypatch.setattr(llm, "DEFAULT_MODEL", "claude-sonnet-5-5")
+        assert task._cost()["fast"] is False
+    finally:
+        llm.set_fast_mode(False)

@@ -5,7 +5,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { fastWords, times, usd } from "../src/lib/fastMode.ts";
+import { fastStatus, fastWords, times, usd } from "../src/lib/fastMode.ts";
 import type { FastOffer } from "../src/types.ts";
 
 const OFFER: FastOffer = {
@@ -51,6 +51,19 @@ test("the notes say what it does not speed up and how it behaves when fast capac
   assert.match(notes, /not the work done on your computer/);
   assert.match(notes, /runs at standard speed and standard price instead of waiting/);
   assert.match(notes, /cached separately/);
+});
+
+test("the line under the switch says fast only when fast mode is in effect", () => {
+  assert.equal(fastStatus(false, fastWords(OFFER)), null);
+  const on = fastStatus(true, fastWords(OFFER));
+  assert.equal(on?.tone, "ok");
+  assert.match(on?.text ?? "", /^On: AI steps from now on are fast, at the fast price/);
+  for (const offer of [{ ...OFFER, refused: "speed not allowed" }, { ...OFFER, available: false, fast_usd_per_mtok: null }]) {
+    const status = fastStatus(true, fastWords(offer));
+    assert.equal(status?.tone, "warn");
+    assert.match(status?.text ?? "", /^On, but not in effect: AI steps run at standard speed and standard price/);
+    assert.doesNotMatch(status?.text ?? "", /at the fast price/);
+  }
 });
 
 test("money and multiples read as words", () => {

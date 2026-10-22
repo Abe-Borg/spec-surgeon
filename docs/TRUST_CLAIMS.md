@@ -267,8 +267,8 @@ How each is labelled:
   estimate".
 - Fast responses: tokens a response reports as served fast (`usage.speed`) are their own row (`llm.FAST_ROW`), priced
   from `llm.FAST_PRICES`, 2 times every standard price. A fallback attempt inside a fast response is priced fast when
-  its model has a fast price (an estimate that errs high). The pill says "Fast" while the setting is on
-  (`DocumentTask._cost`). Settings quotes the standard and fast prices from the same tables (`server.fast_offer`).
+  its model has a fast price (an estimate that errs high). The pill says "Fast" while fast mode is in effect: the setting on,
+  the model served fast, not refused for the key (`DocumentTask._cost`, `llm.fast_for`). Settings quotes the standard and fast prices from the same tables (`server.fast_offer`).
 - A failed call keeps its reservation (`CallBudget._abandon`).
 - A stopped call is settled from the stream plus the 150 tokens/s bound.
 - Re-sent attempts are counted and billed.

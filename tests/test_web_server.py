@@ -204,6 +204,13 @@ def test_settings_about_updates_and_new_conversation(tmp_path, monkeypatch):
     assert llm.FAST_MODE is True and load_settings().fast_mode is True and state.view()["cost"]["fast"] is True
     refused = client.post("/api/settings", json={"fast_mode": "yes"})
     assert refused.status_code == 400 and llm.FAST_MODE is True
+    # refused for this key: the setting stays on, but nothing says Fast, and Settings says why
+    monkeypatch.setattr(llm, "_fast_unavailable", "PermissionDeniedError: speed not allowed · HTTP 403")
+    s = client.get("/api/settings").json()
+    assert s["fast_mode"] is True and "speed not allowed" in s["fast"]["refused"]
+    assert state.view()["cost"]["fast"] is False
+    monkeypatch.setattr(llm, "_fast_unavailable", None)
+    assert state.view()["cost"]["fast"] is True
     assert client.post("/api/settings", json={"fast_mode": False}).json()["fast_mode"] is False
     assert llm.FAST_MODE is False and load_settings().fast_mode is False
     about = client.get("/api/about").json()

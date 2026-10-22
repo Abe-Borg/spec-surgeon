@@ -89,8 +89,9 @@ Rules the page relies on:
   scope until the pass begins; the server also offers the same reply in `chips` outside the question stage.
 - `results` lists the edited copies of the latest run; `working.generation` > 0 means the next request builds on
   those copies, and `can_start_over` shows the "Start over from the originals" chip.
-- `cost.fast` is true while Settings → Fast responses is on (`llm.FAST_MODE`): the spending pill then says "Fast".
-  An older server leaves it out.
+- `cost.fast` is true while fast mode is in effect (`llm.fast_for(llm.DEFAULT_MODEL)`: Settings → Fast responses
+  is on, the model is served fast, and Anthropic has not refused fast mode for this key): the spending pill then says
+  "Fast". An older server leaves it out.
 - `update.manual_result` is the answer to the last check the user asked for (About → Check for updates): "You're up
   to date — …", "No release has been published yet." or "Couldn't check for updates: …". `POST /api/update/check`
   clears it when the check starts, so About shows "Checking for updates…" until it is written again or `state`

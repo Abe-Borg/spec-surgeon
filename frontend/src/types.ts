@@ -103,7 +103,8 @@ export interface Cost {
   usd: number | null;
   text: string;
   calls: number;
-  /** Settings → "Fast responses" is on: the next AI step is priced at the fast table. Absent from an older server. */
+  /** Fast mode is in effect (Settings → "Fast responses" on, the model served fast, not refused for this key): the next
+   *  AI step is priced at the fast table. Absent from an older server. */
   fast?: boolean;
 }
 

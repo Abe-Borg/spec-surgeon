@@ -301,7 +301,7 @@ app's own table). Turning it on takes a second click on a button that names the 
 the moment before Claude starts writing, nor anything done on your computer. When Anthropic's fast capacity is busy
 (a 429 or 529), the step is sent again at once at standard speed and price instead of waiting; if Anthropic refuses
 fast mode for your key, every step runs at standard speed until you turn the setting off and on, and Settings says
-why. While it is on, the spending pill prices the calls served fast at the fast rates and says **Fast**, and a stopped
+why. While it is in effect (on, and not refused), the spending pill prices the calls served fast at the fast rates and says **Fast**, and a stopped
 fast call is estimated at 2.5 times the stopped-call rate. Switching it during a conversation costs one cache refill:
 the two speeds are cached separately.
 

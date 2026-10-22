@@ -30,6 +30,16 @@ export interface FastWords {
   confirm: string;
 }
 
+/** The line under the switch while it is on: green when the next AI step will be fast, a warning when the setting is
+ *  on but cannot take effect (`unavailable` says why, above it). Nothing while it is off. */
+export function fastStatus(on: boolean, words: FastWords): { tone: "ok" | "warn"; text: string } | null {
+  if (!on) return null;
+  if (words.unavailable) {
+    return { tone: "warn", text: "On, but not in effect: AI steps run at standard speed and standard price. Kept for the next start." };
+  }
+  return { tone: "ok", text: "On: AI steps from now on are fast, at the fast price. Kept for the next start." };
+}
+
 export function fastWords(offer: FastOffer): FastWords {
   const model = modelLabel(offer.model);
   const factor = times(offer.price_factor);
@@ -57,7 +67,7 @@ export function fastWords(offer: FastOffer): FastWords {
       "It speeds up Claude's writing and thinking, not the moment before it starts, and not the work done on your computer (rendering, checking, creating copies).",
       "When Anthropic's fast capacity is busy, a step runs at standard speed and standard price instead of waiting.",
       "Switching it during a conversation makes the next step re-read the conversation once without the cache discount: the two speeds are cached separately.",
-      "The spending estimate in the top bar uses the fast prices while it is on, and says “Fast”.",
+      "The spending estimate in the top bar uses the fast prices while it is in effect, and says “Fast”.",
     ],
     unavailable,
     confirm: `Turn on — ${factor} the price`,
