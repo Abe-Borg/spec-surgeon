@@ -424,7 +424,7 @@ function AboutTopic({
           >
             Check for updates
           </button>
-          <Tip tip="Opens the folder of the app’s logs, to send to whoever diagnoses a problem. They never contain your documents.">
+          <Tip tip="Opens the folder of the app’s logs, to send to whoever diagnoses a problem. They never contain your documents, though an error message in them can quote a line of one.">
             <button type="button" onClick={onOpenLogs} className={quietBtn}>
               Open diagnostic logs
             </button>

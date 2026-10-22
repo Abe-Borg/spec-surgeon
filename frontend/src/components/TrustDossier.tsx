@@ -287,7 +287,7 @@ function Dossier() {
             ],
             [
               "Your files",
-              "An attached template, picture or table, and a document’s own words (a template filled with each file’s own section number and title).",
+              "An attached template, picture or table, and a document’s own words (a template filled with each file’s own section number and title, or a File Properties title built from them around words you gave).",
               "The plan’s sentence names the file; a value from your sheet or template is never retyped by Claude.",
             ],
             [
@@ -302,7 +302,7 @@ function Dossier() {
             ],
             [
               "Claude’s custom method",
-              "When no operation fits and a formatting-only change would, a small program Claude wrote. It may not change a word, add a part or make a tracked change.",
+              "When no operation fits and a formatting-only change would, a small program Claude wrote. It may not change a word, add a part or make a tracked change. Under an outcome plan (next row) it may make that plan’s changes instead, wording included, and is checked against the plan.",
               "The plan shows Claude’s own one-line description of it; the conversation says a custom method was prepared.",
             ],
             [
@@ -503,7 +503,7 @@ function Dossier() {
             [
               "Write a custom method",
               "Write one small Python operation when nothing built-in fits.",
-              `Formatting only. Checked as text (whitelisted modules, no file, process or network calls), run on copies in a separate process (${F.customMethodSeconds} s, ${F.customMethodMemoryMB} MB, writes only in its own folder), and every result must pass the independent checker.`,
+              `Formatting only, except under an outcome plan, where it may make exactly that plan’s changes, wording included. Checked as text (whitelisted modules, no file, process or network calls), run on copies in a separate process (${F.customMethodSeconds} s, ${F.customMethodMemoryMB} MB, writes only in its own folder), and every result must pass the independent checker (and, under an outcome plan, its check of the outcomes).`,
             ],
             [
               "Propose outcomes, try repairs (recovery)",
@@ -621,7 +621,9 @@ function Dossier() {
               <>
                 Listens on <Mono>{F.loopback}</Mono> only, on a free port picked at start. Every request must carry the
                 token created for this launch (<Mono>{F.tokenHeader}</Mono>). Pictures are served only as PNG files from
-                the app’s own folders.
+                the app’s own folders. If the app cannot open its own window (for example, without WebView2), it opens the page in
+                your default browser instead, at the same local address, with that launch’s token in the address, which
+                the browser keeps in its history.
               </>,
             ],
             [
@@ -706,6 +708,13 @@ function Dossier() {
             <>
               <b className="text-ink">An outcome plan’s wording is not traced to you</b> the way an ordinary plan’s is.
               Read it in the plan.
+            </>,
+            <>
+              <b className="text-ink">A custom method writes its own prediction.</b> For a built-in operation the
+              prediction the checker holds a copy to comes from the engine’s code; for a custom method it comes from
+              Claude’s program. The app bounds what that program may predict (no word changed, no part added, no tracked
+              change, outside an outcome plan), and anything it did not predict must be unchanged, but its description
+              is Claude’s own. Look at the pages.
             </>,
             <>
               <b className="text-ink">The sandboxes are not a security boundary,</b> and they are weaker on Windows than

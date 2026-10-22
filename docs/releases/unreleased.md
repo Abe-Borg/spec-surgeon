@@ -2,13 +2,22 @@
 
 Changes since v1.8.0.
 
+## Why trust it?
+
+- **Help → Why trust it** gives the short answer: eight claims, each with the mechanism that makes it true. Its
+  **I'm not convinced — show me exactly what runs →** button opens the long one on top of it: where every change comes
+  from, what leaves your computer and where it goes (with a diagram), one card per button and per automatic behaviour
+  saying what runs, what is sent, which AI is involved and what bounds it, what the AI may touch, what the app does not
+  do, and how to check all of it yourself. `docs/TRUST_CLAIMS.md` lists every claim with the code behind it.
+
 ## Diagnostics for the window itself
 
 - **One file to send when something goes wrong.** **About → Save a diagnostic bundle** writes one zip and shows it in
   Explorer: the app's log and event journals, crash logs, its settings, the current and last three conversations,
   and the logs, records and reports of the five newest runs, with a manifest of what is in it and what was left out.
-  No document, picture or page image goes in; conversations and records can quote your words and your documents'
-  text.
+  Folders of copies, samples and page pictures are left out; conversations and records can quote your words and your
+  documents' text, and a conversation's saved history can hold the page images Claude was shown, so treat a bundle
+  like your documents.
 - **The window's page reports on itself.** Every error in the page that nothing caught, a job the page lost track of,
   and a page blocked for 2 seconds or more now reach the app's log and event journal, with the page's loads and the
   WebView2 version. Before, the page's errors went to a console nobody sees.
