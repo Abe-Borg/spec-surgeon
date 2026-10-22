@@ -249,6 +249,11 @@ class DeleteParagraphs(Op):
         if moved:
             frag.flags.append(f"{moved} bookmark or range mark(s) ran into the deleted text from outside; each moved to "
                               f"the edge of the text that stays")
+        held = sum(len(ms) for ms in removal.held.values())
+        if held:
+            frag.flags.append(f"{held} bookmark or range mark(s) whose other end lies in text that stays sat in a "
+                              f"paragraph that stays, emptied; each stays in that paragraph, where its bookmark or "
+                              f"range now starts or ends")
         frag.flags += dangling_flags(pkg, removal)
         frag.flags.append(f"UNTRACKED deletion of {sum(len(ch.selected) for ch in choices)} selected paragraph(s) at "
                           f"the user's request.")

@@ -774,6 +774,93 @@ def test_the_verifier_refuses_a_threaded_comments_last_paragraph_deleted(marks, 
     assert "V10" in failed(rec) and "comment-last-paragraph" in v10(rec) and "the op must refuse" in v10(rec)
 
 
+# ---- range marks in a paragraph the deletion keeps (2026-10-21 review fix) ------------------------------------------
+
+HELD = "sat in a paragraph that stays, emptied; each stays in that paragraph"
+CROSSING = {"cell": ("32", "KeptCell"), "between": ("34", "Span"), "body": ("35", "ToEnd"),
+            "section": ("36", "IntoAppendix")}
+
+
+def marks_of(root, tag: str) -> List[str]:
+    return sorted(e.get(W + "id") for e in root.iter(W + tag))
+
+
+@pytest.mark.parametrize("shape", list(fx.KEPT_SHAPES))
+def test_a_kept_paragraph_keeps_the_range_marks_that_run_out_of_it(shape):
+    """A paragraph the deletion keeps, emptied (a cell's last, one between two tables, the body's last, the last
+    section's), holding one end of a bookmark whose other end stays: that end stays in the paragraph, where it stood —
+    it used to be removed with the paragraph's runs, leaving the other end an orphan."""
+    src = fx.build_kept_marks(shape)
+    plan, out = delete(src, {"text_regex": fx.KEPT_SHAPES[shape]}, False)
+    bid, name = CROSSING[shape]
+    root = xml(out)
+    assert len(plan.property_assertions[0]["expected"][MAIN]["keep"]) == 1
+    assert marks_of(root, "bookmarkStart") == marks_of(root, "bookmarkEnd") == [bid]
+    held = next(e for e in root.iter(W + "bookmarkStart", W + "bookmarkEnd")
+                if e.get(W + "id") == bid and not text_of(e.getparent()))
+    assert held.getparent().tag == W + "p" and [c.tag for c in held.getparent() if c.tag != W + "pPr"] == \
+        [c.tag for c in held.getparent() if c.tag in (W + "bookmarkStart", W + "bookmarkEnd", W + "permStart")]
+    assert any(f.startswith("1 bookmark") and HELD in f for f in plan.flags) or shape == "cell"
+    assert not any("ran into the deleted text from outside" in f for f in plan.flags)
+    assert not any(repr(name) in f for f in plan.flags)               # it does not go: nothing points at a lost one
+
+
+def test_a_kept_cell_paragraph_keeps_its_crossing_marks_and_loses_the_ones_wholly_deleted():
+    """The cell's last paragraph keeps the start of "KeptCell" (its end in the next cell; the REF field below still
+    finds it) and of the permission range; "Inner" (both ends in it) and "Wholly" (from the deleted paragraph above it)
+    lie wholly in the deleted text and go."""
+    src = fx.build_kept_marks("cell")
+    plan, out = delete(src, {"text_regex": fx.KEPT_SHAPES["cell"]}, False)
+    root = xml(out)
+    kept = next(p for p in root.iter(W + "p") if p.find(W + "bookmarkStart") is not None)
+    assert text_of(kept) == "" and [c.tag for c in kept if c.tag != W + "pPr"] == [W + "bookmarkStart", W + "permStart"]
+    assert [b.get(W + "name") for b in root.iter(W + "bookmarkStart")] == ["KeptCell"]
+    assert marks_of(root, "permStart") == marks_of(root, "permEnd") == ["33"]
+    assert any(f.startswith("2 bookmark or range mark(s)") and HELD in f for f in plan.flags)
+    assert not any("KeptCell" in f for f in plan.flags)
+    assert body_texts(out)[-2:] == ["A. See Q.", "END OF SECTION"]
+    assert [t.text for t in root.iter(W + "instrText")] == [" REF KeptCell \\h "]
+
+
+@TRACKED
+def test_a_mark_wholly_inside_the_deletion_still_goes(tracked):
+    src = fx.build_kept_marks("cell")
+    plan, out = delete(src, {"text_regex": "^Q\\. |^Next cell"}, tracked)   # now KeptCell's end is deleted too
+    root = xml(out)
+    if tracked:                                                    # tracked: every mark stays until it is accepted
+        assert marks_of(root, "bookmarkStart") == marks_of(xml(src), "bookmarkStart")
+    else:
+        assert marks_of(root, "bookmarkStart") == marks_of(root, "bookmarkEnd") == []
+        assert marks_of(root, "permStart") == marks_of(root, "permEnd") == []
+        assert any("REF field still points to the bookmark 'KeptCell'" in f for f in plan.flags)
+        assert not any(HELD in f for f in plan.flags)
+
+
+def test_a_kept_paragraphs_crossing_mark_removed_from_the_output_is_caught():
+    """Today's output before the fix: the start gone with the cell paragraph's runs, its end left an orphan."""
+    src = fx.build_kept_marks("cell")
+    plan, out = delete(src, {"text_regex": fx.KEPT_SHAPES["cell"]}, False)
+
+    def orphan(root):
+        start = next(b for b in root.iter(W + "bookmarkStart") if b.get(W + "name") == "KeptCell")
+        start.getparent().remove(start)
+    caught(src, plan, out, MAIN, orphan, "is not the source without exactly what the deletion removes")
+
+
+@pytest.mark.parametrize("shape", list(fx.KEPT_SHAPES))
+def test_a_shared_cascade_that_drops_a_kept_paragraphs_crossing_mark_is_caught(shape, monkeypatch):
+    """The old rule shared by plan and apply: the mark, removed as the kept paragraph's own child, stays removed."""
+    real = deletion.Removal._range_marks
+
+    def drop_held(self, part):
+        real(self, part)
+        for e in self.held.pop(part, []):
+            self._tops[part].add(e)
+    _shared(fx.build_kept_marks(shape), monkeypatch, {"text_regex": fx.KEPT_SHAPES[shape]}, False,
+            [(deletion.Removal, "_range_marks", drop_held)],
+            "is not the source without exactly what the deletion removes")
+
+
 # ---- touches and composition ---------------------------------------------------------------------------------------
 
 def test_untracked_claims_the_part_and_tracked_composes_beside_other_paragraphs(tables):
