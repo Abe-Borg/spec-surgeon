@@ -1,7 +1,9 @@
-"""The seed new revision ids count up from (``ooxml.max_revision_id``): every w:id the file already carries counts,
-whichever element and part carry it. Word writes a w:tblGridChange with its own w:id when someone resizes table columns
-with Track Changes on (common in redlined specifications); a seed read from a fixed list of revision tags left it
-(and w:tblPrExChange) out, handed the same id out again, and V4 set the file aside for a collision the engine made."""
+"""The seed new revision ids count up from (``ooxml.max_revision_id``): every annotation id the file already carries
+counts, whichever document part carries it. Word writes a w:tblGridChange with its own w:id when someone resizes table
+columns with Track Changes on (common in redlined specifications); a seed read from a short list of revision tags left
+it (and w:tblPrExChange) out, handed the same id out again, and V4 set the file aside for a collision the engine made.
+The list is now every element the schemas give an annotation id, checked against the vendored XSDs in
+tests/test_package_hardening.py."""
 from __future__ import annotations
 
 import io
@@ -84,9 +86,10 @@ def test_a_tracked_replacement_beside_a_resized_table_passes(change):
     assert [accepted_text(p) for p in body.findall(W + "p")][-EDITS:] == ["The Client shall review."] * EDITS
 
 
-def test_every_part_and_every_w_id_counts():
+def test_every_document_part_and_every_annotation_id_counts():
     """A property change in styles.xml (outside the text parts) and a bookmark's id both raise the seed; ids that are
-    not numbers are skipped; a part that is not well-formed XML and is no text part is skipped, not refused."""
+    not numbers are skipped; a document part that is not well-formed XML and is no text part is skipped, not refused,
+    and a part outside the document (customXml) is not read at all."""
     src = resized_table(rev_id="3")
 
     def style_change(root):
@@ -103,9 +106,11 @@ def test_every_part_and_every_w_id_counts():
     assert max_revision_id(DocxPackage(styled)) == 40
     assert max_revision_id(DocxPackage(mutate(src, "word/document.xml", bookmark))) == 12
 
-    pkg = DocxPackage(styled)
-    pkg.add_member("customXml/item9.xml", b"<broken", "application/xml")
-    assert max_revision_id(pkg) == 40
+    for broken in ("word/item9.xml", "customXml/item9.xml"):
+        pkg = DocxPackage(styled)
+        pkg.add_member(broken, b"<broken", "application/xml")
+        assert max_revision_id(pkg) == 40
+        assert (broken in pkg.wordprocessing_xml_parts()) == broken.startswith("word/")   # read and passed over, or not read
 
 
 def test_shared_defect_the_old_seed_collides_and_v4_catches_it(monkeypatch):

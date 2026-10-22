@@ -20,7 +20,7 @@ Failure kinds (``classify``):
 * ``refusal`` — the engine declined on purpose (a ``JobException`` code: ``not-found``, ``structure`` …);
 * ``unreadable`` — the file is not a Word document the engine can open: not a zip, an encrypted or old binary file
   named .docx, a part that is not well-formed XML, a file the disk would not give back (``unsupported-format`` for
-  Strict Open XML is the same kind with its own code);
+  Strict Open XML and ``xml-dtd`` for a part with a document type declaration are the same kind with their own codes);
 * ``environment`` (code ``io-error``) — a file the run needs could not be read or written (the template, the results
   folder): permissions, a full disk, a path too long for Windows;
 * ``internal-error`` — anything else unexpected: a defect in Spec Surgeon, never the file's fault;
@@ -273,7 +273,7 @@ def classify(exc: BaseException, stage: str, data: Optional[bytes] = None) -> Di
     code = getattr(exc, "code", None)
     if isinstance(code, str) and code:
         kind = "refusal"
-        if code == "unsupported-format":
+        if code in ("unsupported-format", "xml-dtd"):
             kind = "unreadable"
         elif code == "internal":                       # an op's apply-time cross-check disagreed with its own plan
             kind = "internal-error"

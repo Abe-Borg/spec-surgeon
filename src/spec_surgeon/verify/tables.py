@@ -43,7 +43,12 @@ def table_md5(path: str) -> Tuple[bytes, str]:
 
 
 def _xml(data: bytes):
-    return etree.fromstring(data, etree.XMLParser(resolve_entities=False, huge_tree=True))
+    root = etree.fromstring(data, etree.XMLParser(resolve_entities=False, huge_tree=True))
+    info = root.getroottree().docinfo
+    if info.internalDTD is not None or info.externalDTD is not None or info.doctype:
+        raise ValueError("a workbook part carries an XML document type declaration (<!DOCTYPE …>): an entity it "
+                         "declares would be left out of the text read")
+    return root
 
 
 def _string_item(el) -> str:

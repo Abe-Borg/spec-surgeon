@@ -23,6 +23,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field, asdict
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
+from ..ooxml import MAX_REVISION_ID
+
 
 class JobException(Exception):
     """The op/job cannot proceed deterministically on this file. Carries a structured diagnosis so the
@@ -377,13 +379,21 @@ def merged_mode(fragments: Sequence[PlanFragment]) -> str:
 
 
 def assign_revision_ids(fragments: Sequence[PlanFragment]) -> List[str]:
-    """Give every fragment that writes revisions a disjoint id range (ids must be unique across all parts)."""
+    """Give every fragment that writes revisions a disjoint id range (ids must be unique across all parts), above every
+    annotation id the file uses (each fragment's ``rev_id_base``, from ``ooxml.max_revision_id``). A range that would
+    pass ``MAX_REVISION_ID`` is refused (``revision-ids``): Word reads a larger id as a negative number."""
     notes = []
     needing = [f for f in fragments if f.rev_ids_needed]
     if not needing:
         return notes
     base = max(f.rev_id_base for f in needing)
+    used = base - 1
     for f in needing:
+        last = base + f.rev_ids_needed - 1
+        if last > MAX_REVISION_ID:
+            raise JobException(f"{_label(f)} needs revision ids up to {last}, past {MAX_REVISION_ID}, the largest Word "
+                               f"reads: the file's tracked changes, bookmarks or comments already use ids up to {used}",
+                               "revision-ids", {"op": _label(f), "first_id": base, "last_id": last})
         f.transform_data["first_rev_id"] = base
         notes.append(f"{_label(f)}: revision ids {base}..{base + f.rev_ids_needed - 1}")
         base += f.rev_ids_needed

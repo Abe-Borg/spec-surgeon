@@ -5,7 +5,6 @@ from __future__ import annotations
 
 import copy
 import datetime as _dt
-import posixpath
 import re
 from dataclasses import dataclass
 from typing import Dict, Iterable, List, Optional, Tuple
@@ -183,36 +182,52 @@ def paragraphs(root: etree._Element) -> List[etree._Element]:
 
 # ---- revision bookkeeping ----------------------------------------------------------------------
 
-def max_revision_id(pkg: DocxPackage) -> int:
-    """The highest numeric w:id on any element of any XML part: new revision ids count up from it.
+# Word reads a w:id as a signed 32-bit integer: no new revision id may pass it (ops.base.assign_revision_ids refuses).
+MAX_REVISION_ID = 2 ** 31 - 1
 
-    w:id values must be unique across the document, and no list of revision tags stays complete (one that left out
-    w:tblGridChange and w:tblPrExChange handed out an id the file already carried, and V4 set the file aside). So
-    every w:id counts, in every XML part (styles and numbering can carry property changes too): a bookmark's, a
-    comment's or a note's id only raises the seed, which is harmless. A part that is not well-formed XML is skipped
-    (it is kept byte for byte); a text part that is not still raises, as everywhere else."""
+# Elements whose w:id is an annotation id, one space in which a new revision's id must be new: every revision element
+# (ECMA-376 §17.13.5, range markers included), bookmarks, comment ranges, references and the comments themselves,
+# permission ranges, and Word 2010's co-authoring conflict markup (w14:conflictIns/conflictDel and its custom-XML
+# conflict ranges, which carry a w:id too: schemas/microsoft/wml-2010.xsd). Not here: a footnote's or endnote's id
+# (the note's number, which w:footnoteReference names), a content control's w:id (an element, not this attribute) and
+# a w:div's id in webSettings.xml, which a page pasted from the web carries at random values near 2**31.
+ANNOTATION_ID_TAGS = frozenset([W + n for n in (
+    "ins", "del", "moveFrom", "moveTo", "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
+    "customXmlInsRangeStart", "customXmlInsRangeEnd", "customXmlDelRangeStart", "customXmlDelRangeEnd",
+    "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
+    "cellIns", "cellDel", "cellMerge", "rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "tblPrExChange",
+    "tblGridChange", "trPrChange", "tcPrChange", "numberingChange",
+    "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "commentReference", "comment",
+    "permStart", "permEnd")] + ["{%s}%s" % (NS["w14"], n) for n in (
+    "conflictIns", "conflictDel", "customXmlConflictInsRangeStart", "customXmlConflictInsRangeEnd",
+    "customXmlConflictDelRangeStart", "customXmlConflictDelRangeEnd")])
+_WHOLE_NUMBER = re.compile(r"[+-]?[0-9]+")
+
+
+def max_revision_id(pkg: DocxPackage) -> int:
+    """The highest annotation id (``ANNOTATION_ID_TAGS``) in the package's WordprocessingML parts
+    (``DocxPackage.wordprocessing_xml_parts``: the text parts, and the styles and numbering parts too, which can carry
+    property revisions of their own), 0 when there is none: new revision ids start above it. A reviewer's ids can be
+    anywhere, so every part is read, not only the ones a revision is usually in. The list is every element the schemas
+    give an annotation id (tests/test_package_hardening.py derives it from the vendored XSDs), not every w:id: a
+    w:fitText's, a w:eastAsianLayout's or a web-settings w:div's id is no annotation's, and Word writes those at large
+    values a seed must not climb to. Only an id that reads as a whole number counts: a permission range may be named
+    instead, which takes no number a revision could be given. A part that is not well-formed XML is skipped (it is kept
+    byte for byte); a text part that is not still raises, as everywhere else."""
     text = set(pkg.text_parts())
-    defaults, overrides = pkg.content_types()
     mx = 0
-    for name in pkg.member_names:
-        media_type = overrides.get(name, defaults.get(posixpath.splitext(name)[1].lstrip(".").lower())) or ""
-        if name not in text and not name.endswith(".xml") and not media_type.endswith(("+xml", "/xml")):
-            continue
+    for part in pkg.wordprocessing_xml_parts():
         try:
-            root = pkg.xml(name)
+            root = pkg.xml(part)
         except etree.XMLSyntaxError:
-            if name in text:
+            if part in text:
                 raise
             continue
         for el in root.iter():
-            if not isinstance(el.tag, str):
-                continue
-            v = el.get(W + "id")
-            if v is not None:
-                try:
+            if el.tag in ANNOTATION_ID_TAGS:
+                v = (el.get(W + "id") or "").strip()
+                if _WHOLE_NUMBER.fullmatch(v):
                     mx = max(mx, int(v))
-                except ValueError:
-                    pass
     return mx
 
 

@@ -51,11 +51,29 @@ class UnsupportedFormat(ValueError):
         super().__init__(f"{what}: this is a Strict Open XML document (ISO/IEC 29500 Strict), which Spec Surgeon "
                          f"does not read. In Word, File → Save As → 'Word Document (*.docx)' (not 'Strict Open XML "
                          f"Document'), then run again.")
+
+
+class XmlDoctype(ValueError):
+    """A part carries an XML document type declaration (``<!DOCTYPE …>``), which Word never writes. The parser leaves
+    an entity unresolved (``resolve_entities=False``, never loading anything external), so the part's text as read
+    would silently lack every entity's text, on the transform side and the verifier's alike: refused, not guessed at.
+    ``code`` is what a batch records for the file; the message is one sentence (triage gives it as its reason)."""
+    code = "xml-dtd"
+
+    def __init__(self, part: str):
+        self.part = part
+        self.details = {"part": part}
+        super().__init__(f"{part} carries an XML document type declaration (<!DOCTYPE …>), which Word never writes, so "
+                         f"its text cannot be read exactly; open the file in Word and save it again as .docx, or get "
+                         f"it again from where it came from.")
+
+
 HEADER_REL = REL_TYPE_BASE + "header"
 FOOTER_REL = REL_TYPE_BASE + "footer"
 FOOTNOTES_REL = REL_TYPE_BASE + "footnotes"
 ENDNOTES_REL = REL_TYPE_BASE + "endnotes"
 COMMENTS_REL = REL_TYPE_BASE + "comments"
+SETTINGS_REL = REL_TYPE_BASE + "settings"
 # relationship types whose targets are binary media (what unreferenced_media() may report)
 MEDIA_REL_TYPES = {REL_TYPE_BASE + t for t in ("image", "audio", "video", "media")} | {
     "http://schemas.microsoft.com/office/2007/relationships/hdphoto",
@@ -63,10 +81,20 @@ MEDIA_REL_TYPES = {REL_TYPE_BASE + t for t in ("image", "audio", "video", "media
 }
 
 
-def parse_xml(data: bytes) -> etree._Element:
+def parse_xml(data: bytes, part: str = "an XML part") -> etree._Element:
     # remove_blank_text=False: whitespace is content in OOXML; never let the parser touch it.
     parser = etree.XMLParser(remove_blank_text=False, resolve_entities=False, huge_tree=True)
-    return etree.fromstring(data, parser)
+    root = etree.fromstring(data, parser)
+    if has_doctype(root):
+        raise XmlDoctype(part)
+    return root
+
+
+def has_doctype(root: etree._Element) -> bool:
+    """Whether the parsed document carries a document type declaration — read off the parser's own record, so the
+    answer does not depend on the part's encoding (a UTF-16 part spells ``<!DOCTYPE`` with interleaved zero bytes)."""
+    info = root.getroottree().docinfo
+    return info.internalDTD is not None or info.externalDTD is not None or bool(info.doctype)
 
 
 def serialize_xml(root: etree._Element) -> bytes:
@@ -172,7 +200,7 @@ class DocxPackage:
         return part in self._added or (part in self._source_set and part not in self._removed)
 
     def xml(self, part: str) -> etree._Element:
-        return parse_xml(self.read(part))
+        return parse_xml(self.read(part), part)
 
     def hashes(self) -> Dict[str, str]:
         return {n: md5(self.read(n)) for n in self.member_names}
@@ -328,7 +356,7 @@ class DocxPackage:
                 continue
             data = self.read_source(rp) if source else self.read(rp)
             base = posixpath.dirname(owner)
-            for rel in parse_xml(data).findall(REL + "Relationship"):
+            for rel in parse_xml(data, rp).findall(REL + "Relationship"):
                 mode = rel.get("TargetMode", "Internal")
                 target = rel.get("Target")
                 resolved = None
@@ -402,6 +430,47 @@ class DocxPackage:
                     parts.append(r.resolved)
         return parts
 
+    def wordprocessing_xml_parts(self) -> List[str]:
+        """Every current member that holds the document's own XML, in member order: the text parts wherever their
+        relationships put them, and every XML member the main part relates (wherever its relationship puts it) or
+        that lies in the main part's folder (usually ``word/``, subfolders included) — styles, numbering, settings,
+        theme, the glossary, the comment side parts. A member is XML by its declared content type (its Override, part
+        names compared case-insensitively as OPC compares them, else its extension's Default) ending in ``xml``, or,
+        with none declared, by a ``.xml`` extension in any case. Relationship parts are not included, nor pictures:
+        an SVG (``image/svg+xml``) is XML and often carries a DOCTYPE."""
+        defaults, overrides = self.content_types() if self.has(CT_PART) else ({}, {})
+        folded = {name.casefold(): ctype for name, ctype in overrides.items()}
+        main = self.main_part()
+        folder = posixpath.dirname(main)
+        prefix = folder + "/" if folder else ""
+        text = set(self.text_parts())
+        related = {r.resolved for r in self.rels(main).values() if r.target_mode == "Internal" and r.resolved}
+        out = []
+        for name in self.member_names:
+            if name in text:
+                out.append(name)
+                continue
+            if posixpath.basename(posixpath.dirname(name)) == "_rels" or not (name in related or name.startswith(prefix)):
+                continue
+            ctype = folded.get(name.casefold()) or defaults.get(posixpath.splitext(name)[1].lstrip(".").lower())
+            if ctype is None:
+                xml = name.lower().endswith(".xml")
+            else:
+                xml = ctype.lower().endswith("xml") and not ctype.lower().startswith("image/")
+            if xml:
+                out.append(name)
+        return out
+
+    def check_no_doctype(self) -> None:
+        """Raise ``XmlDoctype`` for the first WordprocessingML part (``wordprocessing_xml_parts``) that carries a
+        document type declaration — at attach time, before any request reads the part (``parse_xml`` refuses it then
+        anyway). Only a part whose bytes spell ``<!DOCTYPE`` in an ASCII-compatible or UTF-16 encoding is parsed, and
+        the parser decides; the others cannot hold one in an encoding Word reads."""
+        marks = tuple("<!DOCTYPE".encode(e) for e in ("ascii", "utf-16-le", "utf-16-be"))
+        for part in self.wordprocessing_xml_parts():
+            if any(m in self.read(part) for m in marks):
+                self.xml(part)
+
     def parts_by_kind(self) -> Dict[str, List[str]]:
         """{'document': [...], 'headers': [...], 'footers': [...], 'footnotes': [...], 'endnotes': [...],
         'comments': [...]} — resolved via rels, never by file name."""
@@ -464,10 +533,20 @@ class DocxPackage:
             infos.append(info)
         return infos
 
+    def settings_part(self) -> Optional[str]:
+        """The document settings part, found as Word finds it: through the main part's relationships, never by its
+        usual name. None when the main part relates none (a stray ``word/settings.xml`` it does not relate is not
+        its settings, and Word reads nothing from it)."""
+        for part in self.parts_of_type(SETTINGS_REL, self.main_part()):
+            if self.has(part):
+                return part
+        return None
+
     def settings_flag(self, name: str) -> bool:
-        if not self.has("word/settings.xml"):
+        part = self.settings_part()
+        if part is None:
             return False
-        root = self.xml("word/settings.xml")
+        root = self.xml(part)
         el = root.find(W + name)
         if el is None:
             return False
