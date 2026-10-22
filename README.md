@@ -268,8 +268,8 @@ recorded for the requests that follow.
   when the file opens).
 - Header/footer templating pins the properties it models; conditional table-style formatting, east-Asian and
   complex-script fonts and sizes are not modelled. A toggle set at more than one style level is refused.
-- Custom transforms are plain formatting on text parts and the styles part, write edited copies only, and run in a
-  sandbox that is not an operating-system security boundary.
+- Custom transforms are plain formatting on text parts, the styles part and (for list labels only) the numbering
+  part, write edited copies only, and run in a sandbox that is not an operating-system security boundary.
 - The installer is unsigned: the checksum checks prove the download is the file the release lists, not who published it.
 - Costs shown for Claude calls are estimates from a built-in price table.
 

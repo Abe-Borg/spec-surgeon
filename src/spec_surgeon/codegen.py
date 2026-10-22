@@ -371,8 +371,9 @@ def _run_in_sandbox(source, docx, select, params, workdir, timeout, goal_contrac
 def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = None, *, goal_contract=None) -> List[str]:
     """Check a generated plan before the suite runs; governed methods also face the independent final-goal check.
     Plain formatting (``allowed_parts``): the source's
-    text parts and its styles part — the parts V10's residual identity covers; any other part (numbering.xml, docProps,
-    a chart…) could carry a change no verified assertion checks, so it is refused outright."""
+    text parts and its styles part — the parts V10's residual identity covers — and the numbering part a
+    ``numbering_labels`` assertion names (V10 proves that member whole); any other part (docProps, a chart…) could
+    carry a change no verified assertion checks, so it is refused outright."""
     probs = []
     if goal_contract is not None:
         from .goals import validate_contract
@@ -395,8 +396,11 @@ def hard_limits(plan: Dict[str, Any], allowed_parts: Optional[Sequence[str]] = N
     if any(p.endswith("settings.xml") for p in plan.get("intended_parts") or []):
         probs.append("generated ops may not edit settings.xml")
     if allowed_parts is not None:
-        outside = sorted({p for p in list(plan.get("intended_parts") or []) + sorted(removed)
-                          if p not in set(allowed_parts)})
+        # list labels (A3): the numbering part a numbering_labels assertion names, which V10 proves whole — that it is
+        # the document's numbering part included
+        allowed = set(allowed_parts) | {a.get("numbering_part") for a in plan.get("property_assertions") or []
+                                         if a.get("kind") == "numbering_labels" and a.get("numbering_part")}
+        outside = sorted({p for p in list(plan.get("intended_parts") or []) + sorted(removed) if p not in allowed})
         if outside:
             probs.append(f"generated ops may change only the document's text parts and its styles part — no verified "
                          f"assertion kind covers {outside}")

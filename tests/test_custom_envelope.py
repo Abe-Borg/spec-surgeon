@@ -14,11 +14,14 @@ from pathlib import Path
 import pytest
 from docx import Document
 
-from make_fixtures import build
+from lxml import etree
+
+from make_fixtures import build, build_numbering
 from spec_surgeon import codegen
 from spec_surgeon.catalog import CUSTOM_TRANSFORM_LIMITS, op_catalog
-from spec_surgeon.codegen import check_source, trial
+from spec_surgeon.codegen import check_source, hard_limits, trial
 from spec_surgeon.ops import get_op
+from spec_surgeon.package import W, DocxPackage
 from spec_surgeon.verify import props as vprops
 
 HIGHLIGHT_OP = '''
@@ -419,3 +422,189 @@ def test_a_semantic_selector_is_re_derived_by_the_kind_not_trusted(schedule, tmp
     wrong = SHADE_OP.replace('"rows": {"index_range": [r, r]}', '"rows": {"text_regex": "Permit"}')
     t = trial(wrong, schedule, {}, {"fill": "D9D9D9"}, tmp_path / "sb2")
     assert not t.passed and any(p.startswith("V10 FAIL") for p in t.problems), t.problems
+
+
+# ---- A3 — list label formatting: numbering_labels, the levels named -------------------------------------------------
+
+LABEL_OP = '''
+from __future__ import annotations
+from lxml import etree
+from spec_surgeon.ops.base import Op, JobException
+from spec_surgeon.package import W
+
+NUMBERING = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering"
+
+
+class OutlineLabelsInArial(Op):
+    name = "outline_labels_in_arial"
+    mode = "formatting"
+    description = "Show the outline list's numbers (the list whose first level reads PART) in Arial at 10 points."
+    params_schema = {"type": "object", "properties": {"font": {"type": "string"}, "size": {"type": "number"}}}
+    select_schema = {}
+
+    def plan(self, pkg, select, params):
+        font, size = params.get("font", "Arial"), params.get("size", 10)
+        main = pkg.main_part()
+        part = next((r.resolved for r in pkg.rels(main).values() if r.type == NUMBERING), None)
+        if part is None:
+            raise JobException("the document has no lists", "not-found")
+        frag = self.fragment(select, params)
+        levels = []
+        for an in pkg.xml(part).findall(W + "abstractNum"):
+            lvls = an.findall(W + "lvl")
+            first = next((l for l in lvls if l.get(W + "ilvl") == "0"), None)
+            text = first.find(W + "lvlText") if first is not None else None
+            if text is None or not (text.get(W + "val") or "").startswith("PART"):
+                continue
+            for l in lvls:
+                if l.find(W + "lvlPicBulletId") is not None:
+                    raise JobException("a picture bullet", "structure")
+                levels.append({"abstractNum": int(an.get(W + "abstractNumId")), "ilvl": int(l.get(W + "ilvl")),
+                               "set": {"fonts": {"ascii": font, "hAnsi": font}, "size": size}})
+        if not levels:
+            raise JobException("no outline list", "not-found")
+        frag.property_assertions.append({"kind": "numbering_labels", "numbering_part": part, "levels": levels,
+                                         "expected_levels": len(levels)})
+        frag.intended_parts = [part]
+        frag.touches.append((part, "*", "lvl"))
+        frag.transform_data = {"part": part, "levels": levels, "font": font, "half": str(int(size * 2))}
+        frag.geometry_reference = "none"
+        frag.geometry_reason = "a label in another font and size can move its text"
+        return frag
+
+    def apply(self, pkg, frag):
+        td = frag.transform_data
+        root = pkg.xml(td["part"])
+        for lv in td["levels"]:
+            an = next(a for a in root.findall(W + "abstractNum") if a.get(W + "abstractNumId") == str(lv["abstractNum"]))
+            lvl = next(l for l in an.findall(W + "lvl") if l.get(W + "ilvl") == str(lv["ilvl"]))
+            rpr = lvl.find(W + "rPr")
+            if rpr is None:
+                rpr = etree.SubElement(lvl, W + "rPr")
+            rf = rpr.find(W + "rFonts")
+            if rf is None:
+                rf = etree.SubElement(rpr, W + "rFonts")
+            for slot, theme in (("ascii", "asciiTheme"), ("hAnsi", "hAnsiTheme")):
+                rf.set(W + slot, td["font"])
+                rf.attrib.pop(W + theme, None)
+            for n in ("sz", "szCs"):
+                for old in rpr.findall(W + n):
+                    rpr.remove(old)
+                etree.SubElement(rpr, W + n).set(W + "val", td["half"])
+        pkg.write_xml(td["part"], root)
+'''
+
+LABEL_WRITE = '        pkg.write_xml(td["part"], root)'
+
+
+def _also(lines: str) -> str:
+    return LABEL_OP.replace(LABEL_WRITE, lines + "\n" + LABEL_WRITE)
+
+
+OUTLINE = '        an = next(a for a in root.findall(W + "abstractNum") if a.get(W + "abstractNumId") == "10")\n'
+LABEL_PLANTED = {
+    "a changed level text": _also(OUTLINE + '        an.findall(W + "lvl")[1].find(W + "lvlText").set(W + "val", "%1-%2")'),
+    "a changed start": _also(OUTLINE + '        an.findall(W + "lvl")[2].find(W + "start").set(W + "val", "2")'),
+    "a changed indent": _also(OUTLINE + '        an.findall(W + "lvl")[2].find(W + "pPr/" + W + "ind").set(W + "left", "1800")'),
+    "an unlisted level": _also(
+        '        bullet = next(a for a in root.findall(W + "abstractNum") if a.get(W + "abstractNumId") == "21")\n'
+        '        etree.SubElement(bullet.find(W + "lvl"), W + "rPr").append(etree.Element(W + "b"))'),
+    # the theme font left beside the name: Word still shows the theme font
+    "a theme font kept": LABEL_OP.replace("                rf.attrib.pop(W + theme, None)\n", ""),
+}
+
+
+def themed(docx: bytes) -> bytes:
+    """The outline list's first level with its own label rPr naming a theme font (Word shows that one)."""
+    pkg = DocxPackage(docx)
+    root = pkg.xml("word/numbering.xml")
+    an = next(a for a in root.findall(W + "abstractNum") if a.get(W + "abstractNumId") == "10")
+    rpr = etree.SubElement(an.findall(W + "lvl")[0], W + "rPr")
+    etree.SubElement(rpr, W + "rFonts", {W + "asciiTheme": "minorHAnsi", W + "hAnsiTheme": "minorHAnsi"})
+    pkg.write_xml("word/numbering.xml", root)
+    return pkg.output_bytes()
+
+
+@pytest.fixture
+def outline(tmp_path) -> Path:
+    f = tmp_path / "21 13 13 - WET-PIPE SPRINKLER SYSTEMS.docx"
+    f.write_bytes(themed(build_numbering()))
+    return f
+
+
+def label_props(docx: bytes, abstract: str = "10"):
+    root = DocxPackage(docx).xml("word/numbering.xml")
+    an = next(a for a in root.findall(W + "abstractNum") if a.get(W + "abstractNumId") == abstract)
+    out = []
+    for lvl in an.findall(W + "lvl"):
+        rf, sz = lvl.find(f"{W}rPr/{W}rFonts"), lvl.find(f"{W}rPr/{W}sz")
+        out.append((rf.get(W + "ascii") if rf is not None else None, rf.get(W + "asciiTheme") if rf is not None else None,
+                    sz.get(W + "val") if sz is not None else None))
+    return out
+
+
+def test_a_custom_method_formats_the_list_labels_it_picks(outline, tmp_path):
+    assert check_source(LABEL_OP) == []
+    before = outline.read_bytes()
+    t = trial(LABEL_OP, outline, {}, {"font": "Arial", "size": 10}, tmp_path / "sb")
+    assert t.passed, t.problems
+    assert "numbering_labels" in t.record.get("V10").summary
+    out = Path(t.output).read_bytes()
+    assert label_props(out) == [("Arial", None, "20")] * 5            # the theme font cleared on level 0
+    assert label_props(out, "21") == label_props(before, "21")       # the bullet list untouched
+    assert outline.read_bytes() == before
+
+
+@pytest.mark.parametrize("case", sorted(LABEL_PLANTED))
+def test_a_custom_method_that_changes_the_numbers_fails_the_trial(case, outline, tmp_path):
+    t = trial(LABEL_PLANTED[case], outline, {}, {"font": "Arial", "size": 10}, tmp_path / "sb")
+    assert not t.passed, case
+    assert any(p.startswith("V10 FAIL") for p in t.problems), t.problems
+
+
+def test_the_numbering_part_may_change_only_behind_a_numbering_labels_assertion(outline):
+    from spec_surgeon.codegen import allowed_parts_of
+    allowed = allowed_parts_of(outline)
+    assert "word/numbering.xml" not in allowed
+    plan = {"diffs": [], "rev_delta": {}, "intended_parts": ["word/numbering.xml"], "property_assertions": []}
+    assert any("numbering.xml" in p for p in hard_limits(plan, allowed))
+    plan["property_assertions"] = [{"kind": "numbering_labels", "numbering_part": "word/numbering.xml"}]
+    assert hard_limits(plan, allowed) == []
+    plan["intended_parts"].append("docProps/core.xml")                 # the assertion opens no other part
+    assert any("docProps/core.xml" in p for p in hard_limits(plan, allowed))
+
+
+def _labels_plan(levels, part="word/numbering.xml"):
+    return {"property_assertions": [{"kind": "numbering_labels", "numbering_part": part, "levels": levels,
+                                     "expected_levels": len(levels)}]}
+
+
+@pytest.mark.parametrize("levels, words", [
+    ([{"abstractNum": 10, "ilvl": 0, "set": {"size": 10}}] * 2, "named twice"),
+    ([{"abstractNum": 99, "ilvl": 0, "set": {"size": 10}}], "not uniquely defined"),
+    ([{"abstractNum": 10, "ilvl": 0, "set": {"lvlText": "x"}}], "bad set"),
+    ([{"abstractNum": 10, "ilvl": 0, "set": {"size": 10.3}}], "bad size"),
+    ([{"abstractNum": 10, "ilvl": 0, "num": 10, "set": {"size": 10}}], "bad level"),
+    ([{"abstractNum": 21, "ilvl": 0, "set": {"fonts": {"ascii": "Arial"}}}], "symbol font"),
+])
+def test_the_kind_says_what_the_method_must_refuse(levels, words, outline):
+    from spec_surgeon.verify import run_suite
+    src = outline.read_bytes()
+    pkg = DocxPackage(src)                                    # the bullet in a symbol font, for the last case
+    root = pkg.xml("word/numbering.xml")
+    bullet = next(a for a in root.findall(W + "abstractNum") if a.get(W + "abstractNumId") == "21")
+    etree.SubElement(etree.SubElement(bullet.find(W + "lvl"), W + "rPr"), W + "rFonts", {W + "ascii": "Symbol"})
+    pkg.write_xml("word/numbering.xml", root)
+    src = pkg.output_bytes()
+    plan = {"diffs": [], "rev_delta": {}, "intended_parts": [], "members_removed": [], "members_added": [],
+            **_labels_plan(levels)}
+    rec = run_suite(src, src, plan, "src.docx", "out.docx")
+    v10 = next(c for c in rec.checks if c.id == "V10")
+    assert v10.status == "FAIL" and "must refuse" in v10.summary + " ".join(v10.data.get("errors", [])), v10.summary
+    assert words in v10.summary + " ".join(v10.data.get("errors", []))
+
+
+def test_list_labels_are_a_custom_method_family_and_list_structure_is_not():
+    assert "numbering_labels" in CUSTOM_TRANSFORM_LIMITS["families"].values()
+    assert any("list structure" in c for c in CUSTOM_TRANSFORM_LIMITS["cannot"])
+    assert any("numbering part" in r for r in CUSTOM_TRANSFORM_LIMITS["rules"])
