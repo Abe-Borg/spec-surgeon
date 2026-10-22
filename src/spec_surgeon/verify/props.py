@@ -557,6 +557,9 @@ class Ctx:
         self.strip_doc_defaults = False
         self.added_styles: Set[str] = set()       # new styles a styles_added assertion accounted for
         self.deleted_src_blocks: Dict[str, Set[int]] = {}   # untracked deleted blocks a removal kind verified
+        # part → {deleted source block: indices (in its own iter()) of the range marks a removal kind expects to stay in
+        # its place}: the residual puts them there before it compares
+        self.kept_marks: Dict[str, Dict[int, List[int]]] = {}
         self.inserted_out_blocks: Dict[str, Set[int]] = {}  # inserted output blocks verified by inserted_paragraphs
         self.strip_style_ppr: Dict[str, Set[str]] = {}      # style id → pPr children a properties assertion checked
         # source block → output block of every paragraph an edit kind checked item by item (verify/edits.py): the
@@ -2654,11 +2657,12 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
         if bi < len(s.pars) and oi < len(o.pars) and o.pars[oi].getparent() is not None:
             o.pars[oi].getparent().replace(o.pars[oi], copy.deepcopy(s.pars[bi]))
     # Untracked deletions and independently checked inserted paragraphs are the
-    # remaining structural changes excluded from this comparison.
-    def remove_blocks(view, idxs):
-        els = [view.pars[i] for i in sorted(idxs) if i < len(view.pars)]
-        chosen = set(map(id, els))
-        for el in els:
+    # remaining structural changes excluded from this comparison. A deleted
+    # block leaves in its place the range marks a removal kind expects to stay.
+    def remove_blocks(view, idxs, stay):
+        found = [(i, view.pars[i]) for i in sorted(idxs) if i < len(view.pars)]
+        chosen = {id(el) for _, el in found}
+        for i, el in found:
             q, inside = el.getparent(), False
             while q is not None:
                 if id(q) in chosen:
@@ -2666,9 +2670,14 @@ def _residual_text_part(ctx: Ctx, part: str, errs: List[str]) -> None:
                     break
                 q = q.getparent()
             if not inside and el.getparent() is not None:
-                el.getparent().remove(el)
-    remove_blocks(s, del_src)
-    remove_blocks(o, ins_out)
+                parent, inner = el.getparent(), list(el.iter())
+                at = parent.index(el)
+                for k, j in enumerate(stay.get(i, ())):
+                    inner[j].tail = None
+                    parent.insert(at + k, inner[j])
+                parent.remove(el)
+    remove_blocks(s, del_src, ctx.kept_marks.get(part, {}))
+    remove_blocks(o, ins_out, {})
     for el in gone:
         if el.getparent() is not None:
             el.getparent().remove(el)

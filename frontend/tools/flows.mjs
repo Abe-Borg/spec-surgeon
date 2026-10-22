@@ -4,7 +4,7 @@
  * browser — the paths the screenshots do not show: a failed job, a pause
  * and its Continue, Stop now mid-job, typing ahead, a chip click, the
  * draft hold on the action button, the file-chooser fallback, a drop,
- * remove, no key → Settings, the top bar's help topics, About and its
+ * remove, no key → Settings, Settings' colour schemes, the top bar's help topics, About and its
  * update check, the update banner and the pill it leaves, start over, the
  * button's home in the conversation, the folding documents tray, and the
  * red X on a preview → the to-do list → the pass over it.
@@ -145,6 +145,35 @@ try {
   await page.keyboard.press("Escape");
   await page.waitForTimeout(500);
   check("the key pill reads Connected after saving", await page.getByText("Connected", { exact: true }).isVisible());
+
+  // 9b. Settings → Appearance: a scheme recolours the window at once, the server keeps it, a reload opens in it.
+  const bodyBg = () => page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+  const savedTheme = () => page.waitForResponse((r) => r.url().endsWith("/api/settings") && r.request().method() === "POST");
+  await page.getByRole("button", { name: "Settings" }).click();
+  const schemes = page.getByRole("radiogroup", { name: "Colour scheme" });
+  await schemes.getByRole("radio", { name: "Warm Clay" }).waitFor();
+  check(
+    "Appearance offers five schemes, Warm Clay chosen",
+    (await schemes.getByRole("radio").count()) === 5 &&
+      (await schemes.getByRole("radio", { name: "Warm Clay" }).getAttribute("aria-checked")) === "true",
+  );
+  await Promise.all([savedTheme(), schemes.getByRole("radio", { name: "Linen" }).click()]);
+  check("picking Linen recolours the window at once", (await bodyBg()) === "rgb(245, 241, 234)", await bodyBg());
+  check("…and marks it chosen", (await schemes.getByRole("radio", { name: "Linen" }).getAttribute("aria-checked")) === "true");
+  const kept = await (await fetch(`${BASE}/api/settings`, { headers: { "X-Spec-Surgeon-Token": TOKEN } })).json();
+  check("the server keeps the scheme", kept.theme === "linen", String(kept.theme));
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await page.getByText("Connected", { exact: true }).waitFor();
+  check(
+    "a reload opens in Linen",
+    (await page.evaluate(() => document.documentElement.dataset.theme)) === "linen" && (await bodyBg()) === "rgb(245, 241, 234)",
+    await bodyBg(),
+  );
+  await page.getByRole("button", { name: "Settings" }).click();
+  await Promise.all([savedTheme(), schemes.getByRole("radio", { name: "Warm Clay" }).click()]);
+  check("…and back to Warm Clay", (await bodyBg()) === "rgb(38, 38, 36)", await bodyBg());
+  await page.keyboard.press("Escape");
 
   // 10. The top bar's help topics: one dialog, a tab strip, Escape closes it.
   const topBar = page.locator("header nav[aria-label='Help']");

@@ -1,6 +1,6 @@
 """What the window remembers between sessions, and where the app keeps its own files.
 
-    %APPDATA%\\Spec Surgeon\\settings.json        folders, options, update preferences (this module)
+    %APPDATA%\\Spec Surgeon\\settings.json        folders, options, the colour scheme, update preferences (this module)
     %LOCALAPPDATA%\\Spec Surgeon\\updates\\        downloaded installers and install logs (``updater``)
     %LOCALAPPDATA%\\Spec Surgeon\\logs\\           the window's error log
 
@@ -9,10 +9,10 @@
 Plain JSON: the user can see and delete the file, and the updater reads it without the window. Never stored:
 the API key (Windows Credential Manager, ``credentials``), the safety-relevant switch (write back over the originals —
 off at every start), the conversation with Claude and any acknowledgement of Claude's visual check (both belong to one
-preview, never to the next start). Not settings at all (since the GUI rework after v0.4.1): the look (the page
-follows the system's light/dark setting) and the automatic update check (once a day, always;
-``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an older ``settings.json`` still
-holds for them (``theme``, ``native_style``, ``auto_check_updates``) are ignored.
+preview, never to the next start). ``theme`` is one of ``THEMES``, the window's colour schemes; any other value (a
+v0.4.x file's ``"dark"``) reads as the first. Not settings at all (since the GUI rework after v0.4.1): the automatic
+update check (once a day, always; ``SPEC_SURGEON_NO_UPDATE_CHECK`` is the only off switch). Keys an older
+``settings.json`` still holds for it (``native_style``, ``auto_check_updates``) are ignored.
 """
 from __future__ import annotations
 
@@ -94,6 +94,11 @@ def settings_path() -> Path:
     return config_dir() / SETTINGS_FILE
 
 
+# The window's colour schemes, the first the default: the page's own list is frontend/src/lib/theme.ts, the colours
+# frontend/src/index.css (tests/test_settings.py keeps the three in step).
+THEMES = ("clay", "blueprint", "graphite", "carbon", "linen")
+
+
 @dataclass
 class Settings:
     schema: int = 1
@@ -104,6 +109,7 @@ class Settings:
     request_draft: str = ""
     window_geometry: str = ""                     # hex of QWidget.saveGeometry()
     log_open: bool = False
+    theme: str = THEMES[0]                        # the window's colour scheme, one of THEMES
     last_update_check: float = 0.0                # epoch seconds of the last automatic attempt (success or not)
     skipped_version: str = ""
     pending_update: Dict[str, Any] = field(default_factory=dict)   # {"version", "log", "started"} while installing
@@ -121,6 +127,8 @@ def _coerce(name: str, value: Any, default: Any) -> Any:
         return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else default
     if isinstance(default, int):
         return value if isinstance(value, int) and not isinstance(value, bool) else default
+    if name == "theme":
+        return value if value in THEMES else default
     if isinstance(default, str):
         return value if isinstance(value, str) else default
     if name == "pending_update":

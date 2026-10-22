@@ -11,8 +11,10 @@ rPr belongs to a w:pPr (an equation's otherwise), under w:trPr a row's, under w:
 content. A row's insertion or deletion (built-in batch 6): accepting a deleted row or rejecting an inserted one drops
 the row (directly in its table; in a content control the op must refuse) and all it holds — a table all of whose own
 rows go, whole, unless that leaves its container without a closing paragraph or two tables side by side (the op must
-refuse) —, and what it holds is content that goes for the anchor checks; the other way round only the marker goes (and
-a w:trPr emptied by it). Chosen: author in the list (casefolded, whitespace collapsed) and wall-clock date in range (no readable date
+refuse) —, and what it holds is content that goes for the anchor checks; the rows that go may not take a vertical
+merge's first row (its text is there) and keep another of its rows (``tablerows.v_cuts``: the op must
+refuse); the other way round only the marker goes (and a w:trPr emptied by it).
+Chosen: author in the list (casefolded, whitespace collapsed) and wall-clock date in range (no readable date
 under a date filter: not chosen). A move piece takes the choice of the innermost open move range of its kind (scanned in
 document order, ranges paired by id); the ranges sharing a name and their pieces are chosen whole or the op must refuse.
 Accept keeps ins/moveTo content and drops del/moveFrom with theirs; reject the reverse, an unwrapped deletion's deleted
@@ -36,6 +38,8 @@ from .reader import W
 from .props import Ctx
 from .fields import v_fields
 from .markup import tree_difference
+from .tablerows import v_cuts
+from .tableselect import v_rows
 from .tablestructure import v_container_problem
 
 _WRAPS = {W + "ins": "ins", W + "del": "del", W + "moveFrom": "moveFrom", W + "moveTo": "moveTo"}
@@ -254,6 +258,14 @@ def _v_decide(root, part: str, action: str, chooses: Callable[[Any], Tuple[bool,
             d.refusals.append(f"{part}: a tracked row that goes sits in a content control")
             continue
         by_table.setdefault(tr.getparent(), []).append(tr)
+    for t, trs in by_table.items():
+        # a merged-down cell holds its text in its first row: that row may not go while a row the merge runs on in stays
+        going = set(trs)
+        cut = v_cuts(t, {r for r, tr in enumerate(v_rows(t)) if tr in going})
+        if cut:
+            d.refusals.append(f"{part}: the tracked rows that go would take the first row of a vertically merged cell "
+                              f"(it starts in row {cut[0]} and holds its text there) while the merge goes on in a row "
+                              f"that stays — the merged cell would lose its text")
     whole = [t for t, trs in by_table.items() if len(trs) == sum(1 for c in t if c.tag == W + "tr")]
     for container in {t.getparent() for t in whole}:
         if v_container_problem(container, {t for t in whole if t.getparent() is container}):
