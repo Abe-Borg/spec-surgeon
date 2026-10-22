@@ -34,3 +34,5 @@ Changes since v1.7.0.
 - Both pull-request test jobs cache pip downloads. The Windows one turns off Defender's real-time scanning on its
   throw-away runner; the installer job keeps Defender on, as users have it.
 - The worked-example schema test builds its validator once (16 s → 0.5 s).
+- CI's `npm ci` skips npm's audit (`--no-audit`): its retiring endpoint held the page build for up to five minutes
+  on every job.

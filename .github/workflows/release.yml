@@ -53,8 +53,10 @@ jobs:
           python -m pip install -e ".[dev,agent,gui]" build twine jsonschema
       - name: Build the window's page
         working-directory: frontend
+        # --no-audit: npm ci otherwise ends by asking npm's retiring audit endpoint, which has taken up to npm's
+        # 5-minute fetch timeout to answer; the build needs no audit.
         run: |
-          npm ci
+          npm ci --no-audit --no-fund
           npm run build
       - name: Check the committed page is the one the source builds
         # The wheel ships the built page from src/spec_surgeon/web/static, so it is committed. When this step fails,
