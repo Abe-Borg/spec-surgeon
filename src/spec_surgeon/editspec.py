@@ -473,6 +473,8 @@ def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] 
         frags.append(frag)
         if trace:
             trace("plan", i, o["op"], "done", frag)
+    from .ops.replace_text import flag_left_elsewhere
+    flag_left_elsewhere(spec["ops"], frags)    # where the words a replacement changes remain (C3; a flag only)
     plan = merge_fragments(frags, job="edit-spec", params={"request": spec["request"], "summary": spec["summary"]})
     if plan.mode != spec["mode"]:
         raise JobException(f"the spec says mode {spec['mode']!r} but its ops make it {plan.mode!r} "

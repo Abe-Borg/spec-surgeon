@@ -30,6 +30,11 @@ Grammar implemented (all from the paid-for lessons):
   definition (``textedit.text_children`` / ``place_text``; the verifier's ``verify/edits.py`` with ``breaks``). They are
   no block text: V2's after-text leaves them out, and the block's structural counts after (V3) are declared. Any other
   control character is refused (``bad-params``).
+* Wording left elsewhere (docs/PLAN-2026-10-22-batch-consistency.md C3): the plan records every place ``find`` (the
+  same matching) also occurs in the file and this op does not edit — a part kind outside the scope, a paragraph the
+  selection leaves out, an occurrence after the first — and ``flag_left_elsewhere`` flags those no ``replace_text`` of
+  the spec edits ("also occurs in the body (1×)"). A refusal for want of ``find`` in the scope says where it occurs
+  instead. Flags only: nothing is predicted from them.
 """
 from __future__ import annotations
 
@@ -47,7 +52,7 @@ from ..ooxml import (FULL_TEXT_TAGS, RevisionStamp, XML_SPACE, ancestor, block_s
                      file_uses_date_utc, flexible_regex_from_literal, max_revision_id, merge_adjacent_runs, paragraphs,
                      split_run_at_text, to_del_text)
 from . import prose, register
-from .base import BlockDiff, JobException, Op, PlanFragment
+from .base import LEFT_ELSEWHERE, BlockDiff, JobException, Op, PlanFragment
 from .selectors import StyleSheet, check_paragraph_selector, paragraph_selected
 from .textedit import TRANSPARENT, control_characters, place_text, placed_counts, shown_text, text_children
 
@@ -223,6 +228,64 @@ def _inside_text(find: str, inside: List[str]) -> str:
     shown = ", ".join(repr(w) for w in words[:3]) + (", …" if len(words) > 3 else "")
     return (f"{find!r} also occurs {len(inside)}× inside longer words ({shown}), not changed — whole_word false "
             f"changes those too")
+
+
+PLACES = {"document": "the body", "headers": "the headers", "footers": "the footers", "footnotes": "the footnotes",
+          "endnotes": "the endnotes", "comments": "the comments"}
+
+
+def _occurrences(pkg: DocxPackage, kinds: Dict[str, List[str]], scope: List[str], pattern, whole: bool,
+                 para_pred, sheet) -> List[list]:
+    """[part, paragraph, start, end, in a field, where] for every match of ``pattern`` in the file's text parts (whole
+    words when ``whole``), ``where`` naming the place in words: a part kind outside the scope ("the body"), a scope
+    paragraph the selection leaves out ("the footers, outside the selected paragraphs"), or a selected one ("the
+    footers, beyond the one changed" — what the op does not edit there is an occurrence after the first)."""
+    out: List[list] = []
+    for kind, label in PLACES.items():
+        for part in kinds.get(kind, []):
+            pars = paragraphs(pkg.xml(part))
+            depths = field_start_depths(pars)
+            for pi, p in enumerate(pars):
+                live, segs = live_segments(p, depths[pi])
+                matches = find_all(pattern, live, segs, whole)
+                if not matches:
+                    continue
+                where = label
+                if kind in scope:
+                    selected = para_pred is None or paragraph_selected(para_pred, p, pi, full_text_map(p)[0], sheet,
+                                                                       all_pars=pars)
+                    where = f"{label}, {'beyond the one changed' if selected else 'outside the selected paragraphs'}"
+                for m in matches:
+                    seg = next((x for x in segs if x.start <= m.start() < x.end), None)
+                    out.append([part, pi, m.start(), m.end(), bool(seg and seg.in_field), where])
+    return out
+
+
+def _places_text(left: List[list]) -> str:
+    """ "the body (1×) and the headers (2×, 1 in a field's result)" """
+    counts: Dict[str, List[int]] = {}
+    for *_, in_field, where in left:
+        c = counts.setdefault(where, [0, 0])
+        c[0] += 1
+        c[1] += 1 if in_field else 0
+    bits = [f"{where} ({n}×" + (f", {k} in a field's result" if k else "") + ")" for where, (n, k) in counts.items()]
+    return ", ".join(bits[:-1]) + " and " + bits[-1] if len(bits) > 1 else (bits[0] if bits else "")
+
+
+def flag_left_elsewhere(ops: List[Dict[str, Any]], frags: List[PlanFragment]) -> None:
+    """Flag on each ``replace_text`` of a spec the places its ``find`` also occurs and no ``replace_text`` of the spec
+    edits (C3): two ops that rename the footer and the body leave nothing to say; one that renames only the footer
+    says the body still reads the old words. Called by ``editspec.plan_spec`` before the fragments merge."""
+    edited = [(e["part"], e["paragraph"], a, b) for o, f in zip(ops, frags) if o.get("op") == ReplaceText.name
+              for e in f.transform_data.get("edits", []) for a, b in e["live_offsets"]]
+    for o, f in zip(ops, frags):
+        if o.get("op") != ReplaceText.name:
+            continue
+        left = [x for x in f.transform_data.get("left_elsewhere") or []
+                if not any(x[0] == part and x[1] == pi and x[2] < b and a < x[3] for part, pi, a, b in edited)]
+        if left:
+            f.flags.append(f"{LEFT_ELSEWHERE}“{f.params.get('find')}” also occurs in {_places_text(left)}; this "
+                           f"change leaves it as it is.")
 
 
 @register
@@ -433,6 +496,9 @@ class ReplaceText(Op):
             if stop:
                 break
 
+        edited = {(e["part"], e["paragraph"], a, b) for e in edits for a, b in e["live_offsets"]}
+        left = [x for x in _occurrences(pkg, kinds, scope, pattern, whole, para_pred, sheet)
+                if (x[0], x[1], x[2], x[3]) not in edited]
         plan.property_assertions.append({
             "kind": "literal_replacement", "select": sel_dict, "params": dict(params),
             "author": author, "expected_edits": total,
@@ -446,8 +512,10 @@ class ReplaceText(Op):
                 plan.notes.append(f"{find!r} does not occur in scope {scope}; no-op.")
                 return plan
             raise JobException(f"{find!r} not found in scope {scope}"
-                               + (f" as a whole word; {_inside_text(find, inside)}" if inside else ""), "not-found",
-                               {"scope": scope, "parts_searched": parts, "inside_longer_words": len(inside)})
+                               + (f" as a whole word; {_inside_text(find, inside)}" if inside else "")
+                               + (f"; it occurs in {_places_text(left)}" if left else ""), "not-found",
+                               {"scope": scope, "parts_searched": parts, "inside_longer_words": len(inside),
+                                "occurs_elsewhere": len(left)})
 
         plan.transform_data = {
             "edits": edits,
@@ -455,6 +523,7 @@ class ReplaceText(Op):
             "use_date_utc": file_uses_date_utc(pkg),
             "first_rev_id": max_revision_id(pkg) + 1,     # re-based by assign_revision_ids when ops are merged
             "date_convention": params.get("date_convention", "word-local-z"),
+            "left_elsewhere": left,                       # for flag_left_elsewhere (a flag; apply never reads it)
         }
         plan.rev_id_base = plan.transform_data["first_rev_id"]
         plan.rev_ids_needed = (plan.rev_delta.get("ins", 0) + plan.rev_delta.get("del", 0)

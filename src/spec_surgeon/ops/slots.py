@@ -588,6 +588,30 @@ def fill_reads(pkg: DocxPackage, rule: Dict[str, Any]) -> List[Tuple[str, int]]:
     return list(dict.fromkeys(out))
 
 
+# The usual identity of a CSI spec, as fill rules — for slot_markers ['reference'] the same rules give the template
+# spec's own values (read_template shows them and where its headers/footers show them) and each spec's own; the
+# catalog shows them, and a flag compares a literal fill with the document's own value by them (C3).
+REFERENCE_FILLS = {
+    "SECTION_NUMBER": {"rule": "regex", "source": "document",
+                       "case_insensitive": True,
+                       "pattern": r"^SECTION\s+(\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?)\b"},
+    "SECTION_TITLE": {"rule": "first_match", "rules": [
+        {"rule": "paragraph_after", "source": "document", "case_insensitive": True,
+         "anchor_regex": r"^SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\s*$"},
+        {"rule": "regex", "source": "document", "case_insensitive": True,
+         "pattern": r"^SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\s*[-–—:]\s*(.+)$"}]},
+}
+
+
+def literal_values(rule: Dict[str, Any]) -> List[str]:
+    """The user's words a fill rule can place: its literal's value, or each literal's of a first_match chain."""
+    if not isinstance(rule, dict):
+        return []
+    if rule.get("rule") == "literal":
+        return [rule.get("value")]
+    return [v for r in rule.get("rules") or [] for v in literal_values(r)] if isinstance(rule.get("rules"), list) else []
+
+
 def rule_uses_literal(rule: Dict[str, Any]) -> bool:
     if not isinstance(rule, dict):
         return False

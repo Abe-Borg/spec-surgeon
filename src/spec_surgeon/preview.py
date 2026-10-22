@@ -46,7 +46,7 @@ from . import diagnostics as diag
 from .editspec import apply_spec, plan_spec
 from .fingerprint import fingerprint
 from .package import DocxPackage
-from .planner import BatchPlan, plan_batch
+from .planner import BatchPlan, left_elsewhere_warnings, plan_batch
 
 
 def key_templates(key: Any) -> List[Path]:
@@ -556,6 +556,7 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
         bp.spec, bp.skipped = spec, [str(f) for f in files if f not in planned]
         pv = Preview(out_dir=out_dir, batch_plan=bp, log_path=log.path, token=token, token_inputs=token_inputs,
                      input_snapshots=snapshots)
+        pv.warnings += left_elsewhere_warnings(bp)     # the same words where this plan does not change them (C3)
         input_changed = (changed_since_preview(spec, planned, token, token_inputs) is not None or
                          bool(changed_inputs(snapshots)) or
                          {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
@@ -724,6 +725,7 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
             bp.spec = chain["stages"][0]["spec"]
             pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path,
                               token=token, token_inputs=token_inputs, input_snapshots=snapshots)
+            pv.warnings += left_elsewhere_warnings(bp)     # stage 1's, on every file (C3)
             input_changed = (changed_since_preview(key, files, token, token_inputs) is not None or
                              bool(changed_inputs(snapshots)) or
                              {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
