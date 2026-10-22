@@ -23,7 +23,8 @@ paragraph — only when its resolved content is nothing but empty runs (w:rPr, w
 wrappers holding only those and Word's _GoBack bookmark (dropped, both ends), a paragraph follows it (block-level marks
 aside) and it has no section break. Property changes: accept drops them; reject restores rPrChange (the paragraph mark's
 own markers, then the snapshot) and pPrChange (the snapshot, then the w:rPr and w:sectPr); a w:rPr / w:pPr emptied by
-that, or by a marker going, goes.
+that, or by a marker going, goes (nothing else emptied goes: a w:tblPrEx left empty by its accepted w:tblPrExChange
+stays).
 """
 from __future__ import annotations
 
@@ -44,7 +45,7 @@ from .tablestructure import v_container_problem
 
 _WRAPS = {W + "ins": "ins", W + "del": "del", W + "moveFrom": "moveFrom", W + "moveTo": "moveTo"}
 _CHANGES = {W + t: t for t in ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange",
-                               "tblGridChange", "numberingChange")}
+                               "tblGridChange", "tblPrExChange", "numberingChange")}
 _CELLS = {W + t: t for t in ("cellIns", "cellDel", "cellMerge")}
 _ALL = {**_WRAPS, **_CHANGES, **_CELLS}
 _HIDING = {W + "del", W + "moveFrom"}

@@ -523,10 +523,13 @@ async function questionJob(res, userText) {
   view.warnings = [];
   view.blocking = false;
   view.action = { label: "", token: "", kind: "none" };
-  await s.emit({ type: "status", kind: "reading", text: "" });
+  // Two model calls, as the real server streams them: the first says what it will do and reads; the second (its
+  // `thinking` status starts it) writes the reply, and the first call's words are set aside as a step.
+  await s.emit({ type: "status", kind: "thinking", text: "Thinking…" });
+  await s.text("I'll read the documents and the template first.", 6);
   await s.emit({ type: "activity", text: "Reading the three documents and their headers and footers" });
   await s.emit({ type: "activity", text: "Reading the template's header and footer" });
-  await s.emit({ type: "status", kind: "thinking", text: "" });
+  await s.emit({ type: "status", kind: "thinking", text: "Thinking…" });
   for (const t of ["The body is Arial already; ", "the headers carry Times New Roman 9 pt. ", "Whether the change covers them is the user's call."]) {
     if (s.job.stop) break;
     await s.emit({ type: "thinking_delta", text: t });

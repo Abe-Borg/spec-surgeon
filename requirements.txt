@@ -16,4 +16,5 @@ anthropic>=1.13       # optional: the conversation in the window, visual check, 
 
 # Development / tests
 pytest>=8
+pytest-xdist>=3.5           # pytest -n auto: the suite on every core
 python-docx>=1.1

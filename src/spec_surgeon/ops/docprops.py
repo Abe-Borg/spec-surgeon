@@ -58,7 +58,6 @@ CP, DC, EP, CU, VT = ("{%s}" % n for n in (CP_NS, DC_NS, EP_NS, CU_NS, VT_NS))
 CORE_REL = "http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties"
 APP_REL = REL_TYPE_BASE + "extended-properties"
 CUSTOM_REL = REL_TYPE_BASE + "custom-properties"
-SETTINGS_REL = REL_TYPE_BASE + "settings"
 CUSTOM_MEMBER = "docProps/custom.xml"
 CUSTOM_CT = "application/vnd.openxmlformats-officedocument.custom-properties+xml"
 PACKAGE_RELS = "_rels/.rels"
@@ -130,9 +129,7 @@ def package_member(pkg: DocxPackage, rel_type: str) -> Optional[str]:
 
 
 def settings_member(pkg: DocxPackage) -> Optional[str]:
-    main = pkg.main_part()
-    found = [p for p in pkg.parts_of_type(SETTINGS_REL, main) if pkg.has(p)]
-    return found[0] if found else None
+    return pkg.settings_part()
 
 
 # ---- values ----------------------------------------------------------------------------------------------------------

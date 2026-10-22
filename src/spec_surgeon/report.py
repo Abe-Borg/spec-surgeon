@@ -206,6 +206,21 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "The file is saved in Word's 'Strict Open XML Document' format, which Spec Surgeon does not read. Open it in "
         "Word and Save As 'Word Document (*.docx)', then run again.",
     ),
+    "xml-dtd": (
+        "XML Document Type Declaration",
+        "A part of the file starts with an XML document type declaration (<!DOCTYPE …>), which Word never writes: the "
+        "file was made or changed by another program. Such a declaration can stand in for words the part does not "
+        "spell out, so its text cannot be read exactly, and the file was left untouched. The reason names the part. "
+        "Open the file in Word and save it again as a Word Document (*.docx), or get it again from where it came "
+        "from, then run again.",
+    ),
+    "revision-ids": (
+        "Revision Numbers Used Up",
+        "The file's tracked changes, bookmarks or comments already carry numbers so large that a new tracked change "
+        "would need one past the largest Word reads (2,147,483,647), so the tracked change was not written. The file "
+        "was left untouched. Accept or reject the pending tracked changes in Word and save the file again, or make "
+        "this change untracked.",
+    ),
     "chain-drift": (
         "Changed Between Two Stages of the Chain",
         "The file a stage was to read is no longer the one the stage before it verified (edited, synced or replaced "

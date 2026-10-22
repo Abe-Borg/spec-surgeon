@@ -732,7 +732,7 @@ EXPECT_SYNTAX = {
     "value": "an exact integer, or a range {'min': n} | {'max': n} | {'min': n, 'max': n} (non-negative, min ≤ max)",
     "rev_delta": "an object mapping revision kinds to the same value forms; kinds: ins, del, moveFrom, moveTo, "
                  "ins_mark, del_mark, moveFrom_mark, moveTo_mark, rPrChange, pPrChange, sectPrChange, tblPrChange, "
-                 "trPrChange, tcPrChange, tblGridChange, numberingChange, cellIns, cellDel, cellMerge",
+                 "trPrChange, tcPrChange, tblGridChange, tblPrExChange, numberingChange, cellIns, cellDel, cellMerge",
     "use": "use a range when the batch's files legitimately differ in how many places change (e.g. text_diffs "
            "{'min': 1}); a file whose plan falls outside the range is set aside with code 'expect', never edited",
 }

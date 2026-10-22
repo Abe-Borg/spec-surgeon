@@ -51,6 +51,24 @@ PACKAGE_PROPERTY_RELS = ("http://schemas.openxmlformats.org/package/2006/relatio
                          _REL_BASE + "extended-properties", _REL_BASE + "custom-properties")
 
 
+class VDoctype(ValueError):
+    """A part the verifier reads carries an XML document type declaration (``<!DOCTYPE …>``): an entity it declares is
+    left unresolved by this reader, so the text read would lack the entity's text — not a reading to judge a file by.
+    The verifier's own refusal, with the code a batch records (``xml-dtd``)."""
+    code = "xml-dtd"
+
+    def __init__(self, part: str):
+        self.part = part
+        self.details = {"part": part}
+        super().__init__(f"{part} carries an XML document type declaration (<!DOCTYPE …>), which Word never writes; "
+                         f"the verifier cannot read its text exactly")
+
+
+def _has_doctype(root: etree._Element) -> bool:
+    info = root.getroottree().docinfo
+    return info.internalDTD is not None or info.externalDTD is not None or bool(info.doctype)
+
+
 class VPackage:
     def __init__(self, data: bytes):
         self.data = data
@@ -106,7 +124,10 @@ class VPackage:
 
     def xml(self, name: str) -> etree._Element:
         parser = etree.XMLParser(remove_blank_text=False, resolve_entities=False, huge_tree=True)
-        return etree.fromstring(self.read(name), parser)
+        root = etree.fromstring(self.read(name), parser)
+        if _has_doctype(root):
+            raise VDoctype(name)
+        return root
 
     def _cached(self, key: tuple, fn):
         if key not in self._memo:
@@ -150,6 +171,37 @@ class VPackage:
                 if r["type"] == t and r["target"] in self.names and r["target"] not in parts:
                     parts.append(r["target"])
         return parts
+
+    def document_xml_parts(self) -> List[str]:
+        """The members holding the document's own XML, read independently of the transform: every text part (by its
+        relationship, whatever its name), and among the members the main part relates (wherever they lie) and those in
+        its folder, each one whose declared content type — the Override for its name (case-insensitive, as OPC
+        compares part names), else the Default for its extension — is an XML type and not a picture's
+        (``image/svg+xml``), or which, with no type declared, is named ``*.xml`` in any case. Relationship parts are
+        left out."""
+        defaults, overrides = self.content_types()
+        override_of = {name.lower(): ctype for name, ctype in overrides.items()}
+        main = self.main_part()
+        home = posixpath.dirname(main)
+        text = self.text_parts()
+        related = {r["target"] for r in self.rels_targets(main).values()}
+        found = []
+        for name in self.names:
+            if name in text:
+                found.append(name)
+                continue
+            folder = posixpath.dirname(name)
+            outside = home and folder != home and not folder.startswith(home + "/")
+            if (outside and name not in related) or posixpath.basename(folder) == "_rels":
+                continue
+            ctype = override_of.get(name.lower())
+            if ctype is None:
+                ctype = defaults.get(posixpath.splitext(name)[1][1:].lower())
+            if ctype is None and name.lower().endswith(".xml"):
+                found.append(name)
+            elif ctype is not None and ctype.lower().endswith("xml") and not ctype.lower().startswith("image/"):
+                found.append(name)
+        return found
 
     # ---- added for the NL editor's checks (V1 integrity, V10) — still independent of package.py ----
 

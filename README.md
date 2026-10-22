@@ -37,7 +37,7 @@ py -3 -m pip install -e .            # core: lxml, PyMuPDF 1.x (2.0 loads an AI 
 py -3 -m pip install -e ".[gui]"     # the window: FastAPI, uvicorn, pywebview (WebView2 on Windows) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
 py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests in the window
-py -3 -m pip install -e ".[dev]"     # pytest + python-docx (fixtures)
+py -3 -m pip install -e ".[dev]"     # pytest, pytest-xdist (pytest -n auto: every core) + python-docx (fixtures)
 ```
 
 or `py -3 -m pip install -r requirements.txt` for everything. Start the window with `spec-surgeon-gui` (or
@@ -71,8 +71,8 @@ The window is one conversation. On the left is the chat, with the one button abo
 are your documents (optionally with one template) and the before/after pages. The top bar, in the style of Build-a-Spec, carries the in-app guide —
 **How to use**, **Workflows**, **How it works** and **About** (the version, the model, the release notes, the license,
 **Check for updates** and **Open diagnostic logs**) — beside a line saying what the conversation works on ("3
-documents · 1 template · building on your copies"), the estimated spending, the connection, **Hide plan**, **New
-conversation** and Settings.
+documents · 1 template · building on your copies"), the estimated spending, the connection, **New conversation**
+and Settings.
 
 1. **Add Word documents.** Drop `.docx` files anywhere in the window, or use **Add Word documents**. Files can come
    from different folders, including files with the same name. Only the files you attach are edited; nothing is
@@ -81,13 +81,15 @@ conversation** and Settings.
    call) and lists it by its name. What it finds (typed numbers instead of automatic list numbering, no paragraph
    styles, text boxes in the headers or footers, an older compatibility mode, editing restrictions, pending tracked
    changes, comments, irregular spacing, an empty body) is not shown in the list. A file that does not open
-   as a Word package, or has no paragraph at all in its body, stays in the list greyed out with the reason and never
-   enters a plan. A `.docm`, `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`.
+   as a Word package, has a part with an XML document type declaration (which Word never writes), or has no
+   paragraph at all in its body, stays in the list greyed out with the reason and never enters a plan. A `.docm`,
+   `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`.
 3. **Optionally add a template.** One reference `.docx` for requests such as "Match the headers and fonts to this
    template. Keep our technical wording."
 4. **Describe the result.** Type what you want and press **Send** (Ctrl+Enter). Spec Surgeon inspects the documents,
    goes ahead on sensible defaults (and says what it assumed), asks at most three questions, each with the answer it
-   recommends, and prepares a plan — while you watch its words, its thinking summary and each step as they happen.
+   recommends, and prepares a plan — while you watch its words flow in as they are written, with one line above them
+   naming each step as it happens (the steps and its thinking summary fold under that line once the reply is written).
    A question comes as a card with buttons and short replies you can tap: click one, type its number, or answer in
    your own words. A choice that would put words into the documents shows those exact words; picking it approves
    exactly those words (a tapped reply never does). Changes that touch the same parts of a file — the template's
@@ -139,7 +141,8 @@ conversations and a clean start, recovery, resource use and verification limits.
 ## Without the window
 
 There is no command line. Developers and coding agents drive the engine from Python, and the test suite
-(`python -m pytest`) is how a change is checked; see [CLAUDE.md](CLAUDE.md). A batch from Python:
+(`python -m pytest -n auto`, one worker per core) is how a change is checked; see [CLAUDE.md](CLAUDE.md). A batch
+from Python:
 
 ```python
 from pathlib import Path
@@ -167,7 +170,7 @@ when someone asks "how do I know nothing else changed?"
 | **V1** Package whitelist | only the plan's intended parts changed; members removed or added exactly as predicted; member order kept; no new dangling relationship or content-type override |
 | **V2** Text preservation | per-paragraph text across every text part (body, headers, footers, footnotes, endnotes, comments) differs from the source exactly as the predicted diff list says, count and content |
 | **V3** Structural children | per-paragraph counts of tabs, breaks, hyphens, symbols, field characters, references and drawings identical, or changed exactly as declared |
-| **V4** Revision accounting | every kind of tracked change moves by its predicted delta (default 0); every new revision id unique |
+| **V4** Revision accounting | every kind of tracked change moves by its predicted delta (default 0); every new revision id unique, reusing no id of a bookmark, comment or revision anywhere in the source (styles and numbering included), and no larger than the largest Word reads (2,147,483,647) |
 | **V5a** Schema vs baseline | changed parts validated against the vendored ECMA-376 schemas; zero errors the source did not already have |
 | **V5b** Untracked-edit check | tracked edits: the reject-all view of the output equals the source character for character; formatting edits: no insertions or deletions added |
 | **V5c** Revision grammar | deleted text only inside deletions, id and author on every wrapper, `xml:space` on edge whitespace |
@@ -209,7 +212,8 @@ direct formatting; the proofing language; unused styles; numbering schemes, type
 numbering audit; table properties and table styles; page setup, columns, line numbers and section breaks inserted or
 removed; character hygiene; and review comments with wording you supply. A large change is an edit like any other:
 deleting a whole PART, or everything, is planned, previewed and verified the same way.
-Every operation also describes itself in one plain sentence; that sentence is what the window's plan shows.
+Every operation also describes itself in one plain sentence; those sentences are how each edited copy's changes are
+recorded for the requests that follow.
 
 ## Limits
 

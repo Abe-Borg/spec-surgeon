@@ -4,7 +4,8 @@ The moment a file is attached the app must know whether the engine can work with
 about it, before any plan and before any model call. ``triage_file`` answers with one of three states:
 
 * ``refused`` — the engine will not take the file: not a file, not a .docx (.docm, .doc), Word's ``~$`` lock file, a
-  package that does not open, or a body without a paragraph. ``reason`` is one sentence: the file and what to do.
+  package that does not open, a part with an XML ``<!DOCTYPE`` (``DocxPackage.check_no_doctype``), or a body without
+  a paragraph. ``reason`` is one sentence: the file and what to do.
 * ``note``    — the file opens and will be worked on; ``notes`` lists what the user should know, one plain sentence
   each (an empty body, protection, compatibility mode, Normal-only styling, typed numbers, fragmented runs, text-box
   headers, pending revisions, comments, irregular spacing). ``ok`` — none of the above.
@@ -23,7 +24,7 @@ from typing import Any, Dict, Iterable, List, Optional
 from lxml import etree
 
 from .fingerprint import fingerprint
-from .package import W, DocxPackage, UnsupportedFormat
+from .package import W, DocxPackage, UnsupportedFormat, XmlDoctype
 from .package_limits import ArchiveLimitError
 
 STATES = ("ok", "note", "refused")
@@ -70,14 +71,6 @@ class Triage:
 
 def _refusal(path: Path, reason: str, **kw) -> Triage:
     return Triage(path, "refused", reason=reason, **kw)
-
-
-def _settings(pkg: DocxPackage, main: str) -> Optional[etree._Element]:
-    """The settings part, resolved through the main part's relationships (never assumed); None when there is none."""
-    for rel in pkg.rels(main).values():
-        if rel.type.endswith("/settings") and rel.resolved and pkg.has(rel.resolved):
-            return pkg.xml(rel.resolved)
-    return None
 
 
 def _compat_mode(settings: Optional[etree._Element]) -> Optional[int]:
@@ -128,10 +121,14 @@ def triage_file(path) -> Triage:
         doc = pkg.xml(main)
         details = fingerprint(pkg)
         kinds = pkg.parts_by_kind()
-        settings = _settings(pkg, main)
+        settings_part = pkg.settings_part()           # through the main part's relationships, never assumed
+        settings = pkg.xml(settings_part) if settings_part else None
+        pkg.check_no_doctype()
     except UnsupportedFormat as exc:
         return _refusal(path, f"{name} is a Strict Open XML document, which cannot be opened as a Word package; in "
                               f"Word, save it again as 'Word Document (*.docx)'.", facts={"error": str(exc)})
+    except XmlDoctype as exc:                       # its message is one sentence: the part, and what to do
+        return _refusal(path, f"{name}: {exc}", facts={"error": str(exc), "part": exc.part})
     except ArchiveLimitError as exc:
         return _refusal(path, f"{name} is larger than this app opens ({exc}); split the document or save a smaller "
                               f"copy in Word.", facts={"error": str(exc)})

@@ -31,7 +31,7 @@ tab strip:
   links, **Check for updates** (it says "Checking for updates…" until the check answers, then the answer or the update
   with **Download and install**) and **Open diagnostic logs**. These replace the old Help menu and About box.
 
-On the right: the estimated spending of the conversation, the connection pill (it opens Settings), **Hide plan**,
+On the right: the estimated spending of the conversation, the connection pill (it opens Settings),
 **New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
 ("v1.7.0 available — install") from 1280 px wide; below that, About offers it.
 
@@ -66,7 +66,8 @@ to-do list is in use):
   headers, footers and page setup). The server still reports these as the attachment's `notes`; the window does
   not show them.
 - Refused, greyed out with the reason: the file cannot be opened as a Word package, is a Strict Open XML
-  document, is larger than the app opens, or has no paragraph at all in its body. The reason says what to do,
+  document, is larger than the app opens, has a part with an XML document type declaration (`<!DOCTYPE …>`, which
+  Word never writes; the reason names the part), or has no paragraph at all in its body. The reason says what to do,
   usually to open the file in Word and save it again as `.docx`. A refused file never enters a plan.
 
 A `.docm`, `.doc` or `~$` lock file is not attached; a notice asks for a `.docx`. A template that would be
@@ -104,9 +105,10 @@ copies; your originals stay as they are, and the assistant is told what was alre
 new. **Start over from the originals** (a reply you can tap, or type) returns to your files. A document attached
 after a run is an original beside the copies: the window says so, and it gets only the next change.
 
-While work runs you see it: the assistant's words as they are written, a summary of its thinking, one plain
-sentence per thing it is doing ("Reading your documents…", "Writing the plan…"), the pages as they render and
-the copies as they are written. **Stop now** keeps what landed.
+While work runs you see it: the assistant's words as they are written, flowing in at a reading pace; above them
+one line naming what it is doing ("Reading your documents…", "Writing the plan…"), which folds into a summary of
+its steps, the words it said along the way and its thinking once the reply is written; the pages as they render
+and the copies as they are written. **Stop now** keeps what landed.
 
 ## The plan
 

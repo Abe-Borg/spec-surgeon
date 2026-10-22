@@ -35,7 +35,7 @@ test("a busy view with no stream attached gets a working bubble, so the window s
   assert.equal(state.live?.status?.kind, "working");
 });
 
-test("job_started adds the user bubble, an empty live bubble, and clears the question", () => {
+test("job_started adds the user bubble, a live bubble with its working line, and clears the question", () => {
   const before = loaded({
     stage: "question",
     questions: ["Body only?"],
@@ -47,7 +47,8 @@ test("job_started adds the user bubble, an empty live bubble, and clears the que
   assert.equal(state.view.messages.length, 1);
   assert.equal(state.view.messages[0].role, "user");
   assert.equal(state.view.messages[0].text, "Everything");
-  assert.deepEqual(state.live, { text: "", thinking: "", status: null, activities: [] });
+  // The working line shows the moment the request is sent, before the first frame names the work.
+  assert.deepEqual(state.live, { text: "", thinking: "", status: { kind: "working", text: "" }, steps: [], call: 0 });
   assert.deepEqual(state.view.questions, []);
   assert.deepEqual(state.view.choices, []);
   assert.deepEqual(state.view.chips, []);
@@ -102,7 +103,7 @@ test("local user bubbles never reuse an id", () => {
   assert.equal(new Set(ids).size, 2);
 });
 
-test("status, activity, thinking and text deltas fill the live bubble; text clears the status", () => {
+test("status, activity, thinking and text deltas fill the live bubble; an activity names the work, text clears it", () => {
   let state = reduce(loaded(), { type: "job_started", userText: "go" });
   state = run(
     state,
@@ -112,8 +113,8 @@ test("status, activity, thinking and text deltas fill the live bubble; text clea
     { type: "thinking_delta", text: "The body " },
     { type: "thinking_delta", text: "is Arial." },
   );
-  assert.equal(state.live?.status?.kind, "reading");
-  assert.deepEqual(state.live?.activities, ["Reading the template's header"]);
+  assert.deepEqual(state.live?.status, { kind: "working", text: "Reading the template's header" });
+  assert.deepEqual(state.live?.steps, [{ kind: "activity", text: "Reading the template's header" }]);
   assert.equal(state.live?.thinking, "The body is Arial.");
   state = run(state, { type: "text_delta", text: "Here " }, { type: "text_delta", text: "we go." });
   assert.equal(state.live?.text, "Here we go.");
@@ -131,8 +132,8 @@ test("message finalizes the bubble: appended to the transcript, its aside kept, 
   );
   assert.equal(state.view.messages.length, 2);
   assert.equal(state.view.messages[1].id, "m2");
-  assert.deepEqual(state.asides.m2, { thinking: "hmm", activities: ["Reading the documents"] });
-  assert.deepEqual(state.live, { text: "", thinking: "", status: null, activities: [] });
+  assert.deepEqual(state.asides.m2, { thinking: "hmm", steps: [{ kind: "activity", text: "Reading the documents" }] });
+  assert.deepEqual(state.live, { text: "", thinking: "", status: null, steps: [], call: 0 });
 });
 
 test("a message with a known id replaces that message instead of appending", () => {
@@ -231,7 +232,7 @@ test("asides survive the authoritative view, keyed by message id", () => {
     { type: "message", message: message("m9", "assistant", "ok") },
     { type: "done", state: view({ messages: [message("m9", "assistant", "ok")] }) },
   );
-  assert.deepEqual(state.asides.m9?.activities, ["Reading"]);
+  assert.deepEqual(state.asides.m9?.steps, [{ kind: "activity", text: "Reading" }]);
 });
 
 test("an update patch moves only the update block", () => {
@@ -308,4 +309,43 @@ test("a view without the to-do fields (an older server) normalizes to an empty l
   assert.deepEqual(full.todo, [{ path: "/a", name: "a.docx" }]);
   assert.deepEqual(full.focus, ["/a"]);
   assert.equal(full.action.can_hold, true);
+});
+
+test("a new model call sets the last call's words aside as a step, where that call began", () => {
+  let state = reduce(loaded(), { type: "job_started", userText: "go" });
+  state = run(
+    state,
+    { type: "status", kind: "thinking", text: "Thinking…" },
+    { type: "thinking_delta", text: "Look at the template." },
+    { type: "text_delta", text: "I'll read the template first. " },
+    { type: "activity", text: "Reading the template" },
+    { type: "status", kind: "thinking", text: "Thinking…" },
+    { type: "thinking_delta", text: "The headers differ." },
+    { type: "text_delta", text: "The headers use Times New Roman." },
+  );
+  // Not the reply the turn ends with: a step before the tool it called, and the new call writes afresh.
+  assert.deepEqual(state.live?.steps, [
+    { kind: "said", text: "I'll read the template first." },
+    { kind: "activity", text: "Reading the template" },
+  ]);
+  assert.equal(state.live?.text, "The headers use Times New Roman.");
+  assert.equal(state.live?.thinking, "Look at the template.\n\nThe headers differ.");
+  // The finished reply keeps every step under its id.
+  state = run(state, { type: "message", message: message("m1", "assistant", "The headers use Times New Roman.") });
+  assert.equal(state.asides.m1?.steps.length, 2);
+});
+
+test("a call that wrote no words leaves no step, and a resent attempt keeps the steps before it", () => {
+  let state = run(
+    loaded(),
+    { type: "status", kind: "thinking" },
+    { type: "activity", text: "Reading the documents" },
+    { type: "status", kind: "thinking" },
+    { type: "text_delta", text: "I'll make the title bold and" },
+    { type: "status", kind: "retrying", text: "Sending again…" },
+  );
+  assert.deepEqual(state.live?.steps, [{ kind: "activity", text: "Reading the documents" }]);
+  assert.equal(state.live?.text, "");
+  state = run(state, { type: "text_delta", text: "I'll make the title bold." });
+  assert.equal(state.live?.text, "I'll make the title bold.");
 });

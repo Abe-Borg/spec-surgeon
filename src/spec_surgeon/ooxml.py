@@ -182,23 +182,52 @@ def paragraphs(root: etree._Element) -> List[etree._Element]:
 
 # ---- revision bookkeeping ----------------------------------------------------------------------
 
+# Word reads a w:id as a signed 32-bit integer: no new revision id may pass it (ops.base.assign_revision_ids refuses).
+MAX_REVISION_ID = 2 ** 31 - 1
+
+# Elements whose w:id is an annotation id, one space in which a new revision's id must be new: every revision element
+# (ECMA-376 §17.13.5, range markers included), bookmarks, comment ranges, references and the comments themselves,
+# permission ranges, and Word 2010's co-authoring conflict markup (w14:conflictIns/conflictDel and its custom-XML
+# conflict ranges, which carry a w:id too: schemas/microsoft/wml-2010.xsd). Not here: a footnote's or endnote's id
+# (the note's number, which w:footnoteReference names), a content control's w:id (an element, not this attribute) and
+# a w:div's id in webSettings.xml, which a page pasted from the web carries at random values near 2**31.
+ANNOTATION_ID_TAGS = frozenset([W + n for n in (
+    "ins", "del", "moveFrom", "moveTo", "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
+    "customXmlInsRangeStart", "customXmlInsRangeEnd", "customXmlDelRangeStart", "customXmlDelRangeEnd",
+    "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
+    "cellIns", "cellDel", "cellMerge", "rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "tblPrExChange",
+    "tblGridChange", "trPrChange", "tcPrChange", "numberingChange",
+    "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "commentReference", "comment",
+    "permStart", "permEnd")] + ["{%s}%s" % (NS["w14"], n) for n in (
+    "conflictIns", "conflictDel", "customXmlConflictInsRangeStart", "customXmlConflictInsRangeEnd",
+    "customXmlConflictDelRangeStart", "customXmlConflictDelRangeEnd")])
+_WHOLE_NUMBER = re.compile(r"[+-]?[0-9]+")
+
+
 def max_revision_id(pkg: DocxPackage) -> int:
-    """w:id values must be unique across every part that carries revisions: new ones start above the highest
-    numeric w:id on ANY element of every text part. Every w:id counts (bookmarks, comments and notes as well as every
-    kind of tracked change), which over-approximates harmlessly and cannot leave a kind out — a list of tags once
-    left out ``w:tblGridChange``, so new ids collided with a tracked column resize and V4 set the file aside."""
+    """The highest annotation id (``ANNOTATION_ID_TAGS``) in the package's WordprocessingML parts
+    (``DocxPackage.wordprocessing_xml_parts``: the text parts, and the styles and numbering parts too, which can carry
+    property revisions of their own), 0 when there is none: new revision ids start above it. A reviewer's ids can be
+    anywhere, so every part is read, not only the ones a revision is usually in. The list is every element the schemas
+    give an annotation id (tests/test_package_hardening.py derives it from the vendored XSDs), not every w:id: a
+    w:fitText's, a w:eastAsianLayout's or a web-settings w:div's id is no annotation's, and Word writes those at large
+    values a seed must not climb to. Only an id that reads as a whole number counts: a permission range may be named
+    instead, which takes no number a revision could be given. A part that is not well-formed XML is skipped (it is kept
+    byte for byte); a text part that is not still raises, as everywhere else."""
+    text = set(pkg.text_parts())
     mx = 0
-    for part in pkg.text_parts():
-        root = pkg.xml(part)
+    for part in pkg.wordprocessing_xml_parts():
+        try:
+            root = pkg.xml(part)
+        except etree.XMLSyntaxError:
+            if part in text:
+                raise
+            continue
         for el in root.iter():
-            if not isinstance(el.tag, str):
-                continue
-            v = el.get(W + "id")
-            if v is not None:
-                try:
+            if el.tag in ANNOTATION_ID_TAGS:
+                v = (el.get(W + "id") or "").strip()
+                if _WHOLE_NUMBER.fullmatch(v):
                     mx = max(mx, int(v))
-                except ValueError:
-                    pass
     return mx
 
 
@@ -409,7 +438,7 @@ def insert_ppr_child_in_order(ppr: etree._Element, child: etree._Element) -> Non
 
 CONTENT_REV_TAGS = ("ins", "del", "moveFrom", "moveTo")
 PROPERTY_REV_TAGS = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange",
-                     "tblGridChange", "numberingChange")
+                     "tblGridChange", "tblPrExChange", "numberingChange")
 CELL_REV_TAGS = ("cellIns", "cellDel", "cellMerge")
 
 
