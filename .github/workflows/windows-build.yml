@@ -81,6 +81,11 @@ jobs:
           Copy-Item examples dist/SpecSurgeon/examples -Recurse
           Copy-Item docs dist/SpecSurgeon/docs -Recurse
           Copy-Item README.md dist/SpecSurgeon/README.md
+      - name: Write the license and fetch the PyMuPDF and MuPDF source
+        # The app bundles PyMuPDF (AGPL-3.0, no commercial license held), so it is distributed as a whole under the
+        # AGPL v3: LICENSE.txt (the installer's license page) names both licenses, and the source of the exact
+        # PyMuPDF and MuPDF in the bundle is published beside the installer as its Corresponding Source.
+        run: python packaging/windows/license_notices.py --app dist/SpecSurgeon --sources dist/installer
       - name: Build the installer
         shell: pwsh
         env:
@@ -114,5 +119,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: windows-installer
-          path: dist/installer/*.exe
+          path: |
+            dist/installer/*.exe
+            dist/installer/*.tar.gz
           if-no-files-found: error

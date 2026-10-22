@@ -29,7 +29,7 @@ version_file.write_text(f'''VSVersionInfo(
     StringStruct('CompanyName', 'Abraham Borg'),
     StringStruct('FileDescription', 'Spec Surgeon'),
     StringStruct('FileVersion', '{version}'),
-    StringStruct('LegalCopyright', 'Copyright (c) 2026 Abraham Borg. MIT License.'),
+    StringStruct('LegalCopyright', 'Copyright (c) 2026 Abraham Borg. MIT License (own code); AGPL-3.0 as a whole, with PyMuPDF.'),
     StringStruct('ProductName', 'Spec Surgeon'),
     StringStruct('ProductVersion', '{version}')
   ])]), VarFileInfo([VarStruct('Translation', [1033, 1200])])]
@@ -40,7 +40,7 @@ if not page.is_file():
     raise SystemExit(f"The window's page is not built ({page}): run `npm ci` and `npm run build` in frontend/ first.")
 
 datas = collect_data_files("spec_surgeon", include_py_files=True,
-                           includes=["schemas/**/*.xsd", "skill/**/*.md", "ops/*.py", "web/static/**/*",
+                           includes=["schemas/**/*.xsd", "skill/**/*.md", "legal/*.txt", "ops/*.py", "web/static/**/*",
                                      "examples/specs/*.json"])
 datas += copy_metadata("anthropic", recursive=True)
 for dist in ("fastapi", "uvicorn", "pywebview"):           # the diagnostics report their versions from the metadata

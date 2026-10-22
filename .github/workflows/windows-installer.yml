@@ -68,6 +68,10 @@ jobs:
           ALLOW_INSTALLER_UPLOAD: ${{ steps.release.outputs.publish }}
         run: |
           options=()
-          if [ "$ALLOW_INSTALLER_UPLOAD" = "true" ]; then options+=(--allow-installer-upload); fi
+          if [ "$ALLOW_INSTALLER_UPLOAD" = "true" ]; then
+            options+=(--allow-installer-upload)
+            # The installer is AGPL-3.0 as a whole: the PyMuPDF and MuPDF source it bundles goes up before it.
+            for source in dist/pymupdf-*.tar.gz dist/mupdf-*-source.tar.gz; do options+=(--source "$source"); done
+          fi
           python packaging/windows/publish_installer.py --repository "$GITHUB_REPOSITORY" \
             --tag "v$APP_VERSION" --installer "dist/SpecSurgeon-$APP_VERSION-Setup-x64.exe" "${options[@]}"

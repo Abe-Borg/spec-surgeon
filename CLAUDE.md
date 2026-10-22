@@ -84,7 +84,10 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   `conftest.py` seals keys, config dir and model; `describe_cases/` feeds `test_describe.py`.
 - `docs/` — design notes (`BUILTIN_OPS_BATCH*_DESIGN.md`), plans, `releases/`, `audits/`, `history/`; `TRUST_CLAIMS.md`
   (the ledger behind the trust surfaces).
-- `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests.
+- `packaging/` — PyInstaller spec, Inno Setup script, installed-app smoke tests, `license_notices.py` (the app's
+  LICENSE.txt and its AGPL Corresponding Source). Two licenses, never one: Spec Surgeon's own code is MIT; the
+  Windows app bundles PyMuPDF (AGPL-3.0, no commercial license held), so the app as a whole is AGPL v3
+  (`about.py`). Never describe the distributed app as MIT-only.
 
 ## How to run
 

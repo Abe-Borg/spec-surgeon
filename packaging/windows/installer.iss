@@ -6,8 +6,8 @@
 ;   OutputBaseFilename  == spec_surgeon.updater.INSTALLER_NAME
 ;   AppMutexName        == spec_surgeon.winapp.APP_MUTEX
 ;   AppUserModelID      == spec_surgeon.winapp.AUMID
-;   AppCopyright, AppContact, LicenseFile and the links on the welcome page == spec_surgeon.about
-;     (COPYRIGHT, EMAIL, the LICENSE file at the repository root, GITHUB_URL, LINKEDIN_URL)
+;   AppCopyright, AppContact, InfoBeforeFile and the links on the welcome page == spec_surgeon.about
+;     (COPYRIGHT, EMAIL, license_text() as license_notices.py writes it, GITHUB_URL, LINKEDIN_URL)
 
 [Setup]
 AppId={{97A6079B-7F70-4F32-A691-12624B86E88C}
@@ -20,9 +20,14 @@ AppSupportURL=https://github.com/Abe-Borg/spec-surgeon
 AppUpdatesURL=https://github.com/Abe-Borg/spec-surgeon/releases
 AppContact=abrahamborg@gmail.com
 AppCopyright=Copyright (c) 2026 Abraham Borg
-; The MIT License (the LICENSE file at the repository root); the wizard shows it and asks for agreement.
-LicenseFile={#SourcePath}..\..\LICENSE
-; The welcome page carries the license summary and the author's GitHub and LinkedIn links (InitializeWizard).
+; The licenses the app is distributed under: Spec Surgeon's own code is MIT, and with PyMuPDF (AGPL-3.0; no
+; commercial license is held) the app as a whole is under the GNU AGPL v3. packaging/windows/license_notices.py
+; writes the bundle's LICENSE.txt: the notice, where the Corresponding Source is, the MIT License and the AGPL.
+; The wizard shows it before installing. The AGPL asks no one to accept it to receive or run the program, so it
+; is shown, not agreed to. An in-app update (/SILENT) skips the wizard's pages: the window's About box shows the
+; same text.
+InfoBeforeFile={#SourcePath}..\..\dist\SpecSurgeon\LICENSE.txt
+; The welcome page carries the licenses in brief and the author's GitHub and LinkedIn links (InitializeWizard).
 DisableWelcomePage=no
 DefaultDirName={localappdata}\Programs\Spec Surgeon
 DefaultGroupName=Spec Surgeon
@@ -58,12 +63,12 @@ Name: "desktopicon"; Description: "Create a &desktop shortcut"; GroupDescription
 Type: filesandordirs; Name: "{app}\_internal"
 
 [Messages]
-WelcomeLabel2=This will install [name/ver] on your computer.%n%nSpec Surgeon is free, open-source software by Abraham Borg, released under the MIT License: use it, change it and share it as you like, keep the copyright notice with it, and note that it comes as is, without warranty. The full text is on the next page.%n%nIt is recommended that you close all other applications before continuing.
-BeveledLabel=Spec Surgeon  -  Copyright (c) 2026 Abraham Borg  -  MIT License
+WelcomeLabel2=This will install [name/ver] on your computer.%n%nSpec Surgeon is free, open-source software by Abraham Borg. Its own code is under the MIT License. It includes PyMuPDF, which is under the GNU AGPL v3, so the app as a whole is distributed under the AGPL v3, with its complete source on the release page. It comes as is, without warranty. The full terms are on the next page.%n%nIt is recommended that you close all other applications before continuing.
+BeveledLabel=Spec Surgeon  -  Copyright (c) 2026 Abraham Borg  -  MIT License (own code), GNU AGPL v3 (as a whole)
 
 [Files]
+; Everything in the bundle, LICENSE.txt among it (the notice, the MIT License and the AGPL v3).
 Source: "*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
-Source: "{#SourcePath}..\..\LICENSE"; DestDir: "{app}"; DestName: "LICENSE.txt"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Spec Surgeon"; Filename: "{app}\SpecSurgeon.exe"; WorkingDir: "{userdocs}"; AppUserModelID: "AbrahamBorg.SpecSurgeon"

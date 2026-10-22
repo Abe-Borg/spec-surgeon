@@ -321,3 +321,45 @@ def test_github_cli_uses_binary_download_and_rename_without_destructive_upload(m
     assert calls[3][0] == ["gh", "api", "--method", "PATCH", "repos/owner/repo/releases/assets/7",
                            "-f", "name=SHA256SUMS.backup-7"]
     assert all(call[1] == {"capture_output": True, "check": True} for call in calls)
+
+
+PYMUPDF, MUPDF = "pymupdf-1.28.2.tar.gz", "mupdf-1.28.2-source.tar.gz"
+
+
+@pytest.fixture
+def local_sources(tmp_path):
+    paths = []
+    for name in (PYMUPDF, MUPDF):
+        (tmp_path / name).write_bytes(f"source of {name}".encode())
+        paths.append(tmp_path / name)
+    return paths
+
+
+def test_corresponding_source_goes_up_before_a_missing_installer_and_into_the_checksums(local_installer,
+                                                                                       local_sources):
+    api = release(installer=False)
+    api.fail("upload", INSTALLER)
+    with pytest.raises(OSError):
+        publish(api, local_installer, allow_installer_upload=True, sources=local_sources)
+    assert {PYMUPDF, MUPDF} <= set(api.contents()) and INSTALLER not in api.contents()     # never the other way
+    publish(api, local_installer, allow_installer_upload=True, sources=local_sources)      # the retry
+    uploads = [call[1] for call in api.attempts if call[0] == "upload"]
+    assert uploads.count(PYMUPDF) == 1 and uploads.count(MUPDF) == 1                       # nothing sent twice
+    assert uploads.index(PYMUPDF) < uploads.index(MUPDF) < uploads.index(INSTALLER)
+    expected = dict(BASE, **{INSTALLER: b"newly built installer"},
+                    **{path.name: path.read_bytes() for path in local_sources})
+    assert api.contents()[publisher.SUMS] == sums(expected)
+
+
+def test_a_different_published_source_is_never_replaced_and_blocks_the_installer(local_installer, local_sources):
+    api = release(installer=False)
+    api.add(PYMUPDF, b"some other source")
+    with pytest.raises(publisher.PublicationError, match="not the source this installer was built with"):
+        publish(api, local_installer, allow_installer_upload=True, sources=local_sources)
+    assert api.contents()[PYMUPDF] == b"some other source" and INSTALLER not in api.contents()
+
+
+def test_a_published_installer_takes_no_source_from_another_build(local_installer, local_sources):
+    api = release()
+    publish(api, local_installer, sources=local_sources)
+    assert PYMUPDF not in api.contents() and MUPDF not in api.contents()

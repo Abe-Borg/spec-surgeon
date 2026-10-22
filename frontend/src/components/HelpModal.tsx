@@ -410,7 +410,7 @@ function AboutTopic({
         </div>
         <div className="flex gap-3">
           <dt className="w-28 flex-none text-ink-faint">License</dt>
-          <dd className="text-ink">{about?.license_name || "MIT License"}</dd>
+          <dd className="text-ink">{about?.license_name || "MIT License and GNU AGPL v3"}</dd>
         </div>
       </dl>
 
@@ -471,7 +471,8 @@ function AboutTopic({
                 </Tip>
                 <p className="mt-2 text-xs text-ink-faint">
                   Downloads the installer, checks it against the release’s SHA-256 checksums, and only then runs it.
-                  The app closes so the installer can replace it, and reopens when it is done.
+                  The app closes so the installer can replace it, and reopens when it is done. The installer runs
+                  without its pages, so its license page is not shown: the update comes under the licenses below.
                 </p>
               </>
             )}
@@ -511,7 +512,7 @@ function AboutTopic({
 
       <section className="rounded-xl border border-edge bg-raised/40 p-4">
         <h4 className="font-[family-name:var(--font-display)] text-[15px] font-semibold text-ink">
-          {about?.license_name || "License"}
+          Licenses
         </h4>
         {about?.license_summary && about.license_summary.length > 0 && (
           <ul className="mt-2 space-y-1.5">
@@ -559,7 +560,7 @@ function AboutTopic({
 
       <div className="space-y-1.5 border-t border-edge pt-4 text-xs text-ink-faint">
         <p>
-          {about?.copyright || "© 2026 Abraham Borg"}. {about?.license_name || "MIT License"}.
+          {about?.copyright || "© 2026 Abraham Borg"}. {about?.license_name || "MIT License and GNU AGPL v3"}.
           {about?.email && (
             <>
               {" "}

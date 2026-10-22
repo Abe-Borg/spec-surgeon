@@ -3,6 +3,7 @@ recursive-include docs *.md *.png
 recursive-include examples *.json *.docx *.md *.png
 recursive-include tests *.py *.json
 recursive-include packaging/windows *.py *.spec *.iss *.ps1 *.ico *.manifest
+recursive-include src/spec_surgeon/legal *.txt
 recursive-include src/spec_surgeon/web/icons *.svg *.png
 recursive-include src/spec_surgeon/web/static *
 recursive-include frontend *.ts *.tsx *.json *.css *.html *.mjs *.md

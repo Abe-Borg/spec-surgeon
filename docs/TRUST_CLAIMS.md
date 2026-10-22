@@ -281,7 +281,11 @@ All in the dossier's "What this does not do":
 - **The logs:** `spec-surgeon.log` (one line per job with its model calls and estimated cost).
 - **The bundle:** About → Save a diagnostic bundle.
 - **Anthropic's console:** its usage page for the key.
-- **The source:** MIT, on GitHub.
+- **The source:** on GitHub. Spec Surgeon's own code is MIT; the Windows app bundles PyMuPDF (AGPL-3.0, no
+  commercial license held), so the app as a whole is distributed under the GNU AGPL v3, and each release page
+  carries its Corresponding Source: the tag's source archives and the PyMuPDF and MuPDF source the installer
+  was built with (`about.license_text`, `packaging/windows/license_notices.py`; `tests/test_about.py`,
+  `tests/test_license_notices.py`).
 
 ## 2. Claims
 
