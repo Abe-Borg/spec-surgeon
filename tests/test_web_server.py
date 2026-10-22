@@ -193,6 +193,19 @@ def test_settings_about_updates_and_new_conversation(tmp_path, monkeypatch):
     assert refused.status_code == 400 and "colour scheme" in refused.json()["error"]
     assert client.get("/api/settings").json()["theme"] == "linen"
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    # fast mode: off until turned on, offered with the price table's own numbers, kept for the next start
+    from spec_surgeon import llm
+    s = client.get("/api/settings").json()
+    assert s["fast_mode"] is False and llm.FAST_MODE is False and state.view()["cost"]["fast"] is False
+    assert s["fast"] == {"model": "claude-opus-5-5", "available": True, "speedup": llm.FAST_SPEEDUP,
+                         "price_factor": 2, "standard_usd_per_mtok": [4.0, 20.0], "fast_usd_per_mtok": [8.0, 40.0],
+                         "refused": None}
+    assert client.post("/api/settings", json={"fast_mode": True}).json()["fast_mode"] is True
+    assert llm.FAST_MODE is True and load_settings().fast_mode is True and state.view()["cost"]["fast"] is True
+    refused = client.post("/api/settings", json={"fast_mode": "yes"})
+    assert refused.status_code == 400 and llm.FAST_MODE is True
+    assert client.post("/api/settings", json={"fast_mode": False}).json()["fast_mode"] is False
+    assert llm.FAST_MODE is False and load_settings().fast_mode is False
     about = client.get("/api/about").json()
     assert about["version"] == "1.6.0" and "MIT" in about["license"] and about["credits"]
     assert client.post("/api/update/check").json()["state"] == "available"
@@ -501,3 +514,14 @@ def test_the_primary_action_takes_the_documents_the_user_set_aside(tmp_path):
         done = frames(response)[-1]["state"]
     assert done["focus"] == [str(second)] and done["todo"] == [] and done["action"]["kind"] == "continue"
     assert "Working on B.docx" in done["messages"][-1]["text"]
+
+
+def test_the_window_applies_the_kept_fast_mode_from_its_start(tmp_path):
+    """A settings.json that says fast mode is on turns it on for every call from the window's start; one that does
+    not (every older file) leaves it off."""
+    from spec_surgeon import llm
+    session = Session(client=FakeClient(), out_root=tmp_path / "out", visual_check=False)
+    WindowState(DocumentTask(session, render=False), Settings(fast_mode=True), token=TOKEN, updates=FakeUpdates())
+    assert llm.FAST_MODE is True
+    WindowState(DocumentTask(session, render=False), Settings(), token=TOKEN, updates=FakeUpdates())
+    assert llm.FAST_MODE is False

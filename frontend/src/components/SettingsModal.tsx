@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import type { Settings } from "../types";
-import { getSettings, saveSettings, saveTheme } from "../lib/api";
+import { getSettings, saveFastMode, saveSettings, saveTheme } from "../lib/api";
+import { fastWords } from "../lib/fastMode";
 import { THEMES, applyTheme, resolveTheme } from "../lib/theme";
-import { ModalShell, primaryBtn } from "./ModalShell";
+import { ModalShell, primaryBtn, quietBtn } from "./ModalShell";
 import Tip from "./Tip";
 
 interface Props {
@@ -15,9 +16,12 @@ interface Props {
 /**
  * Connection setup, separate from the document task: "AI connection" (the
  * key, whether to remember it securely, and the sentence on spending;
- * docs/CONVERSATIONAL_DESKTOP.md, "Connection and resource use") and
- * "Appearance" (the colour scheme, applied at once and kept for the next
- * start). No model tuning controls.
+ * docs/CONVERSATIONAL_DESKTOP.md, "Connection and resource use"), "Fast
+ * responses" (Claude's fast mode: what it buys and what it costs, both from
+ * the server's price table; turning it on asks for a second click that names
+ * the price) and "Appearance" (the colour scheme, applied at once and kept for
+ * the next start). Fast mode is the one model control: it changes how quickly
+ * the same model answers, never what it is asked or how its plan is checked.
  */
 export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props) {
   const [settings, setSettings] = useState<Settings | null>(null);
@@ -29,6 +33,10 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
   const [themeError, setThemeError] = useState("");
   /** The latest click: an answer to an earlier one arriving after it is ignored. */
   const themeTurn = useRef(0);
+  /** Turning fast mode on waits for the second click that names the price. */
+  const [confirmingFast, setConfirmingFast] = useState(false);
+  const [fastSaving, setFastSaving] = useState(false);
+  const [fastError, setFastError] = useState("");
 
   useEffect(() => {
     let alive = true;
@@ -82,6 +90,22 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
       applyTheme(previous);
       setSettings((s) => (s ? { ...s, theme: previous } : s));
       setThemeError(failure instanceof Error ? failure.message : String(failure));
+    }
+  };
+
+  const setFast = async (on: boolean) => {
+    if (fastSaving) return;
+    setFastSaving(true);
+    setFastError("");
+    try {
+      const next = await saveFastMode(on);
+      setSettings(next);
+      setConfirmingFast(false);
+      onSaved();
+    } catch (failure) {
+      setFastError(failure instanceof Error ? failure.message : String(failure));
+    } finally {
+      setFastSaving(false);
     }
   };
 
@@ -165,6 +189,18 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
             </button>
           </Tip>
         </div>
+        {settings?.fast && (
+          <FastSection
+            on={!!settings.fast_mode}
+            words={fastWords(settings.fast)}
+            confirming={confirmingFast}
+            saving={fastSaving}
+            error={fastError}
+            onAsk={() => setConfirmingFast(true)}
+            onCancel={() => setConfirmingFast(false)}
+            onSet={(on) => void setFast(on)}
+          />
+        )}
         <section className="border-t border-edge pt-4">
           <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">Appearance</h3>
           <p className="mt-0.5 text-xs text-ink-dim">The colour scheme changes at once and is kept for the next start.</p>
@@ -210,5 +246,92 @@ export default function SettingsModal({ stepsPerPause, onClose, onSaved }: Props
         </section>
       </div>
     </ModalShell>
+  );
+}
+
+/**
+ * "Fast responses": a switch that is off until the user turns it on. Both sides are always on screen — the benefit,
+ * then the price in a warning box — and turning it on takes a second click on a button that names the price.
+ * Turning it off is one click.
+ */
+function FastSection({
+  on,
+  words,
+  confirming,
+  saving,
+  error,
+  onAsk,
+  onCancel,
+  onSet,
+}: {
+  on: boolean;
+  words: ReturnType<typeof fastWords>;
+  confirming: boolean;
+  saving: boolean;
+  error: string;
+  onAsk: () => void;
+  onCancel: () => void;
+  onSet: (on: boolean) => void;
+}) {
+  return (
+    <section className="border-t border-edge pt-4">
+      <div className="flex items-center justify-between gap-3">
+        <h3 className="font-[family-name:var(--font-display)] text-sm font-semibold text-ink">Fast responses</h3>
+        <button
+          type="button"
+          role="switch"
+          aria-checked={on}
+          aria-label="Fast responses"
+          disabled={saving}
+          onClick={() => (on ? onSet(false) : confirming ? onCancel() : onAsk())}
+          className={`relative h-5 w-9 flex-none rounded-full border transition-colors disabled:opacity-60 ${
+            on ? "border-accent bg-accent" : "border-edge bg-raised"
+          }`}
+        >
+          <span
+            aria-hidden
+            className={`absolute top-0.5 h-3.5 w-3.5 rounded-full transition-all ${
+              on ? "left-[1.1rem] bg-on-accent" : "left-0.5 bg-ink-faint"
+            }`}
+          />
+        </button>
+      </div>
+      <p className="mt-0.5 text-xs text-ink-dim">{words.benefit}</p>
+      <div className="mt-3 rounded-lg border-l-2 border-warn bg-warn/10 px-3 py-2 text-xs leading-relaxed text-ink-dim">
+        <span className="font-medium text-warn">The price: </span>
+        {words.cost}
+      </div>
+      <ul className="mt-2 list-disc space-y-0.5 pl-4 text-[11px] leading-relaxed text-ink-faint">
+        {words.notes.map((n) => (
+          <li key={n}>{n}</li>
+        ))}
+      </ul>
+      {words.unavailable && (
+        <p className="mt-2 text-xs text-warn" role="status">
+          {words.unavailable}
+        </p>
+      )}
+      {confirming && !on && (
+        <div className="mt-3 flex flex-wrap items-center justify-end gap-2" role="group" aria-label="Confirm fast responses">
+          <span className="w-full text-xs text-ink-dim">Turn on fast responses for every AI step from now on?</span>
+          <button type="button" className={quietBtn} disabled={saving} onClick={onCancel}>
+            Keep standard speed
+          </button>
+          <button type="button" className={primaryBtn} disabled={saving} onClick={() => onSet(true)}>
+            {saving ? "Saving…" : words.confirm}
+          </button>
+        </div>
+      )}
+      {on && (
+        <p className="mt-2 text-xs text-ok" role="status">
+          On: AI steps from now on are fast, at the fast price. Kept for the next start.
+        </p>
+      )}
+      {error && (
+        <p className="mt-2 text-xs text-err" role="alert">
+          {error}
+        </p>
+      )}
+    </section>
   );
 }
