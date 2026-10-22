@@ -13,7 +13,7 @@ from fastapi.testclient import TestClient
 from fake_claude import FakeClient, resp, text, tool
 from spec_surgeon.document_task import START_OVER, DocumentTask
 from spec_surgeon.gui import Session
-from spec_surgeon.settings import Settings
+from spec_surgeon.settings import Settings, load_settings
 from spec_surgeon.web.server import TOKEN_HEADER, WindowState, create_app
 from test_document_task import REQUEST, SPEC, document
 
@@ -186,7 +186,12 @@ def test_settings_about_updates_and_new_conversation(tmp_path, monkeypatch):
     s = client.get("/api/settings").json()
     assert s["key_present"] is True and "steps_per_pause" in s          # a scripted client counts as connected
     s = client.post("/api/settings", json={"api_key": "sk-ant-test", "remember": False}).json()
-    assert s["origin"] == "session"
+    assert s["origin"] == "session" and s["theme"] == "clay"
+    assert client.post("/api/settings", json={"theme": "linen"}).json()["theme"] == "linen"
+    assert state.settings.theme == "linen" and load_settings().theme == "linen"      # kept for the next start
+    refused = client.post("/api/settings", json={"theme": "dark"})
+    assert refused.status_code == 400 and "colour scheme" in refused.json()["error"]
+    assert client.get("/api/settings").json()["theme"] == "linen"
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     about = client.get("/api/about").json()
     assert about["version"] == "1.6.0" and "MIT" in about["license"] and about["credits"]
@@ -198,6 +203,36 @@ def test_settings_about_updates_and_new_conversation(tmp_path, monkeypatch):
     old = state.task
     view = client.post("/api/new-conversation").json()
     assert state.task is not old and view["attachments"] == [] and view["messages"] == []
+
+
+def test_the_native_window_opens_the_page_in_the_kept_scheme_on_its_background(tmp_path, monkeypatch):
+    """The shell hands the page its colour scheme in the query string (applied before the first paint) and gives
+    the window that scheme's background, so a light scheme never opens on a dark frame."""
+    import types
+    from spec_surgeon.web import shell
+    created = {}
+
+    class Events:
+        def __init__(self):
+            self.closing = self
+
+        def __iadd__(self, handler):
+            return self
+
+    def create_window(title, url, **kw):
+        created.update(kw, url=url)
+        return types.SimpleNamespace(events=Events())
+    fake = types.ModuleType("webview")
+    fake.settings, fake.create_window, fake.start = {}, create_window, lambda **kw: None
+    monkeypatch.setitem(sys.modules, "webview", fake)
+    monkeypatch.setattr(shell, "native_backend_problem", lambda: None)
+    monkeypatch.setattr(shell, "serve", lambda state, port, dev=False: None)
+    monkeypatch.setattr(shell, "shutdown", lambda state, server: None)
+    state, _ = window(tmp_path)
+    for theme, background in (("clay", "#262624"), ("linen", "#f5f1ea")):
+        state.settings.theme = theme
+        assert shell.run_window(state) == 0
+        assert created["url"].endswith(f"&theme={theme}") and created["background_color"] == background
 
 
 def test_a_second_job_while_one_runs_is_refused(tmp_path):
