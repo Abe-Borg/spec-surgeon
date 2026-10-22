@@ -816,24 +816,38 @@ class CrashWatch:
                 pass
 
 
+_QUIET_LOCK = threading.Lock()
+_QUIET: List[Any] = [0, None]       # threads inside com_quiet, and the crash watch the first of them paused
+
+
 @contextmanager
 def com_quiet() -> Iterator[None]:
     """Word automation (COM) raises first-chance RPC exceptions that Windows' fault handler logs as "Windows fatal
     exception" although they are handled; the window's crash log is paused around it, so it keeps only real crashes.
-    Starting the Word worker process does too: on the owner's machine every one of the 1.8.0 live run's 68 spawns
-    logged an access violation inside CreateProcess, and every worker then ran and finished."""
-    w = _ACTIVE[0]
-    paused = w is not None and w._fh is not None and faulthandler.is_enabled()
-    if paused:
-        faulthandler.disable()
+    Starting a worker process does too: on the owner's machine every one of the 1.8.0 live run's 68 spawns logged an
+    access violation inside CreateProcess, and every worker then ran and finished (the B3 "access violations at
+    worker spawn" of the 1.0 live runs were the same). Several threads may be inside at once (Word instances and
+    transform workers starting side by side): the first pauses the crash log, the last resumes it."""
+    with _QUIET_LOCK:
+        if _QUIET[0] == 0:
+            w = _ACTIVE[0]
+            _QUIET[1] = w if w is not None and w._fh is not None and faulthandler.is_enabled() else None
+            if _QUIET[1] is not None:
+                faulthandler.disable()
+        _QUIET[0] += 1
     try:
         yield
     finally:
-        if paused and w._fh is not None and not w._fh.closed:
-            try:
-                faulthandler.enable(file=w._fh, all_threads=True)
-            except (ValueError, RuntimeError, OSError):
-                pass
+        with _QUIET_LOCK:
+            _QUIET[0] -= 1
+            w = _QUIET[1] if _QUIET[0] == 0 else None
+            if w is not None:
+                _QUIET[1] = None
+                if w._fh is not None and not w._fh.closed:
+                    try:
+                        faulthandler.enable(file=w._fh, all_threads=True)
+                    except (ValueError, RuntimeError, OSError):
+                        pass
 
 
 def write_json(path: Path, data: Any) -> Optional[Path]:

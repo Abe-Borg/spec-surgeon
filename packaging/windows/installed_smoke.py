@@ -117,6 +117,25 @@ def _conversation_run(api, sources, version):
     return view
 
 
+def _worker_processes(sources, spec, out):
+    """The packaged app's own worker processes (spawned from this executable, which freeze_support hands to the pool):
+    a batch shared over two of them, and a map over three, give every file its verified copy, as inline."""
+    from spec_surgeon import batch
+
+    run = batch.run_batch([str(p) for p in sources], "edit-spec", {}, out, workers=2, worker_mode="process",
+                          do_render=False, spec=spec)
+    assert run.counts()["PASS"] == len(sources), run.counts()
+    assert "transform+verify with 2 process worker(s)" in (out / "logs" / "run.log").read_text(encoding="utf-8")
+    original, mode = batch.DEFAULT_WORKER_MODE, None
+    try:
+        batch.DEFAULT_WORKER_MODE = "process"
+        mode = batch.worker_plan(None, 0, 3)[0]
+        assert batch.map_files(divmod, [(7, 2), (9, 4), (5, 5)]) == [(3, 1), (2, 1), (1, 0)]
+    finally:
+        batch.DEFAULT_WORKER_MODE = original
+    assert mode == "process"
+
+
 def _gui(request, result):
     import anthropic
     import fastapi  # noqa: F401
@@ -201,6 +220,8 @@ def _gui(request, result):
         assert not any(c["status"] == "FAIL" for c in record["checks"]), record
         assert any(c["id"] == "V5a" and c["status"] == "PASS" for c in record["checks"]), record
 
+    _worker_processes(sources, spec, Path(request["output_dir"]) / "Worker processes")
+
     generated = trial(request["generated_source"], sources[0], {}, {"twips": 900},
                       Path(request["output_dir"]) / "Isolated generated operation")
     assert generated.passed, generated.problems
@@ -208,7 +229,7 @@ def _gui(request, result):
 
     _updater_offline(updater)
     result.update({"ok": True, "version": __version__, "gui_preview_run": "PASS 2",
-                   "process_pool": "PASS", "isolated_generated_op": "PASS",
+                   "process_pool": "PASS 2 workers", "isolated_generated_op": "PASS",
                    "schemas": schema_count, "worked_examples": example_count,
                    "sources_unchanged": True, "page_bundled": True,
                    "window_backend": gui.renderer, "pywebview": getattr(webview, "__version__", "?"),

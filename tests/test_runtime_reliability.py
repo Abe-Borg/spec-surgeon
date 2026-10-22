@@ -203,14 +203,14 @@ def test_both_batch_pools_use_spawn_even_when_frozen(monkeypatch):
     assert calls == ["spawn", "spawn"]
 
 
-@pytest.mark.parametrize("worker_mode,frozen", [("thread", False), ("serial", False), ("process", True)])
-def test_batch_uses_safe_workers_by_default_and_in_frozen_build(tmp_path, monkeypatch, worker_mode, frozen):
+@pytest.mark.parametrize("worker_mode,frozen", [("thread", False), ("serial", False), ("auto", True)])
+def test_thread_serial_and_a_small_auto_batch_start_no_process(tmp_path, monkeypatch, worker_mode, frozen):
     def unexpected_pool(*args, **kwargs):
-        pytest.fail("safe worker modes must not start a process pool")
+        pytest.fail("these worker modes must not start a process pool")
 
     monkeypatch.setattr(batch, "_process_pool", unexpected_pool)
     monkeypatch.setattr(sys, "frozen", frozen, raising=False)
-    if worker_mode == "serial":
+    if worker_mode in ("serial", "auto"):                   # two files: auto runs them inline
         monkeypatch.setattr(batch, "ThreadPoolExecutor", unexpected_pool)
     sources = []
     for index in range(2):
@@ -218,9 +218,87 @@ def test_batch_uses_safe_workers_by_default_and_in_frozen_build(tmp_path, monkey
         source.write_bytes(build("21 13 13", f"WET-PIPE {index}"))
         sources.append(str(source))
     options = {} if worker_mode == "thread" else {"worker_mode": worker_mode}
-    result = batch.run_batch(sources, "edit-spec", {}, tmp_path / "run", workers=2, do_render=False,
-                             spec=CONTINUOUS, **options)
+    result = batch.run_batch(sources, "edit-spec", {}, tmp_path / "run", workers=0 if worker_mode == "auto" else 2,
+                             do_render=False, spec=CONTINUOUS, **options)
     assert len(result.files) == 2 and all(file.output and file.output.exists() for file in result.files)
+
+
+def test_the_worker_plan_shares_three_or_more_files_over_processes_in_the_packaged_app_too(monkeypatch):
+    monkeypatch.setattr(batch.os, "cpu_count", lambda: 4)
+    for frozen in (False, True):                            # the packaged app no longer swaps processes for threads
+        monkeypatch.setattr(sys, "frozen", frozen, raising=False)
+        assert batch.worker_plan("auto", 0, 1) == ("serial", 1)
+        assert batch.worker_plan("auto", 0, 2) == ("serial", 1)
+        assert batch.worker_plan("auto", 0, 3) == ("process", 3)
+        assert batch.worker_plan("auto", 0, 40) == ("process", 4)            # one per core
+        assert batch.worker_plan("auto", 1, 40) == ("serial", 1)             # one asked for: inline
+        assert batch.worker_plan("auto", 2, 40) == ("process", 2)
+        assert batch.worker_plan("process", 0, 2) == ("process", 2)
+        assert batch.worker_plan("thread", 0, 40) == ("thread", 1)
+        assert batch.worker_plan("serial", 6, 40) == ("serial", 1)
+    monkeypatch.setattr(batch.os, "cpu_count", lambda: 64)
+    assert batch.worker_plan("auto", 0, 40) == ("process", batch.MAX_PROCESS_WORKERS)
+    monkeypatch.setattr(batch, "DEFAULT_WORKER_MODE", "auto")
+    assert batch.worker_plan(None, 0, 5)[0] == "process"                     # None is the module's default
+    with pytest.raises(ValueError, match="auto, thread, serial or process"):
+        batch.worker_plan("fibers", 0, 5)
+
+
+def test_an_auto_batch_of_three_runs_in_worker_processes_with_the_same_results_as_inline(tmp_path, monkeypatch):
+    """The window's default for three or more files: real spawned workers, and every output byte and every check's
+    status the same as the same batch run inline."""
+    sources = []
+    for index in range(3):
+        source = tmp_path / "in" / f"spec-{index}.docx"
+        source.parent.mkdir(exist_ok=True)
+        source.write_bytes(build("21 13 13", f"WET-PIPE {index}"))
+        sources.append(str(source))
+    monkeypatch.setattr(batch, "DEFAULT_WORKER_MODE", "auto")
+    parallel = batch.run_batch(sources, "edit-spec", {}, tmp_path / "auto", do_render=False, spec=CONTINUOUS)
+    log = (tmp_path / "auto" / "logs" / "run.log").read_text(encoding="utf-8")
+    assert "process worker(s)" in log
+    inline = batch.run_batch(sources, "edit-spec", {}, tmp_path / "serial", do_render=False, spec=CONTINUOUS,
+                             worker_mode="serial")
+    assert [f.source for f in parallel.files] == [f.source for f in inline.files]      # the sources' order
+    for a, b in zip(parallel.files, inline.files):
+        assert a.record.passed and b.record.passed
+        assert a.output.read_bytes() == b.output.read_bytes()
+        assert [(c.id, c.status) for c in a.record.checks] == [(c.id, c.status) for c in b.record.checks]
+
+
+def test_spawning_workers_keeps_handled_start_up_exceptions_out_of_the_crash_log_even_side_by_side(tmp_path):
+    """Several threads start processes at once (Word instances, transform workers): the crash log is paused while any
+    of them is starting one and watches again once the last has."""
+    import threading
+    was_enabled = faulthandler.is_enabled()
+    watch = diag.CrashWatch(tmp_path / "logs")
+    try:
+        watch.start()
+        first_in, second_in, first_may_leave = threading.Event(), threading.Event(), threading.Event()
+        seen = []
+
+        def first():
+            with diag.com_quiet():
+                first_in.set()
+                second_in.wait(5)
+                first_may_leave.wait(5)
+            seen.append(("first left", faulthandler.is_enabled()))
+
+        worker = threading.Thread(target=first)
+        worker.start()
+        assert first_in.wait(5)
+        with diag.com_quiet():
+            second_in.set()
+            seen.append(("both in", faulthandler.is_enabled()))
+            first_may_leave.set()
+            worker.join(5)
+            seen.append(("second still in", faulthandler.is_enabled()))
+        assert seen == [("both in", False), ("first left", False), ("second still in", False)]
+        assert faulthandler.is_enabled()                    # the last one out resumes the crash log
+    finally:
+        watch.stop()
+        if was_enabled:
+            faulthandler.enable()
 
 
 def test_thread_mode_defaults_to_one_worker_and_honors_an_explicit_count(tmp_path, monkeypatch):
@@ -582,3 +660,62 @@ def test_a_renderer_failure_is_this_files_failed_render_never_a_crashed_batch(tm
     assert b.renderer == "libreoffice" and fr.status == "FAIL"
     assert fr.record.get("V6").status == "FAIL" and "render failed" in fr.record.get("V6").summary
     assert (tmp_path / "out" / "failed" / "A.docx").is_file() and (tmp_path / "out" / "BATCH_REPORT.md").is_file()
+
+
+def test_the_preview_plans_and_checks_its_samples_side_by_side_with_the_same_results(tmp_path, monkeypatch):
+    """The window's default: a preview of many files plans them in worker processes (planner.PLAN_PROCESS_MIN_FILES)
+    and runs three or more samples side by side — every plan, verdict, check and sample byte as when run here, each
+    sample's events in its own journal."""
+    from spec_surgeon import planner, preview
+    sources = []
+    for index in range(planner.PLAN_PROCESS_MIN_FILES):
+        source = tmp_path / "in" / f"spec-{index:02d}.docx"
+        source.parent.mkdir(exist_ok=True)
+        source.write_bytes(build("21 13 13", f"WET-PIPE {index}"))
+        sources.append(str(source))
+    spec = {**CONTINUOUS, "review": {"sample_files": 3}}
+    inline = preview.make_preview(spec, sources, tmp_path / "inline", do_render=False)
+    monkeypatch.setattr(batch, "DEFAULT_WORKER_MODE", "auto")
+    maps = []
+    real_map = batch.map_files
+    monkeypatch.setattr(batch, "map_files", lambda fn, calls, **kw: maps.append((fn.__name__, len(calls)))
+                        or real_map(fn, calls, **kw))
+    shared = preview.make_preview(spec, sources, tmp_path / "shared", do_render=False)
+    assert maps == [("plan_file", len(sources)), ("_preview_sample", 3)]
+    assert [f.to_dict() | {"ms": 0} for f in shared.batch_plan.files] == \
+        [f.to_dict() | {"ms": 0} for f in inline.batch_plan.files]
+    assert [s.source for s in shared.samples] == [s.source for s in inline.samples]
+    for a, b in zip(shared.samples, inline.samples):
+        assert a.passed and b.passed and a.checks == b.checks and a.exception is None
+        assert a.output.read_bytes() == b.output.read_bytes()
+    assert shared.token == inline.token
+    journals = sorted((tmp_path / "shared" / "logs").glob("*.events.jsonl"))
+    assert len(journals) == 3
+    assert all('"preview.sample.verify.succeeded"' in j.read_text(encoding="utf-8") for j in journals)
+    assert "verification PASS" in (tmp_path / "shared" / "logs" / "preview.log").read_text(encoding="utf-8")
+
+
+def test_a_shared_map_whose_worker_dies_makes_that_call_here(monkeypatch):
+    from concurrent.futures.process import BrokenProcessPool
+
+    class Broken:
+        def result(self):
+            raise BrokenProcessPool("a worker stopped abruptly")
+
+    class Pool:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def submit(self, fn, *args):
+            return Broken()
+
+    monkeypatch.setattr(batch, "DEFAULT_WORKER_MODE", "auto")
+    monkeypatch.setattr(batch.os, "cpu_count", lambda: 4)
+    monkeypatch.setattr(batch, "_process_pool", lambda workers: Pool())
+    assert batch.map_files(divmod, [(7, 2), (9, 4), (5, 5)]) == [(3, 1), (2, 1), (1, 0)]
+    monkeypatch.setattr(batch, "_process_pool", lambda workers: pytest.fail("two calls stay here"))
+    assert batch.map_files(divmod, [(7, 2), (9, 4)]) == [(3, 1), (2, 1)]
+    assert batch.map_files(divmod, [(7, 2), (9, 4), (5, 5)], min_files=12) == [(3, 1), (2, 1), (1, 0)]

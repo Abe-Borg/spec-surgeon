@@ -216,15 +216,16 @@ class WordSession:
 
 def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[str], None]] = None,
                 detail: Optional[Callable[[str], None]] = None, timeout: Optional[float] = None) -> Dict[Path, Path]:
-    """{docx: pdf} for the files Word rendered. One spawned worker starts ONE private Word instance and renders every
-    file in turn (``word_worker.run_word_batch``); a file Word cannot open or export is reported on ``log`` — with
+    """{docx: pdf} for the files Word rendered. The files are shared over up to ``word_worker.word_instances``
+    spawned workers that render side by side, each starting ONE private Word instance and rendering its share in
+    turn (``word_worker.run_word_batches``); a file Word cannot open or export is reported on ``log`` — with
     the COM error's code and Word's own description — and left out, and the others still render. A file that
     exceeds ``timeout`` (per file, enforced by the parent) ends that worker and its private Word, and the remaining
-    files go on in a fresh one. Only a Word that cannot start at all, with nothing rendered, raises — the
+    files of its share go on in a fresh one. Only a Word that cannot start at all, with nothing rendered, raises — the
     renderer-selection wrapper then reports the backend as unavailable once. ``detail`` gets Word's version and
     each file's time. Existing PDFs are never reused."""
     from .. import diagnostics as diag
-    from .word_worker import run_word_batch
+    from .word_worker import run_word_batches
     log = log or (lambda msg: None)
     detail = detail or (lambda msg: None)
     out_dir = Path(out_dir)
@@ -237,7 +238,7 @@ def render_pdfs(files: Sequence[Path], out_dir: Path, log: Optional[Callable[[st
         except OSError as exc:
             held[f] = f"{type(exc).__name__}: {exc}"
     with diag.span("render.word_batch", out_dir=str(out_dir), file_count=len(files)) as outcome:
-        batch = run_word_batch([f for f in files if f not in held], out_dir, timeout_per_file=timeout)
+        batch = run_word_batches([f for f in files if f not in held], out_dir, timeout_per_file=timeout)
         outcome.update(workers=batch.workers, version=batch.version,
                        rendered=sum(1 for v in batch.results.values() if isinstance(v, Path)),
                        failed=sum(1 for v in batch.results.values() if not isinstance(v, Path)))

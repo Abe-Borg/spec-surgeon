@@ -284,3 +284,88 @@ def test_an_old_pdf_that_cannot_be_replaced_fails_that_file_only(word, monkeypat
     got = word_com.render_pdfs(files, word.out, timeout=20, log=said.append)
     assert set(got) == {files[0]}
     assert any("ok2.docx" in m and "could not be replaced" in m for m in said)
+
+
+# ---- several private Word instances side by side (run_word_batches) ------------------------------------------------
+
+def test_instances_scale_with_files_cores_and_the_setting(monkeypatch):
+    monkeypatch.delenv(word_worker.WORD_INSTANCES_ENV, raising=False)
+    monkeypatch.setattr(word_worker.os, "cpu_count", lambda: 8)
+    assert [word_worker.word_instances(n) for n in (0, 1, 2, 3, 4, 5, 6, 40)] == [1, 1, 1, 2, 2, 3, 3, 3]
+    monkeypatch.setattr(word_worker.os, "cpu_count", lambda: 4)
+    assert word_worker.word_instances(40) == 2                                   # one Word per two cores at most
+    monkeypatch.setattr(word_worker.os, "cpu_count", lambda: 2)
+    assert word_worker.word_instances(40) == 1
+    monkeypatch.setattr(word_worker.os, "cpu_count", lambda: 16)
+    monkeypatch.setenv(word_worker.WORD_INSTANCES_ENV, "1")
+    assert word_worker.word_instances(40) == 1                                   # the off switch: one Word, as before
+    monkeypatch.setenv(word_worker.WORD_INSTANCES_ENV, "5")
+    assert word_worker.word_instances(40) == 5
+    monkeypatch.setenv(word_worker.WORD_INSTANCES_ENV, "many")
+    assert word_worker.word_instances(40) == word_worker.WORD_INSTANCES
+
+
+def test_several_instances_render_their_shares_side_by_side_and_the_results_merge(word):
+    files = word.files(*(f"ok{i}.docx" for i in range(6)))
+    t = time.perf_counter()
+    batch = word_worker.run_word_batches(files, word.out, timeout_per_file=20, instances=3)
+    assert batch.workers == 3 and batch.start_error is None and batch.version == "16.0 (build 17328)"
+    assert list(batch.results) == files                                          # the caller's order
+    for f in files:
+        _pdf(batch.results[f], f.name)
+    assert len(word.cleanup) == 3 and all(not terminate for _, terminate in word.cleanup)
+    assert time.perf_counter() - t < 60
+
+
+def test_a_stuck_file_in_one_share_does_not_hold_up_the_others(word):
+    files = word.files("stuck.docx", "ok1.docx", "ok2.docx", "ok3.docx")
+    batch = word_worker.run_word_batches(files, word.out, timeout_per_file=1, instances=2)
+    assert batch.results[files[0]].code == "word-timeout"                        # share 0: stuck, ok2
+    for f in files[1:]:
+        _pdf(batch.results[f], f.name)
+    assert batch.workers == 3                                                    # 2 shares; ok2 went on in a fresh one
+
+
+def test_a_share_whose_word_cannot_start_gets_one_more_try_after_the_others(word, monkeypatch):
+    calls = []
+    real = word_worker.run_word_batch
+
+    def flaky(files, out_dir, timeout_per_file=None):
+        calls.append([Path(f).name for f in files])
+        if len(calls) == 2:                                                      # the second share's Word refuses to start
+            start = WordWorkerError("word-com", "COM error 0x80080005 (Server execution failed)", {"stage": "word_start"})
+            return word_worker.WordBatchResult(results={Path(f): start for f in files}, workers=1, start_error=start)
+        return real(files, out_dir, timeout_per_file)
+
+    monkeypatch.setattr(word_worker, "run_word_batch", flaky)
+    files = word.files("ok0.docx", "ok1.docx", "ok2.docx", "ok3.docx")
+    batch = word_worker.run_word_batches(files, word.out, timeout_per_file=20, instances=2)
+    assert batch.start_error is None
+    for f in files:
+        _pdf(batch.results[f], f.name)
+    assert sorted(calls[2]) == sorted(calls[1])                                  # the refused share, once more, alone
+    assert len(calls) == 3
+
+
+def test_no_share_starting_is_a_start_error_for_the_backend(word, monkeypatch):
+    start = WordWorkerError("word-com", "COM error 0x80080005 (Server execution failed)", {"stage": "word_start"})
+    calls = []
+
+    def never(files, out_dir, timeout_per_file=None):
+        calls.append(files)
+        return word_worker.WordBatchResult(results={Path(f): start for f in files}, workers=1, start_error=start)
+
+    monkeypatch.setattr(word_worker, "run_word_batch", never)
+    files = word.files("a.docx", "b.docx", "c.docx", "d.docx")
+    batch = word_worker.run_word_batches(files, word.out, timeout_per_file=20, instances=2)
+    assert batch.start_error is start and all(batch.results[f] is start for f in files)
+    assert len(calls) == 2                                                       # no retry: Word does not start at all
+
+
+def test_word_com_renders_a_larger_batch_over_several_instances(word, monkeypatch):
+    monkeypatch.setattr(word_worker, "word_instances", lambda n: 2)
+    files = word.files(*(f"ok{i}.docx" for i in range(4)))
+    details = []
+    result = word_com.render_pdfs(files, word.out, detail=details.append, timeout=20)
+    assert result == {f: word.out / (f.stem + ".pdf") for f in files}
+    assert len(details) == 4 and len(word.cleanup) == 2

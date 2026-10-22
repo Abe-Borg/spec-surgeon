@@ -92,3 +92,7 @@ def _hermetic(request, tmp_path_factory, monkeypatch):
         monkeypatch.setattr(llm, "_fast_unavailable", None)
     except ImportError:
         pass
+    # The window's batches share their files over spawned worker processes (batch.DEFAULT_WORKER_MODE "auto"); a
+    # test's patches never reach a spawned worker, so the suite runs them in this process unless a test asks.
+    from spec_surgeon import batch
+    monkeypatch.setattr(batch, "DEFAULT_WORKER_MODE", "thread")
