@@ -16,3 +16,8 @@ Changes since v1.7.0.
 - New messages, notes and cards rise in; the choices and reply chips land one after another; the button above
   the box slides open and shut; the view eases down to new content, and stays where you are while you read
   further up. With Windows' animation effects off (reduced motion), everything shows at once.
+
+## Fixes
+
+- **A comment's author is the name you give.** The reviewer name and initials Word shows on a comment or a reply are
+  checked like any other wording: a name you did not type is refused, and the assistant asks you for it.
