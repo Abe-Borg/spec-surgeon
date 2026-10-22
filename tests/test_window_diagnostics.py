@@ -262,6 +262,7 @@ def test_a_job_says_when_it_starts_and_when_stop_was_asked(tmp_path, logs):
     assert state.job_status()["stop_requested"] is not None
     release.set()
     t.join(20)
+    state.thread.join(10)         # the stream's last frame is sent just before the job's thread returns
     text = logs.lines()
     assert "Job send started (a typed message)" in text
     assert "Stop requested for job send (running " in text
