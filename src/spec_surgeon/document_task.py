@@ -730,9 +730,9 @@ class DocumentTask:
             if c.recovery_active or any(choice.get("kind") in {"custom_transform", "recovery_plan", "recovery_target"}
                                         for choice in entry.choices):
                 continue
-            # Questions and choices are shown once, in the clarification card, never twice.
-            lines = [line for line in entry.text.split("\n") if not line.startswith("• ")]
-            self.say("\n".join(lines).strip(), "assistant")
+            # Questions and choices are shown once, in the clarification card, never twice: the chat says Claude's
+            # words alone (its own "• " lines included; a question of several lines stays whole in the card).
+            self.say(entry.message, "assistant")
         self._seen = len(c.entries)
 
     def _settle(self, log):
@@ -1076,7 +1076,14 @@ class DocumentTask:
         elif self.stage == "question":
             questions.extend(outcome.questions)
             if not questions and not choices:
-                questions.append(outcome.message or "Tell me what you’d like to change or clarify.")
+                # A reply with nothing to pick (plain words, a failure) is the chat's, said there once; the card
+                # carries it only when the chat has not (a recovery turn's), and never repeats the latest bubble.
+                message = (outcome.message or "").strip()
+                said = next((m["text"] for m in reversed(self.messages) if m["role"] == "assistant"), None)
+                if not message:
+                    questions.append("Tell me what you’d like to change or clarify.")
+                elif message != said:
+                    questions.append(message)
         preview = outcome.preview
         # The pages and their findings show beside the plan they belong to, while it waits for the user; a run that
         # finished takes them along.

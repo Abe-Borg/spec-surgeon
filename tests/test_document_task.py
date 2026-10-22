@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 from docx import Document
 
-from fake_claude import FakeClient, resp, tool
+from fake_claude import FakeClient, api_error, raise_on_enter, resp, text, tool
 from spec_surgeon.document_task import STEPS_PER_PAUSE, DocumentTask
 from spec_surgeon.gui import Session
 from spec_surgeon import review_display
@@ -148,6 +148,57 @@ def test_clarification_continues_same_conversation(tmp_path):
     assert task.session.conversation is original
     assert view["stage"] == "preview"
     assert len(task.messages) >= 2
+
+
+# ---- each of Claude's words shows once: in the chat, or in the clarification card ---------------------------------
+
+REPLY = "You're right, the logo matches.\n\nThese differences remain:\n\n• 21 05 00 uses 11 pt\n• 28 46 21 has an extra tab"
+
+
+def said(view):
+    return [m["text"] for m in view["messages"] if m["role"] == "assistant"]
+
+
+def test_a_plain_reply_shows_in_the_chat_and_never_again_in_the_card(tmp_path):
+    for answer in (resp(text(REPLY), stop="end_turn"),                                   # words, no tool
+                   resp(tool("ask_user", {"message": REPLY, "suggested_replies": ["Fix the sizes"]}))):
+        task = task_for(tmp_path, FakeClient(answer))
+        task.attach([document(tmp_path / "Spec.docx")])
+        view = task.perform("send", text=REQUEST)
+        assert view["stage"] == "question"
+        assert said(view) == [REPLY]                    # Claude's own "• " lines stay in its bubble
+        assert view["questions"] == [] and view["choices"] == []
+    assert view["chips"] == ["Fix the sizes"]           # the card keeps only what the user can tap
+
+
+def test_a_question_of_several_lines_shows_whole_in_the_card_and_never_in_the_chat(tmp_path):
+    question = "Which one should change?\n\n- the header\n- the footer"
+    task = task_for(tmp_path, FakeClient(resp(tool("ask_user", {"message": "I checked both.", "questions": [question]}))))
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    assert said(view) == ["I checked both."]
+    assert view["questions"] == [question]
+
+
+def test_a_failure_is_said_once_in_the_chat(tmp_path):
+    task = task_for(tmp_path, FakeClient(resp(stop="end_turn")))                        # an empty answer
+    task.attach([document(tmp_path / "Spec.docx")])
+    view = task.perform("send", text=REQUEST)
+    assert view["stage"] == "question"
+    assert said(view) == ["Claude returned an empty answer"] and view["questions"] == []
+
+
+def test_a_reply_the_chat_did_not_say_still_reaches_the_card(tmp_path):
+    fake = FakeClient(resp(tool("ask_user", {"questions": ["Which title?"]})),
+                      raise_on_enter(api_error("Overloaded", 529)))
+    task = task_for(tmp_path, fake)
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.perform("send", text=REQUEST)
+    task.session.conversation.recovery_active = True    # a recovery turn's words are not the chat's
+    view = task.perform("send", text="FIRE SUPPRESSION")
+    message = task.session.turn.message
+    assert view["stage"] == "question" and message and message not in said(view)
+    assert view["questions"] == [message]
 
 
 def test_readable_review_preserves_exact_wording_and_every_effect(tmp_path):
