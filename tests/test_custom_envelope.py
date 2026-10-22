@@ -406,3 +406,16 @@ def test_table_appearance_is_a_custom_method_family_and_structure_is_not():
     assert not any(c == "tables" for c in CUSTOM_TRANSFORM_LIMITS["cannot"])
     assert any("table structure" in c for c in CUSTOM_TRANSFORM_LIMITS["cannot"])
     assert {"TBLPR_ORDER", "TRPR_ORDER", "TCPR_ORDER"} <= codegen.ALLOWED_FROM["spec_surgeon.ooxml"]
+
+
+def test_a_semantic_selector_is_re_derived_by_the_kind_not_trusted(schedule, tmp_path):
+    """Naming targets by position is guidance, not the boundary (Codex on #87): the kinds re-derive any selector they
+    take with their own code, so a method selecting by text is checked the same way, and one whose selector does not
+    pick what it changed fails."""
+    by_text = HEADER_OP.replace('"tables": {"index_range": [k, k]}', '"tables": {"first_row_regex": "^Rev"}')
+    t = trial(by_text, schedule, {}, {}, tmp_path / "sb1")
+    assert t.passed, t.problems
+    # rows named by a text the shaded row does not hold: the kind picks row 4 ("Issued for Permit"), the method shaded 1
+    wrong = SHADE_OP.replace('"rows": {"index_range": [r, r]}', '"rows": {"text_regex": "Permit"}')
+    t = trial(wrong, schedule, {}, {"fill": "D9D9D9"}, tmp_path / "sb2")
+    assert not t.passed and any(p.startswith("V10 FAIL") for p in t.problems), t.problems
