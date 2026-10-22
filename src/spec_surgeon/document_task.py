@@ -37,6 +37,7 @@ START_OVER = "Start over from the originals"   # the reply (a chip, a button) th
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
+RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RECOVERY.md), on every recovery path
 
 # What the window says while the model uses a tool: one plain sentence per tool, never the tool's name.
 TOOL_ACTIVITY = {
@@ -231,6 +232,7 @@ def _same_file_key(path) -> str:
 class DocumentTask:
     def __init__(self, session=None, *, journal=None, render=True):
         self.session = session or Session()
+        self.session.recovery_attempts = RECOVERY_ATTEMPTS   # the recovery a reviewed outcome plan starts, too
         self.render = render
         self.journal = Path(journal) if journal else None
         self.messages: List[Dict[str, str]] = []
@@ -441,6 +443,8 @@ class DocumentTask:
                 if self.focus and path.suffix.lower() == ".docx":
                     self.focus["documents"].append(str(path))      # attached during the pass: it joins the pass
         self._sync()
+        if not template:
+            self._say_same_names([p for p in checked if p.suffix.lower() == ".docx"])
         if before != (self.documents(), self.template(), self.references()):
             self._invalidate()
             if self.decisions:
@@ -450,6 +454,20 @@ class DocumentTask:
                          f"are not in it; the next change is made to it as it is. To give it every change, say "
                          f"“{START_OVER}” and ask again.")
         self.save()
+
+    def _say_same_names(self, fresh: List[Path]) -> None:
+        """A document attached beside another of the same name (the 1.8.0 live run: a template's folder copy of
+        21 13 13 attached as a 13th document) is named once, with both folders, so a template attached as a document
+        is caught before it is edited like the others."""
+        attached = [a.path for a in self.attachments
+                    if not a.template and not a.reference and a.path.suffix.lower() == ".docx"]
+        for name in dict.fromkeys(p.name.lower() for p in fresh):
+            same = [p for p in attached if p.name.lower() == name]
+            if len(same) > 1:
+                folders = ", ".join(f"“{p.parent.name or p.parent}”" for p in same)
+                self.say(f"{len(same)} attached documents are named “{same[0].name}” (in {folders}); each is edited "
+                         f"as a separate document. If one of them is meant as the template, remove it and attach it "
+                         f"as the template instead.")
 
     def remove(self, path, *, template=False):
         path = Path(path)
@@ -772,7 +790,7 @@ class DocumentTask:
 
     def _recovery_options(self):
         from .recovery import RecoveryOptions
-        return RecoveryOptions(max_cost_usd=None, max_calls=self._budget.max_calls, max_attempts=8,
+        return RecoveryOptions(max_cost_usd=None, max_calls=self._budget.max_calls, max_attempts=RECOVERY_ATTEMPTS,
                                max_output_tokens=DEFAULT_MAX_OUTPUT_TOKENS, max_total_tokens=None,
                                effort=RECOVERY_EFFORT, render=self.render, visual_review=self.session.visual_check)
 

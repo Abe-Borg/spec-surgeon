@@ -541,6 +541,43 @@ def _selection(pkg, candidate):
                                               "text_regex": r"\A" + re.escape(raw) + r"\Z"}}
 
 
+def _run_selection(pkg, run):
+    """One selection for a run of consecutive paragraphs of one part (``run``: candidates of one deletion effect,
+    their indices consecutive): their index range, and only their exact texts within it. Each paragraph must be
+    isolable on its own (``_selection``), and no other part of the scope may hold a paragraph the selection would
+    reach. One stage instead of one per paragraph (the 1.8.0 live run deleted 29 paragraphs of one file in 29
+    stages, each verified and rendered on its own)."""
+    from .ops.selectors import _rx_matches
+    for candidate in run:
+        _selection(pkg, candidate)
+    part, scope = run[0]["part"], run[0]["scope"]
+    first = min(c["paragraph_index"] for c in run)
+    last = max(c["paragraph_index"] for c in run)
+    texts = [block_full_text(p) for p in paragraphs(pkg.xml(part))[first:last + 1]]
+    pattern = r"\A(?:" + "|".join(re.escape(t) for t in dict.fromkeys(texts)) + r")\Z"
+    for other in pkg.parts_by_kind()[scope]:
+        if other != part and any(_rx_matches(pattern, block_full_text(p), p)
+                                 for p in paragraphs(pkg.xml(other))[first:last + 1]):
+            raise GoalMethodRequired("the built-in scope selector cannot isolate these exact paragraphs; use a bound "
+                                     "custom method")
+    return {"scope": [scope], "paragraphs": {"index_range": [first, last + 1], "text_regex": pattern}}
+
+
+def _structural_runs(rows):
+    """``rows`` (effect, target, author), last paragraph first: consecutive deletions of one effect in one part are
+    one run; every insertion is a run of its own."""
+    runs = []
+    for effect, target, author in rows:
+        last = runs[-1] if runs else None
+        if (last is not None and effect["type"] == "delete_paragraphs" and last[0] is effect
+                and last[1][-1]["part"] == target["part"]
+                and last[1][-1]["paragraph_index"] == target["paragraph_index"] + 1):
+            last[1].append(target)
+        else:
+            runs.append((effect, [target], author))
+    return runs
+
+
 def compile_goal_candidate(source, contract, binding=None):
     """Build reviewed source-bound stages; a method gap never changes the approved goal."""
     import hashlib
@@ -638,15 +675,17 @@ def compile_goal_candidate(source, contract, binding=None):
                               "tracked": tracked, "author": author, "allow_missing": True}
                     add(effect, "replace_table", select, params)
         seen_structure = set()
-        for effect, target, author in sorted(structural, key=lambda row: (row[1]["part"], -row[1]["paragraph_index"])):
+        ordered = sorted(structural, key=lambda row: (row[1]["part"], -row[1]["paragraph_index"]))
+        for effect, target, author in ordered:
             key = target["part"], target["paragraph_index"]
             if key in touched_text or key in seen_structure:
                 raise GoalMethodRequired("overlapping structural effects need a single source-bound method", bound)
             seen_structure.add(key)
+        for effect, run, author in _structural_runs(ordered):
             params = {"tracked": effect.get("tracked", True), "author": author}
             if effect["type"] == "insert_paragraph":
                 params.update({k: copy.deepcopy(effect[k]) for k in ("text", "position", "formatting", "style") if k in effect})
-            add(effect, effect["type"], _selection(pkg, target), params)
+            add(effect, effect["type"], _selection(pkg, run[0]) if len(run) == 1 else _run_selection(pkg, run), params)
     finally:
         pkg.close()
     if not stages:

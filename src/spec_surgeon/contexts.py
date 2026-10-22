@@ -94,8 +94,11 @@ def load_context_manifest(path):
     return value
 
 
-def checkpoint_history(messages, *, system, tools, folder, state, authority, source_pins=None, catalog_folder=None):
-    """Persist the active epoch. Existing blocks must remain an exact prefix."""
+def checkpoint_history(messages, *, system, tools, folder, state, authority, source_pins=None, catalog_folder=None,
+                       withdrawn=None):
+    """Persist the active epoch. Existing blocks must remain an exact prefix; ``withdrawn``, the one exception, is a
+    last user message nothing answered (a reply Claude declined, ``Conversation._take_back``): the history may then
+    end one message earlier, with exactly that message gone."""
     catalog_folder = Path(catalog_folder) if catalog_folder is not None else _catalog_folder(folder)
     catalog = {"system": plain(system), "tools": plain(tools)}
     encoded_catalog = _encode(catalog)
@@ -111,6 +114,9 @@ def checkpoint_history(messages, *, system, tools, folder, state, authority, sou
     if path.exists():
         prior = load_context_manifest(path)
         previous = prior["messages"]
+        if withdrawn is not None and previous == manifest["messages"] + [plain(withdrawn)] \
+                and plain(withdrawn).get("role") == "user":
+            previous = manifest["messages"]
         # User replies may extend authority; system/tools and old provider messages
         # cannot be rewritten, even if a caller accidentally mutates an SDK block.
         if (manifest["messages"][:len(previous)] != previous or prior["system"] != catalog["system"]

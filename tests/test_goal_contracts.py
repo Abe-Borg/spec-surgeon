@@ -136,6 +136,69 @@ def test_exact_structural_effects_preserve_other_paragraphs(tmp_path, tracked, k
     execute(source, contract(effect))
 
 
+def article(path, lines):
+    doc = Document()
+    for line in lines:
+        doc.add_paragraph(line)
+    doc.save(path)
+    return path
+
+
+SUBMITTALS = ["SECTION 21 13 13", "1.4 ACTION SUBMITTALS", "Product Data.", "Shop Drawings.", "Delegated-Design Submittal.",
+              "1.5 INFORMATIONAL SUBMITTALS", "Product Data.", "Field quality-control reports."]
+
+
+def stages_of(candidate):
+    return [candidate["spec"]] if candidate["kind"] == "spec" else [s["spec"] for s in candidate["chain"]["stages"]]
+
+
+@pytest.mark.parametrize("tracked", [False, True])
+def test_consecutive_deletions_of_one_effect_are_one_stage(tmp_path, tracked):
+    """The 1.8.0 live run deleted 29 paragraphs of one file in 29 stages, each verified and rendered on its own.
+    Consecutive paragraphs of one deletion effect are now one stage; the paragraph of the same words outside the run
+    ("Product Data." under INFORMATIONAL SUBMITTALS) is not reached."""
+    source = article(tmp_path / "spec.docx", SUBMITTALS)
+    goal = contract({"id": "action", "type": "delete_paragraphs", "tracked": tracked, "target": {"locators": [
+        {"exact_text": "1.4 ACTION SUBMITTALS"}, {"exact_text": "Product Data.", "after_text": "1.4 ACTION SUBMITTALS",
+         "before_text": "Shop Drawings."},
+        {"exact_text": "Shop Drawings."}, {"exact_text": "Delegated-Design Submittal."}], "cardinality": 4}})
+    binding = resolve_goal(source, goal)["binding"]
+    [spec] = stages_of(compile_goal_candidate(source, goal, binding))
+    assert spec["ops"][0]["select"]["paragraphs"]["index_range"] == [1, 5]
+    data = execute(source, goal, binding)
+    left = [p.text for p in Document(__import__("io").BytesIO(data)).paragraphs]
+    if not tracked:
+        assert left == ["SECTION 21 13 13", "1.5 INFORMATIONAL SUBMITTALS", "Product Data.",
+                        "Field quality-control reports."]
+
+
+def test_deletions_with_a_kept_paragraph_between_stay_separate_stages(tmp_path):
+    source = article(tmp_path / "spec.docx", SUBMITTALS)
+    goal = contract({"id": "data", "type": "delete_paragraphs", "tracked": False, "target": {"locators": [
+        {"exact_text": "Shop Drawings."}, {"exact_text": "Field quality-control reports."}], "cardinality": 2}})
+    binding = resolve_goal(source, goal)["binding"]
+    assert len(stages_of(compile_goal_candidate(source, goal, binding))) == 2
+    execute(source, goal, binding)
+
+
+def test_a_run_selection_reaching_a_kept_paragraph_does_not_satisfy_the_goal(tmp_path, monkeypatch):
+    """A grouped selection that plan and apply agree on, but that reaches one paragraph too many, is still caught
+    by the approved goal's own check."""
+    from spec_surgeon import goal_contracts
+    source = article(tmp_path / "spec.docx", SUBMITTALS)
+    goal = contract({"id": "action", "type": "delete_paragraphs", "tracked": False, "target": {"locators": [
+        {"exact_text": "Shop Drawings."}, {"exact_text": "Delegated-Design Submittal."}], "cardinality": 2}})
+    binding = resolve_goal(source, goal)["binding"]
+    monkeypatch.setattr(goal_contracts, "_run_selection", lambda pkg, run:
+                        {"scope": ["document"], "paragraphs": {"index_range": [3, 6]}})
+    [method] = stages_of(compile_goal_candidate(source, goal, binding))
+    pkg = DocxPackage(source.read_bytes())
+    plan, fragments = plan_spec(pkg, method)
+    output = apply_spec(pkg, fragments).output_bytes()
+    assert run_suite(source.read_bytes(), output, plan.to_dict(), "source", "candidate").passed
+    assert not verify_goal(source, output, goal, binding)["passed"]
+
+
 @pytest.mark.parametrize("tracked", [False, True])
 def test_exact_replacement_supports_split_runs_and_empty_literal(tmp_path, tracked):
     source = document(tmp_path / "spec.docx")

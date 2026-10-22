@@ -54,6 +54,24 @@ def test_an_epoch_cannot_change_old_thinking_or_tool_schema(tmp_path):
         checkpoint_history(history(), **dict(arguments, tools=[{"name": "new_tool"}]))
 
 
+def test_an_epoch_gives_up_only_the_last_unanswered_user_message_it_is_told_of(tmp_path):
+    """A reply Claude declined is taken back (Conversation._take_back): exactly that last user message may leave;
+    the guard still refuses any other shortening or a withdrawal it was not told of."""
+    arguments = dict(system="system", tools=[], folder=tmp_path, state={}, authority={})
+    messages = history()
+    checkpoint_history(messages, **arguments)
+    last = messages.pop()
+    with pytest.raises(ContextLimit, match="history changed"):
+        checkpoint_history(messages, **arguments)                                   # not told: refused
+    with pytest.raises(ContextLimit, match="history changed"):
+        checkpoint_history(messages, **arguments, withdrawn={"role": "user", "content": "something else"})
+    with pytest.raises(ContextLimit, match="history changed"):
+        checkpoint_history(messages[:1], **arguments, withdrawn=last)                # more than the one message
+    checkpoint_history(messages, **arguments, withdrawn=last)
+    checkpoint_history(messages + [{"role": "user", "content": [{"type": "tool_result", "tool_use_id": "call",
+                                                                  "content": "the next answer"}]}], **arguments)
+
+
 def test_sdk_optional_defaults_do_not_break_epoch_prefix_after_recovery_reload(tmp_path):
     from spec_surgeon.recovery_state import json_value
 

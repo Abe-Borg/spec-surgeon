@@ -93,7 +93,7 @@ def test_local_output_policy_cannot_escape_outer_budget():
     fake = FakeClient(resp(text("ok")))
     with llm.budget_scope(budget):
         llm.call(fake, model="claude-opus-5-5", system="S", tools=[], messages=[{"role": "user", "content": "x"}],
-                 max_output_tokens=128000, effort="max")
+                 max_output_tokens=128000, effort="high")
     assert fake.requests[0]["max_tokens"] == 1234
     assert fake.requests[0]["output_config"] == {"effort": "low"}
     assert budget.calls == budget.usage.calls == 1
@@ -118,10 +118,30 @@ def test_larger_allowances_remain_configurable_and_invalid_values_are_refused(so
     assert defaults.max_output_tokens == resources.DEFAULT_MAX_OUTPUT_TOKENS == 128000
     assert defaults.max_total_tokens == resources.DEFAULT_MAX_TOTAL_TOKENS == 20000000
     assert defaults.max_cost_usd == resources.DEFAULT_MAX_COST_USD == 250
-    assert defaults.effort == resources.DEFAULT_EFFORT == "max"
+    assert defaults.effort == resources.DEFAULT_EFFORT == "high"
     for bad in (True, 0, -1, 1.5):
         with pytest.raises(ValueError):
             Conversation("r", [source], max_attempts=bad)
+
+
+def test_no_call_runs_at_max_effort(source):
+    """The owner's decision (2026-10-22): high is the most any call asks for, and max is refused, not lowered. The
+    window's conversation is built without an effort, and its planning and recovery after a refused preview take
+    the conversation's (the 2026-10-22 live run's 37 planning and recovery calls ran at max)."""
+    from spec_surgeon import continuous_recovery
+    from spec_surgeon.recovery import RecoveryOptions
+    conversation = Conversation("r", [source])
+    assert llm.EFFORT == conversation.effort == RecoveryOptions().effort == "high"
+    assert continuous_recovery.options_for(conversation).effort == "high"
+    fake = FakeClient(resp(text("ok")))
+    with pytest.raises(ValueError, match="effort"):
+        llm.call(fake, model="claude-opus-5-5", system="S", tools=[], messages=[{"role": "user", "content": "x"}],
+                 effort="max")
+    assert fake.requests == []
+    with pytest.raises(ValueError, match="effort"):
+        RecoveryOptions(effort="max").validate()
+    with pytest.raises(ValueError, match="effort"):
+        Conversation("r", [source], effort="max")
 
 
 @pytest.fixture

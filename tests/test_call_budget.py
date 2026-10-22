@@ -81,7 +81,7 @@ def test_nested_scopes_keep_outer_limits_and_same_budget_is_counted_once():
     ("max_cost_usd", -1.0), ("max_cost_usd", float("nan")), ("max_cost_usd", float("inf")),
     ("max_cost_usd", float("-inf")), ("max_cost_usd", 10 ** 1000),
     ("model", False), ("model", ""), ("model", " "), ("model", " claude-opus-5-5"),
-    ("effort", True), ("effort", "unlimited"), ("effort", None),
+    ("effort", True), ("effort", "unlimited"), ("effort", None), ("effort", "max"),
 ])
 def test_configuration_rejects_non_finite_or_ambiguous_values(field, value):
     with pytest.raises(ValueError, match=field):

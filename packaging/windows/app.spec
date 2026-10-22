@@ -52,8 +52,8 @@ pdf_datas, pdf_binaries, pdf_imports = collect_all("pymupdf")
 datas += pdf_datas
 binaries = list(pdf_binaries)
 hiddenimports = pdf_imports + collect_submodules("anthropic")
-hiddenimports += ["pythoncom", "pywintypes", "win32com.client", "win32cred", "win32timezone", "spec_surgeon.sandbox_runner",
-                  "spec_surgeon.analysis_runner",
+hiddenimports += ["pythoncom", "pywintypes", "win32com.client", "win32cred", "win32gui", "win32timezone",
+                  "spec_surgeon.sandbox_runner", "spec_surgeon.analysis_runner",
                   "spec_surgeon.web.server", "spec_surgeon.web.shell", "spec_surgeon.web.updates",
                   "spec_surgeon.web.watch"]
 # CredRead constructs LastWritten through a dynamic win32timezone import; without it a saved key cannot be read.
