@@ -198,3 +198,68 @@ def test_every_file_reaches_the_preview_text_and_the_window(tmp_path):
 def test_the_prompt_says_to_name_them_with_an_offer():
     prompt = compiler.system_prompt(chat=True)
     assert "WORDING LEFT ELSEWHERE" in prompt and "never change them unasked" in prompt
+
+
+# ---- from review (Codex on #80) ----
+
+def test_past_forty_notes_every_file_is_still_named(tmp_path):
+    files = []
+    for i in range(45):
+        path = tmp_path / f"21 {10 + i // 10:02d} {i % 10:02d}.docx"
+        path.write_bytes(spec_doc(number=f"21 {10 + i // 10:02d} {i % 10:02d}"))
+        files.append(path)
+    text = plan_batch([str(f) for f in files], spec_of(rename())).to_text(per_file=False)
+    assert "… and 5 more note(s) of the same kind, in: " in text
+    assert all(f.name in text.split("WORDING LEFT ELSEWHERE", 1)[1] for f in files)
+
+
+def test_an_allowed_miss_still_says_where_the_words_are():
+    src = spec_doc(footer="21 05 53 - 1")
+    plan, frags = plan_spec(DocxPackage(src), spec_of(rename(allow_missing=True)))
+    assert left(plan) == [f"“{TITLE}” also occurs in the body (1×); this change leaves it as it is."]
+    out = apply_spec(DocxPackage(src), frags).output_bytes()       # a no-op still applies as one
+    assert run_suite(src, out, plan.to_dict(), "src.docx", "out.docx").passed
+
+
+def test_the_rule_that_supplies_a_fill_decides_whether_it_was_typed(template):
+    src = build("21 05 00", "COMMON WORK RESULTS FOR FIRE SUPPRESSION")
+    words = {"request": "Put COMMON WORK RESULTS in the header.", "summary": "template", "mode": "untracked"}
+    reads = {"rule": "regex", "source": "document", "pattern": r"^(COMMON WORK RESULTS)\b"}
+    typed = {"rule": "literal", "value": "COMMON WORK RESULTS"}
+    # the regex reads the same words as the literal fallback: the document supplied them, nothing was typed
+    plan = plan_spec(DocxPackage(src), {**words, "ops": [template_op(template, {"rule": "first_match",
+                                                                                "rules": [reads, typed]})]})[0]
+    assert left(plan) == []
+    # the regex finds nothing: the fallback's typed words fill the slot, and differ from the document's title
+    misses = {"rule": "regex", "source": "document", "pattern": r"^(NOWHERE IN THIS FILE)"}
+    plan = plan_spec(DocxPackage(src), {**words, "ops": [template_op(template, {"rule": "first_match",
+                                                                                "rules": [misses, typed]})]})[0]
+    assert len(left(plan)) == 1 and "“COMMON WORK RESULTS”" in left(plan)[0]
+
+
+def _chain(*stages):
+    return {"name": "rename", "stages": [{"name": f"step {i}", "spec": s} for i, s in enumerate(stages, 1)]}
+
+
+def test_a_chain_names_what_its_later_steps_leave_and_drops_what_they_change(tmp_path):
+    from spec_surgeon.preview import make_chain_preview
+    folder = tmp_path / "docs"
+    folder.mkdir()
+    for n in ("21 05 53", "21 05 54"):
+        (folder / f"{n}.docx").write_bytes(spec_doc(number=n))
+    bold = {"request": "Bold PART 1.", "summary": "bold", "mode": "formatting",
+            "ops": [{"op": "set_properties", "select": {"paragraphs": {"text_regex": "^PART 1"}},
+                     "params": {"run": {"b": True}, "tracked": False}}]}
+    # a later step renames the footer: the samples say the body keeps the old title, and that the others were not
+    # planned that far
+    pv = make_chain_preview(_chain(bold, spec_of(rename())), [str(folder)], tmp_path / "p1", renderer="none",
+                            do_render=False)
+    later = [w for w in pv.warnings if "also occurs in the body" in w]
+    assert later and all(w.endswith("this change leaves it as it is.") for w in later)
+    assert any(w.startswith("The later steps were checked on the sample documents only") for w in pv.warnings)
+    assert "WORDING LEFT ELSEWHERE BY THE LATER STEPS" in pv.to_text()
+    # step 1 renames the footer, step 2 the body: step 1's note no longer holds and is not shown, step 2 leaves none
+    pv = make_chain_preview(_chain(spec_of(rename()), spec_of(rename(scope=("document",)))), [str(folder)],
+                            tmp_path / "p2", renderer="none", do_render=False)
+    assert not any("also occurs" in w for w in pv.warnings)
+    assert "WORDING LEFT ELSEWHERE —" not in pv.batch_plan.to_text(per_file=False)

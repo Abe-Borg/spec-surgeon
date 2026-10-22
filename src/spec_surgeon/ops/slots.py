@@ -603,15 +603,6 @@ REFERENCE_FILLS = {
 }
 
 
-def literal_values(rule: Dict[str, Any]) -> List[str]:
-    """The user's words a fill rule can place: its literal's value, or each literal's of a first_match chain."""
-    if not isinstance(rule, dict):
-        return []
-    if rule.get("rule") == "literal":
-        return [rule.get("value")]
-    return [v for r in rule.get("rules") or [] for v in literal_values(r)] if isinstance(rule.get("rules"), list) else []
-
-
 def rule_uses_literal(rule: Dict[str, Any]) -> bool:
     if not isinstance(rule, dict):
         return False

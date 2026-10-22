@@ -484,6 +484,7 @@ class ReplaceText(Op):
         if total == 0:
             if params.get("allow_missing"):
                 plan.notes.append(f"{find!r} does not occur in scope {scope}; no-op.")
+                plan.transform_data = {"left_elsewhere": left}    # where it does occur, for ops/elsewhere.py
                 return plan
             raise JobException(f"{find!r} not found in scope {scope}"
                                + (f" as a whole word; {_inside_text(find, inside)}" if inside else "")
@@ -593,8 +594,8 @@ class ReplaceText(Op):
 
     def apply(self, pkg: DocxPackage, plan: PlanFragment) -> None:
         td = plan.transform_data
-        if not td:
-            return
+        if not td.get("edits"):
+            return                                   # a no-op (allow_missing): nothing to write
         mode = plan.params["mode"]
         stamp = RevisionStamp.now(td["author"], td["use_date_utc"], td.get("date_convention", "word-local-z"))
         next_id = [td["first_rev_id"]]

@@ -15,7 +15,7 @@ from typing import Any, Dict, List
 
 from ..package import DocxPackage
 from .base import LEFT_ELSEWHERE, JobException, PlanFragment
-from .slots import REFERENCE_FILLS, extract_fill, literal_values, value_tokens
+from .slots import REFERENCE_FILLS, extract_fill, value_tokens
 
 
 def places_text(left: List[list]) -> str:
@@ -43,6 +43,20 @@ def _replacements(ops: List[Dict[str, Any]], frags: List[PlanFragment]) -> None:
                            f"leaves it as it is.")
 
 
+def _supplier(pkg: DocxPackage, name: str, rule: Any) -> Any:
+    """The rule that supplies a fill: a first_match chain's first rule that extracts one, as ``extract_fill`` tries
+    them (a regex that reads the same words as a later literal fallback supplied them, not the literal)."""
+    if isinstance(rule, dict) and isinstance(rule.get("rules"), list) and rule.get("rule") in (None, "first_match"):
+        for sub in rule["rules"]:
+            try:
+                extract_fill(pkg, name, sub)
+            except JobException:
+                continue
+            return _supplier(pkg, name, sub)
+        return None
+    return rule
+
+
 def _template_fills(pkg: DocxPackage, ops: List[Dict[str, Any]], frags: List[PlanFragment]) -> None:
     for o, f in zip(ops, frags):
         if o.get("op") != "apply_header_footer_template":
@@ -50,7 +64,8 @@ def _template_fills(pkg: DocxPackage, ops: List[Dict[str, Any]], frags: List[Pla
         rules = f.params.get("slot_fills") or {}
         bound = f.params.get("slot_bindings") or {}
         for name, value in sorted((f.transform_data.get("fills") or {}).items()):
-            if name not in REFERENCE_FILLS or name in bound or value not in literal_values(rules.get(name)):
+            if name not in REFERENCE_FILLS or name in bound or \
+                    (_supplier(pkg, name, rules.get(name)) or {}).get("rule") != "literal":
                 continue                       # no reference rule, the file's own words, or a rule that read them
             try:
                 own = extract_fill(pkg, name, REFERENCE_FILLS[name])
