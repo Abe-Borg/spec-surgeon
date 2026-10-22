@@ -96,7 +96,8 @@ def test_gui_keeps_conversation_and_exports_the_recovered_preview(tmp_path, monk
     assert (s.last_run_dir / "outputs" / source.name).is_file()
 
 
-def test_failed_preview_automatically_investigates_without_switching_modes(tmp_path):
+def _one_file_refuses(tmp_path, *responses):
+    """Two documents; the spec plans on easy.docx and is refused on source.docx (it has no MissingStyle)."""
     from docx import Document
     from docx.enum.style import WD_STYLE_TYPE
     from spec_surgeon.gui import Session
@@ -105,16 +106,62 @@ def test_failed_preview_automatically_investigates_without_switching_modes(tmp_p
     easy.styles.add_style("MissingStyle", WD_STYLE_TYPE.PARAGRAPH)
     easy.paragraphs[0].style = "MissingStyle"
     easy.save(tmp_path / "easy.docx")
-    broken = {"request": "Make the title bold", "summary": "Use a style", "mode": "formatting",
+    spec = {"request": "Make the title bold", "summary": "Use a style", "mode": "formatting",
         "ops": [{"op": "apply_style", "params": {"style": "MissingStyle"}}]}
-    client = FakeClient(resp(tool("submit_editspec", {"spec": broken})), proposal())
+    client = FakeClient(resp(tool("submit_editspec", {"spec": spec})), *responses)
     s = Session(documents=sorted(tmp_path.glob("*.docx")), out_root=tmp_path / "out", client=client)
     assert s.compile("Make the title bold", lambda _: None) == "Compiled."
+    return s, client, source
+
+
+def test_a_file_the_plan_refuses_leaves_the_preview_of_the_others_standing(tmp_path):
+    # The 1.9.0 live run: one file of thirteen refused at plan time (its even-page footers) voided the preview of the
+    # other twelve and handed the conversation to the outcome planner. The refused file is Left untouched instead;
+    # the preview stands, no model call is made, and the conversation hears which file and why, first.
+    s, client, source = _one_file_refuses(tmp_path)
+    s.make_preview(False, lambda _: None)
+    assert s.spec is not None and s.preview is not None and s.outcome().kind == "preview"
+    assert [f.source.name for f in s.preview.batch_plan.exceptions] == ["source.docx"]
+    assert s.turn is None or not s.turn.choices
+    assert not s.conversation.recovery_active and len(client.requests) == 1
+    note = s.conversation.notes[-1]
+    assert note.index("LEFT UNTOUCHED") < note.index("PREVIEW —")
+    assert "source.docx: [" in note and "1 of 2 file(s) plan cleanly." in note
+
+
+def test_a_sample_that_fails_its_check_still_investigates_the_outcome(tmp_path, monkeypatch):
+    from spec_surgeon import preview as preview_module
+    real = preview_module.make_preview
+
+    def failing(*args, **kwargs):
+        pv = real(*args, **kwargs)
+        pv.samples[0].passed = False
+        return pv
+    monkeypatch.setattr(preview_module, "make_preview", failing)
+    s, client, source = _one_file_refuses(tmp_path, proposal())
     s.make_preview(False, lambda _: None)
     assert s.spec is None and s.preview is None
     assert s.turn.choices[0].kind == "recovery_plan"
     assert "MissingStyle" in str(client.requests[-1]["messages"])
     assert source.is_file()
+
+
+def test_a_preview_that_plans_on_no_file_investigates_the_outcome(tmp_path, monkeypatch):
+    from spec_surgeon import preview as preview_module
+    real = preview_module.make_preview
+
+    def nothing_plans(*args, **kwargs):
+        pv = real(*args, **kwargs)
+        for f in pv.batch_plan.files:             # the file that planned is refused too: the plan stands on nothing
+            if f.status != "exception":
+                f.status, f.exception = "exception", {"code": "not-found", "reason": "planted"}
+        pv.samples = []
+        return pv
+    monkeypatch.setattr(preview_module, "make_preview", nothing_plans)
+    s, client, source = _one_file_refuses(tmp_path, proposal())
+    s.make_preview(False, lambda _: None)
+    assert s.spec is None and s.preview is None
+    assert s.turn.choices[0].kind == "recovery_plan"
 
 
 def test_invisible_proposed_words_are_not_offered_as_an_approval(tmp_path):

@@ -105,7 +105,8 @@ def spec_bindings(spec, chain=None):
     rows = []
     for value in specs:
         for binding in value.get("bindings", []):
-            details = [f"{readable(name)}: {slot['value']} (from {slot['part']}, paragraph {slot['paragraph'] + 1})"
+            details = [f"{readable(name)}: {slot['typed']} (your wording for this document)" if "typed" in slot
+                       else f"{readable(name)}: {slot['value']} (from {slot['part']}, paragraph {slot['paragraph'] + 1})"
                        for name, slot in binding["slots"].items()]
             rows.append({"title": Path(binding["file"]).name, "source": binding["file"], "details": details})
     return rows

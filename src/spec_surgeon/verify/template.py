@@ -247,7 +247,7 @@ def _v_has_literal(rule) -> bool:
     if not isinstance(rule, dict):
         return False
     subs = rule["rules"] if isinstance(rule.get("rules"), list) else []
-    return rule.get("rule") == "literal" or any(_v_has_literal(r) for r in subs)
+    return rule.get("rule") in ("literal", "typed") or any(_v_has_literal(r) for r in subs)
 
 
 def reference_values_of(tpl: VPackage, fills: Dict[str, Any]) -> Dict[str, str]:
@@ -406,6 +406,15 @@ def fill_value(src: VPackage, name: str, rule: Dict[str, Any]) -> str:
         if not isinstance(literal, str) or not literal or ordinal >= len(paragraphs) or literal not in display_of(paragraphs[ordinal]):
             raise ValueError(f"fill {name!r}: literal does not occur verbatim at bound source location")
         return literal
+    if how == "typed":
+        # the user's own wording for this one file (a spec binding's ``typed``): the value as approved, bound to this
+        # source's exact bytes, checked here against the bytes this module read — never another file's wording
+        if hashlib.md5(src.data).hexdigest() != rule.get("source_md5"):
+            raise ValueError(f"fill {name!r}: typed wording bound to another source")
+        typed = rule.get("value")
+        if not isinstance(typed, str) or not typed.strip():
+            raise ValueError(f"fill {name!r}: typed wording is empty")
+        return typed
     if how == "literal":
         v = rule["value"]
     elif how == "regex":

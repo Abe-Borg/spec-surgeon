@@ -606,7 +606,7 @@ REFERENCE_FILLS = {
 def rule_uses_literal(rule: Dict[str, Any]) -> bool:
     if not isinstance(rule, dict):
         return False
-    if rule.get("rule") == "literal":
+    if rule.get("rule") in ("literal", "typed"):       # typed: the user's own wording for one file (a spec binding)
         return True
     if isinstance(rule.get("rules"), list):
         return any(rule_uses_literal(r) for r in rule["rules"])
@@ -630,6 +630,10 @@ def _validate_rule_syntax(name: str, rule: Dict[str, Any]) -> None:
     if kind == "literal":
         if not isinstance(rule.get("value"), str):
             raise JobException(f"slot {name!r}: literal fill needs a string 'value'", "bad-params")
+    elif kind == "typed":
+        if (not isinstance(rule.get("value"), str) or not rule["value"].strip()
+                or not isinstance(rule.get("source_md5"), str)):
+            raise JobException(f"slot {name!r}: typed wording requires its value and source_md5", "bad-params")
     elif kind == "binding":
         if (not isinstance(rule.get("value"), str) or not rule["value"] or not isinstance(rule.get("part"), str)
                 or type(rule.get("paragraph")) is not int or rule["paragraph"] < 0
@@ -670,6 +674,12 @@ def extract_fill(pkg: DocxPackage, name: str, rule: Dict[str, Any]) -> str:
     if occ not in ("all", "first"):
         raise JobException(f"slot {name!r}: occurrence must be 'all' or 'first', got {occ!r}", "bad-params")
 
+    if kind == "typed":
+        # the user's own wording for this file, placed as approved (compiler.placed_words traces it to their words)
+        if hashlib.md5(pkg.data).hexdigest() != rule["source_md5"]:
+            raise JobException(f"slot {name!r}: the wording given for this file is bound to other bytes (the file "
+                               f"changed, or it is another file's)", "binding-source")
+        return rule["value"]
     if kind == "binding":
         if hashlib.md5(pkg.data).hexdigest() != rule["source_md5"]:
             raise JobException(f"slot {name!r}: bound source identity changed", "binding-source")

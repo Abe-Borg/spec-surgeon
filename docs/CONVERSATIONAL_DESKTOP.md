@@ -231,11 +231,16 @@ Originals are never written; the window always creates copies. Each run's copies
 under the app's local data (`%LOCALAPPDATA%\Spec Surgeon\runs` on Windows), so earlier copies remain. **Your
 edited copies** lists them; click one to open it in Word.
 
-A file can be left out at three points, each time with one sentence that names the file and the reason:
+A file can be left out at four points, each time with one sentence that names the file and the reason:
 
 - At attach time, when triage refuses it (above).
+- When you ask: "leave out 20", "not 23 for now". The plan, its preview and its copies cover the other documents;
+  the ones you named are not planned or changed, are listed under **Left untouched** ("You asked to leave it out of
+  this request"), and come back with the next request unless you leave them out again.
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
-  structure. These appear under **Left untouched** before anything runs; no paid investigation precedes them.
+  structure. These appear under **Left untouched** before anything runs; no paid investigation precedes them. The
+  preview of the other documents stands, and the assistant names each one with its reason in its next reply. Only a
+  plan that covers no file at all, or a sample that fails its check, sends the request on to outcome planning.
 - At delivery, when a file fails a verification check. It is never delivered. Spec Surgeon then checks it
   again internally (below).
 
@@ -273,8 +278,8 @@ There is no spending limit. Every AI step (one call to Claude Opus 5.5, whether 
 custom method, the visual check or recovery) may write up to 128,000 tokens, the most the model writes. The
 conversation runs at medium reasoning effort (its sentences and plans are short and the operations' settings ride the
 cached prompt, so a plan is one or two calls), and so do the visual check and a custom method it runs inside a turn,
-because the conversation's budget sets the effort for every call inside it. The outcome planning after a preview that
-set files aside, and recovery (with the custom methods it tries), think at high: their own budget sits inside the
+because the conversation's budget sets the effort for every call inside it. The outcome planning when no ordinary plan
+fits (no operation for the request, a plan that covers no file, or a sample that fails its check), and recovery (with the custom methods it tries), think at high: their own budget sits inside the
 conversation's and wins. No step runs at max: `resources.EFFORTS` refuses it (the owner's decision, 2026-10-22). The
 instructions and the operations' settings (the same for every conversation) are cached for an hour, so the next
 request after a run, a start over or a changed attachment reads them instead of paying for them again; the

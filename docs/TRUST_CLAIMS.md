@@ -15,7 +15,8 @@ Written 2026-10-22 against `master` at 3d1799b (version 1.8.0), from the code ra
 the change that made them. Re-audited the
 same day against `master` at 099ee91 (C2–C6, A1 and the licence change): every model call site, network import,
 thread, timer, `/api` route and outside reference in the built page checked again; what changed is marked
-"(re-audit)". Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
+"(re-audit)". Updated 2026-10-22 after the 1.9.0 live run over test-set-2 (outcome planning's trigger in B8, the
+documents a request leaves out in B5, per-file wording in provenance); those lines say "(test-set-2)". Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
 - `facts` means `tests/test_trust_facts.py` pins the value to its source constant.
@@ -68,10 +69,10 @@ your browser (N4).
 | B2 | Automatic update check, at most once every 24 h | `UpdateFlow.auto_check`, `updater.should_auto_check` | none | GitHub |
 | B3 | Every attachment checked on arrival (triage); two attached documents of one name are named in the chat with both folders (re-audit) | `triage.triage`, `triage_reference`, `DocumentTask._say_same_names` | none | none |
 | B4 | After a reply, up to `AUTO_STEPS` internal steps: make the preview, prepare a custom method, carry out a recovery plan | `DocumentTask._settle`, `Session.outcome` (`auto`) | yes | Anthropic |
-| B5 | The preview: plan every file, apply and verify samples in memory, render them | `Session.make_preview`, `preview.make_preview` | none | none |
+| B5 | (test-set-2) The preview: plan every file the request covers (a document the user left out, `leave_out`, is not planned and is named under Left untouched), apply and verify samples in memory, render them | `Session.make_preview` (`planned_files`), `preview.make_preview`, `DocumentTask._left_untouched` | none | none |
 | B6 | Claude's visual check of the preview pages | `Session._visual_check` → `vision.review_samples` | yes | Anthropic |
 | B7 | A custom method when no built-in operation fits | `Session._generate_custom` → `codegen.generate_op` | yes | Anthropic |
-| B8 | An outcome plan and its trials when the built-in plan cannot be made | `continuous_recovery.propose` / `execute`, `campaign_planner` | yes | Anthropic |
+| B8 | (test-set-2) An outcome plan and its trials when the built-in plan cannot be made: Claude calls the request unsupported, the preview's plan covers no file, or a sample fails its check. A file the plan refuses while others plan does not start it (it waits under Left untouched beside the preview) | `continuous_recovery.propose` / `execute`, `campaign_planner`, the condition in `Session.make_preview` | yes | Anthropic |
 | B9 | Recovery of copies that failed their check after Create edited copies | `DocumentTask._primary` → `Session.resolve_remaining` | yes | Anthropic |
 | B10 | A call that failed for a passing reason is re-sent | `llm.call`, `RETRIES` | yes | Anthropic |
 | B11 | The page reports itself (load, errors, a 10 s heartbeat) to the local server; the watchdog | `frontend/src/lib/diagnostics.ts`, `web/watch.py` | none | loopback only |
@@ -215,6 +216,10 @@ Every source of content in a delivered copy:
   governed path"), checked by the independent outcome check.
 - **A file's own section number and title** in a File Properties value built around your words (re-audit, C5:
   `set_document_properties` `from_document`; `verify/docprops.py`).
+- **Your wording for one document's template slot** (test-set-2: a spec binding's `typed`, such as each title in the
+  template's title case): your words like any other (`compiler.placed_words` traces each one to what you typed or
+  picked), pinned to that document's bytes (`editspec._file_bindings`; `verify/template.fill_value` checks the pin
+  against the bytes it read). Claude may draft them only as a choice whose wording you see and pick.
 - **Claude's outcome plan in recovery:** its wording becomes approved when the app carries the plan out automatically
   (F1).
 - **Remembered repair cases:** tried again, never trusted.
@@ -257,7 +262,9 @@ How each is labelled:
   (`planner.PLAN_PROCESS_MIN_FILES`) and 3 or more samples, one process per core up to 8
   (`batch.MAX_PROCESS_WORKERS`); they end with the work. A worker that stops abruptly costs its own file (recorded, as
   before) or, for a plan or a sample, the call is made again in the app's process (`batch.map_files`).
-- **Closing:** closing the window stops a running job and waits up to 60 s for it (`web/shell.shutdown`).
+- **Closing:** closing the window stops a running job and waits up to 60 s for it (`web/shell.shutdown`); a job
+  still checking or writing copies then finishes first (`gui.main`), and the process ends at once after it
+  (`gui.run`, every entry point: `tests/test_gui.py`).
 
 ### 1i. Cost
 

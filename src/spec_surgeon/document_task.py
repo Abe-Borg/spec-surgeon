@@ -34,6 +34,7 @@ STEPS_PER_PAUSE = 48    # model calls between the pauses where the user says to 
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
 START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
+LEFT_OUT_REASON = "You asked to leave it out of this request; it stays as it is."
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
@@ -805,6 +806,7 @@ class DocumentTask:
         return _fingerprint({"revision": self._revision, "stage": self.stage,
                              "documents": s.documents, "template": s.template, "inputs": s.inputs, "spec": s.spec,
                              "todo": sorted(self.todo), "focus": sorted(self.focus["documents"]) if self.focus else None,
+                             "left_out": [str(p) for p in s.left_out],
                              "preview": outcome.token,
                              "visual_findings": visual.to_dict() if visual else None,
                              "warnings": getattr(preview, "warnings", [])})
@@ -814,7 +816,7 @@ class DocumentTask:
         documents in the plan means the page is out of date, and is refused, never guessed."""
         if not hold:
             return []
-        files = self.session.files()
+        files = self.session.planned_files()
         held: List[Path] = []
         for value in hold:
             path = Path(str(value)).resolve()
@@ -894,7 +896,7 @@ class DocumentTask:
                              "copies first.")
         remaining = None
         if held:
-            remaining = [f for f in s.files() if f not in held]
+            remaining = [f for f in s.planned_files() if f not in held]
             seen = [c["summary"] for g in self._groups() for c in g["changes"]]   # the plan the user looked at
             for path in held:
                 self._set_aside(path, seen)
@@ -1040,14 +1042,21 @@ class DocumentTask:
                           for layout in s.spec.get("layouts") or []] or [1])
         else:
             stages = len(s.spec.get("stages") or []) if is_chain(s.spec) else 1
-        preview = s.outcome().preview
-        set_aside = []
-        for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
-            exc = item.exception or {}
-            set_aside.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
+        set_aside = self._left_untouched(s.outcome().preview)
         return {"groups": groups,
                 "targets": review_display.recovery_targets(s.recovery) if s.recovery else review_display.spec_bindings(s.spec),
                 "set_aside": set_aside, "stages": stages if groups else 0}
+
+    def _left_untouched(self, preview) -> List[Dict[str, str]]:
+        """Left untouched beside a preview: the documents the user left out of the request (no plan covers them),
+        then those the plan refused, each with its reason."""
+        if preview is None:
+            return []
+        items = [{"name": Path(path).name, "reason": LEFT_OUT_REASON} for path in self.session.left_out]
+        for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
+            exc = item.exception or {}
+            items.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
+        return items
 
     def _delivered(self) -> List[Path]:
         """The documents whose copies a partial save during recovery already delivered: their pages and findings leave
@@ -1131,11 +1140,7 @@ class DocumentTask:
         if samples and not any(sample.images for sample in samples):
             warnings.append("Page appearance was not checked: a rendered preview is unavailable. "
                             "Check the edited copies in Word before using them.")
-        set_aside = []
-        batch_plan = getattr(preview, "batch_plan", None)
-        for item in getattr(batch_plan, "exceptions", []) or []:
-            exc = item.exception or {}
-            set_aside.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
+        set_aside = self._left_untouched(preview)
         labels = {"preview": "Create edited copies", "resume": "Continue", "budget": "Continue"}
         if blocking and self.stage == "preview":
             labels["preview"] = "I reviewed the flagged pages — create copies"

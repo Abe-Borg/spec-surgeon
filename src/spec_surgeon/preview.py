@@ -256,8 +256,9 @@ class Preview:
         for binding in spec.get("bindings", []):
             out.append(f"FILLS — {Path(binding['file']).name}:")
             for name, evidence in binding["slots"].items():
-                out.append(f"   {name}: {evidence['value']!r} ({evidence['part']}, "
-                           f"paragraph {evidence['paragraph'] + 1})")
+                out.append(f"   {name}: {evidence['typed']!r} (the user's wording for this file)" if "typed" in evidence
+                           else f"   {name}: {evidence['value']!r} ({evidence['part']}, "
+                                f"paragraph {evidence['paragraph'] + 1})")
         out.append("")
         out.append(self.batch_plan.to_text(per_file=False))
         out.append("\nSAMPLES (applied and verified in memory; sources untouched):")

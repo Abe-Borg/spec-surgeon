@@ -69,8 +69,9 @@ def _template_fills(pkg: DocxPackage, ops: List[Dict[str, Any]], frags: List[Pla
         rules = f.params.get("slot_fills") or {}
         bound = f.params.get("slot_bindings") or {}
         for name, value in sorted((f.transform_data.get("fills") or {}).items()):
-            if name not in REFERENCE_FILLS or name in bound or \
-                    (_supplier(pkg, name, rules.get(name)) or {}).get("rule") != "literal":
+            typed = (bound.get(name) or {}).get("rule") == "typed"     # the user's wording for this one file
+            if name not in REFERENCE_FILLS or (name in bound and not typed) or \
+                    (not typed and (_supplier(pkg, name, rules.get(name)) or {}).get("rule") != "literal"):
                 continue                       # no reference rule, the file's own words, or a rule that read them
             try:
                 own = extract_fill(pkg, name, REFERENCE_FILLS[name])

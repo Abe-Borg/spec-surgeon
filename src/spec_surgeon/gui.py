@@ -155,6 +155,8 @@ class Session:
     recovery_checkpoint: Optional[Path] = None  # current durable investigation, including in-flight work
     pending_layout_recovery: List[Path] = field(default_factory=list)   # layout batch folders still to recover,
                                                   # in plan order (a plan per layout recovers one layout at a time)
+    left_out: List[Path] = field(default_factory=list)   # documents the user left out of the request: the plan, its
+                                                  # preview and its run cover the others (``planned_files``)
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
 
     def _diagnostic_state(self) -> Dict[str, Any]:
@@ -233,6 +235,12 @@ class Session:
 
     # ---- steps ----
     # ---- outcome: a spec XOR a custom transform, and what was previewed of it ----
+    def planned_files(self) -> List[Path]:
+        """The documents the outcome plans, previews and runs: ``files()`` without those the user left out of the
+        request (``left_out``). The conversation still knows every attached document; only the plan leaves these be."""
+        out = set(self.left_out)
+        return [f for f in self.files() if f not in out]
+
     @_session_action
     def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "") -> None:
         """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
@@ -242,6 +250,7 @@ class Session:
         if spec is not None and generated is not None:
             raise ValueError("a session runs either a spec or a custom transform, not both")
         self.spec, self.generated = spec, generated
+        self.left_out = []                        # an outcome's own; the turn that brings a spec sets it again
         self.recovery = None
         self.recovery_checkpoint = None
         self.pending_layout_recovery = []
@@ -432,6 +441,7 @@ class Session:
         self._save_chat()
         if turn.status == "ok":
             self._set_outcome(spec=turn.spec, source="compiled")
+            self.left_out = [Path(p).resolve() for p in getattr(turn, "leave_out", None) or []]
             return "Compiled."
         if turn.status == "questions":
             return "Claude needs your answer — reply in the chat below, or pick one of its choices."
@@ -653,7 +663,7 @@ class Session:
                 "AI-written transform verified. Review its preview before Run."
         if self.spec is None:
             raise ValueError("nothing to preview — describe the change first")
-        files = self.files()                      # the same filtered set Run checks and runs (no template files)
+        files = self.planned_files()              # the same set Run checks and runs (no template, nothing left out)
         out = self._session_dir()                 # beside the conversation's records
         from .editspec import is_chain
         from .layouts import is_layout_plan, make_layout_preview
@@ -680,8 +690,13 @@ class Session:
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
         c = self.conversation
+        # A failed preview is one the plan cannot stand on: no file plans, or a sample fails its check. A file the plan
+        # refuses while others plan is set aside under Left untouched (docs/CONVERSATIONAL_DESKTOP.md) and the preview
+        # stands: the conversation hears why, the user decides. Outcome planning never takes the conversation over for
+        # one refused file (the 1.9.0 live run of 2026-10-22: one file's even-page footers voided a twelve-file preview).
+        bp = self.preview.batch_plan
         if c is not None and c.continuous_recovery and (
-                any(f.status == "exception" for f in self.preview.batch_plan.files)
+                len(bp.exceptions) == len(bp.files)
                 or any(not s.passed for s in self.preview.samples)):
             evidence = {"reason": self.preview.to_text(), "candidate": copy.deepcopy(self.spec)}
             self._set_outcome()
@@ -808,7 +823,21 @@ class Session:
         bp = pv.batch_plan
         total, planned = len(bp.files), len(bp.files) - len(bp.exceptions)
         flagged = len(pv.review.blocking()) if pv.review is not None else 0
-        self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + pv.to_text()[:6000],
+        # what Claude must not miss leads, ahead of the full text the note cuts: the files the plan refused (a chain's
+        # preview repeats its assumptions per stage, and pushed them out of the cut) and the blocking visual findings
+        lead = [f"{planned} of {total} file(s) plan cleanly."]
+        if self.left_out:
+            lead.append("LEFT OUT AT THE USER'S REQUEST (not planned, previewed or changed): "
+                        + ", ".join(self.conversation.batch.label(p) for p in self.left_out))
+        if bp.exceptions:
+            lead.append("LEFT UNTOUCHED (the plan refused these; the others are previewed — name each to the user "
+                        "with its reason and what would let it take part, or offer to leave it out):")
+            lead += [f"   {Path(f.source).name}: [{(f.exception or {}).get('code')}] "
+                     f"{(f.exception or {}).get('reason', '')}"[:400] for f in bp.exceptions[:20]]
+        for finding in (pv.review.blocking() if pv.review is not None else [])[:10]:
+            lead.append(f"BLOCKING VISUAL FINDING — {finding.get('file')}, page {finding.get('page')}: "
+                        f"{finding.get('text', '')}"[:400])
+        self.conversation.note("THE PREVIEW OF YOUR SPEC:\n" + "\n".join(lead) + "\n\n" + pv.to_text()[:6000],
                                display=f"Preview made: {planned} of {total} file(s) plan cleanly." +
                                        (f" Claude's visual check flagged {flagged} problem(s)." if flagged else ""))
         self._save_chat()
@@ -897,7 +926,7 @@ class Session:
         if in_place:
             diag.event("session.approval.refused", level="warning", gate="delivery_mode", reason="copies_only")
             raise ValueError("Edited copies only; original files are never overwritten.")
-        files = self.files()
+        files = self.planned_files()
         from .editspec import is_chain
         from .layouts import is_layout_plan
         if is_layout_plan(self.spec):
@@ -1216,5 +1245,23 @@ def main(argv=None) -> int:
         return code
 
 
+def run(argv=None) -> None:
+    """The window's entry points (``spec-surgeon-gui``, ``python -m spec_surgeon``, the Windows app): ``main``, then
+    the process ends at once. By then the window is closed, the job (if one ran) has ended, the settings and the
+    journal are written and the crash marker is gone; the logs are flushed here. What Python's own teardown would
+    still wait on — a thread of pywebview's .NET and WebView2 layer, a library's idle worker — is nothing of ours,
+    and a process with no window must not stay behind for it (it holds the app mutex an update waits for)."""
+    code = main(argv)
+    import logging
+    logging.shutdown()                   # the app log and the event journal, flushed and closed
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.flush()
+        except Exception:  # noqa: BLE001 — a closed or broken stream has nothing left to flush
+            pass
+    os._exit(code)
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    run()

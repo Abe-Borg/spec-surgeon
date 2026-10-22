@@ -32,6 +32,12 @@ never guess a count. expected_count:'all' deliberately covers every original eli
 each scoped file, whose exact count is bound separately, and supports heterogeneous batches.
 Templates must be explicitly attached and pinned by their exact SHA256 at effect level. Read
 the composition limits in the contract catalog and explain required separate approvals.
+need_user questions and rationales reach the user verbatim in their conversation window: plain
+words about their documents (by file name), never "project", "contract", "effect", "scope" or
+document IDs, and never a procedure (set up, split or narrow anything, start over in pieces).
+A contract covers every document of the conversation. When the user asks to leave documents
+out, say so plainly in one sentence: this plan includes every attached document, and removing a
+document from their documents list leaves it out (the request is then checked again).
 """
 
 
