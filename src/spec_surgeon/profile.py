@@ -1090,6 +1090,7 @@ OWN_NUMBER, OWN_TITLE = "«SECTION NUMBER»", "«SECTION TITLE»"
 MAX_OVERVIEW_BYTES = 12000
 OVERVIEW_FLAGS = 40          # flags THE BATCH lists (the rest are counted; compare_files names every one)
 COMPARE_PAGE = 40            # rows one compare_files call returns at most
+ROW_LINES = 40               # lines a header/footer shows in a row and in most_files_show (the rest in more_lines)
 SAME_AS_MOST = "the same lines as most_files_show"
 OVERVIEW_LINES_CUT = "header/footer lines beyond the first two (compare_files shows them)"
 OVERVIEW_NOTE = (f"{OWN_NUMBER} and {OWN_TITLE} stand for each file's own section number and title; a header/footer "
@@ -1101,26 +1102,49 @@ _SECTION_NUMBERS = re.compile(r"(?<!\d)(\d{2}([ .\-–]?)\d{2}\2\d{2}(?:\.\d{2})
                               r"|\bSECTION\s+[A-Z]{0,4}-?\s*(\d{5,6})(?!\d)", re.IGNORECASE)
 
 
-def letters_shown(p, props: PropResolver) -> Optional[str]:
-    """How a paragraph's letters look to a reader (its runs outside deletions, not those of a nested paragraph):
-    "capitals" when every letter shows as a capital — typed so, or lowercase under w:caps in effect —, "small
-    capitals" when the lowercase letters show in small capitals and none in lower case, "lower case" when no letter
-    shows as a capital, "mixed case" otherwise; None without a cased letter, or when a run's toggle resolves neither
-    way. Where ``shown_case`` names formatting only, this is the look the overview compares across files."""
-    seen = set()
+def _looks(p, props: PropResolver) -> List[tuple]:
+    """(character, look) for what a paragraph's runs type, in order (runs outside deletions, not a nested paragraph's;
+    a tab or break one space): a cased letter's look is "upper", "small" or "lower" as a reader sees it — lowercase
+    under w:caps in effect shows as a capital — or None when its run's toggle resolves neither way; "" otherwise."""
+    out: List[tuple] = []
     for r in p.iter(W + "r"):
         if nearest_p(r) is not p or any(a.tag in (W + "del", W + "moveFrom") for a in r.iterancestors()):
             continue
-        letters = [c for t in r.findall(W + "t") for c in (t.text or "") if c.isupper() or c.islower()]
-        if any(c.isupper() for c in letters):
-            seen.add("upper")
-        if any(c.islower() for c in letters):
-            rpr = r.find(W + "rPr")
-            caps, small = props.run_prop(rpr, p, "caps")[0], props.run_prop(rpr, p, "smallCaps")[0]
-            if caps is None or (caps is not True and small is None):
-                return None
-            seen.add("upper" if caps is True else "small" if small is True else "lower")
-    if not seen:
+        lower: Any = False                     # the look of this run's lowercase letters, once resolved
+        for c in r:
+            if c.tag in (W + "tab", W + "ptab", W + "br", W + "cr"):
+                out.append((" ", ""))
+            elif c.tag == W + "t":
+                for ch in c.text or "":
+                    if ch.isupper():
+                        out.append((ch, "upper"))
+                    elif ch.islower():
+                        if lower is False:
+                            rpr = r.find(W + "rPr")
+                            caps, small = props.run_prop(rpr, p, "caps")[0], props.run_prop(rpr, p, "smallCaps")[0]
+                            lower = None if caps is None or (caps is not True and small is None) else \
+                                "upper" if caps is True else "small" if small is True else "lower"
+                        out.append((ch, lower))
+                    else:
+                        out.append((ch, ""))
+    return out
+
+
+def letters_shown(p, props: PropResolver, within=None) -> Optional[str]:
+    """How a paragraph's letters look to a reader (``_looks``) — or, with ``within`` (a pattern), only the letters of
+    its first match there, the paragraph's when it does not match: "capitals" when every letter shows as a capital
+    (typed so, or under w:caps), "small capitals" when the lowercase letters show in small capitals and none in lower
+    case, "lower case" when no letter shows as a capital, "mixed case" otherwise; None without a cased letter, or
+    when a run's toggle resolves neither way. Where ``shown_case`` names formatting only, this is the look the
+    overview compares across files; a title is measured alone ("Section 21 05 53 - FIRE PUMPS" is a title in
+    capitals)."""
+    looks = _looks(p, props)
+    if within is not None:
+        m = within.search("".join(ch for ch, _ in looks))
+        if m:
+            looks = looks[m.start():m.end()]
+    seen = {look for _, look in looks if look != ""}
+    if not seen or None in seen:
         return None
     if "lower" in seen:
         return "lower case" if seen == {"lower"} else "mixed case"
@@ -1148,11 +1172,47 @@ def _marked(text: str, marks) -> str:
     return text
 
 
+def _field_text(root) -> Dict[Any, str]:
+    """Each paragraph's display text (``_shown_text``) with a field's result as one marker naming its type
+    («PAGE», «NUMPAGES», «STYLEREF» …): what a field shows varies from file to file and page to page, so two lines
+    compare by the field, never by its cached result. A field inside another's result is part of that result."""
+    out: Dict[Any, List[str]] = {}
+    stack: List[Dict[str, Any]] = []           # open complex fields: their code, whether past separate, where shown
+    simple_shown: Dict[Any, set] = {}
+    for r in root.iter(W + "r"):
+        p = nearest_p(r)
+        if p is None or any(a.tag in (W + "del", W + "moveFrom") for a in r.iterancestors()):
+            continue
+        simple = next((a for a in r.iterancestors(W + "fldSimple")), None)
+        for c in r:
+            if c.tag == W + "fldChar":
+                kind = c.get(W + "fldCharType")
+                if kind == "begin":
+                    stack.append({"code": "", "result": False, "shown": set()})
+                elif kind == "separate" and stack:
+                    stack[-1]["result"] = True
+                elif kind == "end" and stack:
+                    stack.pop()
+            elif c.tag == W + "instrText":
+                if stack and not stack[-1]["result"]:
+                    stack[-1]["code"] += c.text or ""
+            elif c.tag in (W + "t", W + "tab", W + "ptab") and all(f["result"] for f in stack):
+                outer = stack[0] if stack else None
+                if outer is None and simple is None:
+                    out.setdefault(p, []).append(c.text or "" if c.tag == W + "t" else " ⇥ ")
+                    continue
+                code = outer["code"] if outer is not None else simple.get(W + "instr") or ""
+                shown = outer["shown"] if outer is not None else simple_shown.setdefault(simple, set())
+                if p not in shown:             # one marker per field and paragraph
+                    shown.add(p)
+                    out.setdefault(p, []).append(f"«{((code.split() or ['FIELD'])[0]).upper()}»")
+    return {p: "".join(v) for p, v in out.items()}
+
+
 def _shape(marked: str) -> tuple:
-    """What two files' same line has in common: its words casefolded, every number one "#" (a page number, a date),
-    the file's own number and title as their markers; spacing and punctuation left out."""
-    return tuple(t if t.startswith("«") else "#" if t.isdecimal() else t.casefold()
-                 for t in re.findall(r"«[^»]*»|\d+|[^\W\d_]+", marked))
+    """What two files' same line has in common: its words casefolded, its numbers as typed, fields and the file's
+    own number and title as their markers; spacing and punctuation left out."""
+    return tuple(t if t.startswith("«") else t.casefold() for t in re.findall(r"«[^»]*»|\d+|[^\W\d_]+", marked))
 
 
 def _quote(text: str) -> str:
@@ -1184,7 +1244,7 @@ class _FileView:
             title_mark = _own_marks(None, self.title)
             for p in paragraphs(root):
                 if nearest_p(p) is None and OWN_TITLE in _marked(display_text(p), title_mark):
-                    self.title_case = letters_shown(p, props)
+                    self.title_case = letters_shown(p, props, within=title_mark[0][0])
                     break
         row: Dict[str, Any] = {"file": label,
                                "section_number": self.number or "(not found by the reference rules)",
@@ -1219,12 +1279,17 @@ class _FileView:
                         self.parts[key] = self.parts[first_key[part]]
                         continue
                     first_key[part] = key
-                    lines = [(t, p) for t, p in ((_shown_text(p), p) for p in paragraphs(pkg.xml(part))
+                    proot = pkg.xml(part)
+                    fielded = _field_text(proot)
+                    lines = [(t, p) for t, p in ((_shown_text(p), p) for p in paragraphs(proot)
                                                  if nearest_p(p) is None) if t.strip()]
-                    self.parts[key] = [(_shape(_marked(t, marks)), letters_shown(p, props), t, _marked(t, marks))
-                                       for t, p in lines]
-                    view: Dict[str, Any] = {"part": part, "lines": [_clip(t) for t, _ in lines]}
-                    caps = {str(j): c for j, c in enumerate(shown_case(p, props) for _, p in lines) if c}
+                    compared = [_marked(fielded.get(p, t), marks) for t, p in lines]
+                    self.parts[key] = [(_shape(m), letters_shown(p, props), t, m)
+                                       for (t, p), m in zip(lines, compared)]
+                    view: Dict[str, Any] = {"part": part, "lines": [_clip(t) for t, _ in lines[:ROW_LINES]]}
+                    if len(lines) > ROW_LINES:
+                        view["more_lines"] = len(lines) - ROW_LINES
+                    caps = {str(j): c for j, c in enumerate(shown_case(p, props) for _, p in lines[:ROW_LINES]) if c}
                     if caps:
                         view["shown_in_capitals"] = caps
                     views[key] = view
@@ -1241,8 +1306,9 @@ class BatchOverview:
     only); a header/footer line most files show and it lacks, or one it shows and most do not (paired in order as
     "reads … where most files show …" when there are as many of each), or a line most files share shown in other
     capitals. On its own, without a majority: a File Properties title naming another section number, or — naming
-    not the file's own — none of the words of its title. Lines are compared by ``_shape``, so each file's own number
-    and title, page numbers and dates do not make two lines differ."""
+    not the file's own — none of the words of its title. Lines are compared by ``_shape``: each file's own number and
+    title, and a field's cached result (the page, the page count), never make two lines differ; a typed number (a
+    project number, an issue date) does."""
 
     def __init__(self, views: List[_FileView], unreadable: List[Dict[str, str]]):
         self.views, self.unreadable = views, unreadable
@@ -1300,8 +1366,10 @@ class BatchOverview:
             shown = [e for e in rep.parts[key] if e[0] in major]
             show = {e[0]: e[3] for e in shown}
             every = sum(1 for v in having if major <= {e[0] for e in v.parts[key]})
-            self.common[key] = {"lines": [_clip(e[3]) for e in shown], "files_showing_every_line": f"{every} of {h}",
-                                "_shapes": [e[0] for e in shown]}
+            self.common[key] = {"lines": [_clip(e[3]) for e in shown[:ROW_LINES]],
+                                "files_showing_every_line": f"{every} of {h}", "_shapes": [e[0] for e in shown]}
+            if len(shown) > ROW_LINES:
+                self.common[key]["more_lines"] = len(shown) - ROW_LINES
             look: Dict[tuple, tuple] = {}
             for s in major:
                 seen = Counter(next(e[1] for e in v.parts[key] if e[0] == s) for v in having
@@ -1368,37 +1436,60 @@ class BatchOverview:
     def summary(self, limit: int = MAX_OVERVIEW_BYTES) -> Dict[str, Any]:
         """What THE BATCH carries: the flags first (``OVERVIEW_FLAGS``, the rest counted), what most files' headers
         and footers show, and every file's row, a header/footer matching most files line for line named as such.
-        Bounded: rows are thinned to two lines per header/footer, then the last rows go — each cut said in
-        ``truncated``, never silently."""
-        out: Dict[str, Any] = {"files": len(self.views), "note": OVERVIEW_NOTE,
-                               "flags": self.flags[:OVERVIEW_FLAGS]}
-        if len(self.flags) > OVERVIEW_FLAGS:
-            out["flags_more"] = f"{len(self.flags) - OVERVIEW_FLAGS} more (compare_files lists every file's flags)"
+        Bounded by ``limit``, always: rows, then most_files_show, are thinned to two lines per header/footer, then the
+        last rows go, then the last flags, then most_files_show — each cut said in ``truncated`` or ``flags_more``,
+        never silently; compare_files has the rest."""
+        flags = list(self.flags[:OVERVIEW_FLAGS])
+        out: Dict[str, Any] = {"files": len(self.views), "note": OVERVIEW_NOTE, "flags": flags}
+        more = lambda: (f"{len(self.flags) - len(flags)} more (compare_files lists every file's flags)"
+                        if len(flags) < len(self.flags) else None)
+        if more():
+            out["flags_more"] = more()
         out["most_files_show"] = self._common()
         rows = [self._row(v, compact=True) for v in self.views]
         out["rows"] = rows
         if self.unreadable:
-            out["unreadable"] = self.unreadable
+            out["unreadable"] = self.unreadable[:10]
         truncated: List[str] = []
         size = lambda: len(json.dumps(out, ensure_ascii=False))
+
+        def thin(views, what):
+            cut = False
+            for view in views:
+                if isinstance(view, dict) and len(view.get("lines") or []) > PART_LINES_THINNED:
+                    view["more_lines"] = view.get("more_lines", 0) + len(view["lines"]) - PART_LINES_THINNED
+                    view["lines"] = view["lines"][:PART_LINES_THINNED]
+                    caps = {k: c for k, c in (view.pop("shown_in_capitals", None) or {}).items()
+                            if int(k) < PART_LINES_THINNED}
+                    if caps:
+                        view["shown_in_capitals"] = caps
+                    cut = True
+            if cut:
+                truncated.append(what)
+
         if size() > limit:
-            for row in rows:
-                for view in row["headers_footers"].values():
-                    if isinstance(view, dict) and len(view.get("lines") or []) > PART_LINES_THINNED:
-                        view["more_lines"] = len(view["lines"]) - PART_LINES_THINNED
-                        view["lines"] = view["lines"][:PART_LINES_THINNED]
-                        caps = {k: c for k, c in (view.pop("shown_in_capitals", None) or {}).items()
-                                if int(k) < PART_LINES_THINNED}
-                        if caps:
-                            view["shown_in_capitals"] = caps
-            truncated.append(OVERVIEW_LINES_CUT)
+            thin([view for row in rows for view in row["headers_footers"].values()], OVERVIEW_LINES_CUT)
+        if size() > limit:
+            thin(out["most_files_show"].values(), "most_files_show lines beyond the first two (compare_files shows "
+                                                  "every file's lines)")
         cut = 0
         while size() > limit and rows:
             rows.pop()
             cut += 1
             out["truncated"] = truncated + [f"the rows of the last {cut} file(s) (compare_files shows them)"]
-        if truncated and "truncated" not in out:
+        if cut:
+            truncated = out["truncated"]
+        while size() > limit and flags:
+            flags.pop()
+            out["flags_more"] = more()
+        if size() > limit and out["most_files_show"]:
+            out["most_files_show"] = {}
+            truncated.append("most_files_show (compare_files shows it)")
             out["truncated"] = truncated
+        if truncated:
+            out["truncated"] = truncated
+        if size() > limit:                     # an absurdly small limit: the count and the way to the rest
+            out = {"files": len(self.views), "truncated": ["the overview (compare_files shows it)"]}
         return out
 
     def compare(self, files: Optional[Sequence[str]] = None, start: int = 0, count: int = 20) -> Dict[str, Any]:

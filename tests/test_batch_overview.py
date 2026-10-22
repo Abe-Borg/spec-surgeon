@@ -11,6 +11,8 @@ from pathlib import Path
 
 import pytest
 from docx import Document
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 
 from fake_claude import FakeClient, resp, tool
 from spec_surgeon import compiler, recovery
@@ -38,7 +40,11 @@ def spec(path: Path, number: str, title: str, *, footer=FOOTER, footer_caps=Fals
         hf.is_linked_to_previous = False
         for i, line in enumerate(lines):
             para = hf.paragraphs[0] if i == 0 else hf.add_paragraph()
-            para.add_run(line.format(title=title, number=number)).font.all_caps = caps_first and i == 0
+            for piece in ([line] if isinstance(line, str) else line):    # a piece (CODE, cached) is a field
+                if isinstance(piece, tuple):
+                    field(para, *piece)
+                else:
+                    para.add_run(piece.format(title=title, number=number)).font.all_caps = caps_first and i == 0
 
     if footer is not None:
         fill(sec.footer, footer, footer_caps)
@@ -57,6 +63,24 @@ def spec(path: Path, number: str, title: str, *, footer=FOOTER, footer_caps=Fals
     doc.core_properties.title = properties_title
     doc.save(path)
     return path
+
+
+def field(paragraph, code: str, cached: str) -> None:
+    """A complex field (begin, code, separate, its cached result, end), as Word writes PAGE and NUMPAGES."""
+    for kind, value in (("begin", None), ("code", code), ("separate", None), ("result", cached), ("end", None)):
+        run = OxmlElement("w:r")
+        if kind == "code":
+            el = OxmlElement("w:instrText")
+            el.set(qn("xml:space"), "preserve")
+            el.text = f" {value} "
+        elif kind == "result":
+            el = OxmlElement("w:t")
+            el.text = value
+        else:
+            el = OxmlElement("w:fldChar")
+            el.set(qn("w:fldCharType"), kind)
+        run.append(el)
+        paragraph._p.append(run)
 
 
 DIVISION_21 = [("21 05 17", "SLEEVES AND SLEEVE SEALS FOR FIRE-SUPPRESSION PIPING", "SECTION 21 05 17 - SLEEVES"),
@@ -135,13 +159,55 @@ def test_a_line_that_did_not_take_a_line_of_its_own_and_a_renamed_title(tmp_path
     assert ov.summary()["most_files_show"]["footer.default"]["files_showing_every_line"] == "4 of 6"
 
 
-def test_own_values_page_numbers_and_dates_never_make_lines_differ(tmp_path):
-    files = [spec(tmp_path / "a.docx", "21 05 17", "FIRE SUPPRESSION PIPING"),
-             spec(tmp_path / "b.docx", "21 05 29", "FIRE-SUPPRESSION HANGERS", footer=["{title}", "2026-11-14",
-                                                                                     "210529 – 3"]),
+def test_fields_and_own_values_never_make_lines_differ_but_typed_numbers_do(tmp_path):
+    """A field's cached result (the page, the page count) differs from file to file and says nothing; each file's
+    own number and title differ by design. A typed number is the file's text: a stale project number or issue date
+    in one footer is what the overview is for."""
+    def page(number, at, of):
+        return [f"{number} - ", ("PAGE", at), " of ", ("NUMPAGES", of)]
+    files = [spec(tmp_path / "a.docx", "21 05 17", "FIRE SUPPRESSION PIPING",
+                  footer=["{title}", "PROJECT 1234 · 2026-10-01", page("21 05 17", "1", "7")]),
+             spec(tmp_path / "b.docx", "21 05 29", "FIRE-SUPPRESSION HANGERS",
+                  footer=["{title}", "PROJECT 1234 · 2026-10-01", page("210529", "3", "12")]),
              spec(tmp_path / "c.docx", "21 05 53", "FIRE SUPPRESSION IDENTIFICATION",
-                  footer=["FIRE-SUPPRESSION   IDENTIFICATION", "2026-10-01", "21-05-53 - 12"])]
-    assert batch_overview(files).flags == []
+                  footer=["FIRE-SUPPRESSION   IDENTIFICATION", "PROJECT 1234 · 2026-10-01", page("21-05-53", "1", "4")])]
+    ov = batch_overview(files)
+    assert ov.flags == []
+    assert ov.summary()["most_files_show"]["footer.default"]["lines"] == [
+        OWN_TITLE, "PROJECT 1234 · 2026-10-01", f"{OWN_NUMBER} - «PAGE» of «NUMPAGES»"]
+    assert ov.compare(["b.docx"])["rows"][0]["headers_footers"]["footer.default"]["lines"][2] == "210529 - 3 of 12"
+    files.append(spec(tmp_path / "stale.docx", "21 13 13", "WET-PIPE SPRINKLER SYSTEMS",
+                      footer=["{title}", "PROJECT 9876 · 2025-03-12", page("21 13 13", "1", "9")]))
+    assert [f["flag"] for f in batch_overview(files).flags] == [
+        "footer reads “PROJECT 9876 · 2025-03-12” where most files (3 of 4) show “PROJECT 1234 · 2026-10-01”"]
+
+
+def test_a_title_is_measured_alone():
+    """The inline form "Section 21 05 53 - TITLE" (the reference fills read it in any case): the title's own letters
+    say how it shows, not the "Section" before it."""
+    doc = Document()
+    doc.add_paragraph("Section 21 05 53 - FIRE PUMPS")
+    doc.add_paragraph("SECTION 21 05 54 - fire pumps")
+    import io
+    buf = io.BytesIO()
+    doc.save(buf)
+    pkg = DocxPackage(buf.getvalue(), name="x.docx")
+    props = PropResolver(StyleSheet(pkg))
+    import re
+    title = re.compile(r"fire[\W_]+pumps", re.IGNORECASE)
+    caps, lower = list(pkg.xml(pkg.main_part()).iter(W + "p"))
+    assert (letters_shown(caps, props, within=title), letters_shown(caps, props)) == ("capitals", "mixed case")
+    assert (letters_shown(lower, props, within=title), letters_shown(lower, props)) == ("lower case", "mixed case")
+
+
+def test_inline_titles_compare_by_the_title_itself(tmp_path):
+    files = [spec(tmp_path / f"{n}.docx", n, f"TITLE {n[-2:]}", section_line=False,
+                  body_title=f"Section {n} - TITLE {n[-2:]}") for n in ("21 05 17", "21 05 29", "21 05 48")]
+    files.append(spec(tmp_path / "odd.docx", "21 13 13", "Wet-Pipe Systems", section_line=False,
+                      body_title="SECTION 21 13 13 - Wet-Pipe Systems"))
+    ov = batch_overview(files)
+    assert [r["title_shown_in"] for r in ov.compare()["rows"]] == ["capitals"] * 3 + ["mixed case"]
+    assert any(f.startswith("its title “Wet-Pipe Systems” shows in mixed case") for f in flags_of(ov, "odd.docx"))
 
 
 def test_a_missing_and_an_extra_header_footer(tmp_path):
@@ -245,6 +311,24 @@ def test_the_overview_is_bounded_and_compare_files_pages_through_every_file(tmp_
         ov.compare(count=COMPARE_PAGE + 1)
     with pytest.raises(KeyError):
         ov.compare(["nope.docx"])
+
+
+def test_a_long_common_footer_and_many_flags_stay_inside_the_bound(tmp_path):
+    long_footer = ["{title}"] + [f"Footer note line {i} of the shared footer, long enough to weigh on the bound"
+                                 for i in range(300)]
+    files = [spec(tmp_path / f"{i:02d}.docx", f"21 05 {i:02d}", f"TITLE {i}", footer=long_footer
+                  + [f"OWN LINE {i}"], properties_title=f"SECTION 26 {i:02d} 00 - OTHER WORK") for i in range(30)]
+    ov = batch_overview(files)
+    common = ov.summary(limit=10**9)["most_files_show"]["footer.default"]
+    assert len(common["lines"]) == 40 and common["more_lines"] == 261
+    for limit in (MAX_OVERVIEW_BYTES, 3000, 600):
+        out = ov.summary(limit=limit)
+        assert len(json.dumps(out, ensure_ascii=False)) <= limit
+        assert out["truncated"]
+    out = ov.summary(limit=3000)
+    assert out["flags_more"].endswith("more (compare_files lists every file's flags)")
+    assert len(out["flags"]) + int(out["flags_more"].split(" ")[0]) == len(ov.flags)
+    assert ov.compare(["00.docx"])["rows"][0]["headers_footers"]["footer.default"]["more_lines"] == 262
 
 
 def test_an_unreadable_file_is_listed_and_the_others_compare(tmp_path):
