@@ -1216,5 +1216,23 @@ def main(argv=None) -> int:
         return code
 
 
+def run(argv=None) -> None:
+    """The window's entry points (``spec-surgeon-gui``, ``python -m spec_surgeon``, the Windows app): ``main``, then
+    the process ends at once. By then the window is closed, the job (if one ran) has ended, the settings and the
+    journal are written and the crash marker is gone; the logs are flushed here. What Python's own teardown would
+    still wait on — a thread of pywebview's .NET and WebView2 layer, a library's idle worker — is nothing of ours,
+    and a process with no window must not stay behind for it (it holds the app mutex an update waits for)."""
+    code = main(argv)
+    import logging
+    logging.shutdown()                   # the app log and the event journal, flushed and closed
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            if stream is not None:
+                stream.flush()
+        except Exception:  # noqa: BLE001 — a closed or broken stream has nothing left to flush
+            pass
+    os._exit(code)
+
+
 if __name__ == "__main__":  # pragma: no cover
-    sys.exit(main())
+    run()
