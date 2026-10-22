@@ -421,7 +421,8 @@ function Dossier() {
               <Mono>{F.apiAddressEnv}</Mono> if you set one; over HTTPS, with your key),
               only while work you started runs: your request and answers; file names (and, in recovery, full paths); the
               full path of an attached template, picture or table; a profile of each kind of document (styles, headings,
-              header and footer text, sample paragraphs); whatever Claude’s read tools return (paragraph text, a part’s
+              header and footer text, sample paragraphs); an overview of every document (its section number and title,
+              its header and footer lines, its File Properties title); whatever Claude’s read tools return (paragraph text, a part’s
               XML, table rows); page images rendered on your computer; failure reasons; and in recovery up to{" "}
               {F.pastRepairCasesSent} remembered repair cases from earlier work.
             </>,

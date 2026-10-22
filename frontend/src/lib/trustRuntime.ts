@@ -104,8 +104,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     sent:
       `To the Anthropic API (${F.anthropicHost}, unless ${F.apiAddressEnv} is set): your request and earlier answers, what the copies already carry, ` +
       "the file names, the full path of an attached template, picture or table, a profile of each kind of document " +
-      "(styles, headings, header and footer text, sample paragraphs), and whatever Claude's tools read: paragraph " +
-      "text, XML, table rows, and page images rendered on your computer.",
+      "(styles, headings, header and footer text, sample paragraphs), an overview of every document (its section " +
+      "number and title, its header and footer lines, its File Properties title), and whatever Claude's tools read: " +
+      "paragraph text, XML, table rows, and page images rendered on your computer.",
     ai: conversationModel,
     bounds:
       `No spending ceiling. Every call counts toward a pause after ${F.stepsPerPause} AI steps. Stop now cuts the ` +
@@ -186,7 +187,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "Claude proposes the outcomes to reach (what should change, where, with what wording). The app checks the " +
       "proposal, carries it out without waiting for a pick, and tries methods on copies of your files. Each copy is " +
       "checked by the independent checker; the plan's effects and pages are shown before anything is delivered.",
-    sent: "To the Anthropic API: the request, your decisions, the file names and profiles, and what its tools read.",
+    sent: "To the Anthropic API: the request, your decisions, the file names, the profiles and the overview of every " +
+      "document, and what its tools read.",
     ai: recoveryModel,
     bounds:
       `Counts toward the pause; the trials get at most ${F.recoveryAttemptsPerGroup} attempts per group of files, ` +
@@ -214,7 +216,7 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       "comes back with a question or a new plan.",
     sent:
       "Nothing to make and check the copies. Recovery, if it runs, sends the failed files' names and full paths, their " +
-      `profiles and failure reasons, what its tools read, page images, and up to ${F.pastRepairCasesSent} matching ` +
+      `profiles and overview, failure reasons, what its tools read, page images, and up to ${F.pastRepairCasesSent} matching ` +
       "repair cases from earlier work kept on this computer.",
     ai: `None to make and check the copies. Recovery: ${recoveryModel}`,
     bounds:
