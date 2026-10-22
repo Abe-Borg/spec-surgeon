@@ -41,15 +41,14 @@ from ..package import CT_PART, MEDIA_REL_TYPES, NS, R, REL, W, DocxPackage, pars
 from ..ooxml import (PPR_ORDER, RPR_ORDER, SECTPR_ORDER, block_full_text, count_revisions, get_or_add,
                      insert_in_order, mark_rpr, paragraph_ppr, paragraphs, run_rpr, set_rfonts)
 from . import prose, register
-from .base import LEFT_ELSEWHERE, BlockDiff, JobException, Op, PlanFragment
+from .base import BlockDiff, JobException, Op, PlanFragment
 from .effective import AmbiguousToggle, Resolver, rescale_tabs, text_width, theme_fonts, theme_part
 from .hf_common import (FOOTER_CT, HEADER_CT, KINDS, TYPES, apply_removal, check_part_relationships, effective_refs,
                         plan_removal, refs)
 from .selectors import StyleSheet
 from .template_styles import reconcile_styles, remap_references, reference_parts
-from .slots import (REFERENCE_FILLS, apply_slot, display_segments, expected_block_text, extract_fill, field_runs, fill_reads,
-                    find_slots, literal_values, mark_slots, nearest_p, paragraph_runs, reference_values,
-                    rule_uses_literal, value_tokens)
+from .slots import (apply_slot, display_segments, expected_block_text, extract_fill, field_runs, fill_reads, find_slots, mark_slots, nearest_p,
+                    paragraph_runs, reference_values, rule_uses_literal)
 
 WP = "{http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing}"
 KEEP_NS = {NS["w"], NS["r"], "http://www.w3.org/XML/1998/namespace"}
@@ -761,29 +760,8 @@ class ApplyHeaderFooterTemplate(Op):
         if literal:
             frag.flags.append(f"literal fill(s) {literal} are user-supplied words placed untracked: "
                               + "; ".join(f"{n} = {fills[n]!r}" for n in literal))
-        frag.flags += self._left_elsewhere(pkg, fills, effective_fills, literal)
         frag.notes.append("the document's own body (revision-history table included) is untouched")
         return frag
-
-    @staticmethod
-    def _left_elsewhere(pkg: DocxPackage, fills: Dict[str, str], rules: Dict[str, Any], literal: List[str]) -> List[str]:
-        """A literal fill of a reference slot (SECTION_NUMBER, SECTION_TITLE) whose words differ from the document's
-        own, read by the reference rule: the headers/footers will say one thing and the document another
-        (docs/PLAN-2026-10-22-batch-consistency.md C3). A flag only: nothing is predicted from the reading, and the
-        document stays as it is. Letters compared casefolded — a difference of case alone is not this flag's."""
-        out = []
-        for name in literal:
-            if name not in REFERENCE_FILLS or fills[name] not in literal_values(rules[name]):
-                continue                                 # no reference rule, or a chain whose literal did not fill it
-            try:
-                own = extract_fill(pkg, name, REFERENCE_FILLS[name])
-            except JobException:
-                continue                                 # the document has no value of its own to compare
-            if value_tokens(own) != value_tokens(fills[name]):
-                what = name.lower().replace("_", " ")
-                out.append(f"{LEFT_ELSEWHERE}the headers/footers get the words given for the {what}, “{fills[name]}”, "
-                           f"while the document's own {what} reads “{own}”; this change leaves the document as it is.")
-        return out
 
     # ------------------------------------------------------------------------------------------------
     def apply(self, pkg: DocxPackage, frag: PlanFragment) -> None:

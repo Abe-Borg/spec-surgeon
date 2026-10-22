@@ -32,8 +32,8 @@ Grammar implemented (all from the paid-for lessons):
   control character is refused (``bad-params``).
 * Wording left elsewhere (docs/PLAN-2026-10-22-batch-consistency.md C3): the plan records every place ``find`` (the
   same matching) also occurs in the file and this op does not edit — a part kind outside the scope, a paragraph the
-  selection leaves out, an occurrence after the first — and ``flag_left_elsewhere`` flags those no ``replace_text`` of
-  the spec edits ("also occurs in the body (1×)"). A refusal for want of ``find`` in the scope says where it occurs
+  selection leaves out, an occurrence after the first — and ``ops/elsewhere.flag_left_elsewhere`` flags those no
+  ``replace_text`` of the spec edits ("also occurs in the body (1×)"). A refusal for want of ``find`` in the scope says where it occurs
   instead. Flags only: nothing is predicted from them.
 """
 from __future__ import annotations
@@ -52,7 +52,8 @@ from ..ooxml import (FULL_TEXT_TAGS, RevisionStamp, XML_SPACE, ancestor, block_s
                      file_uses_date_utc, flexible_regex_from_literal, max_revision_id, merge_adjacent_runs, paragraphs,
                      split_run_at_text, to_del_text)
 from . import prose, register
-from .base import LEFT_ELSEWHERE, BlockDiff, JobException, Op, PlanFragment
+from .base import BlockDiff, JobException, Op, PlanFragment
+from .elsewhere import places_text
 from .selectors import StyleSheet, check_paragraph_selector, paragraph_selected
 from .textedit import TRANSPARENT, control_characters, place_text, placed_counts, shown_text, text_children
 
@@ -259,33 +260,6 @@ def _occurrences(pkg: DocxPackage, kinds: Dict[str, List[str]], scope: List[str]
                     seg = next((x for x in segs if x.start <= m.start() < x.end), None)
                     out.append([part, pi, m.start(), m.end(), bool(seg and seg.in_field), where])
     return out
-
-
-def _places_text(left: List[list]) -> str:
-    """ "the body (1×) and the headers (2×, 1 in a field's result)" """
-    counts: Dict[str, List[int]] = {}
-    for *_, in_field, where in left:
-        c = counts.setdefault(where, [0, 0])
-        c[0] += 1
-        c[1] += 1 if in_field else 0
-    bits = [f"{where} ({n}×" + (f", {k} in a field's result" if k else "") + ")" for where, (n, k) in counts.items()]
-    return ", ".join(bits[:-1]) + " and " + bits[-1] if len(bits) > 1 else (bits[0] if bits else "")
-
-
-def flag_left_elsewhere(ops: List[Dict[str, Any]], frags: List[PlanFragment]) -> None:
-    """Flag on each ``replace_text`` of a spec the places its ``find`` also occurs and no ``replace_text`` of the spec
-    edits (C3): two ops that rename the footer and the body leave nothing to say; one that renames only the footer
-    says the body still reads the old words. Called by ``editspec.plan_spec`` before the fragments merge."""
-    edited = [(e["part"], e["paragraph"], a, b) for o, f in zip(ops, frags) if o.get("op") == ReplaceText.name
-              for e in f.transform_data.get("edits", []) for a, b in e["live_offsets"]]
-    for o, f in zip(ops, frags):
-        if o.get("op") != ReplaceText.name:
-            continue
-        left = [x for x in f.transform_data.get("left_elsewhere") or []
-                if not any(x[0] == part and x[1] == pi and x[2] < b and a < x[3] for part, pi, a, b in edited)]
-        if left:
-            f.flags.append(f"{LEFT_ELSEWHERE}“{f.params.get('find')}” also occurs in {_places_text(left)}; this "
-                           f"change leaves it as it is.")
 
 
 @register
@@ -513,7 +487,7 @@ class ReplaceText(Op):
                 return plan
             raise JobException(f"{find!r} not found in scope {scope}"
                                + (f" as a whole word; {_inside_text(find, inside)}" if inside else "")
-                               + (f"; it occurs in {_places_text(left)}" if left else ""), "not-found",
+                               + (f"; it occurs in {places_text(left)}" if left else ""), "not-found",
                                {"scope": scope, "parts_searched": parts, "inside_longer_words": len(inside),
                                 "occurs_elsewhere": len(left)})
 
@@ -523,7 +497,7 @@ class ReplaceText(Op):
             "use_date_utc": file_uses_date_utc(pkg),
             "first_rev_id": max_revision_id(pkg) + 1,     # re-based by assign_revision_ids when ops are merged
             "date_convention": params.get("date_convention", "word-local-z"),
-            "left_elsewhere": left,                       # for flag_left_elsewhere (a flag; apply never reads it)
+            "left_elsewhere": left,                       # for ops/elsewhere.py (a flag; apply never reads it)
         }
         plan.rev_id_base = plan.transform_data["first_rev_id"]
         plan.rev_ids_needed = (plan.rev_delta.get("ins", 0) + plan.rev_delta.get("del", 0)
