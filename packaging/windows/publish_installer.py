@@ -131,7 +131,27 @@ def restore_backup(api, selected=None):
     return None
 
 
-def publish(api, installer_name, installer_path, *, allow_installer_upload=False):
+def publish_source(api, path):
+    """Add one Corresponding Source archive (the PyMuPDF and MuPDF source the installer bundles) unless the same
+    bytes are already public. A different asset under its name is never replaced."""
+    name, data = Path(path).name, Path(path).read_bytes()
+    existing = named(api.assets(), name)
+    if existing is None:
+        try:
+            api.upload(name, data)
+        except Exception:
+            # As with the installer: the upload can finish before its response fails.
+            if named(api.assets(), name) is None:
+                raise
+        existing = named(api.assets(), name)
+        if existing is None:
+            raise PublicationError(f"Source upload did not create the release asset {name}")
+    if api.download(existing) != data:
+        raise PublicationError(f"The published {name} is not the source this installer was built with; "
+                               "preserve it for investigation")
+
+
+def publish(api, installer_name, installer_path, *, allow_installer_upload=False, sources=()):
     installer = named(api.assets(), installer_name)
     if installer is None:
         if not allow_installer_upload:
@@ -143,6 +163,10 @@ def publish(api, installer_name, installer_path, *, allow_installer_upload=False
         manifest(api, assets, previous)
         if inventory(api.assets()) != inventory(assets):
             raise PublicationError("Release distribution inventory changed before installer upload; retry")
+        # The installer is AGPL-3.0 as a whole (it bundles PyMuPDF): its Corresponding Source goes up first, so
+        # no public installer is ever without it. Only the exact tagged build knows which source it bundles.
+        for source in sources:
+            publish_source(api, source)
         try:
             api.upload(installer_name, Path(installer_path).read_bytes())
         except Exception:
@@ -236,6 +260,8 @@ if __name__ == "__main__":
     parser.add_argument("--tag", required=True)
     parser.add_argument("--installer", type=Path, required=True)
     parser.add_argument("--allow-installer-upload", action="store_true")
+    parser.add_argument("--source", type=Path, action="append", default=[],
+                        help="a Corresponding Source archive to publish before a missing installer")
     args = parser.parse_args()
     print(publish(GitHubCLI(args.repository, args.tag), args.installer.name, args.installer,
-                  allow_installer_upload=args.allow_installer_upload))
+                  allow_installer_upload=args.allow_installer_upload, sources=args.source))

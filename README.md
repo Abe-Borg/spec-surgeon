@@ -298,7 +298,20 @@ recorded for the requests that follow.
 
 ## License
 
-Spec Surgeon is free software under the [MIT License](LICENSE), Copyright © 2026 Abraham Borg. It comes as is,
-without warranty of any kind, so check every delivered file yourself. The installed app bundles open-source
-components under their own licenses; the About box lists them. Contact: abrahamborg@gmail.com ·
+Spec Surgeon's own code is free software under the [MIT License](LICENSE), Copyright © 2026 Abraham Borg. It
+uses [PyMuPDF](https://github.com/pymupdf/PyMuPDF) and MuPDF by Artifex Software, which are licensed under the
+[GNU Affero General Public License v3](src/spec_surgeon/legal/AGPL-3.0.txt) (AGPL) or a commercial license from
+Artifex. No commercial license is held, so the Windows app, which bundles PyMuPDF, is distributed as a whole under
+the AGPL v3: you may use, change and share it, and whoever shares it passes it on under the AGPL v3 with its
+complete source. The MIT License still applies to Spec Surgeon's own code taken by itself.
+
+The installer shows the full terms (the app's `LICENSE.txt`: the notice, the MIT License and the AGPL v3) and
+installs them with the app; an in-app update runs the installer silently, so its pages are skipped, and the same
+text is under **About** → **Licenses**. Each release page carries the Corresponding Source: the tag's source
+archives (this repository, with the build scripts in `packaging/windows`) and the source of the exact PyMuPDF and
+MuPDF the installer was built with (`pymupdf-<version>.tar.gz`, `mupdf-<version>-source.tar.gz`, fetched by
+`packaging/windows/license_notices.py` and listed in `SHA256SUMS`).
+
+It comes as is, without warranty of any kind, so check every delivered file yourself. The installed app bundles
+other open-source components under their own licenses; the About box lists them. Contact: abrahamborg@gmail.com ·
 [GitHub](https://github.com/Abe-Borg/spec-surgeon) · [LinkedIn](https://www.linkedin.com/in/abrahamborg/).

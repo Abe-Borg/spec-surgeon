@@ -60,6 +60,25 @@ def test_releases_publish_the_checksums_the_updater_needs():
     assert "--latest" in release                           # /releases/latest is what the updater asks for
 
 
+def test_releases_publish_the_installer_s_corresponding_source():
+    # The installer bundles PyMuPDF (AGPL-3.0, no commercial license held): the bundle's LICENSE.txt is written and
+    # the source of the PyMuPDF and MuPDF inside it is fetched between bundling and Inno Setup, and goes up beside
+    # the installer, before it, and into the checksums.
+    build = (ROOT / ".github" / "workflows" / "windows-build.yml").read_text(encoding="utf-8")
+    step = "      - name: Write the license and fetch the PyMuPDF and MuPDF source\n"
+    assert build.index("- name: Bundle the desktop app") < build.index(step) < build.index("- name: Build the installer")
+    assert ("run: python packaging/windows/license_notices.py --app dist/SpecSurgeon --sources dist/installer"
+            in build.split(step, 1)[1].split("\n      - ", 1)[0])
+    assert "dist/installer/*.exe\n            dist/installer/*.tar.gz" in build
+    release = (ROOT / ".github" / "workflows" / "release.yml").read_text(encoding="utf-8")
+    assert 'gh release create "$GITHUB_REF_NAME" dist/*' in release and "*.tar.gz *.exe" in release
+    publishing = _workflow_script("windows-installer.yml",
+                                  "Verify or repair installer checksums without replacing published assets")
+    assert "for source in dist/pymupdf-*.tar.gz dist/mupdf-*-source.tar.gz" in publishing
+    assert '--source "$source"' in publishing
+    assert publishing.index("--allow-installer-upload") < publishing.index('--source "$source"') < publishing.index("fi")
+
+
 def test_version_and_package_data():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text(encoding="utf-8"))
     assert pyproject["project"]["version"] == __version__

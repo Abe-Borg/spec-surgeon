@@ -33,8 +33,8 @@ tab strip:
   what is sent, AI involved, bounded by), what Claude may touch, what the key words mean, the parts with no AI,
   security, money, what the app does not do, and how to check all of it. Escape closes the long answer and leaves
   Why trust it open. Every claim in both is in `docs/TRUST_CLAIMS.md` with its source in the code and its test.
-- **About** — the version, the model, the release notes, the license and the open-source components, the author's
-  links, **Check for updates** (it says "Checking for updates…" until the check answers, then the answer or the update
+- **About** — the version, the model, the release notes, the licenses (MIT for its own code, the GNU AGPL v3 for the
+  app as a whole, with PyMuPDF) and the open-source components, the author's links, **Check for updates** (it says "Checking for updates…" until the check answers, then the answer or the update
   with **Download and install**), **Open diagnostic logs** and **Save a diagnostic bundle** (below, "When the window
   has a problem"). These replace the old Help menu and About box.
 

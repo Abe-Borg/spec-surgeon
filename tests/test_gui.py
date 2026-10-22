@@ -324,10 +324,10 @@ def test_about_says_who_made_it_the_license_and_how_to_reach_him(tmp_path):
         assert value in plain
     for name, lic, _ in about.THIRD_PARTY:
         assert f"{name}: {lic}" in plain
-    assert info["license"].strip() == about.LICENSE_TEXT.strip()
+    assert info["license"] == about.license_text(*about.pdf_versions())       # the notice, the MIT and the AGPL texts
     # The window's About page reads the same values field by field, never from a copy of its own.
     assert (info["author"], info["email"], info["linkedin"]) == (about.AUTHOR, about.EMAIL, about.LINKEDIN_URL)
-    assert info["copyright"] == about.COPYRIGHT_LINE and info["license_name"] == about.LICENSE_NAME
+    assert info["copyright"] == about.COPYRIGHT_LINE and info["license_name"] == about.APP_LICENSE
     assert info["license_summary"] == about.LICENSE_SUMMARY
     assert info["components"] == [{"name": n, "license": lic, "url": u} for n, lic, u in about.THIRD_PARTY]
     from spec_surgeon import llm
