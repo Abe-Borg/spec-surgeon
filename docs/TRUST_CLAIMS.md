@@ -245,7 +245,9 @@ How each is labelled:
   appends nothing to the history (`conversation.py`).
 - **Renderers:** Word 120 s per file (`word_worker.DEFAULT_TIMEOUT`), LibreOffice 600 s per batch
   (`libreoffice.render_pdfs`).
-- **Closing:** closing the window stops a running job and waits up to 60 s for it (`web/shell.shutdown`).
+- **Closing:** closing the window stops a running job and waits up to 60 s for it (`web/shell.shutdown`); a job
+  still checking or writing copies then finishes first (`gui.main`), and the process ends at once after it
+  (`gui.run`, every entry point: `tests/test_gui.py`).
 
 ### 1i. Cost
 

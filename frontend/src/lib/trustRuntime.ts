@@ -261,7 +261,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     runs:
       `The running AI call is cut off: the app checks for a stop every ${F.stopPollSeconds} s and closes the ` +
       "connection, so Anthropic stops writing. No further call starts. Your progress is saved; Continue picks it up. " +
-      `Closing the window does the same and waits up to ${F.closeWaitSeconds} s for the work to stop.`,
+      `Closing the window does the same and waits up to ${F.closeWaitSeconds} s for the work to stop. Checking or ` +
+      "writing copies does not stop part-way: it finishes first. Then the app's process ends; nothing of it stays " +
+      "running.",
     sent: "Nothing new. The cut connection is the only signal.",
     ai: NONE,
     bounds:
