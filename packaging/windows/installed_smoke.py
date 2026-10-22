@@ -183,6 +183,10 @@ def _gui(request, result):
         assert update["state"] == "none", update                  # no update flow is attached to the smoke's window
         settings = api.get("/api/settings")
         assert settings["can_remember"] is True and settings["out_root"] == str(session.out_root), settings
+        # the page's own reports reach the frozen app's watch (web/watch.py), as the WebView2 page sends them
+        taken = api.post("/api/diagnostics", {"reports": [{"kind": "loaded", "visible": True, "user_agent": "smoke"},
+                                                          {"kind": "beat", "visible": True}]})
+        assert taken == {"ok": True, "taken": 2}, taken
     finally:
         server.should_exit = True
         if state.thread is not None:
@@ -206,7 +210,7 @@ def _gui(request, result):
                    "schemas": schema_count, "worked_examples": example_count,
                    "sources_unchanged": True, "page_bundled": True,
                    "window_backend": gui.renderer, "pywebview": getattr(webview, "__version__", "?"),
-                   "updater_offline": "PASS", "credential_manager": "PASS",
+                   "updater_offline": "PASS", "credential_manager": "PASS", "page_diagnostics": "PASS",
                    "anthropic": anthropic.__version__, "pymupdf": pymupdf.VersionBind, "word_modules": True})
 
 

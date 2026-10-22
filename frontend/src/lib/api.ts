@@ -1,7 +1,8 @@
 // Adapted from Build-a-Spec's frontend/src/lib/api.ts (copy-based reuse):
 // the fetch helpers and `streamChat`'s shape, against Spec Surgeon's own
 // contract (docs/WEB_API.md).
-import type { About, JobEvent, Settings, Update, View } from "../types.ts";
+import type { About, BundleSaved, JobEvent, Settings, Update, View } from "../types.ts";
+import type { Report } from "./diagnostics.ts";
 import {
   apiHeaders,
   apiUrl,
@@ -189,4 +190,22 @@ export async function installUpdate(): Promise<void> {
 
 export async function openLogs(): Promise<void> {
   await post<unknown>("/api/logs");
+}
+
+/** Zip the app's logs, conversations and recent run records (never a document) and show it in Explorer. */
+export async function saveDiagnosticBundle(): Promise<BundleSaved> {
+  return post<BundleSaved>("/api/diagnostics/bundle");
+}
+
+/** The page's own reports (lib/diagnostics.ts). `keepalive` lets the last one outlive the page. Never throws
+ *  into the page: a failed report is dropped by the reporter. */
+export async function postDiagnostics(reports: Report[], keepalive = false): Promise<void> {
+  const resp = await fetch(apiUrl(setup, "/api/diagnostics"), {
+    method: "POST",
+    headers: apiHeaders(setup, { "Content-Type": "application/json" }),
+    body: JSON.stringify({ reports }),
+    cache: "no-store",
+    keepalive,
+  });
+  if (!resp.ok) throw new ApiError(resp.status, "diagnostics refused");
 }

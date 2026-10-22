@@ -30,10 +30,16 @@ from .. import __version__, about, credentials, llm
 from .. import diagnostics as diag
 from ..document_task import STEPS_PER_PAUSE, DocumentTask
 from ..gui import Session
-from ..settings import THEMES, Settings, config_dir, logs_dir, save_settings
+from ..settings import THEMES, Settings, config_dir, data_dir, default_run_root, logs_dir, save_settings
+from .watch import WindowWatch
 
 STATIC = Path(__file__).resolve().parent / "static"
 TOKEN_HEADER = "X-Spec-Surgeon-Token"
+# The routes the page polls or fetches by the dozen: journalled only when they fail or are slow (every other /api
+# request leaves a ``web.request`` event: the page's actions, in order).
+QUIET_ROUTES = frozenset({"/api/state", "/api/update", "/api/image", "/api/health", "/api/diagnostics"})
+SLOW_REQUEST_MS = 2000
+WAITS_ON_USER = frozenset({"/api/pick"})        # a native dialog: slow because the user takes their time
 KNOWN_FAILURES = {"ValueError", "TrialsFailed", "TransformFailed", "SpecError", "FileNotFoundError", "PermissionError"}
 NOT_BUILT = """<!doctype html><meta charset="utf-8"><title>Spec Surgeon</title>
 <body style="font-family:system-ui;margin:3rem;max-width:40rem"><h1>Spec Surgeon</h1>
@@ -68,6 +74,17 @@ def open_path(path: Path) -> None:
         subprocess.Popen(["xdg-open", str(path)])
 
 
+def reveal_path(path: Path) -> None:
+    """Show a file selected in the file manager (its folder elsewhere)."""
+    path = Path(path)
+    if sys.platform.startswith("win"):
+        subprocess.Popen(f'explorer /select,"{path}"')  # noqa: S602,S607 — Explorer's own syntax; our own file
+    elif sys.platform == "darwin":
+        subprocess.Popen(["open", "-R", str(path)])
+    else:
+        subprocess.Popen(["xdg-open", str(path.parent)])
+
+
 def spent_text(cost) -> str:
     if cost is None:
         return "an amount the price table cannot estimate"
@@ -84,6 +101,21 @@ def job_ended_line(action: str, stage: str, *, stopped: bool, failure: str, cost
             + (f"; failed ({failure})" if failure else "")
             + f"; {calls} model call{'' if calls == 1 else 's'} so far; estimated cost {cost.get('text')}"
             + f"; {seconds:.1f} s")
+
+
+def job_started_line(action: str, values: Dict[str, Any]) -> str:
+    """The app log's line at the start of every job, so a job that never ends still shows: the action and what kind of
+    input started it, never the input itself."""
+    if action == "send":
+        what = "a suggested reply the user tapped" if values.get("chip") else "a typed message"
+    elif action == "choose":
+        what = f"choice {diag.snip(values.get('choice_id') or '?', 40)}"
+    elif action == "primary":
+        hold = values.get("hold") or []
+        what = "the primary action" + (f", {len(hold)} document(s) held back" if hold else "")
+    else:
+        what = ""
+    return f"Job {action} started" + (f" ({what})" if what else "")
 
 
 class Shell:
@@ -111,6 +143,8 @@ class WindowState:
         self.thread: Optional[threading.Thread] = None
         self.cancel: Optional[threading.Event] = None
         self.started_at = 0.0
+        self.job: Optional[Dict[str, Any]] = None       # the running job's clock, for the watch (``job_status``)
+        self.watch = WindowWatch(job_status=self.job_status)
         self._last_view: Optional[Dict[str, Any]] = None
         self.key_origin = "environment" if os.environ.get(credentials.ENV) else "none"
         if self.key_origin == "none":
@@ -122,6 +156,11 @@ class WindowState:
     @property
     def busy(self) -> bool:
         return self.thread is not None and self.thread.is_alive()
+
+    def job_status(self) -> Optional[Dict[str, Any]]:
+        """The running job's clock for the watch (``web/watch.py``): None when no job runs."""
+        job = self.job
+        return dict(job) if job is not None and self.busy else None
 
     # ---- the view ----
     def view(self) -> Dict[str, Any]:
@@ -193,15 +232,24 @@ class WindowState:
             submitted = values.get("text", "")
             context = copy_context()            # the request's session/action/span follow the job onto its thread
             queued = time.perf_counter()
+            job = {"action": action, "id": diag.new_id(), "started": time.monotonic(),
+                   "last_progress": time.monotonic(), "stop_requested": None}
+            self.job = job
+
+            def moved():
+                job["last_progress"] = time.monotonic()
 
             def log(text):
+                moved()
                 diag.app_log().info(str(text))
 
             def progress(phase, usage):
+                moved()
                 if phase != "started":
                     events.put({"type": "cost", "cost": task._cost()})
 
             def relay(event):
+                moved()
                 # The coordinator's events name files; the page is sent URLs (the contract's shape for
                 # ``samples[].images``), exactly as the state payload sends them.
                 if isinstance(event, dict) and event.get("type") == "samples":
@@ -247,6 +295,7 @@ class WindowState:
                                                    failure=failure, cost=task._cost(),
                                                    seconds=time.perf_counter() - queued))
                 events.put(terminal)
+            diag.app_log().info(job_started_line(action, values))
             self.thread = threading.Thread(target=context.run, args=(target,), daemon=False, name="spec-surgeon-job")
             self.thread.start()
             return events
@@ -254,6 +303,12 @@ class WindowState:
     def stop(self) -> bool:
         if not self.busy or self.cancel is None:
             return False
+        job = self.job
+        if job is not None and job.get("stop_requested") is None:
+            job["stop_requested"] = time.monotonic()
+            running = time.monotonic() - job["started"]
+            diag.event("web.job.stop_requested", action=job["action"], running_s=round(running, 1))
+            diag.app_log().info(f"Stop requested for job {job['action']} (running {running:.0f} s)")
         self.cancel.set()
         return True
 
@@ -301,6 +356,33 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             if not secrets.compare_digest(given.encode("utf-8", "surrogateescape"), state.token.encode("utf-8")):
                 return JSONResponse({"error": "This window's session token is missing or wrong."}, status_code=401)
         return await call_next(request)
+
+    @app.middleware("http")
+    async def breadcrumbs(request: Request, call_next):
+        """Every page action leaves a ``web.request`` event — the route, its status and time, never a body — so the
+        journal shows what the user did, in order; the polled routes only when they fail or are slow. A route that
+        raises leaves its traceback in the app log (uvicorn would print it to a console the window does not have)."""
+        path = request.url.path
+        if not path.startswith("/api/"):
+            return await call_next(request)
+        t0 = time.perf_counter()
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            took = round((time.perf_counter() - t0) * 1000, 1)
+            diag.event("web.request.failed", level="error", method=request.method, path=path, duration_ms=took,
+                       **diag.error_fields(exc))
+            diag.app_log().error(f"{request.method} {path} failed after {took:.0f} ms\n{traceback.format_exc()}")
+            raise
+        took = round((time.perf_counter() - t0) * 1000, 1)
+        status = response.status_code
+        slow = took >= SLOW_REQUEST_MS and path not in WAITS_ON_USER
+        if path not in QUIET_ROUTES or status >= 400 or slow:
+            diag.event("web.request", level="warning" if status >= 500 or slow else "info", method=request.method,
+                       path=path, status=status, duration_ms=took)
+        if slow:
+            diag.app_log().warning(f"{request.method} {path} took {took / 1000:.1f} s to answer ({status})")
+        return response
 
     def error(message: str, status: int = 400):
         return JSONResponse({"error": message}, status_code=status)
@@ -530,6 +612,37 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         logs_dir().mkdir(parents=True, exist_ok=True)
         open_path(logs_dir())
         return {"ok": True}
+
+    @app.post("/api/diagnostics")
+    async def page_diagnostics(request: Request):
+        try:
+            body = await request.json()
+        except ValueError:
+            return error("A diagnostics report is a JSON object with its reports.")
+        taken = state.watch.page_reports(body.get("reports") if isinstance(body, dict) else None)
+        return {"ok": True, "taken": taken}
+
+    @app.post("/api/diagnostics/bundle")
+    def diagnostics_bundle():
+        target = data_dir() / "diagnostics" / f"spec-surgeon-diagnostics-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+        roots = [Path(state.task.session.out_root), default_run_root()]
+        try:
+            made = diag.diagnostic_bundle(target, logs=logs_dir(), config=config_dir(), run_roots=roots,
+                                          header=[f"Spec Surgeon {state.version}",
+                                                  diag.environment_line(diag.environment()),
+                                                  f"Job running: {state.job['action'] if state.busy and state.job else 'none'}"])
+        except OSError as e:
+            diag.event("diagnostics.bundle.failed", level="error", **diag.error_fields(e))
+            return error(f"The diagnostic bundle could not be written: {e}", 500)
+        diag.event("diagnostics.bundle.saved", path=str(made["path"]), files=len(made["files"]),
+                   skipped=len(made["skipped"]), bytes=made["bytes"])
+        diag.app_log().info(f"Diagnostic bundle saved: {made['path']} ({len(made['files'])} files)")
+        try:
+            reveal_path(made["path"])
+        except OSError:
+            pass
+        return {"path": str(made["path"]), "name": made["path"].name, "files": len(made["files"]),
+                "skipped": len(made["skipped"])}
 
     @app.post("/api/quit")
     def quit_window():

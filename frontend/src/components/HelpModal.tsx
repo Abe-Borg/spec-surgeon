@@ -29,6 +29,9 @@ interface Props {
   onDownloadUpdate: () => void;
   onInstallUpdate: () => void;
   onOpenLogs: () => void;
+  onSaveBundle: () => void;
+  /** What the last Save a diagnostic bundle said ("" before one). */
+  bundleNote: string;
 }
 
 /** A link from the About page opens in the system browser: in the native window a plain anchor would navigate the
@@ -407,6 +410,8 @@ function AboutTopic({
   onDownloadUpdate,
   onInstallUpdate,
   onOpenLogs,
+  onSaveBundle,
+  bundleNote,
 }: {
   version: string;
   busy: boolean;
@@ -417,6 +422,8 @@ function AboutTopic({
   onDownloadUpdate: () => void;
   onInstallUpdate: () => void;
   onOpenLogs: () => void;
+  onSaveBundle: () => void;
+  bundleNote: string;
 }) {
   const [about, setAbout] = useState<About | null>(null);
   const [error, setError] = useState("");
@@ -494,12 +501,22 @@ function AboutTopic({
               Open diagnostic logs
             </button>
           </Tip>
+          <Tip tip="Saves one zip with the app’s logs, its settings, your recent conversations and the logs and records of your recent runs, and shows it in Explorer: the one file to send when something went wrong. No document, picture or page image goes in it; conversations and records can quote your words and your documents’ text.">
+            <button type="button" onClick={onSaveBundle} className={quietBtn}>
+              Save a diagnostic bundle
+            </button>
+          </Tip>
           {status.text && !status.action && status.progress === null && (
             <span className={`text-xs ${statusTone}`} role="status">
               {status.text}
             </span>
           )}
         </div>
+        {bundleNote && (
+          <p className="text-xs text-ink-dim" role="status">
+            {bundleNote}
+          </p>
+        )}
         {(status.action || status.progress !== null || update?.state === "installing") && (
           <div className="rounded-xl border border-accent/50 bg-accent/10 p-4">
             <p className="text-sm font-medium text-ink" role="status">
@@ -655,6 +672,8 @@ export default function HelpModal({
   onDownloadUpdate,
   onInstallUpdate,
   onOpenLogs,
+  onSaveBundle,
+  bundleNote,
 }: Props) {
   // Escape, Tab containment and focus restoration through the one hook every dialog uses.
   const panelRef = useRef<HTMLDivElement>(null);
@@ -733,6 +752,8 @@ export default function HelpModal({
               onDownloadUpdate={onDownloadUpdate}
               onInstallUpdate={onInstallUpdate}
               onOpenLogs={onOpenLogs}
+              onSaveBundle={onSaveBundle}
+              bundleNote={bundleNote}
             />
           )}
         </div>

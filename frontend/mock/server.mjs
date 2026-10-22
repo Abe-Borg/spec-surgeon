@@ -15,7 +15,8 @@
  * Mock-only routes (never in the real server): POST /mock/scenario {name}
  * sets the view to a canned scenario (empty, attached, question, preview,
  * layouts, done, todo, paused, update-available, update-ready, up-to-date,
- * no-key); POST /mock/reset. A check for updates finds 1.7.0, except after
+ * no-key); POST /mock/reset; GET /mock/page-reports (what the page sent to
+ * /api/diagnostics). A check for updates finds 1.7.0, except after
  * the up-to-date scenario, where it answers "You're up to date".
  *
  * No dependencies: http, fs, path, zlib. Preview images are PNGs drawn here.
@@ -376,6 +377,7 @@ async function readJson(req) {
 }
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const pageReports = [];
 
 function tokenOf(req, url) {
   return req.headers["x-spec-surgeon-token"] || url.searchParams.get("token") || "";
@@ -797,6 +799,7 @@ async function handle(req, res) {
       return json(res, 200, view);
     }
     if (path === "/mock/health") return json(res, 200, { ok: true, token: TOKEN });
+    if (path === "/mock/page-reports") return json(res, 200, { reports: pageReports });
     return json(res, 404, { error: "No such mock route." });
   }
 
@@ -988,6 +991,18 @@ async function handle(req, res) {
     case "POST /api/logs":
       console.log("[mock] open logs folder");
       return json(res, 200, { ok: true });
+    case "POST /api/diagnostics": {
+      // The page's own reports (lib/diagnostics.ts): taken, and kept for GET /mock/page-reports.
+      const body = await readJson(req);
+      const reports = Array.isArray(body.reports) ? body.reports.slice(0, 25) : [];
+      pageReports.push(...reports);
+      if (pageReports.length > 500) pageReports.splice(0, pageReports.length - 500);
+      return json(res, 200, { ok: true, taken: reports.length });
+    }
+    case "POST /api/diagnostics/bundle":
+      console.log("[mock] save a diagnostic bundle");
+      return json(res, 200, { path: "C:/Users/you/AppData/Local/Spec Surgeon/diagnostics/spec-surgeon-diagnostics-mock.zip",
+                              name: "spec-surgeon-diagnostics-mock.zip", files: 12, skipped: 3 });
     case "POST /api/quit":
       if (view.busy) return busyRefusal();
       console.log("[mock] quit");

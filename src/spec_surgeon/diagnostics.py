@@ -639,13 +639,99 @@ def pid_alive(pid: int) -> bool:
 _ACTIVE: List[Optional["CrashWatch"]] = [None]
 
 
+def thread_stacks(limit: int = 40) -> str:
+    """Where every thread of this process is now: its name and its stack, innermost call last — source locations
+    only, never locals. For a job that stopped moving, a Stop that was not obeyed, or a page that stopped answering:
+    the thread that is stuck shows the call it is stuck in."""
+    frames = sys._current_frames()
+    threads = {t.ident: t for t in threading.enumerate()}
+    me = threading.get_ident()
+    out: List[str] = []
+    for ident, frame in sorted(frames.items(), key=lambda kv: getattr(threads.get(kv[0]), "name", "")):
+        t = threads.get(ident)
+        name = t.name if t is not None else f"thread {ident}"
+        flags = [w for w, on in (("daemon", t is not None and t.daemon), ("this one", ident == me)) if on]
+        out.append(f"Thread {name}" + (f" ({', '.join(flags)})" if flags else "") + ":")
+        for entry in traceback.format_list(traceback.extract_stack(frame, limit=limit)):
+            out.extend("  " + line for line in entry.rstrip("\n").splitlines())
+    return "\n".join(out)
+
+
+LAST_EVENT_FIELDS = ("action", "method", "path", "status", "state", "kind", "stage", "reason", "error_type", "error")
+
+
+def last_events(log_dir: Path, pid: int, n: int = 8) -> List[Dict[str, Any]]:
+    """The last ``n`` events a process wrote to its application journal (``app-events-<pid>.jsonl``, its newest
+    rotation first): ``{"time", "event", **a few identifying fields}``, oldest first. What a session that ended
+    without closing was doing when it stopped; [] when its journal is gone."""
+    rows: List[Dict[str, Any]] = []
+    base = Path(log_dir) / APP_EVENTS.format(pid=pid)
+    for path in [base] + [Path(f"{base}.{i}") for i in (1, 2, 3)]:
+        if len(rows) >= n or not path.is_file():
+            break
+        try:
+            with open(path, "rb") as fh:
+                size = fh.seek(0, os.SEEK_END)
+                fh.seek(max(0, size - 256 * 1024))
+                lines = fh.read().decode("utf-8", errors="replace").splitlines()
+        except OSError:
+            break
+        found = []
+        for line in lines:
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue                                   # a line cut by the end of the process, or by the seek
+            if isinstance(row, dict) and isinstance(row.get("event"), str):
+                found.append(row)
+        rows = found + rows
+    out = []
+    for row in rows[-n:]:
+        when = str(row.get("timestamp") or "")
+        try:
+            when = datetime.fromisoformat(when.replace("Z", "+00:00")).astimezone().strftime("%H:%M:%S")
+        except ValueError:
+            pass
+        item = {"time": when, "event": row["event"]}
+        for key in LAST_EVENT_FIELDS:
+            if row.get(key) not in (None, ""):
+                item[key] = snip(row[key], 160)
+        out.append(item)
+    return out
+
+
+def previous_session_line(info: Dict[str, Any]) -> str:
+    """The app log's account of a session that ended without closing: who it was, what it was doing last (its
+    journal's last events) and what its crash log says — an empty crash log means no native crash was caught, so the
+    process was ended from outside (Task Manager, signing out, a power cut) or stopped answering and was closed."""
+    who = (f"The previous session (pid {info.get('pid') or '?'}, Spec Surgeon {info.get('version') or '?'}, "
+           f"started {info.get('started') or '?'}) ended without closing.")
+    events = info.get("last_events") or []
+    if events:
+        what = " Its last recorded events: " + "; ".join(
+            f"{e.get('time')} {e.get('event')}"
+            + "".join(f" {k}={e[k]}" for k in LAST_EVENT_FIELDS if k in e) for e in events) + "."
+    else:
+        what = " Its event journal has nothing to say (gone, or never written)."
+    if info.get("crash_log"):
+        crash = (f" Python's fault handler wrote what it saw to {info['crash_log']}: "
+                 + " | ".join(fault_excerpt(info.get("excerpt") or [], 6) or (info.get("excerpt") or [])[:6]))
+    elif info.get("crash_log_found"):
+        crash = (" Its crash log is empty: no native crash was caught, so the process was ended from outside (Task "
+                 "Manager, signing out, a power cut) or stopped answering and was closed.")
+    else:
+        crash = " It left no crash log."
+    return who + what + crash
+
+
 class CrashWatch:
     """The window's crash watch: ``start()`` points Python's fault handler at ``crash-<time>-<pid>.log`` (the stack of
     a hard crash: a fault in the native window (pythonnet, WebView2), lxml or PyMuPDF) and writes
     ``session-<pid>.json``; ``stop()`` — a clean exit — removes the marker, and the crash log when nothing was written
     to it. A marker an earlier session left behind
     whose process is gone means that session ended without closing (a hard crash, a kill, a power cut): ``start()``
-    returns it, with its crash log, so the window can say so once."""
+    returns it, with its crash log and the last events of its journal (``last_events``), so the window can say so
+    once and the app log can say what it was doing (``previous_session_line``)."""
 
     KEEP = 10
 
@@ -688,7 +774,10 @@ class CrashWatch:
             crash = self.dir / str((info or {}).get("crash_log") or "-")
             lines = read_trace(crash) if crash.is_file() else []
             out.append({"started": (info or {}).get("started"), "version": (info or {}).get("version"),
-                        "crash_log": str(crash) if lines else None, "excerpt": lines[-40:]})
+                        "crash_log": str(crash) if lines else None, "excerpt": lines[-40:],
+                        "pid": pid if isinstance(pid, int) else None,
+                        "crash_log_found": crash.is_file(),
+                        "last_events": last_events(self.dir, pid) if isinstance(pid, int) else []})
             try:
                 m.unlink()
             except OSError:
@@ -756,3 +845,113 @@ def write_json(path: Path, data: Any) -> Optional[Path]:
     except (OSError, TypeError, ValueError) as exc:
         diagnostic_failure(path, exc)
         return None
+
+
+# ---- the diagnostic bundle (Help → About → Save a diagnostic bundle) ------------------------------------------------
+
+BUNDLE_LOGS = ("spec-surgeon.log*", "app-events-*.jsonl*", "crash-*.log", "session-*.json")
+BUNDLE_TEXT = frozenset({".log", ".jsonl", ".json", ".md", ".txt"})
+# Folders of a run that hold documents, pages or their pieces: never read into a bundle, whatever their files are.
+BUNDLE_SKIP_DIRS = frozenset({"outputs", "failed", "samples", "source", "source-in", "template", "output",
+                              "output-hf", "attachments", "pages", "images", "sandbox"})
+BUNDLE_RECENT_RUNS = 5
+BUNDLE_RECENT_CONVERSATIONS = 3
+BUNDLE_FILE_CAP = 25 * 2 ** 20
+BUNDLE_TOTAL_CAP = 250 * 2 ** 20
+
+
+def _newest(paths: Sequence[Path], n: int) -> List[Path]:
+    def mtime(p: Path) -> float:
+        try:
+            return p.stat().st_mtime
+        except OSError:
+            return 0.0
+    return sorted(paths, key=mtime, reverse=True)[:n]
+
+
+def diagnostic_bundle(target: Path, *, logs: Path, config: Path, run_roots: Sequence[Path],
+                      recent_runs: int = BUNDLE_RECENT_RUNS, header: Sequence[str] = ()) -> Dict[str, Any]:
+    """One zip with everything a diagnosis reads, and nothing of the documents: the application logs folder (the app
+    log, every event journal, crash logs, session markers), ``settings.json``, the current conversation and the last
+    archived ones, and from the newest ``recent_runs`` folders of each run root their logs, records, reports and
+    conversation records (``.log``, ``.jsonl``, ``.json``, ``.md``, ``.txt`` outside the folders that hold documents
+    and pages). ``MANIFEST.txt`` lists what is in it and what was left out, and why. Conversations and records quote
+    the user's words and the documents' text: the bundle is the user's to share or not. Written whole, then renamed
+    into place; returns ``{"path", "files", "skipped", "bytes"}``. Raises OSError when the zip cannot be written."""
+    target = Path(target)
+    chosen: List[tuple] = []                   # (name in the zip, file on disk)
+    skipped: List[str] = []
+    seen: set = set()
+
+    def add(name: str, path: Path) -> None:
+        key = os.path.normcase(str(path))
+        if key in seen or not path.is_file():
+            return
+        seen.add(key)
+        chosen.append((name, path))
+
+    logs = Path(logs)
+    for pattern in BUNDLE_LOGS:
+        for path in sorted(logs.glob(pattern)):
+            add(f"logs/{path.name}", path)
+    config = Path(config)
+    add("config/settings.json", config / "settings.json")
+    add("config/conversation.json", config / "conversation.json")
+    for path in _newest(list((config / "conversations").glob("*.json")), BUNDLE_RECENT_CONVERSATIONS):
+        add(f"config/conversations/{path.name}", path)
+    roots: List[Path] = []
+    for root in run_roots:
+        root = Path(root)
+        if root.is_dir() and all(os.path.normcase(str(root.resolve())) != os.path.normcase(str(r.resolve()))
+                                 for r in roots):
+            roots.append(root)
+    for i, root in enumerate(roots):
+        try:
+            runs = _newest([p for p in root.iterdir() if p.is_dir()], recent_runs)
+        except OSError as exc:
+            skipped.append(f"{root} (the run folder could not be listed: {exc})")
+            continue
+        for run in runs:
+            prefix = f"runs/{run.name}" if len(roots) == 1 else f"runs/{i + 1}-{run.name}"
+            for dirpath, dirnames, filenames in os.walk(run):
+                kept = [d for d in dirnames if d.lower() not in BUNDLE_SKIP_DIRS]
+                for d in sorted(set(dirnames) - set(kept)):
+                    skipped.append(f"{prefix}/{Path(dirpath).relative_to(run).as_posix()}/{d}/ (documents or pages)"
+                                   .replace("/./", "/"))
+                dirnames[:] = kept
+                for name in sorted(filenames):
+                    path = Path(dirpath) / name
+                    if path.suffix.lower() in BUNDLE_TEXT:
+                        add(f"{prefix}/{path.relative_to(run).as_posix()}", path)
+
+    files: List[str] = []
+    total = 0
+    part = target.with_name(target.name + ".part")
+    part.parent.mkdir(parents=True, exist_ok=True)
+    with zipfile.ZipFile(part, "w", compression=zipfile.ZIP_DEFLATED) as z:
+        for name, path in chosen:
+            try:
+                size = path.stat().st_size
+                if size > BUNDLE_FILE_CAP:
+                    skipped.append(f"{name} ({size // 2 ** 20} MB: larger than {BUNDLE_FILE_CAP // 2 ** 20} MB)")
+                    continue
+                if total + size > BUNDLE_TOTAL_CAP:
+                    skipped.append(f"{name} (the bundle reached {BUNDLE_TOTAL_CAP // 2 ** 20} MB)")
+                    continue
+                data = path.read_bytes()             # one read: a log still being written is taken as it stands
+            except OSError as exc:
+                skipped.append(f"{name} (could not be read: {exc})")
+                continue
+            z.writestr(name, data)
+            files.append(name)
+            total += len(data)
+        manifest = [*header, f"Saved {datetime.now().astimezone().isoformat(timespec='seconds')}", "",
+                    "Holds the app's logs and event journals, its settings, the current and last conversations, and "
+                    "the logs, records and reports of the newest runs. No document, picture or page image is in it; "
+                    "conversations and records can quote your words and your documents' text.", "",
+                    f"Files ({len(files)}):", *[f"  {n}" for n in files]]
+        if skipped:
+            manifest += ["", f"Left out ({len(skipped)}):", *[f"  {n}" for n in skipped]]
+        z.writestr("MANIFEST.txt", redact_text("\n".join(manifest) + "\n"))
+    part.replace(target)
+    return {"path": target, "files": files, "skipped": skipped, "bytes": total}

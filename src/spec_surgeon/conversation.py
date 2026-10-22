@@ -145,6 +145,9 @@ class Entry:
     images: List[str] = field(default_factory=list)
     at: str = field(default_factory=lambda: datetime.now().isoformat(timespec="seconds"))
     chips: List[str] = field(default_factory=list)
+    # Claude's words alone, without the questions ``text`` lists after them: the window's chat says these and shows
+    # the questions once, in their own card (a question of several lines never leaks into the bubble).
+    message: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
         return {"role": self.role, "text": self.text, "status": self.status, "understanding": self.understanding,
@@ -542,11 +545,11 @@ class Conversation:
         self.turn = turn
         diag.event("conversation.turn.outcome", status=turn.status, model_calls=self.calls,
                    question_count=len(turn.questions), choice_count=len(turn.choices), errors=turn.errors)
-        shown = [turn.message or ("" if turn.questions else str((turn.spec or {}).get("summary") or ""))]
-        shown += [f"• {q}" for q in turn.questions]
+        said = turn.message or ("" if turn.questions else str((turn.spec or {}).get("summary") or ""))
+        shown = [said] + [f"• {q}" for q in turn.questions]
         self.entries.append(Entry("claude", "\n".join(x for x in shown if x), status=turn.status,
                                   understanding=turn.understanding, choices=[c.to_dict() for c in turn.choices],
-                                  images=list(turn.images), chips=list(turn.chips)))
+                                  images=list(turn.images), chips=list(turn.chips), message=said.strip()))
         return turn
 
     def _next_choice_id(self) -> str:
