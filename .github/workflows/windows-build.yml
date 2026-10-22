@@ -70,7 +70,7 @@ jobs:
         run: npm test
       - name: Run Windows tests
         if: inputs.run_tests
-        run: python -m pytest -q --junitxml=windows-tests.xml
+        run: python -m pytest -q -n auto --junitxml=windows-tests.xml
       - name: Bundle the desktop app
         shell: pwsh
         run: |
