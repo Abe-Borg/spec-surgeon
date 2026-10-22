@@ -14,6 +14,7 @@ from typing import Any, Dict, List
 
 from .editspec import EXPECT_CHECKS, MODES, SPEC_ASSERTION_KINDS
 from .ops import OPS
+from .ops.slots import REFERENCE_FILLS   # the usual identity of a CSI spec, as fill rules (shown in the catalog)
 
 # The GUI needs a concrete directory; wheels and frozen builds both extract these
 # package resources beside this module. The compiler reads the same resources below.
@@ -735,19 +736,6 @@ EXPECT_SYNTAX = {
                  "trPrChange, tcPrChange, tblGridChange, tblPrExChange, numberingChange, cellIns, cellDel, cellMerge",
     "use": "use a range when the batch's files legitimately differ in how many places change (e.g. text_diffs "
            "{'min': 1}); a file whose plan falls outside the range is set aside with code 'expect', never edited",
-}
-
-# The usual identity of a CSI spec, as fill rules — for slot_markers ['reference'] the same rules give the template
-# spec's own values (read_template shows them and where its headers/footers show them) and each spec's own.
-REFERENCE_FILLS = {
-    "SECTION_NUMBER": {"rule": "regex", "source": "document",
-                       "case_insensitive": True,
-                       "pattern": r"^SECTION\s+(\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?)\b"},
-    "SECTION_TITLE": {"rule": "first_match", "rules": [
-        {"rule": "paragraph_after", "source": "document", "case_insensitive": True,
-         "anchor_regex": r"^SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\s*$"},
-        {"rule": "regex", "source": "document", "case_insensitive": True,
-         "pattern": r"^SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\s*[-–—:]\s*(.+)$"}]},
 }
 
 SELECTOR_GRAMMAR = {

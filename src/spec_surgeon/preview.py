@@ -46,7 +46,7 @@ from . import diagnostics as diag
 from .editspec import apply_spec, plan_spec
 from .fingerprint import fingerprint
 from .package import DocxPackage
-from .planner import BatchPlan, plan_batch
+from .planner import LEFT_WARNINGS, BatchPlan, left_elsewhere_warnings, left_notes, plan_batch
 
 
 def key_templates(key: Any) -> List[Path]:
@@ -210,13 +210,15 @@ class SampleView:
     look_pages: List[int] = field(default_factory=list)   # page 1 and the first page whose words moved
     stages: List[Dict[str, Any]] = field(default_factory=list)   # a chain's sample: each stage's verdict, in order
     outcomes: List[Dict[str, Any]] = field(default_factory=list)  # a chain's independent final requirements
+    left_later: List[str] = field(default_factory=list)   # a chain's sample: its later steps' wording left elsewhere
 
     def to_dict(self):
         return {"source": str(self.source), "output": str(self.output) if self.output else None, "passed": self.passed,
                 "checks": self.checks, "images": [str(i) for i in self.images], "exception": self.exception,
                 "look_pages": self.look_pages, "pages_before": self.pages_before, "pages_after": self.pages_after,
                 **({"stages": self.stages} if self.stages else {}),
-                **({"outcomes": self.outcomes} if self.outcomes else {})}
+                **({"outcomes": self.outcomes} if self.outcomes else {}),
+                **({"left_later": self.left_later} if self.left_later else {})}
 
     def stages_text(self) -> str:
         """``stage 1 PASS · stage 2 FAIL [V10]`` — how far a chain's sample got."""
@@ -556,6 +558,7 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
         bp.spec, bp.skipped = spec, [str(f) for f in files if f not in planned]
         pv = Preview(out_dir=out_dir, batch_plan=bp, log_path=log.path, token=token, token_inputs=token_inputs,
                      input_snapshots=snapshots)
+        pv.warnings += left_elsewhere_warnings(bp)     # the same words where this plan does not change them (C3)
         input_changed = (changed_since_preview(spec, planned, token, token_inputs) is not None or
                          bool(changed_inputs(snapshots)) or
                          {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
@@ -635,6 +638,13 @@ def _make_preview(spec: Dict[str, Any], inputs: Sequence[str], out_dir: Path, re
 
 # ---- chains: several specs, one after another (chain.py) ----------------------------------------------------------
 
+def _replaced_after(stages: Sequence[Dict[str, Any]], n: int) -> List[str]:
+    """The find texts a replacement in a chain's steps after step ``n`` (1-based) replaces: a step's note that the
+    same words remain elsewhere may not hold once those run (C3)."""
+    return [op["params"]["find"] for st in stages[n:] for op in (st.get("spec") or {}).get("ops") or []
+            if op.get("op") == "replace_text" and (op.get("params") or {}).get("find")]
+
+
 @dataclass
 class ChainPreview(Preview):
     """A chain's preview: stage 1's plan on every file (the later stages are planned on each file once the stage before
@@ -669,6 +679,11 @@ class ChainPreview(Preview):
                        + (f"; images: {[i.name for i in sv.images]}" if sv.images else ""))
             out += [f"     final requirement {entry['index']} {entry['status']}: {entry['summary']}"
                     for entry in sv.outcomes]
+        later = [(labels[str(Path(sv.source))], what) for sv in self.samples for what in sv.left_later]
+        if later:
+            out.append("\nWORDING LEFT ELSEWHERE BY THE LATER STEPS — on the sample files only (the later steps run on "
+                       "the others once the step before them did; tell the user, and offer to change them too):")
+            out += [f"   {lab}: {what}" for lab, what in later]
         if self.review is not None:
             out.append("")
             out.append(self.review.to_text())
@@ -722,8 +737,10 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
             stages = execution_chain["stages"]
             bp = plan_batch([str(f) for f in files], stages[0]["spec"])
             bp.spec = chain["stages"][0]["spec"]
+            bp.superseded = _replaced_after(stages, 1)
             pv = ChainPreview(out_dir=out_dir, batch_plan=bp, chain=chain, log_path=log.path,
                               token=token, token_inputs=token_inputs, input_snapshots=snapshots)
+            pv.warnings += left_elsewhere_warnings(bp)     # stage 1's, on every file, as far as they hold (C3)
             input_changed = (changed_since_preview(key, files, token, token_inputs) is not None or
                              bool(changed_inputs(snapshots)) or
                              {str(f.source.resolve()) for f in bp.files} != set(token_inputs["files"]) or
@@ -760,6 +777,8 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                             pkg = DocxPackage(data, name=str(f))
                             with diag.span("preview.sample.plan"):
                                 plan, frags = plan_spec(pkg, spec, fingerprint(pkg)["pattern_id"])
+                            if i > 1:                    # planned on the step before it: true for this sample
+                                sv.left_later += left_notes(plan.flags, _replaced_after(stages, i))
                             phase = "apply"
                             with diag.span("preview.sample.apply"):
                                 out = apply_spec(pkg, frags).output_bytes()
@@ -805,6 +824,12 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                                  or bool(changed_inputs(snapshots)))
                 diag.event("preview.sample_finished", source=str(f), passed=sv.passed,
                            exception=sv.exception, checks=sv.checks, stages=sv.stages)
+            labels = sample_labels(pv.samples)
+            later = [f"{labels[str(Path(sv.source))]}: {what}" for sv in pv.samples for what in sv.left_later]
+            if later or bp.superseded:
+                pv.warnings += later[:LEFT_WARNINGS] + [
+                    "The later steps were checked on the sample documents only: the others may keep the same words "
+                    "elsewhere too; ask in the chat to look."]
             pv.renderer = render_samples(pv.samples, out_dir, renderer, do_render, pv.warnings, log=log)
             if input_changed or changed_since_preview(key, files, token, token_inputs) is not None or changed_inputs(snapshots):
                 pv.token = ""

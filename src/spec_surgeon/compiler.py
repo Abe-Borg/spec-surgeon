@@ -469,6 +469,12 @@ headers/footers share, «SECTION NUMBER» and «SECTION TITLE» standing for eac
 named so instead of repeating the lines; compare_files gives every file's lines in full. Before a header/footer, title \
 or File Properties request, read the flags and name each one that bears on it in your reply (which file, what \
 differs), with an offer the user can take or leave. The flags describe the files; they change and decide nothing.
+- A change kept to one place says where the same words remain: the preview's WORDING LEFT ELSEWHERE lists each \
+file where a replace_text leaves its find text outside its scope or selection (or after the first), or a literal \
+header/footer fill differs from the document's own section number or title. The user sees them beside the pages too. \
+When you next reply, name them (which file, where, the words) and offer to change them as well — a replace_text over \
+that scope, or the user's own wording; never change them unasked. Renaming in two places with one replace_text \
+(scope ["document", "footers"]) leaves nothing to say.
 - mode: "formatting" unless an op places characters; "content" for tracked wording changes; "untracked" when \
 the user asked for untracked wording or a template has literal fills.
 - Inspect as deeply as needed before deciding. read_paragraphs, list_parts and read_xml_page have continuation \

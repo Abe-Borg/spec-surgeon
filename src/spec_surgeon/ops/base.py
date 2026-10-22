@@ -72,6 +72,11 @@ def text_diffs(diffs) -> list:
 
 GEOMETRY_REFERENCES = ("source", "template", "none")
 
+# The start of a flag that says where a change kept to one place leaves the same words (docs/PLAN-2026-10-22-batch-
+# consistency.md C3): the preview gathers these flags for every file, for the user and for the assistant. A flag
+# only — nothing is predicted from it, so the reads behind it are no ``touches``.
+LEFT_ELSEWHERE = "Not changed elsewhere: "
+
 
 @dataclass
 class Plan:

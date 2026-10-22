@@ -36,6 +36,10 @@ Changes since v1.8.0.
   or none of the words of the document's title. Before, only the first four layouts were summarised and nothing
   compared the files. The comparison changes nothing; the assistant names what bears on your request and offers a
   fix. After a run, the next request compares the edited copies.
+- **A change kept to one place says where the old words remain.** Renaming a title in the footer only now notes, beside
+  the pages, every document whose first page (or header, or note) still reads the old words, and the assistant offers
+  to change them too. A header or footer filled with a section number or title you typed notes a document whose own
+  differs. A rename that finds nothing where you asked says where the words are instead. Nothing extra is changed.
 
 ## Fixes
 

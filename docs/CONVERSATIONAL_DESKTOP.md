@@ -88,7 +88,13 @@ the title shows, every displayed header/footer line (capitals by formatting mark
 with flags naming the documents that differ from most — a title or header/footer line in other capitals, a line
 missing or extra, a Properties title naming another section or none of the file's title words. The flags describe and
 choose nothing; the assistant names the ones a request touches. `compare_files` shows every file's lines in full. The
-overview is computed whenever a batch is, so a request after a run reads the copies it made. The check's findings describe the file, not the edit: a file with any of them
+overview is computed whenever a batch is, so a request after a run reads the copies it made.
+
+A change kept to one place says where the same words remain: a replacement whose words also occur outside its scope or
+selection (and no other replacement of the plan changes them), or a literal header/footer fill of the section number or
+title that differs from the document's own (C3). The preview shows these notes beside the pages (`Preview.warnings`)
+and lists them for every file in the text the assistant reads (`WORDING LEFT ELSEWHERE`), which then offers to change
+them too; nothing changes unasked. The check's findings describe the file, not the edit: a file with any of them
 is edited like any other, and a file with none can still be set aside at plan time.
 
 Adding or removing a document after a plan exists voids that plan. The conversation says so, and the button

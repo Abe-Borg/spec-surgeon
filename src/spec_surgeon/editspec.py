@@ -35,6 +35,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 from .ooxml import CELL_REV_TAGS, CONTENT_REV_TAGS, PROPERTY_REV_TAGS
 from .ops import OPS, JobException, Plan, PlanFragment, get_op, merge_fragments
 from .ops.base import text_diffs
+from .ops.elsewhere import flag_left_elsewhere
 from .ops.selectors import DEFAULT_PRESERVE_FONTS, selection_reads, size_values
 from .package import DocxPackage
 
@@ -473,6 +474,7 @@ def plan_spec(pkg: DocxPackage, spec: Dict[str, Any], pattern_id: Optional[str] 
         frags.append(frag)
         if trace:
             trace("plan", i, o["op"], "done", frag)
+    flag_left_elsewhere(pkg, spec["ops"], frags)     # where a change kept to one place leaves the same words (C3)
     plan = merge_fragments(frags, job="edit-spec", params={"request": spec["request"], "summary": spec["summary"]})
     if plan.mode != spec["mode"]:
         raise JobException(f"the spec says mode {spec['mode']!r} but its ops make it {plan.mode!r} "

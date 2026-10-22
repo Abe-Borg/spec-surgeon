@@ -117,7 +117,7 @@ overrides it).
 
 | Conversation | Tools | Validated by |
 | --- | --- | --- |
-| Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies) |
+| Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, compare_files, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies) |
 | Custom-method writer (`codegen.py`) | the inspection tools + show_xml, find_paragraphs, list_styles, show_part_text, submit_op | `codegen.check_source` (import whitelist, forbidden names and attributes), sandbox run, `hard_limits`, `verify.run_suite` |
 | Visual check (`vision.py`) | submit_review | findings about pages it was not shown are dropped; advisory only |
 | Outcome planner (`campaign_planner.py`) | read tools, view_pages, list_documents, inspect_goal_effect, propose_plan, need_user, unsupported | `goals.validate_contract`, template pin, invisible characters |
@@ -131,6 +131,9 @@ overrides it).
   paths.
 - The full local path of an attached template and of attached pictures and tables.
 - The batch's profiles: styles, section titles, header and footer text, sample paragraphs.
+- The overview of every document side by side (`profile.batch_overview`, from #79): its section number and title, how
+  its title shows, each displayed header and footer line, its File Properties title, and flags where a document differs
+  from most; `compare_files` returns the same in full. Recovery and the outcome planner get it with the profiles.
 - Whatever the read tools return: paragraph text, XML of a part, table rows.
 - Page images: `view_pages`, the visual check, recovery's views.
 - In recovery, up to 5 past repair cases from the local repair memory.
@@ -195,6 +198,8 @@ How each is labelled:
 - The plan's sentences come from the operation code.
 - Claude's assumptions are listed as assumptions.
 - Claude's visual findings are listed as warnings with file and page.
+- Notes that a change kept to one place leaves the same words elsewhere are listed as warnings with the file; the plan
+  writes them, not Claude (`ops/elsewhere.py`, `planner.left_elsewhere_warnings`, from #80).
 - A custom method's summary is Claude's own proposal text.
 - An outcome plan is shown as its effects (`review_display.effects`).
 

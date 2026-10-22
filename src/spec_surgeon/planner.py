@@ -15,13 +15,41 @@ import time
 from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .editspec import is_template_file, plan_spec, spec_templates, validate_spec
 from .fingerprint import fingerprint
 from .ops import Plan
-from .ops.base import text_diffs
+from .ops.base import LEFT_ELSEWHERE, text_diffs
 from .package import DocxPackage
+
+
+LEFT_LINES = 40          # lines of WORDING LEFT ELSEWHERE in the plan's text (the rest counted)
+LEFT_WARNINGS = 6        # of them shown beside the previews (the rest counted)
+
+
+def left_notes(flags: Sequence[str], superseded: Sequence[str] = ()) -> List[str]:
+    """The words of a plan's ``LEFT_ELSEWHERE`` flags — without a replacement's whose find text a later step of a
+    chain replaces again (``superseded``): what it says of the source may no longer hold after that step."""
+    out = []
+    for flag in flags:
+        if LEFT_ELSEWHERE not in flag:
+            continue
+        what = flag.split(LEFT_ELSEWHERE, 1)[1]
+        if not any(what.casefold().startswith(f"“{find}”".casefold()) for find in superseded):
+            out.append(what)
+    return out
+
+
+def left_elsewhere_warnings(bp: "BatchPlan") -> List[str]:
+    """What the window shows beside the previews: each file where a change kept to one place leaves the same words
+    elsewhere, in the flag's own plain words (C3); the assistant has every file in the plan's text."""
+    left = bp.left_elsewhere()
+    out = [f"{name}: {what}" for name, what in left[:LEFT_WARNINGS]]
+    if len(left) > LEFT_WARNINGS:
+        out.append(f"{len(left) - LEFT_WARNINGS} more place(s) like these keep the old words; ask in the chat to see "
+                   f"them all or to change them too.")
+    return out
 
 
 def _names(parts: Sequence[str], n: int = 6) -> str:
@@ -110,6 +138,7 @@ class BatchPlan:
     files: List[FilePlan] = field(default_factory=list)
     skipped: List[str] = field(default_factory=list)
     seconds: float = 0.0
+    superseded: List[str] = field(default_factory=list)   # find texts a later step of a chain replaces again (C3)
 
     @property
     def patterns(self) -> Dict[str, List[FilePlan]]:
@@ -121,6 +150,12 @@ class BatchPlan:
     @property
     def exceptions(self) -> List[FilePlan]:
         return [f for f in self.files if f.status == "exception"]
+
+    def left_elsewhere(self) -> List[Tuple[str, str]]:
+        """(file name, what) for every planned file's flag that a change kept to one place leaves the same words
+        elsewhere (``LEFT_ELSEWHERE``, C3) — every file's, where the summaries show one file per pattern."""
+        return [(f.source.name, what) for f in self.files if f.status == "planned"
+                for what in left_notes(f.summary, self.superseded)]
 
     def to_dict(self):
         return {"request": self.spec.get("request"), "files": [f.to_dict() for f in self.files],
@@ -145,6 +180,14 @@ class BatchPlan:
                     out += [f"      {line}" for line in f.summary]
             if not per_file and len(fs) > 1:
                 out.append(f"   … and {len(fs) - 1} more file(s) of this pattern")
+        left = self.left_elsewhere()
+        if left:
+            out.append("\nWORDING LEFT ELSEWHERE — every file where the same words remain in a place this plan does "
+                       "not change (tell the user, and offer to change them too):")
+            out += [f"   {name}: {what}" for name, what in left[:LEFT_LINES]]
+            if len(left) > LEFT_LINES:                  # every file still named; read them with the tools
+                rest = list(dict.fromkeys(name for name, _ in left[LEFT_LINES:]))
+                out.append(f"   … and {len(left) - LEFT_LINES} more note(s) of the same kind, in: {', '.join(rest)}")
         # Hygiene changes must be reviewable for EVERY file, even when other summaries
         # are grouped by structure pattern. JSON quoting exposes ordinary/NBSP differences.
         import json
