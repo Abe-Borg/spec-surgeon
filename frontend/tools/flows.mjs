@@ -252,18 +252,19 @@ try {
   await page.waitForTimeout(400);
   check("Start over clears the copies", (await page.getByText("Your edited copies").count()) === 0);
 
-  // 13. The one button lives in the conversation pane; the plan card carries none; there is no Hide plan button.
+  // 13. The one button lives in the conversation pane; the workbench carries none, and no plan card; there is no Hide plan button.
   await scenario("preview");
   await page.reload();
   const createBtn = page.getByRole("button", { name: "Create edited copies" });
   await createBtn.waitFor();
   check("no Hide plan button", (await page.getByRole("button", { name: /Hide plan|Show plan/ }).count()) === 0);
   check("the action button is in the conversation pane", (await page.locator("section[aria-label='Conversation']").getByRole("button", { name: "Create edited copies" }).count()) === 1);
-  check("the plan card has no button", (await page.locator("section[aria-label='Your documents, the plan and the pages']").getByRole("button", { name: "Create edited copies" }).count()) === 0);
+  check("the workbench has no button", (await page.locator("section[aria-label='Your documents and the pages']").getByRole("button", { name: "Create edited copies" }).count()) === 0);
+  check("no plan card", (await page.getByText("Here’s what will change").count()) === 0);
 
-  // 14. Markdown renders in both panes (the chat's reply and the plan's sentences).
+  // 14. Markdown renders in both panes (the chat's reply and the findings on the pages).
   check("the chat renders markdown", (await page.locator("section[aria-label='Conversation'] .md").count()) > 0);
-  check("the plan renders markdown", (await page.locator(".paper .md").count()) > 0);
+  check("the findings render markdown", (await page.locator(".paper .md").count()) > 0);
 
   // 15. The red X on a preview counts on the button; approving sets that document aside; the to-do card offers the pass.
   const holdBtn = page.getByRole("button", { name: /Needs more work · 21 05 00/ });

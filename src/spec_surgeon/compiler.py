@@ -1213,6 +1213,30 @@ def _planner_for(outcome: Any):
     return lambda pkg, pid: plan_spec(pkg, outcome, pid)
 
 
+def _attached_checks(spec: Dict[str, Any], batch: _Batch) -> List[str]:
+    """Every file the spec reads beside the documents (``editspec.input_slots``) is one the user attached: a table or
+    a picture is one of the INPUT FILES, a template the attached template or one of the documents (a spec may read an
+    attached document as its template). A file nobody attached is not the user's: a table's cells and a picture are
+    placed without passing the words gate, so a file the model found or wrote itself would place the model's words."""
+    from .editspec import input_slots
+
+    def resolved(value) -> Optional[Path]:
+        try:
+            return Path(value).resolve()
+        except (OSError, ValueError, RuntimeError):     # a NUL in the path, a symlink loop: no file the user attached
+            return None
+    inputs = {Path(p).resolve() for p in batch.inputs}
+    templates = {Path(p).resolve() for p in [*([batch.template] if batch.template else []), *batch.files.values()]}
+    named = [d[k] for o in spec.get("ops", []) for d, k in input_slots(o)
+             if resolved(d[k]) not in (templates if d is o.get("params") and k == "template" else inputs)]
+    if named:
+        listed = "; ".join(map(str, named))           # the paths as written, never a list's repr (it doubles a backslash)
+        return [f"[input] the spec names {listed}, which the user did not attach: a table or picture must be one of the "
+                f"INPUT FILES (its exact path), a template the attached template or one of the documents. Use an "
+                f"attached file, or call ask_user to have the user attach it."]
+    return []
+
+
 def _content_checks(spec: Dict[str, Any], sources: Sequence[str]) -> List[str]:
     """The checks a spec's content must pass before any dry run: case-only replacements go through picked
     capitalization records, each capitalization record was picked, and every placed word is the user's."""
@@ -1323,7 +1347,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
         except SpecError as e:
             return spec, [f"[{e.code}] {e.reason}"]
         for st in chain["stages"]:
-            errs = _content_checks(st["spec"], sources)
+            errs = _attached_checks(st["spec"], batch) or _content_checks(st["spec"], sources)
             if errs:
                 return spec, errs
         return chain, _dry_errors(chain, batch, patterns)
@@ -1331,7 +1355,7 @@ def compose_submission(spec: Any, batch: _Batch, sources: Sequence[str],
         validate_spec(spec)
     except SpecError as e:
         return spec, [f"[{e.code}] {e.reason}"]
-    errs = _content_checks(spec, sources)
+    errs = _attached_checks(spec, batch) or _content_checks(spec, sources)
     if errs:
         return spec, errs
     errs = _dry_errors(spec, batch, patterns)
