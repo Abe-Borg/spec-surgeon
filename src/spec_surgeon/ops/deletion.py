@@ -390,13 +390,16 @@ def already_deleted(p) -> List[Any]:
 
 
 def pending_flag(part: str, changed: Sequence[Any]) -> Optional[str]:
-    """Whose pending insertions and deletions lie in the changed paragraphs, and what the deletion does over them."""
-    def by(tag: str) -> List[str]:
-        return sorted({el.get(W + "author") or "an unnamed author" for p in changed for el in p.iter(tag)})
+    """Whose pending insertions, deletions and formatting changes lie in ``changed`` (the changed paragraphs and the
+    deleted tables), and what the deletion does over them."""
+    def by(*tags: str) -> List[str]:
+        return sorted({el.get(W + "author") or "an unnamed author" for p in changed for el in p.iter(*tags)})
     inserted, deleted = by(W + "ins"), by(W + "del")
+    formatted = by(*(W + t for t in PROPERTY_REV_TAGS))
     clauses = ([f"what {', '.join(inserted)} inserted is deleted inside the insertion (rejecting it still removes all "
                 f"of it)"] if inserted else []) + \
-              ([f"what {', '.join(deleted)} deleted stays as it was"] if deleted else [])
+              ([f"what {', '.join(deleted)} deleted stays as it was"] if deleted else []) + \
+              ([f"the formatting changes by {', '.join(formatted)} stay with it"] if formatted else [])
     if not clauses:
         return None
     return f"{part}: the deleted text holds someone's pending tracked changes: {'; '.join(clauses)}"

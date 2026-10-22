@@ -209,7 +209,7 @@ class DeleteParagraphs(Op):
             targets[ch.part] = {"paragraphs": {str(index[p]): new_mark[p] for p in changed},
                                 "rows": [[k, r] for k, r in rows]}
             frag.flags += tracked_flags(pkg, ch.part, gone)
-            pending = pending_flag(ch.part, changed)
+            pending = pending_flag(ch.part, changed + ch.tables)
             if pending:
                 frag.flags.append(pending)
             if ch.part == pkg.main_part():

@@ -272,7 +272,8 @@ def test_a_mark_already_deleted_gets_no_second_deletion():
 
 def test_formatting_changes_stay_where_they_are():
     src = mutate(SPEC, formatting_changes)
-    _, _, out = delete(src, {"text_regex": r"^A\.\t"})
+    frag, _, out = delete(src, {"text_regex": r"^A\.\t"})
+    assert any("the formatting changes by Jack stay with it" in f for f in frag.flags), frag.flags   # Codex on #83
     p = written(out, "A.")
     assert p.find(f"{W}pPr/{W}pPrChange").get(W + "id") == "321"
     assert p.find(f"{W}del/{W}r/{W}rPr/{W}rPrChange").get(W + "id") == "320"
@@ -289,6 +290,7 @@ def test_a_field_updated_with_track_changes_on_is_not_cut():
 def test_a_table_with_redlines_in_its_cells_and_a_resized_grid_is_deleted():
     src = mutate(mutate(SPEC, cell_inserted_text), grid_changed)
     frag, _, out = delete(src, TABLE)
+    assert any("Jeremy inserted" in f and "formatting changes by Jack" in f for f in frag.flags), frag.flags
     tbl = next(DocxPackage(out).xml(MAIN).iter(W + "tbl"))
     assert tbl.find(f"{W}tblGrid/{W}tblGridChange").get(W + "id") == "360"
     assert all(new(tr.find(f"{W}trPr/{W}del")) for tr in tbl.findall(W + "tr"))
