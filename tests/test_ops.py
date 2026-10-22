@@ -9,7 +9,9 @@ from typing import List, Tuple
 import pytest
 from lxml import etree
 
+from fx_revisions import tracked_column_resize
 from make_fixtures import build_rich
+from spec_surgeon import ooxml
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import set_font as set_font_module
 from spec_surgeon.ops.remove_header_footer import RemoveHeaderFooter
@@ -414,3 +416,16 @@ def test_replace_text_refuses_to_split_a_run_with_a_tracked_format_change(rich):
     plan, out, rec = run_ops(rich, [("replace_text", {"scope": ["document", "headers"]},
                                      {"find": "Schedule 40", "replace": "Schedule 10", "author": AUTHOR})])
     assert rec.passed, rec.to_markdown()
+
+
+def test_new_revision_ids_start_above_a_tracked_column_resize():
+    """New revision ids start above EVERY w:id of the file. The seed once counted a list of tags without
+    ``w:tblGridChange``: the two tracked replacements here took ids 1–4, one of them the resize's own, and V4 set
+    the file aside for a duplicate the engine itself wrote."""
+    src = tracked_column_resize(1)
+    assert ooxml.max_revision_id(DocxPackage(src)) == 1
+    plan, out, rec = run_ops(src, [("replace_text", {}, {"find": "Owner", "replace": "Client", "author": AUTHOR})])
+    assert rec.passed, rec.to_markdown()
+    ids = [el.get(W + "id") for el in etree.fromstring(zipfile.ZipFile(io.BytesIO(out)).read("word/document.xml")).iter()
+           if el.get(W + "id") is not None]
+    assert sorted(ids, key=int) == ["1", "2", "3", "4", "5"]

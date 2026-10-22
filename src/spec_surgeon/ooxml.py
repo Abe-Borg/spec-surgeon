@@ -183,24 +183,22 @@ def paragraphs(root: etree._Element) -> List[etree._Element]:
 # ---- revision bookkeeping ----------------------------------------------------------------------
 
 def max_revision_id(pkg: DocxPackage) -> int:
-    """w:id values must be unique across every part that carries revisions."""
+    """w:id values must be unique across every part that carries revisions: new ones start above the highest
+    numeric w:id on ANY element of every text part. Every w:id counts (bookmarks, comments and notes as well as every
+    kind of tracked change), which over-approximates harmlessly and cannot leave a kind out — a list of tags once
+    left out ``w:tblGridChange``, so new ids collided with a tracked column resize and V4 set the file aside."""
     mx = 0
     for part in pkg.text_parts():
         root = pkg.xml(part)
         for el in root.iter():
             if not isinstance(el.tag, str):
                 continue
-            if el.tag in (W + "ins", W + "del", W + "pPrChange", W + "rPrChange", W + "sectPrChange",
-                          W + "tblPrChange", W + "trPrChange", W + "tcPrChange", W + "cellIns",
-                          W + "cellDel", W + "cellMerge", W + "moveFrom", W + "moveTo",
-                          W + "moveFromRangeStart", W + "moveToRangeStart", W + "bookmarkStart",
-                          W + "commentRangeStart", W + "numberingChange"):
-                v = el.get(W + "id")
-                if v is not None:
-                    try:
-                        mx = max(mx, int(v))
-                    except ValueError:
-                        pass
+            v = el.get(W + "id")
+            if v is not None:
+                try:
+                    mx = max(mx, int(v))
+                except ValueError:
+                    pass
     return mx
 
 

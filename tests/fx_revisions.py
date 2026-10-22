@@ -1,5 +1,6 @@
 """Fixtures for resolve_tracked_changes (tests/test_revisions.py): documents whose tracked changes cover every kind the op
-resolves — and the ones it leaves to Word."""
+resolves — and the ones it leaves to Word. ``tracked_column_resize`` (tests/test_ops.py): a table whose column widths
+carry a pending change, the file's only w:id — new revision ids must start above it."""
 from __future__ import annotations
 
 import copy
@@ -309,4 +310,16 @@ def awkward(kind: str) -> bytes:
         wrap(p.add_run("moved here"), "moveTo", JACK)
     if kind != "last":
         doc.add_paragraph("Closing paragraph.")
+    return docx_bytes(doc)
+
+
+def tracked_column_resize(grid_change_id: int) -> bytes:
+    """A table whose column widths carry a pending tracked change (Word writes ``w:tblGridChange`` when columns are
+    resized with Track Changes on) and a paragraph with "Owner" twice; that change's id is the file's only w:id."""
+    doc = Document()
+    table = doc.add_table(rows=1, cols=2)
+    table._tbl.tblGrid.append(etree.fromstring(
+        f'<w:tblGridChange xmlns:w="{W_NS}" w:id="{grid_change_id}"><w:tblGrid><w:gridCol w:w="2000"/>'
+        f'<w:gridCol w:w="2000"/></w:tblGrid></w:tblGridChange>'))
+    doc.add_paragraph("The Owner shall review. The Owner shall approve.")
     return docx_bytes(doc)
