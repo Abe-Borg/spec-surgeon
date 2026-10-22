@@ -83,7 +83,7 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
 
 ```sh
 pip install -e ".[dev,gui,agent]"            # Windows: py -3 -m pip install -e ".[dev,gui,agent,word]"
-python3 -m pytest -q                          # Windows: py -3 -m pytest -q -s
+python3 -m pytest -q -n auto                  # every core, as CI; Windows: py -3 -m pytest -q -n auto
 python3 -m pytest -q tests/test_ops.py        # one module (in a git worktree: PYTHONPATH=src python3 -m pytest …)
 cd frontend && npm ci && npm run build        # rebuild the window's page (Node 22) into web/static; commit it
 python3 tests/make_fixtures.py OUT            # fixtures; --rich, --template, --reference, --styles-template, --numbering-scheme, --dirty

@@ -25,3 +25,14 @@ Changes since v1.7.0.
   starts or ends in a paragraph Word must keep (the last paragraph of a table cell, of the document or of its last
   section, or a paragraph between two tables): that end of the bookmark now stays, so cross-references to it keep
   working.
+
+## A faster test suite
+
+- The suite runs on every core: `python -m pytest -n auto` (pytest-xdist, now in the `dev` extra and
+  requirements.txt), as pull-request and release CI now run it. Measured on four cores: the suite's ~4,900 tests in
+  under four minutes, from about thirteen on one.
+- Both pull-request test jobs cache pip downloads. The Windows one turns off Defender's real-time scanning on its
+  throw-away runner; the installer job keeps Defender on, as users have it.
+- The worked-example schema test builds its validator once (16 s → 0.5 s).
+- CI's `npm ci` skips npm's audit (`--no-audit`): its retiring endpoint held the page build for up to five minutes
+  on every job.

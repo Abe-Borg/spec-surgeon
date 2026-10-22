@@ -37,7 +37,7 @@ py -3 -m pip install -e .            # core: lxml, PyMuPDF 1.x (2.0 loads an AI 
 py -3 -m pip install -e ".[gui]"     # the window: FastAPI, uvicorn, pywebview (WebView2 on Windows) — spec-surgeon-gui
 py -3 -m pip install -e ".[word]"    # Windows: adds pywin32 so Word is the renderer/oracle (recommended)
 py -3 -m pip install -e ".[agent]"   # optional: anthropic SDK for typed requests in the window
-py -3 -m pip install -e ".[dev]"     # pytest + python-docx (fixtures)
+py -3 -m pip install -e ".[dev]"     # pytest, pytest-xdist (pytest -n auto: every core) + python-docx (fixtures)
 ```
 
 or `py -3 -m pip install -r requirements.txt` for everything. Start the window with `spec-surgeon-gui` (or
@@ -71,8 +71,8 @@ The window is one conversation. On the left is the chat, with the one button abo
 are your documents (optionally with one template) and the before/after pages. The top bar, in the style of Build-a-Spec, carries the in-app guide —
 **How to use**, **Workflows**, **How it works** and **About** (the version, the model, the release notes, the license,
 **Check for updates** and **Open diagnostic logs**) — beside a line saying what the conversation works on ("3
-documents · 1 template · building on your copies"), the estimated spending, the connection, **Hide plan**, **New
-conversation** and Settings.
+documents · 1 template · building on your copies"), the estimated spending, the connection, **New conversation**
+and Settings.
 
 1. **Add Word documents.** Drop `.docx` files anywhere in the window, or use **Add Word documents**. Files can come
    from different folders, including files with the same name. Only the files you attach are edited; nothing is
@@ -139,7 +139,8 @@ conversations and a clean start, recovery, resource use and verification limits.
 ## Without the window
 
 There is no command line. Developers and coding agents drive the engine from Python, and the test suite
-(`python -m pytest`) is how a change is checked; see [CLAUDE.md](CLAUDE.md). A batch from Python:
+(`python -m pytest -n auto`, one worker per core) is how a change is checked; see [CLAUDE.md](CLAUDE.md). A batch
+from Python:
 
 ```python
 from pathlib import Path
@@ -209,7 +210,8 @@ direct formatting; the proofing language; unused styles; numbering schemes, type
 numbering audit; table properties and table styles; page setup, columns, line numbers and section breaks inserted or
 removed; character hygiene; and review comments with wording you supply. A large change is an edit like any other:
 deleting a whole PART, or everything, is planned, previewed and verified the same way.
-Every operation also describes itself in one plain sentence; that sentence is what the window's plan shows.
+Every operation also describes itself in one plain sentence; those sentences are how each edited copy's changes are
+recorded for the requests that follow.
 
 ## Limits
 

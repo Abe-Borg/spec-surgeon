@@ -138,12 +138,16 @@ def test_catalog_and_schema_cover_every_op():
 def test_example_specs_conform_to_the_published_schema():
     jsonschema = pytest.importorskip("jsonschema")
     schema = editspec_json_schema()
+    # One validator for every file: jsonschema.validate() checks the schema itself again on each call (16 s for 50).
+    cls = jsonschema.validators.validator_for(schema)
+    cls.check_schema(schema)
+    validator = cls(schema)
     for f in SPECS.glob("*.json"):
-        jsonschema.validate(json.loads(f.read_text(encoding="utf-8")), schema)
+        validator.validate(json.loads(f.read_text(encoding="utf-8")))
     bad = json.loads((SPECS / "remove-all-headers-footers.json").read_text(encoding="utf-8"))
     bad["ops"][0]["params"]["colour"] = "red"
     with pytest.raises(jsonschema.ValidationError):
-        jsonschema.validate(bad, schema)
+        validator.validate(bad)
 
 
 # ---- the profile: borders, shading, styles in use, languages (built-in batch 4) ------------------------------------------

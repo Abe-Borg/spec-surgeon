@@ -31,7 +31,7 @@ tab strip:
   links, **Check for updates** (it says "Checking for updates…" until the check answers, then the answer or the update
   with **Download and install**) and **Open diagnostic logs**. These replace the old Help menu and About box.
 
-On the right: the estimated spending of the conversation, the connection pill (it opens Settings), **Hide plan**,
+On the right: the estimated spending of the conversation, the connection pill (it opens Settings),
 **New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
 ("v1.7.0 available — install") from 1280 px wide; below that, About offers it.
 
