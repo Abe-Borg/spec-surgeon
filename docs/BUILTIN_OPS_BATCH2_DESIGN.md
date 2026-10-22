@@ -194,7 +194,8 @@ headers, footers, footnotes, endnotes).
   paragraph of its container, never one with a section break. Otherwise two paragraphs would be joined and Word decides
   whose formatting the joined one keeps: refused (`paragraph-merge`, saying what is in the way) — resolve it in Word.
 * **Property changes**: accept removes `rPrChange`, `pPrChange`, `sectPrChange`, `tblPrChange`, `trPrChange`,
-  `tcPrChange`, `tblGridChange`, `numberingChange` (an emptied `w:rPr`/`w:pPr` too); reject restores `rPrChange` (the
+  `tcPrChange`, `tblGridChange`, `tblPrExChange` (a row's table-property exceptions; an emptied `w:tblPrEx` stays),
+  `numberingChange` (an emptied `w:rPr`/`w:pPr` too); reject restores `rPrChange` (the
   `w:rPr` becomes the paragraph mark's own revision markers, then the snapshot's children) and `pPrChange` (the `w:pPr`
   becomes the snapshot's children, then its own `w:rPr` and `w:sectPr`). Rejecting the others, table row and cell
   revisions (`w:trPr/w:ins|w:del`, `cellIns`, `cellDel`, `cellMerge`) and revisions inside equations: `revision-kind`.

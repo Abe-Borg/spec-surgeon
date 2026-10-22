@@ -30,8 +30,8 @@ Definitions (the verifier's own reading is verify/applytablestyle.py):
 Left alone and flagged: a table in a text box when the selection is every table (a selection naming tables refuses it,
 ``textbox``). Refused: a table without ``w:tblPr``, rows or cells in a content control or custom XML when cells are
 cleared (``table-structure``). Flagged: with ``keep``, restyled tables whose own (or rows' or cells') borders, shading or
-margins win over the style; a pending tracked table or cell property change on a changed table or cell (reject-all would
-restore that older snapshot).
+margins win over the style; a pending tracked table, row-exception or cell property change on a changed table, row or
+cell (reject-all would restore that older snapshot).
 
 Verified by V10's ``applied_table_style`` kind (verify/applytablestyle.py) — and, when the style is imported, by
 ``styles_imported`` (verify/styleimport.py). With ``clear`` the kind's post-condition reads every selected table, row and
@@ -272,6 +272,7 @@ class ApplyTableStyle(Op):
                 own = own_rows(tbl)
                 for r, gone in rows:
                     frag.touches.append((part, f"tr:{k}:{r}", "tblPrEx"))
+                    older += int(own[r].find(f"{W}tblPrEx/{W}tblPrExChange") is not None)
                 for r, c, gone in cells:
                     frag.touches.append((part, f"tc:{k}:{r}:{c}", "tcPr"))
                     frag.touches += [(part, f"tc:{k}:{r}:{c}", n) for n in gone]
@@ -333,8 +334,8 @@ class ApplyTableStyle(Op):
             frag.flags.append(f"{keeps} restyled table(s) keep their own borders, shading or cell margins (or their "
                               f"rows or cells do), which win over the style; direct_formatting 'clear' removes them.")
         if older:
-            frag.flags.append(f"{older} changed table(s)/cell(s) already carry a pending tracked property change; "
-                              f"reject-all would restore that older snapshot.")
+            frag.flags.append(f"{older} changed table(s), row(s) or cell(s) already carry a pending tracked property "
+                              f"change; reject-all would restore that older snapshot.")
         return frag
 
     def apply(self, pkg: DocxPackage, frag: PlanFragment) -> None:

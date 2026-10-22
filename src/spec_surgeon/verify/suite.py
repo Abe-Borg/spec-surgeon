@@ -161,14 +161,15 @@ class VerificationRecord:
 
 CONTENT_REV = ("ins", "del", "moveFrom", "moveTo")
 OTHER_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange",
-             "numberingChange", "cellIns", "cellDel", "cellMerge")
-PROPERTY_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange")
+             "tblPrExChange", "numberingChange", "cellIns", "cellDel", "cellMerge")
+PROPERTY_REV = ("rPrChange", "pPrChange", "sectPrChange", "tblPrChange", "trPrChange", "tcPrChange", "tblGridChange",
+                "tblPrExChange")
 # The elements whose w:id shares one space with a revision's (the verifier's own list): the whole revision family with
 # its range markers, bookmarks, comments (range, reference, the comment itself) and permission ranges, and Word 2010's
 # co-authoring conflict markup in its own namespace (W14_ANNOTATION_ELEMENTS). A note's id, a content control's and a
 # web-settings div's are other spaces.
 ANNOTATION_ELEMENTS = frozenset(CONTENT_REV + OTHER_REV + (
-    "tblPrExChange", "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
+    "moveFromRangeStart", "moveFromRangeEnd", "moveToRangeStart", "moveToRangeEnd",
     "customXmlInsRangeStart", "customXmlInsRangeEnd", "customXmlDelRangeStart", "customXmlDelRangeEnd",
     "customXmlMoveFromRangeStart", "customXmlMoveFromRangeEnd", "customXmlMoveToRangeStart", "customXmlMoveToRangeEnd",
     "bookmarkStart", "bookmarkEnd", "commentRangeStart", "commentRangeEnd", "commentReference", "comment",
@@ -303,7 +304,7 @@ def _property_change_grammar(root, part: str) -> List[str]:
     the source's own baseline (Word itself omits w:id on some pPrChange elements)."""
     errs = []
     snapshot = {"rPrChange": "rPr", "pPrChange": "pPr", "sectPrChange": "sectPr", "tblPrChange": "tblPr",
-                "trPrChange": "trPr", "tcPrChange": "tcPr"}
+                "trPrChange": "trPr", "tcPrChange": "tcPr", "tblPrExChange": "tblPrEx"}
     for local, child in snapshot.items():
         for el in root.iter(W + local):
             where = f"{part}: w:{local} (id {el.get(W + 'id')})"
