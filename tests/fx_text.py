@@ -23,6 +23,10 @@ case is found by its text in the tests, never by index.
 
 ``build_notes()``: red specifier notes whose paragraph marks are red too, for hiding the notes and, only where the whole
 paragraph goes, the mark (its own docstring).
+
+``build_words()``: whole words for ``replace_text`` (tests/test_whole_word.py) — "NFPA 13" beside "NFPA 13R" and
+"NFPA 13D"; a paragraph whose first "NFPA 13" is part of "NFPA 13R"; "1.01", a tab and "SUMMARY" in runs of their own;
+"Owner" glued to a bold "s"; "Owner" after a line break; "x(2022)".
 """
 from __future__ import annotations
 
@@ -186,4 +190,25 @@ def build_notes() -> bytes:
     _rpr_add(p.add_run("[Note: two sets.]"), RED)
     _mark_add(p, "<w:vanish/>" + RED)
     doc.add_paragraph("E.\tProvide a warranty.")
+    return docx_bytes(doc)
+
+
+def build_words() -> bytes:
+    """Whole words (module docstring): every paragraph found by its text."""
+    doc = Document()
+    doc.add_paragraph("Install the systems per NFPA 13. NFPA 13R and NFPA 13D systems are not permitted.")
+    doc.add_paragraph("Where NFPA 13R applies, follow NFPA 13 for the rest.")
+    p = doc.add_paragraph()
+    p.add_run("1.01")
+    p.add_run().add_tab()
+    p.add_run("SUMMARY")
+    p = doc.add_paragraph()
+    p.add_run("Owner")
+    p.add_run("s").bold = True
+    p.add_run(" shall review the submittals.")
+    p = doc.add_paragraph()
+    p.add_run("Approved by the")
+    p.add_run().add_break()
+    p.add_run("Owner")
+    doc.add_paragraph("Adopted as x(2022) by the authority.")
     return docx_bytes(doc)

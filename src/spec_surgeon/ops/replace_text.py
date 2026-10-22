@@ -15,6 +15,9 @@ Grammar implemented (all from the paid-for lessons):
   counted over the WHOLE part (``field_start_depths``): a TOC begins in one paragraph, shows its entries in the
   paragraphs that follow and ends paragraphs later — every one of those paragraphs is inside the field.
 * Text inside a pending deletion is not live text and is never matched.
+* Whole words unless ``whole_word: false`` (the rule of ``replace_table``): a match whose first (last) character is a
+  letter, digit or ``_`` must not have one right before (after) it in what a reader sees — a tab, a line break, a
+  picture or a field mark between keeps two words apart. "NFPA 13" leaves "NFPA 13R" and "NFPA 13D" alone.
 * A tracked edit in a run that carries a pending tracked FORMATTING change (w:rPrChange) is an exception by
   default (``tracked-format``); when ``allow_tracked_format_split: true``, every split fragment (and the inserted
   run) keeps a copy of the ``w:rPrChange`` — as Word itself writes a split run — and every copy after the first
@@ -46,7 +49,7 @@ from ..ooxml import (FULL_TEXT_TAGS, RevisionStamp, XML_SPACE, ancestor, block_s
 from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
 from .selectors import StyleSheet, check_paragraph_selector, paragraph_selected
-from .textedit import control_characters, place_text, placed_counts, shown_text, text_children
+from .textedit import TRANSPARENT, control_characters, place_text, placed_counts, shown_text, text_children
 
 
 def default_author() -> str:
@@ -62,6 +65,8 @@ class Segment:
     ins: Optional[etree._Element]     # nearest w:ins ancestor (None if not inserted)
     ins_is_parent: bool               # run's direct parent is that ins
     in_field: bool                    # inside a field instruction or cached result
+    gap_before: bool = True           # the paragraph's start or a non-letter child (tab, break, picture, field or
+                                      # note mark …) stands between this w:t and the live characters before it
 
 
 def _walk_runs(p: etree._Element):
@@ -107,6 +112,7 @@ def live_segments(p: etree._Element, start_depth: int = 0) -> Tuple[str, List[Se
     segs: List[Segment] = []
     pos = 0
     depth = start_depth  # field nesting depth (complex fields), continued from the paragraphs before
+    gap = True           # no live character since the paragraph's start or the last non-letter run child
     for run in _walk_runs(p):
         if ancestor(run, W + "del", p) is not None:
             for c in run:
@@ -118,18 +124,71 @@ def live_segments(p: etree._Element, start_depth: int = 0) -> Tuple[str, List[Se
         ins_is_parent = ins is not None and run.getparent() is ins
         in_fld_simple = ancestor(run, W + "fldSimple", p) is not None
         for c in run:
+            if not isinstance(c.tag, str) or c.tag == W + "rPr" or c.tag in TRANSPARENT:
+                continue
             if c.tag == W + "fldChar":
                 t = c.get(W + "fldCharType")
                 if t == "begin":
                     depth += 1
                 elif t == "end":
                     depth = max(0, depth - 1)
+                gap = True
             elif c.tag == W + "t":
                 text = c.text or ""
                 segs.append(Segment(t=c, run=run, start=pos, end=pos + len(text), ins=ins,
-                                    ins_is_parent=ins_is_parent, in_field=(depth > 0 or in_fld_simple)))
+                                    ins_is_parent=ins_is_parent, in_field=(depth > 0 or in_fld_simple),
+                                    gap_before=gap))
                 pos += len(text)
+                gap = gap and not text
+            else:
+                gap = True
     return "".join((s.t.text or "") for s in segs), segs
+
+
+def _word(c: str) -> bool:
+    return c.isalnum() or c == "_"
+
+
+def _gap_at(segs: List[Segment], pos: int) -> bool:
+    """A non-letter run child stands right before live position ``pos`` (0 < pos < len of the live text)."""
+    for s in segs:
+        if s.start <= pos < s.end:
+            return pos == s.start and s.gap_before
+    return True
+
+
+def whole_word(live: str, segs: List[Segment], start: int, end: int) -> bool:
+    """[start, end) of the live text is a whole word: a match whose first (last) character is a letter, digit or
+    ``_`` has none right before (after) it in what a reader sees ("NFPA 13" is not whole inside "NFPA 13R"; "(2022)"
+    is whole inside "x(2022)"). The live text holds only w:t characters, so a neighbour across a w:t edge counts
+    only when nothing stands between (``Segment.gap_before``): "1.01<tab>SUMMARY" reads "1.01SUMMARY" here and
+    "SUMMARY" is still whole."""
+    if start > 0 and _word(live[start]) and _word(live[start - 1]) and not _gap_at(segs, start):
+        return False
+    if end < len(live) and _word(live[end - 1]) and _word(live[end]) and not _gap_at(segs, end):
+        return False
+    return True
+
+
+def find_all(pattern, live: str, segs: List[Segment], whole: bool) -> list:
+    """Every match of ``pattern`` in the live text, whole words only when ``whole``."""
+    return [m for m in pattern.finditer(live) if not whole or whole_word(live, segs, m.start(), m.end())]
+
+
+def inside_words(pattern, live: str, segs: List[Segment]) -> List[str]:
+    """The longer word around every match that is not a whole word ("NFPA 13R" for "NFPA 13"): what whole words left
+    alone, for the plan to say."""
+    out = []
+    for m in pattern.finditer(live):
+        a, b = m.start(), m.end()
+        if whole_word(live, segs, a, b):
+            continue
+        while a > 0 and _word(live[a - 1]) and not _gap_at(segs, a):
+            a -= 1
+        while b < len(live) and _word(live[b]) and not _gap_at(segs, b):
+            b += 1
+        out.append(live[a:b])
+    return out
 
 
 def full_text_map(p: etree._Element, skip_deleted: bool = False) -> Tuple[str, Dict[int, int]]:
@@ -159,6 +218,13 @@ def full_text_map(p: etree._Element, skip_deleted: bool = False) -> Tuple[str, D
     return "".join(parts), offsets
 
 
+def _inside_text(find: str, inside: List[str]) -> str:
+    words = list(dict.fromkeys(inside))
+    shown = ", ".join(repr(w) for w in words[:3]) + (", …" if len(words) > 3 else "")
+    return (f"{find!r} also occurs {len(inside)}× inside longer words ({shown}), not changed — whole_word false "
+            f"changes those too")
+
+
 @register
 class ReplaceText(Op):
     name = "replace_text"
@@ -177,6 +243,10 @@ class ReplaceText(Op):
                       "default": ["document"]},
             "occurrences": {"type": "string", "enum": ["all", "first"], "default": "all"},
             "match_case": {"type": "boolean", "default": True},
+            "whole_word": {"type": "boolean", "default": True,
+                           "description": "If true (default), whole words only: a match whose first (last) character is "
+                                          "a letter, digit or _ must not have one right before (after) it, so 'NFPA 13' "
+                                          "leaves 'NFPA 13R' alone. false also matches inside longer words."},
             "flexible_whitespace": {"type": "boolean", "default": False,
                                     "description": "If true, spaces in 'find' match any run of spaces/NBSPs/tabs and '-' matches en/em-dashes."},
             "ignore_formatting_noise": {"type": "boolean", "default": False,
@@ -235,6 +305,7 @@ class ReplaceText(Op):
         scope = select.get("scope") or params.get("scope") or ["document"]
         occurrences = params.get("occurrences", "all")
         match_case = params.get("match_case", True)
+        whole = params.get("whole_word", True)
         flex_ws = bool(params.get("flexible_whitespace", False))
         ignore_noise = bool(params.get("ignore_formatting_noise", False))
         allow_tf_split = bool(params.get("allow_tracked_format_split", False))
@@ -251,6 +322,8 @@ class ReplaceText(Op):
             raise JobException(f"occurrences must be 'all' or 'first', got {occurrences!r}", "bad-params")
         if not isinstance(match_case, bool):
             raise JobException("match_case must be true or false", "bad-params")
+        if not isinstance(whole, bool):
+            raise JobException("whole_word must be true or false", "bad-params")
         if params.get("date_convention", "word-local-z") not in ("word-local-z", "utc"):
             raise JobException("date_convention must be 'word-local-z' or 'utc'", "bad-params")
         author = params.get("author") or default_author()
@@ -274,6 +347,7 @@ class ReplaceText(Op):
         sheet = StyleSheet(pkg) if para_pred is not None else None
 
         total = 0
+        inside: List[str] = []             # the longer words whole words left alone (occurrences "all")
         edits: List[Dict[str, Any]] = []   # transform instructions, per paragraph
         stop = False
         for part in parts:
@@ -288,7 +362,9 @@ class ReplaceText(Op):
                     if not paragraph_selected(para_pred, p, pi, btxt, sheet, all_pars=pars):
                         continue
                 live, segs = live_segments(p, depths[pi])
-                matches = list(pattern.finditer(live))
+                matches = find_all(pattern, live, segs, whole)
+                if whole and occurrences == "all":
+                    inside += inside_words(pattern, live, segs)
                 if not matches:
                     continue
                 merge_needed = False
@@ -299,7 +375,7 @@ class ReplaceText(Op):
                     work_p = copy.deepcopy(p)
                     merge_adjacent_runs(work_p, ignore_noise=False)
                     live2, segs2 = live_segments(work_p, depths[pi])
-                    matches2 = list(pattern.finditer(live2))
+                    matches2 = find_all(pattern, live2, segs2, whole)
                     if live2 == live and len(matches2) == len(matches) and \
                             all(self._single_segment(segs2, m.start(), m.end()) for m in matches2):
                         merge_needed = True
@@ -308,7 +384,7 @@ class ReplaceText(Op):
                         work_p = copy.deepcopy(p)
                         merge_adjacent_runs(work_p, ignore_noise=True)
                         live3, segs3 = live_segments(work_p, depths[pi])
-                        matches3 = list(pattern.finditer(live3))
+                        matches3 = find_all(pattern, live3, segs3, whole)
                         if live3 == live and len(matches3) == len(matches) and \
                                 all(self._single_segment(segs3, m.start(), m.end()) for m in matches3):
                             merge_needed = True
@@ -363,12 +439,15 @@ class ReplaceText(Op):
             "edited_blocks": {part: [e["paragraph"] for e in edits if e["part"] == part]
                               for part in parts if any(e["part"] == part for e in edits)},
         })
+        if inside:
+            plan.flags.append(f"Whole words only: {_inside_text(find, inside)}.")
         if total == 0:
             if params.get("allow_missing"):
                 plan.notes.append(f"{find!r} does not occur in scope {scope}; no-op.")
                 return plan
-            raise JobException(f"{find!r} not found in scope {scope}", "not-found",
-                               {"scope": scope, "parts_searched": parts})
+            raise JobException(f"{find!r} not found in scope {scope}"
+                               + (f" as a whole word; {_inside_text(find, inside)}" if inside else ""), "not-found",
+                               {"scope": scope, "parts_searched": parts, "inside_longer_words": len(inside)})
 
         plan.transform_data = {
             "edits": edits,
@@ -590,6 +669,8 @@ class ReplaceText(Op):
         hows: List[str] = []
         if params.get("match_case") is False:
             hows.append("ignoring case")
+        if params.get("whole_word") is False:
+            hows.append("even inside longer words")
         if params.get("flexible_whitespace"):
             hows.append("allowing any spacing or dash")
         if params.get("ignore_formatting_noise"):
