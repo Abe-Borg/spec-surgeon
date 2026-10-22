@@ -36,6 +36,11 @@ def hf_spec():
     return load_spec(SPECS / "match-template-spec-header-footer.json")
 
 
+def hf_template() -> Path:
+    """The template the header/footer spec reads: the window's batch carries the attached template it names."""
+    return Path(next(o["params"]["template"] for o in hf_spec()["ops"] if o["op"] == "apply_header_footer_template"))
+
+
 def combined_spec():
     """The one spec a model writes for the request: the font ops and the template op together."""
     font, hf = font_spec(), hf_spec()
@@ -111,7 +116,7 @@ def test_merging_cuts_across_files_takes_every_cut_any_file_needs():
 # ---- the compiler ----------------------------------------------------------------------------------------------------
 
 def test_the_compiler_composes_a_conflicting_submission_into_a_chain_instead_of_rejecting_it(folder):
-    batch = compiler._Batch(sorted(folder.glob("*.docx")), None)
+    batch = compiler._Batch(sorted(folder.glob("*.docx")), hf_template())
     outcome, errs = compiler.compose_submission(combined_spec(), batch, [REQUEST])
     assert errs == [] and is_chain(outcome)
     assert len(outcome["stages"]) == 2
@@ -121,7 +126,7 @@ def test_the_compiler_composes_a_conflicting_submission_into_a_chain_instead_of_
 
 
 def test_the_model_may_submit_its_own_stages(folder):
-    batch = compiler._Batch(sorted(folder.glob("*.docx")), None)
+    batch = compiler._Batch(sorted(folder.glob("*.docx")), hf_template())
     font = font_spec()
     hf = hf_spec()
     submission = {"summary": "Match the template", "assumptions": ["Arial 10 pt"],
@@ -154,6 +159,7 @@ def test_font_and_template_in_one_request_is_one_plan_one_approval_and_verified_
     session = Session(client=fake, out_root=tmp_path / "out", visual_check=False)
     task = DocumentTask(session, render=False)
     task.attach(sorted(folder.glob("*.docx")))
+    task.attach([hf_template()], template=True)                     # the template the spec reads is attached
     view = task.perform("send", text=REQUEST)
     assert view["stage"] == "preview", view["messages"]
     assert view["stages"] == 2
@@ -217,7 +223,7 @@ def test_a_layout_whose_ops_overlap_is_accepted_as_the_chain_the_engine_composed
          "spec": {"summary": "bold by style", "mode": "formatting",
                   "ops": [{"op": "set_properties", "select": {"paragraphs": {"style_in": ["ArchPara"]}},
                            "params": bold}]}}]}
-    batch = compiler._Batch([typed, styled], None)
+    batch = compiler._Batch([typed, styled], hf_template())
     outcome, errs = compiler.compose_submission(copy.deepcopy(submission), batch, [REQUEST])
     assert errs == []
     assert is_chain(outcome["layouts"][0]["spec"]) and len(outcome["layouts"][0]["spec"]["stages"]) == 2
@@ -259,7 +265,7 @@ def test_a_composed_stage_declares_the_mode_its_ops_plan_not_the_mode_of_their_c
     assert chain is not None and [st["spec"]["mode"] for st in chain["stages"]] == ["formatting", "untracked"]
     plans = plan_chain(pkg, chain)                       # every step accepted, the second as untracked
     assert len(plans) == 2
-    batch = compiler._Batch(sorted(folder.glob("*.docx")), None)
+    batch = compiler._Batch(sorted(folder.glob("*.docx")), hf_template())
     outcome, errs = compiler.compose_submission(spec, batch, [REQUEST, "WET-PIPE SPRINKLER SYSTEMS"])
     assert errs == [] and is_chain(outcome)
     assert [st["spec"]["mode"] for st in outcome["stages"]] == ["formatting", "untracked"]

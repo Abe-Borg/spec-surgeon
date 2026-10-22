@@ -25,8 +25,7 @@
   --color-ok: #7fa650;
   --color-warn: #d4a04c;
   --color-err: #c65b4e;
-  /* Tints on the paper: a block the latest change touched, an error card. */
-  --color-changed: #f8ecd6;
+  /* The tint of an error card on the paper. */
   --color-err-tint: #fbeeec;
 
   --font-display: "Georgia", "Cambria", serif;
@@ -57,7 +56,6 @@
   --color-ok: #428a5e;
   --color-warn: #e2ad4f;
   --color-err: #dc4739;
-  --color-changed: #e3eefc;
   --color-err-tint: #fcefee;
 }
 
@@ -82,7 +80,6 @@
   --color-ok: #5f8f3a;
   --color-warn: #e0a54a;
   --color-err: #d94b3c;
-  --color-changed: #dff4f2;
   --color-err-tint: #fcefed;
 }
 
@@ -107,7 +104,6 @@
   --color-ok: #318c52;
   --color-warn: #e8b230;
   --color-err: #e12c31;
-  --color-changed: #fff0e3;
   --color-err-tint: #fdecec;
 }
 
@@ -132,7 +128,6 @@
   --color-ok: #3c7e39;
   --color-warn: #9d671b;
   --color-err: #b33d2c;
-  --color-changed: #f8ead2;
   --color-err-tint: #fbeceb;
 }
 
@@ -262,19 +257,7 @@ body {
     box-shadow 0.6s ease;
 }
 
-/* Blocks touched by the latest change, tinted on the paper surface and
-   settling over 0.6 s (the "something just landed here" cue). */
-.changed-block {
-  background: var(--color-changed);
-  box-shadow: inset 2px 0 0 var(--color-accent);
-  transition: background 0.6s ease;
-}
-.changed-block.is-settled {
-  background: transparent;
-  box-shadow: none;
-}
-
-/* A card that has just arrived (a plan, a preview) rises in, once. */
+/* A card that has just arrived (a preview, the copies) rises in, once. */
 .card-in {
   animation: card-in 0.24s ease-out both;
 }
@@ -419,13 +402,10 @@ body {
     color: var(--color-ink-dim);
     -webkit-text-fill-color: var(--color-ink-dim);
   }
-  .changed-block {
-    transition: none;
-  }
 }
 
-/* Markdown on the paper cards (the plan's sentences, assumptions, findings,
-   reasons): the same rules in the paper's tones. */
+/* Markdown on the paper cards (findings, reasons): the same rules in the
+   paper's tones. */
 .md-paper h1,
 .md-paper h2,
 .md-paper h3,

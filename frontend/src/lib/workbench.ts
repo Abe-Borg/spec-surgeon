@@ -1,10 +1,10 @@
 /**
- * The workbench's small rules: how the plan cards are titled, how a page
- * count reads, where the run folder is, what an attachment's tag says.
+ * The workbench's small rules: how a page count reads, where the run folder
+ * is, what an attachment's tag says.
  *
  * Pure, so `node --test` can pin them.
  */
-import type { Attachment, Plan, PlanGroup, Sample, View } from "../types.ts";
+import type { Attachment, Plan, Sample, View } from "../types.ts";
 
 /** The parent folder of a path, with either separator; "" when there is none. */
 export function parentFolder(path: string): string {
@@ -36,21 +36,6 @@ export function pageCount(sample: Pick<Sample, "pages_before" | "pages_after">):
   const flag = change === 0 ? "" : change > 0 ? `+${change}` : `−${Math.abs(change)}`;
   const text = `Pages: ${before} → ${after}${flag ? ` (${flag})` : ""}`;
   return { text, flag, grew: change > 0 };
-}
-
-/** The title of a plan card: one card reads "Here's what will change"; one
- *  per layout reads "<label> · N documents". */
-export function groupTitle(group: PlanGroup, several: boolean): string {
-  if (!several) return "Here’s what will change";
-  const label = (group.label ?? "").trim() || "One layout";
-  const n = group.count ?? group.files?.length ?? 0;
-  return `${label} · ${n} ${n === 1 ? "document" : "documents"}`;
-}
-
-/** The quiet note under a plan: "in N ordered steps" when the engine composed several. */
-export function stagesNote(plan: Pick<Plan, "stages"> | null): string {
-  if (!plan || typeof plan.stages !== "number" || plan.stages <= 1) return "";
-  return `in ${plan.stages} ordered steps`;
 }
 
 /** The plan has anything to show: a change, an assumption, a target or a file set aside. */

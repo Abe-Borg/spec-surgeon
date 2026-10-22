@@ -1,10 +1,10 @@
-import { memo, useEffect, useMemo, useRef } from "react";
+import { memo, useEffect, useRef } from "react";
 import type { Attachment, View } from "../types";
 import type { Mark, Reviews } from "../lib/review";
 import { planHasContent, runFolder } from "../lib/workbench";
 import DocumentsTray from "./DocumentsTray";
 import Markdown from "./Markdown";
-import PlanCards, { PaperCard } from "./PlanCards";
+import PaperCard from "./PaperCard";
 import PreviewCard from "./PreviewCard";
 import Tip from "./Tip";
 
@@ -24,8 +24,8 @@ interface Props {
   onZoom: (src: string, title: string) => void;
 }
 
-/** Faux grey bars where the plan will appear; pulsing while a plan is being worked out. */
-function PlanPlaceholder({
+/** Faux grey bars where the previews will appear; pulsing while a plan is being worked out. */
+function PreviewPlaceholder({
   working,
   started,
   hasDocuments,
@@ -42,20 +42,20 @@ function PlanPlaceholder({
     />
   );
   return (
-    <section className="paper px-5 py-4" aria-label={working ? "Working out the plan" : "The plan will appear here"}>
+    <section className="paper px-5 py-4" aria-label={working ? "Working out the plan" : "The previews will appear here"}>
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <h2 className="font-[family-name:var(--font-display)] text-[1.05rem] font-semibold text-paper-faint">
-            {working ? "Working out the plan…" : "Here’s what will change"}
+            {working ? "Working out the plan…" : "Previews"}
           </h2>
           <p className="mt-0.5 text-xs text-paper-faint">
             {working
-              ? "One sentence per change, with the pages before and after."
+              ? "The pages before and after appear here as they render."
               : started
-                ? "The plan appears here once your request is clear."
+                ? "The previews appear here once your request is clear."
                 : hasDocuments
-                  ? "Say what you want to change; the plan appears here."
-                  : "Add your documents and say what you want; the plan appears here."}
+                  ? "Say what you want to change; the previews appear here."
+                  : "Add your documents and say what you want; the previews appear here."}
           </p>
         </div>
       </div>
@@ -79,22 +79,21 @@ function Workbench({
   onStartOver,
   onZoom,
 }: Props) {
-  const plan = view.plan;
-  const showPlan = planHasContent(plan);
+  const hasPlan = planHasContent(view.plan);
   const folder = runFolder(view);
-  const setAside = plan?.set_aside ?? [];
+  const setAside = view.plan?.set_aside ?? [];
   const todo = view.todo ?? [];
   const scrollRef = useRef<HTMLElement>(null);
-  const planRef = useRef<HTMLDivElement>(null);
+  const previewsRef = useRef<HTMLDivElement>(null);
   const resultsRef = useRef<HTMLDivElement>(null);
 
-  // The newest thing scrolls into view as it lands: a plan when it arrives
-  // (keyed by content, so a refetch of the same plan moves nothing), the
-  // copies when they are written.
-  const planKey = useMemo(() => (showPlan ? JSON.stringify(plan) : ""), [plan, showPlan]);
+  // The newest thing scrolls into view as it lands: the previews when they
+  // render (keyed by their pages, so a refetch of the same previews moves
+  // nothing), the copies when they are written.
+  const previewsKey = view.samples.map((s) => `${s.source}\t${s.images.join("\t")}`).join("\n");
   useEffect(() => {
-    if (planKey) planRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
-  }, [planKey]);
+    if (previewsKey) previewsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
+  }, [previewsKey]);
   const resultsKey = view.results.map((r) => r.output).join("\n");
   useEffect(() => {
     if (resultsKey) resultsRef.current?.scrollIntoView({ block: "start", behavior: "smooth" });
@@ -104,7 +103,7 @@ function Workbench({
     <section
       ref={scrollRef}
       className="flex min-w-[480px] flex-1 basis-[54%] flex-col overflow-y-auto bg-bg"
-      aria-label="Your documents, the plan and the pages"
+      aria-label="Your documents and the pages"
     >
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-6 py-6">
         <DocumentsTray
@@ -113,41 +112,39 @@ function Workbench({
           focus={view.focus ?? []}
           busy={busy}
           uploading={uploading}
-          compact={showPlan || view.results.length > 0}
+          compact={hasPlan || view.results.length > 0}
           onAdd={onAdd}
           onRemove={onRemove}
         />
 
-        {showPlan && plan ? (
-          <div ref={planRef} className="scroll-mt-6">
-            <PlanCards plan={plan} />
-          </div>
-        ) : (
-          view.results.length === 0 && (
-            <PlanPlaceholder
-              working={busy}
-              started={view.messages.length > 0}
-              hasDocuments={view.attachments.length > 0}
-            />
-          )
+        {view.samples.length === 0 && view.results.length === 0 && (busy || !hasPlan) && (
+          <PreviewPlaceholder
+            working={busy}
+            started={view.messages.length > 0}
+            hasDocuments={view.attachments.length > 0}
+          />
         )}
 
-        {view.samples.length > 0 && canReview && (
-          <p className="-mb-2 px-1 text-[12px] text-ink-faint">
-            Look at each preview. The green checkmark says it looks right; the red X sets that document aside for
-            more work after the others are created.
-          </p>
+        {view.samples.length > 0 && (
+          <div ref={previewsRef} className="flex scroll-mt-6 flex-col gap-5">
+            {canReview && (
+              <p className="-mb-2 px-1 text-[12px] text-ink-faint">
+                Look at each preview. The green checkmark says it looks right; the red X sets that document aside for
+                more work after the others are created.
+              </p>
+            )}
+            {view.samples.map((sample) => (
+              <PreviewCard
+                key={sample.source || sample.name}
+                sample={sample}
+                mark={reviews[sample.source]}
+                canReview={canReview}
+                onMark={onMark}
+                onZoom={onZoom}
+              />
+            ))}
+          </div>
         )}
-        {view.samples.map((sample) => (
-          <PreviewCard
-            key={sample.source || sample.name}
-            sample={sample}
-            mark={reviews[sample.source]}
-            canReview={canReview}
-            onMark={onMark}
-            onZoom={onZoom}
-          />
-        ))}
 
         {view.warnings.length > 0 && (
           <PaperCard

@@ -36,7 +36,7 @@ test("the schemes have unique ids and Warm Clay comes first, as the default", ()
 });
 
 test("every other scheme redefines every colour token of @theme, and only those", () => {
-  assert.ok(BASE.size >= 20);
+  assert.ok(BASE.size >= 19);
   for (const t of THEMES.filter((t) => t.id !== DEFAULT_THEME)) {
     const own = schemeTokens(t.id);
     assert.deepEqual([...own.keys()].sort(), [...BASE.keys()].sort(), t.id);

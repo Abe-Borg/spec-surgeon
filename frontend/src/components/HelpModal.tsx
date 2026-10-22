@@ -122,7 +122,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
     <div className="space-y-4">
       <Lead>
         Spec Surgeon is a conversation about your Word specifications. You attach the documents, say what should
-        change in plain words, read the plan and the before-and-after pages, and press one button for edited copies.
+        change in plain words, look at the before-and-after pages, and press one button for edited copies.
         A typical first pass:
       </Lead>
       <Steps
@@ -168,13 +168,12 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
             d: "Type what you want and press Enter (Shift+Enter starts a new line). Spec Surgeon reads the documents before asking anything they can answer, goes ahead on sensible defaults and says what it assumed, and asks at most three questions, each with the answer it recommends. Click a choice, type its number, tap a suggested reply, or answer in your own words.",
           },
           {
-            t: "Read the plan and look at the pages",
+            t: "Look at the pages",
             d: (
               <>
-                <Tag>Here’s what will change</Tag> gives one sentence per change, in inches and points with exact text
-                quoted, and the assumptions beneath it. <Tag>Every setting</Tag> opens the rest for the reader who wants
-                it all. Below are rendered before-and-after pages for sample documents with their page counts — click a
-                page to enlarge it — and <Tag>Left untouched</Tag> names any file the plan cannot cover, and why.
+                The conversation says in plain words what it will change. Beside it are rendered before-and-after pages
+                for sample documents with their page counts — click a page to enlarge it — and{" "}
+                <Tag>Left untouched</Tag> names any file the plan cannot cover, and why.
               </>
             ),
           },
@@ -266,7 +265,7 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         steps={[
           "Attach the sections, then Add a template (optional) with the document whose headers and footers you want.",
           "Ask: “Match the headers, footers and fonts to this template. Keep our technical wording.”",
-          "Changes that touch the same parts of a file — the template’s header beside a font change — are put in order by Spec Surgeon itself. The plan says “in 2 ordered steps”; it is still one plan and one button.",
+          "Changes that touch the same parts of a file — the template’s header beside a font change — are put in order by Spec Surgeon itself; it is still one plan and one button.",
           "If one of your documents is a copy of the template, the window says so: remove one of them.",
         ]}
       />
@@ -276,7 +275,7 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         steps={[
           "Attach the sections and Add a picture or table (optional) with the new logo (.png, .jpg or .gif).",
           "Ask: “Replace the logo in the first-page header with this one, at the same size.”",
-          "The plan names the picture and its size in inches. Your approval covers that exact file: change it after the preview and the plan is checked again.",
+          "Check the picture and its size on a sample’s pages. Your approval covers that exact file: change it after the preview and the plan is checked again.",
         ]}
       />
       <Recipe
@@ -285,7 +284,7 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         steps={[
           "Attach the sections and the sheet (.xlsx, .csv or .json) with the project names and numbers.",
           "Say what goes where: “Put the project name and number from this sheet in every footer.”",
-          "The plan names the sheet it uses. Check the values on a sample’s pages before you approve.",
+          "Check the values on a sample’s pages before you approve.",
         ]}
       />
       <Recipe
@@ -293,7 +292,7 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         tagline="Exact words, placed exactly as approved."
         steps={[
           "Ask: “Change ‘Issued for Bid’ to ‘Issued for Construction’ everywhere.”",
-          "The plan quotes the old and the new text exactly.",
+          "Check the new text on a sample’s pages before you approve.",
           "Words that go into a document are always ones you typed or picked. A choice that would place words shows them beneath its button, and picking it approves exactly those words; a suggested reply you tap answers a question but never becomes document wording.",
         ]}
       />
@@ -302,7 +301,7 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         tagline="Different structures, one approval."
         steps={[
           "Attach them together. Documents are often built differently — styled article titles in one, plain paragraphs with typed numbers in another.",
-          "When one plan cannot describe the change for all of them, the window shows Your documents use N layouts: one card per layout, each with its own changes, assumptions and sample pages.",
+          "When one plan cannot describe the change for all of them, the plan has one part per layout, and the previews show sample pages from each.",
           "One button approves all of them.",
           "A document built differently from every layout is listed under Left untouched with a sentence: attach it on its own, or ask for a plan that covers it.",
         ]}
@@ -344,7 +343,7 @@ function HowItWorks() {
   return (
     <div className="space-y-4">
       <Lead>
-        A conversation on the left; your documents, the plan, the pages and the copies on the right. Under the hood:
+        A conversation on the left; your documents, the pages and the copies on the right. Under the hood:
       </Lead>
       <Points
         items={[
