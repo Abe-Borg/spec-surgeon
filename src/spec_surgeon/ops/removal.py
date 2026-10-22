@@ -9,10 +9,16 @@ removed. Revision delta (tracked): ``del`` +1 per run.
 **Paragraph deletion** (``filter_tagged_paragraphs``' rules, shared): tracked — every run that is a direct child of the
 paragraph goes into its own ``w:del``, the paragraph mark gets a ``w:del``; bookmarks and proofing marks stay where they
 are; untracked — the paragraph is removed. ``deletable`` says why one may not be deleted.
+
+**Range marks an untracked removal keeps** (``kept_marks``; ops/deletion.py's step 4 read for whole paragraphs and whole
+simple fields): a bookmark, permission, move or custom-XML range mark (paired by kind and ``w:id``) in a removed
+paragraph or simple field, some mark of whose pair lies outside everything removed from the part, stays: it takes the
+place of the removed element it was in, in document order (``remove_in_place``) — at the edge of the text that stays,
+so its bookmark keeps both ends and a REF field to it still finds it. A pair all of whose marks are removed goes.
 """
 from __future__ import annotations
 
-from typing import Any, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from lxml import etree
 
@@ -21,6 +27,7 @@ from ..ooxml import (RPR_ORDER, RevisionStamp, block_full_text, block_struct_cou
 from ..package import W
 from .base import BlockDiff, JobException, PlanFragment
 from .delete_paragraphs import INERT_P_CHILDREN
+from .deletion import RANGE_FAMILY
 
 HIDING = (W + "del", W + "moveFrom")
 
@@ -65,9 +72,48 @@ def plan_paragraph_deletion(frag: PlanFragment, part: str, bi: int, p, tracked: 
         frag.intended_parts.append(part)
 
 
-def delete_paragraph(p, tracked: bool, stamp: Optional[RevisionStamp], next_id: List[int]) -> None:
+def range_marks(el) -> List[Any]:
+    """The bookmark, permission, move and custom-XML range marks in ``el``, in document order — what ``kept_marks``
+    indexes a paragraph's kept marks by."""
+    return list(el.iter(*RANGE_FAMILY))
+
+
+def kept_marks(root, removed: Sequence[Any]) -> Dict[Any, List[Any]]:
+    """An untracked removal of ``removed`` (whole paragraphs and whole simple fields of ``root``, none inside another):
+    {removed element: the range marks in it that stay, in document order} — those some mark of whose pair lies outside
+    everything removed. The module docstring's rule."""
+    tops = set(removed)
+
+    def top_of(m) -> Optional[Any]:
+        return next((a for a in m.iterancestors() if a in tops), None)
+
+    pairs: Dict[Tuple[str, str], List[bool]] = {}
+    marks = range_marks(root)
+    for m in marks:
+        pairs.setdefault((RANGE_FAMILY[m.tag], m.get(W + "id") or ""), []).append(top_of(m) is not None)
+    out: Dict[Any, List[Any]] = {}
+    for m in marks:
+        top = top_of(m)
+        if top is not None and not all(pairs[(RANGE_FAMILY[m.tag], m.get(W + "id") or "")]):
+            out.setdefault(top, []).append(m)
+    return out
+
+
+def remove_in_place(el, keep: Sequence[Any] = ()) -> None:
+    """Untracked: ``el`` leaves its parent, and the range marks ``keep`` (its own, ``kept_marks``) take its place."""
+    parent = el.getparent()
+    at = parent.index(el)
+    for k, m in enumerate(keep):
+        m.tail = None
+        parent.insert(at + k, m)
+    parent.remove(el)
+
+
+def delete_paragraph(p, tracked: bool, stamp: Optional[RevisionStamp], next_id: List[int],
+                     keep: Sequence[Any] = ()) -> None:
+    """Delete one paragraph; untracked, the range marks ``keep`` (``kept_marks``) stay where it was."""
     if not tracked:
-        p.getparent().remove(p)
+        remove_in_place(p, keep)
         return
     mark = etree.Element(W + "del")
     stamp.apply(mark, next_id[0])

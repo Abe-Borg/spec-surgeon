@@ -29,6 +29,11 @@ residual's.
 * **Fields**: a run to remove inside a complex field's span goes only with the whole outermost field (local to the
   paragraph, every content run of its span chosen and live, no simple field in it); inside a simple field only with the
   whole simple field (untracked; tracked refused).
+* **Range marks** (untracked; ``v_kept_marks``, also read by verify/textops.py for tagged paragraphs): a bookmark,
+  permission, move or custom-XML range mark (paired by family and ``w:id``) in a deleted paragraph or a removed simple
+  field stays when some mark of its pair is in neither — in the place of the paragraph (the residual puts it there:
+  ``ctx.kept_marks``) or of the simple field (its item keeps its place, its chain cut at the field). The plan's
+  ``marks`` must name exactly those, by their indices among their paragraph's range marks. A pair wholly removed goes.
 """
 from __future__ import annotations
 
@@ -37,9 +42,9 @@ from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from .reader import W
 from .props import Ctx, Styles, _pstyle
-from .edits import (V_CONTAINERS, V_HIDING, V_REVISION_TAGS, check_deleted_paragraph, part_revision_ids, v_deletable,
-                    v_items, v_paragraph_text)
-from .deletion import _v_last_section
+from .edits import (V_CONTAINERS, V_HIDING, V_REVISION_TAGS, Item, check_deleted_paragraph, part_revision_ids,
+                    v_deletable, v_items, v_paragraph_text)
+from .deletion import _V_RANGES, _v_last_section
 from .fields import v_fields
 from .markup import (check_paragraph, drop, tracked_delete, v_color, v_color_in, v_color_names, v_hidden,
                      v_mark_hidden)
@@ -139,6 +144,35 @@ def _v_keep(blocks: Sequence[Any], chosen: Sequence[Any], tracked: bool) -> List
 
 def _v_blocks(container) -> List[Any]:
     return [c for c in container if isinstance(c.tag, str) and c.tag in V_BLOCKS]
+
+
+def v_range_marks(el) -> List[Any]:
+    """Every range mark in ``el``, document order: what the plan's ``marks`` index."""
+    return [e for e in el.iter() if isinstance(e.tag, str) and e.tag in _V_RANGES]
+
+
+def v_kept_marks(root, removed: Sequence[Any]) -> List[Tuple[Any, Any]]:
+    """An untracked removal of ``removed`` (paragraphs, simple fields) from ``root``: (mark, the removed element it lies
+    in) for each range mark that stays — its pair has a mark outside everything removed — in document order."""
+    out_of = {id(e) for e in removed}
+
+    def owner(el):
+        q = el.getparent()
+        while q is not None and id(q) not in out_of:
+            q = q.getparent()
+        return q
+
+    marks = [(e, owner(e)) for e in v_range_marks(root)]
+    staying = {(_V_RANGES[e.tag], e.get(W + "id") or "") for e, o in marks if o is None}
+    return [(e, o) for e, o in marks if o is not None and (_V_RANGES[e.tag], e.get(W + "id") or "") in staying]
+
+
+def v_hold_marks(ctx: Ctx, part: str, bi: int, src_p, ks: Sequence[int]) -> None:
+    """The residual's instruction: deleted source paragraph ``bi`` leaves its range marks ``ks`` in its place."""
+    if not ks:
+        return
+    marks, inner = v_range_marks(src_p), list(src_p.iter())
+    ctx.kept_marks.setdefault(part, {})[bi] = [next(j for j, e in enumerate(inner) if e is marks[k]) for k in ks]
 
 
 class _VSpans:
@@ -314,6 +348,7 @@ def _v_decide(sv, styles: Styles, tracked: bool, choose, demote, args, refuse_un
             runs_of[bi] = runs
     spans = _VSpans(sv.root)
     out: Dict[str, Any] = {"delete": delete, "runs": {}, "simple": {}}
+    gone = [pars[bi] for bi in delete]
     for bi in sorted(set(delete) | set(runs_of)):
         if bi in delete:
             continue
@@ -324,6 +359,13 @@ def _v_decide(sv, styles: Styles, tracked: bool, choose, demote, args, refuse_un
             out["runs"][str(bi)] = [next(k for k, x in enumerate(own) if x is r) for r in runs]
         if simples:
             out["simple"][str(bi)] = [next(k for k, x in enumerate(sims) if x is s) for s in simples]
+            gone += simples
+    if not tracked:
+        for m, o in v_kept_marks(sv.root, gone):
+            p = o if o.tag == W + "p" else _vp(o)
+            ranges = v_range_marks(p)
+            out.setdefault("marks", {}).setdefault(str(at[id(p)]), []).append(
+                next(k for k, x in enumerate(ranges) if x is m))
     return out
 
 
@@ -331,7 +373,8 @@ def _v_same(derived: Dict[str, Any], planned: Optional[Dict[str, Any]]) -> bool:
     planned = planned or {"delete": [], "runs": {}, "simple": {}}
     norm = lambda d: (sorted(d.get("delete") or []),
                       {str(k): sorted(v) for k, v in (d.get("runs") or {}).items()},
-                      {str(k): sorted(v) for k, v in (d.get("simple") or {}).items()})
+                      {str(k): sorted(v) for k, v in (d.get("simple") or {}).items()},
+                      {str(k): sorted(v) for k, v in (d.get("marks") or {}).items()})
     return norm(derived) == norm(planned)
 
 
@@ -353,12 +396,14 @@ def _v_check_outputs(ctx: Ctx, part: str, sv, ov, dec: Dict[str, Any], tracked: 
                         f"deleted")
             return 0, 0
         to_out = {bi: k for k, bi in enumerate(kept)}
+    marks = dec.get("marks") or {}
     for bi in sorted(delete):
         if tracked:
             check_deleted_paragraph(sv.pars[bi], ov.pars[bi], author, old_ids, f"{kind} {part} block {bi}", errs)
             ctx.verified_blocks.setdefault(part, {})[bi] = bi
         else:
             ctx.deleted_src_blocks.setdefault(part, set()).add(bi)
+            v_hold_marks(ctx, part, bi, sv.pars[bi], marks.get(str(bi), []))
     n_runs = 0
     for b in sorted(set(dec["runs"]) | set(dec["simple"]), key=int):
         bi = int(b)
@@ -371,8 +416,16 @@ def _v_check_outputs(ctx: Ctx, part: str, sv, ov, dec: Dict[str, Any], tracked: 
         if tracked:
             expected = tracked_delete(items, runs, author)
         else:
-            expected = [it for it in drop(items, runs=runs)
-                        if not any(e is s for s in simples for e in it.chain_els)]
+            ranges = v_range_marks(src_p)
+            held = [ranges[k] for k in marks.get(b, [])]
+            expected = []
+            for it in drop(items, runs=runs):
+                cut = next((k for k, e in enumerate(it.chain_els) if any(e is s for s in simples)), None)
+                if cut is None:
+                    expected.append(it)
+                elif any(it.el is m for m in held):      # a kept mark: where its simple field was
+                    expected.append(Item(it.kind, it.value, (it.ctx[0], it.ctx[1], it.ctx[2][:cut]), it.pos, it.tag,
+                                         it.run, it.el, it.live, it.chain_els[:cut]))
         check_paragraph(src_p, ov.pars[to_out[bi]], expected, old_ids, f"{kind} {part} block {bi}", errs)
         ctx.verified_blocks.setdefault(part, {})[bi] = to_out[bi]
     return len(delete), n_runs

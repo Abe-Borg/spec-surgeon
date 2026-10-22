@@ -1,5 +1,6 @@
 """Fixtures for built-in batch 2's removal ops — remove_hidden_text, remove_notes, remove_empty_paragraphs
-(docs/BUILTIN_OPS_BATCH2_DESIGN.md §5, §6, §8). Every paragraph is found by its text in the tests, never by index."""
+(docs/BUILTIN_OPS_BATCH2_DESIGN.md §5, §6, §8); ``build_crossing_marks`` — bookmarks and a permission range running out
+of what they delete into what stays. Every paragraph is found by its text in the tests, never by index."""
 from __future__ import annotations
 
 import copy
@@ -279,6 +280,72 @@ def build_last_section(kind: str, *, hidden_break: bool = False, field_in: str =
         if kind == "hidden":
             hide(p.runs[0])
             hide_mark(p)
+    return save(doc)
+
+
+# ---- range marks running out of what goes ----------------------------------------------------------------------------
+
+def _mark(paragraph, tag: str, mid: str, name: str = "", inside=None):
+    """A range mark (``w:bookmarkStart`` with ``name``, ``w:bookmarkEnd``, ``w:permStart``, ``w:permEnd``) at the end of
+    the paragraph — or of ``inside`` (an element of it)."""
+    el = OxmlElement(f"w:{tag}"); el.set(qn("w:id"), mid)
+    if name:
+        el.set(qn("w:name"), name)
+    if tag == "permStart":
+        el.set(qn("w:edGrp"), "everyone")
+    (paragraph._p if inside is None else inside).append(el)
+
+
+def build_crossing_marks(kind: str, *, simple: bool = False, permission: bool = True) -> bytes:
+    """Bookmarks and a permission range (unless ``permission`` is false) running out of the paragraphs a removal deletes
+    into paragraphs that stay. ``kind`` "notes": the two paragraphs to delete are notes by the text rule ``^NOTE``;
+    "hidden": their runs and marks are hidden. In reading order:
+
+    * "Lead." — the start of "Back";
+    * "NOTE: starts the bookmark." (deleted) — all of "Inner", then the start of "B", the start of "Wholly", and a
+      permission range's start;
+    * "Visible text." — the end of "B" and of the permission range;
+    * "NOTE: ends two bookmarks." (deleted) — the end of "Wholly" (wholly in the deleted text: it goes) and of "Back";
+    * "See ⟨REF B⟩ and ⟨REF Back⟩." — cross-references to the two bookmarks whose other end stays;
+    * with ``simple``: "Title: ⟨a hidden DOCPROPERTY simple field⟩ end." whose field holds all of "InField" and the
+      start of "FieldMark", whose end is in "After the field."; then "END OF SECTION"."""
+    doc = Document()
+    lead = doc.add_paragraph("Lead.")
+    first = doc.add_paragraph("NOTE: starts the bookmark.")
+    middle = doc.add_paragraph("Visible text.")
+    second = doc.add_paragraph("NOTE: ends two bookmarks.")
+    see = doc.add_paragraph("See ")
+    field(see, " REF B \\h ", "Visible text.")
+    see.add_run(" and ")
+    field(see, " REF Back \\h ", "Lead.")
+    see.add_run(".")
+    _mark(lead, "bookmarkStart", "4", "Back")
+    _mark(first, "bookmarkStart", "2", "Inner")
+    _mark(first, "bookmarkEnd", "2")
+    _mark(first, "bookmarkStart", "1", "B")
+    _mark(first, "bookmarkStart", "3", "Wholly")
+    _mark(middle, "bookmarkEnd", "1")
+    if permission:
+        _mark(first, "permStart", "5")
+        _mark(middle, "permEnd", "5")
+    _mark(second, "bookmarkEnd", "3")
+    _mark(second, "bookmarkEnd", "4")
+    if kind == "hidden":
+        for p in (first, second):
+            hide(p.runs[0])
+            hide_mark(p)
+    if simple:
+        title = doc.add_paragraph("Title: ")
+        simple_field(title, " DOCPROPERTY Title ", "Spec title", hidden=True)
+        fs = title._p.find(qn("w:fldSimple"))
+        _mark(title, "bookmarkStart", "7", "InField", inside=fs)
+        _mark(title, "bookmarkEnd", "7", inside=fs)
+        _mark(title, "bookmarkStart", "6", "FieldMark", inside=fs)
+        fs.append(fs.find(qn("w:r")))                                  # the marks first, then the field's result
+        title.add_run(" end.")
+        after = doc.add_paragraph("After the field.")
+        _mark(after, "bookmarkEnd", "6")
+    doc.add_paragraph("END OF SECTION")
     return save(doc)
 
 
