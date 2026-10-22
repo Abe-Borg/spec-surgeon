@@ -2,8 +2,19 @@
 
 Spec Surgeon's desktop window is this page (React 18, TypeScript, Vite, Tailwind v4), built once into
 `src/spec_surgeon/web/static/` and hosted by the local server described in `docs/WEB_API.md`. The visual
-system is Build-a-Spec's, copied and adapted (never imported across repositories): the warm dark chrome, the
-paper content cards, Georgia for display text, the system sans for everything else.
+system is Build-a-Spec's, copied and adapted (never imported across repositories): the chrome around paper
+content cards, Georgia for display text, the system sans for everything else.
+
+## Colour schemes
+
+Every colour is a token in `src/index.css`. `@theme` holds Warm Clay, the default; Blueprint, Graphite & Teal,
+Carbon & Hi-Vis and Linen (light) each redefine every token under `<html data-theme="…">`. `src/lib/theme.ts` lists
+them for Settings → Appearance, which recolours the window at once and saves the choice (`POST /api/settings
+{"theme"}`); the shell opens the page with `?theme=<id>` and `index.html`'s inline script applies it before the
+first paint. A component never names a colour of its own: `tests/theme.test.ts` fails on a colour literal in
+`src/components/` or `App.tsx`, on a scheme missing a token, and on a picker swatch that differs from its
+scheme. To add a scheme: a block in `index.css`, an entry in `theme.ts`, the id in `settings.THEMES` and its
+background in `web/shell.BACKGROUNDS` (`tests/test_settings.py` checks the four agree).
 
 The page never applies edits or derives state: every `done`/`error` frame and `GET /api/state` carry the
 whole view, and the page renders it (`src/lib/view.ts`). Streamed frames are presentation only.
@@ -17,10 +28,11 @@ whole view, and the page renders it (`src/lib/view.ts`). Streamed frames are pre
 | `src/lib/view.ts` | the reducer over the view and the live reply bubble |
 | `src/lib/chat.ts`, `action.ts`, `workbench.ts`, `review.ts`, `help.ts` | the pure rules the components render (the review marks and `hold` live in `review.ts`; `help.ts`: the top bar's topics and context line, About's update line) |
 | `src/lib/api.ts` | every route of the contract |
+| `src/lib/theme.ts` | the colour schemes Settings offers, and the one the page opens in |
 | `src/components/` | the header (the top bar), the chat, the workbench, the modals; `HelpModal.tsx` is the in-app guide and About |
 | `mock/server.mjs` | a Node-only mock of the whole contract |
 | `tools/screenshots.mjs` | Playwright screenshots against the mock |
-| `tools/flows.mjs` | Playwright walk through the other paths (a failed job, a pause, Stop, a drop, Settings, the top bar's help topics, About and its update check, the update banner, the review marks and the to-do list) |
+| `tools/flows.mjs` | Playwright walk through the other paths (a failed job, a pause, Stop, a drop, Settings and its colour schemes, the top bar's help topics, About and its update check, the update banner, the review marks and the to-do list) |
 | `tools/browser.mjs` | shared by both: the mock's launch and the Chromium lookup |
 | `tests/*.test.ts` | `node --test` over the pure rules |
 
@@ -75,7 +87,8 @@ npm run dev
 ## Tests
 
 The pure rules (the frame parser, the reducer, the chat rules, the action label, the token and base
-resolution, the workbench rules, the review marks, the top bar's rules) run under `node --test`:
+resolution, the workbench rules, the review marks, the top bar's rules, the colour schemes against the
+stylesheet) run under `node --test`:
 
 ```
 cd frontend
@@ -84,7 +97,8 @@ npm test
 
 The paths the screenshots do not show — a failed job, a pause and its Continue, Stop now mid-job, typing
 ahead, a chip click, the draft hold on the action button, the folding documents tray, the file-chooser fallback,
-a drop, Settings, About, the update banner, Start over, the red X on a preview and the to-do list's pass — run
+a drop, Settings and a colour scheme kept across a reload, About, the update banner, Start over, the red X on a
+preview and the to-do list's pass — run
 in a real browser against the mock, one PASS/FAIL line each (build first):
 
 ```

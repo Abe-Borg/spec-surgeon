@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import dataclasses
 import json
+import re
+from pathlib import Path
 
 import pytest
 
@@ -29,12 +31,49 @@ def test_missing_wrong_types_and_unknown_keys(tmp_path):
     assert s == Settings(log_open=True)
 
 
-def test_the_look_and_the_update_check_are_not_settings():
-    """The GUI rework after v0.4.1 removed the Appearance and Updates panels: the window follows Windows' light/dark
-    setting and checks for updates once a day without being told to. A settings.json from v0.4.x still loads."""
+def test_the_update_check_is_not_a_setting():
+    """The GUI rework after v0.4.1 removed the Updates panel: the window checks for updates once a day without being
+    told to. A settings.json from v0.4.x still loads."""
     names = {f.name for f in dataclasses.fields(Settings)}
-    assert not names & {"theme", "native_style", "auto_check_updates"}
+    assert not names & {"native_style", "auto_check_updates"}
     assert {"last_update_check", "skipped_version", "pending_update", "last_run_version"} <= names
+
+
+def test_the_colour_scheme_is_one_of_the_windows_schemes(tmp_path):
+    """``theme`` is kept as chosen; a value the window has no scheme for (a v0.4.x file's "dark", a typo, a number)
+    reads as Warm Clay, the default."""
+    p = tmp_path / "settings.json"
+    assert Settings().theme == st.THEMES[0] == "clay"
+    for theme in st.THEMES:
+        save_settings(Settings(theme=theme), p)
+        assert load_settings(p).theme == theme
+    for bad in ("dark", "Linen", "", 3, None):
+        p.write_text(json.dumps({"theme": bad}), encoding="utf-8")
+        assert load_settings(p).theme == "clay"
+
+
+FRONTEND = Path(__file__).resolve().parents[1] / "frontend"
+
+
+def _scheme_backgrounds() -> dict:
+    """Each scheme's ``--color-bg`` in the page's stylesheet: @theme's for the default, its own block's for the rest."""
+    css = (FRONTEND / "src" / "index.css").read_text(encoding="utf-8")
+    out = {"clay": re.search(r"@theme \{[^}]*--color-bg:\s*([^;]+);", css).group(1)}
+    for theme, body in re.findall(r':root\[data-theme="([a-z]+)"\] \{([^}]*)\}', css):
+        out[theme] = re.search(r"--color-bg:\s*([^;]+);", body).group(1)
+    return out
+
+
+def test_the_page_and_the_shell_know_the_same_schemes():
+    """settings.THEMES, the page's list (frontend/src/lib/theme.ts), the stylesheet's blocks and the shell's window
+    backgrounds name the same schemes, and the shell opens each on its own background."""
+    page = re.findall(r'^    id: "([a-z]+)",$', (FRONTEND / "src" / "lib" / "theme.ts").read_text(encoding="utf-8"), re.M)
+    assert tuple(page) == st.THEMES
+    backgrounds = _scheme_backgrounds()
+    assert set(backgrounds) == set(st.THEMES)
+    pytest.importorskip("fastapi")
+    from spec_surgeon.web import shell
+    assert shell.BACKGROUNDS == backgrounds
 
 
 def test_a_hand_edited_pending_update_cannot_break_start_up(tmp_path):

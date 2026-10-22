@@ -409,6 +409,92 @@ def test_a_clean_exit_says_so_in_the_app_log(monkeypatch, job):
             h.close()
 
 
+@pytest.mark.parametrize("crashed", [False, True])
+def test_every_start_is_clean_and_the_last_conversation_is_archived(monkeypatch, crashed):
+    """The window never reopens the last conversation: at start its journal moves under ``conversations/`` (kept,
+    never read) and the task is empty, with nothing attached and nothing said. After a crash the one message says
+    where that conversation went."""
+    import logging
+    pytest.importorskip("fastapi")
+    from spec_surgeon import gui, winapp
+    from spec_surgeon.settings import config_dir, logs_dir
+    from spec_surgeon.web import shell
+    journal = config_dir() / "conversation.json"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    saved = {"version": 2, "attachments": [{"path": "C:/Specs/21 13 13.docx", "template": False}],
+             "messages": [{"role": "user", "text": "Change every font to Arial"}],
+             "decisions": ["Change every font to Arial"], "results": {}, "budget": {}}
+    journal.write_text(json.dumps(saved), encoding="utf-8")
+    if crashed:                                    # the last session left its marker: it never closed cleanly
+        logs_dir().mkdir(parents=True, exist_ok=True)
+        (logs_dir() / "session-1.json").write_text(json.dumps({"version": "1.7.0"}), encoding="utf-8")
+    seen = {}
+
+    def run_window(state, **kw):
+        seen["task"] = state.task
+        seen["messages"] = [dict(m) for m in state.task.messages]
+        return 0
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    monkeypatch.setattr(winapp, "hold_app_mutex", lambda: False)
+    monkeypatch.setattr(shell, "run_window", run_window)
+    logger = logging.getLogger("spec_surgeon")
+    try:
+        assert gui.main() == 0
+    finally:
+        for h in [h for h in logger.handlers if isinstance(h, logging.FileHandler)]:
+            logger.removeHandler(h)
+            h.close()
+    archived = list((config_dir() / "conversations").glob("*.json"))
+    assert len(archived) == 1 and json.loads(archived[0].read_text(encoding="utf-8")) == saved
+    task = seen["task"]
+    assert task.attachments == [] and task.decisions == [] and task.stage == "empty" and task.results == {}
+    if crashed:
+        assert len(seen["messages"]) == 1 and seen["messages"][0]["role"] == "app"
+        assert "ended unexpectedly" in seen["messages"][0]["text"] and str(archived[0]) in seen["messages"][0]["text"]
+    else:
+        assert seen["messages"] == []
+
+
+def test_a_conversation_that_cannot_be_archived_is_never_written_over(monkeypatch):
+    """When the last conversation cannot be moved aside (Windows holds the file open for a backup or a scanner), the
+    clean session keeps no journal: its saves, and New conversation, leave that file as it was."""
+    import logging
+    pytest.importorskip("fastapi")
+    from spec_surgeon import gui, winapp
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.settings import config_dir
+    from spec_surgeon.web import shell
+    journal = config_dir() / "conversation.json"
+    journal.parent.mkdir(parents=True, exist_ok=True)
+    journal.write_text('{"version": 2, "messages": [{"role": "user", "text": "keep me"}]}', encoding="utf-8")
+    before = journal.read_bytes()
+
+    def locked(self):                               # the one file that is held open cannot be moved
+        if self.journal == journal:
+            raise PermissionError(13, "The process cannot access the file because it is being used by another process")
+        return None
+    seen = {}
+
+    def run_window(state, **kw):
+        state.task.say("A new message")
+        state.save_settings()                       # what closing the window does
+        state.new_conversation()
+        seen["journal"] = state.task.journal
+        return 0
+    monkeypatch.setattr(DocumentTask, "archive", locked)
+    monkeypatch.setenv("SPEC_SURGEON_NO_UPDATE_CHECK", "1")
+    monkeypatch.setattr(winapp, "hold_app_mutex", lambda: False)
+    monkeypatch.setattr(shell, "run_window", run_window)
+    logger = logging.getLogger("spec_surgeon")
+    try:
+        assert gui.main() == 0
+    finally:
+        for h in [h for h in logger.handlers if isinstance(h, logging.FileHandler)]:
+            logger.removeHandler(h)
+            h.close()
+    assert journal.read_bytes() == before and seen["journal"] is None
+
+
 def test_the_engine_never_loads_the_window():
     import subprocess
     import sys

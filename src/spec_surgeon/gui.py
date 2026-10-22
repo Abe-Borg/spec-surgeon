@@ -1175,15 +1175,18 @@ def main(argv=None) -> int:
         if settings.out_root:
             session.out_root = Path(settings.out_root)
         task = DocumentTask(session, journal=config_dir() / "conversation.json")
+        # Every start is clean: the last conversation is archived under conversations\, never reopened.
         try:
-            task.restore()
-        except (OSError, ValueError, TypeError, KeyError) as exc:
-            task.say(f"The saved conversation could not be opened: {exc}")
+            archived = task.archive()
+        except OSError as exc:
+            archived = None
+            task.journal = None          # this session never writes over a conversation that could not be set aside
+            diag.app_log().warning(f"The last conversation could not be archived ({exc}); this session keeps no journal")
         if previous:
             last = previous[-1]
             task.say("The previous session ended unexpectedly"
                      + (f"; Python's fault handler wrote what it saw to {last['crash_log']}." if last.get("crash_log") else ".")
-                     + " Your saved conversation is below.")
+                     + (f" Its conversation is saved in {archived}." if archived else ""))
         state = WindowState(task, settings, token=new_token(), version=__version__)
         state.updates = UpdateFlow(settings, release_notes=lambda: release_notes_text(__version__),
                                    quit_app=lambda: state.shell.close(), is_busy=lambda: state.busy)
