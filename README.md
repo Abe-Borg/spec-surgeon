@@ -233,7 +233,8 @@ and site variables; MasterSpec option groups; tagged paragraphs; issue stamps; E
 inserting, removing, resizing and swapping pictures; inserting and deleting tables, rows and columns, cell shading,
 alignment and widths, and merged cells; comments (adding, replying, resolving, removing), highlighting, hidden text,
 specifier notes, footnotes and endnotes, blank paragraphs, hyperlinks, fields (inserting page numbers, dates, style
-references and properties, or unlinking them), watermarks, document properties, track changes and Mark as Final;
+references and properties, or unlinking them), watermarks, document properties (a title built from each
+document's own section number and title included), track changes and Mark as Final;
 bold, italic, caps, superscript and subscript, hidden text, highlight, character spacing, colour and pagination
 flags; tab stops; borders and shading; style spacing, style application and style mapping from a template; clearing
 direct formatting; the proofing language; unused styles; numbering schemes, typed numbers, list levels and a

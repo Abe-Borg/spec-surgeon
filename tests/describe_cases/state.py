@@ -28,6 +28,9 @@ CASES = {
         ({}, {"final": False}, ["Remove the file's Mark as Final, so it opens for editing again"]),
     ],
     "set_document_properties": [
+        # C5: a title built from each file's own section number and title
+        ({}, {"from_document": {"title": "SECTION {number} - {title}"}},
+         ["set the title to “SECTION {number} - {title}” with each file's own section number and title in place"]),
         ({}, {"set": {"title": "Section 09 91 23 — Painting", "company": "Acme Engineering"}},
          ["In the file's properties (File → Info)", "set the title to “Section 09 91 23 — Painting”",
           "the company to “Acme Engineering”"]),

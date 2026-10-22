@@ -12,10 +12,16 @@ absent; a custom property: the source property with the new value, or a new one 
 custom properties part the op created is compared whole with this module's own expected part, and the package
 relationships and ``[Content_Types].xml`` with the source plus exactly its one relationship and one override
 (``Ctx.verified_members``). The changes it derives must be the plan's (``changed``).
+
+``from_document`` (docs/PLAN-2026-10-22-batch-consistency.md C5): a property whose value is the user's words with
+``{number}`` and ``{title}`` in place of the file's own section number and title. They are read here from the SOURCE
+by this module's own copy of the reference rules (``_V_REFERENCE``) through the verifier's own fill reading
+(``verify/template.fill_value``); the property must read exactly the words with them in place.
 """
 from __future__ import annotations
 
 import functools
+import re
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from lxml import etree
@@ -23,6 +29,20 @@ from lxml import etree
 from .markup import check_content_types, check_relationships, tree_difference
 from .props import Ctx, sig
 from .reader import REL, W
+from .template import fill_value
+
+# A CSI spec's own section number and title, as fill rules: the verifier's own copy of the reference rules
+# (tests/test_properties_from_document.py pins it equal to the transform side's).
+_V_REFERENCE = {
+    "number": {"rule": "regex", "source": "document", "case_insensitive": True,
+               "pattern": r"^SECTION\s+(\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?)\b"},
+    "title": {"rule": "first_match", "rules": [
+        {"rule": "paragraph_after", "source": "document", "case_insensitive": True,
+         "anchor_regex": r"^SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\s*$"},
+        {"rule": "regex", "source": "document", "case_insensitive": True,
+         "pattern": r"^SECTION\s+\d{2}[\s-]*\d{2}[\s-]*\d{2}(?:\.\d{2})?\s*[-–—:]\s*(.+)$"}]},
+}
+_V_PLACEHOLDER = re.compile(r"\{(number|title)\}")
 
 _CP = "{http://schemas.openxmlformats.org/package/2006/metadata/core-properties}"
 _DC = "{http://purl.org/dc/elements/1.1/}"
@@ -246,6 +266,20 @@ def _document_properties(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
             continue
         which, tag = _V_PROPERTIES[k]
         c.clear_element(which, tag, k)
+    for k, text in (a.get("from_document") or {}).items():
+        if k not in _V_PROPERTIES:
+            c.err(f"unknown property {k!r}")
+            continue
+        values = {}
+        for key in sorted(set(_V_PLACEHOLDER.findall(text))):
+            try:
+                values[key] = fill_value(ctx.src, key, _V_REFERENCE[key])
+            except (ValueError, KeyError, re.error) as e:
+                c.err(f"{k}: this file's section {key} cannot be read ({e}) — the op must refuse")
+        if len(values) != len(set(_V_PLACEHOLDER.findall(text))):
+            continue
+        which, tag = _V_PROPERTIES[k]
+        c.set_element(which, tag, _V_PLACEHOLDER.sub(lambda m: values[m.group(1)], text), k)
     c.custom_sets([(n, "text", v) for n, v in a.get("custom") or []])
     c.custom_clears(a.get("clear_custom") or [])
     c.compare_plan(a)

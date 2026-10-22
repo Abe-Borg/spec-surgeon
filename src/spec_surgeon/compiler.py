@@ -446,7 +446,9 @@ remove_notes, remove_empty_paragraphs) restructures the part; the app runs it as
 layout diagonal or horizontal, size in points or "auto"); "change the watermark to X" is add_watermark with replace \
 true; "remove the watermark" is remove_watermark (text only when the user names which). A watermark is untracked.
 - set_document_properties: "clear the author names" is clear ["author", "last_modified_by"] (tracked changes and \
-comments keep their authors); leave review.geometry_reference out (the op chooses it per file). Say in assumptions that \
+comments keep their authors); "set every file's Properties title to its own section" (the overview's flags name stale \
+ones) is from_document {"title": "SECTION {number} - {title}"} — one request for the whole batch, each file's own \
+number and title in place, the words around them the user's (a file without them is set aside); leave review.geometry_reference out (the op chooses it per file). Say in assumptions that \
 a field showing a changed property keeps its saved value until Word updates fields, and that turning Track Changes off \
 (set_document_state) accepts nothing.
 - The attached template may be a TEMPLATE SPEC: an ordinary spec from the architect or another firm (read_template \
@@ -706,6 +708,10 @@ def placed_words(spec: Dict[str, Any]) -> List[str]:
             for key in ("set", "custom"):
                 if isinstance(params.get(key), dict):
                     out += [v for v in params[key].values() if isinstance(v, str) and v]
+            # C5: the words around {number} and {title} are the user's; the number and title are each file's own
+            if isinstance(params.get("from_document"), dict):
+                out += [piece.strip() for v in params["from_document"].values() if isinstance(v, str)
+                        for piece in re.split(r"\{(?:number|title)\}", v) if piece.strip()]
         # built-in batch 6: an inserted picture's alt text is the user's words
         if op == "insert_image" and isinstance(params.get("description"), str) and params["description"]:
             out.append(params["description"])

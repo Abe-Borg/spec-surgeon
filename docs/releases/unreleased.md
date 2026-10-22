@@ -45,6 +45,9 @@ Changes since v1.8.0.
   so the words are still the document's own. A note beside the pages names each document whose title would otherwise
   show in another case than the template's (21 05 53's "Identification for Fire Suppression Systems" where the
   template shows "DOOR HARDWARE").
+- **File Properties titles fixed for a whole batch in one request.** "Set every file's title to SECTION number – title"
+  now puts each document's own section number and title in place, between your words. Before, every title had to be
+  typed. A document whose number or title cannot be found is set aside, never guessed.
 
 ## Fixes
 

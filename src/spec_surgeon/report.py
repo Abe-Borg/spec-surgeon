@@ -124,6 +124,12 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Two operations in the spec would change the same paragraph, property or part; the engine never guesses an "
         "order. Split them into separate passes.",
     ),
+    "property-value": (
+        "Property Value Built From This File Is Not Usable",
+        "The document property built from this file's own section number and title is not one line of visible text of "
+        "at most 255 characters (a very long title, or an invisible character in it). Set this file's property in Word, "
+        "or give the words for it.",
+    ),
     "template-slot": (
         "Template Spec Value Not Found",
         "A fill rule finds no usable value in the template spec itself (its own section number or title, say), so the "
