@@ -70,7 +70,7 @@ render checks are recorded as N/A with the reason.
 The window is one conversation. On the left is the chat, with the one button above the box you type in; on the right
 are your documents (optionally with one template) and the before/after pages. The top bar, in the style of Build-a-Spec, carries the in-app guide —
 **How to use**, **Workflows**, **How it works** and **About** (the version, the model, the release notes, the license,
-**Check for updates** and **Open diagnostic logs**) — beside a line saying what the conversation works on ("3
+**Check for updates**, **Open diagnostic logs** and **Save a diagnostic bundle**) — beside a line saying what the conversation works on ("3
 documents · 1 template · building on your copies"), the estimated spending, the connection, **New conversation**
 and Settings.
 
@@ -135,8 +135,18 @@ the key: without one the window keeps your draft and asks you to connect one in 
 **Settings → Appearance** picks the window's colour scheme: Warm Clay (the default), Blueprint, Graphite & Teal,
 Carbon & Hi-Vis or Linen (the light one). The window changes at once and opens in the scheme you chose from then on.
 
+**When something goes wrong.** **About → Save a diagnostic bundle** writes one zip (and shows it in Explorer) with
+everything a diagnosis reads: the app's log and its event journals, crash logs, its settings, your current and last
+conversations, and the logs, records and reports of your recent runs. No document, picture or page image goes in
+it; conversations and records can quote your words and your documents' text, so it is yours to share or not. The
+log says what the window itself went through: each request and job as it starts and ends, every error in the window's
+page, a page that stopped answering (a frozen window) with where every part of the app was at that moment, a job
+that stopped moving or did not obey Stop, the window closing, and at the next start what a session that never closed
+was doing last. If the window ever fails to draw, it shows **Reload the window** instead of going blank: the app
+behind it keeps running, so the conversation and any work in progress carry on.
+
 See [the window guide](docs/CONVERSATIONAL_DESKTOP.md) for triage, pictures and tables, layouts, previews,
-conversations and a clean start, recovery, resource use and verification limits.
+conversations and a clean start, recovery, resource use, verification limits and what the window logs about itself.
 
 ## Without the window
 
@@ -246,6 +256,8 @@ recorded for the requests that follow.
 ## Where everything else is
 
 - [docs/CONVERSATIONAL_DESKTOP.md](docs/CONVERSATIONAL_DESKTOP.md) — the window guide.
+- [docs/DEVELOPER_DIAGNOSTICS.md](docs/DEVELOPER_DIAGNOSTICS.md) — investigating a failure: what each log and journal
+  holds, how to follow one action through them, and what the window records about itself.
 - [docs/releases/](docs/releases/) — release notes per version, what the update banner shows.
 - [docs/audits/](docs/audits/) — independent audits, sweeps and their responses.
 - [docs/history/](docs/history/) — the previous CLAUDE.md files ([2026-10-18](docs/history/CLAUDE-2026-10-18.md),

@@ -5,9 +5,10 @@
  * and its Continue, Stop now mid-job, typing ahead, a chip click, the
  * draft hold on the action button, the file-chooser fallback, a drop,
  * remove, no key → Settings, Settings' colour schemes, the top bar's help topics, About and its
- * update check, the update banner and the pill it leaves, start over, the
- * button's home in the conversation, the folding documents tray, and the
- * red X on a preview → the to-do list → the pass over it.
+ * update check and diagnostic bundle, the page's own report of its load,
+ * the update banner and the pill it leaves, start over, the button's home
+ * in the conversation, the folding documents tray, and the red X on a
+ * preview → the to-do list → the pass over it.
  *
  *   npm run build
  *   node tools/flows.mjs
@@ -222,6 +223,21 @@ try {
   );
   await about.getByRole("button", { name: "Open diagnostic logs" }).click();
   check("Open diagnostic logs is in About", true);
+  await about.getByRole("button", { name: "Save a diagnostic bundle" }).click();
+  check(
+    "Save a diagnostic bundle says where it went",
+    await about
+      .getByText("Saved spec-surgeon-diagnostics-mock.zip (12 files); its folder is open.")
+      .waitFor({ timeout: 5000 })
+      .then(() => true)
+      .catch(() => false),
+  );
+  const sentReports = (await (await fetch(`${BASE}/mock/page-reports`)).json()).reports;
+  check(
+    "the page reported its load to the app",
+    sentReports.some((r) => r.kind === "loaded" && typeof r.user_agent === "string" && r.visible === true),
+    JSON.stringify(sentReports.map((r) => r.kind).slice(0, 6)),
+  );
   await page.keyboard.press("Escape");
 
   // 12. Updates: About's check finds one → the banner → Not now leaves a pill → the pill downloads → ready.

@@ -1169,7 +1169,14 @@ def main(argv=None) -> int:
     watch = diag.CrashWatch(logs_dir())
     previous = watch.start()
     diag.app_log().info(f"Spec Surgeon {__version__} started — {diag.environment_line(diag.environment())}"
-                        + (f"; app log {log_path}" if log_path else ""))
+                        + (f"; app log {log_path}" if log_path else "")
+                        + (f"; event journal {log_path.with_name(diag.APP_EVENTS.format(pid=os.getpid())).name}"
+                           if log_path else ""))
+    for gone in previous:                # a session that never closed: what it was doing, in the log a person reads
+        diag.app_log().warning(diag.previous_session_line(gone))
+        diag.event("app.previous_session.unclean", level="warning", previous_pid=gone.get("pid"),
+                   version=gone.get("version"), started=gone.get("started"), crash_log=gone.get("crash_log"),
+                   crash_log_found=gone.get("crash_log_found"), last_events=gone.get("last_events"))
     with diag.span("gui.application") as completion:
         session = Session()
         if settings.out_root:

@@ -4,7 +4,9 @@ Diagnostics are enabled automatically in the desktop app. They are local files; 
 
 ## Collect the evidence
 
-Take the results folder's `DIAGNOSTICS.md`, `logs/` and `records/`, and the application logs folder (**Help → Open diagnostic logs** in the window). Leave out `outputs/`, `failed/`, `samples/` and anything else holding documents or page images. Reports, transcripts, exception messages and trace summaries can still quote client text, so treat the evidence as sensitive project material.
+The quickest way: **About → Save a diagnostic bundle** in the window (also on the window's error screen). It writes `spec-surgeon-diagnostics-<time>.zip` under `%LOCALAPPDATA%\Spec Surgeon\diagnostics` and shows it in Explorer: the application logs folder (app log, every event journal, crash logs, session markers), `settings.json`, the current and last three conversations, and from the five newest folders of the run root their `logs/`, `records/`, reports, `compile.json` and `conversation.json` (`.log`, `.jsonl`, `.json`, `.md`, `.txt` only; `outputs/`, `failed/`, `samples/`, `pages/`, `images/`, `attachments/` and the other folders that hold documents are never read). `MANIFEST.txt` lists every file in it and every one left out, with the reason (`diagnostics.diagnostic_bundle`).
+
+By hand: take the results folder's `DIAGNOSTICS.md`, `logs/` and `records/`, and the application logs folder (**About → Open diagnostic logs** in the window). Leave out `outputs/`, `failed/`, `samples/` and anything else holding documents or page images. Reports, transcripts, conversations, exception messages and trace summaries can still quote client text, so treat the evidence as sensitive project material.
 
 | Evidence | Location | What it answers |
 | --- | --- | --- |
@@ -14,8 +16,9 @@ Take the results folder's `DIAGNOSTICS.md`, `logs/` and `records/`, and the appl
 | Readable traces | `logs/run.log`, `logs/<output stem>.trace.log` | Stage messages, plan summaries, error details and native fault/hang stacks |
 | Conversation timeline | `<conversation work folder>/logs/events.jsonl` | Model calls, tool execution, validation and accepted/rejected submissions |
 | Preview/chain/recovery timeline | Their own `logs/events.jsonl`, including nested run folders | Sample processing, chain stages, repair trials, budgets, reviews and delivery |
-| Application timeline | Application logs folder, `app-events-<pid>.jsonl` and `.1`–`.3` | UI actions, background jobs, session state and failures before a run folder exists |
-| Readable application log/crashes | `spec-surgeon.log`, `crash-*.log` | Activity, caught failures and native crashes; how every window job ended (`Job <action> ended: stage …; stopped yes/no; [failed (<error type>);] N model calls so far; estimated cost …; N s`) and `Spec Surgeon closed` on a clean exit. A job's activity with no `Job … ended` line after it was cut off; a `started` line with no `closed` before it means the previous session did not exit cleanly |
+| Application timeline | Application logs folder, `app-events-<pid>.jsonl` and `.1`–`.3` (the `started` line of `spec-surgeon.log` names the session's file) | The window's requests (`web.request`), jobs (`web.job.*`), the page's own reports (`page.*`), the window's life (`window.*`), session state and failures before a run folder exists |
+| Readable application log/crashes | `spec-surgeon.log`, `crash-*.log` | Activity, caught failures and native crashes; every window job as it starts (`Job <action> started (a typed message)`) and how it ended (`Job <action> ended: stage …; stopped yes/no; [failed (<error type>);] N model calls so far; estimated cost …; N s`); Stop; the window's open and close; page errors, a page blocked or frozen, a quiet job or an unobeyed Stop with every thread's stack; and `Spec Surgeon closed` on a clean exit. A `Job … started` with no `Job … ended` after it was cut off; a session that did not exit cleanly is described at the next start (`The previous session (pid …) ended without closing. Its last recorded events: …`) |
+| Diagnostic bundle | `%LOCALAPPDATA%\Spec Surgeon\diagnostics\spec-surgeon-diagnostics-<time>.zip` | All of the above in one file, with a manifest of what is in it and what was left out |
 
 On Windows, the application logs folder is `%LOCALAPPDATA%\Spec Surgeon\logs`. Other platforms use `spec_surgeon.settings.logs_dir()`. `SPEC_SURGEON_CONFIG_DIR` overrides application storage for isolated development/tests.
 
@@ -52,9 +55,35 @@ A started span without a terminal event means the operation may still be running
 
 **A custom transform stopped:** Follow `codegen.sandbox.prepared`, the process span, timeout/exit/missing-result events and the trial verification outcome. Generation and generated-run folders retain their own `logs/events.jsonl`, including evidence from temporary sandbox work that was later cleaned up. The generated source and detailed result remain in the existing codegen history, not the event metadata.
 
-**A button appears to do nothing:** Find `ui.action.queued`, `ui.worker.started`, session action spans, approval decisions and `ui.result.display`. Queue time is recorded separately from runtime. A refused gate records the reason. Unhandled Python exceptions in the main thread or background threads are recorded while preserving the host's exception hooks.
+**A button appears to do nothing:** Find the click's `web.request` (route, status, `duration_ms`); a job route is followed by `web.job.started` and, on the job's thread, the session spans (`session.*`), approval decisions (`session.approval.*`) and model calls, then `web.job.succeeded`/`failed`. `queue_ms` on the job span is the wait before it ran. A refused gate records the reason. A route that raised has `web.request.failed` with its traceback (also in `spec-surgeon.log`). Unhandled Python exceptions in the main thread or background threads are recorded while preserving the host's exception hooks; the page's own uncaught errors are `page.error` and `page.unhandled_rejection`.
+
+**The window froze, went blank or closed by itself:** see "The window" below.
 
 **The diagnostics themselves fail:** Look for `diagnostics.write_failed` in the application journal and the once-per-destination stderr warning. Diagnostic I/O failure does not change document processing. A broken progress callback produces `diagnostics.progress_callback_failed` after the progress line is persisted. If every destination is unavailable and the app has no console, there may be no durable evidence; correct the storage failure first.
+
+## The window
+
+The page runs in WebView2 with no console anyone sees, so it reports on itself (`frontend/src/lib/diagnostics.ts`, `POST /api/diagnostics`), and `web/watch.py` journals each report and watches the page and the running job on its own thread (`spec-surgeon-watch`, a tick every 5 s).
+
+| Event | When | In `spec-surgeon.log` |
+| --- | --- | --- |
+| `page.loaded` / `page.unload` | the page loads or reloads (`load`, `user_agent` with the WebView2 version, `viewport`, `reduced_motion`) / unloads | yes |
+| `page.visibility` | the window is shown or hidden (minimised) | no |
+| `page.error` / `page.unhandled_rejection` | an error or a rejected promise nothing caught (`message`, `where`, `stack`, `count`: the same error is sent once, then counted for 30 s) | yes, up to 100 a session |
+| `page.render_failed` | a drawing failed; the error screen replaced the page (`message`, `stack`, `component_stack`) | yes |
+| `page.stream_ended_early` | a job's stream closed before `done`/`error` (`reason`: `cut`) or failed (`failed`) | yes |
+| `page.slow` | the heartbeat (every 10 s) carried a long task of 2 s or more (`max_ms`, `total_ms`, `count`) | yes |
+| `page.unresponsive` / `page.responsive` | a showing page sent nothing for 45 s / answered again (`silent_s`) | yes, with every thread's stack |
+| `web.request` / `web.request.failed` | every `/api` request but the polled ones (`/api/state`, `/api/update`, `/api/image`, `/api/health`, `/api/diagnostics`), which appear only when they fail (status ≥ 400) or take 2 s or more | slow (not the file dialog) and failed ones |
+| `web.job.started` … `succeeded`/`failed` | a job's span (`action`, `queue_ms`) | started and ended lines |
+| `web.job.stop_requested` / `web.job.stop_overdue` | Stop pressed / the job still runs 30 s later | yes; overdue with every thread's stack |
+| `web.job.quiet` | a job with no progress (no event, log line or cost) for 5 min, then every 15 min | yes, with every thread's stack |
+| `window.server.started`, `window.opened`, `window.closing`, `window.closed`, `window.shutdown.*` | the window's life; `window.shutdown` says whether a running job stopped within its 60 s wait | open, closing, and a job that would not stop (with stacks) |
+| `window.watch.resumed` | a tick came 30 s late (sleep, suspend): the page's and the job's clocks restart instead of reporting a stall | no |
+| `app.previous_session.unclean` | at start, for a session that never closed: its pid, version, crash log and `last_events` | `The previous session (pid …) ended without closing …` |
+| `diagnostics.bundle.saved` / `.failed` | About → Save a diagnostic bundle | saved |
+
+To read an incident: find the last `page.*` and `web.*` events before it. A page that froze shows `page.unresponsive` with the Python threads at that moment (a server thread stuck in a call means the app stopped answering the page; idle threads mean the page itself froze, and the `page.slow` that follows says for how long). A window that went blank shows `page.render_failed` with the component stack. A session that ended without `Spec Surgeon closed` is described by the next start; its own journal (`app-events-<pid>.jsonl`, kept for the five newest ended sessions) has every event to its last.
 
 ## Read a combined timeline without extra packages
 

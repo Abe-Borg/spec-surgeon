@@ -79,7 +79,7 @@ def job_log(tmp_path):
     def ended():
         for h in logger.handlers:
             h.flush()
-        return [line for line in path.read_text(encoding="utf-8").splitlines() if " Job " in line]
+        return [line for line in path.read_text(encoding="utf-8").splitlines() if " Job " in line and " ended: " in line]
     try:
         yield ended
     finally:

@@ -9,6 +9,7 @@ import { canReview, heldSources, reviewKey, setMark, type Mark, type Reviews } f
 import { INITIAL_STATE, reduce } from "./lib/view";
 import { ACCEPT } from "./lib/workbench";
 import { checkSettled, updatePill, type HelpTopic } from "./lib/help";
+import { reportPage } from "./lib/diagnostics";
 import Header from "./components/Header";
 import Chat from "./components/Chat";
 import Workbench from "./components/Workbench";
@@ -84,7 +85,7 @@ export default function App() {
   // --- Jobs ----------------------------------------------------------------
 
   const runJob = useCallback(
-    async (stream: AsyncGenerator<JobEvent>, userText: string | null) => {
+    async (stream: AsyncGenerator<JobEvent>, userText: string | null, action: string) => {
       if (busyRef.current) return;
       busyRef.current = true;
       dispatch({ type: "job_started", userText });
@@ -98,8 +99,16 @@ export default function App() {
           // composer takes it back so nothing the user typed is lost.
           if (event.type === "error" && typeof event.resend === "string" && event.resend) resend = event.resend;
         }
-        if (!terminal) dispatch({ type: "job_ended" });
+        if (!terminal) {
+          // The stream closed without its done/error: the app's log should know the page lost the job.
+          reportPage({ kind: "stream", action, reason: "cut" }, true);
+          dispatch({ type: "job_ended" });
+        }
       } catch (failure) {
+        // A refusal (busy, no token) is an answer; anything else lost the job's stream on the way.
+        if (!(failure instanceof api.ApiError)) {
+          reportPage({ kind: "stream", action, reason: "failed", message: failureText(failure) }, true);
+        }
         dispatch({ type: "job_failed", message: failureText(failure) });
       } finally {
         busyRef.current = false;
@@ -112,9 +121,9 @@ export default function App() {
     [refresh],
   );
 
-  const onSend = useCallback((text: string, chip = false) => void runJob(api.send(text, chip), text), [runJob]);
+  const onSend = useCallback((text: string, chip = false) => void runJob(api.send(text, chip), text, "send"), [runJob]);
   const onChoose = useCallback(
-    (choice: Choice) => void runJob(api.choose(choice.id), choice.label),
+    (choice: Choice) => void runJob(api.choose(choice.id), choice.label, "choose"),
     [runJob],
   );
   const onStop = useCallback(() => {
@@ -137,7 +146,7 @@ export default function App() {
   const held = useMemo(() => (reviewing ? heldSources(reviews, view.samples) : []), [reviewing, reviews, view.samples]);
 
   const onAct = useCallback(
-    (token: string) => void runJob(api.primary(token, view.action.kind === "approve" ? held : []), null),
+    (token: string) => void runJob(api.primary(token, view.action.kind === "approve" ? held : []), null, "primary"),
     [runJob, view.action.kind, held],
   );
 
@@ -282,6 +291,16 @@ export default function App() {
 
   const onOpenLogs = useCallback(() => {
     api.openLogs().catch((failure: unknown) => setNotice(failureText(failure)));
+  }, []);
+
+  // About's Save a diagnostic bundle: the answer stays on About until the window closes.
+  const [bundleNote, setBundleNote] = useState("");
+  const onSaveBundle = useCallback(() => {
+    setBundleNote("Saving the diagnostic bundle…");
+    api
+      .saveDiagnosticBundle()
+      .then((saved) => setBundleNote(`Saved ${saved.name} (${saved.files} files); its folder is open.`))
+      .catch((failure: unknown) => setBundleNote(failureText(failure)));
   }, []);
 
   /** Follow the update block every 2 s for up to `tries` polls, or until
@@ -447,6 +466,8 @@ export default function App() {
         onDownloadUpdate={onDownloadUpdate}
         onInstallUpdate={onInstallUpdate}
         onOpenLogs={onOpenLogs}
+        onSaveBundle={onSaveBundle}
+        bundleNote={bundleNote}
       />
       {zoom && <ZoomModal src={zoom.src} title={zoom.title} onClose={() => setZoom(null)} />}
     </div>

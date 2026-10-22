@@ -81,6 +81,13 @@ def on_closing(state: WindowState) -> bool:
     """The window's X while work runs: the running AI step is cut off, as Stop now does (its progress is saved), a
     download is cancelled, and the close goes ahead. True: pywebview closes the window."""
     try:
+        job = state.job_status()
+        diag.event("window.closing", job=job["action"] if job else None)
+        diag.app_log().info("Window closing" + (f" while job {job['action']} runs: stopping it" if job else
+                                                " (no job running)"))
+    except Exception:  # noqa: BLE001 — closing is never refused over bookkeeping
+        pass
+    try:
         if state.busy:
             state.stop()
         if state.updates is not None and state.updates.state().get("state") == "downloading":
@@ -92,16 +99,28 @@ def on_closing(state: WindowState) -> bool:
 
 def shutdown(state: WindowState, server, *, wait: float = 60.0) -> None:
     """Nothing outlives the window: a job still running is told to stop and waited for, so its last writes (the
-    settings, the journal) land before the process ends and never after a later launch's; then the server stops."""
+    settings, the journal) land before the process ends and never after a later launch's; then the server stops.
+    A job that does not stop in ``wait`` seconds leaves every thread's stack in the app log before the process waits
+    on it (``gui.main``), so a window that closed but a process that stayed shows why."""
+    state.watch.stop()
     thread = state.thread
-    if thread is not None and thread.is_alive():
-        state.stop()
-        thread.join(wait)
-    try:
-        state.save_settings()
-    except Exception:  # noqa: BLE001
-        pass
-    server.should_exit = True
+    with diag.span("window.shutdown", job_running=bool(thread is not None and thread.is_alive())) as outcome:
+        if thread is not None and thread.is_alive():
+            job = state.job_status()
+            state.stop()
+            t0 = time.monotonic()
+            thread.join(wait)
+            outcome["waited_s"] = round(time.monotonic() - t0, 1)
+            outcome["job_stopped"] = not thread.is_alive()
+            if thread.is_alive():
+                diag.app_log().warning(f"Job {job['action'] if job else '?'} did not stop within {wait:.0f} s of the "
+                                       "window closing; the process stays until it does. Where every thread of the "
+                                       "app is:\n" + diag.thread_stacks())
+        try:
+            state.save_settings()
+        except Exception:  # noqa: BLE001
+            pass
+        server.should_exit = True
 
 
 def _stop_on_signals() -> None:
@@ -139,11 +158,23 @@ def native_backend_problem() -> Optional[str]:
     return None
 
 
+def _renderer() -> str:
+    """pywebview's renderer once its backend is chosen (``edgechromium`` is WebView2 on Windows); the page's own
+    ``page.loaded`` report names the WebView2 version through its user agent."""
+    try:
+        from webview.guilib import initialize     # what ``native_backend_problem`` already ran; ``start`` runs it again
+        return str(getattr(initialize(), "renderer", None) or "unknown")
+    except Exception:  # noqa: BLE001 — a name for the log, never a reason to fail
+        return "unknown"
+
+
 def run_window(state: WindowState, *, dev: bool = False, page_url: Optional[str] = None) -> int:
     """Serve, open the page, block until the window closes. ``page_url`` (dev): the Vite dev server instead of the
     built page."""
     port = free_port()
     server = serve(state, port, dev=dev)
+    diag.event("window.server.started", port=port)
+    state.watch.start()
     base = f"http://127.0.0.1:{port}"
     theme = state.settings.theme
     url = (page_url or base + "/") + f"?token={state.token}&api={base}&theme={theme}"
@@ -161,9 +192,14 @@ def run_window(state: WindowState, *, dev: bool = False, page_url: Optional[str]
                                                  min_size=MIN_SIZE, text_select=True,
                                                  background_color=BACKGROUNDS.get(theme, BACKGROUNDS["clay"]))
             shell.window.events.closing += lambda: on_closing(state)
+            renderer = _renderer()
+            diag.event("window.opened", shell="pywebview", renderer=str(renderer), port=port, theme=theme)
+            diag.app_log().info(f"Window opened (pywebview, renderer {renderer}) on 127.0.0.1:{port}")
             webview.start(debug=dev)
+            diag.event("window.closed")
         else:
             diag.app_log().warning(f"{problem}; opening the page in the default browser")
+            diag.event("window.opened", shell="browser", reason=problem, port=port, theme=theme)
             _stop_on_signals()
             webbrowser.open(url)
             print(f"Spec Surgeon is open in your browser at {base}/ — press Ctrl+C here to close it.", file=sys.stderr)

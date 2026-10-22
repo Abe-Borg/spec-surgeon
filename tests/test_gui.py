@@ -448,11 +448,16 @@ def test_every_start_is_clean_and_the_last_conversation_is_archived(monkeypatch,
     assert len(archived) == 1 and json.loads(archived[0].read_text(encoding="utf-8")) == saved
     task = seen["task"]
     assert task.attachments == [] and task.decisions == [] and task.stage == "empty" and task.results == {}
+    log = (logs_dir() / "spec-surgeon.log").read_text(encoding="utf-8")
+    assert " started — " in log and "; event journal app-events-" in log
     if crashed:
         assert len(seen["messages"]) == 1 and seen["messages"][0]["role"] == "app"
         assert "ended unexpectedly" in seen["messages"][0]["text"] and str(archived[0]) in seen["messages"][0]["text"]
+        # the app log says it too, for whoever reads the log rather than the window
+        assert " WARNING " in log and "The previous session (pid ?, Spec Surgeon 1.7.0, started ?) ended without " \
+                                      "closing. Its event journal has nothing to say" in log
     else:
-        assert seen["messages"] == []
+        assert seen["messages"] == [] and "The previous session" not in log
 
 
 def test_a_conversation_that_cannot_be_archived_is_never_written_over(monkeypatch):
