@@ -40,6 +40,12 @@ field goes whole; tracked it is refused (``field-result`` — a simple field can
 selected run that is not reachable through containers alone (``textedit.CONTAINERS``) is refused (``structure``); one in a
 text box, or holding one, ``textbox``.
 
+**Range marks** (untracked; ``removal.kept_marks``): a bookmark, permission, move or custom-XML range mark in a deleted
+paragraph or a removed simple field, some mark of whose pair lies in what stays, stays — in the place of the paragraph
+or field it was in (the plan records it as ``marks``: per paragraph, its indices among the paragraph's range marks), so
+a bookmark keeps both ends and a REF field to it still finds it; flagged. A pair wholly removed goes. Tracked, nothing
+moves: a deleted paragraph keeps its marks until the deletion is accepted.
+
 Both ops list every removed piece as a flag (part, paragraph, the words) — the preview shows them.
 """
 from __future__ import annotations
@@ -54,8 +60,8 @@ from .base import JobException, Op, PlanFragment
 from .deletion import last_section_keep
 from .fields import fields_of
 from .markup import Look, color_in, color_names, valid_color
-from .removal import (deletable, delete_paragraph, has_content, live, plan_paragraph_deletion, plan_run_removal,
-                      remove_runs)
+from .removal import (deletable, delete_paragraph, has_content, kept_marks, live, plan_paragraph_deletion,
+                      plan_run_removal, range_marks, remove_in_place, remove_runs)
 from .replace_table import COMMON_PARAMS, default_author, resolve_scope, tracked_of
 from .selectors import SCOPE_KINDS, StyleSheet, scope_parts
 from .textedit import CONTAINERS, RunText
@@ -469,6 +475,7 @@ class _Removing(Op):
         spans = FieldSpans(root)
         out: Dict[str, Any] = {"delete": sorted(delete), "runs": {}, "simple": {}}
         untracked_deletion = False
+        removed: List[Any] = []                   # untracked: the paragraphs and simple fields that leave the part
         for bi in sorted(set(delete) | set(runs_of)):
             p = pars[bi]
             where = f"{part} paragraph {bi}"
@@ -478,6 +485,7 @@ class _Removing(Op):
                 frag.flags.append(f"{where}: removed {self.piece_par} paragraph «{text}»" if text else
                                   f"{where}: removed an empty {self.piece_par} paragraph")
                 untracked_deletion = untracked_deletion or not tracked
+                removed.append(p)
                 continue
             runs, simples = apply_field_rules(p, runs_of[bi], spans, tracked, where)
             if not runs and not simples:
@@ -489,7 +497,20 @@ class _Removing(Op):
                 out["runs"][str(bi)] = [own.index(r) for r in runs]
             if simples:
                 out["simple"][str(bi)] = [sims.index(s) for s in simples]
+                removed += simples
             frag.flags.append(f"{where}: removed {self.piece} " + ", ".join(f"«{t}»" for t in pieces(p, gone)))
+        if not tracked:
+            # the bookmarks and range marks running out of what goes into what stays: each stays in its place
+            for top, marks in kept_marks(root, removed).items():
+                bi = index[id(top if top.tag == W + "p" else nearest_p(top))]
+                ranges = range_marks(pars[bi])
+                out.setdefault("marks", {}).setdefault(str(bi), []).extend(ranges.index(m) for m in marks)
+                thing = "paragraph" if top.tag == W + "p" else "field"
+                frag.flags.append(f"{part} paragraph {bi}: {len(marks)} bookmark or range mark(s) in the removed "
+                                  f"{thing} run on into text that stays; each stays where the {thing} was, so its "
+                                  f"bookmark keeps both ends")
+            for v in out.get("marks", {}).values():
+                v.sort()
         if untracked_deletion:
             frag.touches.append((part, "*", "text"))
         return out
@@ -515,11 +536,18 @@ class _Removing(Op):
                 sims = own_simple_fields(pars[int(bi)])
                 simples += [sims[k] for k in ks]
             doomed = [pars[bi] for bi in d["delete"]]
+            # the planned range marks that stay, by the paragraph or simple field whose place they take
+            held: Dict[Any, List[Any]] = {}
+            for bi, ks in d.get("marks", {}).items():
+                p, ranges = pars[int(bi)], range_marks(pars[int(bi)])
+                for k in ks:
+                    top = p if int(bi) in d["delete"] else next(a for a in ranges[k].iterancestors() if a in simples)
+                    held.setdefault(top, []).append(ranges[k])
             remove_runs(runs, tracked, stamp, next_id)
             for s in simples:
-                s.getparent().remove(s)
+                remove_in_place(s, held.get(s, ()))
             for p in doomed:
-                delete_paragraph(p, tracked, stamp, next_id)
+                delete_paragraph(p, tracked, stamp, next_id, held.get(p, ()))
             pkg.write_xml(part, root)
 
 

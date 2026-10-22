@@ -15,6 +15,7 @@ from fx_table_structure import build_structure
 from spec_surgeon.ops import JobException, get_op, merge_fragments
 from spec_surgeon.ops import revisions as rev_module
 from spec_surgeon.package import DocxPackage, W, serialize_xml
+from spec_surgeon.report import FAILURE_EXPLANATIONS
 from spec_surgeon.verify import run_suite
 from spec_surgeon.verify.props import first_difference
 
@@ -231,3 +232,88 @@ def test_a_shared_wrong_row_rule_is_caught(src, monkeypatch):
         res, part, "reject" if action == "accept" else "accept"))
     plan, out, rec = resolve(tracked, "accept", authors=[AUTHOR])
     assert "V10" in failed(rec) and "resolved_changes" in v10(rec)
+
+
+# ---- a vertical merge (delete_table_rows' rule, on both sides) -------------------------------------------------------
+# The Zone schedule (table 1): "Notes" merges down from Z1 ("Shared", w:vMerge restart) through Z2 and Z3 (continue).
+
+ZONE_ROWS = {"Z1": 1, "Z2": 2, "Z3": 3, "Totals": 4}
+
+
+def _zone_rows(root):
+    return rows(list(root.iter(W + "tbl"))[1])
+
+
+def _tracked_zone_rows(kind: str, *names: str):
+    """Jack's tracked insertion (``ins``) or deletion (``del``) of the named rows of the Zone schedule."""
+    def plant(root):
+        for k, name in enumerate(names):
+            tr = _zone_rows(root)[ZONE_ROWS[name]]
+            trpr = tr.find(W + "trPr")
+            if trpr is None:
+                trpr = etree.Element(W + "trPr")
+                tr.insert(0, trpr)
+            trpr.append(frag_xml(f'<w:{kind} w:id="{950 + k}" w:author="{JACK[0]}" w:date="{JACK[1]}"/>'))
+    return plant
+
+
+def _zone_texts(data: bytes):
+    return [" | ".join("".join(t.text or "" for t in tc.iter(W + "t")) for tc in tr.findall(W + "tc"))
+            for tr in _zone_rows(body(data))]
+
+
+@pytest.mark.parametrize("kind,action,names", [
+    ("del", "accept", ("Z1",)), ("ins", "reject", ("Z1",)), ("del", "accept", ("Z1", "Z2")),
+])
+def test_a_tracked_row_that_starts_a_merge_is_left_for_word(src, kind, action, names):
+    """Taking the merge's first row (its text, "Shared") while a row it goes on in stays would leave the merged cell
+    empty: refused as delete_table_rows refuses it."""
+    with pytest.raises(JobException) as e:
+        resolve(mutate(src, _tracked_zone_rows(kind, *names)), action)
+    assert e.value.code == "vertical-merge", e.value.reason
+    assert "row 1" in e.value.reason
+    assert "vertical-merge" in FAILURE_EXPLANATIONS and "tracked" in FAILURE_EXPLANATIONS["vertical-merge"][1]
+
+
+@pytest.mark.parametrize("kind,action,names,left", [
+    ("del", "accept", ("Z2",), ["Zone | Area | Notes", "Z1 | North | Shared", "Z3 | East | ", "Totals | 3"]),
+    ("del", "accept", ("Z3",), ["Zone | Area | Notes", "Z1 | North | Shared", "Z2 | South | ", "Totals | 3"]),
+    ("ins", "reject", ("Z2", "Z3"), ["Zone | Area | Notes", "Z1 | North | Shared", "Totals | 3"]),
+    ("del", "accept", ("Z1", "Z2", "Z3"), ["Zone | Area | Notes", "Totals | 3"]),      # the merged block goes whole
+    ("del", "accept", ("Totals",), ["Zone | Area | Notes", "Z1 | North | Shared", "Z2 | South | ", "Z3 | East | "]),
+    ("del", "reject", ("Z1",), None), ("ins", "accept", ("Z1",), None),                 # only the marker goes
+])
+def test_rows_that_keep_a_merge_whole_resolve(src, kind, action, names, left):
+    """Taking later rows of a merge only shortens it; a merge going whole, a row outside every merge and the marker
+    side resolve as before."""
+    data = mutate(src, _tracked_zone_rows(kind, *names))
+    plan, out, rec = resolve(data, action)
+    assert rec.passed, rec.to_markdown()
+    assert _zone_texts(out) == (left if left is not None else _zone_texts(src))
+    assert all(tr.find(f"{W}trPr/{W}{kind}") is None for tr in _zone_rows(body(out)))
+
+
+def test_an_output_that_cuts_a_merge_is_caught(src):
+    """A wrong OUTPUT: accepting Jack's deletion of Z2 is planned and verified; an output that also lost Z1 — the merged
+    cell's text gone, Z3's w:vMerge continuing nothing — fails V10."""
+    data = mutate(src, _tracked_zone_rows("del", "Z2"))
+    plan, out, rec = resolve(data, "accept")
+    assert rec.passed, rec.to_markdown()
+
+    def cut(root):
+        z1 = _zone_rows(root)[1]
+        z1.getparent().remove(z1)
+    bad = mutate(out, cut)
+    assert _zone_texts(bad) == ["Zone | Area | Notes", "Z3 | East | ", "Totals | 3"]
+    assert _zone_rows(body(bad))[1].find(f".//{W}vMerge") is not None
+    rec = run_suite(data, bad, plan.to_dict(), "src.docx", "out.docx")
+    assert "V10" in failed(rec) and "resolved_changes" in v10(rec)
+
+
+def test_a_shared_wrong_merge_rule_is_caught(src, monkeypatch):
+    """A wrong IMPLEMENTATION shared by plan and apply: without the merge rule, accepting Jack's deletion of Z1 takes
+    the merged cell's text away (what the op did before); the verifier's own rule says the op must refuse."""
+    monkeypatch.setattr(rev_module, "merge_crossings", lambda tbl, gone: [])
+    plan, out, rec = resolve(mutate(src, _tracked_zone_rows("del", "Z1")), "accept")
+    assert _zone_texts(out) == ["Zone | Area | Notes", "Z2 | South | ", "Z3 | East | ", "Totals | 3"]
+    assert "V10" in failed(rec) and "the op must refuse" in v10(rec) and "vertically merged" in v10(rec)

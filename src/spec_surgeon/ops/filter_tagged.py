@@ -12,6 +12,8 @@ its systems is NOT listed ("[WET/DRY]" survives deleting DRY). A paragraph that 
   the paragraph mark gets a ``w:del``; bookmarks and proofing marks stay where they are (nothing moves); a paragraph
   holding pending revisions or other content (hyperlinks, content controls, comment anchors) is refused;
 * untracked — the paragraph is removed (its pending revisions with it, flagged); a table cell's last paragraph is refused.
+  A bookmark, permission, move or custom-XML range mark in it, some mark of whose pair lies in a paragraph that stays,
+  stays where the paragraph was (``removal.kept_marks``; flagged) — a pair wholly in deleted paragraphs goes.
 
 Both refuse a paragraph that carries a section break, holds a field, or holds a text box (``section-break``,
 ``field-result``, ``textbox``). The verifier derives the tags and decisions again (verify/textops.py, kind
@@ -26,7 +28,7 @@ from ..ooxml import RevisionStamp, block_full_text, count_revisions, file_uses_d
 from ..package import DocxPackage, W
 from . import prose, register
 from .base import BlockDiff, JobException, Op, PlanFragment
-from .removal import deletable, delete_paragraph  # noqa: F401 — deletable is re-exported
+from .removal import deletable, delete_paragraph, kept_marks, range_marks  # noqa: F401 — deletable is re-exported
 from .replace_table import COMMON_PARAMS, default_author, resolve_scope, tracked_of
 from .selectors import SCOPE_KINDS, scope_parts
 from .slots import field_runs
@@ -152,6 +154,7 @@ class FilterTaggedParagraphs(Op):
         frag.untracked_diffs_expected = not tracked
         edits: Dict[str, Dict[str, List[List[Any]]]] = {}
         gone: Dict[str, List[int]] = {}
+        marks: Dict[str, Dict[str, List[int]]] = {}      # untracked: part → {deleted paragraph: its kept range marks}
         seen: Dict[str, List[int]] = {}                  # system → [kept, deleted]
         for part in parts:
             root = pkg.xml(part)
@@ -205,6 +208,14 @@ class FilterTaggedParagraphs(Op):
                             raise JobException(f"{part}: deleting every paragraph of a table cell would break the "
                                                f"table", "table-cell", {"part": part})
                     frag.touches.append((part, "*", "text"))
+                    # the bookmarks and range marks running out of a deleted paragraph into what stays stay in its place
+                    at = {id(pars[i]): i for i in removed}
+                    for p, held in kept_marks(root, [pars[i] for i in removed]).items():
+                        ranges = range_marks(p)
+                        marks.setdefault(part, {})[str(at[id(p)])] = sorted(ranges.index(m) for m in held)
+                        frag.flags.append(f"{part} paragraph {at[id(p)]}: {len(held)} bookmark or range mark(s) in the "
+                                          f"deleted paragraph run on into text that stays; each stays where the "
+                                          f"paragraph was, so its bookmark keeps both ends")
                 if part not in frag.intended_parts:
                     frag.intended_parts.append(part)
         n_del = sum(len(v) for v in gone.values())
@@ -214,7 +225,8 @@ class FilterTaggedParagraphs(Op):
             "tag_separator": params.get("tag_separator", DEFAULT_SEPARATOR), "keep": params.get("keep") or [],
             "delete": params.get("delete") or [], "strip_tags": strip, "tracked": tracked, "author": author,
             "expected_deleted": {p: v for p, v in gone.items()},
-            "expected_stripped": {p: sorted(int(b) for b in v) for p, v in edits.items()}})
+            "expected_stripped": {p: sorted(int(b) for b in v) for p, v in edits.items()},
+            "expected_marks": marks})
         if not seen:
             if params.get("allow_missing"):
                 frag.notes.append("filter_tagged_paragraphs: no tagged paragraph; no change.")
@@ -225,7 +237,7 @@ class FilterTaggedParagraphs(Op):
         frag.rev_ids_needed = sum(v for k, v in frag.rev_delta.items() if v > 0)
         frag.geometry_reference = "none"
         frag.geometry_reason = "deleting paragraphs reflows the content after them"
-        frag.transform_data = {"edits": edits, "deleted": gone, "tracked": tracked, "author": author,
+        frag.transform_data = {"edits": edits, "deleted": gone, "marks": marks, "tracked": tracked, "author": author,
                                "use_date_utc": file_uses_date_utc(pkg), "first_rev_id": frag.rev_id_base,
                                "date_convention": params.get("date_convention", "word-local-z")}
         frag.notes.append(f"filter_tagged_paragraphs ({'tracked' if tracked else 'untracked'}): {n_del} paragraph(s) "
@@ -246,6 +258,8 @@ class FilterTaggedParagraphs(Op):
             if part in td.get("edits", {}):
                 apply_part_edits(root, td["edits"][part], td["tracked"], stamp, next_id)
             pars = paragraphs(root)
+            held = td.get("marks", {}).get(part, {})
             for bi in sorted(td.get("deleted", {}).get(part, []), reverse=True):
-                delete_paragraph(pars[bi], td["tracked"], stamp, next_id)
+                ranges = range_marks(pars[bi])
+                delete_paragraph(pars[bi], td["tracked"], stamp, next_id, [ranges[k] for k in held.get(str(bi), [])])
             pkg.write_xml(part, root)

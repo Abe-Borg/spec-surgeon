@@ -22,7 +22,9 @@ revision.
 **Resolution**, in this order: (0) rows (built-in batch 6, docs/BUILTIN_OPS_BATCH6_DESIGN.md §6) — accepting a row's
 deletion or rejecting its insertion takes the row (a ``w:tr`` directly in its ``w:tbl``; one in a content control is
 refused, ``table-structure``) with everything in it, whatever is pending there; accepting an insertion or rejecting a
-deletion takes only the marker (an emptied ``w:trPr`` goes); a table every own row of which goes goes whole, unless that
+deletion takes only the marker (an emptied ``w:trPr`` goes); the rows that go may not take the first row of a vertical
+merge and keep another of its rows (``vertical-merge``, ``table_rows.merge_crossings`` — delete_table_rows' rule: the
+merged cell's content is in its first row); a table every own row of which goes goes whole, unless that
 would leave its container without a closing paragraph or set two tables side by side (``table_edit``'s rule,
 ``table-structure``); what a row that goes holds must take no anchor away, as removed content (below); (1) content —
 accept unwraps ins/moveTo and removes del/moveFrom with their content,
@@ -56,6 +58,7 @@ from .fields import fields_of
 from .replace_table import resolve_scope
 from .selectors import SCOPE_KINDS, scope_parts
 from .table_edit import table_removal_problem
+from .table_rows import merge_crossings
 from .table_select import own_rows
 
 CONTENT_TAGS = tuple(W + t for t in ("ins", "del", "moveFrom", "moveTo"))
@@ -355,6 +358,19 @@ def _rows(res: Resolution, part: str, action: str) -> None:
             raise JobException(f"{part}: a tracked row to {action} sits in a content control or custom XML — resolve "
                                f"it in Word", "table-structure", {"part": part})
         by_table.setdefault(tr.getparent(), []).append(tr)
+    for tbl, trs in by_table.items():
+        # delete_table_rows' rule: a merged-down cell keeps its content in its first row, so taking that row while a row
+        # the merge goes on in stays would leave the merged cell without its text
+        index = {id(tr): r for r, tr in enumerate(own_rows(tbl))}
+        rs = sorted(index[id(tr)] for tr in trs)
+        cut = merge_crossings(tbl, rs)
+        if cut:
+            k = next(i for i, t in enumerate(tbl.getroottree().getroot().iter(W + "tbl")) if t is tbl)
+            raise JobException(f"{part} table {k}: {action}ing the tracked row(s) {rs} would take the first row of "
+                               f"the vertically merged cell that starts in row {cut[0]} (its content is in that row) "
+                               f"while the merge goes on in a row that stays — resolve it in Word, or unmerge the "
+                               f"cells first", "vertical-merge",
+                               {"part": part, "table": f"{part} table {k}", "rows": rs, "merge_start": cut[0]})
     whole = [tbl for tbl, trs in by_table.items() if len(trs) == len(own_rows(tbl))]
     for container in {t.getparent() for t in whole}:
         why = table_removal_problem(container, {t for t in whole if t.getparent() is container})
