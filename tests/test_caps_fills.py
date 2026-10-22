@@ -85,7 +85,7 @@ def mutate(docx: bytes, fn) -> bytes:
     return buf.getvalue()
 
 
-def _mark_title_runs(element: str):
+def _mark_title_runs(element: str, **attrs):
     def fn(_, root):
         for r in root.iter(W + "r"):
             if "DOOR HARDWARE" in "".join(t.text or "" for t in r.findall(W + "t")):
@@ -94,7 +94,9 @@ def _mark_title_runs(element: str):
                     rpr = etree.SubElement(r, W + "rPr")
                     r.remove(rpr)
                     r.insert(0, rpr)
-                etree.SubElement(rpr, W + element)
+                el = etree.SubElement(rpr, W + element)
+                for k, v in attrs.items():
+                    el.set(W + k, v)
     return fn
 
 
@@ -162,6 +164,13 @@ def test_refusals(template, tmp_path):
     with pytest.raises(JobException) as e:
         get_op(OP).plan(DocxPackage(src), {"sections": "all"}, params(small, caps_fills=["SECTION_TITLE"]))
     assert e.value.code == "bad-params" and "small capitals" in e.value.reason
+    # as set_properties: capitals never touch a symbol-font run (another glyph) (Codex on #81)
+    symbol = tmp_path / "symbol.docx"
+    symbol.write_bytes(mutate(build_reference_spec(), _mark_title_runs("rFonts", ascii="Wingdings", hAnsi="Wingdings")))
+    with pytest.raises(JobException) as e:
+        get_op(OP).plan(DocxPackage(src), {"sections": "all"}, params(symbol, caps_fills=["SECTION_TITLE"]))
+    assert e.value.code == "bad-params" and "symbol font" in e.value.reason
+    get_op(OP).plan(DocxPackage(src), {"sections": "all"}, params(symbol))      # without caps_fills it plans
 
 
 def test_planted_defects_are_caught(template, monkeypatch):

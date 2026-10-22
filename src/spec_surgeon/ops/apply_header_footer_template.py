@@ -45,7 +45,7 @@ from .base import BlockDiff, JobException, Op, PlanFragment
 from .effective import AmbiguousToggle, Resolver, rescale_tabs, text_width, theme_fonts, theme_part
 from .hf_common import (FOOTER_CT, HEADER_CT, KINDS, TYPES, apply_removal, check_part_relationships, effective_refs,
                         plan_removal, refs)
-from .selectors import StyleSheet
+from .selectors import DEFAULT_PRESERVE_FONTS, StyleSheet, is_symbol_rpr
 from .template_styles import reconcile_styles, remap_references, reference_parts
 from .slots import (apply_slot, display_segments, expected_block_text, extract_fill, field_runs, fill_reads, find_slots, mark_slots, nearest_p,
                     paragraph_runs, reference_values, rule_uses_literal)
@@ -119,12 +119,16 @@ def _slot_appearance(p, slots, slot, resolver):
     return {"color": list(colour), "elements": [etree.tostring(e).decode() for e in rpr if e.tag in (W + "highlight", W + "shd")]}
 
 
-def _shown_case(p, slot, resolver) -> Optional[str]:
-    """How the template shows a slot's letters through formatting — "capitals" or "small capitals" when its run (the
-    one a fill goes into, keeping its properties) has caps or smallCaps in effect, else None."""
+def _slot_run(p, slot):
+    """The run a slot starts in: the one its fill goes into, keeping its properties."""
     _, segments = display_segments(p)
-    run = next(r for _, r, a, b in segments if a <= slot.start < b)
-    eff = resolver.run(run.find(W + "rPr"), p)
+    return next(r for _, r, a, b in segments if a <= slot.start < b)
+
+
+def _shown_case(p, slot, resolver) -> Optional[str]:
+    """How the template shows a slot's letters through formatting — "capitals" or "small capitals" when its run has
+    caps or smallCaps in effect, else None."""
+    eff = resolver.run(_slot_run(p, slot).find(W + "rPr"), p)
     return "capitals" if eff.get("caps") else ("small capitals" if eff.get("smallCaps") else None)
 
 
@@ -648,6 +652,14 @@ class ApplyHeaderFooterTemplate(Op):
                                      **({"caps": True} if s.name in caps_fills else {})}
                                     for s in sl] for bi, sl in slots_by_copy[k].items()}
             for bi, sl in c["slots"].items():
+                # as set_properties: caps never touch a symbol-font run (Word case-maps the code: another glyph)
+                symbol = sorted({s.name for s in slots_by_copy[k][int(bi)] if s.name in caps_fills and is_symbol_rpr(
+                    _slot_run(paragraphs(troot)[int(bi)], s).find(W + "rPr"), paragraphs(troot)[int(bi)], tsheet,
+                    DEFAULT_PRESERVE_FONTS)})
+                if symbol:
+                    raise JobException(f"caps_fills {symbol}: the template's slot is in a symbol font ({tp}); "
+                                       f"capitals would change its glyphs", "bad-params",
+                                       {"caps_fills": symbol, "part": tp})
                 small = sorted({e["name"] for e in sl if e.get("caps") and e["shown"] == "small capitals"})
                 if small:
                     raise JobException(f"caps_fills {small}: the template shows {'this slot' if len(small) == 1 else 'these slots'} "

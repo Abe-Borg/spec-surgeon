@@ -545,7 +545,7 @@ COMMON_ASSUMPTIONS: Dict[str, List[str]] = {
         "a template spec's own number or title written another way in its headers/footers, or shown by a field, is "
         "refused rather than copied into every spec",
         "caps_fills shows the named fills in capitals by formatting (w:caps on the filled text); each file's letters "
-        "stay as it types them, and a slot the template shows in small capitals is refused",
+        "stay as it types them; a slot the template shows in small capitals, or sets in a symbol font, is refused",
     ],
     # ---- built-in batch 6 (docs/BUILTIN_OPS_BATCH6_DESIGN.md §2) ----
     "remove_footnotes": [
