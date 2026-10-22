@@ -989,7 +989,7 @@ class CallBudget:
         if self.exhausted_reason:
             raise BudgetExceeded(self.exhausted_reason)
         if self.calls >= self.max_calls:
-            self._stop(f"recovery call limit reached ({self.max_calls} calls)")
+            self._stop(f"call limit reached ({self.max_calls} calls)")
         token_reservation = estimated_input + max_output
         if self.max_total_tokens is not None and self.accounted_tokens + token_reservation > self.max_total_tokens:
             self._stop(f"recovery token budget cannot cover the next request: {token_reservation:,} estimated tokens "

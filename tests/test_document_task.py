@@ -860,3 +860,17 @@ def test_a_reply_claude_declines_leaves_the_window_asking_in_plain_words(tmp_pat
     task.perform("send", text="FIRE SUPPRESSION")
     sent = json.dumps(fake.requests[-1]["messages"], default=str)
     assert task.stage == "question" and "FIRE SUPPRESSION" in sent and "what were you thinking" not in sent
+
+
+def test_two_attached_documents_of_one_name_are_named_with_their_folders(tmp_path):
+    """The 1.8.0 live run attached a template's folder copy of 21 13 13 as a 13th document, beside the batch's own
+    21 13 13: nothing said so, and it was planned and edited like the others."""
+    first = document(tmp_path / "test-set-1" / "21 13 13 Wet-Pipe Sprinkler Systems.docx")
+    task = task_for(tmp_path)
+    task.attach([first, document(tmp_path / "test-set-1" / "21 12 00 Standpipes.docx")])
+    assert not any("are named" in m["text"] for m in task.messages)
+    task.attach([document(tmp_path / "template" / "21 13 13 Wet-Pipe Sprinkler Systems.docx")])
+    [said] = [m["text"] for m in task.messages if "are named" in m["text"]]
+    assert "“test-set-1”" in said and "“template”" in said and "attach it as the template" in said
+    task.attach([document(tmp_path / "other.docx")], template=True)       # the template itself is not a document
+    assert sum("are named" in m["text"] for m in task.messages) == 1

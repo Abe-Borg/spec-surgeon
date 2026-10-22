@@ -440,6 +440,8 @@ class DocumentTask:
                 if self.focus and path.suffix.lower() == ".docx":
                     self.focus["documents"].append(str(path))      # attached during the pass: it joins the pass
         self._sync()
+        if not template:
+            self._say_same_names([p for p in checked if p.suffix.lower() == ".docx"])
         if before != (self.documents(), self.template(), self.references()):
             self._invalidate()
             if self.decisions:
@@ -449,6 +451,20 @@ class DocumentTask:
                          f"are not in it; the next change is made to it as it is. To give it every change, say "
                          f"“{START_OVER}” and ask again.")
         self.save()
+
+    def _say_same_names(self, fresh: List[Path]) -> None:
+        """A document attached beside another of the same name (the 1.8.0 live run: a template's folder copy of
+        21 13 13 attached as a 13th document) is named once, with both folders, so a template attached as a document
+        is caught before it is edited like the others."""
+        attached = [a.path for a in self.attachments
+                    if not a.template and not a.reference and a.path.suffix.lower() == ".docx"]
+        for name in dict.fromkeys(p.name.lower() for p in fresh):
+            same = [p for p in attached if p.name.lower() == name]
+            if len(same) > 1:
+                folders = ", ".join(f"“{p.parent.name or p.parent}”" for p in same)
+                self.say(f"{len(same)} attached documents are named “{same[0].name}” (in {folders}); each is edited "
+                         f"as a separate document. If one of them is meant as the template, remove it and attach it "
+                         f"as the template instead.")
 
     def remove(self, path, *, template=False):
         path = Path(path)
