@@ -64,6 +64,9 @@ Rules the page relies on:
 - `questions`/`choices`/`chips`: `choices` carry approval semantics (picking one may approve exact `words`);
   `chips` are plain suggested replies the model offered and are sent as typed text. Both appear only in stage
   `question`, under the latest assistant message. Choices with `words` show the words beneath the button.
+  Each of the model's words shows once: the assistant message carries its reply without the questions, and
+  `questions` never repeats that message (a reply with nothing to pick, plain words or a failure, is in `messages`
+  only; `questions` carries it only when the chat did not say it, as a recovery turn's).
 - `plan` is present whenever a plan exists (stages `preview` and `question` with a partial result); `stages` is the
   number of ordered steps the engine composed internally, never a procedure the user performs. The page shows only
   `set_aside` (the **Left untouched** card); `groups`, `targets` and `stages` tell it a plan exists but are not
