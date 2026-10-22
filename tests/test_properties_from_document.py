@@ -96,6 +96,11 @@ def test_a_batch_gets_each_files_own_and_sets_aside_the_file_without(tmp_path):
     ({"from_document": {"title": "SECTION 21 05 53"}}, "bad-params", "{number} and/or {title}"),
     ({"from_document": {"title": "{number} {project}"}}, "bad-params", "no other"),
     ({"from_document": {"title": "{number} - {number}"}}, "bad-params", "at most once"),
+    # a brace that is no placeholder would be written as typed (Codex on #82)
+    ({"from_document": {"title": "SECTION {number} - {title:uppercase}"}}, "bad-params", "or brace"),
+    ({"from_document": {"title": "SECTION { number } - {title}"}}, "bad-params", "or brace"),
+    ({"from_document": {"title": "SECTION {number} - {title}}"}}, "bad-params", "or brace"),
+    ({"from_document": {"title": "{SECTION {number}"}}, "bad-params", "or brace"),
     ({"from_document": {"title": WORDS}, "set": {"title": "Typed"}}, "bad-params", "asked for twice"),
     ({"from_document": {"title": WORDS}, "clear": ["title"]}, "bad-params", "asked for twice"),
     ({"from_document": {"title": "\u200b{number}"}}, "bad-params", "invisible"),
@@ -105,6 +110,20 @@ def test_the_words_are_checked_before_any_file(params, code, words):
     with pytest.raises(JobException) as e:
         plan_spec(DocxPackage(spec_file()), spec_of(**params))
     assert e.value.code == code and words in e.value.reason
+
+
+@pytest.mark.parametrize("words", ["SECTION {number} - {title:uppercase}", "{number} {number}", "SECTION 21 05 53"])
+def test_the_verifier_refuses_words_the_op_must_refuse_on_its_own(words):
+    src = spec_file()
+    plan, out, rec = run(src, spec_of(from_document={"title": WORDS}))
+    tampered = plan.to_dict()
+    for a in tampered["property_assertions"]:
+        if "from_document" in a:
+            a["from_document"] = {"title": words}
+    rec = run_suite(src, out, tampered, "src.docx", "out.docx")
+    assert "V10" in failed(rec)
+    v10 = next(c for c in rec.checks if c.id == "V10")
+    assert "the op must refuse" in " ".join(v10.data.get("errors", [])) + v10.summary
 
 
 def test_a_built_value_that_is_no_property_value_sets_the_file_aside():

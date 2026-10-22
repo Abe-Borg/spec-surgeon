@@ -16,7 +16,8 @@ relationships and ``[Content_Types].xml`` with the source plus exactly its one r
 ``from_document`` (docs/PLAN-2026-10-22-batch-consistency.md C5): a property whose value is the user's words with
 ``{number}`` and ``{title}`` in place of the file's own section number and title. They are read here from the SOURCE
 by this module's own copy of the reference rules (``_V_REFERENCE``) through the verifier's own fill reading
-(``verify/template.fill_value``); the property must read exactly the words with them in place.
+(``verify/template.fill_value``); the property must read exactly the words with them in place. Words with neither,
+with one twice, or with any other brace: the op must refuse.
 """
 from __future__ import annotations
 
@@ -270,8 +271,13 @@ def _document_properties(ctx: Ctx, a: Dict[str, Any], errs: List[str]) -> str:
         if k not in _V_PROPERTIES:
             c.err(f"unknown property {k!r}")
             continue
+        found = _V_PLACEHOLDER.findall(text) if isinstance(text, str) else []
+        if not found or len(found) != len(set(found)) or "{" in _V_PLACEHOLDER.sub("", text) \
+                or "}" in _V_PLACEHOLDER.sub("", text):
+            c.err(f"{k}: {text!r} needs {{number}} and/or {{title}}, each once, and no other brace — the op must refuse")
+            continue
         values = {}
-        for key in sorted(set(_V_PLACEHOLDER.findall(text))):
+        for key in sorted(set(found)):
             try:
                 values[key] = fill_value(ctx.src, key, _V_REFERENCE[key])
             except (ValueError, KeyError, re.error) as e:

@@ -24,7 +24,8 @@ they run only when the user asks for them by name, and change exactly the named 
   it; CLAUDE.md rule 10's third case — the op's purpose is the property).
 * a value is the user's words: text, not blank, one line, no control or invisible character, at most 255 characters.
 * ``from_document`` (docs/PLAN-2026-10-22-batch-consistency.md C5): a core/app property whose value is the user's
-  words with ``{number}`` and/or ``{title}`` (each at most once) in place of the file's own section number and title,
+  words with ``{number}`` and/or ``{title}`` (each at most once, and no other brace: ``{title:uppercase}`` would be
+  written as typed) in place of the file's own section number and title,
   read by the reference fill rules (``slots.REFERENCE_FILLS``, as a template fill reads them) — one request fixes a
   batch's stale titles. A file whose number or title the rules do not find (or find twice, differing) is set aside
   with the rules' own code (``not-found``, ``ambiguous``); a built value that is not a property value
@@ -553,9 +554,10 @@ class SetDocumentProperties(Op):
         reads: List[Tuple[str, int]] = []
         for k, text in built.items():
             names = PLACEHOLDER.findall(text) if isinstance(text, str) else []
-            if not names or set(names) - set(PLACEHOLDERS) or len(set(names)) != len(names):
+            if not names or set(names) - set(PLACEHOLDERS) or len(set(names)) != len(names) \
+                    or re.search(r"[{}]", PLACEHOLDER.sub("", text)):
                 raise JobException(f"from_document.{k}: the words need {{number}} and/or {{title}}, each at most once, "
-                                   f"and no other {{…}}, got {text!r}", "bad-params")
+                                   f"and no other {{…}} or brace, got {text!r}", "bad-params")
             placeable_value(PLACEHOLDER.sub("x", text), f"from_document.{k}")      # the user's own words
             values = {}
             for n in names:
