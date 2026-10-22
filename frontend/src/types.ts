@@ -212,6 +212,14 @@ export interface Settings {
   theme: string;
 }
 
+/** `/api/diagnostics/bundle`: the zip saved (and shown in Explorer). */
+export interface BundleSaved {
+  path: string;
+  name: string;
+  files: number;
+  skipped: number;
+}
+
 export interface Component {
   name: string;
   license: string;

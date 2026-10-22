@@ -29,7 +29,8 @@ tab strip:
 - **How it works** — the mechanics in plain words.
 - **About** — the version, the model, the release notes, the license and the open-source components, the author's
   links, **Check for updates** (it says "Checking for updates…" until the check answers, then the answer or the update
-  with **Download and install**) and **Open diagnostic logs**. These replace the old Help menu and About box.
+  with **Download and install**), **Open diagnostic logs** and **Save a diagnostic bundle** (below, "When the window
+  has a problem"). These replace the old Help menu and About box.
 
 On the right: the estimated spending of the conversation, the connection pill (it opens Settings),
 **New conversation** and the gear. An update set aside with the banner's **Not now** stays in the top bar as a pill
@@ -287,6 +288,36 @@ program holds the file open) is left exactly as it is, and that session keeps no
 write over it. After a crash the first message says the
 previous session ended unexpectedly, where Python's fault handler wrote what it saw, and where its conversation
 was archived.
+
+## When the window has a problem
+
+The window's page runs in WebView2, where nobody sees its console, so the page reports on itself to the app
+(`frontend/src/lib/diagnostics.ts` → `POST /api/diagnostics` → `web/watch.py`) and the app writes it down in the logs
+folder (`%LOCALAPPDATA%\Spec Surgeon\logs`): `spec-surgeon.log` for a person, `app-events-<pid>.jsonl` for a query.
+
+- **What it records.** Every request the page makes (route, status, time; never a body), each job as it starts and
+  ends, Stop, the window's open and close, the page's loads and reloads (with the WebView2 version), every error in
+  the page that nothing caught, a job stream the page lost before its end, and a page blocked for 2 s or more (its
+  long tasks, sent with a heartbeat every 10 s).
+- **A frozen window.** A showing page that sends nothing for 45 s is written down as frozen, with where every thread
+  of the app was at that moment, and again when it answers. A hidden or minimised window is never called frozen, and
+  a computer waking from sleep restarts the clocks.
+- **A stuck job.** A job that shows no progress for 5 minutes (no words, no step, no log line) gets every thread's
+  stack in the log, again every 15 minutes it stays quiet; so does a job still running 30 s after Stop, and one that
+  did not stop within a minute of the window closing.
+- **A window that fails to draw.** Instead of a blank window, a screen says the window ran into a problem, with
+  **Reload the window**, **Save a diagnostic bundle** and **Open diagnostic logs**. The error and the parts of the
+  window it happened in go to the log. The app behind the page keeps running: a reload finds the conversation as it
+  was, and a job in progress carries on (the page follows it until it ends).
+- **A session that never closed.** The next start writes, in `spec-surgeon.log`, what that session was doing last
+  (the last events of its journal) and whether its crash log caught a native crash; an empty crash log means the
+  process was ended from outside (Task Manager, signing out, a power cut) or stopped answering and was closed.
+- **Save a diagnostic bundle** (About, or the error screen) writes `spec-surgeon-diagnostics-<time>.zip` under
+  `%LOCALAPPDATA%\Spec Surgeon\diagnostics` and shows it in Explorer: the logs folder, `settings.json`, the current
+  and last three conversations, and from the five newest run folders their logs, records, reports and conversation
+  records. `MANIFEST.txt` lists what is in it and what was left out. Documents, pictures, page images and the folders
+  that hold them (`outputs`, `failed`, `samples` and the like) never go in; conversations and records can quote your
+  words and your documents' text.
 
 ## Capability and verification limits
 

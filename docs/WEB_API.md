@@ -119,9 +119,29 @@ Rules the page relies on:
 | POST | `/api/update/download` | | the `update` block (starts the download; `progress` 0–100) |
 | POST | `/api/update/install` | | the `update` block: `installing` and the app quits to install; a download that finished while work ran waits as `ready` for this (409 with the reason while work still runs) |
 | POST | `/api/logs` | | opens the diagnostic logs folder |
+| POST | `/api/diagnostics` | `{"reports": [{"kind": "…", …}, …]}` (at most 25; below) | `{"ok": true, "taken": n}` — the page's own reports, journalled as `page.*` events (`web/watch.py`); 400 for a body that is not JSON |
+| POST | `/api/diagnostics/bundle` | | writes `spec-surgeon-diagnostics-<time>.zip` under the app's data folder and shows it in the file manager; `{"path", "name", "files", "skipped"}` (500 with `{"error"}` when it cannot be written) |
 | POST | `/api/quit` | | the shell closes the window (409 while busy) |
 
 Every error is JSON `{"error": "one sentence for the user"}` with 400/404/409/500.
+
+## The page's reports (`/api/diagnostics`)
+
+The page (`frontend/src/lib/diagnostics.ts`) reports on itself, since nobody sees its console in the native window.
+Unknown kinds and fields are passed over; text is cut to 2,000 characters and stacks to 8,000.
+
+| kind | fields | sent |
+| --- | --- | --- |
+| `loaded` | `visible`, `user_agent`, `viewport` (`"1440x900"`), `reduced_motion`, `version` | once per page load |
+| `unload` | | on `pagehide` (with `keepalive`) |
+| `visibility` | `visible` | on every change |
+| `beat` | `visible`, `long_tasks`: `{"count", "total_ms", "max_ms"}` since the last beat | every 10 s |
+| `error` | `message`, `source`, `line`, `column`, `stack`, `count` | an error nothing caught; the same one at most every 30 s, with the count of repeats |
+| `rejection` | `message`, `stack`, `count` | a rejected promise nothing caught; as `error` |
+| `render` | `message`, `stack`, `component_stack` | a drawing failed and the error screen took over |
+| `stream` | `action`, `reason` (`cut`, `failed`), `message` | a job stream closed before `done`/`error`, or failed on the way |
+
+Any report is a sign of life: a showing page (`visible`) that sends nothing for 45 s is journalled as unresponsive.
 
 ## The job stream (`send`, `choose`, `primary`)
 

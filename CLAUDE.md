@@ -74,7 +74,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files), `inventory.py` (the content digest that pins a file).
-  - `document_task.py`, `review_display.py`, `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/`,
+  - `document_task.py`, `review_display.py`, `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/`
+    (`server.py`, `shell.py`, `watch.py`: the page's own reports and the watchdog over the page and the job),
     `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
   - `render/` (Word COM, LibreOffice), `schemas/` (ECMA-376 XSDs), `skill/`, `examples/`.
 - `tests/` — pytest; `make_fixtures.py` and `fx_*.py` build synthetic documents; `fake_claude.py` scripts Claude;
@@ -96,7 +97,10 @@ spec-surgeon-gui                              # the window; or: python3 -m spec_
 There is no command line. Check a change with the test suite; to run the engine by hand, call it from Python:
 `batch.run_batch(files, "edit-spec", {}, out_dir, spec=editspec.load_spec(path))` for a batch, `verify.run_suite`
 for one pair, `gui.Session` for the window's steps with a scripted client (`tests/fake_claude.py`). A run's
-`DIAGNOSTICS.md`, `records/` and `logs/` say why a file did not pass.
+`DIAGNOSTICS.md`, `records/` and `logs/` say why a file did not pass. The window's own trail (requests, jobs, the
+page's errors, a frozen page, an unclean exit) is in the logs folder, `spec-surgeon.log` and `app-events-<pid>.jsonl`
+(`docs/DEVELOPER_DIAGNOSTICS.md`, "The window"); About → Save a diagnostic bundle zips it with the conversations and
+the newest runs' records.
 
 ## How to add an op
 
