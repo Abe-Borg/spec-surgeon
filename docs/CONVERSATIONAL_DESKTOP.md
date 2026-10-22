@@ -269,7 +269,10 @@ recovery critic) are not cached at all beyond the instructions. Three things kee
 A call that fails for a passing reason (the service is overloaded or rate-limited, a server error, a dropped
 connection or a response cut off in transit) is sent again automatically, up to twice, after 5 and then 20
 seconds (longer when the service asks for it). Every attempt counts as an AI step. A request the service
-refuses is never sent again.
+refuses is never sent again. When Claude declines to answer a reply (Anthropic's checks flag it, for instance as
+asking Claude to reveal its own reasoning), the chat says so in plain words and the reply is taken back out of the
+conversation, its wording no longer approved, so it does not go out again with the next message; rephrase it and
+send it again.
 
 ## Conversations and a clean start
 

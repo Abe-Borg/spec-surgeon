@@ -839,3 +839,24 @@ def test_a_table_attached_in_the_window_fills_the_documents_end_to_end(tmp_path)
     # filled as a tracked change: the placeholder deleted, the sheet's value inserted
     assert "<w:t>Leesburg</w:t>" in headers and "<w:delText>{{SITE_NAME}}</w:delText>" in headers
     assert "<w:t>{{SITE_NAME}}</w:t>" not in headers
+
+
+def test_a_reply_claude_declines_leaves_the_window_asking_in_plain_words(tmp_path):
+    """The 1.8.0 live run showed the provider's policy text for a declined reply. The window says what happened and
+    waits for the next reply, which goes out without the declined one."""
+    from types import SimpleNamespace
+    task = task_for(tmp_path)
+    fake = FakeClient(resp(tool("ask_user", {"questions": ["Which title?"]}, "a1")),
+                      resp(stop="refusal", details=SimpleNamespace(category="reasoning_extraction",
+                                                                   explanation="This request was blocked")),
+                      resp(tool("ask_user", {"questions": ["Anything else?"]}, "a2")))
+    task.session.client = fake
+    task.attach([document(tmp_path / "Spec.docx")])
+    task.perform("send", text=REQUEST)
+    task.perform("send", text="what were you thinking")
+    assert task.stage == "question"
+    said = task.messages[-1]["text"]
+    assert "taken back out of the conversation" in said and "blocked" not in said
+    task.perform("send", text="FIRE SUPPRESSION")
+    sent = json.dumps(fake.requests[-1]["messages"], default=str)
+    assert task.stage == "question" and "FIRE SUPPRESSION" in sent and "what were you thinking" not in sent

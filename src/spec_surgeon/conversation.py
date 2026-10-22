@@ -9,7 +9,8 @@ own words or by picking one of the choices Claude offered — and the same conve
 What makes it safe:
 
 * **Append-only history.** ``messages`` is only ever appended to (the model's thinking blocks are tied to the exact
-  history that produced them). A failed call appends nothing; the next reply simply adds the user's new text. An API
+  history that produced them). A failed call appends nothing; the next reply simply adds the user's new text. The
+  one removal: a reply Claude declined to answer leaves again (``_take_back``), while nothing yet follows it. An API
   error (``llm.is_api_error``) ends the turn as ``failed`` with its kind, HTTP status and request id; anything else is a
   defect and propagates — it appends nothing either, so the history still pairs.
 * **Every tool call is answered.** Each ``tool_use`` gets exactly one ``tool_result`` in the very next user message
@@ -56,6 +57,19 @@ CHOICE_KINDS_FROM_CLAUDE = ("clarify", "alternative", "rephrase")   # built from
 APP_CHOICE_KINDS = ("custom_transform", "recovery_plan", "recovery_target")   # carried out by the app, never sent
 MAX_CALLS_PER_TURN = compiler.MAX_TURNS
 NUDGE = "Finish by calling submit_editspec (or ask_user)."
+
+
+def declined_text(resp, *, taken_back: bool) -> str:
+    """What the window says when Claude declines to answer (``stop_reason`` refusal): in plain words, never the
+    provider's policy text (that goes to the turn's errors and the records)."""
+    category = getattr(getattr(resp, "stop_details", None), "category", None)
+    why = ("Anthropic's checks read it as asking Claude to reveal its own reasoning. Ask about the documents or the "
+           "plan instead, not about how Claude thinks." if category == "reasoning_extraction" else
+           f"Anthropic's checks declined it ({category})." if category else "Anthropic's checks declined it.")
+    if taken_back:
+        return (f"Claude declined to answer that message, so it was taken back out of the conversation; nothing else "
+                f"changed. {why} Rephrase it and send it again.")
+    return f"Claude declined to go on with this request; nothing was changed. {why} Rephrase your last message."
 # the tool result an accepted spec gets (the user's next message, if any, says what the preview found)
 ACCEPTED_RESULT = ("accepted — the app shows it to the user; their next message (if any) follows with what the preview "
                    "found")
@@ -296,6 +310,7 @@ class Conversation:
         self.entries: List[Entry] = []
         self.pending: List[Dict[str, Any]] = []   # tool_results owed for the last assistant turn, in call order
         self.notes: List[str] = []                 # app text for the next user message (never approved words)
+        self._reply_mark: Optional[tuple] = None   # (the user message a reply sent, the state before it): see _take_back
         self.usage = llm.Usage()
         self.tool_calls: List[Dict[str, Any]] = []
         self.turn: Optional[Turn] = None
@@ -348,6 +363,8 @@ class Conversation:
             raise ValueError("that choice is carried out by the app, not sent to Claude")
         if not text and chosen is None:
             raise ValueError("type a reply or pick one of the choices")
+        before = {"pending": copy.deepcopy(self.pending), "notes": list(self.notes), "ask_ids": list(self._ask_ids),
+                  "sources": len(self.sources)}
         if chosen is not None and chosen.kind == "capitalization":
             from .ops.hygiene import approval_source
             record = chosen.snapshot
@@ -370,7 +387,27 @@ class Conversation:
         self.entries.append(Entry("user", "\n".join(([f"Chose: {chosen.describe()}"] if chosen else []) +
                                                     ([text] if text else []))))
         self._send_user(said_text)
+        self._reply_mark = (self.messages[-1], before)
         return self._advance()
+
+    def _take_back(self) -> bool:
+        """A reply Claude declined to answer (``stop_reason`` refusal on the first call after it) leaves the history:
+        otherwise it would go out again with every later message and be answered as part of the next one (the 1.8.0
+        live run re-sent a refused reply with the user's next). The state from before it returns: the tool results
+        it carried are owed again, the app's notes wait again, its words are no longer approved. Only that reply,
+        and only while it is still the last message; the transcript keeps what the user typed."""
+        mark, self._reply_mark = self._reply_mark, None
+        if mark is None or not self.messages or self.messages[-1] is not mark[0]:
+            return False
+        message, before = mark
+        self.messages.pop()
+        from .contexts import checkpoint_history
+        checkpoint_history(self.messages, **self._context_arguments(), withdrawn=message)
+        self.pending, self.notes, self._ask_ids = before["pending"], before["notes"], before["ask_ids"]
+        del self.sources[before["sources"]:]
+        self.exchange.append({"turn": self.calls, "role": "app",
+                              "content": "the declined reply was taken back out of the history"})
+        return True
 
     def resumable(self) -> bool:
         """The last turn stopped before Claude answered (the allowance paused it, the user stopped it, or the call
@@ -599,6 +636,8 @@ class Conversation:
             self.usage.add(resp, self.model)
             self.exchange.append(llm.response_entry(self.calls, resp, time.perf_counter() - t_call))
             problem = llm.stop_problem(resp)
+            if problem and getattr(resp, "stop_reason", None) == "refusal":
+                return self._fail(declined_text(resp, taken_back=self._take_back()), [problem] + rejections)
             if problem:
                 return self._fail(problem, rejections)
             content = llm.history_content(resp)
