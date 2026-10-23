@@ -270,7 +270,8 @@ class Conversation:
                  stall_repetitions: int = DEFAULT_STALL_REPETITIONS, max_image_tokens: Optional[int] = None,
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
                  continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = (),
-                 history: Sequence[str] = (), fresh: Sequence[str] = (), context: str = ""):
+                 history: Sequence[str] = (), fresh: Sequence[str] = (), context: str = "",
+                 todo: Sequence[str] = ()):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -302,6 +303,11 @@ class Conversation:
         self.history = [str(h) for h in history if str(h).strip()]   # changes already made to the files (continue-on-result)
         self.fresh: List[str] = list(fresh)
         self.context = str(context or "")          # the app's account of how these documents come to be planned
+        self.todo = [str(t) for t in todo if str(t).strip()]   # the user's to-do list (not in THE BATCH), one line each
+        # the documents the user set aside during this conversation (``set_aside``, resolved paths, in order): they
+        # left ``files`` at once, and no later submission plans them; with the reason given for each
+        self.set_aside: List[str] = []
+        self.set_aside_reasons: Dict[str, str] = {}
         self.prior_failures = list(prior_failures or [])
         # The words a spec may place: the request, the user's answers, and (on a replay of a saved conversation) the
         # words the user actually typed or accepted — never a choice's label; never an empty source.
@@ -341,7 +347,8 @@ class Conversation:
         self.started = True
         self.messages = compiler.build_messages(self.request, self.batch, self.answers,
                                                 prior_failures=self.prior_failures or None, history=self.history or None,
-                                                fresh=self.fresh or None, context=self.context or None)
+                                                fresh=self.fresh or None, context=self.context or None,
+                                                todo=self.todo or None)
         self.entries.append(Entry("user", self.request))
         self.exchange.append({"turn": 0, "role": "user", "content": self.messages[0]["content"],
                               "files": [str(f) for f in self.files],
@@ -477,7 +484,8 @@ class Conversation:
     def to_dict(self) -> Dict[str, Any]:
         return {"id": self.id, "request": self.request, "files": [str(f) for f in self.files],
                 "template": str(self.template) if self.template else None,
-                "input_files": [str(p) for p in self.batch.inputs], "model": self.model, "mode": self.mode,
+                "input_files": [str(p) for p in self.batch.inputs], "set_aside": list(self.set_aside),
+                "model": self.model, "mode": self.mode,
                 "approved_words": list(self.sources), "answers": list(self.answers),
                 "entries": [e.to_dict() for e in self.entries], "turn": self.turn.to_dict() if self.turn else None,
                 "unsupported": self.unsupported, "tool_calls": self.tool_calls, "usage": self.usage.to_dict(),
@@ -675,6 +683,9 @@ class Conversation:
                     asks.append((b, inp))
                     results[_bid(b)] = {"type": "tool_result", "tool_use_id": _bid(b), "content": "(waiting for the user)"}
                     continue
+                if name == "set_aside" and any(t["name"] == "set_aside" for t in self.tools):
+                    results[_bid(b)] = self._take_set_aside(b, inp)
+                    continue
                 if name == "submit_editspec":
                     if accepted is not None:
                         diag.event("conversation.submission.rejected", tool_use_id=_bid(b), model_turn=self.calls,
@@ -689,12 +700,14 @@ class Conversation:
                     spec = inp.get("spec")
                     outcome = spec
                     # the documents the user left out of the request: nothing plans them, nothing judges the spec there
-                    left_out, errs = compiler.resolve_leave_out(inp.get("leave_out"), self.batch)
+                    # (and the documents set aside during this conversation, which no plan covers either)
+                    parked = [Path(p) for p in self.set_aside]
+                    left_out, errs = compiler.resolve_leave_out(inp.get("leave_out"), self.batch, set_aside=parked)
                     try:
                         with diag.span("conversation.submission.validate", tool_use_id=_bid(b), model_turn=self.calls) as record:
                             if not errs:
                                 outcome, errs = compiler.compose_submission(spec, self.batch, self.sources,
-                                                                            leave_out=left_out)
+                                                                            leave_out=left_out + parked)
                             record.update(accepted=not bool(errs), errors=errs,
                                           composed=bool(errs) is False and outcome is not spec)
                     except Exception as e:  # noqa: BLE001 — the call must be answered (rule 14): a spec the checks
@@ -754,6 +767,35 @@ class Conversation:
             self.messages.append({"role": "user", "content": ordered})
             self._record_results(ordered, pending=False)
         return self._fail(f"no spec after {self.max_calls} calls", rejections)
+
+    def _take_set_aside(self, block, inp: Dict[str, Any]) -> Dict[str, Any]:
+        """A ``set_aside`` call: the documents the user asked to put on their to-do list leave this conversation's
+        documents at once (``files``), and every later submission leaves them out. The app moves them to the to-do
+        list when the turn ends (``DocumentTask``); nothing in them changes."""
+        tid = _bid(block)
+        paths, errs = compiler.resolve_set_aside(inp.get("documents"), self.batch, [Path(p) for p in self.set_aside])
+        if errs:
+            diag.event("conversation.set_aside.refused", tool_use_id=tid, model_turn=self.calls, errors=errs)
+            return {"type": "tool_result", "tool_use_id": tid, "is_error": True, "content": "\n".join(errs)}
+        reason = " ".join(str(inp.get("reason") or "").split())[:200]
+        for path in paths:
+            key = str(path.resolve())
+            self.set_aside.append(key)
+            self.set_aside_reasons[key] = reason
+        parked = set(self.set_aside)
+        self.files = [f for f in self.files if str(Path(f).resolve()) not in parked]
+        diag.event("conversation.set_aside", tool_use_id=tid, model_turn=self.calls, count=len(paths),
+                   remaining=len(self.files))
+        names = ", ".join(self.batch.label(p) for p in paths) or "nothing new (already set aside)"
+        if not self.files:
+            rest = ("Every document is now set aside: nothing is left to plan in this request. Tell the user in plain "
+                    "words, and do not submit a plan.")
+        else:
+            rest = ("From now on a plan covers only the others: " + ", ".join(self.batch.label(f) for f in self.files)
+                    + ". Tell the user in plain words, and go on with whatever else they asked.")
+        return {"type": "tool_result", "tool_use_id": tid,
+                "content": f"Set aside: {names}. The app puts them on the user's to-do list, out of every plan until "
+                           f"the user works on them or puts them back; nothing in them changes. {rest}"}
 
     # ---- turns ----
     def _choices_from(self, raw: Any, errors: List[str]) -> List[Choice]:
