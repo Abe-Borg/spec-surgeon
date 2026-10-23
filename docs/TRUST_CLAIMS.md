@@ -16,7 +16,9 @@ the change that made them. Re-audited the
 same day against `master` at 099ee91 (C2–C6, A1 and the licence change): every model call site, network import,
 thread, timer, `/api` route and outside reference in the built page checked again; what changed is marked
 "(re-audit)". Updated 2026-10-22 after the 1.9.0 live run over test-set-2 (outcome planning's trigger in B8, the
-documents a request leaves out in B5, per-file wording in provenance); those lines say "(test-set-2)". Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
+documents a request leaves out in B5, per-file wording in provenance); those lines say "(test-set-2)". Updated
+2026-10-23 with the to-do list as the place documents wait (the chat's `set_aside` tool in §1d, A15, A23, A24, B18,
+T52, T53); those lines say "(to-do list)". Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
 - `facts` means `tests/test_trust_facts.py` pins the value to its source constant.
@@ -45,7 +47,7 @@ documents a request leaves out in B5, per-file wording in provenance); those lin
 | A12 | Open a copy, or the copies' folder | `POST /api/open` → `os.startfile` | none |
 | A13 | **Start over from the originals** | `POST /api/start-over` (or the typed reply) | none |
 | A14 | **New conversation** | `POST /api/new-conversation` | none |
-| A15 | **Work on the documents I set aside** | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
+| A15 | **Work on the documents I set aside** (to-do list: whatever put them there, each with why) | `/api/send` with `WORK_TODO` → `start_todo` | none until the next request |
 | A16 | Click a page to enlarge it | page only; the image comes from `GET /api/image` | none |
 | A17 | About → **Check for updates** | `POST /api/update/check` | none |
 | A18 | **Download** / **Download and install** / **Restart to update** / **Not now** | `/api/update/download`, `/install`; **Not now** hides the banner in the page only (`App.tsx` `dismissedUpdate`) | none |
@@ -53,8 +55,10 @@ documents a request leaves out in B5, per-file wording in provenance); those lin
 | A20 | Click a link: in the chat, in release notes, About's links, the releases page | the system browser (`target=_blank`) | none |
 | A21 | **Reload the window** (shown only when the page fails to draw) | `frontend/src/components/ErrorBoundary.tsx` | none |
 | A22 | Settings → **Fast responses**: on with the second click on the button that names the price, off with one click | `POST /api/settings` `{fast_mode}` → `llm.set_fast_mode`, kept in `settings.json` | none (changes the speed of later calls) |
+| A23 | (to-do list) **Put back** beside a document on the to-do list | `POST /api/put-back` → `DocumentTask.put_back` | none |
+| A24 | (to-do list) **Set the rest aside for later**, a reply offered while files are checked again once the ready copies are saved | `/api/send` with `SET_ASIDE_REST` → `DocumentTask.set_rest_aside` | none |
 
-Count: 22 actions.
+Count: 24 actions.
 
 (re-audit) The server also has `/api/update/cancel`, `/api/update/skip`, `/api/update/dismiss`, `/api/update/releases`
 and `/api/quit`, behind the same launch token. The page calls none of them (`frontend/src/lib/api.ts`), so no click
@@ -83,9 +87,10 @@ your browser (N4).
 
 | B16 | A batch of 3 or more files is edited and checked in the app's own worker processes, one per core up to 8, each file whole in one worker; a preview plans 12 or more files, and checks 3 or more samples, the same way; Word renders over up to 3 private instances side by side | `batch.worker_plan` (`DEFAULT_WORKER_MODE` "auto"), `batch.map_files`, `planner.PLAN_PROCESS_MIN_FILES`, `render/word_worker.run_word_batches` | none | none |
 | B17 | With Fast responses on: a fast call the fast capacity cannot take (429, 529) is re-sent at once at standard speed; a key refused fast mode (a 400 or 403 naming the speed) runs at standard speed until the setting is turned on again | `llm.call` (`_fast_capacity`, `_speed_refused`, `_fast_unavailable`) | follows a call | Anthropic |
+| B18 | (to-do list) After Create edited copies runs: a file its preview refused, and a run failure no recovery takes, go on the to-do list with the reason (a Create that is refused moves nothing). After a conversation turn: the documents Claude set aside at the user's word (`set_aside`) go there too | `DocumentTask._refused_now`, `_bin_failed`, `_take_set_aside` | none of its own | none |
 
-Count: 17 automatic behaviours. B4–B10, B13, B15 and B17 run only inside work a click started. B1–B3, B11, B12, B14
-and B16 involve no model.
+Count: 18 automatic behaviours. B4–B10, B13, B15 and B17 run only inside work a click started. B1–B3, B11, B12, B14,
+B16 and B18 involve no model.
 
 ### 1c. Network destinations
 
@@ -138,7 +143,7 @@ overrides it).
 
 | Conversation | Tools | Validated by |
 | --- | --- | --- |
-| Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, compare_files, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies) |
+| Chat (`conversation.py`) | `CHAT_TOOLS`: describe_op, inspect_template_styles, read_context_archive, run_analysis, read_analysis_result, list_parts, read_paragraphs, read_xml_page, inspect_profile, compare_files, list_styles, sample_paragraphs, show_part_text, read_template, read_input_file, ask_user, submit_editspec, view_pages, propose_defined_terms, set_aside (to-do list: changes no file; it moves the named documents to the to-do list) | `compiler.compose_submission` (schema, attached-file checks, `untraceable` wording check, dry plan; the documents set aside are left out of it); `conversation._ask_turn` (choice kinds, invisible characters, ≤5 suggested replies); `compiler.resolve_set_aside` (labels THE BATCH lists) |
 | Custom-method writer (`codegen.py`) | the inspection tools + show_xml, find_paragraphs, list_styles, show_part_text, submit_op | `codegen.check_source` (import whitelist, forbidden names and attributes), sandbox run, `hard_limits`, `verify.run_suite`. (re-audit) Under an approved outcome contract (recovery's `custom_transform`), `hard_limits` returns before its formatting-only rules, `allowed_imports` adds `GOAL_FROM`, and the copy must also pass `goals.verify_goal` → `verify/goals.py` or `verify/effects.py` (independent) |
 | Visual check (`vision.py`) | submit_review | findings about pages it was not shown are dropped; advisory only |
 | Outcome planner (`campaign_planner.py`) | read tools, view_pages, list_documents, inspect_goal_effect, propose_plan, need_user, unsupported | `goals.validate_contract`, template pin, invisible characters |
@@ -148,6 +153,8 @@ overrides it).
 **What a request carries:**
 - The request, your answers and decisions.
 - What the copies already carry.
+- (to-do list) The names of the documents on your to-do list and why each waits (`compiler.build_messages` `todo`);
+  their contents are not sent while they wait.
 - File names, or trailing folders where two files share a name (`compiler.file_labels`). Recovery requests carry full
   paths.
 - The full local path of an attached template and of attached pictures and tables.
@@ -173,7 +180,7 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 | --- | --- | --- | --- |
 | Windows Credential Manager, `Spec Surgeon/ANTHROPIC_API_KEY` | the API key, if you ticked Remember | — | until you delete it (no button in the window) |
 | `config_dir()\settings.json` | folders, colour scheme, whether Fast responses is on, update bookkeeping | paths only | overwritten |
-| `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results, estimated spending | yes | archived at each start; **never pruned** (F5) |
+| `config_dir()\conversation.json`, `conversations\*.json` | the chat, your decisions and approved wording, results, the to-do list with why each document waits, estimated spending | yes | archived at each start; **never pruned** (F5) |
 | `config_dir()\attachments\<time>\` | full copies of files you dropped on the window | yes, whole files | **never deleted** (F5) |
 | `config_dir()\repair-memory.sqlite3` | past repair cases: your request, candidate plans, wording and generated code | yes | 2,000 cases, oldest dropped; no clear button (F4) |
 | `config_dir()\render-profiles\` | LibreOffice's own profiles | not inspected | kept |
@@ -392,6 +399,8 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T49 | When the fast capacity is busy a call runs at once at standard speed and price; a key refused fast mode runs at standard speed and Settings says why | D(engine, runtime B17) | `llm.call` (`_fast_capacity`, `_speed_refused`), `llm.fast_unavailable`, `server.fast_offer` | existing: `tests/test_fast_mode.py` |
 | T50 | A batch of 3 or more files is edited and checked in the app's own worker processes, one per core up to 8, each file whole in one worker; a preview plans 12 or more files and checks 3 or more samples the same way; the results are those of running them one by one | D(engine, runtime B5, A8) | `batch.worker_plan`, `batch.map_files`, `planner.plan_batch`, `preview._preview_sample` | facts (`processMinFiles`, `maxProcessWorkers`, `planProcessMinFiles`) + existing: `tests/test_runtime_reliability.py` (`test_an_auto_batch_of_three_runs_in_worker_processes_with_the_same_results_as_inline`, `test_the_preview_plans_and_checks_its_samples_side_by_side_with_the_same_results`) |
 | T51 | Word renders over up to 3 new invisible instances side by side, never your open Word | D(engine, runtime B5, A8) | `render/word_worker.run_word_batches`, `word_instances`, `WORD_INSTANCES` | facts (`wordInstances`, `wordInstancesEnv`) + existing: `tests/test_render_word_batch.py` |
+| T52 | (to-do list) Claude can set documents aside only at your word; it changes nothing in them, and no plan covers them until you work on them or put them back | D(runtime A5, blast radius) | `compiler.SET_ASIDE_TOOL`, `Conversation._take_set_aside`, `compiler.resolve_leave_out` (`set_aside`), `DocumentTask._take_set_aside` | existing: `tests/test_set_aside_bin.py` |
+| T53 | (to-do list) A file the plan refused, or whose copy could not be made with nothing to check it again, goes on your to-do list with the reason once the others run; a refused Create moves nothing there; Put back and Set the rest aside change no file | D(runtime B5, B8, A8, A15) | `DocumentTask._refused_now`, `_bin_failed`, `set_rest_aside`, `put_back` | existing: `tests/test_set_aside_bin.py` |
 
 ## 3. Findings (reported, not fixed in this change)
 

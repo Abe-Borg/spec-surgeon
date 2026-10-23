@@ -83,10 +83,18 @@ export interface Result {
   name: string;
 }
 
-/** A document the user set aside at approval (the red X on its preview): it waits on the to-do list. */
+/** Why a document waits on the to-do list: the red X on its preview, the user asked the assistant, the plan
+ *  refused it, or its copy could not be made. */
+export type TodoWhy = "held" | "asked" | "refused" | "failed";
+
+/** A document waiting on the to-do list, out of every plan until the user works on it or puts it back. */
 export interface TodoItem {
   path: string;
   name: string;
+  /** Absent in a view from before the to-do list said why (read as the red X). */
+  why?: TodoWhy;
+  /** One sentence saying why, as the server words it. */
+  reason?: string;
 }
 
 export type ActionKind = "approve" | "continue" | "save" | "none";

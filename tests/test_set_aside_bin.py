@@ -310,3 +310,20 @@ def test_only_the_conversation_can_set_aside_and_the_prompt_says_when():
     assert "call set_aside" in prompt and "Leave out is for this request only; set aside is for later." in prompt
     assert "puts it on the to-do list with its reason" in prompt
     assert compiler.resolve_set_aside([], None)[1]                  # an empty call is refused
+
+
+def test_the_put_back_route_takes_a_document_off_the_list_and_refuses_what_is_not_on_it(tmp_path):
+    from test_web_server import frames, window
+    state, client = window(tmp_path, FakeClient(submit()))
+    first, second = document(tmp_path / "A.docx"), document(tmp_path / "B.docx")
+    client.post("/api/attach", json={"paths": [str(first), str(second)]})
+    with client.stream("POST", "/api/send", json={"text": REQUEST}) as response:
+        done = frames(response)[-1]["state"]
+    with client.stream("POST", "/api/primary", json={"token": done["action"]["token"], "hold": [str(second)]}) as response:
+        done = frames(response)[-1]["state"]
+    assert [item["path"] for item in done["todo"]] == [str(second)]
+    refused = client.post("/api/put-back", json={"path": str(first)})
+    assert refused.status_code == 400 and "not on your to-do list" in refused.json()["error"]
+    view = client.post("/api/put-back", json={"path": str(second)}).json()
+    assert view["todo"] == [] and WORK_TODO not in view["chips"]
+    assert "back among the documents" in view["messages"][-1]["text"]

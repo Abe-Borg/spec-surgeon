@@ -221,7 +221,7 @@ export default function Chat({
                     />
                   );
                 case "todo":
-                  return <TodoCard key={item.key} names={item.names} busy={busy} onSend={onSend} />;
+                  return <TodoCard key={item.key} items={item.items} busy={busy} onSend={onSend} />;
                 default:
                   return null;
               }

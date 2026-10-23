@@ -116,7 +116,9 @@ and Settings.
    Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
    others). To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"): the plan covers
    the others, the ones you named stay exactly as they are under **Left untouched**, and your next request covers
-   them again unless you leave them out again.
+   them again unless you leave them out again. To park documents for later instead, say that ("set 20 aside for
+   later, I'm waiting on the owner"): they go on your to-do list at once, with your reason, and stay out of every
+   request until you work on them or put them back.
 6. **Create edited copies.** One button, in the conversation above the box you type in, approves the displayed plan.
    The engine applies it to every file you did not set aside, verifies each one independently, and lists the copies
    under **Your edited copies**; click one to open it in Word. Originals are never written. A file that fails a
@@ -124,6 +126,16 @@ and Settings.
    never a method to choose. The documents you set aside wait on a to-do list; once the other copies are saved, the
    conversation offers to work on them: they are planned alone, from the same request, and you say what should be
    different.
+
+**The to-do list.** Documents wait there, each with why, until you come back to them: the ones you marked with the
+red X, the ones you asked the assistant to set aside, a file the plan could not be applied to (it goes there when you
+create the others' copies), and a file whose copy could not be made with nothing left to check it again. While files
+are being checked again after a run, **Set the rest aside for later** (offered once the ready copies are saved) puts
+what was not fixed there too and ends the request. Nothing on the list is changed. "Work on the documents I set aside"
+(a reply the app offers) plans them on their own, from the request they were set aside from, with the assistant told
+why each one waited; **Put back** beside one returns it to the other documents as it is. Each new request tells the
+assistant what is on the list, so it can answer "what did I set aside?" without planning those files. The list is
+kept in the saved conversation; **Start over from the originals** clears it.
 
 **Mixed batches.** Documents from different projects are often built differently: styled article titles in one,
 plain paragraphs with typed numbers in another. For such a batch the plan has one specification per layout, and the

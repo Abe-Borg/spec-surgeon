@@ -271,6 +271,8 @@ export default function App() {
 
   const onStartOver = useCallback(() => applyView(api.startOver()), [applyView]);
 
+  const onPutBack = useCallback((path: string) => applyView(api.putBack(path)), [applyView]);
+
   const onOpen = useCallback((path: string) => {
     api.openPath(path).catch((failure: unknown) => setNotice(failureText(failure)));
   }, []);
@@ -434,6 +436,7 @@ export default function App() {
           onRemove={onRemove}
           onOpen={onOpen}
           onStartOver={onStartOver}
+          onPutBack={onPutBack}
           onZoom={onZoom}
         />
       </main>
