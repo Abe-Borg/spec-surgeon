@@ -78,6 +78,30 @@ export function initialInputs(recipe: Recipe, view: Attached): RecipeInputs {
   return inputs;
 }
 
+/**
+ * The open form again after the attachments changed: what was typed stays (a template value only while the template
+ * still asks for it), and a picture or table that is no longer attached is chosen afresh as the form would open with
+ * it, never sent stale.
+ */
+export function refreshInputs(recipe: Recipe, current: RecipeInputs, view: Attached): RecipeInputs {
+  const out = initialInputs(recipe, view);
+  const files = new Set([...pictures(view), ...tables(view)].map((f) => f.path));
+  for (const field of recipe.fields) {
+    if (!(field.name in current)) continue;
+    const value = current[field.name];
+    if (field.kind === "slots") {
+      const typed = (value ?? {}) as Record<string, string>;
+      const slots = out[field.name] as Record<string, string>;
+      for (const slot of Object.keys(slots)) if (slot in typed) slots[slot] = typed[slot];
+    } else if (field.kind === "picture" || field.kind === "table") {
+      if (value && files.has(String(value))) out[field.name] = value;
+    } else {
+      out[field.name] = value;
+    }
+  }
+  return out;
+}
+
 /** A field shows only when it applies: the watermark's words only when adding one. */
 export function fieldShown(recipe: Recipe, field: RecipeField, inputs: RecipeInputs): boolean {
   if (recipe.id === "watermark" && field.name === "text") return inputs.action !== "remove";

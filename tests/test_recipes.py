@@ -348,6 +348,54 @@ def test_setting_every_document_aside_in_safe_mode_creates_nothing_and_starts_no
     assert not task.results and "no copy was created" in task.messages[-1]["text"]
 
 
+def test_a_removed_document_leaves_the_untouched_list_and_cannot_be_handed_over(tmp_path):
+    good = tmp_path / "21 13 13.docx"
+    good.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    empty = tmp_path / "empty.docx"
+    empty.write_bytes(build_dirty("empty_body"))
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    task.attach([good, empty])
+    view = task.perform("recipe", recipe="title_property", inputs={"pattern": "SECTION {number} - {title}"})
+    task.perform("primary", token=view["token"])
+    assert [e["name"] for e in task.view()["left_untouched"]] == ["empty.docx"]
+    stale = task.view()["left_untouched"][0]["path"]
+    task.remove(empty)
+    assert task.view()["left_untouched"] == []
+    task.left_untouched = [{"path": stale, "name": "empty.docx", "why": "refused", "reason": "x", "request": "r"}]
+    with pytest.raises(ValueError, match="not the ones"):    # a page out of date names a document no longer attached
+        task.hand_off([stale])
+    assert task.todo == {} and task.mode == "safe"
+
+
+def test_a_default_plan_approved_in_safe_mode_takes_no_ai_step(folder, tmp_path, monkeypatch):
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="default")
+    task.attach(docs(folder))
+    _built, outcome, errors = built_and_gated("remove_highlight", {}, task.documents())
+    assert not errors
+    s = task.session
+    task.decisions = ["Remove the highlighting"]
+    s._set_outcome(spec=outcome, source="conversation")       # a plan the conversation made, previewed in Default
+    task._settle(quiet)
+    assert task.stage == "preview" and not s.model_free
+    task.set_mode("safe")                                    # the preview stays; Safe mode makes no AI call
+
+    def never(*a, **k):
+        raise AssertionError("an AI step in Safe mode")
+    monkeypatch.setattr(s, "resolve_remaining", never)
+    monkeypatch.setattr(s, "resolve_next_layout", never)
+    real_run = s.run
+
+    def run_one_failing(*a, **k):
+        real_run(*a, **k)
+        s.last_batch.files[0].exception = {"code": "planted", "reason": "a planted failure"}   # Default recovers it
+    monkeypatch.setattr(s, "run", run_one_failing)
+    task.perform("primary", token=task.view()["token"])
+    view = task.view()
+    assert task.stage == "done" and task.todo == {}
+    assert [(e["name"], e["reason"]) for e in view["left_untouched"]] == [(Path(s.last_batch.files[0].source).name,
+                                                                           "a planted failure")]
+
+
 def test_a_button_no_document_can_take_previews_nothing_to_create(tmp_path):
     empty = tmp_path / "empty.docx"
     empty.write_bytes(build_dirty("empty_body"))

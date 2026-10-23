@@ -504,6 +504,7 @@ class DocumentTask:
         self.working.pop(str(path), None)
         self.applied.pop(str(path), None)
         self.todo.pop(str(path), None)
+        self.left_untouched = [e for e in self.left_untouched if _same_file_key(e["path"]) != _same_file_key(path)]
         pass_over = False
         if self.focus:
             self.focus["documents"] = [d for d in self.focus["documents"] if d != str(path)]
@@ -840,7 +841,9 @@ class DocumentTask:
         if self.stage == "preview":
             raise ValueError("Create the copies, or press another button, before handing documents over.")
         wanted = {str(Path(str(v))) for v in paths}
-        chosen = [entry for entry in self.left_untouched if entry["path"] in wanted]
+        attached = {_same_file_key(a.path) for a in self.attachments if not a.template and not a.reference}
+        chosen = [entry for entry in self.left_untouched
+                  if entry["path"] in wanted and _same_file_key(entry["path"]) in attached]
         if not chosen or len(chosen) != len(wanted):
             raise ValueError("Those documents are not the ones the last button left untouched.")
         for entry in chosen:
@@ -1145,7 +1148,9 @@ class DocumentTask:
         # list with the plan's reason, to come back to (the session keeps them until the request ends: the approval
         # was taken over them)
         refused = self._refused_now(held) if s.recovery is None else []
-        model_free = s.model_free               # a Safe-mode button's: no AI step follows, nothing goes on the list
+        # a Safe-mode button's, or any plan approved in Safe mode (a Default-mode preview still waiting when the mode
+        # changed): no AI step follows, and what the run leaves untouched waits beside the copies, not on the list
+        model_free = s.model_free or self.mode == "safe"
         remaining = None
         if held:
             # the files the preview refused never run (Session._without_refused): a user who sets aside every

@@ -21,7 +21,8 @@ beside it alike.
 
 The top bar's **Safe | Default** switch chooses how a change is asked for; the window opens in the mode last used
 (Safe the first time, `Settings.mode`). Documents, copies, the to-do list and any preview stay as they are when the
-mode changes.
+mode changes. A Default-mode preview approved after switching to Safe mode is created as a button's is, with no AI
+step: what it leaves untouched waits beside the copies instead of going to recovery.
 
 In Safe mode the box you type in gives way to buttons, in groups: headers and footers (match to template, remove, a
 watermark, swap the logo), fonts (match to template), text (find and replace), clean up (accept all tracked changes,

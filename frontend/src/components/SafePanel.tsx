@@ -1,6 +1,6 @@
 import { memo, useEffect, useMemo, useState } from "react";
 import type { FindReplacePair, Recipe, RecipeField, RecipeInputs, View } from "../types";
-import { availability, fieldShown, grouped, initialInputs, missing, payload, pictures, tables } from "../lib/recipes";
+import { availability, fieldShown, grouped, initialInputs, missing, payload, pictures, refreshInputs, tables } from "../lib/recipes";
 import { primaryBtn } from "./ModalShell";
 import Tip from "./Tip";
 
@@ -200,12 +200,14 @@ function SafePanel({ recipes, view, busy, onPreview }: Props) {
   const [inputs, setInputs] = useState<RecipeInputs>({});
   const groups = useMemo(() => grouped(recipes), [recipes]);
 
-  // A form opened with what was attached then; a template or picture added since fills in its own fields.
+  // A form opened with what was attached then; a template, picture or table attached or removed since is taken
+  // into its fields, and a file no longer attached is never sent.
   const slotsKey = (view.template?.typed_slots ?? []).join("\n");
+  const filesKey = [...pictures(view), ...tables(view)].map((f) => f.path).join("\n");
   useEffect(() => {
-    if (chosen) setInputs((current) => ({ ...initialInputs(chosen, view), ...withoutStale(current, chosen) }));
+    if (chosen) setInputs((current) => refreshInputs(chosen, current, view));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [slotsKey]);
+  }, [slotsKey, filesKey]);
 
   const open = (recipe: Recipe) => {
     setChosen(recipe);
@@ -280,9 +282,4 @@ function SafePanel({ recipes, view, busy, onPreview }: Props) {
 }
 
 /** The fields the user already filled that still exist in the form. */
-function withoutStale(current: RecipeInputs, recipe: Recipe): RecipeInputs {
-  const names = new Set(recipe.fields.filter((f) => f.kind !== "slots").map((f) => f.name));
-  return Object.fromEntries(Object.entries(current).filter(([name]) => names.has(name)));
-}
-
 export default memo(SafePanel);

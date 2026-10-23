@@ -6,7 +6,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import type { Attachment, Recipe, View } from "../src/types.ts";
-import { availability, fieldShown, grouped, initialInputs, missing, payload, pictures, tables } from "../src/lib/recipes.ts";
+import { availability, fieldShown, grouped, initialInputs, missing, payload, pictures, refreshInputs, tables } from "../src/lib/recipes.ts";
 import { EMPTY_VIEW, normalizeView } from "../src/lib/view.ts";
 
 const file = (name: string, kind: Attachment["kind"], state: Attachment["state"] = "ok"): Attachment => ({
@@ -101,6 +101,26 @@ test("a form opens with its defaults, an empty pair row, the template's slots an
   assert.deepEqual(initialInputs(HEADERS, v), { slots: { "ISSUED FOR PERMIT": "" } });
   assert.deepEqual(initialInputs(LOGO, v), { image: "C:/Specs/logo.png", old: "" });
   assert.deepEqual(initialInputs(WATERMARK, v), { action: "add", text: "" });
+});
+
+test("a form keeps what was typed when attachments change, and never keeps a file no longer attached", () => {
+  const before = view([file("a.docx", "document"), file("logo.png", "reference"), file("new.png", "reference")], {
+    kind: "prepared",
+    typed_slots: ["ISSUED FOR PERMIT", "DATE"],
+    reason: "",
+  });
+  const typed = { image: "C:/Specs/new.png", old: "C:/Specs/logo.png" };
+  // the chosen new logo removed: the first picture still attached; the old one stays chosen
+  const after = view([file("a.docx", "document"), file("logo.png", "reference")]);
+  assert.deepEqual(refreshInputs(LOGO, typed, after), { image: "C:/Specs/logo.png", old: "C:/Specs/logo.png" });
+  assert.deepEqual(refreshInputs(LOGO, typed, before), typed);
+  // a table removed: no table chosen; the typed rows stay
+  const rows = { pairs: [{ find: "ACME", replace: "Contoso" }], table: "C:/Specs/pairs.csv", tracked: true, whole_word: false };
+  assert.deepEqual(refreshInputs(FIND, rows, view([file("a.docx", "document")])), { ...rows, table: "" });
+  // a template value stays while the template asks for it; a new one starts empty
+  const later = view([file("a.docx", "document")], { kind: "prepared", typed_slots: ["DATE", "PHASE"], reason: "" });
+  assert.deepEqual(refreshInputs(HEADERS, { slots: { "ISSUED FOR PERMIT": "BID", DATE: "2026" } }, later),
+    { slots: { DATE: "2026", PHASE: "" } });
 });
 
 test("a form says what it still needs, and sends only filled rows", () => {
