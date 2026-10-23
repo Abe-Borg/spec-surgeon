@@ -65,7 +65,7 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
           },
           {
             t: "What runs without you",
-            d: `Every AI step runs inside work you started — a message, a choice or the button — though one action can chain several: the preview’s visual check, a custom method, recovery of a copy that failed. Without a click the app checks each file as it arrives (no AI, no network) and asks GitHub for a new version at most once every ${F.updateCheckHours} hours, carrying nothing about your documents; ${F.noUpdateCheckEnv} turns that off.`,
+            d: `Safe mode makes no AI call at all: its buttons build their plans in code. In Default mode every AI step runs inside work you started — a message, a choice or the button — though one action can chain several: the preview’s visual check, a custom method, recovery of a copy that failed. Without a click the app checks each file as it arrives (no AI, no network) and asks GitHub for a new version at most once every ${F.updateCheckHours} hours, carrying nothing about your documents; ${F.noUpdateCheckEnv} turns that off.`,
           },
           {
             t: "Your documents go to Anthropic, and nowhere else",

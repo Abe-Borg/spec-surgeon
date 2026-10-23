@@ -8,12 +8,81 @@ are three sections, each with its own fold and its own button to add more: the W
 optionally one reference template, and any pictures or tables you attached for the edit to use. Each folds to one line
 once a plan exists (click its title to open it); below them are the before/after pages. You add documents, describe the result, look at the pages, mark each preview with a green checkmark or a red
 X, and create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
+That is Default mode. Safe mode, the other choice in the top bar, puts buttons for the common changes where the box
+you type in is, and calls no model at all ("Safe mode" below).
 Both panes render what the assistant writes as formatted text (lists, bold, links), in the chat and on the cards
 beside it alike.
 
 ![The conversation starts with Word documents, an optional template, and a request](conversation-start.png)
 
 ![The plan in the conversation and rendered before-and-after pages, followed by one action to create copies](conversation-preview.png)
+
+## Safe mode
+
+The top bar's **Safe | Default** switch chooses how a change is asked for; the window opens in the mode last used
+(Safe the first time, `Settings.mode`). Documents, copies, the to-do list and any preview stay as they are when the
+mode changes. A Default-mode preview approved after switching to Safe mode is created as a button's is, with no AI
+step: what it leaves untouched waits beside the copies instead of going to recovery.
+
+In Safe mode the box you type in gives way to buttons, in groups: headers and footers (match to template, remove, a
+watermark, swap the logo), fonts and formatting (match body formatting to template, match font to template), text
+(find and replace), clean up (accept all tracked changes,
+remove comments, highlighting, hidden text or empty paragraphs) and files and properties (name the copies by section
+number and title, the document title property, Track Changes off). A button that cannot be pressed yet says why when
+the pointer rests on it (no documents, no template, no picture). Pressing one opens a short form — the words to find
+and their replacements, the watermark's words, a template's values, a naming pattern — and **Preview**.
+
+What happens then is what happens to a plan in Default mode, with no model anywhere (`recipes.py`):
+
+- The button's plan is built in code from the form and the attachments, then passes the gate every plan passes
+  (`compiler.compose_submission`): its settings are checked, every file it reads must be one you attached, every
+  word it would place must be one you typed, and it is planned dry on the documents; overlapping operations are put
+  in order as always.
+- The preview plans every document, checks the samples and renders their pages. Claude's visual check is not run.
+- **Create edited copies** makes and checks every copy as always. A document the button could not change exactly is
+  not handed to recovery (an AI step): it is listed under **Left untouched by the last button** beside the copies,
+  with the engine's reason, and **Try these in Default mode** puts it on the to-do list and switches to Default
+  mode, where "Work on the documents I set aside" plans it with the button's sentence as its request. Unlike a
+  Default-mode plan's refusals, which go on the to-do list by themselves, a button's stay among the documents the
+  next button works on until you hand them over. A preview's document you mark with the X goes on the to-do list as
+  in Default mode; with every document marked, nothing is created and no conversation starts.
+- The button's sentence (what you pressed and what you typed) is your line in the chat, and the change sentences of
+  its plan join the history the next request in either mode hears.
+
+Tracked changes are off in Safe mode unless the form's *Show my changes as tracked changes in Word* is ticked (find
+and replace, remove hidden text, remove empty paragraphs); every other button's change is plain formatting or never
+tracked, as in Default mode. The template buttons tell a prepared template (yellow-highlighted or `{{NAME}}`
+placeholders) from an ordinary specification used as one without a model (`recipes.template_kind`): a prepared
+template's section number and title placeholders are filled from each document and its other placeholders are typed
+in the form; an ordinary specification gives each document its own number and title wherever its headers and footers
+show its own; a template with nothing to fill is refused at the button.
+
+**Match body formatting to template** (`template_roles.py`, `body_match.py`; docs/PLAN-2026-10-23-modes.md M3) plans
+each document on its own, in code. The form shows the template's style for each part of a section (the section
+number line, the title, PART, articles, paragraphs, subparagraphs, END OF SECTION: `template_roles.detect`, from
+`structure.role_summary` over the template), each changeable, and boxes for the page, the font and the paragraph
+spacing (all on). For each document, `body_match.plan_file` reads its own structure:
+
+- an outline Word numbers converts to the template's styles and list (`convert_numbering`: the main list, each role's
+  level mapped onto the template's, table cells left out, every number keeping its counters — "1.01" shows as
+  "1.1", a renumbering refuses); an outline typed as text converts by value (`convert_typed_numbers`, `match:
+  "counters"`); a mix of the two refuses;
+- the section number line, the title and END OF SECTION take the template's styles (`apply_style`), each only where
+  one selector finds exactly that paragraph;
+- the template's page size and margins (`set_page_setup`, every section, unless one is in another orientation), its
+  body font (the *Match font to template* operations), and the clearing of paragraph spacing, indents and alignment
+  outside tables (`clear_direct_formatting`, runs untouched);
+- a document whose own style has the id of a template role style and is used by paragraphs the plan does not
+  restyle is refused (the template's definition would change their look).
+
+Documents of one structure pattern whose plans agree run as one layout (the largest agreeing group; each other one
+is left out with why), and each layout's spec passes `compiler.compose_submission` on its own documents, which puts
+the overlapping operations in ordered steps. A document left out is listed beside the preview with its reason
+(`Session.left_out_reasons`) and, after the run, under **Left untouched by the last button**, ready for Default mode.
+Every change is plain and no word is placed.
+
+Typing is not possible in Safe mode, and the server refuses a message there; the conversation and its question cards
+belong to Default mode.
 
 ## The top bar
 
@@ -22,9 +91,9 @@ documents · 1 template · 1 picture · building on your copies"; files triage r
 1280 px wide and shortens with an ellipsis before anything else gives way. Then the in-app guide, one dialog with a
 tab strip:
 
-- **How to use** — a first pass in eight steps, what a refused file means, and how spending, Stop now and the
-  pause work.
-- **Workflows** — recipes for the usual jobs: fonts across a set, headers and footers from a template, a logo, values
+- **How to use** — the two modes, what each lets you control and what it costs, Safe mode in four steps, a Default
+  first pass in eight steps, what a refused file means, and how spending, Stop now and the pause work.
+- **Workflows** — recipes for the usual jobs: a Safe-mode clean-up before issue, fonts across a set, headers and footers from a template, a logo, values
   from a sheet, an issue stamp, a mixed batch, one change after another, a file left untouched, stopped or paused work.
 - **How it works** — the mechanics in plain words.
 - **Why trust it** — eight claims, each with the mechanism that makes it true, and **I'm not convinced — show me
@@ -260,10 +329,12 @@ A file can be left out at four points, each time with one sentence that names th
   this request"), and come back with the next request unless you leave them out again. "Set 20 aside for later"
   puts it on the to-do list instead (above), out of every request until you come back to it.
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
-  structure. These appear under **Left untouched** before anything runs; no paid investigation precedes them. The
-  preview of the other documents stands, and the assistant names each one with its reason in its next reply;
-  **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them) and puts them
-  on the to-do list with their reason. Only a plan that covers no file at all, or a sample that fails its check,
+  structure; in a plan done in steps, also a sample whose later step cannot predict its result (the later steps are
+  planned on the samples alone). These appear under **Left untouched** before anything runs; no paid investigation
+  precedes them. The preview of the other documents stands, and the assistant names each one with its reason in its
+  next reply; **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them)
+  and puts them on the to-do list with their reason. Only a plan that covers no file at all, a sample that fails its
+  check, or a preview whose every sample is refused
   sends the request on to outcome planning.
 - At delivery, when a file fails a verification check. It is never delivered. Spec Surgeon then checks it
   again internally (below); a file nothing can check again goes on the to-do list.
@@ -305,7 +376,7 @@ custom method, the visual check or recovery) may write up to 128,000 tokens, the
 conversation runs at medium reasoning effort (its sentences and plans are short and the operations' settings ride the
 cached prompt, so a plan is one or two calls), and so do the visual check and a custom method it runs inside a turn,
 because the conversation's budget sets the effort for every call inside it. The outcome planning when no ordinary plan
-fits (no operation for the request, a plan that covers no file, or a sample that fails its check), and recovery (with the custom methods it tries), think at high: their own budget sits inside the
+fits (no operation for the request, a plan that covers no file, a sample that fails its check, or a preview whose every sample is refused), and recovery (with the custom methods it tries), think at high: their own budget sits inside the
 conversation's and wins. No step runs at max: `resources.EFFORTS` refuses it (the owner's decision, 2026-10-22). The
 instructions and the operations' settings (the same for every conversation) are cached for an hour, so the next
 request after a run, a start over or a changed attachment reads them instead of paying for them again; the
@@ -409,7 +480,7 @@ A PASS means the engine found exactly the predicted change and nothing else, not
 wanted. Automated page comparison and Claude's visual check are not human acceptance in Word; look at the
 pages, and open the copies.
 
-The window has no other mode, and there is no command line: it was removed on 2026-10-21 together with the
+The window has two modes (Safe and Default, above), and there is no command line: it was removed on 2026-10-21 together with the
 features only it offered (the recipe library, office profiles, specification QA audits, project evidence, built-in
 workflows, campaign and recovery workspaces, evaluations).
 

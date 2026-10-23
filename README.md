@@ -11,7 +11,8 @@ deterministic Python over the document XML. The expected result is predicted *be
 verifier, sharing no code with the transform, reads only the before and after packages and asserts that prediction.
 A file is delivered only when every check passes and the source has not moved since it was read. No language model
 is in the per-file loop; Claude is optional, and its job is to turn a plain-English request into a specification you
-approve, to look at preview pages, and to investigate files the engine set aside.
+approve, to look at preview pages, and to investigate files the engine set aside. Safe mode does the common changes
+from buttons, with no AI at all.
 
 It runs as a Windows desktop app and as a Python library (Windows, macOS or Linux). There is no command line.
 
@@ -26,8 +27,8 @@ a banner offers each new version, and **About → Check for updates** checks at 
 user without administrator access, offers a desktop shortcut and includes an uninstaller. Example EditSpecs are
 available from **Spec Surgeon → Example edit specs** in the Start menu.
 
-Microsoft Word or LibreOffice is still needed for page rendering; neither is installed by this setup program. Typed
-requests need your Anthropic API key: enter it in the window's **Settings** and tick *Remember securely on this
+Microsoft Word or LibreOffice is still needed for page rendering; neither is installed by this setup program. Safe
+mode needs no API key. Default mode's typed requests need your Anthropic API key: enter it in the window's **Settings** and tick *Remember securely on this
 computer* to keep it in Windows Credential Manager. The installer is unsigned, so Windows may show a publisher prompt on the first manual install.
 
 **Python package / development setup** (Python 3.10+ on Windows, macOS or Linux; from the project folder):
@@ -112,7 +113,8 @@ and Settings.
    drafts each document's title in the template's case as one choice you can pick or correct, and one plan then
    puts each document's own approved title in its footer.
    A file the plan cannot cover is listed under **Left untouched** with the reason, and the preview of the others
-   stands; the assistant names it in its next reply and says what would let it take part.
+   stands; the assistant names it in its next reply and says what would let it take part. In a plan done in steps
+   (the template's headers and footers, then the fonts), a sample the later step refuses is listed there too.
    Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
    others). To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"): the plan covers
    the others, the ones you named stay exactly as they are under **Left untouched**, and your next request covers
@@ -149,15 +151,52 @@ copies remain. Every start of the app is a clean one: the last conversation is a
 
 ![The plan in the conversation and before/after pages, with one action](docs/conversation-preview.png)
 
+**Two modes.** The switch is in the top bar, beside the help topics, and the window opens in the mode you last used
+(Safe the first time).
+
+- **Safe — buttons, no AI.** What you control: the common changes, one button each — *Match headers and footers to
+  template*, *Remove headers and footers*, *Add or remove a watermark*, *Swap the logo*, *Match body formatting to
+  template*, *Match font to template*,
+  *Find and replace* (typed pairs or an attached table; body, headers and footers), *Accept all tracked changes*,
+  *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Name files by
+  section number and title*, *Set the document title property* and *Turn off Track Changes*. Each button has a short
+  form (your words and choices only), then **Preview**, the same pages, checks and **Create edited copies** as Default
+  mode. What it costs: only what the buttons do. The copies are clean unless you tick *Show my changes as tracked
+  changes in Word* (offered where the change can be tracked). The template buttons take either a prepared template
+  (yellow-highlighted or `{{NAME}}` placeholders: the section number and title come from each document, every other
+  placeholder's value is typed in the form) or an ordinary specification whose headers and footers show its own
+  section number and title. No model is called — no plan, no visual check, no recovery — so it needs no API key and
+  spends nothing.
+- **Match body formatting to template** (Safe mode) makes each document look like your template without touching a
+  word or a table. The form shows the template's style for each part of a section (the section number line, the
+  title, PART, articles, paragraphs and subparagraphs, END OF SECTION), read from the template and changeable. Each
+  document's outline takes those styles and the template's numbering, and every number keeps its value: a "1.01"
+  article shows as the template's "1.1", but a list that would renumber sets the document aside. An outline typed as
+  text converts when its numbers are the ones the list counts (a typo, a skip or a duplicate sets it aside). With its
+  boxes ticked (the default) it also sets the template's page size and margins (a document with a landscape page keeps
+  its pages), its body font, and lets the styles set paragraph spacing, indents and alignment — bold, italic and
+  underlined words stay. Documents built alike run as one plan and the rest are planned their own way; a document it
+  cannot read (no outline, typed and Word numbers mixed, an outline deeper than the template's, one of its styles
+  shared with paragraphs it does not restyle) is left untouched with the reason.
+- **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,
+  sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI's
+  spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.
+
+On a batch from different projects, Safe mode's buttons work on every document they can change exactly and leave
+the rest untouched, each with the engine's reason — a template's section line it cannot find, an odd-and-even pages
+setting that differs from the template's, a phrase whose formatting changes partway through. Nothing is guessed and
+nothing is half-edited: a copy passes every check or is not made. After the copies are created, **Try these in
+Default mode** puts the untouched documents on your to-do list in Default mode, where the conversation can plan them.
+
 Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
 beside your documents is ever looked for.
 
-Connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
+For Default mode, connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
 with room for its full 128,000-token answer (the conversation, and the visual check and custom methods it runs inside
 a turn, at medium effort; the outcome planning when no ordinary plan fits (no operation for the request, a plan that
-covers no file, or a sample that fails its check), and recovery, at high; no step at
-max; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is cached for an
+covers no file, a sample that fails its check, or a preview whose every sample is refused), and recovery, at high;
+no step at max; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is cached for an
 hour, so a follow-up request reads it instead of paying for it again). Instead, the
 header shows the estimated spending as it accrues, **Stop now** cuts off the AI step that is running at once, and
 work pauses after every 48 AI steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a
@@ -291,6 +330,9 @@ recorded for the requests that follow.
 - **Nothing here has been proven on your files yet.** The engine, the window and the installer are tested on
   synthetic fixtures (including a family of deliberately dirty files) and in CI; the live Claude path, Word
   rendering and the first real batches are the user's to run. Expect fixes from the first real runs of every operation.
+- Safe mode's buttons do only what each says. A document a button cannot change exactly is left untouched with the
+  reason; no AI looks at it there, and it can be handed to Default mode. Text boxes, shapes and the other objects
+  out of reach stay out of reach in every mode.
 - A PASS is the engine's proof of the predicted change, not acceptance of the result. Look at the before/after
   pages. Claude's visual check is advisory and can be wrong both ways.
 - Normalizing a file (typed numbers, direct formatting, whitespace, pending tracked changes) is never automatic; it

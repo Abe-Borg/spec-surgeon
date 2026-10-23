@@ -407,6 +407,58 @@ def test_a_scheme_level_whose_number_is_hidden_or_in_capitals_refuses(tmp_path, 
     assert "V10" in failed(rec) and "the op must refuse: scheme" in v10(rec)
 
 
+# ---- typed values instead of the typed look (docs/PLAN-2026-10-23-modes.md G1) ---------------------------------------
+
+@pytest.mark.parametrize("tracked", [True, False])
+def test_typed_values_convert_into_the_lists_own_look(tpl, tracked):
+    """match "counters": "1.01" (its "01" in a second run for 2.01) and "PART 1 –" with an en dash convert into the
+    scheme's "1.1" and "PART 1 -" — the same values —, each named in a flag; exact matching sets that file aside."""
+    src = build_typed(masterspec=True)
+    assert refused(src, tpl).code == "numbering-mismatch"
+    plan, out, rec = converting(src, tpl, tracked=tracked, match="counters")
+    assert rec.passed, rec.to_markdown()
+    got = numbers(out)
+    assert {k: got.get(k) for k in TYPED} == TYPED
+    flags = " | ".join(plan.flags)
+    assert "same values" in flags and "‘1.01’ → ‘1.1’" in flags and "‘PART 1 \u2013’ → ‘PART 1 -’" in flags, flags
+    assert "‘2.01’ → ‘2.1’" in flags
+    a = next(x for x in plan.property_assertions if x["kind"] == "typed_numbers")
+    assert a["params"]["match"] == "counters" and len(a["converted"]) == 22
+
+
+def test_typed_values_still_refuse_a_typo(tpl, monkeypatch):
+    """A duplicate "B." counts 3 where it is typed 2: refused, by value as by look; a transform that skips the value
+    check (plan and apply agree) is caught by the verifier's own reading of the values."""
+    src = build_typed(typo=True, masterspec=True)
+    e = refused(src, tpl, match="counters")
+    assert e.code == "numbering-mismatch" and "Reliable." in e.reason
+    from spec_surgeon.ops import convert_typed_numbers as ctn
+    monkeypatch.setattr(ctn, "counters_differ", lambda *a: None)
+    plan, out, rec = converting(src, tpl, tracked=False, match="counters")
+    assert "V10" in failed(rec) and "the op must refuse: numbering-mismatch" in v10(rec), v10(rec)
+
+
+def test_a_converted_number_that_counts_otherwise_than_typed_fails(tpl):
+    """The output's "1.01" paragraph at the paragraph level: its number no longer holds the typed values."""
+    def fn(root):
+        find(root, "SUMMARY").find(f"{W}pPr/{W}pStyle").set(W + "val", "PR1")
+    rec = _broken(tpl, fn, data=build_typed(masterspec=True), tracked=False, match="counters")
+    assert "typed_numbers" in v10(rec)
+
+
+def test_both_sides_read_typed_values_alike():
+    """Every value 1–80 as each format writes it reads back as itself on both sides; junk reads as nothing."""
+    from spec_surgeon.verify import lists as vl
+    for fmt in ("decimal", "decimalZero", "upperLetter", "lowerLetter", "upperRoman", "lowerRoman"):
+        for n in range(1, 81):
+            text = tl.format_value(fmt, n)
+            assert tl.value_of(fmt, text) == vl._v_value(fmt, text) == n, (fmt, n, text)
+    for fmt, junk in (("upperRoman", "IIII"), ("upperRoman", "VX"), ("upperLetter", "AB"), ("lowerLetter", "A"),
+                      ("decimal", "1a"), ("decimal", ""), ("upperLetter", "")):
+        assert tl.value_of(fmt, junk) is None and vl._v_value(fmt, junk) is None, (fmt, junk)
+    assert tl.value_of("decimal", "007") == vl._v_value("decimalZero", "7") == 7
+
+
 # ---- wrong OUTPUTS are caught -----------------------------------------------------------------------------------------
 
 def mutate(docx: bytes, part: str, fn) -> bytes:
@@ -473,8 +525,8 @@ def test_a_matcher_that_keeps_the_separator_is_caught(tpl, monkeypatch):
     verifier's own prefixes see the separator left behind."""
     real = tl.typed_number
 
-    def keep_separator(text, scheme):
-        tn = real(text, scheme)
+    def keep_separator(text, scheme, lenient=False):
+        tn = real(text, scheme, lenient)
         return None if tn is None else dataclasses.replace(tn, end=tn.token_start + len(tn.token))
     monkeypatch.setattr(tl, "typed_number", keep_separator)
     plan, out, rec = converting(build_typed(), tpl, tracked=False)
@@ -485,7 +537,7 @@ def test_a_matcher_that_ignores_the_separator_rule_on_a_tracked_conversion_is_ca
     """The same matcher, tracked: the typed numbers become deletions without their tabs; V2/V8 agree with the plan's own
     accepted views, V10 does not."""
     real = tl.typed_number
-    monkeypatch.setattr(tl, "typed_number", lambda text, scheme: (
+    monkeypatch.setattr(tl, "typed_number", lambda text, scheme, lenient=False: (
         None if real(text, scheme) is None else
         dataclasses.replace(real(text, scheme), end=real(text, scheme).token_start + len(real(text, scheme).token))))
     plan, out, rec = converting(build_typed(), tpl)

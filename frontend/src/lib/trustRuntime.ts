@@ -195,9 +195,10 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     automatic: true,
     you:
       "Nothing beyond your request: when no ordinary plan fits (Claude finds no operation for it, the plan covers no " +
-      "file, or a sample fails its check), the app continues on its own. A file the plan refuses while the others " +
-      "plan does not start it: that file waits under Left untouched beside the preview of the others, and goes on " +
-      "your to-do list when you create theirs.",
+      "file, a sample fails its check, or every sample is refused), the app continues on its own. A file the plan " +
+      "refuses while the others plan does not start it, nor does a sample a later step of the plan refuses: that " +
+      "file waits under Left untouched beside the preview of the others, and goes on your to-do list when you " +
+      "create theirs.",
     runs:
       "Claude proposes the outcomes to reach (what should change, where, with what wording). The app checks the " +
       "proposal, carries it out without waiting for a pick, and tries methods on copies of your files: built-in " +
@@ -211,6 +212,24 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `Counts toward the pause; the trials get at most ${F.recoveryAttemptsPerGroup} attempts per group of files, ` +
       "on copies only. The wording in Claude's proposed outcomes is treated as " +
       "approved on this path without a separate pick: read the plan before you approve it.",
+  },
+  {
+    covers: ["A23", "A24", "A25"],
+    title: "Safe mode: choosing a mode, pressing a button, handing documents over",
+    you:
+      "Choose Safe or Default in the top bar; in Safe mode, pick a button, fill in its form and press Preview; Try " +
+      "these in Default mode beside what a button left untouched.",
+    runs:
+      "Choosing a mode keeps it in settings.json for the next start. A button builds its plan in code from your form " +
+      "and your attachments; the plan passes the same gate as a conversation's (its settings, the files it reads, " +
+      "every word it would place traced to what you typed) and the ordinary preview runs, without Claude's visual " +
+      "check. Create edited copies then makes and checks the copies as always. Handing over puts those documents on " +
+      "your to-do list and switches to Default mode.",
+    sent: "Nothing. A button never reaches the network.",
+    ai: NONE,
+    bounds:
+      "The buttons and what they do are fixed in the app. A document a button cannot change exactly is left " +
+      "untouched with the reason; nothing an AI does follows, neither a visual check nor recovery.",
   },
   {
     covers: ["A7"],
@@ -232,8 +251,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
       `core (at most ${F.maxProcessWorkers}), each file edited and checked whole in one of them, and Word renders over ` +
       `up to ${F.wordInstances} instances side by side. A copy that passes goes to a new timestamped folder; one that fails is moved to failed ` +
       "and never delivered. Then, if any copy failed, the app looks at those files again on its own (recovery) and " +
-      "comes back with a question or a new plan. A file the preview refused, or one whose copy failed with nothing to " +
-      "check it again, goes on your to-do list with the reason; a click that is refused moves nothing there.",
+      "comes back with a question or a new plan — except after a Safe-mode button, whose copies get no recovery. A " +
+      "file the preview refused, or one whose copy failed with nothing to check it again, goes on your to-do list " +
+      "with the reason; a click that is refused moves nothing there.",
     sent:
       "Nothing to make and check the copies. Recovery, if it runs, sends the failed files' names and full paths, their " +
       `profiles and overview, failure reasons, what its tools read, page images, and up to ${F.pastRepairCasesSent} matching ` +
@@ -309,32 +329,25 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     bounds: "The window's server only serves PNG pictures from the run folder or the app's own folder.",
   },
   {
-    covers: ["A13", "A14"],
-    title: "Start over, New conversation",
-    you: "Start over from the originals; New conversation.",
+    covers: ["A13", "A14", "A15", "A26", "A27"],
+    title: "Start over, New conversation, and your to-do list",
+    you:
+      "Start over from the originals; New conversation; Work on the documents I set aside; Put back beside a document " +
+      "on the to-do list; Set the rest aside for later (offered while files are checked again, once the ready copies " +
+      "are saved).",
     runs:
       "Start over makes your originals the working set again; the plan is void and the to-do list is cleared. New " +
-      "conversation archives this conversation in the conversations folder and starts an empty one.",
-    sent: "Nothing, until you send the next request.",
-    ai: NONE,
-    bounds: "No copy and no original is deleted or changed.",
-  },
-  {
-    covers: ["A15", "A23", "A24"],
-    title: "Your to-do list: work on it, put one back, set the rest aside",
-    you:
-      "Work on the documents I set aside; Put back beside a document on the list; Set the rest aside for later " +
-      "(offered while files are checked again, once the ready copies are saved).",
-    runs:
-      "The list holds the documents set aside, each with why: the ✗ on its preview, your word to the assistant, a " +
-      "plan that could not be applied to it, or a copy that could not be made. Working on them makes them the only " +
-      "documents in scope and repeats the request they were set aside from; Claude is told why each one waited. Put " +
-      "back returns one to the other documents as it is. Set the rest aside puts what recovery has not fixed on the " +
-      "list and ends the request; the copies already saved stay as they are.",
+      "conversation archives this conversation in the conversations folder and starts an empty one. The to-do list " +
+      "holds the documents set aside, each with why: the ✗ on its preview, your word to the assistant, a plan or a " +
+      "Safe-mode button that could not be applied to it, or a copy that could not be made. Working on them makes them " +
+      "the only documents in scope and repeats the request they were set aside from; Claude is told why each one " +
+      "waited. Put back returns one to the other documents as it is. Set the rest aside puts what recovery has not " +
+      "fixed on the list and ends the request; the copies already saved stay as they are.",
     sent: "Nothing, until you send the next request.",
     ai: NONE,
     bounds:
-      "No copy and no original is deleted or changed. The list is kept in the saved conversation; Start over clears it.",
+      "No copy and no original is deleted or changed. The to-do list is kept in the saved conversation; Start over " +
+      "clears it.",
   },
   {
     covers: ["A17", "A18", "A20"],
