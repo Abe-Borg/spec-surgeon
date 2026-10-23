@@ -71,7 +71,11 @@ request at a time); `applied` keeps the changes each copy carries, so the histor
 Documents the user leaves out of a request (`submit_editspec.leave_out` → `Session.left_out`) are not planned,
 previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, as does a sample
 a chain's later step refuses (`preview.refusals`), and the preview of the others stands (outcome planning starts
-only when no file plans, a sample fails its check, or every sample is refused).
+only when no file plans, a sample fails its check, or every sample is refused). The to-do list
+(`DocumentTask.todo`, each entry with `why` and `reason`) is where documents wait for later: the red X, the chat's
+`set_aside` tool at the user's word (`Conversation.set_aside` → `DocumentTask._take_set_aside`), a file the plan
+refused once the others run, a run failure no recovery takes, and recovery's leftovers at `SET_ASIDE_REST`;
+`put_back` takes one off without a pass.
 Delivered copies are the working set the next request builds on. There is no command line (removed 2026-10-21 with the
 library, workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations and the named v0.1.0
 jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.

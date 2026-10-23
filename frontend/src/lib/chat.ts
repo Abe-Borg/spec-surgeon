@@ -5,7 +5,7 @@
  *
  * Pure, so `node --test` can pin every rule.
  */
-import type { Choice, Message, View } from "../types.ts";
+import type { Choice, Message, TodoItem, View } from "../types.ts";
 import type { Aside, LiveReply, Step, UiState } from "./view.ts";
 
 /** Every item carries the key the chat renders it under. Messages are keyed by their place in the conversation,
@@ -18,7 +18,7 @@ export type ChatItem =
   | { kind: "error"; key: string; text: string }
   | { kind: "prompts"; key: string; questions: string[]; choices: Choice[]; chips: string[] }
   | { kind: "pause"; key: string; stepsPerPause: number; costText: string; canContinue: boolean }
-  | { kind: "todo"; key: string; names: string[] };
+  | { kind: "todo"; key: string; items: TodoItem[] };
 
 /** The key of the conversation's entry at `index` (a message, or the live bubble after the last one). */
 export function entryKey(index: number): string {
@@ -29,14 +29,18 @@ export function entryKey(index: number): string {
  *  (`document_task.WORK_TODO`). Sent as a chip: the user's decision, never their wording. */
 export const WORK_TODO = "Work on the documents I set aside";
 
-/** The to-do card: documents set aside at approval wait; once the other copies are saved (or whenever
- *  nothing runs and no pass is under way) the card offers to begin the pass over them. */
+/** The reply that ends a recovery by putting what it has not fixed on the to-do list (`document_task.SET_ASIDE_REST`);
+ *  the server offers it as a chip once the ready copies are saved. */
+export const SET_ASIDE_REST = "Set the rest aside for later";
+
+/** The to-do card: documents set aside (the red X, at the user's word, or because the plan refused them or their copy
+ *  could not be made) wait; whenever nothing runs and no pass is under way the card offers to begin the pass. */
 export function todoFor(state: UiState): ChatItem | null {
   const { view } = state;
   if (view.busy || state.live) return null;
   if ((view.todo ?? []).length === 0 || (view.focus ?? []).length > 0) return null;
   if (view.stage !== "done" && view.stage !== "empty" && view.stage !== "resume") return null;
-  return { kind: "todo", key: "todo", names: view.todo.map((item) => item.name) };
+  return { kind: "todo", key: "todo", items: view.todo };
 }
 
 /** The choices and chips to offer right now, or null when none apply. */
