@@ -157,6 +157,25 @@ def test_create_runs_only_the_files_the_plan_covers_and_starts_no_recovery(tmp_p
     assert source.read_bytes() == before
 
 
+def test_setting_aside_every_previewed_document_beside_a_refused_one_begins_the_pass(tmp_path):
+    # From review (Codex on #93): the refused file counted as left to run, so the all-set-aside path was skipped and
+    # the run, which drops it, found nothing and failed. Setting aside every previewed document begins the pass.
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.gui import Session
+    source, easy = _two_documents(tmp_path)
+    before = [p.read_bytes() for p in (source, easy)]
+    client = FakeClient(resp(tool("submit_editspec", {"spec": STYLE_SPEC})))
+    task = DocumentTask(Session(client=client, out_root=tmp_path / "out", visual_check=False), render=False)
+    task.attach([easy, source])
+    view = task.perform("send", text="Make the title bold")
+    assert task.session.runnable_files() == [easy.resolve()]
+    task.perform("primary", token=view["token"], hold=[str(easy)])
+    assert task.results == {} and task.session.last_batch is None
+    assert task.focus is not None and task.focus["documents"] == [str(easy)]
+    assert any("set every document aside" in m["text"] for m in task.messages if m["role"] == "app")
+    assert [p.read_bytes() for p in (source, easy)] == before
+
+
 def test_a_sample_that_fails_its_check_still_investigates_the_outcome(tmp_path, monkeypatch):
     from spec_surgeon import preview as preview_module
     real = preview_module.make_preview

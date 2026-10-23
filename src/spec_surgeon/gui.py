@@ -852,6 +852,13 @@ class Session:
                                        (f" Claude's visual check flagged {flagged} problem(s)." if flagged else ""))
         self._save_chat()
 
+    def runnable_files(self) -> List[Path]:
+        """What Create can run of the displayed plan: ``planned_files`` without the files its preview refused (while
+        another file planned) — the set the window counts the documents left to run in."""
+        files = self.planned_files()
+        kept = self._without_refused(files, None)
+        return files if kept is None else kept
+
     def _without_refused(self, files: List[Path], only) -> Optional[List[Path]]:
         """What Create runs of an approved spec: the files the preview's plan refused stay as they are — the window
         listed them under Left untouched, not part of the plan — so they are never run, and so never sent on to
