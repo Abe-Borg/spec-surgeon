@@ -366,7 +366,10 @@ def test_the_layout_plans_each_pass_the_gate_as_ordered_steps(folder):
     for layout in plan["layouts"]:
         stages = [[o["op"] for o in st["spec"]["ops"]] for st in layout["spec"]["stages"]]
         assert stages[0][:2] == ["set_page_setup", "set_font"]          # the page and the font come first
-        assert set(stages[-1]) == {"set_style_font"}                    # the template's look on its styles, last
+        assert set(stages[-1]) <= {"set_style_font", "set_font"} and "set_style_font" in stages[-1]  # the look, last
+        for op in layout["spec"]["stages"][-1]["spec"]["ops"]:
+            if op["op"] == "set_font":                                  # plain body text: by its style, no table
+                assert op["select"]["paragraphs"]["in_table"] is False and op["select"]["paragraphs"]["style_in"]
         assert stages[-2][-1] == "clear_direct_formatting"              # the clearing before it
         first = layout["spec"]["stages"][0]["spec"]["ops"][1]
         assert first["select"] == {"scope": ["document"], "runs": "all", "paragraphs": {"in_table": False}}
@@ -439,3 +442,35 @@ def test_a_chain_files_stop_reads_like_a_batch_files():
                             "reason": "it would count differently", "details": {}}
     cf.status = "FAIL"
     assert cf.exception is None
+
+
+def test_plain_body_text_on_a_shared_style_takes_the_body_font(folder, monkeypatch):
+    """Codex review on Abe-Borg/spec-surgeon#103: a body paragraph the plan does not restyle, in Normal — which the table
+    cell shares, so the font step leaves Normal alone — kept Times New Roman. Its runs now take the template's body
+    font in the last step; the table cell keeps its font."""
+    no_ai(monkeypatch)
+
+    def plain_note(root):
+        summary = next(p for p in root.iter(W + "p") if "".join(t.text or "" for t in p.iter(W + "t")) == "SUMMARY")
+        summary.addnext(etree.fromstring(f'<w:p {W_DECL}><w:r><w:t>A plain note to the specifier.</w:t></w:r></w:p>'))
+    path = folder / "plain.docx"
+    path.write_bytes(patch_docx(build_styled_outline(table=True), {MAIN: plain_note}))
+    plan = bm.plan_file(path, roles_of(folder), font=True)
+    assert plan.plain_styles == ["Normal"] and "Normal" not in plan.font_styles
+    task = DocumentTask(Session(out_root=folder / "out"), render=False, mode="safe")
+    task.attach([path])
+    task.attach([template(folder)], template=True)
+    view = task.perform("recipe", recipe="body_formatting", inputs={})
+    assert view["stage"] == "preview", [m["text"] for m in task.messages]
+    view = task.perform("primary", token=view["token"])
+    assert view["stage"] == "done" and all(f.status == "PASS" for f in task.session.last_batch.files)
+    data = Path(task.results[str(path.resolve())]).read_bytes()
+    out, got = DocxPackage(data), outline(data)
+    look = Resolver(StyleSheet(out), theme_fonts(out))
+
+    def seen(p):
+        r = p.find(f".//{W}r")
+        return look.run(r.find(W + "rPr"), p)["ascii"]
+    assert seen(got["A plain note to the specifier."][2]) == "Arial"
+    assert seen(got["Product data"][2]) == "Times New Roman"
+    assert seen(got["SECTION 21 13 13"][2]) == "Arial" and got["SECTION 21 13 13"][0] == "SCT"

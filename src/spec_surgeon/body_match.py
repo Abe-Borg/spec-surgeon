@@ -25,7 +25,8 @@ code from the document's own structure and the template's roles (``template_role
   their look would change unasked.
 * The template's look on the outline (the form's "font" box): every role style the plan imports is pinned, after the
   import, to the font and size it resolves to in the template (``template_look``) — an imported style is based on the
-  document's own Normal, whose font and size are the document's.
+  document's own Normal, whose font and size are the document's; and the body text outside tables the plan does not
+  restyle (``FilePlan.plain_styles``) takes the body font on its runs in the same last step.
 
 **Per layout** (``build``): the documents of one structure pattern (``fingerprint.pattern_id``) whose plans agree run
 one plan; the largest agreeing group wins and each other document is left out with the reason. The font step (the form's
@@ -64,6 +65,7 @@ class FilePlan:
     notes: List[str] = field(default_factory=list)
     look: List[Dict[str, Any]] = field(default_factory=list)  # the template's look on its imported styles: last step
     font_styles: List[str] = field(default_factory=list)   # styles only the body outside tables uses (font step)
+    plain_styles: List[str] = field(default_factory=list)  # the styles of body text outside tables it does not restyle
     defaults_free: bool = False                            # nothing outside the body outside tables has paragraphs
 
     @property
@@ -269,8 +271,10 @@ def plan_file(path: Path, roles: TemplateRoles, *, page: bool = True, clear: boo
     outside = [p for i, p in enumerate(pars) if i in cells] + [p for _, p in _elsewhere(pkg, main_part)]
     body_styles = _uses([p for i, p in enumerate(pars) if i not in cells], sheet)
     font_styles = sorted(body_styles - _uses(outside, sheet) - imported)
+    plain = {paragraph_style(p, sheet) for i, p in enumerate(pars) if i not in cells and i not in targeted}
     return FilePlan(Path(path), ops, kind, top[0]["size_pt"] if top and top[0]["size_pt"] else None, notes,
-                    look=look, font_styles=font_styles, defaults_free=not outside)
+                    look=look, font_styles=font_styles, defaults_free=not outside,
+                    plain_styles=sorted(x for x in plain - imported if x))
 
 
 def font_ops(font: str, size: Optional[float], size_from: List[float], styles: List[str] = (),
@@ -349,7 +353,17 @@ def build_layouts(roles: TemplateRoles, ctx, request: str, *, page: bool, font: 
         stub = {"kind": "layouts", "request": request, "layouts": [layout]}
         outcome, errors = compiler.compose_submission(layout_spec(stub, layout), batch, [request],
                                                       patterns=[pat["pattern_id"]], leave_out=list(left))
-        if not errors and chosen[0].look:
+        look_ops = list(chosen[0].look)
+        plain = sorted(set().union(*(p.plain_styles for p in chosen)))
+        if font and roles.font and plain:
+            # body text the plan does not restyle takes the body font on its runs (after the restyle, so the
+            # template's own styles keep their fonts): its style may be one a table or a header shares (Normal), which
+            # the font step leaves alone
+            sized = {"size": roles.size, "size_from": sizes} if roles.size and sizes else {}
+            look_ops.append({"op": "set_font", "select": {"scope": ["document"], "runs": "all",
+                                                          "paragraphs": {"style_in": plain, "in_table": False}},
+                             "params": {"font": roles.font, **sized, "only_where_defined": False, "tracked": False}})
+        if not errors and look_ops:
             # the imported styles take the template's font and size in a step of their own, planned on the copy
             # that holds them (the composer orders only ops that overlap in the source)
             from .chain import chain_from_specs
@@ -357,7 +371,7 @@ def build_layouts(roles: TemplateRoles, ctx, request: str, *, page: bool, font: 
             steps = ([(st["name"], st["spec"]) for st in outcome["stages"]] if is_chain(outcome)
                      else [("match", outcome)])
             look = {"request": request, "summary": "The template's font and size on the styles it brought.",
-                    "mode": "formatting", "ops": chosen[0].look}
+                    "mode": "formatting", "ops": look_ops}
             outcome, errors = compiler.compose_submission(chain_from_specs(steps + [("template look", look)]), batch,
                                                           [request], patterns=[pat["pattern_id"]],
                                                           leave_out=list(left))

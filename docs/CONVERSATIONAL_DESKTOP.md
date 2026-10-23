@@ -76,7 +76,8 @@ spacing (all on). For each document, `body_match.plan_file` reads its own struct
   the styles nothing else uses (`set_style_font`), the document defaults only when no table, header, footer or note
   could inherit them; and, in a last step of its own, every style the plan brought from the template pinned to the
   font and size it has in the template (`body_match.template_look`), since an imported style is based on the
-  document's own Normal. Headers, footers and tables keep their fonts;
+  document's own Normal, and the body text outside tables the plan does not restyle taking the body font on its runs
+  (its style may be one a table or a header shares). Headers, footers and tables keep their fonts;
 - a document whose own style has the id of a template role style and is used by paragraphs the plan does not
   restyle — in a table cell the conversion leaves out, a header, a footer, a note or a comment as much as in the
   body — is refused (the template's definition would change their look).
