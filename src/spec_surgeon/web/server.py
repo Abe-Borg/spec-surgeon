@@ -109,7 +109,8 @@ def job_started_line(action: str, values: Dict[str, Any]) -> str:
     if action == "send":
         what = "a suggested reply the user tapped" if values.get("chip") else "a typed message"
     elif action == "choose":
-        what = f"choice {diag.snip(values.get('choice_id') or '?', 40)}"
+        what = f"choice {diag.snip(values.get('choice_id') or '?', 40)}" + \
+            (", its wording edited" if values.get("wording") is not None else "")
     elif action == "primary":
         hold = values.get("hold") or []
         what = "the primary action" + (f", {len(hold)} document(s) held back" if hold else "")
@@ -490,7 +491,10 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
     @app.post("/api/choose")
     async def choose(request: Request):
         body = await request.json()
-        return stream("choose", choice_id=str(body.get("choice_id") or ""))
+        wording = body.get("wording")
+        if wording is not None and not isinstance(wording, str):
+            return error("wording must be text.")
+        return stream("choose", choice_id=str(body.get("choice_id") or ""), wording=wording)
 
     @app.post("/api/primary")
     async def primary(request: Request):

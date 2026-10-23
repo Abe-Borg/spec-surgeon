@@ -195,8 +195,9 @@ TOOLS = INSPECTION_TOOLS + [
                                                        "alternative, say exactly how it differs from what was asked"},
              "kind": {"type": "string", "enum": ["clarify", "alternative", "rephrase"]},
              "wording": {"type": "string", "description": "ONLY when picking this choice would place words in the "
-                                                         "documents: those exact words (the user's pick approves "
-                                                         "them; nothing else does)"},
+                                                         "documents: those exact words (the user sees them in an "
+                                                         "editable box; the pick approves them as offered or as the "
+                                                         "user edited them; nothing else does)"},
              "detail": {"type": "string"}}, "required": ["label", "kind"]}}}}},
     {"name": "submit_editspec", "description": "Submit the EditSpec. It is validated and dry-planned; errors come "
      "back to fix. A spec that says 'unsupported' must also judge custom_transform. When one spec cannot express "
@@ -562,7 +563,9 @@ results, not a procedure: get them exactly what they asked for with as little of
   alternatives. An unsupported capability is a limitation of the app, not a reason to ask the user to rephrase an
   already clear request.
 - For an explicit request to draft or rewrite wording, you MAY propose a draft through ask_user with its EXACT text
-  in the choice's wording field, and say it is a proposed draft; it is applied only if the user picks it. Otherwise
+  in the choice's wording field, and say it is a proposed draft; it is applied only if the user picks it. The user
+  may edit a choice's one wording before picking it: the app then tells you the exact words they approved instead,
+  and you use those, never your draft. Otherwise
   preserve document wording. Never invent project facts, technical requirements or citations.
 - After a completed result the next request builds on the edited copies the user has; the app tells you what was
   already done, and you plan only what is new. A request to undo an earlier change is answered by suggesting

@@ -1,4 +1,6 @@
 // Adapted from Build-a-Spec's frontend/src/components/SuggestedPrompts.tsx (copy-based reuse).
+import { useId, useState } from "react";
+import { checkWording } from "../lib/wording";
 import type { Choice } from "../types";
 import Markdown from "./Markdown";
 
@@ -12,10 +14,68 @@ interface Props {
   choices: Choice[];
   chips: string[];
   busy: boolean;
-  /** A choice carries approval semantics: picking one may approve its exact words. */
-  onChoose: (choice: Choice) => void;
+  /** A choice carries approval semantics: picking one may approve its exact words — or, ``wording``, the user's edit
+   *  of its one drafted wording, which is then approved instead of the draft. */
+  onChoose: (choice: Choice, wording?: string) => void;
   /** A chip is one of the model's suggested replies, sent as the user's decision (never as their wording). */
   onSend: (text: string, chip?: boolean) => void;
+}
+
+/** Claude's drafted wording in a box the user may change; "Use this wording" picks the choice with it. */
+function WordingEditor({ choice, busy, onChoose, onCancel }: {
+  choice: Choice;
+  busy: boolean;
+  onChoose: (choice: Choice, wording?: string) => void;
+  onCancel: () => void;
+}) {
+  const draft = choice.words[0] ?? "";
+  const [text, setText] = useState(draft);
+  const id = useId();
+  const check = checkWording(draft, text);
+  const use = () => {
+    if (!check.error && !busy) onChoose(choice, check.edited ?? undefined);
+  };
+  return (
+    <div className="mt-1 ml-3 border-l-2 border-accent/60 pl-3">
+      <label htmlFor={id} className="text-[10px] font-medium tracking-wide text-ink-faint uppercase">
+        Your wording
+      </label>
+      <textarea
+        id={id}
+        rows={2}
+        value={text}
+        autoFocus
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) {
+            e.preventDefault();
+            use();
+          }
+        }}
+        className="mt-1 w-full resize-y rounded-lg border border-edge bg-raised px-2.5 py-1.5 text-sm text-ink outline-none transition-colors focus:border-accent"
+      />
+      <p className={`mt-0.5 text-[11px] ${check.error ? "text-err" : "text-ink-faint"}`}>
+        {check.error || "Picking approves exactly these words; the draft is not used unless you leave it as it is."}
+      </p>
+      <div className="mt-1.5 flex flex-wrap gap-2">
+        <button
+          type="button"
+          onClick={use}
+          disabled={busy || Boolean(check.error)}
+          className="rounded-lg bg-accent px-3 py-1 text-xs font-medium text-on-accent transition-colors hover:bg-accent-hover disabled:opacity-40"
+        >
+          Use this wording
+        </button>
+        <button
+          type="button"
+          onClick={onCancel}
+          className="rounded-lg px-2 py-1 text-xs text-ink-dim transition-colors hover:text-ink"
+        >
+          Cancel
+        </button>
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -26,6 +86,7 @@ interface Props {
  * choices' labels are the model's text, rendered as markdown.
  */
 export default function Prompts({ questions, choices, chips, busy, onChoose, onSend }: Props) {
+  const [editing, setEditing] = useState<string | null>(null);
   return (
     <div className="chat-in rounded-2xl border border-edge bg-surface/60 px-4 py-3" role="group" aria-label="One thing to clarify">
       {questions.length > 0 && (
@@ -45,8 +106,12 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
               <button
                 type="button"
                 onClick={() => onChoose(choice)}
-                disabled={busy}
-                title={choice.detail || (choice.words.length ? "Picking this approves exactly the words beneath it" : "")}
+                disabled={busy || editing === choice.id}
+                title={
+                  editing === choice.id
+                    ? "You are editing its wording: press Use this wording below, or Cancel to pick the draft as offered"
+                    : choice.detail || (choice.words.length ? "Picking this approves exactly the words beneath it" : "")
+                }
                 style={stagger(index)}
                 className="prompt-chip-in w-full rounded-xl border border-edge bg-raised px-4 py-2.5 text-left text-sm text-ink transition-colors hover:border-accent/70 hover:bg-raised/80 disabled:pointer-events-none disabled:opacity-40"
               >
@@ -58,17 +123,31 @@ export default function Prompts({ questions, choices, chips, busy, onChoose, onS
                   </span>
                 )}
               </button>
-              {choice.words.length > 0 && (
-                <div className="mt-1 ml-3 border-l-2 border-edge pl-3 text-[12px] text-ink-dim">
-                  <span className="text-[10px] font-medium tracking-wide text-ink-faint uppercase">
-                    Exact wording:
-                  </span>
-                  {choice.words.map((word, i) => (
-                    <p key={`${i}-${word}`} className="mt-0.5 whitespace-pre-wrap">
-                      “{word}”
-                    </p>
-                  ))}
-                </div>
+              {editing === choice.id && choice.editable ? (
+                <WordingEditor choice={choice} busy={busy} onChoose={onChoose} onCancel={() => setEditing(null)} />
+              ) : (
+                choice.words.length > 0 && (
+                  <div className="mt-1 ml-3 border-l-2 border-edge pl-3 text-[12px] text-ink-dim">
+                    <span className="text-[10px] font-medium tracking-wide text-ink-faint uppercase">
+                      Exact wording:
+                    </span>
+                    {choice.editable && (
+                      <button
+                        type="button"
+                        onClick={() => setEditing(choice.id)}
+                        disabled={busy}
+                        className="ml-2 text-[11px] text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent disabled:opacity-40"
+                      >
+                        Edit wording
+                      </button>
+                    )}
+                    {choice.words.map((word, i) => (
+                      <p key={`${i}-${word}`} className="mt-0.5 whitespace-pre-wrap">
+                        “{word}”
+                      </p>
+                    ))}
+                  </div>
+                )
               )}
             </div>
           ))}

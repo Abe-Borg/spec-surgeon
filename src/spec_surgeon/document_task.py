@@ -661,8 +661,8 @@ class DocumentTask:
                                 "Reply with the number, or numbers separated by commas."}
         return None
 
-    def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), recipe="", inputs=None,
-                log=lambda _: None, events=None):
+    def perform(self, action, *, text="", token="", choice_id="", chip=False, hold=(), wording=None, recipe="",
+                inputs=None, log=lambda _: None, events=None):
         """Worker entry point. One ledger covers every nested model call and every turn. ``events`` is the window's
         live channel (docs/WEB_API.md: status, activity, text_delta, thinking_delta, message, plan, samples, results,
         question, cost); without one the job runs silently and the view says everything at the end. ``hold`` (the
@@ -683,7 +683,7 @@ class DocumentTask:
                 if action == "send":
                     self._send(text, checkpointed_log, chip=chip)
                 elif action == "choose":
-                    self._choose(choice_id, checkpointed_log)
+                    self._choose(choice_id, checkpointed_log, wording=wording)
                 elif action == "primary":
                     self._primary(token, checkpointed_log, hold=hold)
                 elif action == "recipe":
@@ -781,25 +781,31 @@ class DocumentTask:
                 self._compile(log)
         self._settle(log)
 
-    def _choose(self, choice_id, log):
+    def _choose(self, choice_id, log, wording=None):
+        """A picked choice; ``wording``: the user's edit of its one wording (``conversation.edited_wording``), checked
+        before anything is said or kept."""
+        from .conversation import edited_wording
         if self.mode == "safe":
             raise ValueError(SAFE_NO_CONVERSATION)
         self._ready_to_talk()
         chosen = next((c for c in self._choices() if c.id == choice_id), None)
         if chosen is None:
             raise ValueError("That choice is no longer available. Review the updated plan first.")
-        self.say(f"Chose: {chosen.label}", "user")
-        self._take(chosen, log)
+        edited = edited_wording(chosen, wording)
+        self.say(f"Chose: {chosen.label}" + (f" — “{edited}”" if edited is not None else ""), "user")
+        self._take(chosen, log, edited=edited)
         self._settle(log)
 
-    def _take(self, chosen, log):
-        """A choice the user picked: its label is a decision, its exact words are approved wording."""
+    def _take(self, chosen, log, edited=None):
+        """A choice the user picked: its label is a decision, its exact words are approved wording — or, ``edited``,
+        the user's own edit of them, and the draft is not."""
+        words = [edited] if edited is not None else list(chosen.words)
         self.decisions.append(chosen.label)
-        self.decisions.extend(chosen.words)
-        self.word_sources.extend(chosen.words)
+        self.decisions.extend(words)
+        self.word_sources.extend(words)
         self.save(in_progress=True)
         with self._conversation():
-            self.session.reply(choice_id=chosen.id, render=self.render, log=log)
+            self.session.reply(choice_id=chosen.id, render=self.render, log=log, wording=edited)
 
     # ---- Safe mode ----
     def set_mode(self, mode: str, acknowledged: bool = False) -> None:
@@ -1021,7 +1027,8 @@ class DocumentTask:
             self.stage = "budget"
         if self.stage == "question":
             self._emit({"type": "question", "questions": list(outcome.questions),
-                        "choices": [{"id": c.id, "label": c.label, "words": list(c.words), "detail": c.detail}
+                        "choices": [{"id": c.id, "label": c.label, "words": list(c.words), "detail": c.detail,
+                                     "editable": getattr(c, "editable", False)}
                                     for c in outcome.choices], "chips": list(outcome.chips)})
 
     def _recovery_options(self):
@@ -1635,7 +1642,8 @@ class DocumentTask:
                 "targets": review_display.recovery_targets(s.recovery) if s.recovery else review_display.spec_bindings(s.spec),
                 "document_count": len(s.recovery.files) if s.recovery else len(s.documents),
                 "questions": questions,
-                "choices": [{"id": c.id, "label": c.label, "words": list(c.words), "detail": c.detail} for c in choices],
+                "choices": [{"id": c.id, "label": c.label, "words": list(c.words), "detail": c.detail,
+                             "editable": getattr(c, "editable", False)} for c in choices],
                 "samples": samples, "set_aside": set_aside,
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
                 "unverified": {k: list(v) for k, v in self.unverified.items()},

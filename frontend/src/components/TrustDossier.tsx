@@ -284,7 +284,7 @@ function Dossier() {
           rows={[
             [
               "You",
-              "Your request, your typed answers, and the exact wording of a choice you picked. Only these count as approved wording.",
+              "Your request, your typed answers, and the exact wording of a choice you picked — as offered, or as you edited it first. Only these count as approved wording.",
               "Your bubbles in the chat. The conversation’s record keeps them as approved words, apart from everything Claude wrote.",
             ],
             [

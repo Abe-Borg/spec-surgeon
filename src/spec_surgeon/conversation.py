@@ -17,7 +17,9 @@ What makes it safe:
   (``check_pairing`` runs before every request). Results the app cannot give yet — the answer to ``ask_user``, what
   the preview of an accepted spec showed — wait in ``pending`` and go out first in the next user message.
 * **Approved words only.** ``sources`` — the words a spec may place in the documents — are the request, the user's
-  ``--answer`` lines and replies, and the exact ``wording`` of a choice the user picked. Never Claude's own text: its
+  ``--answer`` lines and replies, and the exact ``wording`` of a choice the user picked — as offered, or as the user
+  edited it before picking (``Choice.editable``: a choice of Claude's offering exactly one wording; the edited text
+  replaces the draft, which is then never approved, and passes the same ``clean_wording`` check). Never Claude's own text: its
   understanding, messages, choice labels, notes or the custom-transform brief. A wording with a character the user
   cannot see (``invisible``) is never offered. conversation.json records the sources as ``approved_words`` (beside
   ``answers``), and the spec the app gets carries the user's ``request``, never the text Claude wrote there (the
@@ -98,9 +100,15 @@ class Choice:
         if self.wording and not self.words:
             self.words = [self.wording]
 
+    @property
+    def editable(self) -> bool:
+        """A choice of Claude's that offers exactly one wording: the user may edit it before picking it, and the edited
+        text is then the approved wording (``edited_wording``)."""
+        return self.kind in CHOICE_KINDS_FROM_CLAUDE and bool(self.wording) and self.words == [self.wording]
+
     def to_dict(self) -> Dict[str, Any]:
         return {"id": self.id, "label": self.label, "kind": self.kind, "wording": self.wording, "detail": self.detail,
-                "words": list(self.words), "item_hash": self.item_hash}
+                "words": list(self.words), "item_hash": self.item_hash, "editable": self.editable}
 
     def exact_words(self) -> str:
         return ", ".join(f"«{w}»" for w in self.words)
@@ -225,6 +233,29 @@ def clean_wording(w: Any) -> Optional[str]:
     if bad:
         raise ValueError(f"wording contains invisible or control characters {[hex(ord(c)) for c in bad][:5]}")
     return w
+
+
+WORDING_RULE = ("The wording must be one line of visible characters (no line breaks, no invisible characters) and "
+                "cannot be empty.")
+
+
+def edited_wording(choice: Choice, wording: Optional[str]) -> Optional[str]:
+    """The words the user approves by picking ``choice`` with ``wording`` typed over its draft: None when there is no
+    edit (``wording`` None, or the draft unchanged once the outer spaces go); else the edited text, which must pass the
+    rule every offered wording passes (``clean_wording``: one line, nothing invisible). ValueError with a plain sentence
+    for a choice that cannot be edited or a wording that breaks the rule."""
+    if wording is None:
+        return None
+    if not choice.editable:
+        raise ValueError("Only a choice that offers one wording can have its wording edited.")
+    if not isinstance(wording, str):
+        raise ValueError(WORDING_RULE)
+    text = wording.strip(" ")
+    try:
+        text = clean_wording(text)
+    except ValueError:
+        raise ValueError(WORDING_RULE) from None
+    return None if text == choice.wording else text
 
 
 def _chips(raw: Any, errors: List[str]) -> List[str]:
@@ -364,9 +395,11 @@ class Conversation:
                 return c
         raise ValueError("that choice is not offered any more — pick one of the current choices or type a reply")
 
-    def reply(self, text: str = "", choice_id: Optional[str] = None, client=None, approve: bool = True) -> Turn:
+    def reply(self, text: str = "", choice_id: Optional[str] = None, client=None, approve: bool = True,
+              wording: Optional[str] = None) -> Turn:
         """The user's next message: their own words, a picked choice, or both. Picking a choice approves its exact
-        wording (if it has any); typed words are approved as typed. ``approve=False`` sends text the user did not
+        wording (if it has any) — or, with ``wording``, the user's edit of it (``edited_wording``), and the draft is not
+        approved; typed words are approved as typed. ``approve=False`` sends text the user did not
         write — a tapped suggested reply, which is the model's wording — as the user's decision but never as a
         source of words the documents may carry (CLAUDE.md invariant 6: Claude's words are never the user's)."""
         if not self.started:
@@ -379,6 +412,9 @@ class Conversation:
             raise ValueError("that choice is carried out by the app, not sent to Claude")
         if not text and chosen is None:
             raise ValueError("type a reply or pick one of the choices")
+        edited = edited_wording(chosen, wording) if chosen is not None else None
+        if wording is not None and chosen is None:
+            raise ValueError("an edited wording belongs to a picked choice")
         before = {"pending": copy.deepcopy(self.pending), "notes": list(self.notes), "ask_ids": list(self._ask_ids),
                   "sources": len(self.sources)}
         if chosen is not None and chosen.kind == "capitalization":
@@ -386,13 +422,18 @@ class Conversation:
             record = chosen.snapshot
             self.batch.check_source_pin(Path(record["file"]))
             self.sources.append(approval_source(record))
-        if chosen is not None and chosen.words:
+        if edited is not None:
+            self.sources.append(edited)          # the user's words: the draft they replaced is never approved
+        elif chosen is not None and chosen.words:
             self.sources += list(chosen.words)   # each its own source: never stitched together
         if text and approve:
             self.sources.append(text)
         self.turn = None          # the turn being answered is over: its choices can no longer be picked
         said = []
-        if chosen is not None:
+        if chosen is not None and edited is not None:
+            said.append(f"The user chose: «{chosen.label}» and changed its wording first — approving these exact words "
+                        f"instead of the offered ones: «{edited}»")
+        elif chosen is not None:
             said.append(f"The user chose: «{chosen.label}»" +
                         (f" — approving these exact words: {chosen.exact_words()}" if chosen.words else ""))
             if chosen.kind == "capitalization":
@@ -400,7 +441,9 @@ class Conversation:
         if text:
             said.append(f"The user replied: {text}")
         said_text = "\n".join(said)
-        self.entries.append(Entry("user", "\n".join(([f"Chose: {chosen.describe()}"] if chosen else []) +
+        shown = (f"{chosen.label} — exact words, as you edited them: «{edited}»" if edited is not None
+                 else chosen.describe() if chosen else "")
+        self.entries.append(Entry("user", "\n".join(([f"Chose: {shown}"] if chosen else []) +
                                                     ([text] if text else []))))
         self._send_user(said_text)
         self._reply_mark = (self.messages[-1], before)

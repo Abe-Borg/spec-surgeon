@@ -22,7 +22,7 @@ interface Props {
   /** How many previews carry the red X. */
   held: number;
   onSend: (text: string, chip?: boolean) => void;
-  onChoose: (choice: Choice) => void;
+  onChoose: (choice: Choice, wording?: string) => void;
   onAct: (token: string) => void;
   onContinue: () => void;
   onStop: () => void;

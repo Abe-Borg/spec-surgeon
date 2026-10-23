@@ -169,7 +169,9 @@ async function* streamJob(path: string, body: unknown): AsyncGenerator<JobEvent>
 /** A typed message, or (`chip`) one of the model's suggested replies the user tapped: the user's decision, never
  * approved wording — the words are the model's (docs/WEB_API.md). */
 export const send = (text: string, chip = false) => streamJob("/api/send", chip ? { text, chip: true } : { text });
-export const choose = (choiceId: string) => streamJob("/api/choose", { choice_id: choiceId });
+/** A picked choice; ``wording``: the user's edit of its one drafted wording (the draft as offered sends none). */
+export const choose = (choiceId: string, wording?: string) =>
+  streamJob("/api/choose", wording === undefined ? { choice_id: choiceId } : { choice_id: choiceId, wording });
 /** The one action. ``hold``: the previewed documents the user marked with the red X — they go on the to-do list and
  * the others get copies (docs/WEB_API.md). */
 export const primary = (token: string, hold: string[] = []) =>

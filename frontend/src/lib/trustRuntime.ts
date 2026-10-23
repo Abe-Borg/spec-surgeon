@@ -126,7 +126,8 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     you: "Click a choice, type its number, tap a suggested reply, or answer in your own words.",
     runs:
       "Your answer goes back into the same conversation. A choice that would place words shows them beneath its " +
-      "button; picking it approves exactly those words. A tapped suggested reply answers the question but is never " +
+      "button; picking it approves exactly those words — or, after Edit wording, exactly your version of them, " +
+      "never the draft you replaced. A tapped suggested reply answers the question but is never " +
       "approved wording: it was written by Claude.",
     sent: "The same as sending a request: your answer joins the conversation's history.",
     ai: conversationModel,

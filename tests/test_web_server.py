@@ -168,6 +168,15 @@ def test_a_failed_job_streams_an_error_with_a_retry_safe_view(tmp_path):
     assert client.post("/api/send", json={"text": ""}).status_code == 400
 
 
+def test_a_choice_s_edited_wording_must_be_text_and_its_log_line_never_carries_it(tmp_path):
+    from spec_surgeon.web.server import job_started_line
+    state, client = window(tmp_path)
+    bad = client.post("/api/choose", json={"choice_id": "c1", "wording": ["ISSUED"]})
+    assert bad.status_code == 400 and "wording must be text" in bad.json()["error"]
+    line = job_started_line("choose", {"choice_id": "c1", "wording": "ISSUED FOR BID"})
+    assert line == "Job choose started (choice c1, its wording edited)" and "ISSUED" not in line
+
+
 def test_images_are_served_only_from_the_apps_own_folders(tmp_path):
     state, client = window(tmp_path)
     inside = tmp_path / "out" / "x" / "page.png"

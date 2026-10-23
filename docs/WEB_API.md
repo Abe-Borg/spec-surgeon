@@ -40,7 +40,7 @@ that ends a job is authoritative.
     "stages": 2
   },
   "questions": ["Only the body text, or the headers, footers and titles too?"],
-  "choices": [{"id": "c1", "label": "Only the body text", "words": [], "detail": ""}],
+  "choices": [{"id": "c1", "label": "Only the body text", "words": [], "detail": "", "editable": false}],
   "chips": ["Everything, including the headers", "Just the body"],
   "samples": [{"source": "…", "name": "21 13 13.docx", "images": ["/api/image?path=…"],
                "pages_before": 12, "pages_after": 12, "passed": true}],
@@ -135,7 +135,7 @@ Rules the page relies on:
 | POST | `/api/pick` | `{"kind": "documents | template | references"}` | opens the NATIVE file dialog through the shell (pywebview); `{"paths": [...]}` — 501 when no shell |
 | POST | `/api/remove` | `{"path": "...", "template": false}` | the view |
 | POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
-| POST | `/api/choose` | `{"choice_id": "c1"}` | SSE stream |
+| POST | `/api/choose` | `{"choice_id": "c1", "wording": "…"}` — `wording` only for an `editable` choice (one drafted wording): the user's edit, approved instead of the draft (400 when it is not text; an edit that breaks the wording rule ends the job in `error`) | SSE stream |
 | POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
 | GET | `/api/recipes` | | `{"recipes": [{"id", "label", "group", "summary", "needs": ["template" \| "picture"], "fields": [{"name", "kind": "text \| pairs \| choice \| check \| picture \| table \| slots", "label", "required", "default"?, "options"?, "help"?, "placeholder"?, "optional_choice"?}]}], "groups": [...]}` — Safe mode's buttons (`recipes.catalog()`), the same for the whole session |
 | POST | `/api/recipe` | `{"recipe": "<id>", "inputs": {<field name>: value}}` — a Safe-mode button and its form; a form that cannot be used, or a plan the gate refuses, is said in one `app` message and nothing is previewed; 400 for inputs that are not an object | SSE stream |

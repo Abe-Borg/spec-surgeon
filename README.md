@@ -98,7 +98,8 @@ and Settings.
    section) and offers a fix; nothing changes until you ask for it.
    A question comes as a card with buttons and short replies you can tap: click one, type its number, or answer in
    your own words. A choice that would put words into the documents shows those exact words; picking it approves
-   exactly those words (a tapped reply never does). Changes that touch the same parts of a file — the template's
+   exactly those words (a tapped reply never does). When Claude drafts wording for you, **Edit wording** opens it in a
+   box, already filled in: change it and **Use this wording** approves exactly your version, never the draft. Changes that touch the same parts of a file — the template's
    header and footer beside its font, say — are composed into ordered steps by the engine; nothing is asked of you
    in two steps.
 5. **Look at the pages.** The chat says in plain words what will change. Beside it: rendered before/after pages for
