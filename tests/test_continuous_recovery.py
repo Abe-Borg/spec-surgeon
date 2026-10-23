@@ -96,19 +96,27 @@ def test_gui_keeps_conversation_and_exports_the_recovered_preview(tmp_path, monk
     assert (s.last_run_dir / "outputs" / source.name).is_file()
 
 
-def _one_file_refuses(tmp_path, *responses):
-    """Two documents; the spec plans on easy.docx and is refused on source.docx (it has no MissingStyle)."""
+STYLE_SPEC = {"request": "Make the title bold", "summary": "Use a style", "mode": "formatting",
+              "ops": [{"op": "apply_style", "params": {"style": "MissingStyle"}}]}
+
+
+def _two_documents(tmp_path):
+    """source.docx has no MissingStyle (the spec is refused on it); easy.docx has it (the spec plans)."""
     from docx import Document
     from docx.enum.style import WD_STYLE_TYPE
-    from spec_surgeon.gui import Session
     source = write_document(tmp_path / "source.docx")
     easy = Document(source)
     easy.styles.add_style("MissingStyle", WD_STYLE_TYPE.PARAGRAPH)
     easy.paragraphs[0].style = "MissingStyle"
     easy.save(tmp_path / "easy.docx")
-    spec = {"request": "Make the title bold", "summary": "Use a style", "mode": "formatting",
-        "ops": [{"op": "apply_style", "params": {"style": "MissingStyle"}}]}
-    client = FakeClient(resp(tool("submit_editspec", {"spec": spec})), *responses)
+    return source, tmp_path / "easy.docx"
+
+
+def _one_file_refuses(tmp_path, *responses):
+    """Two documents; the spec plans on easy.docx and is refused on source.docx (it has no MissingStyle)."""
+    from spec_surgeon.gui import Session
+    source, _ = _two_documents(tmp_path)
+    client = FakeClient(resp(tool("submit_editspec", {"spec": STYLE_SPEC})), *responses)
     s = Session(documents=sorted(tmp_path.glob("*.docx")), out_root=tmp_path / "out", client=client)
     assert s.compile("Make the title bold", lambda _: None) == "Compiled."
     return s, client, source
@@ -127,6 +135,45 @@ def test_a_file_the_plan_refuses_leaves_the_preview_of_the_others_standing(tmp_p
     note = s.conversation.notes[-1]
     assert note.index("LEFT UNTOUCHED") < note.index("PREVIEW —")
     assert "source.docx: [" in note and "1 of 2 file(s) plan cleanly." in note
+
+
+def test_create_runs_only_the_files_the_plan_covers_and_starts_no_recovery(tmp_path):
+    # From review (Codex on #91): the refused file stayed in the run, failed there again and sent the request to
+    # recovery after the copies — the outcome planner taking over one step later, for a file the window had listed as
+    # Left untouched, not part of the plan. It is never run; the others get their copies; no model call follows.
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.gui import Session
+    source, easy = _two_documents(tmp_path)
+    before = source.read_bytes()
+    client = FakeClient(resp(tool("submit_editspec", {"spec": STYLE_SPEC})))
+    task = DocumentTask(Session(client=client, out_root=tmp_path / "out", visual_check=False), render=False)
+    task.attach([easy, source])
+    view = task.perform("send", text="Make the title bold")
+    assert view["stage"] == "preview" and [item["name"] for item in view["set_aside"]] == ["source.docx"]
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and list(task.results) == [str(easy)]
+    assert [f.source.name for f in task.session.last_batch.files] == ["easy.docx"]
+    assert task.session.recovery is None and len(client.requests) == 1
+    assert source.read_bytes() == before
+
+
+def test_setting_aside_every_previewed_document_beside_a_refused_one_begins_the_pass(tmp_path):
+    # From review (Codex on #93): the refused file counted as left to run, so the all-set-aside path was skipped and
+    # the run, which drops it, found nothing and failed. Setting aside every previewed document begins the pass.
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.gui import Session
+    source, easy = _two_documents(tmp_path)
+    before = [p.read_bytes() for p in (source, easy)]
+    client = FakeClient(resp(tool("submit_editspec", {"spec": STYLE_SPEC})))
+    task = DocumentTask(Session(client=client, out_root=tmp_path / "out", visual_check=False), render=False)
+    task.attach([easy, source])
+    view = task.perform("send", text="Make the title bold")
+    assert task.session.runnable_files() == [easy.resolve()]
+    task.perform("primary", token=view["token"], hold=[str(easy)])
+    assert task.results == {} and task.session.last_batch is None
+    assert task.focus is not None and task.focus["documents"] == [str(easy)]
+    assert any("set every document aside" in m["text"] for m in task.messages if m["role"] == "app")
+    assert [p.read_bytes() for p in (source, easy)] == before
 
 
 def test_a_sample_that_fails_its_check_still_investigates_the_outcome(tmp_path, monkeypatch):

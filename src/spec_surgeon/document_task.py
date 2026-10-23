@@ -896,7 +896,9 @@ class DocumentTask:
                              "copies first.")
         remaining = None
         if held:
-            remaining = [f for f in s.planned_files() if f not in held]
+            # the files the preview refused never run (Session._without_refused): a user who sets aside every
+            # previewed document has set aside everything there is to create
+            remaining = [f for f in s.runnable_files() if f not in held]
             seen = [c["summary"] for g in self._groups() for c in g["changes"]]   # the plan the user looked at
             for path in held:
                 self._set_aside(path, seen)

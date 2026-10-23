@@ -130,3 +130,29 @@ def test_a_layout_of_left_out_documents_only_is_refused_with_a_reason(tmp_path):
     _, errs = compiler.compose_submission(submission, batch, ["Make the body paragraphs bold."], leave_out=[typed])
     assert errs == ["layout 'A': [leave-out] every document this spec covers is left out of the request; drop it (a "
                     "layout of left-out documents only is not needed)"]
+
+
+def test_a_custom_method_leaves_out_the_documents_the_user_left_out(tmp_path):
+    # From review (Codex on #91): an unsupported request with "leave out 20" fell back to a custom method over every
+    # document. The documents left out stay out of its trials, its preview and its copies.
+    from test_codegen import GOOD_OP
+    from docx import Document
+    docs = three(tmp_path)
+    request = "Set the header distance to 900 twips, not in 22."
+    fake = FakeClient(resp(tool("submit_editspec", {
+        "spec": {"request": request, "summary": "Move header", "unsupported": "Use a custom method",
+                 "proposal": "Set the header distance to 900 twips"},
+        "custom_transform": "possible", "custom_transform_reason": "Formatting only",
+        "leave_out": ["22 Michigan.docx"]})), resp(tool("submit_op", {"source": GOOD_OP, "params": {"twips": 900}})))
+    task = task_for(tmp_path, fake)
+    task.attach(docs)
+    before = docs[2].read_bytes()
+    view = task.perform("send", text=request)
+    assert view["stage"] == "preview" and task.session.generated.passed
+    assert task.session.left_out == [docs[2].resolve()] and task.session.planned_files() == docs[:2]
+    assert docs[2] not in [Path(s.source) for s in task.session.generated_preview.samples]
+    assert view["set_aside"] == [{"name": "22 Michigan.docx", "reason": LEFT_OUT_REASON}]
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and sorted(task.results) == sorted(str(p) for p in docs[:2])
+    assert all(Document(task.results[str(p)]).sections[0].header_distance.twips == 900 for p in docs[:2])
+    assert docs[2].read_bytes() == before

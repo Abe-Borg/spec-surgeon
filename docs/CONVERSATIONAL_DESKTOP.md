@@ -239,8 +239,9 @@ A file can be left out at four points, each time with one sentence that names th
   this request"), and come back with the next request unless you leave them out again.
 - At plan time, when the operation cannot predict its result on that file, or when no layout covers its
   structure. These appear under **Left untouched** before anything runs; no paid investigation precedes them. The
-  preview of the other documents stands, and the assistant names each one with its reason in its next reply. Only a
-  plan that covers no file at all, or a sample that fails its check, sends the request on to outcome planning.
+  preview of the other documents stands, and the assistant names each one with its reason in its next reply;
+  **Create edited copies** leaves them as they are (they are not run, so no recovery follows for them). Only a plan
+  that covers no file at all, or a sample that fails its check, sends the request on to outcome planning.
 - At delivery, when a file fails a verification check. It is never delivered. Spec Surgeon then checks it
   again internally (below).
 
