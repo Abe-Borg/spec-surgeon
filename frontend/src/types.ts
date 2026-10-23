@@ -103,6 +103,9 @@ export interface Cost {
   usd: number | null;
   text: string;
   calls: number;
+  /** Fast mode is in effect (Settings → "Fast responses" on, the model served fast, not refused for this key): the next
+   *  AI step is priced at the fast table. Absent from an older server. */
+  fast?: boolean;
 }
 
 export interface Connection {
@@ -210,6 +213,22 @@ export interface Settings {
   logs_dir: string;
   /** The colour scheme kept in settings.json: one of src/lib/theme.ts's ids. */
   theme: string;
+  /** Claude's fast mode, kept in settings.json; off until the user turns it on. Absent from an older server. */
+  fast_mode?: boolean;
+  fast?: FastOffer;
+}
+
+/** What Settings says about fast mode, from the server's own price table (llm.PRICES / llm.FAST_PRICES): the model
+ *  the AI steps use, whether Anthropic serves it fast, prices in USD per million tokens as [input, output], the
+ *  speed-up, and why the API refused fast mode for this key (null unless it did). */
+export interface FastOffer {
+  model: string;
+  available: boolean;
+  speedup: number;
+  price_factor: number;
+  standard_usd_per_mtok: [number, number] | null;
+  fast_usd_per_mtok: [number, number] | null;
+  refused: string | null;
 }
 
 /** `/api/diagnostics/bundle`: the zip saved (and shown in Explorer). */

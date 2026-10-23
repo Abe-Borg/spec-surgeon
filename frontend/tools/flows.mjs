@@ -174,6 +174,31 @@ try {
   await page.getByRole("button", { name: "Settings" }).click();
   await Promise.all([savedTheme(), schemes.getByRole("radio", { name: "Warm Clay" }).click()]);
   check("…and back to Warm Clay", (await bodyBg()) === "rgb(38, 38, 36)", await bodyBg());
+
+  // 9c. Settings → Fast responses: off, both sides shown, a second click that names the price turns it on, the pill
+  // says Fast, one click turns it off.
+  const fastSwitch = page.getByRole("switch", { name: "Fast responses" });
+  check("Fast responses starts off", (await fastSwitch.getAttribute("aria-checked")) === "false");
+  check(
+    "the benefit and the price are both on screen",
+    (await page.getByText(/writes its answers up to 2\.5× faster/).isVisible()) &&
+      (await page.getByText(/\$8 instead of \$4 per million input tokens/).isVisible()),
+  );
+  await fastSwitch.click();
+  const confirmFast = page.getByRole("button", { name: "Turn on — twice the price" });
+  check("the switch asks first, with the price on the button", await confirmFast.isVisible());
+  check("…and is not on yet", (await fastSwitch.getAttribute("aria-checked")) === "false");
+  await Promise.all([savedTheme(), confirmFast.click()]);
+  check("the second click turns it on", (await fastSwitch.getAttribute("aria-checked")) === "true");
+  const fastKept = await (await fetch(`${BASE}/api/settings`, { headers: { "X-Spec-Surgeon-Token": TOKEN } })).json();
+  check("the server keeps it", fastKept.fast_mode === true, String(fastKept.fast_mode));
+  await page.keyboard.press("Escape");
+  await page.reload();
+  await page.getByText("Connected", { exact: true }).waitFor();
+  check("the spending pill says Fast", await page.locator("header").getByText("Fast", { exact: true }).isVisible());
+  await page.getByRole("button", { name: "Settings" }).click();
+  await Promise.all([savedTheme(), fastSwitch.click()]);
+  check("one click turns it off", (await fastSwitch.getAttribute("aria-checked")) === "false");
   await page.keyboard.press("Escape");
 
   // 10. The top bar's help topics: one dialog, a tab strip, Escape closes it.

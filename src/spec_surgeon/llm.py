@@ -24,6 +24,13 @@ recovery and the visual check of the preview samples).
   not be echoed back or acted on — only its text is kept.
 * ``served`` tells which model actually answered (``resp.model``) and whether a fallback ran.
 * ``Usage`` adds up tokens per serving model and estimates the cost from ``PRICES``.
+* Fast mode (Settings → "Fast responses", ``set_fast_mode``; off unless the user turns it on): a call to a model
+  Anthropic serves fast (``FAST_PRICES``) asks for ``speed="fast"`` — the same model, effort and thinking, written up to
+  ``FAST_SPEEDUP`` times faster, at ``FAST_PRICE_FACTOR`` times the price on every token (the caching multipliers apply
+  on top). A fast call the fast capacity cannot take (429, 529, overloaded) is re-sent at once at standard speed,
+  never waited out; a request refused for its speed (a 400 or 403 naming it: the key has no fast access) is re-sent at
+  standard speed and fast mode stays off for the process (``fast_unavailable``) until the setting is turned on again.
+  Tokens served fast are kept in their own ``Usage`` row (``FAST_ROW``) and priced from ``FAST_PRICES``.
 * ``budget_scope`` gives recovery and its nested callers shared call, token and estimated USD limits, with optional
   model/effort overrides. Calls outside a scope retain the ordinary defaults above.
 
@@ -149,7 +156,21 @@ PRICES: Dict[str, Tuple[float, float, float, float, float]] = {
     "claude-opus-4-8": (5.00, 25.00, 0.50, 6.25, 10.00),
     "claude-sonnet-5-5": (2.00, 10.00, 0.20, 2.50, 4.00),
 }
-TOKEN_KEYS = ("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+# Fast mode: the models Anthropic serves fast, at FAST_PRICE_FACTOR times every price above (input, output, cache read,
+# both cache writes: the caching multipliers apply on top of the fast price). A model not listed is never asked for it.
+FAST_PRICE_FACTOR = 2
+FAST_SPEEDUP = 2.5                          # "up to 2.5x higher output tokens per second" (Anthropic's fast-mode page)
+FAST_PRICES: Dict[str, Tuple[float, float, float, float, float]] = {
+    "claude-opus-5-5": (8.00, 40.00, 0.40, 10.00, 16.00),
+    "claude-opus-5": (10.00, 50.00, 1.00, 12.50, 20.00),
+    "claude-opus-4-8": (10.00, 50.00, 1.00, 12.50, 20.00),
+}
+FAST_BETA = "fast-mode-2026-02-01"          # Opus 5.5 serves fast without it; Opus 5 and 4.8 (research preview) need it
+FAST_PREVIEW_MODELS = ("claude-opus-5", "claude-opus-4-8")
+FAST_ROW = " (fast)"                        # a Usage row of tokens served fast: "claude-opus-5-5 (fast)"
+FAST_MODE = False                           # the window's setting (set_fast_mode); off unless the user turns it on
+_fast_unavailable: Optional[str] = None     # why fast requests were refused for this key, latched for the process
+TOKEN_KEYS =("input_tokens", "output_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
 # Of the cache writes, those made for the 1-hour TTL (priced higher): kept beside TOKEN_KEYS, never added to the
 # token total — they are already counted in cache_creation_input_tokens.
 CACHE_1H_KEY = "cache_creation_1h_input_tokens"
@@ -296,6 +317,59 @@ def _sdk_credentials() -> bool:
         return False
 
 
+# ---- fast mode ------------------------------------------------------------------------------------------------------
+
+def set_fast_mode(on: bool) -> None:
+    """The window's setting, for every call from now on. Turning it on again forgets an earlier refusal, so a key that
+    has gained fast access is tried again."""
+    global FAST_MODE, _fast_unavailable
+    FAST_MODE = bool(on)
+    if FAST_MODE:
+        _fast_unavailable = None
+    diag.event("model.fast_mode.set", on=FAST_MODE)
+
+
+def fast_unavailable() -> Optional[str]:
+    """Why fast mode is off although the setting is on (the API refused it for this key), or None."""
+    return _fast_unavailable if FAST_MODE else None
+
+
+def fast_for(model: str) -> bool:
+    """Whether a call to ``model`` asks for fast mode now: the setting is on, the model is served fast and the API has
+    not refused fast mode for this key."""
+    return FAST_MODE and model in FAST_PRICES and _fast_unavailable is None
+
+
+def row_key(model: str, fast: bool) -> str:
+    """The ``Usage`` row that tokens of ``model`` are kept in: its own name, or with ``FAST_ROW`` when served fast."""
+    return f"{model}{FAST_ROW}" if fast else model
+
+
+def price_of(row: str) -> Optional[Tuple[float, float, float, float, float]]:
+    """The prices of a ``Usage`` row: ``FAST_PRICES`` for a fast row, ``PRICES`` otherwise; None when not listed."""
+    if row.endswith(FAST_ROW):
+        return FAST_PRICES.get(row[:-len(FAST_ROW)])
+    return PRICES.get(row)
+
+
+def _speed_refused(e: BaseException) -> bool:
+    """A request refused for its speed: a 400 or 403 whose message names the speed or fast mode."""
+    status = getattr(e, "status_code", None)
+    text = str(e).lower()
+    return status in (400, 403) and ("speed" in text or "fast mode" in text or "fast-mode" in text)
+
+
+def _fast_capacity(e: BaseException) -> bool:
+    """A fast call the fast capacity could not take: a 429, a 529 or an overloaded error (Anthropic's fast-mode page:
+    exceeding fast mode's rate limits or capacity returns a 429 or 529)."""
+    if getattr(e, "status_code", None) in (429, 529):
+        return True
+    body = getattr(e, "body", None)
+    error = body.get("error") if isinstance(body, dict) else None
+    kind = getattr(e, "type", None) or (error.get("type") if isinstance(error, dict) else None)
+    return kind in ("rate_limit_error", "overloaded_error")
+
+
 def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], messages: List[Dict[str, Any]],
          max_output_tokens: Optional[int] = None, effort: Optional[str] = None, one_shot: bool = False):
     """One streamed request; returns the final message. ``one_shot``: no later request repeats these messages, so
@@ -305,20 +379,36 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
     half-appends a turn. Inside ``budget_scope``, every caller shares its limits, including nested transform and
     visual calls, and every attempt counts against them. A refused preflight raises ``BudgetExceeded`` before opening
     a stream; ordinary calls are unchanged. The kill switch (``cancellation_scope``) raises ``UserCancelled`` before a
-    call, while one runs, or while waiting to re-send."""
+    call, while one runs, or while waiting to re-send. A fast call the fast capacity cannot take, or that is refused for
+    its speed, is re-sent at once at standard speed (the module docstring); that is not one of the ``RETRIES``."""
+    global _fast_unavailable
     cancel = _CANCEL_EVENT.get()
-    for attempt in range(RETRIES + 1):
+    attempt, standard = 0, False
+    while True:
         if cancel is not None and cancel.is_set():
             raise UserCancelled("Cancelled before the next model call. Your source files were not changed.")
+        delay = 0.0
         with diag.scope(model_call_id=diag.new_id()):
             with diag.span("model.call", requested_model=model, attempt=attempt + 1) as record:
                 try:
                     return _call(client, model=model, system=system, tools=tools, messages=messages, record=record,
-                                 max_output_tokens=max_output_tokens, effort=effort, one_shot=one_shot)
+                                 max_output_tokens=max_output_tokens, effort=effort, one_shot=one_shot,
+                                 standard=standard)
                 except BudgetExceeded as exc:
                     diag.event("model.budget.exhausted", level="warning", reason=str(exc), budgets=_budget_records())
                     raise
+                except UserCancelled:
+                    raise
                 except Exception as exc:  # noqa: BLE001 — re-sent only when transient; everything else propagates
+                    if record.get("speed") == "fast" and (_fast_capacity(exc) or _speed_refused(exc)):
+                        if _speed_refused(exc):
+                            _fast_unavailable = api_error_text(exc)[:300]
+                        standard = True
+                        record.update(retrying=True, error=_record_error(exc))
+                        _observe({"type": "retry"})  # the window drops the abandoned attempt's words
+                        diag.event("model.call.fast_to_standard", level="warning", attempt=attempt + 1,
+                                   refused=_speed_refused(exc), error=api_error_text(exc)[:300])
+                        continue
                     if attempt >= RETRIES or not is_transient(exc):
                         raise
                     delay = _retry_delay(exc, attempt)
@@ -326,12 +416,12 @@ def call(client, *, model: str, system: str, tools: Sequence[Dict[str, Any]], me
                     _observe({"type": "retry"})      # the window drops the abandoned attempt's words
                     diag.event("model.call.retry", level="warning", attempt=attempt + 1, delay_seconds=delay,
                                error=api_error_text(exc)[:300])
+        attempt += 1
         if cancel is not None:
             if cancel.wait(delay):
                 raise UserCancelled("Cancelled before the next model call. Your source files were not changed.")
         elif delay > 0:
             time.sleep(delay)
-    raise AssertionError("unreachable: the last attempt returns or raises")
 
 
 def is_transient(e: BaseException) -> bool:
@@ -456,6 +546,7 @@ def _response_metadata(resp, requested):
         model, fell_back = served(resp)
         return {"request_id": getattr(resp, "_request_id", None) or getattr(resp, "id", None),
                 "stop_reason": getattr(resp, "stop_reason", None), "served_model": model,
+                "served_speed": getattr(getattr(resp, "usage", None), "speed", None),
                 "fell_back": fell_back, "usage": usage.to_dict()}
     except Exception as exc:  # noqa: BLE001 — malformed diagnostic metadata cannot discard a response
         return {"record_error": _record_error(exc)}
@@ -467,7 +558,8 @@ def system_blocks(system: str) -> Any:
     return [{"type": "text", "text": system, "cache_control": dict(SYSTEM_CACHE)}] if system else system
 
 
-def _call(client, *, model, system, tools, messages, record, max_output_tokens, effort, one_shot=False):
+def _call(client, *, model, system, tools, messages, record, max_output_tokens, effort, one_shot=False,
+          standard=False):
     budgets = _CALL_BUDGETS.get()
     max_tokens = MAX_TOKENS if max_output_tokens is None else positive_integer("max_output_tokens", max_output_tokens)
     if max_tokens > MAX_TOKENS:
@@ -483,6 +575,14 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
         max_tokens = min(max_tokens, *(b.max_output_tokens for b in budgets))
         effort = budgets[-1].effort
         record.update(model=model, max_output_tokens=max_tokens, effort=effort)
+    fast = not standard and fast_for(model)
+    record["speed"] = "fast" if fast else "standard"
+    # A fast call fails at once on a 429 (the SDK would otherwise wait it out): ``call`` re-sends it at standard speed.
+    options = getattr(client, "with_options", None)
+    if fast and callable(options):
+        client = options(max_retries=0)
+        retries_disabled = True
+    if budgets:
         try:
             estimated_input = estimate_input_tokens(system=system, tools=tools, messages=messages)
             # the tools and system prompt: the part a 1-hour cache write (SYSTEM_CACHE) can cover
@@ -491,12 +591,12 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
             for budget in budgets:
                 budget.exhausted_reason = f"cannot estimate this request's input tokens: {e}"
             raise BudgetExceeded(budgets[-1].exhausted_reason) from e
-        reservations = [b._preflight(model, estimated_input, max_tokens, estimated_prefix, cached_history=not one_shot)
+        reservations = [b._preflight(model, estimated_input, max_tokens, estimated_prefix, cached_history=not one_shot,
+                                     fast=fast)
                         for b in budgets]
         # SDK retries are additional HTTP attempts invisible to this call site. ``call`` re-sends a transient failure
         # itself, so that every attempt passes the same preflight and counts against the same cap.
-        options = getattr(client, "with_options", None)
-        if callable(options):
+        if callable(options) and not retries_disabled:
             client = options(max_retries=0)
             retries_disabled = True
         for budget, reservation in zip(budgets, reservations):
@@ -507,11 +607,15 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
               output_config={"effort": effort}, betas=[FALLBACK_BETA], fallbacks="default")
     if not one_shot:
         kw["cache_control"] = dict(MESSAGES_CACHE)
+    if fast:
+        kw["speed"] = "fast"
+        if model in FAST_PREVIEW_MODELS:
+            kw["betas"] = [FALLBACK_BETA, FAST_BETA]
     if not _thinking_display_refused and _STREAM_OBSERVER.get() is not None:
         kw["thinking"] = dict(_THINKING_DISPLAY)   # the summary the window shows; refused once → never sent again
     record.update(model=model, max_output_tokens=max_tokens, effort=effort, phase="stream.open")
     diag.event("model.request.prepared", model=model, max_output_tokens=max_tokens, effort=effort,
-               message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets),
+               speed=record["speed"], message_count=len(messages), tool_count=len(tools), budgeted=bool(budgets),
                retries_disabled=retries_disabled)
     _model_progress("started")
     cancel = _CANCEL_EVENT.get()
@@ -528,7 +632,8 @@ def _call(client, *, model, system, tools, messages, record, max_output_tokens, 
         for budget, reservation in zip(budgets, reservations if budgets else ()):
             budget.failed_calls += 1
             if stopped:
-                budget._settle_stopped(model, reservation, seen.get("usage"), max_tokens, time.monotonic() - started)
+                budget._settle_stopped(model, reservation, seen.get("usage"), max_tokens, time.monotonic() - started,
+                                       fast=fast)
             else:
                 # Keep the reservation: a dropped stream may have consumed tokens without reporting its usage.
                 budget._abandon(reservation)
@@ -683,7 +788,7 @@ def response_entry(n: int, resp: Any, seconds: float) -> Dict[str, Any]:
         return {"turn": n, "role": "assistant", "stop_reason": getattr(resp, "stop_reason", None),
                 "seconds": round(seconds, 2),
                 "request_id": getattr(resp, "_request_id", None) or getattr(resp, "id", None),
-                "model": model, "fell_back": fell_back,
+                "model": model, "fell_back": fell_back, "speed": getattr(u, "speed", None),
                 "usage": usage,
                 "content": [block_dict(b) for b in (getattr(resp, "content", None) or [])]}
     except Exception as e:  # noqa: BLE001 — a diagnostic never stops the work it describes
@@ -787,6 +892,9 @@ class Usage:
         self.fallbacks = 0
 
     def add(self, resp, requested: str) -> None:
+        """The speed the response reports (``usage.speed``) decides the row of every attempt it carries: a fallback
+        attempt reported under a fast response is priced fast when its model has a fast price — an estimate that errs
+        high, never low."""
         self.calls += 1
         model, fell_back = served(resp)
         if model:
@@ -795,14 +903,17 @@ class Usage:
         usage = getattr(resp, "usage", None)
         if usage is None:
             return
+        fast = getattr(usage, "speed", None) == "fast"
         entries = getattr(usage, "iterations", None) or None
         if entries:
             for e in entries:
-                self._add(getattr(e, "model", None) or requested, e)
+                m = getattr(e, "model", None) or requested
+                self._add(row_key(m, fast and m in FAST_PRICES), e)
         else:
-            self._add(model or requested, usage)
+            self._add(row_key(model or requested, fast), usage)
 
     def _add(self, model: str, src) -> None:
+        """``model``: the row's key, a model's name or ``row_key(model, True)`` for tokens served fast."""
         row = self.by_model.setdefault(model, {k: 0 for k in TOKEN_KEYS})
         for k in TOKEN_KEYS:
             row[k] += int(getattr(src, k, 0) or 0)
@@ -842,7 +953,7 @@ class Usage:
         for model, row in self.by_model.items():
             if not any(row.values()):
                 continue
-            price = PRICES.get(model)
+            price = price_of(model)
             if price is None:
                 return None
             pin, pout, pread, pwrite, pwrite_hour = price
@@ -857,7 +968,8 @@ class Usage:
         n = self.tokens()
         cost = self.cost_usd()
         money = f"≈ ${cost:.2f}" if cost is not None else "cost unknown (a model without a listed price answered)"
-        return f"{n:,} tokens · {money}" + (f" · {self.fallbacks} fallback(s)" if self.fallbacks else "")
+        fast = " · fast mode" if any(row.endswith(FAST_ROW) for row in self.by_model) else ""
+        return f"{n:,} tokens · {money}" + fast + (f" · {self.fallbacks} fallback(s)" if self.fallbacks else "")
 
     def to_dict(self) -> Dict[str, Any]:
         return {**self.as_dict(), "by_model": self.by_model, "calls": self.calls, "served_models": sorted(set(self.served)),
@@ -983,9 +1095,11 @@ class CallBudget:
         raise BudgetExceeded(reason)
 
     def _preflight(self, model: str, estimated_input: int, max_output: int,
-                   estimated_prefix: int = 0, cached_history: bool = True) -> Tuple[int, Optional[float]]:
+                   estimated_prefix: int = 0, cached_history: bool = True,
+                   fast: bool = False) -> Tuple[int, Optional[float]]:
         """``estimated_prefix``: the part of the input (tools and system prompt) a 1-hour cache write may cover;
-        ``cached_history``: whether the rest may be a 5-minute cache write (not for a ``one_shot`` call)."""
+        ``cached_history``: whether the rest may be a 5-minute cache write (not for a ``one_shot`` call); ``fast``:
+        the call asks for fast mode, reserved at the fast prices."""
         if self.exhausted_reason:
             raise BudgetExceeded(self.exhausted_reason)
         if self.calls >= self.max_calls:
@@ -994,7 +1108,7 @@ class CallBudget:
         if self.max_total_tokens is not None and self.accounted_tokens + token_reservation > self.max_total_tokens:
             self._stop(f"recovery token budget cannot cover the next request: {token_reservation:,} estimated tokens "
                        f"plus {self.accounted_tokens:,} accounted, limit {self.max_total_tokens:,}")
-        price = PRICES.get(model)
+        price = price_of(row_key(model, fast))
         if price is None:
             if self.max_cost_usd is not None:
                 self._stop(f"price unknown for {model}; cannot enforce an estimated USD recovery budget")
@@ -1032,16 +1146,19 @@ class CallBudget:
             self._inflight_cost_usd = max(0.0, self._inflight_cost_usd - reservation[1])
 
     def _settle_stopped(self, model: str, reservation: Tuple[int, Optional[float]], seen: Optional[Dict[str, int]],
-                        max_output: int, seconds: float) -> None:
+                        max_output: int, seconds: float, fast: bool = False) -> None:
         """A call the user stopped: the input its stream reported when it opened (else the preflight estimate), and the
-        larger of the output it reported and what it could have written in ``seconds`` — never more than ``max_output``."""
+        larger of the output it reported and what it could have written in ``seconds`` — never more than ``max_output``.
+        A fast call writes up to ``FAST_SPEEDUP`` times faster, and is priced fast."""
         self._abandon(reservation)
         seen = dict(seen or {})
-        bound = min(max_output, math.ceil(max(0.0, seconds) * STOPPED_OUTPUT_RATE))
+        rate = STOPPED_OUTPUT_RATE * (FAST_SPEEDUP if fast else 1)
+        bound = min(max_output, math.ceil(max(0.0, seconds) * rate))
         if not any(seen.get(k) for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")):
             seen["input_tokens"] = max(0, reservation[0] - max_output)
         seen["output_tokens"] = max(int(seen.get("output_tokens", 0) or 0), bound)
-        self.usage._add(model, SimpleNamespace(**{k: int(seen.get(k, 0) or 0) for k in (*TOKEN_KEYS, CACHE_1H_KEY)}))
+        self.usage._add(row_key(model, fast),
+                        SimpleNamespace(**{k: int(seen.get(k, 0) or 0) for k in (*TOKEN_KEYS, CACHE_1H_KEY)}))
         self._reserved_tokens -= reservation[0]
         if reservation[1] is None:
             self._unpriced_reservations -= 1

@@ -305,11 +305,15 @@ function HowItWorks() {
           },
           {
             t: "Pages rendered once",
-            d: "The before-and-after pages come from Microsoft Word when it is installed (a private, invisible copy, never your open Word), otherwise LibreOffice. Pages are kept by the document’s exact content, so creating the copies does not render again what the preview already rendered. Claude also looks at the pages; what it flags is advice for you to check.",
+            d: "The before-and-after pages come from Microsoft Word when it is installed (private, invisible copies, up to three side by side, never your open Word), otherwise LibreOffice. Pages are kept by the document’s exact content, so creating the copies does not render again what the preview already rendered. Claude also looks at the pages; what it flags is advice for you to check.",
+          },
+          {
+            t: "Many documents at once",
+            d: "Three or more documents are edited and checked side by side, one per core of your computer, each from start to finish on its own, so every copy and its check are exactly what they would be alone.",
           },
           {
             t: "One model, with room to think",
-            d: "Every AI step runs Claude Opus 5.5 with room for its full answer: the conversation, and the visual check and custom methods it runs, at medium effort; outcome planning and recovery at high. A plan usually takes one or two calls.",
+            d: "Every AI step runs Claude Opus 5.5 with room for its full answer: the conversation, and the visual check and custom methods it runs, at medium effort; outcome planning and recovery at high. A plan usually takes one or two calls. Settings → Fast responses, off until you turn it on, has the same model write up to 2.5 times faster at twice the price.",
           },
           {
             t: "A clean start every time",

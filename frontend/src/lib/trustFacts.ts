@@ -8,11 +8,13 @@
  * test reads this file as text.
  */
 export const TRUST_FACTS = {
-  // The model and its settings (src/spec_surgeon/llm.py, resources.py, document_task.py)
+  // The model and its settings (src/spec_surgeon/llm.py, resources.py, document_task.py; fast mode: llm.py)
   model: "claude-opus-5-5",
   maxOutputTokens: 128000,
   conversationEffort: "medium",
   recoveryEffort: "high",
+  fastSpeedup: 2.5,
+  fastPriceFactor: 2,
   stepsPerPause: 48,
   autoSteps: 6,
   retries: 2,
@@ -53,6 +55,12 @@ export const TRUST_FACTS = {
   maxDocxMB: 256,
   // Renderers (render/word_worker.py, render/libreoffice.py)
   wordTimeoutSeconds: 120,
+  wordInstances: 3,
+  wordInstancesEnv: "SPEC_SURGEON_WORD_INSTANCES",
+  // Worker processes (batch.py, planner.py)
+  processMinFiles: 3,
+  maxProcessWorkers: 8,
+  planProcessMinFiles: 12,
   libreOfficeTimeoutSeconds: 600,
   // Data kept on your computer (settings.py, credentials.py, diagnostics.py, telemetry.py, repair_memory.py, render/cache.py)
   credentialTarget: "Spec Surgeon/ANTHROPIC_API_KEY",

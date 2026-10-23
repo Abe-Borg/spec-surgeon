@@ -108,6 +108,8 @@ def expected() -> dict:
         "maxOutputTokens": const("resources.py", "DEFAULT_MAX_OUTPUT_TOKENS"),
         "conversationEffort": const("document_task.py", "CONVERSATION_EFFORT"),
         "recoveryEffort": const("document_task.py", "RECOVERY_EFFORT"),
+        "fastSpeedup": const("llm.py", "FAST_SPEEDUP"),
+        "fastPriceFactor": const("llm.py", "FAST_PRICE_FACTOR"),
         "stepsPerPause": const("document_task.py", "STEPS_PER_PAUSE"),
         "autoSteps": const("document_task.py", "AUTO_STEPS"),
         "retries": const("llm.py", "RETRIES"),
@@ -146,6 +148,11 @@ def expected() -> dict:
         "maxTableOrPictureMB": const("inputs.py", "MAX_BYTES") // MIB,
         "maxDocxMB": class_const("package_limits.py", "ArchiveLimits", "max_archive_bytes") // MIB,
         "wordTimeoutSeconds": int(const("render/word_worker.py", "DEFAULT_TIMEOUT")),
+        "wordInstances": const("render/word_worker.py", "WORD_INSTANCES"),
+        "wordInstancesEnv": const("render/word_worker.py", "WORD_INSTANCES_ENV"),
+        "processMinFiles": const("batch.py", "PROCESS_MIN_FILES"),
+        "maxProcessWorkers": const("batch.py", "MAX_PROCESS_WORKERS"),
+        "planProcessMinFiles": const("planner.py", "PLAN_PROCESS_MIN_FILES"),
         "libreOfficeTimeoutSeconds": default("render/libreoffice.py", "render_pdfs", "timeout"),
         "credentialTarget": const("credentials.py", "TARGET"),
         "appLogMB": int(one(r"maxBytes=(\d+) \* 2 \*\* 20", source("diagnostics.py"), "the app log's size")),
@@ -288,3 +295,28 @@ def test_the_copy_names_the_exceptions_the_code_has():
     shell = source("web/shell.py")
     assert "webbrowser.open(url)" in shell and '?token={state.token}' in shell
     assert "opens the page in\n                your default browser instead" in dossier
+
+
+def test_fast_mode_is_off_until_turned_on_and_priced_from_the_table():
+    """The words the copy says about Fast responses, each tied to the code: off by default (the setting and the
+    module), turned on only by the window's setting, every fast price the factor times the standard one, a busy fast
+    capacity falling back to standard speed, and the worker processes and Word instances the copy names."""
+    assert const("llm.py", "FAST_MODE") is False
+    fields = {n.target.id: n.value for n in ast.walk(_tree("settings.py"))
+              if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)}
+    assert ast.literal_eval(fields["fast_mode"]) is False
+    prices, fast = const("llm.py", "PRICES"), const("llm.py", "FAST_PRICES")
+    factor = facts()["fastPriceFactor"]
+    assert fast and all(fast[m] == tuple(factor * p for p in prices[m]) for m in fast)
+    assert "llm.set_fast_mode(settings.fast_mode)" in source("web/server.py")
+    assert "_fast_capacity(exc) or _speed_refused(exc)" in source("llm.py")
+    assert const("batch.py", "DEFAULT_WORKER_MODE") == "auto"
+    assert "(os.cpu_count() or 2) // 2" in source("render/word_worker.py"), "one Word per two cores at most"
+    dossier = (FRONTEND / "components" / "TrustDossier.tsx").read_text(encoding="utf-8")
+    level1 = (FRONTEND / "components" / "WhyTrustIt.tsx").read_text(encoding="utf-8")
+    assert "Fast responses (Settings) is off until you turn it on" in dossier
+    assert "Fast responses, off until you turn it on in Settings" in level1
+    ledger = (ROOT / "docs" / "TRUST_CLAIMS.md").read_text(encoding="utf-8")
+    for key in ("FAST_PRICES", "FAST_SPEEDUP", "FAST_PRICE_FACTOR", "PROCESS_MIN_FILES", "MAX_PROCESS_WORKERS",
+                "PLAN_PROCESS_MIN_FILES", "WORD_INSTANCES"):
+        assert key in ledger, f"the ledger names no source for {key}"

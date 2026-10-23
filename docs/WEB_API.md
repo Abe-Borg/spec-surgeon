@@ -22,7 +22,7 @@ that ends a job is authoritative.
   "busy": false,
   "stage": "empty | question | preview | done | budget | resume",
   "connection": {"ready": true, "origin": "saved | environment | session | none"},
-  "cost": {"usd": 0.12, "text": "about $0.12", "calls": 3},
+  "cost": {"usd": 0.12, "text": "about $0.12", "calls": 3, "fast": false},
   "attachments": [
     {"path": "C:/Specs/21 13 13.docx", "name": "21 13 13.docx", "kind": "document | template | reference",
      "state": "ok | note | refused", "notes": ["Numbers are typed by hand, not automatic list numbering."],
@@ -89,6 +89,9 @@ Rules the page relies on:
   scope until the pass begins; the server also offers the same reply in `chips` outside the question stage.
 - `results` lists the edited copies of the latest run; `working.generation` > 0 means the next request builds on
   those copies, and `can_start_over` shows the "Start over from the originals" chip.
+- `cost.fast` is true while fast mode is in effect (`llm.fast_for(llm.DEFAULT_MODEL)`: Settings → Fast responses
+  is on, the model is served fast, and Anthropic has not refused fast mode for this key): the spending pill then says
+  "Fast". An older server leaves it out.
 - `update.manual_result` is the answer to the last check the user asked for (About → Check for updates): "You're up
   to date — …", "No release has been published yet." or "Couldn't check for updates: …". `POST /api/update/check`
   clears it when the check starts, so About shows "Checking for updates…" until it is written again or `state`
@@ -111,8 +114,8 @@ Rules the page relies on:
 | POST | `/api/new-conversation` | | the view (archives the journal, starts empty) |
 | POST | `/api/open` | `{"path": "..."}` | opens a result in Word / a folder with the OS (`{"ok": true}`); 404 if gone |
 | GET | `/api/image` | `?path=…` | the PNG (only files under the app's run folders are served; else 404) |
-| GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "out_root": "…", "logs_dir": "…", "steps_per_pause": 48, "theme": "clay"}` |
-| POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` and/or `{"theme": "linen"}` | the settings; 400 with `{"error"}` (an unknown scheme included). `theme` is one of `clay`, `blueprint`, `graphite`, `carbon`, `linen` and is saved to `settings.json` at once |
+| GET | `/api/settings` | | `{"key_present": true, "origin": "saved", "can_remember": true, "out_root": "…", "logs_dir": "…", "steps_per_pause": 48, "theme": "clay", "fast_mode": false, "fast": {"model": "claude-opus-5-5", "available": true, "speedup": 2.5, "price_factor": 2, "standard_usd_per_mtok": [4.0, 20.0], "fast_usd_per_mtok": [8.0, 40.0], "refused": null}}` — `fast` is what Settings says about fast mode, from `llm.PRICES` / `llm.FAST_PRICES` for the model the calls use; `refused` is the API's reason when it refused fast mode for this key |
+| POST | `/api/settings` | `{"api_key": "sk-…", "remember": true}` and/or `{"theme": "linen"}` and/or `{"fast_mode": true}` | the settings; 400 with `{"error"}` (an unknown scheme, a `fast_mode` that is not a boolean). `theme` is one of `clay`, `blueprint`, `graphite`, `carbon`, `linen` and is saved to `settings.json` at once; `fast_mode` is saved too and applies from the next AI step (`llm.set_fast_mode`; a call already running keeps its speed) |
 | GET | `/api/about` | | `{"version", "name", "tagline", "license", "license_name", "license_summary": [...], "release_notes", "credits": [...], "copyright", "author", "email", "github", "linkedin", "model", "components": [{"name", "license", "url"}]}` — every value from `about.py` (and `model` from `llm.DEFAULT_MODEL`); `credits` is the same as plain lines |
 | GET | `/api/update` | | the `update` block |
 | POST | `/api/update/check` | | the `update` block (starts a background check) |
