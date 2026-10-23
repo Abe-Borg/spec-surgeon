@@ -293,12 +293,14 @@ class Session:
 
     @_session_action
     def compile(self, request: str, log: Log, history: Optional[List[str]] = None,
-                fresh: Optional[List[str]] = None, context: Optional[str] = None) -> str:
+                fresh: Optional[List[str]] = None, context: Optional[str] = None,
+                todo: Optional[List[str]] = None) -> str:
         """Start a conversation about ``request`` over the current files. Returns a status line; sets ``spec`` when
         Claude's first answer is a spec, otherwise ``turn`` says what Claude needs from the user. It opens the session
         folder (``out_dir``): conversation.json and compile.json there after every turn, and the first preview or
         custom transform beside them (``_session_dir``). ``context`` is the app's own account of how these documents
-        come to be planned (set aside after a preview, say), never the user's words."""
+        come to be planned (set aside after a preview, say), never the user's words; ``todo`` names the documents
+        waiting on the user's to-do list (one line each, with why), which the conversation does not hold."""
         from .conversation import Conversation
         if not request.strip():
             raise ValueError("Type what you want done.")
@@ -316,7 +318,8 @@ class Session:
         self.conversation = Conversation(request, files, template=self.template, client=self.client,
                                          work_dir=out / "chat", log=log, continuous_recovery=True,
                                          word_sources=self.replay_word_sources, input_files=self.inputs,
-                                         history=list(history or []), fresh=list(fresh or []), context=context or "")
+                                         history=list(history or []), fresh=list(fresh or []), context=context or "",
+                                         todo=list(todo or []))
         try:
             turn = self.conversation.start()
         except Exception:
@@ -440,6 +443,12 @@ class Session:
     def _after_turn(self, turn) -> str:
         self.turn = turn
         self.questions = list(turn.questions)
+        c = self.conversation
+        if c is not None and getattr(c, "set_aside", None):
+            # documents the user set aside during the turn left the conversation's files: they leave the session's
+            # documents too, so the conversation still matches them (the window moves them to the to-do list)
+            parked = set(c.set_aside)
+            self.documents = [d for d in self.documents if str(Path(d).resolve()) not in parked]
         diag.event("session.conversation.turn", status=turn.status, question_count=len(self.questions),
                    choice_count=len(getattr(turn, "choices", [])), has_spec=getattr(turn, "spec", None) is not None)
         self._save_chat()

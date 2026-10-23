@@ -36,6 +36,12 @@ STAGES = ("empty", "question", "preview", "done", "budget", "resume")
 START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
 LEFT_OUT_REASON = "You asked to leave it out of this request; it stays as it is."
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
+# the reply (a chip, typed) that ends a recovery by putting the documents it could not fix on the to-do list
+SET_ASIDE_REST = "Set the rest aside for later"
+# why a document is on the to-do list (``todo[...]["why"]``), and the sentence the window and the model are given
+WHY_HELD, WHY_ASKED, WHY_REFUSED, WHY_FAILED = "held", "asked", "refused", "failed"
+HELD_REASON = "You marked its preview as needing more work."
+ASKED_REASON = "You asked to set it aside for later."
 CONVERSATION_EFFORT = "medium"   # the model's own default: fewer tool rounds per turn than high, measured by the owner
 RECOVERY_EFFORT = "high"         # the hard path keeps the depth
 RECOVERY_ATTEMPTS = 8            # candidate attempts per problem group (docs/RECOVERY.md), on every recovery path
@@ -51,7 +57,7 @@ TOOL_ACTIVITY = {
     "read_paragraphs": "Reading the documents", "read_xml_page": "Reading the document's structure",
     "run_analysis": "Analysing the documents", "read_analysis_result": "Reading the analysis",
     "propose_defined_terms": "Finding defined terms", "read_context_archive": "Looking back at the conversation",
-    "submit_editspec": "Writing the plan", "ask_user": "",
+    "submit_editspec": "Writing the plan", "ask_user": "", "set_aside": "Setting documents aside",
 }
 # The tools whose input carries the model's words to the user in a top-level "message": the reply joins them to its
 # plain text (``conversation._ask_turn``, ``_spec_turn``), so the window shows them as they are written.
@@ -257,6 +263,8 @@ class DocumentTask:
         # focus: the pass over them, once the user begins it (its documents, the plan they saw)
         self.todo: Dict[str, Dict[str, Any]] = {}
         self.focus: Optional[Dict[str, Any]] = None
+        self._binned: List[str] = []        # documents of this request that could not take the change, on the list
+        self._parked = ("", 0)              # (conversation id, how many of its set-aside documents were taken)
         self._events = None                 # the window's live channel for the job that is running (perform)
         self._talking = False               # inside a call of the conversation itself: its words are the reply
         self._said = False                  # the model call that is streaming has written words to the user
@@ -509,7 +517,7 @@ class DocumentTask:
         self._emit({"type": "status", "kind": "reading", "text": "Reading your documents…"})
         with self._conversation():
             self.session.compile(self._request(), log, history=self._history_in_scope(), fresh=self._fresh_documents(),
-                                 context=self._focus_context())
+                                 context=self._focus_context(), todo=self._todo_lines())
 
     def _history_in_scope(self) -> List[str]:
         """The changes the copies in scope carry, one line each, in the order they were made: a change every copy
@@ -531,15 +539,28 @@ class DocumentTask:
         return lines
 
     def _focus_context(self) -> str:
-        """What the model is told about a pass over set-aside documents: why they are planned alone, and the plan the
-        user saw and set aside (the changes the other copies got). The app's account, never the user's words."""
+        """What the model is told about a pass over the to-do list: why these documents are planned alone (each one's
+        reason for being on the list), and the plan the user saw (the changes the other copies got). The app's
+        account, never the user's words."""
         if not self.focus:
             return ""
         seen = self.focus.get("seen", [])
-        return ("SET ASIDE AFTER A PREVIEW: the user looked at the before/after pages of the plan below for these "
-                "documents and said they need more work. Their request stands; their latest words say what should be "
-                "different. Plan for these documents only." +
-                ("\nTHE PLAN THEY SAW:\n" + "\n".join(f"- {s}" for s in seen) if seen else ""))
+        plan = "\nTHE PLAN THEY SAW:\n" + "\n".join(f"- {s}" for s in seen) if seen else ""
+        why = self.focus.get("why") or {}
+        if all((why.get(d) or {}).get("why", WHY_HELD) == WHY_HELD for d in self.focus["documents"]):
+            return ("SET ASIDE AFTER A PREVIEW: the user looked at the before/after pages of the plan below for these "
+                    "documents and said they need more work. Their request stands; their latest words say what should "
+                    "be different. Plan for these documents only." + plan)
+        lines = [f"- {Path(d).name}: {(why.get(d) or {}).get('reason') or HELD_REASON}"
+                 for d in self.focus["documents"]]
+        return ("FROM THE USER'S TO-DO LIST: these documents waited there and the user is working on them now. The "
+                "request below was the one under way when they went on the list; it stands unless the user's latest "
+                "words say otherwise. The set-aside is done: do not set them aside again unless the user asks. Plan for "
+                "these documents only. Why each one was on the list:\n" + "\n".join(lines) + plan)
+
+    def _todo_lines(self) -> List[str]:
+        """The to-do list as the model is told it at the start of a request: one line per waiting document."""
+        return [f"{entry['name']}: {entry.get('reason') or HELD_REASON}" for entry in self.todo.values()]
 
     # ---- continue on the result ----
     def _advance_generation(self) -> None:
@@ -580,7 +601,7 @@ class DocumentTask:
             return
         self.working, self.generation, self.history, self.decisions = {}, 0, [], []
         self.results = {}
-        self.applied, self.todo, self.focus = {}, {}, None
+        self.applied, self.todo, self.focus, self._binned = {}, {}, None, []
         self._sync()
         self._invalidate()
         self.stage = "empty"
@@ -679,6 +700,14 @@ class DocumentTask:
             else:
                 self.say("Nothing is set aside right now; every document is in the plan.")
             return
+        if text.casefold() == SET_ASIDE_REST.casefold():
+            self.say(text, "user")
+            self.set_rest_aside()
+            return
+        if self.todo and not self.focus and not self.documents():
+            self.say(text, "user")
+            self.say(f"Every document is on your to-do list. Say “{WORK_TODO}”, or put one back, to work on it.")
+            return
         self._ready_to_talk()
         question = self._target_question()
         if question:
@@ -767,6 +796,7 @@ class DocumentTask:
         preview) until the user is needed, then set the stage from the one decision table."""
         s = self.session
         self._collect_conversation()
+        self._take_set_aside()
         outcome = s.outcome()
         for _ in range(AUTO_STEPS):
             if outcome.kind != "auto":
@@ -781,6 +811,7 @@ class DocumentTask:
                 with self._conversation():
                     s.reply(choice_id=outcome.auto_choice, render=self.render, log=log)
             self._collect_conversation()
+            self._take_set_aside()
             outcome = s.outcome()
         self._revision += 1
         self.stage = {"question": "question", "preview": "preview", "resume": "resume", "auto": "question",
@@ -826,18 +857,81 @@ class DocumentTask:
                 held.append(path)
         return held
 
-    def _set_aside(self, current: Path, seen: List[str]) -> None:
-        """A previewed document the user marked as needing more work: on the to-do list, with the decisions it was
-        set aside from and the plan the user looked at (``seen``), until the user works on it (``start_todo``)."""
+    def _set_aside(self, current: Path, seen: List[str], why: str = WHY_HELD, reason: str = HELD_REASON) -> str:
+        """A document onto the to-do list, keyed by its attached original, with the decisions it was set aside from,
+        the plan the user looked at (``seen``), why (a previewed document the user marked as needing more work, one
+        the user asked to set aside, one the plan refused, one whose copy did not pass) and the sentence that says so,
+        until the user works on it (``start_todo``) or puts it back (``put_back``). Returns the original's key."""
         origin = str(self.origin_of(current))
-        self.todo[origin] = {"name": Path(origin).name, "decisions": list(self.decisions), "seen": list(seen)}
+        self.todo[origin] = {"name": Path(origin).name, "decisions": list(self.decisions), "seen": list(seen),
+                             "why": why, "reason": reason}
+        return origin
+
+    def _take_set_aside(self) -> None:
+        """The documents the user asked the assistant to set aside during the last turn (``Conversation.set_aside``)
+        go on the to-do list at once: out of this request and every later one, the conversation going on about the
+        others. A pass over the to-do list whose every document is set aside again is over; when nothing is left in
+        scope the request ends with them."""
+        c = self.session.conversation
+        if c is None or not getattr(c, "set_aside", None):
+            return
+        done = self._parked[1] if self._parked[0] == c.id else 0
+        fresh, self._parked = c.set_aside[done:], (c.id, len(c.set_aside))
+        taken: List[str] = []
+        for path in fresh:
+            origin = str(self.origin_of(path))
+            if origin in self.todo or not any(str(a.path) == origin for a in self.attachments):
+                continue
+            given = c.set_aside_reasons.get(path, "")
+            reason = ASKED_REASON[:-1] + (f": {given.rstrip('.')}." if given else ".")
+            self._set_aside(Path(path), [], why=WHY_ASKED, reason=reason)
+            taken.append(origin)
+            if self.focus and origin in self.focus["documents"]:
+                self.focus["documents"] = [d for d in self.focus["documents"] if d != origin]
+        if not taken:
+            return
+        names = ", ".join(Path(o).name for o in taken)
+        several = len(taken) > 1
+        ended = ""
+        if self.focus is not None and not self.focus["documents"]:
+            self.focus, self.decisions = None, []          # the pass is over: its documents are back on the list
+            ended = " The pass over your to-do list is over; the other documents are back as they are."
+        self._sync()
+        if not self.documents():
+            self.decisions = []                            # nothing left in scope: the request ends with them
+        if not self.decisions:
+            self.session._set_outcome()
+            self.session.end_conversation()
+        self.say(f"Set aside for later: {names}. {'They are' if several else 'It is'} on your to-do list, out of every "
+                 f"plan until you work on {'them' if several else 'it'} or put {'them' if several else 'it'} back; "
+                 f"nothing in {'them' if several else 'it'} changes." + ended)
+        self.save(in_progress=True)
+
+    def put_back(self, path) -> None:
+        """A document off the to-do list, without a pass over it: it is among the documents the next request works
+        on again, as it is (its copy, if it has one). During a pass it joins the others when the pass ends."""
+        key = str(Path(path))
+        if key not in self.todo:
+            raise ValueError("That document is not on your to-do list.")
+        before = self.documents()
+        entry = self.todo.pop(key)
+        self._sync()
+        if self.focus:
+            self.say(f"{entry['name']} is off your to-do list; it joins the other documents when this pass ends.")
+        else:
+            self.say(f"{entry['name']} is off your to-do list and back among the documents your next request works on.")
+        if self.documents() != before:
+            self._invalidate()
+            if self.decisions:
+                self.say("The documents changed. I’ll check them against your request again.")
+        self.save()
 
     def start_todo(self) -> None:
         """The pass over the to-do list, one request at a time: the documents set aside from the same decisions (the
         oldest first) become the only documents in scope, those decisions are the request again, and the model is
-        told what each copy carries and what the user saw. Documents set aside from another request stay on the
-        list for the next pass. The other documents' copies stay as they are and come back when this pass delivers
-        its copies."""
+        told what each copy carries, why each was set aside and what the user saw. Documents set aside from another
+        request stay on the list for the next pass. The other documents' copies stay as they are and come back when
+        this pass delivers its copies."""
         if not self.todo:
             return
         decisions = list(next(iter(self.todo.values())).get("decisions") or [])
@@ -845,7 +939,9 @@ class DocumentTask:
         rest = {k: v for k, v in self.todo.items() if k not in group}
         entries = list(group.values())
         self.focus = {"documents": list(group),
-                      "seen": list(dict.fromkeys(s for e in entries for s in e.get("seen", [])))}
+                      "seen": list(dict.fromkeys(s for e in entries for s in e.get("seen", []))),
+                      "why": {k: {"why": v.get("why", WHY_HELD), "reason": v.get("reason") or HELD_REASON}
+                              for k, v in group.items()}}
         self.decisions = decisions
         self.todo = rest
         self._sync()
@@ -853,17 +949,24 @@ class DocumentTask:
         names = ", ".join(e["name"] for e in entries)
         several = len(entries) > 1
         waiting = ", ".join(e["name"] for e in rest.values())
-        self.say((f"Working on the {len(entries)} documents you set aside: {names}. " if several else
-                  f"Working on {names}, which you set aside. ") +
+        self.say((f"Working on the {len(entries)} documents from your to-do list: {names}. " if several else
+                  f"Working on {names}, from your to-do list. ") +
                  f"Tell me what should be different for {'them' if several else 'it'}, or continue to plan "
                  f"{'them' if several else 'it'} again as before. The other copies stay as they are." +
                  (f" {waiting}: set aside from a different request; {'they wait' if len(rest) > 1 else 'it waits'} "
                   f"for the next pass." if rest else ""))
         self.save()
 
-    def _offer_todo(self) -> None:
+    def _offer_todo(self, binned: Sequence[str] = ()) -> None:
+        """Say what waits on the to-do list once a request ends; ``binned``: the documents of this request that could
+        not take the change (the plan refused them, or their copy did not pass) and went on the list with the reason."""
         if not self.todo:
             return
+        binned = [k for k in binned if k in self.todo]
+        if binned:
+            several = len(binned) > 1
+            self.say(f"{', '.join(self.todo[k]['name'] for k in binned)} could not take this change, so "
+                     f"{'they wait' if several else 'it waits'} on your to-do list with the reason.")
         names = ", ".join(e["name"] for e in self.todo.values())
         several = len(self.todo) > 1
         self.say(f"On your to-do list: {names}. When you’re ready to work on {'them' if several else 'it'}, say "
@@ -894,6 +997,10 @@ class DocumentTask:
         if held and s.recovery is not None:
             raise ValueError("A document cannot be set aside while files are being checked again; save the ready "
                              "copies first.")
+        # the files the preview refused never run (Session._without_refused): once the others run they go on the to-do
+        # list with the plan's reason, to come back to (the session keeps them until the request ends: the approval
+        # was taken over them)
+        refused = self._refused_now(held) if s.recovery is None else []
         remaining = None
         if held:
             # the files the preview refused never run (Session._without_refused): a user who sets aside every
@@ -904,6 +1011,8 @@ class DocumentTask:
                 self._set_aside(path, seen)
             if not remaining:
                 # every previewed document set aside: nothing to create; the pass over them begins at once
+                for path, seen_by, reason in refused:
+                    self._set_aside(path, seen_by, why=WHY_REFUSED, reason=reason)
                 self.say("You set every document aside, so no copy was created. Tell me what should be different, "
                          "and I’ll plan them again.")
                 self.start_todo()
@@ -913,6 +1022,8 @@ class DocumentTask:
             s.acknowledge_review(outcome.token)
         log("Creating and checking your edited copies…")
         s.run(False, self.render, log, only=remaining)
+        self._binned += [self._set_aside(path, seen_by, why=WHY_REFUSED, reason=reason)
+                         for path, seen_by, reason in refused]
         self._collect_results()
         self._emit({"type": "results", "results": self._results_view()})
         if s.last_batch is not None and any(f.status != "PASS" for f in s.last_batch.files):
@@ -927,7 +1038,9 @@ class DocumentTask:
                     s.turn = result_turn(conversation, s.recovery)
                 self._settle(log)
                 return
-            # nothing a plan can recover: a document no layout covered stays as it was, named under "Left untouched"
+            # nothing a plan can recover: a document no layout covered stays as it was, named under "Left untouched",
+            # and goes on the to-do list with why
+            self._binned += self._bin_failed(s.last_batch.files)
         if s.last_trials is not None and any(not f.passed for f in s.last_trials):
             log("Checking the files that still need work…")
             s.resolve_remaining(log, options=self._recovery_options())
@@ -950,6 +1063,78 @@ class DocumentTask:
         self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. You can open them, describe another "
                  f"change to make on top of them, or start over from the originals.")
         self._advance_generation()
+        binned, self._binned = self._binned, []
+        self._offer_todo(binned)
+
+    def _refused_now(self, held: Sequence[Path] = ()) -> List[tuple]:
+        """At Create: the documents of the displayed plan its preview refused while another planned, each with the
+        plan the user saw and the plan's reason, ``(path, seen, reason)``: they go on the to-do list once the others
+        run. The ones the user set aside with the red X are theirs already."""
+        s = self.session
+        planned, runnable = s.planned_files(), s.runnable_files()
+        refused = [f for f in planned if f not in runnable and f not in held]
+        if not refused:
+            return []
+        seen = [c["summary"] for g in self._groups() for c in g["changes"]]
+        reasons = {Path(item.source).resolve(): (item.exception or {}).get("reason", "")
+                   for item in getattr(getattr(s.preview, "batch_plan", None), "exceptions", None) or []}
+        out = []
+        for f in refused:
+            why = str(reasons.get(Path(f).resolve(), "")).strip().rstrip(".")
+            out.append((f, seen, "The plan could not be applied to it" + (f": {why}." if why else ".")))
+        return out
+
+    def _bin_failed(self, files) -> List[str]:
+        """Run results that did not pass and that nothing will check again: on the to-do list with why."""
+        seen = [c["summary"] for g in self._groups() for c in g["changes"]]
+        out: List[str] = []
+        for item in files:
+            if item.status == "PASS":
+                continue
+            exc = getattr(item, "exception", None) or {}
+            why = exc.get("reason") or getattr(item, "reason", "") or "it did not pass the independent checks"
+            out.append(self._set_aside(Path(item.source), seen, why=WHY_FAILED,
+                                       reason=f"Its copy could not be made: {str(why).rstrip('.')}."))
+        return out
+
+    def set_rest_aside(self) -> None:
+        """During recovery, at the user's word (``SET_ASIDE_REST``): the documents it has not fixed go on the to-do
+        list with the reason, and so do those of the layouts still waiting for theirs; the copies already saved are
+        the working set and the request ends. Ready copies not saved yet are saved first (their own button)."""
+        s = self.session
+        r = s.recovery
+        if r is None or all(f.status == "READY" for f in r.files):
+            self.say("Nothing is waiting on a check right now.")
+            return
+        if any(f.status == "READY" and not f.delivered_to for f in r.files):
+            self.say("Save the ready copies first; then the rest can be set aside for later.")
+            return
+        binned = [self._set_aside(Path(f.source), [], why=WHY_FAILED,
+                                  reason=f"It still needed work when you set it aside: {str(f.reason).rstrip('.')}.")
+                  for f in r.files if f.status != "READY"]
+        from .batch import load_set_aside
+        for folder in s.pending_layout_recovery:
+            try:
+                items = load_set_aside(folder).get("files") or []
+            except (OSError, ValueError):
+                items = []
+            for item in items:
+                if item.get("source"):
+                    reason = item.get("reason") or "it did not pass the independent checks"
+                    binned.append(self._set_aside(Path(item["source"]), [], why=WHY_FAILED,
+                                                  reason=f"Its copy could not be made: {str(reason).rstrip('.')}."))
+        self._advance_generation()
+        # the request ends here, whether or not a copy was saved: nothing of it is left to check
+        self.decisions, self.focus, self._binned = [], None, []
+        self._resume_recovery, self._resume_layouts = None, []
+        s.pending_layout_recovery = []
+        s._set_outcome()
+        s.end_conversation()
+        self._sync()
+        self._revision += 1
+        self.stage = "done" if self.results else "empty"
+        names = ", ".join(self.todo[k]["name"] for k in dict.fromkeys(binned))
+        self.say(f"Set aside for later: {names}. The copies already saved stay as they are.")
         self._offer_todo()
 
     def _resume(self, log):
@@ -1158,6 +1343,10 @@ class DocumentTask:
         else:
             stages = len(s.spec.get("stages") or []) if is_chain(s.spec) else 1
         chips = list(outcome.chips) if not question else []
+        r = s.recovery
+        if (self.stage == "question" and r is not None and any(f.status != "READY" for f in r.files)
+                and all(f.delivered_to for f in r.ready) and SET_ASIDE_REST not in chips):
+            chips.append(SET_ASIDE_REST)        # what recovery has not fixed can wait on the to-do list
         resting = self.stage in {"done", "empty", "resume"}
         if self.todo and not self.focus and resting and WORK_TODO not in chips:
             chips.insert(0, WORK_TODO)
@@ -1169,7 +1358,8 @@ class DocumentTask:
                 "chips": chips,
                 "working": {"generation": self.generation, "from_originals": not self.working,
                             "can_start_over": can_start_over},
-                "todo": [{"path": path, "name": entry["name"]} for path, entry in self.todo.items()],
+                "todo": [{"path": path, "name": entry["name"], "why": entry.get("why", WHY_HELD),
+                          "reason": entry.get("reason") or HELD_REASON} for path, entry in self.todo.items()],
                 "focus": list(self.focus["documents"]) if self.focus else [],
                 "can_hold": self.stage == "preview" and s.recovery is None,
                 "attachments": [{**a.to_dict(), "current": str(self.current_of(a.path))} for a in self.attachments],
@@ -1227,18 +1417,29 @@ class DocumentTask:
             raise ValueError("The saved conversation could not be read.")
         todo = data.get("todo", {})
         focus = data.get("focus")
+        text = lambda value: isinstance(value, str)  # noqa: E731
+        why_ok = lambda v: text(v.get("why", WHY_HELD)) and text(v.get("reason", ""))  # noqa: E731
         if not (isinstance(todo, dict)
                 and all(isinstance(k, str) and isinstance(v, dict) and isinstance(v.get("name"), str)
-                        and strings(v.get("decisions", [])) and strings(v.get("seen", [])) for k, v in todo.items())):
+                        and strings(v.get("decisions", [])) and strings(v.get("seen", [])) and why_ok(v)
+                        for k, v in todo.items())):
             raise ValueError("The saved conversation could not be read.")
         if focus is not None and not (isinstance(focus, dict) and strings(focus.get("documents"))
-                                      and strings(focus.get("seen", []))):
+                                      and strings(focus.get("seen", []))
+                                      and isinstance(focus.get("why", {}), dict)
+                                      and all(isinstance(k, str) and isinstance(v, dict) and why_ok(v)
+                                              for k, v in focus.get("why", {}).items())):
             raise ValueError("The saved conversation could not be read.")
         known = {str(a.path) for a in self.attachments if not a.template and not a.reference}
-        self.todo = {k: {"name": v["name"], "decisions": list(v.get("decisions", [])), "seen": list(v.get("seen", []))}
+        # a journal from before the to-do list said why holds only documents set aside with the red X
+        self.todo = {k: {"name": v["name"], "decisions": list(v.get("decisions", [])), "seen": list(v.get("seen", [])),
+                         "why": v.get("why", WHY_HELD), "reason": v.get("reason") or HELD_REASON}
                      for k, v in todo.items() if k in known}
         documents = [d for d in (focus or {}).get("documents", []) if d in known]
-        self.focus = {"documents": documents, "seen": list(focus.get("seen", []))} if focus and documents else None
+        self.focus = ({"documents": documents, "seen": list(focus.get("seen", [])),
+                       "why": {k: {"why": v.get("why", WHY_HELD), "reason": v.get("reason") or HELD_REASON}
+                               for k, v in focus.get("why", {}).items() if k in documents}}
+                      if focus and documents else None)
 
     def restore(self):
         if not self.journal or not self.journal.is_file():

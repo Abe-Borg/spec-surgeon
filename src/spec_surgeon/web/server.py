@@ -497,6 +497,17 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         state.task.start_over()
         return state.view()
 
+    @app.post("/api/put-back")
+    async def put_back(request: Request):
+        if state.busy:
+            return busy_error()
+        body = await request.json()
+        try:
+            state.task.put_back(str(body.get("path") or ""))
+        except ValueError as exc:
+            return error(str(exc))
+        return state.view()
+
     @app.post("/api/new-conversation")
     def new_conversation():
         if state.busy:

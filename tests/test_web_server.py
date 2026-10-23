@@ -515,7 +515,9 @@ def test_the_primary_action_takes_the_documents_the_user_set_aside(tmp_path):
     with client.stream("POST", "/api/primary", json={"token": done["action"]["token"], "hold": [held]}) as response:
         done = frames(response)[-1]["state"]
     assert done["stage"] == "done" and [r["name"] for r in done["results"]] == ["A.docx"]
-    assert done["todo"] == [{"path": str(second), "name": "B.docx"}] and done["action"]["can_hold"] is False
+    assert done["todo"] == [{"path": str(second), "name": "B.docx", "why": "held",
+                             "reason": "You marked its preview as needing more work."}]
+    assert done["action"]["can_hold"] is False
     assert done["chips"][0] == WORK_TODO
     with client.stream("POST", "/api/send", json={"text": WORK_TODO, "chip": True}) as response:
         done = frames(response)[-1]["state"]

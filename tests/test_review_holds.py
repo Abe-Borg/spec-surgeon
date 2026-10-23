@@ -50,7 +50,8 @@ def test_a_document_set_aside_at_approval_waits_on_the_to_do_list_while_the_othe
     assert list(task.applied) == [str(first)] and task.applied[str(first)] == task.history   # only A carries it
     assert task.documents() == [Path(task.results[str(first)])]   # the set-aside document is out of scope meanwhile
     view = task.view()
-    assert view["todo"] == [{"path": str(second), "name": "B.docx"}] and view["focus"] == []
+    assert view["todo"] == [{"path": str(second), "name": "B.docx", "why": "held",
+                             "reason": "You marked its preview as needing more work."}] and view["focus"] == []
     assert view["chips"][0] == WORK_TODO and START_OVER in view["chips"]
     assert view["can_hold"] is False
     assert any("to-do list" in m["text"] and "B.docx" in m["text"] for m in task.messages if m["role"] == "app")
@@ -63,7 +64,8 @@ def test_the_pass_over_the_set_aside_documents_plans_them_alone_from_the_request
     task.perform("primary", token=view["token"], hold=[str(second)])
     first_copy = Path(task.results[str(first)])
     view = task.perform("send", text=WORK_TODO)
-    assert task.focus == {"documents": [str(second)], "seen": task.history}
+    assert task.focus == {"documents": [str(second)], "seen": task.history,
+                          "why": {str(second): {"why": "held", "reason": "You marked its preview as needing more work."}}}
     assert task.todo == {} and task.documents() == [second]        # the set-aside document alone, as it is
     assert task.decisions == [REQUEST]                              # the request it was set aside from stands
     assert view["stage"] == "resume" and view["focus"] == [str(second)] and WORK_TODO not in view["chips"]
@@ -143,7 +145,8 @@ def test_the_journal_keeps_the_to_do_list_and_the_pass(tmp_path):
     again.perform("send", text=WORK_TODO)
     once_more = task_for(tmp_path, FakeClient(), journal=journal)
     assert once_more.restore()
-    assert once_more.focus == {"documents": [str(second)], "seen": task.history}
+    assert once_more.focus == {"documents": [str(second)], "seen": task.history,
+                               "why": {str(second): {"why": "held", "reason": "You marked its preview as needing more work."}}}
     assert once_more.documents() == [second] and once_more.decisions == [REQUEST] and once_more.stage == "resume"
     assert once_more.applied == {str(first): task.history}
     # a journal from before per-copy histories: every copy carried every change
