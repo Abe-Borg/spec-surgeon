@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "spec-surgeon"
-version = "1.10.0"
+version = "1.11.0"
 description = "Surgical edits to Word (.docx) specifications with independent verification records."
 readme = "README.md"
 requires-python = ">=3.10"
