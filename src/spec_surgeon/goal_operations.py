@@ -27,6 +27,11 @@ OPERATIONS = {
     "numbering": "convert_numbering",
     "typed_numbering": "convert_typed_numbers",
 }
+# Options an operation offers that the approved-effect verifier (verify/goal_operations.py, verify/goal_numbering.py)
+# does not model: never advertised to an outcome contract, and refused in one (they serve Safe mode's "match body
+# formatting to template", which runs the operations themselves — docs/PLAN-2026-10-23-modes.md M2).
+NOT_FOR_EFFECTS = {"numbering": {"params": {"counters"}, "select": {"include_tables"}},
+                   "typed_numbering": {"params": {"match"}, "select": set()}}
 TEMPLATED = {"paragraph_style", "style_mapping", "table_style", "numbering", "typed_numbering"}
 AUTHORED = {"paragraph_style", "style_mapping", "numbering", "typed_numbering", "paragraph_borders"}
 COUNTS = {
@@ -77,6 +82,12 @@ def validate_operation_effect(effect):
         raise GoalError(f"{effect['type']} has unsupported fields: {sorted(set(effect) - allowed)}")
     if not isinstance(effect.get("select", {}), dict) or not isinstance(effect.get("params"), dict):
         raise GoalError("operation effect select and params must be objects")
+    off = NOT_FOR_EFFECTS.get(effect["type"], {})
+    unmodelled = sorted((set(effect["params"]) & off.get("params", set()))
+                        | (set(effect.get("select", {})) & off.get("select", set())))
+    if unmodelled:
+        raise GoalError(f"{effect['type']} effects do not take {unmodelled}: the approved-effect verifier does not "
+                        f"model them")
     if "template" in effect["params"]:
         raise GoalError("put an approved template and template_sha256 at effect level, never inside params")
     count = effect.get("expected_count")
@@ -189,9 +200,17 @@ def operation_catalog():
     for kind, name in OPERATIONS.items():
         params = copy.deepcopy(OPS[name].params_schema)
         params.get("properties", {}).pop("template", None)
+        select = copy.deepcopy(OPS[name].select_schema)
+        off = NOT_FOR_EFFECTS.get(kind, {})
+        for key in off.get("params", ()):
+            params.get("properties", {}).pop(key, None)
+        for key in off.get("select", ()):
+            select.get("properties", {}).pop(key, None)
+        if "properties" in select and not select["properties"]:
+            select = {"description": select.get("description", "none")}
         result[kind] = {"fields": ["select", "params", "expected_count"] +
                        (["template", "template_sha256"] if kind in TEMPLATED else []),
-                       "select": copy.deepcopy(OPS[name].select_schema), "params": params,
+                       "select": select, "params": params,
                        "expected_count": "non-negative exact count, or 'all' original matches; " + COUNTS[kind],
                        "binding": "original source SHA256 and exact source count; selections are independently re-resolved",
                        "template": "optional absolute path plus exact SHA256, never inside params" if kind in TEMPLATED else None}

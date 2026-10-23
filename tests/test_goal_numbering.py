@@ -189,3 +189,25 @@ def test_contract_author_is_used_when_params_omit_it(scheme):
         assert assertions[0]["author"] == "Contract Author"
     finally:
         source.zip.close()
+
+
+def test_options_the_effect_verifier_does_not_model_are_neither_offered_nor_accepted(scheme):
+    """convert_numbering's counters and include_tables, convert_typed_numbers' match (docs/PLAN-2026-10-23-modes.md
+    M2) serve Safe mode's body button; the approved-effect verifier does not model them, so an outcome contract can
+    neither see nor use them."""
+    from spec_surgeon.goal_operations import operation_catalog, validate_operation_effect
+    from spec_surgeon.goals import GoalError
+    catalog = operation_catalog()
+    assert "counters" not in catalog["numbering"]["params"]["properties"]
+    assert "properties" not in catalog["numbering"]["select"]
+    assert "match" not in catalog["typed_numbering"]["params"]["properties"]
+    assert "include_tables" in catalog["typed_numbering"]["select"]["properties"]      # modelled before, kept
+    for kind, extra in (("numbering", {"params": {"counters": "keep"}}),
+                        ("numbering", {"select": {"include_tables": False}}),
+                        ("typed_numbering", {"params": {"match": "counters"}})):
+        effect = _effect(kind, scheme)
+        effect["params"].update(extra.get("params", {}))
+        effect["select"].update(extra.get("select", {}))
+        with pytest.raises(GoalError, match="does not model"):
+            validate_operation_effect(effect)
+    validate_operation_effect(_effect("numbering", scheme))                         # the rest as before
