@@ -12,8 +12,10 @@ import {
   pageCount,
   parentFolder,
   planHasContent,
+  referencesTitle,
   runFolder,
   scopeTag,
+  sectionAttachments,
   traySummary,
   trayTitle,
 } from "../src/lib/workbench.ts";
@@ -90,16 +92,38 @@ test("the scope tag says a document waits on the to-do list or is in the pass ov
   assert.equal(scopeTag({ path: "/b", kind: "document" }, { todo: scope.todo, focus: ["/b"] }), "Working on");
 });
 
-test("the folded tray sums the attachments up in one line", () => {
+test("each folded section sums its own attachments up in one line", () => {
   const doc = (path: string, extra: Partial<Attachment> = {}): Attachment => ({
     path, name: path.split("/").pop() ?? path, kind: "document", state: "ok", notes: [], reason: "", current: path, ...extra,
   });
   const attachments = [
     doc("/a.docx"), doc("/b.docx"), doc("/c.docx", { state: "refused" }),
     doc("/t.docx", { kind: "template" }), doc("/logo.png", { kind: "reference" }), doc("/values.xlsx", { kind: "reference" }),
+    doc("/broken.png", { kind: "reference", state: "refused" }),
   ];
-  assert.equal(traySummary({ attachments, todo: [], focus: [] }), "2 documents · a template · 1 picture · 1 table · 1 left out");
-  assert.equal(traySummary({ attachments: [doc("/a.docx")], todo: [{ path: "/a.docx", name: "a.docx" }], focus: [] }), "1 document · 1 to do");
-  assert.equal(traySummary({ attachments: [doc("/a.docx")], todo: [], focus: ["/a.docx"] }), "1 document · working on 1");
-  assert.equal(traySummary({ attachments: [], todo: [], focus: [] }), "");
+  const view = { attachments, todo: [], focus: [] };
+  assert.equal(traySummary("documents", view), "2 documents · 1 left out");
+  assert.equal(traySummary("template", view), "t.docx");
+  assert.equal(traySummary("references", view), "1 picture · 1 table · 1 left out");
+  assert.equal(traySummary("documents", { attachments: [doc("/a.docx")], todo: [{ path: "/a.docx", name: "a.docx" }], focus: [] }), "1 document · 1 to do");
+  assert.equal(traySummary("documents", { attachments: [doc("/a.docx")], todo: [], focus: ["/a.docx"] }), "1 document · working on 1");
+  assert.equal(traySummary("documents", { attachments: [], todo: [], focus: [] }), "");
+  assert.equal(traySummary("template", { attachments: [doc("/a.docx")], todo: [], focus: [] }), "none");
+  assert.equal(traySummary("references", { attachments: [doc("/a.docx")], todo: [{ path: "/a.docx", name: "a.docx" }], focus: [] }), "none");
+  assert.equal(traySummary("template", { attachments: [doc("/t.docx", { kind: "template", state: "refused" })], todo: [], focus: [] }), "1 left out");
+});
+
+test("each section lists its own kind, and the pictures title counts the accepted ones", () => {
+  const doc = (path: string, extra: Partial<Attachment> = {}): Attachment => ({
+    path, name: path.split("/").pop() ?? path, kind: "document", state: "ok", notes: [], reason: "", current: path, ...extra,
+  });
+  const attachments = [
+    doc("/a.docx"), doc("/t.docx", { kind: "template" }),
+    doc("/logo.png", { kind: "reference" }), doc("/broken.png", { kind: "reference", state: "refused" }),
+  ];
+  assert.deepEqual(sectionAttachments("documents", { attachments }).map((a) => a.path), ["/a.docx"]);
+  assert.deepEqual(sectionAttachments("template", { attachments }).map((a) => a.path), ["/t.docx"]);
+  assert.deepEqual(sectionAttachments("references", { attachments }).map((a) => a.path), ["/logo.png", "/broken.png"]);
+  assert.equal(referencesTitle({ attachments }), "Pictures and tables · 1");
+  assert.equal(referencesTitle({ attachments: [] }), "Pictures and tables");
 });

@@ -84,19 +84,47 @@ export function scopeTag(
   return "";
 }
 
-/** The one line the collapsed tray shows: "3 documents · a template · 1 picture · 1 left out · 1 to do". */
-export function traySummary(view: Pick<View, "attachments" | "todo" | "focus">): string {
-  const documents = view.attachments.filter((a) => a.kind === "document" && a.state !== "refused").length;
-  const refused = view.attachments.filter((a) => a.state === "refused").length;
-  const pictures = view.attachments.filter((a) => a.kind === "reference" && kindTag(a) === "Picture").length;
-  const tables = view.attachments.filter((a) => a.kind === "reference" && kindTag(a) === "Table").length;
+/** The tray's three sections, each with its own fold: the documents, the template, the pictures and tables. */
+export type TraySection = "documents" | "template" | "references";
+
+/** The attachments one section lists, refused ones included. */
+export function sectionAttachments(section: TraySection, view: Pick<View, "attachments">): Attachment[] {
+  const kind = section === "documents" ? "document" : section === "template" ? "template" : "reference";
+  return view.attachments.filter((a) => a.kind === kind);
+}
+
+/** "Pictures and tables · 2": the accepted pictures and tables, or the bare title. */
+export function referencesTitle(view: Pick<View, "attachments">): string {
+  const n = view.attachments.filter((a) => a.kind === "reference" && a.state !== "refused").length;
+  return n > 0 ? `Pictures and tables · ${n}` : "Pictures and tables";
+}
+
+/**
+ * The one line a folded section shows: "3 documents · 1 left out · 1 to do",
+ * the template's name, or "1 picture · 1 table"; "none" for an empty
+ * template or pictures section, "" for no documents.
+ */
+export function traySummary(section: TraySection, view: Pick<View, "attachments" | "todo" | "focus">): string {
+  const listed = sectionAttachments(section, view);
+  const usable = listed.filter((a) => a.state !== "refused");
+  const refused = listed.length - usable.length;
   const parts: string[] = [];
-  if (documents > 0) parts.push(`${documents} ${documents === 1 ? "document" : "documents"}`);
-  if (view.attachments.some((a) => a.kind === "template")) parts.push("a template");
-  if (pictures > 0) parts.push(`${pictures} ${pictures === 1 ? "picture" : "pictures"}`);
-  if (tables > 0) parts.push(`${tables} ${tables === 1 ? "table" : "tables"}`);
+  if (section === "documents") {
+    if (usable.length > 0) parts.push(`${usable.length} ${usable.length === 1 ? "document" : "documents"}`);
+  } else if (section === "template") {
+    if (usable.length > 0) parts.push(usable[0].name);
+  } else {
+    const pictures = usable.filter((a) => kindTag(a) === "Picture").length;
+    const tables = usable.length - pictures;
+    if (pictures > 0) parts.push(`${pictures} ${pictures === 1 ? "picture" : "pictures"}`);
+    if (tables > 0) parts.push(`${tables} ${tables === 1 ? "table" : "tables"}`);
+  }
   if (refused > 0) parts.push(`${refused} left out`);
-  if ((view.focus ?? []).length > 0) parts.push(`working on ${view.focus.length}`);
-  else if ((view.todo ?? []).length > 0) parts.push(`${view.todo.length} to do`);
+  if (section === "documents") {
+    if ((view.focus ?? []).length > 0) parts.push(`working on ${view.focus.length}`);
+    else if ((view.todo ?? []).length > 0) parts.push(`${view.todo.length} to do`);
+  } else if (parts.length === 0) {
+    parts.push("none");
+  }
   return parts.join(" · ");
 }

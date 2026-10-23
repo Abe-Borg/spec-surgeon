@@ -4,9 +4,9 @@ Spec Surgeon is one window: a web page shown in a native window (Microsoft's Web
 the default browser when pywebview is not installed) and served by a local server on your computer — nothing
 leaves the machine but the model calls you ask for (the contract between the page and the server is
 `docs/WEB_API.md`). On the left is the conversation, with the one button above the box you type in. On the right
-are the Word documents you attached (a section that folds to one line once a plan exists; click its title to open
-it), optionally one reference template, any pictures or tables you attached for the edit to use, and the before/after
-pages. You add documents, describe the result, look at the pages, mark each preview with a green checkmark or a red
+are three sections, each with its own fold and its own button to add more: the Word documents you attached,
+optionally one reference template, and any pictures or tables you attached for the edit to use. Each folds to one line
+once a plan exists (click its title to open it); below them are the before/after pages. You add documents, describe the result, look at the pages, mark each preview with a green checkmark or a red
 X, and create edited copies. Nothing else is asked of you: no operations, methods or settings beyond an API key.
 Both panes render what the assistant writes as formatted text (lists, bold, links), in the chat and on the cards
 beside it alike.
@@ -53,8 +53,8 @@ and if one of the documents is a copy of the template the window says so and ask
 **Add a picture or table (optional)**, or dropping one, attaches a file for the edit to use: a picture
 (`.png`, `.jpg`, `.jpeg`, `.gif`, `.bmp`), for example a new logo to put in place of the old one or a detail to
 insert, or a table (`.xlsx`, `.csv`, `.json`), for example a sheet of project names and numbers to fill in, or a
-schedule to place in the documents as a table. It is listed under the
-template by its name, tagged Picture or Table; one that
+schedule to place in the documents as a table. It is listed under
+Pictures and tables by its name, tagged Picture or Table; one that
 cannot be read or is larger than 20 MB is refused with the reason. Claude is told about each one (a picture's
 format and size, a table's sheets and columns) and can read the tables, but nothing beside your documents is
 ever looked for. A plan that uses one names it, and
