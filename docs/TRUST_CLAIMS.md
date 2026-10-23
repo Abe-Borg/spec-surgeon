@@ -36,7 +36,7 @@ documents a request leaves out in B5, per-file wording in provenance); those lin
 | A3 | **Add Word documents**, **Add a template (optional)**, **Add a picture or table (optional)**, or a drop anywhere in the window | `POST /api/pick` → `/api/attach`; a drop → `POST /api/upload` → `DocumentTask.attach` → `triage` | none |
 | A4 | Remove an attachment (✕) | `POST /api/remove` | none |
 | A5 | Type a request or answer, then **Send** or Enter | `POST /api/send` → `DocumentTask._send` | conversation |
-| A6 | Pick a choice, type its number, or tap a suggested reply | `POST /api/choose` or `/api/send` (`chip`) | conversation |
+| A6 | Pick a choice (after **Edit wording**, with your own version of its drafted wording), type its number, or tap a suggested reply | `POST /api/choose` (`wording`) or `/api/send` (`chip`) | conversation |
 | A7 | Mark a preview ✓ / ✗ | page state only; ✗ is sent as `hold` with A8 | none |
 | A8 | **Create edited copies** (or **I reviewed the flagged pages — create copies**) | `POST /api/primary` → `DocumentTask._primary` → `Session.run` | none to make and check the copies; recovery afterwards if a copy fails |
 | A9 | **Save N ready copies** | `POST /api/primary` during recovery | none |
@@ -205,7 +205,8 @@ On Windows, `config_dir()` = `%APPDATA%\Spec Surgeon`, `data_dir()` = `%LOCALAPP
 ### 1g. Provenance
 
 Every source of content in a delivered copy:
-- **Your words:** the request, typed answers, a picked choice's exact wording (`conversation.sources`;
+- **Your words:** the request, typed answers, a picked choice's exact wording — as offered, or as you edited it
+  before picking, when the draft you replaced is never approved (`conversation.edited_wording`; `conversation.sources`;
   `DocumentTask.word_sources`).
 - **Your files:** an attached template, picture or table, and the document's own words (template fills).
 - **The operations:** formatting and structure, which add zero characters.
@@ -345,7 +346,7 @@ Lv1 marks a claim in "Why trust it?"; D marks one in the dossier (section in bra
 | T3 | The checker shares no code with the editing | Lv1, D(engine, terms) | `verify/` imports | existing: `tests/test_independence.py` |
 | T4 | A copy that fails its check is never delivered; it goes to `failed\` | Lv1, D(runtime A8, limits) | `batch.py` | existing: `tests/test_batch*.py` |
 | T5 | Claude never edits a file; it writes a plan (or, for a custom method, a program that runs in a sandbox and must pass the same checker) — formatting only, unless it carries out an outcome plan you are shown (re-audit: softened from "formatting-only") | Lv1, D(engine, blast radius) | `conversation.py`, `codegen._trial`, `codegen.run_generated`, `codegen.hard_limits` (`goal_contract`) | facts (`test_the_copy_names_the_exceptions_the_code_has`) + existing: `tests/test_codegen*.py` |
-| T6 | Words placed in a document come from your request, answers, picked choices or attached files, with one exception (F1) | Lv1, D(provenance) | `compiler.untraceable`, `conversation.sources`, `continuous_recovery.approve` | existing: `tests/test_compiler*.py`, `tests/test_document_task.py::test_recovery_plan_and_preview_stay_in_same_task_without_json` |
+| T6 | Words placed in a document come from your request, answers, picked choices (as offered, or as you edited them) or attached files, with one exception (F1) | Lv1, D(provenance) | `compiler.untraceable`, `conversation.sources`, `conversation.edited_wording`, `continuous_recovery.approve` | existing: `tests/test_compiler*.py`, `tests/test_document_task.py::test_recovery_plan_and_preview_stay_in_same_task_without_json`, `tests/test_conversation.py::test_an_edited_wording_is_the_approved_one_and_the_draft_is_not`, `tests/test_document_task.py::test_an_edited_draft_is_the_users_wording_end_to_end` |
 | T7 | A tapped suggested reply is a decision, never approved wording | Lv1, D(provenance, runtime A6) | `DocumentTask._send` (`chip`), `Conversation.reply(approve=False)` | existing: `tests/test_document_task.py` |
 | T8 | Nothing is delivered without your click on Create edited copies or Save ready copies, and the click approves the exact plan and files on screen | Lv1, D(runtime A8, terms) | `DocumentTask._primary` token check; `preview.approval_token`; `Session.run` re-checks | existing: `tests/test_approval_handoff.py` |
 | T9 | Every AI step runs inside work you started; one action can chain up to 6 internal steps | Lv1, D(summary, runtime) | `DocumentTask.perform`, `_settle`, `AUTO_STEPS` | facts (`autoSteps`) |

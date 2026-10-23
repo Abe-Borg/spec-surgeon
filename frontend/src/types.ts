@@ -66,6 +66,8 @@ export interface Choice {
   label: string;
   words: string[];
   detail: string;
+  /** Claude's one drafted wording: the user may edit it before picking, and the edit is then the approved wording. */
+  editable?: boolean;
 }
 
 export interface Sample {

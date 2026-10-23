@@ -86,6 +86,24 @@ try {
   await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 20000 });
   check("the chip's text became the user bubble", (await userBubbles().last().innerText()) === "Just the body");
 
+  // 4b. Claude's drafted wording is editable before it is picked; the edit is what the pick approves.
+  await box.fill("a question");
+  await box.press("Enter");
+  await page.getByRole("button", { name: "Edit wording" }).waitFor({ timeout: 20000 });
+  await page.getByRole("button", { name: "Edit wording" }).click();
+  const wordingBox = page.getByLabel("Your wording");
+  check("the wording box starts from Claude's draft",
+    (await wordingBox.inputValue()) === "Riverside Medical Center — Issued for Construction, 20 October 2026");
+  await wordingBox.fill("Riverside Medical Center — Issued for Permit");
+  await wordingBox.press("Shift+Enter");
+  await wordingBox.type("second line");
+  check("a line break cannot be sent", await page.getByRole("button", { name: "Use this wording" }).isDisabled());
+  await wordingBox.fill("Riverside Medical Center — Issued for Permit");
+  await page.getByRole("button", { name: "Use this wording" }).click();
+  await page.getByRole("button", { name: "Create edited copies" }).waitFor({ timeout: 20000 });
+  check("the edited wording is the user's pick",
+    (await userBubbles().last().innerText()) === "Everything, and reword the footer — “Riverside Medical Center — Issued for Permit”");
+
   // 5. A draft holds the action button and says why.
   await box.fill("hmm");
   await page.waitForTimeout(100);

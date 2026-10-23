@@ -123,7 +123,8 @@ export default function App() {
 
   const onSend = useCallback((text: string, chip = false) => void runJob(api.send(text, chip), text, "send"), [runJob]);
   const onChoose = useCallback(
-    (choice: Choice) => void runJob(api.choose(choice.id), choice.label, "choose"),
+    (choice: Choice, wording?: string) =>
+      void runJob(api.choose(choice.id, wording), wording === undefined ? choice.label : `${choice.label} — “${wording}”`, "choose"),
     [runJob],
   );
   const onStop = useCallback(() => {

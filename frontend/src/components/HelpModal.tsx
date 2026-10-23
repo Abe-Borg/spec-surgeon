@@ -224,7 +224,7 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         steps={[
           "Ask: “Change ‘Issued for Bid’ to ‘Issued for Construction’ everywhere.”",
           "Check the new text on a sample’s pages before you approve.",
-          "Words that go into a document are ones you typed or picked. A choice that would place words shows them beneath its button, and picking it approves exactly those words; a suggested reply you tap answers a question but never becomes document wording. The one exception: when no ordinary plan fits and the app carries out an outcome plan Claude proposed, that plan’s wording is used without a separate pick — it is shown in the plan you approve.",
+          "Words that go into a document are ones you typed or picked. A choice that would place words shows them beneath its button, and picking it approves exactly those words — or, after Edit wording, exactly your version of them; a suggested reply you tap answers a question but never becomes document wording. The one exception: when no ordinary plan fits and the app carries out an outcome plan Claude proposed, that plan’s wording is used without a separate pick — it is shown in the plan you approve.",
         ]}
       />
       <Recipe

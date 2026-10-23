@@ -51,6 +51,10 @@ try {
   await page.getByRole("button", { name: /Just the body/ }).waitFor();
   await page.waitForTimeout(500);
   await shot(page, "conversation-chat", DOCS_DIR ? [join(DOCS_DIR, "conversation-chat.png")] : []);
+  await page.getByRole("button", { name: "Edit wording" }).click();
+  await page.waitForTimeout(300);
+  await shot(page, "wording-edit");
+  await page.getByRole("button", { name: "Cancel" }).click();
 
   // 3. A plan with previews and the action button.
   await page.getByRole("button", { name: /^1\./ }).click();

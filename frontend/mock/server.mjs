@@ -250,6 +250,7 @@ const SCENARIOS = {
         label: "Everything, and reword the footer",
         words: ["Riverside Medical Center — Issued for Construction, 20 October 2026"],
         detail: "",
+        editable: true,
       },
     ];
     v.chips = ["Everything, including the headers", "Just the body", "I don’t know — use your default"];
@@ -869,7 +870,10 @@ async function handle(req, res) {
       const body = await readJson(req);
       const choice = view.choices.find((c) => c.id === body.choice_id);
       if (!choice) return json(res, 400, { error: "That choice is no longer open." });
-      return planJob(res, choice.label);
+      if (body.wording !== undefined && (typeof body.wording !== "string" || !choice.editable)) {
+        return json(res, 400, { error: "Only a choice that offers one wording can have its wording edited." });
+      }
+      return planJob(res, body.wording === undefined ? choice.label : `${choice.label} — “${body.wording}”`);
     }
     case "POST /api/primary": {
       if (view.busy) return busyRefusal();

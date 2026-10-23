@@ -358,6 +358,43 @@ def test_proposed_rewrite_requires_wording_choice_then_preview_approval(tmp_path
     assert source.read_bytes() == before
 
 
+def test_an_edited_draft_is_the_users_wording_end_to_end(tmp_path):
+    """docs/PLAN-2026-10-23-modes.md M4: the choice offers Claude's draft pre-filled and editable; the user's edit is
+    the approved wording, the copy carries exactly it, and the draft is never approved. A bad edit is refused before
+    anything is said or kept."""
+    original = "Keep this technical wording intact."
+    draft = "Preserve the technical wording."
+    mine = "Preserve the technical wording exactly."
+    request = "Rewrite the final sentence more concisely."
+    spec = {"request": request, "summary": "Shorten the final sentence", "mode": "content",
+            "ops": [{"op": "replace_text", "select": {"scope": ["document"]},
+                     "params": {"find": original, "replace": mine, "tracked": True, "author": "Abraham Borg"}}]}
+    fake = FakeClient(resp(tool("ask_user", {"message": "Here is a proposed shorter sentence.",
+        "choices": [{"kind": "rephrase", "label": "Use this sentence", "wording": draft}]})),
+        resp(tool("submit_editspec", {"spec": spec})))
+    task = task_for(tmp_path, fake)
+    source = document(tmp_path / "Spec.docx")
+    task.attach([source])
+    view = task.perform("send", text=request)
+    choice = view["choices"][0]
+    assert choice["editable"] is True and choice["words"] == [draft]
+    with pytest.raises(ValueError, match="one line of visible characters"):
+        task.perform("choose", choice_id=choice["id"], wording="Two\nlines")
+    assert task.stage == "question" and mine not in task.word_sources and len(fake.requests) == 1
+    view = task.perform("choose", choice_id=choice["id"], wording=mine)
+    assert view["stage"] == "preview", [m["text"] for m in view["messages"]]
+    assert mine in task.word_sources and draft not in task.word_sources and mine in task.decisions
+    assert any(m["role"] == "user" and m["text"] == f"Chose: Use this sentence — “{mine}”" for m in view["messages"])
+    task.perform("primary", token=view["token"])
+    from zipfile import ZipFile
+    from lxml import etree
+    with ZipFile(task.results[str(source)]) as package:
+        root = etree.fromstring(package.read("word/document.xml"))
+    inserted = root.xpath("//w:ins//w:t/text()", namespaces={"w":
+        "http://schemas.openxmlformats.org/wordprocessingml/2006/main"})
+    assert "".join(inserted) == mine
+
+
 def test_recovery_plan_and_preview_stay_in_same_task_without_json(tmp_path, monkeypatch):
     from spec_surgeon import continuous_recovery
     from spec_surgeon.recovery import RecoveryOptions

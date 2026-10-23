@@ -121,6 +121,54 @@ def test_choices_reply_by_choice_approves_its_exact_wording(folder):
     assert_well_formed(fake)
 
 
+EDITED = "ISSUED FOR BID 2026-11-09"
+PLACES_EDITED = {**PLACES_STAMP, "ops": [{**PLACES_STAMP["ops"][0],
+                                          "params": {**PLACES_STAMP["ops"][0]["params"], "replace": EDITED}}]}
+
+
+def test_an_edited_wording_is_the_approved_one_and_the_draft_is_not(folder):
+    """docs/PLAN-2026-10-23-modes.md M4: the user edits Claude's draft before picking it. The edited text is what
+    picking approves — Claude is told the exact words — and the draft it replaced is never approved: a spec placing it
+    is refused, a spec placing the edit passes."""
+    fake = FakeClient(
+        ask(message="Which words should the stamp say?",
+            choices=[{"label": "Use the permit stamp", "kind": "alternative", "wording": STAMP}]),
+        submit(PLACES_STAMP, "s1"),
+        submit(PLACES_EDITED, "s2"))
+    c = conv(folder, fake)
+    t = c.start()
+    assert t.choices[0].editable and t.choices[0].to_dict()["editable"] is True
+    t2 = c.reply(choice_id=t.choices[0].id, wording="  " + EDITED + " ")
+    sent = fake.requests[1]["messages"][-1]["content"][0]["content"]
+    assert "changed its wording first" in sent and f"«{EDITED}»" in sent and STAMP not in sent
+    assert EDITED in c.sources and STAMP not in c.sources
+    rejected = fake.requests[2]["messages"][-1]["content"][0]
+    assert rejected["is_error"] and "never gave them verbatim" in rejected["content"]     # the draft: not the user's
+    assert t2.status == "ok" and not untraceable(PLACES_EDITED, c.sources)
+    said = [e.text for e in c.entries if e.role == "user"][-1]
+    assert said.startswith("Chose: Use the permit stamp — exact words, as you edited them")
+    assert_well_formed(fake)
+
+
+def test_an_unchanged_or_bad_edit_is_a_plain_pick_or_refused_before_anything_is_said(folder):
+    fake = FakeClient(
+        ask(message="Which words?", choices=[{"label": "Use the permit stamp", "kind": "alternative", "wording": STAMP},
+                                             {"label": "Only the body sections", "kind": "clarify"}]),
+        submit(PLACES_STAMP, "s1"))
+    c = conv(folder, fake)
+    t = c.start()
+    for bad in ("", "   ", "ISSUED\nFOR BID", "ISSUED\u200bFOR BID"):
+        with pytest.raises(ValueError, match="one line of visible characters"):
+            c.reply(choice_id=t.choices[0].id, wording=bad)
+    with pytest.raises(ValueError, match="one wording can have its wording edited"):
+        c.reply(choice_id=t.choices[1].id, wording=EDITED)
+    assert len(fake.requests) == 1 and STAMP not in c.sources and EDITED not in c.sources    # nothing sent or kept
+    assert not t.choices[1].editable
+    c.reply(choice_id=t.choices[0].id, wording=STAMP + " ")              # the draft as offered: an ordinary pick
+    assert "approving these exact words" in fake.requests[1]["messages"][-1]["content"][0]["content"]
+    assert STAMP in c.sources
+
+
 def test_claude_s_suggested_words_are_refused_until_the_user_picks_them(folder):
     fake = FakeClient(
         ask(message="Shall I use this stamp?", choices=[{"label": "Use it", "kind": "clarify", "wording": STAMP}]),

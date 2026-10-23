@@ -32,7 +32,9 @@ files go to clients, so the one failure that matters is content lost or invented
 6. **No generated characters.** Formatting and structural ops add zero text. Content ops place the user's approved
    wording verbatim, or the words of a file the user attached (a table, a template), and `compiler.placed_words` must
    trace every typed word to the user's own sources. Claude's words are never the user's: a tapped suggested reply is a
-   decision, never approved wording.
+   decision, never approved wording. A choice's drafted wording becomes the user's only by the pick — as offered, or as
+   the user edited it first (`conversation.edited_wording`: the same `clean_wording` rule); a draft the user replaced
+   is never approved.
 7. **One specification per edit.** The approved EditSpec (or chain of them) is the only description of a change the
    engine executes; nothing runs that was not planned, previewed and approved as that spec.
 

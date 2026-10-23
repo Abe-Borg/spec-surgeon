@@ -110,7 +110,10 @@ When something needs your decision, a card titled **One thing to clarify** shows
 as buttons. Click one, type its number, or answer in your own words. A choice that would put words into the
 documents shows those exact words beneath the button; picking it approves exactly those words and nothing
 else. Questions are asked once, and per layout, never per file. For an explicit request to draft or rewrite
-wording, the conversation may offer exact draft wording as a choice; it is applied only if you pick it. A reply
+wording, the conversation may offer exact draft wording as a choice; it is applied only if you pick it. A choice
+that offers one wording has **Edit wording**: the draft opens in a box, and **Use this wording** picks the choice with
+your edit, which is then the approved wording instead of the draft (one line of visible characters, the rule every
+offered wording passes; `conversation.edited_wording`). Claude is told the exact words you approved. A reply
 that asks nothing (an answer, an apology, a list of findings) stays in the chat alone; the card never repeats it.
 
 The assistant goes ahead on sensible defaults and says what it assumed; it asks at most three questions per
