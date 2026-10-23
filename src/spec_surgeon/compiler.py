@@ -548,8 +548,15 @@ results, not a procedure: get them exactly what they asked for with as little of
   BATCH). They are not planned, previewed or changed, the window lists them under Left untouched, and the next
   request covers them again unless the user leaves them out again. Never leave out a document the user did not name,
   and never ask the user to remove documents, start another conversation or set anything up to leave one out.
+- "Set 20 aside for later", "park these two", "I'll come back to 23", "put it on my to-do list": call set_aside with
+  those documents (and the user's reason, if they gave one). They go on the user's to-do list and stay out of this
+  request and every later one until the user works on them or puts them back; then go on with whatever else the user
+  asked, for the others. Leave out is for this request only; set aside is for later. Documents on the to-do list are
+  not in THE BATCH: you cannot read, plan or bring them back. The user brings them back by saying "Work on the
+  documents I set aside" (the app offers it as a reply) or with Put back beside the to-do list in the window.
 - A document the plan refuses (the preview's LEFT UNTOUCHED, with the reason) is not part of the plan. Name it in your
-  next reply with its reason in plain words and what would let it take part, or offer to leave it out.
+  next reply with its reason in plain words and what would let it take part, or offer to leave it out. If the user
+  creates the copies without it, the app puts it on the to-do list with its reason, to come back to later.
 - A template does not authorize copying unrelated project identity or technical content. Distinguish appearance,
   structure and wording when the request is ambiguous. If requirements conflict, say so and offer achievable
   alternatives. An unsupported capability is a limitation of the app, not a reason to ask the user to rephrase an
@@ -599,10 +606,23 @@ PROPOSE_TERMS_TOOL = {
     "input_schema": {"type": "object", "properties": {"file": {"type": "string"},
         "terms": {"type": "array", "items": {"type": "string"}}, "start": {"type": "integer", "minimum": 0},
         "count": {"type": "integer", "minimum": 1, "maximum": 40}}, "required": ["file", "terms"]}}
+SET_ASIDE_TOOL = {
+    "name": "set_aside", "description": "Put documents on the user's to-do list at their word (\"set 20 aside for "
+    "later\", \"park the Michigan one\", \"I'll come back to 23\"): they leave this request at once, and every later "
+    "plan, until the user works on them (the reply \"Work on the documents I set aside\") or puts them back from the "
+    "window. Nothing in them changes. Only documents the user named. To keep a document out of this one request "
+    "only, use submit_editspec's leave_out instead.",
+    "input_schema": {"type": "object", "properties": {
+        "documents": {"type": "array", "items": {"type": "string"}, "minItems": 1,
+                      "description": "labels from THE BATCH of the documents the user asked to set aside"},
+        "reason": {"type": "string", "description": "why, in a few plain words from what the user said (shown beside "
+                                                    "each document on the to-do list); empty when they gave none"}},
+        "required": ["documents"]}}
 ASK_USER_CHAT = _chat_ask_user()
-# the conversation's tools (a chat adds view_pages and propose_defined_terms); the advisor and the transform writer
-# never get these
-CHAT_TOOLS = [ASK_USER_CHAT if t["name"] == "ask_user" else t for t in TOOLS] + [VIEW_PAGES_TOOL, PROPOSE_TERMS_TOOL]
+# the conversation's tools (a chat adds view_pages, propose_defined_terms and set_aside); the advisor and the transform
+# writer never get these
+CHAT_TOOLS = ([ASK_USER_CHAT if t["name"] == "ask_user" else t for t in TOOLS]
+              + [VIEW_PAGES_TOOL, PROPOSE_TERMS_TOOL, SET_ASIDE_TOOL])
 
 
 def system_prompt(chat: bool = False) -> str:
@@ -1189,14 +1209,16 @@ class _Batch:
         """A table or picture listed beside the documents — only a listed one (inputs.read)."""
         return read_input(path, self.inputs, sheet, rows)
 
-def resolve_leave_out(raw: Any, batch: _Batch) -> Tuple[List[Path], List[str]]:
+def resolve_leave_out(raw: Any, batch: _Batch, set_aside: Sequence[Path] = ()) -> Tuple[List[Path], List[str]]:
     """The documents a submission leaves out of the request at the user's word (``leave_out``: labels THE BATCH
     shows), as the batch's paths, and the errors that refuse it: not a list of labels, a label THE BATCH does not
-    list, or every document (nothing would be planned)."""
+    list, or every document (nothing would be planned). ``set_aside``: the documents this conversation already set
+    aside (``set_aside``), which no plan covers either; one named here again is no error and is not repeated."""
     if raw is None or raw == []:
-        return [], []
+        raw = []
     if not isinstance(raw, list) or not all(isinstance(x, str) and x.strip() for x in raw):
         return [], ["[leave-out] leave_out must be a list of file labels from THE BATCH"]
+    parked = {str(Path(p).resolve()) for p in set_aside}
     paths: List[Path] = []
     errs: List[str] = []
     for label in raw:
@@ -1204,11 +1226,31 @@ def resolve_leave_out(raw: Any, batch: _Batch) -> Tuple[List[Path], List[str]]:
         if path is None:
             errs.append(f"[leave-out] leave_out names {label!r}, which THE BATCH does not list; use its labels "
                         f"({', '.join(sorted(batch.files)[:12])}{', …' if len(batch.files) > 12 else ''})")
-        elif path not in paths:
+        elif path not in paths and str(path.resolve()) not in parked:
             paths.append(path)
-    if not errs and len(paths) >= len(batch.files):
+    if not errs and raw and len(paths) + len(parked) >= len(batch.files):
         errs.append("[leave-out] leave_out names every document, so nothing would be planned; ask the user which "
-                    "documents to plan")
+                    "documents to plan" + (" (the others are set aside)" if parked else ""))
+    return paths, errs
+
+
+def resolve_set_aside(raw: Any, batch: _Batch, already: Sequence[Path] = ()) -> Tuple[List[Path], List[str]]:
+    """The documents a ``set_aside`` call puts on the user's to-do list (labels THE BATCH shows), as the batch's paths,
+    and the errors that refuse it: not a list of labels, or a label THE BATCH does not list. A document this
+    conversation already set aside is passed over (``already``). Setting every document aside is allowed: the user
+    may park the whole set."""
+    if not isinstance(raw, list) or not raw or not all(isinstance(x, str) and x.strip() for x in raw):
+        return [], ["[set-aside] documents must be a non-empty list of file labels from THE BATCH"]
+    done = {str(Path(p).resolve()) for p in already}
+    paths: List[Path] = []
+    errs: List[str] = []
+    for label in raw:
+        path = batch.files.get(label.strip())
+        if path is None:
+            errs.append(f"[set-aside] {label!r} is not a label THE BATCH lists; use its labels "
+                        f"({', '.join(sorted(batch.files)[:12])}{', …' if len(batch.files) > 12 else ''})")
+        elif path not in paths and str(path.resolve()) not in done:
+            paths.append(path)
     return paths, errs
 
 
@@ -1551,14 +1593,20 @@ def check_submission(spec: Any, batch: _Batch, sources: Sequence[str],
 def build_messages(request: str, batch: _Batch, answers: Sequence[str],
                    prior_failures: Optional[Sequence[Dict[str, Any]]] = None,
                    history: Optional[Sequence[str]] = None,
-                   fresh: Optional[Sequence[str]] = None, context: Optional[str] = None) -> List[Dict[str, Any]]:
+                   fresh: Optional[Sequence[str]] = None, context: Optional[str] = None,
+                   todo: Optional[Sequence[str]] = None) -> List[Dict[str, Any]]:
     """The first user message: the request, the user's answers, the changes already made to these copies (a request
     that builds on a result), any prior pass's set-aside diagnostics, the attached template, the input files a spec
     names, and the batch's profiles per structure pattern. ``context`` is the app's own account of how these
-    documents come to be planned (set aside after a preview, say); it is never the user's words."""
+    documents come to be planned (set aside after a preview, say); it is never the user's words. ``todo``: one line
+    per document waiting on the user's to-do list (its name and why), which THE BATCH does not hold."""
     parts = [f"REQUEST:\n{request}"]
     if context and context.strip():
         parts.append(context.strip())
+    if todo:
+        parts.append("ON THE USER'S TO-DO LIST (set aside for later: not in THE BATCH and out of every plan until the "
+                     "user works on them, with the reply \"Work on the documents I set aside\", or puts one back from "
+                     "the window; you cannot read, plan or bring them back):\n" + "\n".join(f"- {t}" for t in todo))
     if answers:
         parts.append("THE USER'S ANSWERS TO EARLIER QUESTIONS:\n" + "\n".join(f"- {a}" for a in answers))
     if history:

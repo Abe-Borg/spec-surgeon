@@ -322,15 +322,30 @@ def test_what_a_button_left_untouched_can_be_handed_to_default_mode(tmp_path):
     task.perform("primary", token=view["token"])
     view = task.view()
     assert [e["name"] for e in view["left_untouched"]] == ["empty.docx"]
+    assert view["todo"] == []                                # a button's refusals stay in scope until handed over
     with pytest.raises(ValueError, match="not the ones"):
         task.hand_off([str(good)])
     task.hand_off([str(empty.resolve())])
     view = task.view()
     assert task.mode == "default" and view["mode"] == "default" and view["left_untouched"] == []
     assert [t["name"] for t in view["todo"]] == ["empty.docx"]
-    assert task.todo[str(empty.resolve())]["decisions"] == ["Set the document title property to "
-                                                            "“SECTION {number} - {title}”"]
+    entry = task.todo[str(empty.resolve())]
+    assert entry["decisions"] == ["Set the document title property to “SECTION {number} - {title}”"]
+    assert entry["why"] == "refused" and entry["reason"].startswith("The button could not change it: ")
+    assert view["todo"][0]["reason"] == entry["reason"]      # the to-do card says why, as it does for a conversation's
     assert WORK_TODO in task.messages[-1]["text"]
+
+
+def test_setting_every_document_aside_in_safe_mode_creates_nothing_and_starts_no_conversation(folder, tmp_path):
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    files = docs(folder)
+    task.attach(files)
+    view = task.perform("recipe", recipe="remove_highlight", inputs={})
+    task.perform("primary", token=view["token"], hold=[str(f) for f in files])
+    view = task.view()
+    assert task.mode == "safe" and task.stage == "empty" and task.decisions == [] and task.focus is None
+    assert sorted(t["name"] for t in view["todo"]) == sorted(f.name for f in files)
+    assert not task.results and "no copy was created" in task.messages[-1]["text"]
 
 
 def test_a_button_no_document_can_take_previews_nothing_to_create(tmp_path):

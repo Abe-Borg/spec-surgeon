@@ -171,7 +171,10 @@ def test_setting_aside_every_previewed_document_beside_a_refused_one_begins_the_
     assert task.session.runnable_files() == [easy.resolve()]
     task.perform("primary", token=view["token"], hold=[str(easy)])
     assert task.results == {} and task.session.last_batch is None
-    assert task.focus is not None and task.focus["documents"] == [str(easy)]
+    # the refused file joins the pass from the to-do list, with the plan's reason (it never ran either)
+    assert task.focus is not None and task.focus["documents"] == [str(easy), str(source)]
+    assert task.focus["why"][str(source)]["why"] == "refused"
+    assert "MissingStyle" in task.focus["why"][str(source)]["reason"]
     assert any("set every document aside" in m["text"] for m in task.messages if m["role"] == "app")
     assert [p.read_bytes() for p in (source, easy)] == before
 

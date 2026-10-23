@@ -40,7 +40,10 @@ What happens then is what happens to a plan in Default mode, with no model anywh
 - **Create edited copies** makes and checks every copy as always. A document the button could not change exactly is
   not handed to recovery (an AI step): it is listed under **Left untouched by the last button** beside the copies,
   with the engine's reason, and **Try these in Default mode** puts it on the to-do list and switches to Default
-  mode, where "Work on the documents I set aside" plans it with the button's sentence as its request.
+  mode, where "Work on the documents I set aside" plans it with the button's sentence as its request. Unlike a
+  Default-mode plan's refusals, which go on the to-do list by themselves, a button's stay among the documents the
+  next button works on until you hand them over. A preview's document you mark with the X goes on the to-do list as
+  in Default mode; with every document marked, nothing is created and no conversation starts.
 - The button's sentence (what you pressed and what you typed) is your line in the chat, and the change sentences of
   its plan join the history the next request in either mode hears.
 
