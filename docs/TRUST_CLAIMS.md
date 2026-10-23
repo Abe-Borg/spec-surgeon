@@ -16,7 +16,9 @@ the change that made them. Re-audited the
 same day against `master` at 099ee91 (C2–C6, A1 and the licence change): every model call site, network import,
 thread, timer, `/api` route and outside reference in the built page checked again; what changed is marked
 "(re-audit)". Updated 2026-10-22 after the 1.9.0 live run over test-set-2 (outcome planning's trigger in B8, the
-documents a request leaves out in B5, per-file wording in provenance); those lines say "(test-set-2)". Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
+documents a request leaves out in B5, per-file wording in provenance); those lines say "(test-set-2)". Updated
+2026-10-23 after the 1.10.0 live run over test-set-3 (a sample a later step refuses no longer starts B8); that line
+also says "(test-set-3)". Paths are relative to `src/spec_surgeon/` unless they start with `frontend/`, `tests/` or `docs/`.
 
 **Verification column:**
 - `facts` means `tests/test_trust_facts.py` pins the value to its source constant.
@@ -72,7 +74,7 @@ your browser (N4).
 | B5 | (test-set-2) The preview: plan every file the request covers (a document the user left out, `leave_out`, is not planned and is named under Left untouched), apply and verify samples in memory, render them | `Session.make_preview` (`planned_files`), `preview.make_preview`, `DocumentTask._left_untouched` | none | none |
 | B6 | Claude's visual check of the preview pages | `Session._visual_check` → `vision.review_samples` | yes | Anthropic |
 | B7 | A custom method when no built-in operation fits | `Session._generate_custom` → `codegen.generate_op` | yes | Anthropic |
-| B8 | (test-set-2) An outcome plan and its trials when the built-in plan cannot be made: Claude calls the request unsupported, the preview's plan covers no file, or a sample fails its check. A file the plan refuses while others plan does not start it (it waits under Left untouched beside the preview) | `continuous_recovery.propose` / `execute`, `campaign_planner`, the condition in `Session.make_preview` | yes | Anthropic |
+| B8 | (test-set-2, test-set-3) An outcome plan and its trials when the built-in plan cannot be made: Claude calls the request unsupported, the preview's plan covers no file, a sample fails its check, or every sample is refused. A file the plan refuses while others plan does not start it, nor does a sample a later step of a chain refuses (`preview.refusals`); it waits under Left untouched beside the preview | `continuous_recovery.propose` / `execute`, `campaign_planner`, the condition in `Session.make_preview` | yes | Anthropic |
 | B9 | Recovery of copies that failed their check after Create edited copies | `DocumentTask._primary` → `Session.resolve_remaining` | yes | Anthropic |
 | B10 | A call that failed for a passing reason is re-sent | `llm.call`, `RETRIES` | yes | Anthropic |
 | B11 | The page reports itself (load, errors, a 10 s heartbeat) to the local server; the watchdog | `frontend/src/lib/diagnostics.ts`, `web/watch.py` | none | loopback only |

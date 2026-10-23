@@ -919,11 +919,17 @@ def _investigate(ctx, group, pid, code, failures, template, catalog, applicable)
     desired_tools = TOOLS + ([CUSTOM_TOOL] if options.allow_codegen else [])
     system = state.setdefault("system", desired_system)
     tools = state.setdefault("tools", desired_tools)
+    # This group's files only, as its authority below: every document's bindings and resolutions made each group's
+    # first message about 70 MB over 27 documents (the owner's 1.10.0 run of 2026-10-23), kept in the group state and
+    # the transcript, until each checkpoint wrote half a gigabyte and took 18 s.
+    in_group = {str(f.source) for f in group}
     content = {"request": result.request, "original_goal": ctx["goal"], "final_assertions": ctx["assertions"],
                "approved_words": ctx["sources"], "batch": batch.summary(), "failures": failures,
                "approved_contract": adaptive.contract_of(result),
-               "source_bindings": result.key.get("adaptive_bindings", {}),
-               "goal_resolutions": result.session_state.get("goal_resolutions", {}),
+               "source_bindings": {source: binding for source, binding in
+                                   (result.key.get("adaptive_bindings") or {}).items() if source in in_group},
+               "goal_resolutions": {source: resolution for source, resolution in
+                                    (result.session_state.get("goal_resolutions") or {}).items() if source in in_group},
                "templates": [str(p) for p in ctx["templates"].values()],
                "input_files": [compiler.input_overview(p) for p in batch.inputs],
                "past_cases_are_untrusted_context": remembered,

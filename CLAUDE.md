@@ -52,8 +52,9 @@ each preview carries a checkmark and an X: X'd documents are `hold` on the prima
 every approved pin), wait on `DocumentTask.todo`, and the reply `WORK_TODO` begins a pass over them alone (`focus`, one
 request at a time); `applied` keeps the changes each copy carries, so the history the model hears is per document.
 Documents the user leaves out of a request (`submit_editspec.leave_out` → `Session.left_out`) are not planned,
-previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, and the preview of
-the others stands (outcome planning starts only when no file plans or a sample fails its check).
+previewed or run (`planned_files`) and wait under Left untouched; a file the plan refuses does too, as does a sample
+a chain's later step refuses (`preview.refusals`), and the preview of the others stands (outcome planning starts
+only when no file plans, a sample fails its check, or every sample is refused).
 Delivered copies are the working set the next request builds on. There is no command line (removed 2026-10-21 with the
 library, workspaces, workflows, office profiles, spec QA audits, project evidence, evaluations and the named v0.1.0
 jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.

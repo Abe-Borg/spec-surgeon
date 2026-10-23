@@ -179,6 +179,96 @@ def test_setting_aside_every_previewed_document_beside_a_refused_one_begins_the_
     assert [p.read_bytes() for p in (source, easy)] == before
 
 
+BOLD_THEN_STYLE = {"request": "Make the title bold", "summary": "Bold, then the style",
+                   "stages": [{"name": "bold", "spec": {"request": "Make the title bold", "summary": "Bold",
+                                                        "mode": "formatting",
+                                                        "ops": [{"op": "set_properties", "params": {"run": {"b": True}}}]}},
+                              {"name": "style", "spec": STYLE_SPEC}]}
+
+
+def _a_later_step_refuses(tmp_path, *responses):
+    """Two documents, a chain of two steps: the first plans on both, the second (MissingStyle) refuses source.docx,
+    and only on its sample, since a chain plans its later steps on the samples alone."""
+    from spec_surgeon.gui import Session
+    source, easy = _two_documents(tmp_path)
+    client = FakeClient(resp(tool("submit_editspec", {"spec": BOLD_THEN_STYLE})), *responses)
+    s = Session(documents=[easy, source], out_root=tmp_path / "out", client=client, visual_check=False)
+    assert s.compile("Make the title bold", lambda _: None) == "Compiled."
+    return s, client, source, easy
+
+
+def test_a_sample_a_later_step_refuses_leaves_the_preview_of_the_others_standing(tmp_path):
+    # The 1.10.0 live run (2026-10-23): a chain's font step refused two samples' list numbering (numbering-unsupported)
+    # and the nineteen-file preview, sixteen of its samples passed, went to the outcome planner — twice in one morning.
+    # A later step's refusal on a sample is a refused file like a first step's: Left untouched, the preview stands.
+    from spec_surgeon.preview import refusals
+    s, client, source, easy = _a_later_step_refuses(tmp_path)
+    s.make_preview(False, lambda _: None)
+    assert s.spec is not None and s.preview is not None and s.outcome().kind == "preview"
+    assert not s.preview.batch_plan.exceptions                 # the first step planned on both
+    assert [p.name for p, _ in refusals(s.preview)] == ["source.docx"]
+    assert not s.conversation.recovery_active and len(client.requests) == 1
+    note = s.conversation.notes[-1]
+    assert note.index("LEFT UNTOUCHED") < note.index("PREVIEW —")
+    assert "source.docx: [" in note and "MissingStyle" in note and "1 of 2 file(s) plan cleanly." in note
+
+
+def test_create_leaves_a_sample_a_later_step_refused_untouched(tmp_path):
+    from spec_surgeon.document_task import DocumentTask
+    from spec_surgeon.gui import Session
+    source, easy = _two_documents(tmp_path)
+    before = source.read_bytes()
+    client = FakeClient(resp(tool("submit_editspec", {"spec": BOLD_THEN_STYLE})))
+    task = DocumentTask(Session(client=client, out_root=tmp_path / "out", visual_check=False), render=False)
+    task.attach([easy, source])
+    view = task.perform("send", text="Make the title bold")
+    assert view["stage"] == "preview"
+    assert [item["name"] for item in view["set_aside"]] == ["source.docx"]
+    assert "MissingStyle" in view["set_aside"][0]["reason"]
+    assert [sample.source.name for sample in view["samples"]] == ["easy.docx"]   # no page of a copy nobody makes
+    assert task.session.runnable_files() == [easy.resolve()]
+    task.perform("primary", token=view["token"])
+    assert task.stage == "done" and list(task.results) == [str(easy)]
+    assert task.session.recovery is None and len(client.requests) == 1
+    assert source.read_bytes() == before
+
+
+def test_a_preview_whose_every_sample_a_later_step_refuses_investigates_the_outcome(tmp_path, monkeypatch):
+    # No sample got through: nothing shows the plan working, so the preview cannot stand on its own.
+    from spec_surgeon import preview as preview_module
+    real = preview_module.make_chain_preview
+
+    def every_sample_refused(*args, **kwargs):
+        pv = real(*args, **kwargs)
+        for sv in pv.samples:
+            sv.passed, sv.exception = None, {"code": "not-found", "reason": "planted", "kind": "refusal"}
+        return pv
+    monkeypatch.setattr(preview_module, "make_chain_preview", every_sample_refused)
+    s, client, source, easy = _a_later_step_refuses(tmp_path, proposal())
+    s.make_preview(False, lambda _: None)
+    assert s.spec is None and s.preview is None
+    assert s.turn.choices[0].kind == "recovery_plan"
+
+
+def test_a_sample_the_engine_failed_on_still_investigates_the_outcome(tmp_path, monkeypatch):
+    # Only a refusal (a case the op cannot predict, with its code) sets a file aside; the engine's own failure on a
+    # sample is a failed preview, as before.
+    from spec_surgeon import preview as preview_module
+    real = preview_module.make_chain_preview
+
+    def crashed(*args, **kwargs):
+        pv = real(*args, **kwargs)
+        broken = next(sv for sv in pv.samples if sv.passed)
+        broken.passed = None
+        broken.exception = {"code": "internal-error", "reason": "planted", "kind": "internal-error"}
+        return pv
+    monkeypatch.setattr(preview_module, "make_chain_preview", crashed)
+    s, client, source, easy = _a_later_step_refuses(tmp_path, proposal())
+    s.make_preview(False, lambda _: None)
+    assert s.spec is None and s.preview is None
+    assert s.turn.choices[0].kind == "recovery_plan"
+
+
 def test_a_sample_that_fails_its_check_still_investigates_the_outcome(tmp_path, monkeypatch):
     from spec_surgeon import preview as preview_module
     real = preview_module.make_preview
