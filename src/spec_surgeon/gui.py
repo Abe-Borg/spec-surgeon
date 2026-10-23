@@ -155,6 +155,8 @@ class Session:
     recovery_checkpoint: Optional[Path] = None  # current durable investigation, including in-flight work
     pending_layout_recovery: List[Path] = field(default_factory=list)   # layout batch folders still to recover,
                                                   # in plan order (a plan per layout recovers one layout at a time)
+    outcome_source: str = ""                      # where the outcome came from: "compiled" (the conversation),
+                                                  # "recipe" (a Safe-mode button: ``model_free``), "" (none, or a test)
     left_out: List[Path] = field(default_factory=list)   # documents the user left out of the request: the plan, its
                                                   # preview and its run cover the others (``planned_files``)
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
@@ -251,6 +253,7 @@ class Session:
         if spec is not None and generated is not None:
             raise ValueError("a session runs either a spec or a custom transform, not both")
         self.spec, self.generated = spec, generated
+        self.outcome_source = source if (spec is not None or generated is not None) else ""
         self.left_out = [Path(p).resolve() for p in left_out]   # an outcome's own: what the user left out of it
         self.recovery = None
         self.recovery_checkpoint = None
@@ -258,6 +261,12 @@ class Session:
         self.preview, self.generated_token, self.generated_preview = None, "", None
         self.generated_inputs, self.generated_intent = {}, ""
         self.pending_custom_transform = None
+
+    @property
+    def model_free(self) -> bool:
+        """The outcome is a Safe-mode button's (``recipes``): its preview and its run make no AI call — no visual
+        check of the pages, no investigation or recovery of the documents it sets aside."""
+        return self.outcome_source == "recipe"
 
     def outcome_key(self) -> Any:
         """What the approval token is taken over beside the files: the spec, a chain's key, or the plan per layout."""
@@ -704,7 +713,7 @@ class Session:
         log(f"Preview log: {out / 'preview' / 'logs' / 'preview.log'}")
         if on_preview is not None:
             on_preview()
-        if render and self.visual_check:
+        if render and self.visual_check and not self.model_free:
             log("Looking at the rendered pages…")
             self._visual_check(self.preview, self._intent(), out / "preview", log)
         self._note_preview()
@@ -1251,7 +1260,7 @@ def main(argv=None) -> int:
         session = Session()
         if settings.out_root:
             session.out_root = Path(settings.out_root)
-        task = DocumentTask(session, journal=config_dir() / "conversation.json")
+        task = DocumentTask(session, journal=config_dir() / "conversation.json", mode=settings.mode)
         # Every start is clean: the last conversation is archived under conversations\, never reopened.
         try:
             archived = task.archive()

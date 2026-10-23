@@ -115,7 +115,22 @@ try {
   await page.waitForTimeout(800);
   await shot(page, "todo");
 
-  // 9. The narrow window: 1000 px wide, the documents folded to their title line beside the plan.
+  // 9. Safe mode: the buttons in place of the message box, a button's form, and what a button left untouched.
+  await scenario("safe");
+  await page.reload();
+  await page.getByRole("region", { name: "Safe mode" }).waitFor();
+  await page.waitForTimeout(600);
+  await shot(page, "safe-mode");
+  await page.getByRole("button", { name: "Match headers and footers to template" }).click();
+  await page.waitForTimeout(300);
+  await shot(page, "safe-form");
+  await scenario("safe-done");
+  await page.reload();
+  await page.getByText("Left untouched by the last button").waitFor();
+  await page.waitForTimeout(800);
+  await shot(page, "safe-done");
+
+  // 10. The narrow window: 1000 px wide, the documents folded to their title line beside the plan.
   await scenario("preview");
   await page.setViewportSize({ width: 1000, height: 700 });
   await page.reload();

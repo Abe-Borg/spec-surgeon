@@ -1,0 +1,339 @@
+{
+ "recipes": [
+  {
+   "id": "headers_footers_template",
+   "label": "Match headers and footers to template",
+   "group": "Headers & footers",
+   "summary": "Gives every document your template's headers and footers, with each document's own section number and title filled in.",
+   "needs": [
+    "template"
+   ],
+   "fields": [
+    {
+     "name": "slots",
+     "kind": "slots",
+     "label": "Values for the template's placeholders",
+     "required": false
+    }
+   ]
+  },
+  {
+   "id": "remove_headers_footers",
+   "label": "Remove headers and footers",
+   "group": "Headers & footers",
+   "summary": "Removes the headers, the footers or both from every section.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "which",
+     "kind": "choice",
+     "label": "Remove",
+     "required": false,
+     "default": "both",
+     "options": [
+      {
+       "value": "both",
+       "label": "Headers and footers"
+      },
+      {
+       "value": "headers",
+       "label": "Headers only"
+      },
+      {
+       "value": "footers",
+       "label": "Footers only"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "watermark",
+   "label": "Add or remove a watermark",
+   "group": "Headers & footers",
+   "summary": "Draws your words faintly behind every page, or takes a watermark out.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "action",
+     "kind": "choice",
+     "label": "Watermark",
+     "required": false,
+     "default": "add",
+     "options": [
+      {
+       "value": "add",
+       "label": "Add a watermark"
+      },
+      {
+       "value": "remove",
+       "label": "Remove the watermark"
+      }
+     ]
+    },
+    {
+     "name": "text",
+     "kind": "text",
+     "label": "Watermark words",
+     "required": false,
+     "help": "Exactly as they should appear; one line.",
+     "placeholder": "NOT FOR CONSTRUCTION"
+    }
+   ]
+  },
+  {
+   "id": "swap_logo",
+   "label": "Swap the logo",
+   "group": "Headers & footers",
+   "summary": "Replaces the logo in the headers with a picture you attach, fitted to the same space.",
+   "needs": [
+    "picture"
+   ],
+   "fields": [
+    {
+     "name": "image",
+     "kind": "picture",
+     "label": "New logo",
+     "required": true
+    },
+    {
+     "name": "old",
+     "kind": "picture",
+     "label": "Old logo",
+     "required": false,
+     "help": "Attach the old logo too to swap only that picture.",
+     "optional_choice": "Every picture in the headers"
+    }
+   ]
+  },
+  {
+   "id": "font_template",
+   "label": "Match font to template",
+   "group": "Fonts",
+   "summary": "Sets the text in your template's body font and size; headings, notes and other sizes keep theirs.",
+   "needs": [
+    "template"
+   ],
+   "fields": []
+  },
+  {
+   "id": "find_replace",
+   "label": "Find and replace",
+   "group": "Text",
+   "summary": "Replaces words you list with your replacements in the body, headers and footers.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "pairs",
+     "kind": "pairs",
+     "label": "Find → replace with",
+     "required": false
+    },
+    {
+     "name": "table",
+     "kind": "table",
+     "label": "Or a table of pairs (first column: find; second: replace)",
+     "required": false
+    },
+    {
+     "name": "match_case",
+     "kind": "check",
+     "label": "Match capitals exactly",
+     "required": false,
+     "default": true
+    },
+    {
+     "name": "whole_word",
+     "kind": "check",
+     "label": "Whole words only",
+     "required": false,
+     "default": true,
+     "help": "On: “NFPA 13” leaves “NFPA 13R” alone."
+    },
+    {
+     "name": "tracked",
+     "kind": "check",
+     "label": "Show my changes as tracked changes in Word",
+     "required": false,
+     "default": false,
+     "help": "Off: clean copies. On: each change is a tracked change a reviewer can accept or reject."
+    }
+   ]
+  },
+  {
+   "id": "accept_changes",
+   "label": "Accept all tracked changes",
+   "group": "Clean up",
+   "summary": "Accepts every pending tracked change, so the copies are clean.",
+   "needs": [],
+   "fields": []
+  },
+  {
+   "id": "remove_comments",
+   "label": "Remove all comments",
+   "group": "Clean up",
+   "summary": "Removes every comment and its replies.",
+   "needs": [],
+   "fields": []
+  },
+  {
+   "id": "remove_highlight",
+   "label": "Remove highlighting",
+   "group": "Clean up",
+   "summary": "Removes Word's highlighter colour from all text.",
+   "needs": [],
+   "fields": []
+  },
+  {
+   "id": "remove_hidden_text",
+   "label": "Remove hidden text",
+   "group": "Clean up",
+   "summary": "Removes text Word hides with its Hidden font setting.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "tracked",
+     "kind": "check",
+     "label": "Show my changes as tracked changes in Word",
+     "required": false,
+     "default": false,
+     "help": "Off: clean copies. On: each change is a tracked change a reviewer can accept or reject."
+    }
+   ]
+  },
+  {
+   "id": "remove_empty_paragraphs",
+   "label": "Remove empty paragraphs",
+   "group": "Clean up",
+   "summary": "Removes blank lines from the body.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "how",
+     "kind": "choice",
+     "label": "Which blank lines",
+     "required": false,
+     "default": "collapse",
+     "options": [
+      {
+       "value": "collapse",
+       "label": "Keep one where several stand together"
+      },
+      {
+       "value": "all",
+       "label": "Remove every one"
+      }
+     ]
+    },
+    {
+     "name": "tracked",
+     "kind": "check",
+     "label": "Show my changes as tracked changes in Word",
+     "required": false,
+     "default": false,
+     "help": "Off: clean copies. On: each change is a tracked change a reviewer can accept or reject."
+    }
+   ]
+  },
+  {
+   "id": "name_files",
+   "label": "Name files by section number and title",
+   "group": "Files & properties",
+   "summary": "Names each edited copy from its own section number and title.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "pattern",
+     "kind": "choice",
+     "label": "Name",
+     "required": false,
+     "default": "{number} - {title}",
+     "options": [
+      {
+       "value": "{number} - {title}",
+       "label": "21 13 13 - Wet-Pipe Sprinkler Systems.docx"
+      },
+      {
+       "value": "{number} {title}",
+       "label": "21 13 13 Wet-Pipe Sprinkler Systems.docx"
+      },
+      {
+       "value": "{number}",
+       "label": "21 13 13.docx"
+      }
+     ]
+    },
+    {
+     "name": "number",
+     "kind": "choice",
+     "label": "Section number",
+     "required": false,
+     "default": "as_is",
+     "options": [
+      {
+       "value": "as_is",
+       "label": "As written (21 13 13)"
+      },
+      {
+       "value": "digits",
+       "label": "Digits only (211313)"
+      }
+     ]
+    },
+    {
+     "name": "title",
+     "kind": "choice",
+     "label": "Title",
+     "required": false,
+     "default": "as_is",
+     "options": [
+      {
+       "value": "as_is",
+       "label": "As written"
+      },
+      {
+       "value": "title",
+       "label": "Title Case"
+      },
+      {
+       "value": "upper",
+       "label": "UPPER CASE"
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "title_property",
+   "label": "Set the document title property",
+   "group": "Files & properties",
+   "summary": "Sets File → Info → Title from each document's own section number and title.",
+   "needs": [],
+   "fields": [
+    {
+     "name": "pattern",
+     "kind": "text",
+     "label": "Title",
+     "required": true,
+     "default": "SECTION {number} - {title}",
+     "help": "{number} and {title} stand for each document's own; the other words are yours."
+    }
+   ]
+  },
+  {
+   "id": "track_changes_off",
+   "label": "Turn off Track Changes",
+   "group": "Files & properties",
+   "summary": "The copies open with Word's Track Changes setting off.",
+   "needs": [],
+   "fields": []
+  }
+ ],
+ "groups": [
+  "Headers & footers",
+  "Fonts",
+  "Text",
+  "Clean up",
+  "Files & properties"
+ ]
+}

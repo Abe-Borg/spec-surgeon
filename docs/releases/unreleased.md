@@ -1,3 +1,20 @@
 # Unreleased
 
 Changes since v1.10.0.
+
+## Safe mode
+
+- **Two modes.** The top bar's **Safe | Default** switch chooses how a change is asked for, and the window opens in
+  the mode you last used (Safe the first time). Default mode is the conversation, as before.
+- **Safe mode is buttons, with no AI.** Match headers and footers to template, remove headers and footers, add or
+  remove a watermark, swap the logo, match font to template, find and replace, accept all tracked changes, remove
+  comments, highlighting, hidden text or empty paragraphs, name the copies by section number and title, set the
+  document title property, and turn off Track Changes. Each has a short form, then the same preview, checks and
+  **Create edited copies** as Default mode. No model is called, so Safe mode needs no API key and spends nothing.
+- **Clean copies unless you ask.** Find and replace, removing hidden text and removing empty paragraphs offer *Show
+  my changes as tracked changes in Word*; it is off each time.
+- **Both kinds of template.** The template buttons take a prepared template (yellow-highlighted or `{{NAME}}`
+  placeholders) or an ordinary specification; the section number and title come from each document, any other
+  placeholder's value is typed in the form.
+- **What a button cannot do is said, and can go to Default mode.** A document a button cannot change exactly is left
+  untouched with the reason, beside the copies; **Try these in Default mode** puts it on the to-do list there.

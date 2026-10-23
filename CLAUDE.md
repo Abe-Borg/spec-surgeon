@@ -41,7 +41,10 @@ embedded objects, data-bound content controls and the theme.
 
 ## Repository layout
 
-The desktop is one window: the page in `web/static/` (built from `frontend/`), served by `web/server.py` over one
+The desktop is one window with two modes (`docs/PLAN-2026-10-23-modes.md`): **Safe** — buttons whose plans
+`recipes.py` builds in code from the user's form, no model call anywhere (`Session.model_free`: no visual check, no
+recovery) — and **Default**, the conversation below. Both pass the same gate (`compiler.compose_submission`), preview,
+approval and verification. The page in `web/static/` (built from `frontend/`), served by `web/server.py` over one
 `document_task.DocumentTask` (contract `docs/WEB_API.md`) and shown by `web/shell.py`. The user attaches Word files, an
 optional template and pictures or tables for the edit to use; `triage.py` checks each on arrival without a model call.
 `layouts.py` gives a mixed batch one EditSpec per structural layout with one approval; `review_display.py` describes
@@ -84,6 +87,8 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
   - `preview.py`, `codegen.py` + `sandbox_runner.py` (custom transforms), `goals.py`, `goal_contracts.py`,
     `goal_operations.py` (reviewed outcome contracts), `recovery*.py`, `continuous_recovery.py`, `campaign_planner.py`
     (bounded investigation of set-aside files), `inventory.py` (the content digest that pins a file).
+  - `recipes.py` — Safe mode's buttons: each a fixed EditSpec from its form (`build`), the header/footer template's kind
+    (`template_kind`); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`.
   - `document_task.py`, `review_display.py`, `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/`
     (`server.py`, `shell.py`, `watch.py`: the page's own reports and the watchdog over the page and the job),
     `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.
@@ -145,7 +150,9 @@ than none.
 
 ## Session protocol
 
-Current round: `docs/PLAN-2026-10-22-batch-consistency.md` (what the first live run found); the full-control round,
+Current rounds: `docs/PLAN-2026-10-23-modes.md` (Safe, Default and Obliterate modes; match body formatting; the
+pre-filled wording field — one pull request per item) and `docs/PLAN-2026-10-22-batch-consistency.md` (what the first
+live run found); the full-control round,
 `docs/PLAN-2026-10-21-full-control.md` (design: `docs/BUILTIN_OPS_BATCH6_DESIGN.md`), waits on its live runs. Read both
 before any work and take items from the current round's status table. Beside them, `docs/PLAN-2026-10-22-word-judge.md`
 (real Word judges the tracked changes the engine writes and reads; test evidence only) has its own status table, and so

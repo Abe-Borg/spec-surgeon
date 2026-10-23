@@ -8,7 +8,7 @@ page in its address, `?token=…&api=http://127.0.0.1:<port>&theme=<scheme>` (an
 `window.SPEC_SURGEON = {token, version, api}` would win over the address). `theme` is the colour scheme kept in
 `settings.json`; the page's inline script applies it before the first paint. Without the right token
 every `/api` route answers 401. One job runs at a time: a second `send`, `choose`, `primary` or `attach` while
-`busy` is true answers 409 `{"error": "busy"}`.
+`busy` is true answers 409 `{"error": "busy"}`. So do `recipe`, `mode` and `handoff` (Safe mode, below).
 
 The page never applies edits or derives state itself: every `done`/`state` event and `GET /api/state` carry the
 FULL view, and the page renders it. Streamed frames (text deltas, status, activity) are presentation only; the view
@@ -52,6 +52,10 @@ that ends a job is authoritative.
   "focus": [],
   "working": {"generation": 0, "from_originals": true, "can_start_over": false},
   "budget": {"paused": false, "steps_per_pause": 48},
+  "mode": "safe | default",
+  "modes": ["safe", "default"],
+  "template": {"kind": "none | prepared | reference | unusable", "typed_slots": ["ISSUED FOR PERMIT"], "reason": ""},
+  "left_untouched": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "reason": "…"}],
   "update": {"state": "none | available | downloading | ready | installing | updated | failed | error",
              "version": "", "notes": "", "progress": 0, "error": "", "text": "", "manual_result": "",
              "install_log": ""}
@@ -67,6 +71,12 @@ Rules the page relies on:
   Each of the model's words shows once: the assistant message carries its reply without the questions, and
   `questions` never repeats that message (a reply with nothing to pick, plain words or a failure, is in `messages`
   only; `questions` carries it only when the chat did not say it, as a recovery turn's).
+- `mode` is the window's mode (docs/CONVERSATIONAL_DESKTOP.md, "Safe mode"). In `safe`, `action.kind` is only ever
+  `approve` or `none` (no conversation to continue), `send` and `choose` end in `error`, and the page shows the
+  buttons (`GET /api/recipes`) in place of the composer. `template` says what kind of header/footer template the
+  attached template is (`recipes.template_kind`): a prepared template's `typed_slots` are the values its form asks
+  for. `left_untouched` lists what the last Safe-mode button's run gave no copy, with the engine's reason, until the
+  next button or a hand-off; it is empty while a preview waits.
 - `plan` is present whenever a plan exists (stages `preview` and `question` with a partial result); `stages` is the
   number of ordered steps the engine composed internally, never a procedure the user performs. The page shows only
   `set_aside` (the **Left untouched** card); `groups`, `targets` and `stages` tell it a plan exists but are not
@@ -109,6 +119,10 @@ Rules the page relies on:
 | POST | `/api/send` | `{"text": "...", "chip"?: true}` — `chip` marks one of the model's suggested replies the user tapped: their decision, never approved wording | SSE stream (below) |
 | POST | `/api/choose` | `{"choice_id": "c1"}` | SSE stream |
 | POST | `/api/primary` | `{"token": "...", "hold"?: ["<sample source path>", …]}` — `hold` names the previewed documents marked with the red X: set aside on the to-do list, the others run; a path that is not one of the plan's documents is refused (400 for a malformed list, the job's `error` for an unknown path) | SSE stream |
+| GET | `/api/recipes` | | `{"recipes": [{"id", "label", "group", "summary", "needs": ["template" \| "picture"], "fields": [{"name", "kind": "text \| pairs \| choice \| check \| picture \| table \| slots", "label", "required", "default"?, "options"?, "help"?, "placeholder"?, "optional_choice"?}]}], "groups": [...]}` — Safe mode's buttons (`recipes.catalog()`), the same for the whole session |
+| POST | `/api/recipe` | `{"recipe": "<id>", "inputs": {<field name>: value}}` — a Safe-mode button and its form; a form that cannot be used, or a plan the gate refuses, is said in one `app` message and nothing is previewed; 400 for inputs that are not an object | SSE stream |
+| POST | `/api/mode` | `{"mode": "safe \| default"}` | the view; kept in settings.json; 400 for another mode |
+| POST | `/api/handoff` | `{"paths": ["<left_untouched path>", …]}` — the documents go on the to-do list with the button's sentence as their request, and the mode becomes `default`; 400 for a path the last button did not leave untouched, or while a preview waits | the view |
 | POST | `/api/stop` | | `{"ok": true}` — the running model call is cut off; the stream then ends with `done` |
 | POST | `/api/start-over` | | the view (the working set returns to the originals; the plan is void) |
 | POST | `/api/new-conversation` | | the view (archives the journal, starts empty) |
@@ -146,7 +160,7 @@ Unknown kinds and fields are passed over; text is cut to 2,000 characters and st
 
 Any report is a sign of life: a showing page (`visible`) that sends nothing for 45 s is journalled as unresponsive.
 
-## The job stream (`send`, `choose`, `primary`)
+## The job stream (`send`, `choose`, `primary`, `recipe`)
 
 `Content-Type: text/event-stream`; each frame is `data: <json>\n\n`; the last frame is `done` or `error`.
 

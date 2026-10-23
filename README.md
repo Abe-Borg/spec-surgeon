@@ -11,7 +11,8 @@ deterministic Python over the document XML. The expected result is predicted *be
 verifier, sharing no code with the transform, reads only the before and after packages and asserts that prediction.
 A file is delivered only when every check passes and the source has not moved since it was read. No language model
 is in the per-file loop; Claude is optional, and its job is to turn a plain-English request into a specification you
-approve, to look at preview pages, and to investigate files the engine set aside.
+approve, to look at preview pages, and to investigate files the engine set aside. Safe mode does the common changes
+from buttons, with no AI at all.
 
 It runs as a Windows desktop app and as a Python library (Windows, macOS or Linux). There is no command line.
 
@@ -26,8 +27,8 @@ a banner offers each new version, and **About → Check for updates** checks at 
 user without administrator access, offers a desktop shortcut and includes an uninstaller. Example EditSpecs are
 available from **Spec Surgeon → Example edit specs** in the Start menu.
 
-Microsoft Word or LibreOffice is still needed for page rendering; neither is installed by this setup program. Typed
-requests need your Anthropic API key: enter it in the window's **Settings** and tick *Remember securely on this
+Microsoft Word or LibreOffice is still needed for page rendering; neither is installed by this setup program. Safe
+mode needs no API key. Default mode's typed requests need your Anthropic API key: enter it in the window's **Settings** and tick *Remember securely on this
 computer* to keep it in Windows Credential Manager. The installer is unsigned, so Windows may show a publisher prompt on the first manual install.
 
 **Python package / development setup** (Python 3.10+ on Windows, macOS or Linux; from the project folder):
@@ -137,11 +138,36 @@ copies remain. Every start of the app is a clean one: the last conversation is a
 
 ![The plan in the conversation and before/after pages, with one action](docs/conversation-preview.png)
 
+**Two modes.** The switch is in the top bar, beside the help topics, and the window opens in the mode you last used
+(Safe the first time).
+
+- **Safe — buttons, no AI.** What you control: the common changes, one button each — *Match headers and footers to
+  template*, *Remove headers and footers*, *Add or remove a watermark*, *Swap the logo*, *Match font to template*,
+  *Find and replace* (typed pairs or an attached table; body, headers and footers), *Accept all tracked changes*,
+  *Remove all comments*, *Remove highlighting*, *Remove hidden text*, *Remove empty paragraphs*, *Name files by
+  section number and title*, *Set the document title property* and *Turn off Track Changes*. Each button has a short
+  form (your words and choices only), then **Preview**, the same pages, checks and **Create edited copies** as Default
+  mode. What it costs: only what the buttons do. The copies are clean unless you tick *Show my changes as tracked
+  changes in Word* (offered where the change can be tracked). The template buttons take either a prepared template
+  (yellow-highlighted or `{{NAME}}` placeholders: the section number and title come from each document, every other
+  placeholder's value is typed in the form) or an ordinary specification whose headers and footers show its own
+  section number and title. No model is called — no plan, no visual check, no recovery — so it needs no API key and
+  spends nothing.
+- **Default — a conversation.** What you control: any change you can describe, from one word to whole tables,
+  sections and pictures, on documents built in different ways. What it costs: an Anthropic API key and the AI's
+  spending, and the AI can misread a request, so you read what it plans and look at the pages before you approve.
+
+On a batch from different projects, Safe mode's buttons work on every document they can change exactly and leave
+the rest untouched, each with the engine's reason — a template's section line it cannot find, an odd-and-even pages
+setting that differs from the template's, a phrase whose formatting changes partway through. Nothing is guessed and
+nothing is half-edited: a copy passes every check or is not made. After the copies are created, **Try these in
+Default mode** puts the untouched documents on your to-do list in Default mode, where the conversation can plan them.
+
 Besides Word documents you can attach pictures and tables for the edit to use, such as a new logo to swap in or
 insert, a schedule to place as a table, or a spreadsheet of project values to fill in; Claude is told about them and can read the tables, and nothing
 beside your documents is ever looked for.
 
-Connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
+For Default mode, connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
 with room for its full 128,000-token answer (the conversation, and the visual check and custom methods it runs inside
 a turn, at medium effort; the outcome planning when no ordinary plan fits (no operation for the request, a plan that
 covers no file, or a sample that fails its check), and recovery, at high; no step at
@@ -279,6 +305,9 @@ recorded for the requests that follow.
 - **Nothing here has been proven on your files yet.** The engine, the window and the installer are tested on
   synthetic fixtures (including a family of deliberately dirty files) and in CI; the live Claude path, Word
   rendering and the first real batches are the user's to run. Expect fixes from the first real runs of every operation.
+- Safe mode's buttons do only what each says. A document a button cannot change exactly is left untouched with the
+  reason; no AI looks at it there, and it can be handed to Default mode. Text boxes, shapes and the other objects
+  out of reach stay out of reach in every mode.
 - A PASS is the engine's proof of the predicted change, not acceptance of the result. Look at the before/after
   pages. Claude's visual check is advisory and can be wrong both ways.
 - Normalizing a file (typed numbers, direct formatting, whitespace, pending tracked changes) is never automatic; it
