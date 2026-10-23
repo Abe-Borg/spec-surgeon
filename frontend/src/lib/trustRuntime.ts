@@ -193,8 +193,9 @@ export const RUNTIME_CARDS: RuntimeCard[] = [
     automatic: true,
     you:
       "Nothing beyond your request: when no ordinary plan fits (Claude finds no operation for it, the plan covers no " +
-      "file, or a sample fails its check), the app continues on its own. A file the plan refuses while the others " +
-      "plan does not start it: that file waits under Left untouched beside the preview of the others.",
+      "file, a sample fails its check, or every sample is refused), the app continues on its own. A file the plan " +
+      "refuses while the others plan does not start it, nor does a sample a later step of the plan refuses: that " +
+      "file waits under Left untouched beside the preview of the others.",
     runs:
       "Claude proposes the outcomes to reach (what should change, where, with what wording). The app checks the " +
       "proposal, carries it out without waiting for a pick, and tries methods on copies of your files: built-in " +

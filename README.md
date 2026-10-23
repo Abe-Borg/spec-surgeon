@@ -113,7 +113,8 @@ and Settings.
    drafts each document's title in the template's case as one choice you can pick or correct, and one plan then
    puts each document's own approved title in its footer.
    A file the plan cannot cover is listed under **Left untouched** with the reason, and the preview of the others
-   stands; the assistant names it in its next reply and says what would let it take part.
+   stands; the assistant names it in its next reply and says what would let it take part. In a plan done in steps
+   (the template's headers and footers, then the fonts), a sample the later step refuses is listed there too.
    Each preview carries a green checkmark (looks good) and a red X (needs more work: set it aside for after the
    others). To leave documents out of a request altogether, say so ("leave out 20, and 23 for now"): the plan covers
    the others, the ones you named stay exactly as they are under **Left untouched**, and your next request covers
@@ -192,8 +193,8 @@ beside your documents is ever looked for.
 For Default mode, connect an Anthropic API key once in **Settings**. There is no spending limit: every AI step runs Claude Opus 5.5
 with room for its full 128,000-token answer (the conversation, and the visual check and custom methods it runs inside
 a turn, at medium effort; the outcome planning when no ordinary plan fits (no operation for the request, a plan that
-covers no file, or a sample that fails its check), and recovery, at high; no step at
-max; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is cached for an
+covers no file, a sample that fails its check, or a preview whose every sample is refused), and recovery, at high;
+no step at max; every operation's settings ride the cached prompt, so a plan is one or two calls; that prompt is cached for an
 hour, so a follow-up request reads it instead of paying for it again). Instead, the
 header shows the estimated spending as it accrues, **Stop now** cuts off the AI step that is running at once, and
 work pauses after every 48 AI steps until you press **Continue**, which picks the conversation up where it stopped. A call that fails for a

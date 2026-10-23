@@ -40,7 +40,7 @@ import os
 import traceback
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from . import diagnostics as diag
 from .editspec import apply_spec, plan_spec
@@ -235,6 +235,27 @@ class SampleView:
                 failed = [k for k, v in (st.get("checks") or {}).items() if v == "FAIL"]
                 parts.append(f"stage {st['stage']} FAIL {failed}")
         return " · ".join(parts)
+
+
+def sample_refused(sv: Any) -> bool:
+    """A sample the plan refused (a ``JobException`` with its code: a case the op cannot predict), not one the engine
+    failed on or whose output failed its checks. A chain plans its later steps on the samples only, on the bytes the
+    step before made, so a later step's refusal shows here and nowhere in the batch plan."""
+    return (getattr(sv, "exception", None) or {}).get("kind") == "refusal"
+
+
+def refusals(pv: Any) -> List[Tuple[Path, Dict[str, Any]]]:
+    """The documents a preview refused, each with its refusal: every one the plan refused, then each sample a later
+    step refused. They wait under Left untouched while the others are previewed (the owner's 1.10.0 run of 2026-10-23:
+    two samples whose list numbering the font step refused handed a nineteen-file preview to outcome planning)."""
+    out = [(Path(f.source), f.exception or {}) for f in getattr(getattr(pv, "batch_plan", None), "exceptions", None)
+           or []]
+    seen = {p.resolve() for p, _ in out}
+    for sv in getattr(pv, "samples", None) or []:
+        if sample_refused(sv) and Path(sv.source).resolve() not in seen:
+            seen.add(Path(sv.source).resolve())
+            out.append((Path(sv.source), sv.exception))
+    return out
 
 
 @dataclass

@@ -913,17 +913,18 @@ class DocumentTask:
         self.save()
 
     def _refused_by_preview(self, preview, request: str) -> List[Dict[str, str]]:
-        """The documents a button's preview refused, with their reasons: Create does not run them (``Session.
-        _without_refused``), so the run's own results never name them."""
+        """The documents a button's preview refused (the plan, or a later step on a sample), with their reasons:
+        Create does not run them (``Session._without_refused``), so the run's own results never name them."""
+        from .preview import refusals
         out: List[Dict[str, str]] = []
         for path, reason in self.session.left_out_reasons.items():       # a button that left documents out, with why
             origin = str(self.origin_of(Path(path)))
             out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED, "reason": reason,
                         "request": request})
-        for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
-            origin = str(self.origin_of(Path(item.source)))
+        for source, exc in refusals(preview):
+            origin = str(self.origin_of(source))
             out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED,
-                        "reason": str((item.exception or {}).get("reason", "")), "request": request})
+                        "reason": str(exc.get("reason", "")), "request": request})
         return out
 
     def _left_after_run(self, request: str, refused: Sequence[Dict[str, str]] = ()) -> List[Dict[str, str]]:
@@ -1317,9 +1318,9 @@ class DocumentTask:
         refused = [f for f in planned if f not in runnable and f not in held]
         if not refused:
             return []
+        from .preview import refusals
         seen = [c["summary"] for g in self._groups() for c in g["changes"]]
-        reasons = {Path(item.source).resolve(): (item.exception or {}).get("reason", "")
-                   for item in getattr(getattr(s.preview, "batch_plan", None), "exceptions", None) or []}
+        reasons = {source.resolve(): exc.get("reason", "") for source, exc in refusals(s.preview)}
         out = []
         for f in refused:
             why = str(reasons.get(Path(f).resolve(), "")).strip().rstrip(".")
@@ -1488,14 +1489,13 @@ class DocumentTask:
 
     def _left_untouched(self, preview) -> List[Dict[str, str]]:
         """Left untouched beside a preview: the documents the user left out of the request (no plan covers them),
-        then those the plan refused, each with its reason."""
+        then those the preview refused (the plan, or a later step on a sample), each with its reason."""
         if preview is None:
             return []
+        from .preview import refusals
         why = self.session.left_out_reasons
         items = [{"name": Path(path).name, "reason": why.get(str(path), LEFT_OUT_REASON)} for path in self.session.left_out]
-        for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
-            exc = item.exception or {}
-            items.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})
+        items += [{"name": source.name, "reason": exc.get("reason", "")} for source, exc in refusals(preview)]
         return items
 
     def _delivered(self) -> List[Path]:
@@ -1505,8 +1505,12 @@ class DocumentTask:
         return [Path(f.source) for f in recovery.files if f.delivered_to] if recovery is not None else []
 
     def _undelivered_samples(self, preview) -> list:
+        """The samples the pages show: not one whose copy a partial save delivered, nor one a later step refused (it
+        waits under Left untouched, unchanged)."""
+        from .preview import sample_refused
         delivered = {str(path) for path in self._delivered()}
-        return [sv for sv in getattr(preview, "samples", []) or [] if str(sv.source) not in delivered]
+        return [sv for sv in getattr(preview, "samples", []) or []
+                if str(sv.source) not in delivered and not sample_refused(sv)]
 
     def _undelivered_findings(self, review) -> list:
         """The visual check's findings less those about a delivered document. A finding names its file by the label

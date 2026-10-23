@@ -438,3 +438,32 @@ def test_the_mock_servers_buttons_are_the_apps():
     import json
     mock = Path(__file__).resolve().parent.parent / "frontend" / "mock" / "recipes.json"
     assert json.loads(mock.read_text(encoding="utf-8")) == {"recipes": recipes.catalog(), "groups": list(recipes.GROUPS)}
+
+
+def test_a_sample_a_later_step_refused_is_left_untouched_beside_a_buttons_copies(tmp_path, monkeypatch):
+    # A button's spec passes the gate that turns overlapping operations into ordered steps, so a later step can refuse a
+    # sample (docs/PLAN-2026-10-22-batch-consistency.md P1). Create does not run that document (Session._without_refused)
+    # and Left untouched names it with the step's reason, never a document dropped without a word.
+    a, b = tmp_path / "21 13 13.docx", tmp_path / "21 13 16.docx"
+    a.write_bytes(build("21 13 13", "WET-PIPE SPRINKLER SYSTEMS"))
+    b.write_bytes(build("21 13 16", "DRY-PIPE SPRINKLER SYSTEMS"))
+    before = b.read_bytes()
+    real = preview.make_preview
+
+    def later_step_refuses(*args, **kwargs):
+        pv = real(*args, **kwargs)
+        refused = next(sv for sv in pv.samples if Path(sv.source).name == b.name)
+        refused.passed = None
+        refused.exception = {"code": "numbering-unsupported", "kind": "refusal",
+                             "reason": "stage 2 (fonts): a list defined through a numbering style"}
+        return pv
+    monkeypatch.setattr(preview, "make_preview", later_step_refuses)
+    task = DocumentTask(Session(out_root=tmp_path / "out", visual_check=False), render=False, mode="safe")
+    task.attach([a, b])
+    view = task.perform("recipe", recipe="title_property", inputs={"pattern": "SECTION {number} - {title}"})
+    assert view["stage"] == "preview" and [e["name"] for e in view["set_aside"]] == [b.name]
+    task.perform("primary", token=view["token"])
+    view = task.view()
+    assert list(task.results) == [str(a)] and b.read_bytes() == before
+    assert [(e["name"], e["reason"]) for e in view["left_untouched"]] == [
+        (b.name, "stage 2 (fonts): a list defined through a numbering style")]

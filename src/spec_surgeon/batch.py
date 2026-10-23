@@ -1050,8 +1050,10 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
             hf_docs: Dict[Path, str] = {}
             for k, t in enumerate(templates):
                 try:
+                    # numbered, never named after the file: the path stays short of Windows' 260 characters (the
+                    # owner's 1.10.0 run: an 84-character name under a recovery attempt's folders made 261)
                     hf_docs[geom.hf_only_copy(Path(t), out_dir / "render" / "template" /
-                                              f"{k:02d} {Path(t).stem} (headers-footers only).docx")[0]] = str(Path(t))
+                                              f"{k:02d} headers-footers.docx")[0]] = str(Path(t))
                 except Exception as e:  # noqa: BLE001 — its files' V7 fails for want of the reference, and says so
                     rlog(f"{Path(t).name}: the template's headers/footers-only copy could not be made "
                          f"({type(e).__name__}: {e})")
@@ -1065,9 +1067,9 @@ def _render_and_compare(batch: BatchResult, renderer: str, do_render: bool, work
         if templated:
             hf_dir = out_dir / "render" / "output-hf"
             copies = {}
-            for fr in templated:
+            for k, fr in enumerate(templated):
                 try:
-                    path, n = geom.hf_only_copy(fr.output, hf_dir / f"{Path(fr.output).stem} (headers-footers only).docx")
+                    path, n = geom.hf_only_copy(fr.output, hf_dir / f"{k:03d} headers-footers.docx")
                     copies[path] = (fr.output, n)
                 except Exception as e:  # noqa: BLE001
                     rlog(f"{fr.output.name}: its headers/footers-only copy could not be made ({type(e).__name__}: {e})")

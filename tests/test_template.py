@@ -578,6 +578,25 @@ def test_v7_template_reference_rendered(tmp_path):
     assert "footer:" in v7["c"] and "header:" not in v7["c"]
 
 
+@pytest.mark.skipif(shutil.which("soffice") is None, reason="LibreOffice not installed")
+def test_v7_copies_are_named_short_whatever_the_documents_name(tmp_path):
+    """The owner's 1.10.0 run: the headers/footers-only copy of a document with an 84-character name, under a
+    recovery attempt's folders, reached 261 characters and could not be written on Windows, so its V7 could not be
+    made. The copies are numbered, never named after the document or the template, and V7 still pairs each file
+    with its own."""
+    spec = load_spec(SPEC)
+    src = tmp_path / "in"
+    src.mkdir()
+    name = "32_FAA_AC-150-5370-10H_Standard-Specifications-for-Construction-of-Airports.docx"
+    (src / name).write_bytes(build("21 22 00", "CLEAN-AGENT"))
+    batch = run_batch([str(src)], "edit-spec", {}, tmp_path / "run", workers=1, renderer="libreoffice", spec=spec)
+    rec = batch.files[0].record
+    assert rec.passed and rec.get("V7").status == "PASS", rec.to_markdown()
+    render = tmp_path / "run" / "render"
+    assert sorted(p.name for p in (render / "output-hf").glob("*.docx")) == ["000 headers-footers.docx"]
+    assert sorted(p.name for p in (render / "template").glob("*.docx")) == ["00 headers-footers.docx"]
+
+
 def _title_page_on_cover(root):
     sp = root.find(f".//{W}pPr/{W}sectPr")                 # section 0's break
     etree.SubElement(sp, W + "titlePg")
