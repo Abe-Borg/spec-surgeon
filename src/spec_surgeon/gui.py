@@ -159,6 +159,8 @@ class Session:
                                                   # "recipe" (a Safe-mode button: ``model_free``), "" (none, or a test)
     left_out: List[Path] = field(default_factory=list)   # documents the user left out of the request: the plan, its
                                                   # preview and its run cover the others (``planned_files``)
+    left_out_reasons: Dict[str, str] = field(default_factory=dict)   # str(resolved path) → why a Safe-mode button
+                                                  # left it out (``body_match``); none: the user left it out
     diagnostic_id: str = field(default_factory=diag.new_id, init=False, repr=False, compare=False)
 
     def _diagnostic_state(self) -> Dict[str, Any]:
@@ -245,7 +247,7 @@ class Session:
 
     @_session_action
     def _set_outcome(self, spec: Optional[Dict[str, Any]] = None, generated: Any = None, source: str = "",
-                     left_out: Sequence[Any] = ()) -> None:
+                     left_out: Sequence[Any] = (), left_out_reasons: Optional[Dict[str, str]] = None) -> None:
         """The one place the session's outcome changes. A new outcome voids everything previewed or approved for the
         old one: a reply that turns a custom transform into a spec must never leave the transform runnable, and a reply
         that only asks a question must never leave the old spec's preview runnable. The outcome is a spec (or a plan
@@ -255,6 +257,7 @@ class Session:
         self.spec, self.generated = spec, generated
         self.outcome_source = source if (spec is not None or generated is not None) else ""
         self.left_out = [Path(p).resolve() for p in left_out]   # an outcome's own: what the user left out of it
+        self.left_out_reasons = {str(Path(k).resolve()): str(v) for k, v in (left_out_reasons or {}).items()}
         self.recovery = None
         self.recovery_checkpoint = None
         self.pending_layout_recovery = []

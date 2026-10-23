@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useState } from "react";
+import { Fragment, memo, useEffect, useMemo, useState } from "react";
 import type { FindReplacePair, Recipe, RecipeField, RecipeInputs, View } from "../types";
 import { availability, fieldShown, grouped, initialInputs, missing, payload, pictures, refreshInputs, tables } from "../lib/recipes";
 import { primaryBtn } from "./ModalShell";
@@ -185,6 +185,39 @@ function FieldInput({
         </div>
       );
     }
+    case "roles": {
+      const body = view.template?.body;
+      if (!body || body.order.length === 0) return null;
+      const chosen = value && typeof value === "object" && !Array.isArray(value) ? (value as Record<string, string>) : {};
+      const from = [body.page && `pages ${body.page}`, body.font && `text in ${body.font}`].filter(Boolean).join("; ");
+      return (
+        <div>
+          <Label field={field} />
+          <div className="grid grid-cols-[minmax(0,auto)_minmax(0,1fr)] items-center gap-x-3 gap-y-1.5">
+            {body.order.map((role) => (
+              <Fragment key={role}>
+                <span className="text-[12px] text-ink-dim">{body.labels[role] ?? role}</span>
+                <select
+                  aria-label={body.labels[role] ?? role}
+                  className={inputClass}
+                  value={chosen[role] ?? ""}
+                  onChange={(e) => onChange(field.name, { ...chosen, [role]: e.target.value })}
+                >
+                  <option value="">(none)</option>
+                  {body.styles.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.name}
+                    </option>
+                  ))}
+                </select>
+              </Fragment>
+            ))}
+          </div>
+          <Help text={field.help} />
+          {from && <Help text={`From your template: ${from}.`} />}
+        </div>
+      );
+    }
     default:
       return null;
   }
@@ -202,7 +235,7 @@ function SafePanel({ recipes, view, busy, onPreview }: Props) {
 
   // A form opened with what was attached then; a template, picture or table attached or removed since is taken
   // into its fields, and a file no longer attached is never sent.
-  const slotsKey = (view.template?.typed_slots ?? []).join("\n");
+  const slotsKey = (view.template?.typed_slots ?? []).join("\n") + JSON.stringify(view.template?.body?.roles ?? {});
   const filesKey = [...pictures(view), ...tables(view)].map((f) => f.path).join("\n");
   useEffect(() => {
     if (chosen) setInputs((current) => refreshInputs(chosen, current, view));

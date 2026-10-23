@@ -64,14 +64,14 @@ def test_every_button_is_in_a_group_with_a_form_the_panel_can_render():
         seen.add(item["id"])
         assert item["label"] and item["summary"].endswith(".")
         for f in item["fields"]:
-            assert f["kind"] in {"text", "pairs", "choice", "check", "picture", "table", "slots"}
+            assert f["kind"] in {"text", "pairs", "choice", "check", "picture", "table", "slots", "roles"}
             if f["kind"] == "choice":
                 assert f["default"] in {o["value"] for o in f["options"]}
     assert seen == set(recipes.BY_ID)
-    # the owner's list (2026-10-23): first set and second set, nothing dropped back in
+    # the owner's list (2026-10-23): first set and second set, nothing dropped back in; and the body button (M3)
     assert seen == {"headers_footers_template", "remove_headers_footers", "watermark", "swap_logo", "font_template",
                     "find_replace", "accept_changes", "remove_comments", "remove_highlight", "remove_hidden_text",
-                    "remove_empty_paragraphs", "name_files", "title_property", "track_changes_off"}
+                    "remove_empty_paragraphs", "name_files", "title_property", "track_changes_off", "body_formatting"}
 
 
 def test_tracking_is_offered_only_where_the_operation_can_track_and_is_off_by_default():

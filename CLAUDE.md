@@ -89,6 +89,9 @@ jobs). Details: `docs/CONVERSATIONAL_DESKTOP.md`.
     (bounded investigation of set-aside files), `inventory.py` (the content digest that pins a file).
   - `recipes.py` — Safe mode's buttons: each a fixed EditSpec from its form (`build`), the header/footer template's kind
     (`template_kind`); the page's copy of the list (`frontend/mock/recipes.json`) is pinned to `catalog()`.
+    `template_roles.py` (a template's style per role, page and font, read without a model) and `body_match.py` (match
+    body formatting: one plan per document from its own structure, one layout per agreeing pattern, each through the
+    gate; what it cannot match is left out with the reason, `Session.left_out_reasons`).
   - `document_task.py`, `review_display.py`, `gui.py` (`Session`, `main`; `python -m spec_surgeon` runs it), `web/`
     (`server.py`, `shell.py`, `watch.py`: the page's own reports and the watchdog over the page and the job),
     `updater.py`, `settings.py`, `credentials.py`, `winapp.py`.

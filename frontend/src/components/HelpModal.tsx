@@ -61,7 +61,7 @@ function HowToUse({ stepsPerPause }: { stepsPerPause: number }) {
           items={[
             {
               t: "Safe — buttons, no AI",
-              d: "What you control: the common changes, one button each — headers and footers from your template, the font from your template, find and replace, accepting tracked changes, removing comments, highlighting, hidden text or blank lines, removing headers and footers, a watermark, a logo, file names, the title property and the Track Changes setting. What it costs: only what the buttons do. A document a button cannot change exactly is left untouched with the reason, and can be handed to Default mode. No AI is used, so it needs no API key and spends nothing.",
+              d: "What you control: the common changes, one button each — headers and footers from your template, the body formatting from your template (its outline styles and numbering, page, font and paragraph spacing), the font from your template, find and replace, accepting tracked changes, removing comments, highlighting, hidden text or blank lines, removing headers and footers, a watermark, a logo, file names, the title property and the Track Changes setting. What it costs: only what the buttons do. A document a button cannot change exactly is left untouched with the reason, and can be handed to Default mode. No AI is used, so it needs no API key and spends nothing.",
             },
             {
               t: "Default — a conversation",
@@ -229,7 +229,7 @@ function Workflows({ stepsPerPause }: { stepsPerPause: number }) {
         steps={[
           "Choose Safe in the top bar and drop the whole set in. Add your template if the headers, footers or font should match it.",
           "Accept all tracked changes, then Remove all comments, then Remove highlighting — each one previewed, then created.",
-          "Match headers and footers to template, then Match font to template.",
+          "Match body formatting to template (its outline styles and numbering, page and font), then Match headers and footers to template.",
           "Name files by section number and title last, so the copies carry their names.",
           "A document a button left untouched keeps its reason beside the copies; Try these in Default mode hands it to the conversation.",
         ]}

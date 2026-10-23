@@ -43,7 +43,7 @@ from docx.enum.section import WD_SECTION
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.shared import Pt
+from docx.shared import Inches, Pt
 from lxml import etree
 
 W_NS = "http://schemas.openxmlformats.org/wordprocessingml/2006/main"
@@ -1676,6 +1676,141 @@ def build_scheme_example() -> bytes:
         doc.add_paragraph(text, style=doc.styles[_style_name(doc, sid)])
     buf = io.BytesIO(); doc.save(buf)
     return buf.getvalue()
+
+
+# ---- Safe mode's "match body formatting to template" (docs/PLAN-2026-10-23-modes.md M3) -------------------------------
+
+def _page(doc, margin: int, size=(12240, 15840), header: int = 720):
+    """Every section's page: ``size`` (w, h twips), all four margins ``margin``, header/footer distance ``header``."""
+    for sec in doc.sections:
+        sp = sec._sectPr
+        for el in sp.findall(qn("w:pgSz")) + sp.findall(qn("w:pgMar")):
+            sp.remove(el)
+        sz = etree.fromstring(f'<w:pgSz {_W_DECL} w:w="{size[0]}" w:h="{size[1]}"/>')
+        mar = etree.fromstring(f'<w:pgMar {_W_DECL} w:top="{margin}" w:right="{margin}" w:bottom="{margin}" '
+                               f'w:left="{margin}" w:header="{header}" w:footer="{header}" w:gutter="0"/>')
+        sp.insert(0, mar)
+        sp.insert(0, sz)
+
+
+def _body_font(doc, font: str, half_points: int):
+    """The document defaults' font and size (every style based on them inherits it)."""
+    styles = doc.styles.element
+    rpr = styles.find(qn("w:docDefaults") + "/" + qn("w:rPrDefault") + "/" + qn("w:rPr"))
+    for el in rpr.findall(qn("w:rFonts")) + rpr.findall(qn("w:sz")) + rpr.findall(qn("w:szCs")):
+        rpr.remove(el)
+    rpr.insert(0, etree.fromstring(f'<w:rFonts {_W_DECL} w:ascii="{font}" w:hAnsi="{font}" w:cs="{font}"/>'))
+    rpr.append(etree.fromstring(f'<w:sz {_W_DECL} w:val="{half_points}"/>'))
+    rpr.append(etree.fromstring(f'<w:szCs {_W_DECL} w:val="{half_points}"/>'))
+    normal = _style_el(doc, "Normal")
+    for el in normal.findall(qn("w:rPr")):
+        normal.remove(el)
+
+
+BODY_TEXT = ("Comply with the requirements of the Contract Documents and with the referenced standards, and coordinate "
+             "the work of this Section with the work of the other trades.")
+
+
+def build_body_template() -> bytes:
+    """The user's template for "match body formatting to template": the scheme of ``build_scheme_example`` (``PRT`` …
+    ``PR3``, one list, ``PART %1 -`` / ``%1.%2`` / ``%3.`` / ``%4.`` / ``%5.``), and three styles of its own: ``SCT``
+    (the section number line, centred bold), ``TTL`` (the title, centred bold capitals) and ``EOS`` (END OF SECTION,
+    centred). Arial 10 pt (the document defaults), Letter, 1 in margins, header and footer 0.5 in from the edge.
+
+    Body: "SECTION 00 00 00" (SCT); "SECTION TITLE" (TTL); GENERAL [PART 1 -]; SUMMARY [1.1]; three PR1 paragraphs of
+    body text [A.–C.], a PR2 [1.] under the second; SUBMITTALS [1.2] with two PR1 [A., B.]; PRODUCTS [PART 2 -];
+    MATERIALS [2.1] with a PR1 [A.] and a PR3 under a PR2; "END OF SECTION 00 00 00" (EOS)."""
+    doc = Document()
+    _body_font(doc, "Arial", 20)
+    _page(doc, 1440)
+    ids = SCHEME_LEVELS
+    for k, sid in enumerate(ids):
+        rpr = {"PRT": "<w:rPr><w:b/><w:caps/></w:rPr>", "ART": "<w:rPr><w:b/></w:rPr>"}.get(sid, "")
+        keep = "<w:keepNext/>" if k < 2 else ""
+        nxt = f'<w:next w:val="{ids[k + 1]}"/>' if k + 1 < len(ids) else ""
+        _add_style(doc, f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{sid}"><w:name w:val="{sid}"/>'
+                        f'<w:basedOn w:val="Normal"/>{nxt}<w:qFormat/><w:pPr>{keep}<w:numPr><w:ilvl w:val="{k}"/>'
+                        f'<w:numId w:val="10"/></w:numPr><w:spacing w:before="120" w:after="0"/></w:pPr>{rpr}</w:style>')
+    for sid, name, rpr in (("SCT", "Section Number", "<w:b/>"), ("TTL", "Section Title", "<w:b/><w:caps/>"),
+                           ("EOS", "End of Section", "")):
+        _add_style(doc, f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{sid}"><w:name w:val="{name}"/>'
+                        f'<w:basedOn w:val="Normal"/><w:qFormat/><w:pPr><w:spacing w:before="240" w:after="240"/>'
+                        f'<w:jc w:val="center"/></w:pPr><w:rPr>{rpr}</w:rPr></w:style>')
+    levels = [_lvl_xml(0, "decimal", "PART %1 -", pstyle="PRT", suff="space", left=0, hanging=0),
+              _lvl_xml(1, "decimal", "%1.%2", pstyle="ART", left=720, hanging=720),
+              _lvl_xml(2, "upperLetter", "%3.", pstyle="PR1", left=1440, hanging=720),
+              _lvl_xml(3, "decimal", "%4.", pstyle="PR2", left=2160, hanging=720),
+              _lvl_xml(4, "lowerLetter", "%5.", pstyle="PR3", left=2880, hanging=720)]
+    _add_lists(doc, [_abstract_xml(10, levels, "6B6B0010")],
+               ['<w:num w:numId="10"><w:abstractNumId w:val="10"/></w:num>'])
+    style = {sid: doc.styles[_style_name(doc, sid)] for sid in ids + ["SCT", "TTL", "EOS"]}
+    doc.add_paragraph("SECTION 00 00 00", style=style["SCT"])
+    doc.add_paragraph("SECTION TITLE", style=style["TTL"])
+    for sid, text in (("PRT", "GENERAL"), ("ART", "SUMMARY"), ("PR1", BODY_TEXT), ("PR1", BODY_TEXT),
+                      ("PR2", BODY_TEXT), ("PR1", BODY_TEXT), ("ART", "SUBMITTALS"), ("PR1", BODY_TEXT),
+                      ("PR1", BODY_TEXT), ("PRT", "PRODUCTS"), ("ART", "MATERIALS"), ("PR1", BODY_TEXT),
+                      ("PR2", BODY_TEXT), ("PR3", BODY_TEXT)):
+        doc.add_paragraph(text, style=style[sid])
+    doc.add_paragraph("END OF SECTION 00 00 00", style=style["EOS"])
+    return docx_bytes(doc)
+
+
+def build_styled_outline(number: str = "21 13 13", title: str = "WET-PIPE SPRINKLER SYSTEMS",
+                         table: bool = False) -> bytes:
+    """A specification outlined by its OWN styles and list, unlike ``build_body_template`` in every way the button
+    matches: styles ``SpPart`` / ``SpArt`` / ``SpPara`` / ``SpSub`` (ids the template does not use) numbered by one
+    list — num 20: ``PART %1 -``, ``%1.%2`` with a ZERO-PADDED article ("1.01"), ``%3.``, ``%4.`` —; the section number
+    and title in Normal with direct bold and centring; Times New Roman 11 pt; 0.75 in margins. Body paragraphs carry
+    direct spacing, indents and alignment, and one a bold word (it stays bold); ``table``: a two-cell table after
+    SUBMITTALS holding a Normal paragraph with a direct indent (left as it is).
+
+    Body: "SECTION nn nn nn" (Normal, bold, centred); the title (Normal, bold, centred); GENERAL [PART 1 -]; SUMMARY
+    [1.01]; two SpPara [A., B.] (the first with direct spacing and a 0.25 in indent, the second justified with a bold
+    "shall"), an SpSub [1.] under B.; SUBMITTALS [1.02] with an SpPara [A.]; PRODUCTS [PART 2 -]; MATERIALS [2.01] with
+    an SpPara [A.]; "END OF SECTION nn nn nn" (Normal, centred)."""
+    doc = Document()
+    _body_font(doc, "Times New Roman", 22)
+    _page(doc, 1080)
+    ids = ["SpPart", "SpArt", "SpPara", "SpSub"]
+    for k, sid in enumerate(ids):
+        _add_style(doc, f'<w:style w:type="paragraph" w:customStyle="1" w:styleId="{sid}"><w:name w:val="{sid}"/>'
+                        f'<w:basedOn w:val="Normal"/><w:pPr><w:numPr><w:ilvl w:val="{k}"/><w:numId w:val="20"/>'
+                        f'</w:numPr></w:pPr></w:style>')
+    levels = [_lvl_xml(0, "decimal", "PART %1 -", pstyle="SpPart", suff="space", left=0, hanging=0),
+              _lvl_xml(1, "decimalZero", "%1.%2", pstyle="SpArt", left=864, hanging=864),
+              _lvl_xml(2, "upperLetter", "%3.", pstyle="SpPara", left=1440, hanging=576),
+              _lvl_xml(3, "decimal", "%4.", pstyle="SpSub", left=2016, hanging=576)]
+    _add_lists(doc, [_abstract_xml(20, levels, "6B6B0020")],
+               ['<w:num w:numId="20"><w:abstractNumId w:val="20"/></w:num>'])
+    style = {sid: doc.styles[_style_name(doc, sid)] for sid in ids}
+    for text in (f"SECTION {number}", title):
+        p = doc.add_paragraph()
+        p.alignment = 1
+        p.add_run(text).bold = True
+    doc.add_paragraph("GENERAL", style=style["SpPart"])
+    doc.add_paragraph("SUMMARY", style=style["SpArt"])
+    p = doc.add_paragraph(BODY_TEXT, style=style["SpPara"])
+    p.paragraph_format.space_after = Pt(12)
+    p.paragraph_format.left_indent = Inches(0.25)
+    p = doc.add_paragraph("The installer ", style=style["SpPara"])
+    p.alignment = 3
+    p.add_run("shall").bold = True
+    p.add_run(" " + BODY_TEXT)
+    doc.add_paragraph(BODY_TEXT, style=style["SpSub"])
+    doc.add_paragraph("SUBMITTALS", style=style["SpArt"])
+    if table:
+        t = doc.add_table(rows=1, cols=2)
+        cell = t.cell(0, 0).paragraphs[0]
+        cell.add_run("Product data")
+        cell.paragraph_format.left_indent = Inches(0.1)
+        t.cell(0, 1).paragraphs[0].add_run("Required")
+    doc.add_paragraph(BODY_TEXT, style=style["SpPara"])
+    doc.add_paragraph("PRODUCTS", style=style["SpPart"])
+    doc.add_paragraph("MATERIALS", style=style["SpArt"])
+    doc.add_paragraph(BODY_TEXT, style=style["SpPara"])
+    p = doc.add_paragraph(f"END OF SECTION {number}")
+    p.alignment = 1
+    return docx_bytes(doc)
 
 
 # ---- built-in batch 2: generic package surgery for fixtures (docs/BUILTIN_OPS_BATCH2_DESIGN.md) -----------------------

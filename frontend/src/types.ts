@@ -70,9 +70,22 @@ export interface TemplateInfo {
   /** A prepared template's placeholders the user types a value for. */
   typed_slots: string[];
   reason: string;
+  /** What "Match body formatting to template" reads from the template (template_roles.detect). */
+  body?: BodyRoles;
 }
 
-export type RecipeFieldKind = "text" | "pairs" | "choice" | "check" | "picture" | "table" | "slots";
+/** The template's style for each part of a section, read without a model; ``problems`` say why it cannot be used. */
+export interface BodyRoles {
+  roles: Record<string, string>;
+  styles: { id: string; name: string }[];
+  labels: Record<string, string>;
+  order: string[];
+  page: string;
+  font: string;
+  problems: string[];
+}
+
+export type RecipeFieldKind = "text" | "pairs" | "choice" | "check" | "picture" | "table" | "slots" | "roles";
 
 export interface RecipeField {
   name: string;

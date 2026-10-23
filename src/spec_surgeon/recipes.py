@@ -21,7 +21,7 @@ from .catalog import REFERENCE_FILLS
 from .inputs import KINDS as INPUT_KINDS
 
 # The groups the panel shows, in order.
-GROUPS = ("Headers & footers", "Fonts", "Text", "Clean up", "Files & properties")
+GROUPS = ("Headers & footers", "Fonts & formatting", "Text", "Clean up", "Files & properties")
 
 # Template slots that stand for the section number or title (decision 2 of the plan): filled from each document by the
 # reference rules. A slot whose name is not here is a value the user types in the button's form.
@@ -69,6 +69,14 @@ class Context:
     documents: List[Path]
     template: Optional[Path] = None
     references: List[Path] = field(default_factory=list)
+    _batch: Any = field(default=None, init=False, repr=False)
+
+    def batch(self):
+        """The batch as the gate reads it (``compiler._Batch``: every document profiled once), made when first asked."""
+        if self._batch is None:
+            from .compiler import _Batch
+            self._batch = _Batch(self.documents, self.template, input_files=self.references)
+        return self._batch
 
     def pictures(self) -> List[Path]:
         return [p for p in self.references if INPUT_KINDS.get(p.suffix.lower()) == "picture"]
@@ -79,10 +87,16 @@ class Context:
 
 @dataclass
 class Built:
-    """A button's spec, the words the user typed for it (the only words it may place), and its one sentence."""
-    spec: Dict[str, Any]
+    """A button's spec, the words the user typed for it (the only words it may place), and its one sentence. A button
+    that plans per layout (``body_match``) passes each layout through the gate itself: ``outcome`` is then the layout
+    plan as the engine runs it (None when no document can take the change), and ``left_out`` the documents it leaves
+    out, each with the sentence that says why."""
+    spec: Optional[Dict[str, Any]]
     sources: List[str]
     request: str
+    outcome: Any = None
+    left_out: Dict[str, str] = field(default_factory=dict)
+    gated: bool = False
 
 
 @dataclass(frozen=True)
@@ -395,6 +409,41 @@ def _font_template(inputs: Dict[str, Any], ctx: Context) -> Built:
                        assumptions, assertions=[assertion]), [], request)
 
 
+def _body_formatting(inputs: Dict[str, Any], ctx: Context) -> Built:
+    """``body_match``: one plan per layout of the batch, each through the gate; documents it cannot match are left
+    out with their reasons."""
+    if ctx.template is None:
+        raise RecipeError("Attach your template first.")
+    from . import body_match, template_roles
+    detected = template_roles.detect(ctx.template)
+    try:
+        roles = template_roles.resolve(ctx.template, template_roles.chosen_roles(inputs, detected["roles"]))
+    except ValueError as e:
+        raise RecipeError(f"{e} Try it in Default mode.") from e
+    page = _flag(inputs, "page", True) and roles.page is not None
+    font = _flag(inputs, "font", True) and roles.font is not None
+    clear = _flag(inputs, "clear", True)
+    parts = ["outline styles and numbering"] + (["page"] if page else []) + (["font"] if font else []) + \
+            (["paragraph spacing, indents and alignment"] if clear else [])
+    request = f"Match the body formatting to the template {Path(ctx.template).name} ({', '.join(parts)})"
+    assumptions = ["each part of a section takes the template's style: " + "; ".join(template_roles.describe(roles)),
+                   "outline numbers keep their values in the template's numbering (1.01 shows as 1.1); a number "
+                   "that would change sets the document aside"]
+    if page:
+        assumptions.append(f"pages: {template_roles.page_words(roles.page)} (a document with a landscape page keeps "
+                           f"its pages)")
+    if font:
+        assumptions.append(f"text in {roles.font}" + (f", the documents' body text in {roles.size:g} pt"
+                                                         if roles.size else ""))
+    if clear:
+        assumptions.append("paragraphs follow their styles' spacing, indents and alignment; bold, italic and "
+                           "underlined words stay")
+    assumptions += ["words, tables and headers and footers stay as they are", "plain changes, not tracked"]
+    plan, left, _ = body_match.build_layouts(roles, ctx, request, page=page, font=font, clear=clear,
+                                             assumptions=assumptions)
+    return Built(spec=None, sources=[], request=request, outcome=plan, left_out=left, gated=True)
+
+
 # ---- text ----
 def _pairs(inputs: Dict[str, Any]) -> List[Dict[str, str]]:
     raw = inputs.get("pairs") or []
@@ -580,7 +629,17 @@ RECIPES: Tuple[Recipe, ...] = (
            (Field("image", "picture", "New logo", required=True),
             Field("old", "picture", "Old logo", optional_choice="Every picture in the headers",
                   help="Attach the old logo too to swap only that picture.")), _swap_logo),
-    Recipe("font_template", "Match font to template", "Fonts",
+    Recipe("body_formatting", "Match body formatting to template", "Fonts & formatting",
+           "Gives each document your template's outline styles and numbering, its page, its font, and lets the styles "
+           "set paragraph spacing, indents and alignment. Words and tables stay as they are.", ("template",),
+           (Field("roles", "roles", "Your template's style for each part of a section",
+                  help="Read from your template; change any that is wrong."),
+            Field("page", "check", "Page size and margins", default=True),
+            Field("font", "check", "Font", default=True),
+            Field("clear", "check", "Let the styles set paragraph spacing, indents and alignment", default=True,
+                  help="Clears those three where a paragraph sets its own. Bold, italic and underlined words stay.")),
+           _body_formatting),
+    Recipe("font_template", "Match font to template", "Fonts & formatting",
            "Sets the text in your template's body font and size; headings, notes and other sizes keep theirs.",
            ("template",), (), _font_template),
     Recipe("find_replace", "Find and replace", "Text",

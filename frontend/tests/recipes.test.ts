@@ -123,6 +123,48 @@ test("a form keeps what was typed when attachments change, and never keeps a fil
     { slots: { DATE: "2026", PHASE: "" } });
 });
 
+const BODY = recipe({
+  id: "body_formatting",
+  label: "Match body formatting to template",
+  group: "Fonts & formatting",
+  needs: ["template"],
+  fields: [
+    { name: "roles", kind: "roles", label: "Your template's style for each part of a section", required: false },
+    { name: "page", kind: "check", label: "Page size and margins", required: false, default: true },
+  ],
+});
+const bodyInfo = (roles: Record<string, string>, problems: string[] = []) => ({
+  kind: "none" as const,
+  typed_slots: [],
+  reason: "",
+  body: {
+    roles,
+    styles: [{ id: "PRT", name: "PRT" }, { id: "ART", name: "ART" }, { id: "TTL", name: "Section Title" }],
+    labels: { part: "PART", article: "Article (1.1)", section_title: "Section title" },
+    order: ["section_title", "part", "article"],
+    page: "8.5 × 11 in portrait, margins 1 in",
+    font: "Arial 10 pt",
+    problems,
+  },
+});
+
+test("the body button starts from the template's roles and says why it cannot be pressed", () => {
+  const files = [file("a.docx", "document"), file("T.docx", "template")];
+  const ok = view(files, bodyInfo({ part: "PRT", article: "ART", section_title: "TTL" }));
+  assert.equal(availability(BODY, ok).ready, true);
+  assert.deepEqual(initialInputs(BODY, ok), { roles: { part: "PRT", article: "ART", section_title: "TTL" }, page: true });
+  const bad = view(files, bodyInfo({}, ["T.docx: no style stands for PART."]));
+  assert.deepEqual(availability(BODY, bad), { ready: false, reason: "T.docx: no style stands for PART." });
+  assert.equal(availability(BODY, view([file("a.docx", "document")])).reason, "Attach your template first.");
+});
+
+test("a role chosen by hand stays while the template still has that style", () => {
+  const files = [file("a.docx", "document"), file("T.docx", "template")];
+  const v = view(files, bodyInfo({ part: "PRT", article: "ART" }));
+  const typed = { roles: { part: "PRT", article: "ART", section_title: "", paragraph: "Gone" }, page: false };
+  assert.deepEqual(refreshInputs(BODY, typed, v), { roles: { part: "PRT", article: "ART", section_title: "" }, page: false });
+});
+
 test("a form says what it still needs, and sends only filled rows", () => {
   assert.equal(missing(FIND, { pairs: [{ find: "", replace: "" }], table: "" }),
     "Type a pair of words to find and replace, or choose a table.");

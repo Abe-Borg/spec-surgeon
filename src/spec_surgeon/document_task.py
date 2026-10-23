@@ -816,9 +816,12 @@ class DocumentTask:
             self.say(f"{recipe.label}: {e}")
             return
         self._emit({"type": "status", "kind": "checking", "text": "Checking the documents…"})
-        batch = compiler._Batch(files, ctx.template, input_files=ctx.references)
-        outcome, errors = compiler.compose_submission(built.spec, batch, [built.request, *built.sources])
-        nothing = bool(errors) and errors[0].startswith(compiler.PLANS_ON_NONE)
+        if built.gated:
+            # a button that plans per layout passed each layout through the gate itself (``body_match``)
+            outcome, errors, nothing = built.outcome, [], built.outcome is None
+        else:
+            outcome, errors = compiler.compose_submission(built.spec, ctx.batch(), [built.request, *built.sources])
+            nothing = bool(errors) and errors[0].startswith(compiler.PLANS_ON_NONE)
         if errors and not nothing:
             self._revision += 1
             self.say(f"{recipe.label} cannot be used on these documents: " + "; ".join(errors[:3]))
@@ -828,7 +831,19 @@ class DocumentTask:
         self.decisions = [built.request]
         self.word_sources.extend(w for w in built.sources if w not in self.word_sources)
         self.left_untouched = []
-        s._set_outcome(spec=outcome, source="recipe")
+        if outcome is None:
+            # no layout of the batch can take the change: nothing to preview; each document's reason beside it
+            s._set_outcome()
+            self.left_untouched = [{"path": str(self.origin_of(Path(p))), "name": Path(p).name, "why": WHY_REFUSED,
+                                    "reason": r, "request": built.request} for p, r in built.left_out.items()]
+            self.stage = "empty"
+            self._revision += 1
+            self.say("None of the documents can take this change as they are; each one's reason is under Left "
+                     "untouched beside the documents.")
+            self.save()
+            return
+        s._set_outcome(spec=outcome, source="recipe", left_out=list(built.left_out),
+                       left_out_reasons=built.left_out)
         self._settle(log)
         if nothing:
             self.say("None of the documents can take this change as they are; each one's reason is under Left "
@@ -867,6 +882,10 @@ class DocumentTask:
         """The documents a button's preview refused, with their reasons: Create does not run them (``Session.
         _without_refused``), so the run's own results never name them."""
         out: List[Dict[str, str]] = []
+        for path, reason in self.session.left_out_reasons.items():       # a button that left documents out, with why
+            origin = str(self.origin_of(Path(path)))
+            out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED, "reason": reason,
+                        "request": request})
         for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
             origin = str(self.origin_of(Path(item.source)))
             out.append({"path": origin, "name": Path(origin).name, "why": WHY_REFUSED,
@@ -891,19 +910,21 @@ class DocumentTask:
         return out
 
     def template_info(self) -> Dict[str, Any]:
-        """What kind of header/footer template the attached template is (``recipes.template_kind``), read again only
-        when the file changes."""
-        from . import recipes
+        """What kind of header/footer template the attached template is (``recipes.template_kind``) and, under
+        ``body``, the roles "match body formatting to template" reads from it (``template_roles.detect``) — read again
+        only when the file changes."""
+        from . import recipes, template_roles
         template = self.template()
         if template is None:
-            return recipes.template_kind(None)
+            return {**recipes.template_kind(None), "body": template_roles.detect(None)}
         try:
             st = Path(template).stat()
             key = (str(template), st.st_size, st.st_mtime_ns)
         except OSError:
-            return recipes.template_kind(None)
+            return {**recipes.template_kind(None), "body": template_roles.detect(None)}
         if self._template_kind is None or self._template_kind[0] != key:
-            self._template_kind = (key, recipes.template_kind(Path(template)))
+            self._template_kind = (key, {**recipes.template_kind(Path(template)),
+                                         "body": template_roles.detect(Path(template))})
         return dict(self._template_kind[1])
 
     @staticmethod
@@ -1411,7 +1432,8 @@ class DocumentTask:
         then those the plan refused, each with its reason."""
         if preview is None:
             return []
-        items = [{"name": Path(path).name, "reason": LEFT_OUT_REASON} for path in self.session.left_out]
+        why = self.session.left_out_reasons
+        items = [{"name": Path(path).name, "reason": why.get(str(path), LEFT_OUT_REASON)} for path in self.session.left_out]
         for item in getattr(getattr(preview, "batch_plan", None), "exceptions", []) or []:
             exc = item.exception or {}
             items.append({"name": Path(item.source).name, "reason": exc.get("reason", "")})

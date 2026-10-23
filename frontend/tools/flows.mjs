@@ -365,6 +365,13 @@ try {
   await page.getByRole("region", { name: "Safe mode" }).waitFor({ timeout: 5000 });
   check("Safe mode puts the buttons where the message box was", (await page.getByLabel("Describe a change or answer a question").count()) === 0);
   check("…and says no AI is used", await page.getByText("No AI in Safe mode").isVisible());
+  await page.getByRole("button", { name: "Match body formatting to template" }).click();
+  check("the body button's form starts from the template's roles",
+    (await page.getByRole("combobox", { name: "PART", exact: true }).inputValue()) === "PRT" &&
+    (await page.getByRole("combobox", { name: "Section title" }).inputValue()) === "TTL");
+  check("…says what it read from the template", await page.getByText("From your template: pages 8.5 × 11 in portrait").isVisible());
+  check("…and can be previewed as it is", await page.getByRole("button", { name: "Preview", exact: true }).isEnabled());
+  await page.getByRole("button", { name: "All buttons" }).click();
   await page.getByRole("button", { name: "Find and replace" }).click();
   const previewBtn = page.getByRole("button", { name: "Preview", exact: true });
   check("an empty form cannot be previewed", await previewBtn.isDisabled());

@@ -54,7 +54,10 @@ that ends a job is authoritative.
   "budget": {"paused": false, "steps_per_pause": 48},
   "mode": "safe | default",
   "modes": ["safe", "default"],
-  "template": {"kind": "none | prepared | reference | unusable", "typed_slots": ["ISSUED FOR PERMIT"], "reason": ""},
+  "template": {"kind": "none | prepared | reference | unusable", "typed_slots": ["ISSUED FOR PERMIT"], "reason": "",
+               "body": {"roles": {"part": "PRT", "article": "ART"}, "styles": [{"id": "PRT", "name": "PRT"}],
+                        "labels": {"part": "PART"}, "order": ["section_id", "part"], "page": "8.5 × 11 in portrait, margins 1 in",
+                        "font": "Arial 10 pt", "problems": []}},
   "left_untouched": [{"path": "C:/Specs/21 05 00.docx", "name": "21 05 00.docx", "reason": "…"}],
   "update": {"state": "none | available | downloading | ready | installing | updated | failed | error",
              "version": "", "notes": "", "progress": 0, "error": "", "text": "", "manual_result": "",
@@ -75,7 +78,9 @@ Rules the page relies on:
   `approve` or `none` (no conversation to continue), `send` and `choose` end in `error`, and the page shows the
   buttons (`GET /api/recipes`) in place of the composer. `template` says what kind of header/footer template the
   attached template is (`recipes.template_kind`): a prepared template's `typed_slots` are the values its form asks
-  for. `left_untouched` lists what the last Safe-mode button's run gave no copy, with the engine's reason, until the
+  for; `body` is what *Match body formatting to template* reads from it (`template_roles.detect`: the detected style
+  per role, the template's paragraph styles for the form's `roles` field, the page and font in words, and `problems`
+  — non-empty, the button cannot be pressed, the first one says why). `left_untouched` lists what the last Safe-mode button's run gave no copy, with the engine's reason, until the
   next button or a hand-off; it is empty while a preview waits.
 - `plan` is present whenever a plan exists (stages `preview` and `question` with a partial result); `stages` is the
   number of ordered steps the engine composed internally, never a procedure the user performs. The page shows only
