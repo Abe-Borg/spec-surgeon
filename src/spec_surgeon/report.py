@@ -73,6 +73,13 @@ FAILURE_EXPLANATIONS: Dict[str, Tuple[str, str]] = {
         "Expected Change Count Mismatch",
         "The file planned cleanly, but the number of changes differed from the spec's strict 'expect' count.",
     ),
+    "unverified": (
+        "Delivered Unverified (Obliterate Mode)",
+        "A check failed on this copy, and it was delivered anyway because the window was in Obliterate mode: it is in "
+        "outputs/ beside the verified copies, and its record names every check that failed. Nothing proves the rest of "
+        "the file is untouched; open it in Word and check it before you use it. In Default mode the same copy would "
+        "have been held back.",
+    ),
     "verify-fail": (
         "Failed Verification (Not Delivered)",
         "The edit was applied to a copy, but one or more of the V1–V10 checks failed on the result, so the copy was "
@@ -714,12 +721,13 @@ def _set_aside_summary(manifest: Dict[str, Any]) -> str:
 
 def build_set_aside_manifest(batch: "BatchResult") -> Dict[str, Any]:
     """Structured manifest of every file that did not PASS (untouched exceptions and verification failures),
-    ready for human review or a recovery pass on only these files."""
+    ready for human review or a recovery pass on only these files. A copy delivered UNVERIFIED (Obliterate mode) is
+    not set aside: it was delivered, and the batch report and its record say what failed."""
     items: List[Dict[str, Any]] = []
     by_code: Counter = Counter()
     by_pattern: Counter = Counter()
     for f in batch.files:
-        if f.status == "PASS":
+        if f.status == "PASS" or getattr(f, "unverified", None):
             continue
         pid = f.fingerprint.get("pattern_id", "?")
         stage = None
@@ -863,7 +871,16 @@ def write_batch_report(batch: "BatchResult") -> Path:
             lines.append(f"- **{f.source.name}** — `{f.exception.get('code')}`: {short(f.exception.get('reason'))}")
             lines.append(f"  - diagnosis: `exceptions/{getattr(f, 'record_stem', f.source.stem)}.exception.json`")
         lines.append("")
-    failed = [f for f in batch.files if f.record and not f.record.passed]
+    shaky = [f for f in batch.files if f.record and not f.record.passed and getattr(f, "unverified", None)]
+    failed = [f for f in batch.files if f.record and not f.record.passed and f not in shaky]
+    if shaky:
+        lines.append("## Failed verification, delivered UNVERIFIED (Obliterate mode)")
+        lines.append("These copies failed a check and were delivered to `outputs/` anyway, at the user's word. Nothing "
+                     "proves the rest of each file is untouched: open them in Word and check them before use.")
+        for f in shaky:
+            bad = [c for c in f.record.checks if c.status == "FAIL"]
+            lines.append(f"- **{f.source.name}**: " + "; ".join(f"{c.id} {short(c.summary)}" for c in bad))
+        lines.append("")
     if failed:
         lines.append("## Failed verification (NOT delivered)")
         lines.append("The edited copies of these files were moved out of `outputs/` to `failed/`. They are kept for "
@@ -889,7 +906,8 @@ def write_batch_report(batch: "BatchResult") -> Path:
     if batch.contact_sheet:
         lines.append(f"- First pages of every output: `{batch.contact_sheet.relative_to(out)}`")
     lines.append("- Rendered pages that changed: `render/pages/`")
-    lines.append("- Outputs that passed every check: `outputs/` (or written back in place when run with `--in-place`)")
+    lines.append("- Outputs that passed every check: `outputs/` (or written back in place when run with `--in-place`)"
+                 + ("; the copies delivered UNVERIFIED are there too, named above" if shaky else ""))
     if failed:
         lines.append("- Copies that FAILED verification (diagnosis only, never delivered): `failed/`")
     write_report(out / "BATCH_REPORT.md", "\n".join(lines), "batch.json, set_aside.json and records/*.record.json")
@@ -1004,7 +1022,13 @@ def file_diagnosis(f: "FileResult", heading: str = "##", number: Optional[int] =
                                                                     if f.trace_path else "")])
     ids = [c for c, *_ in failures]
     stages = sorted({CHECK_STAGE.get(c, "verify") for c in ids}, key=list(STAGE_TEXT).index)
-    if ids == ["V9"]:
+    title = "Failed verification (not delivered)"
+    if getattr(f, "unverified", None) and f.delivered_to:
+        title = "Failed verification, delivered UNVERIFIED"
+        happened = (f"the independent verifier rejected the copy ({', '.join(ids)}), and it was delivered anyway to "
+                    f"`{f.delivered_to}` because the window was in Obliterate mode")
+        meaning = FAILURE_EXPLANATIONS["unverified"][1]
+    elif ids == ["V9"]:
         happened = ("every check passed, but delivery was refused (the source changed during the run, or the file "
                     "could not be written back); nothing was delivered")
         meaning = ("Not an editing problem: close the file in Word, make sure nobody is changing it, and run again "
@@ -1019,7 +1043,7 @@ def file_diagnosis(f: "FileResult", heading: str = "##", number: Optional[int] =
                     "nothing was delivered")
         meaning = FAILURE_EXPLANATIONS["verify-fail"][1]
     out_rel = (f"`{Path(f.output).parent.name}/{Path(f.output).name}`" if f.output else "")
-    lines = [f"{heading} {f'{number}. ' if number else ''}{name} — Failed verification (not delivered)", "",
+    lines = [f"{heading} {f'{number}. ' if number else ''}{name} — {title}", "",
              f"- **What happened:** {happened}.",
              "- **Where it stopped:** " + "; ".join(f"{STAGE_TEXT[s]} (`{s}`)" for s in stages),
              "- **Why:**"]
@@ -1135,8 +1159,8 @@ def build_chain_set_aside_manifest(result: "Any") -> Dict[str, Any]:
     by_pattern: Counter = Counter()
     n = len(result.stages)
     for f in result.files:
-        if f.status == "PASS":
-            continue
+        if f.status == "PASS" or (f.code == "unverified" and f.delivered_to):
+            continue                              # delivered UNVERIFIED (Obliterate mode): not set aside
         pid = f.pattern_id or "?"
         by_code[f.code] += 1
         by_pattern[pid] += 1

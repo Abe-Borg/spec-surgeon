@@ -28,7 +28,7 @@ from fastapi.staticfiles import StaticFiles
 
 from .. import __version__, about, credentials, llm, recipes
 from .. import diagnostics as diag
-from ..document_task import MODES, STEPS_PER_PAUSE, DocumentTask
+from ..document_task import LAUNCH_MODES, STEPS_PER_PAUSE, DocumentTask
 from ..gui import Session
 from ..settings import THEMES, Settings, config_dir, data_dir, default_run_root, logs_dir, save_settings
 from .watch import WindowWatch
@@ -121,6 +121,11 @@ def job_started_line(action: str, values: Dict[str, Any]) -> str:
     return f"Job {action} started" + (f" ({what})" if what else "")
 
 
+def launch_mode(mode: str) -> str:
+    """The mode settings.json keeps: Safe or Default; a window in Obliterate mode is kept as Default (never restored)."""
+    return mode if mode in LAUNCH_MODES else "default"
+
+
 class Shell:
     """What the native window offers the server: file dialogs and closing. The default has neither (a browser)."""
 
@@ -195,10 +200,12 @@ class WindowState:
                     "images": [self.image_url(p) for p in sv.images if Path(p).is_file()],
                     "pages_before": sv.pages_before, "pages_after": sv.pages_after, "passed": sv.passed}
                    for sv in raw["samples"]]
-        results = [{"source": source, "output": output, "name": Path(output).name}
+        unverified = raw.get("unverified") or {}
+        results = [{"source": source, "output": output, "name": Path(output).name,
+                    "unverified": list(unverified.get(source, []))}
                    for source, output in raw["results"].items()]
         return {"version": self.version, "busy": busy, "stage": stage, "mode": raw.get("mode", "default"),
-                "modes": list(MODES), "template": task.template_info(),
+                "modes": task.available_modes(), "template": task.template_info(),
                 "left_untouched": [dict(e) for e in raw.get("left_untouched", [])],
                 "connection": {"ready": task.session.claude_ready(), "origin": self.key_origin},
                 "cost": task._cost(), "attachments": attachments, "messages": messages, "plan": plan,
@@ -292,7 +299,7 @@ class WindowState:
                     terminal = {"type": "done", "state": self._payload(task.view(), busy=False)}
                 try:
                     self.settings.out_root = str(task.session.out_root)
-                    self.settings.mode = task.mode
+                    self.settings.mode = launch_mode(task.mode)
                     save_settings(self.settings)
                     task.save()
                 except Exception:  # noqa: BLE001
@@ -324,12 +331,13 @@ class WindowState:
         task.archive()
         session = Session(out_root=task.session.out_root, client=task.session.client,
                           visual_check=task.session.visual_check)
-        self.task = DocumentTask(session, journal=task.journal, render=task.render, mode=task.mode)
+        self.task = DocumentTask(session, journal=task.journal, render=task.render, mode=task.mode,
+                                 obliterate_allowed=task.obliterate_allowed)
         self.task.save()
 
     def save_settings(self) -> None:
         self.settings.out_root = str(self.task.session.out_root)
-        self.settings.mode = self.task.mode
+        self.settings.mode = launch_mode(self.task.mode)
         save_settings(self.settings)
         if not self.busy:
             self.task.save()
@@ -514,7 +522,7 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             return busy_error()
         body = await request.json()
         try:
-            state.task.set_mode(str(body.get("mode") or ""))
+            state.task.set_mode(str(body.get("mode") or ""), acknowledged=body.get("acknowledged") is True)
         except ValueError as e:
             return error(str(e))
         state.save_settings()
@@ -585,7 +593,8 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
         return {"key_present": state.task.session.claude_ready(), "origin": state.key_origin,
                 "can_remember": credentials.available(), "out_root": str(state.task.session.out_root),
                 "logs_dir": str(logs_dir()), "steps_per_pause": STEPS_PER_PAUSE, "theme": state.settings.theme,
-                "fast_mode": state.settings.fast_mode, "fast": fast_offer()}
+                "fast_mode": state.settings.fast_mode, "fast": fast_offer(),
+                "show_obliterate": state.settings.show_obliterate}
 
     @app.post("/api/settings")
     async def set_settings(request: Request):
@@ -594,6 +603,16 @@ def create_app(state: WindowState, *, dev: bool = False) -> FastAPI:
             if body["theme"] not in THEMES:
                 return error("There is no such colour scheme.")
             state.settings.theme = body["theme"]
+            state.save_settings()
+        if "show_obliterate" in body:
+            if not isinstance(body["show_obliterate"], bool):
+                return error("Show Obliterate mode is on or off.")
+            if state.busy and not body["show_obliterate"] and state.task.mode == "obliterate":
+                return busy_error()
+            state.settings.show_obliterate = body["show_obliterate"]
+            state.task.obliterate_allowed = body["show_obliterate"]
+            if not body["show_obliterate"] and state.task.mode == "obliterate":
+                state.task.set_mode("default")        # hidden again: the window leaves it
             state.save_settings()
         if "fast_mode" in body:
             if not isinstance(body["fast_mode"], bool):

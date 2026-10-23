@@ -124,8 +124,11 @@ def _approval_token_from_inputs(spec, inputs):
 def generated_key(g: Any) -> Dict[str, Any]:
     """What a custom transform's approval token hashes beside the files (in place of a spec): its code, selection and
     parameters and approved adaptive outcome — the same key as the window's ``Session._generated_key``."""
-    return {"generated_source": g.source, "select": g.select, "params": g.params,
-            "goal_contract": getattr(g, "goal_contract", None), "goal_bindings": getattr(g, "goal_bindings", {})}
+    key = {"generated_source": g.source, "select": g.select, "params": g.params,
+           "goal_contract": getattr(g, "goal_contract", None), "goal_bindings": getattr(g, "goal_bindings", {})}
+    if getattr(g, "unguarded", False):
+        key["unguarded"] = True                   # an Obliterate method's approval is never a guarded one's
+    return key
 
 
 def changed_since_preview(key: Dict[str, Any], files: Sequence[Path], token: str,
@@ -506,7 +509,9 @@ def _preview_generated(g: Any, out_dir: Path, renderer: str, do_render: bool) ->
         trials = list(getattr(g, "trials", None) or [])
         names = output_names([Path(t.source) for t in trials])
         for t in trials:
-            sv = SampleView(source=Path(t.source), passed=bool(t.passed),
+            # a trial that passed with failed checks (Obliterate mode: FileTrial.unverified) may be delivered, but its
+            # preview shows the checks it failed, never a pass
+            sv = SampleView(source=Path(t.source), passed=bool(t.passed) and not getattr(t, "unverified", None),
                             checks={c.id: c.status for c in t.record.checks} if t.record is not None else {})
             if t.record is not None:
                 _log_verification(log, Path(t.source).name, t.record)
@@ -750,17 +755,19 @@ class ChainPreview(Preview):
 
 
 def make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str = "auto",
-                       do_render: bool = True) -> ChainPreview:
+                       do_render: bool = True, *, continue_failed: bool = False) -> ChainPreview:
     with diag.scope(run_id=diag.context().get("run_id") or diag.new_id(), preview_id=diag.new_id()), \
             diag.span("preview.chain", out_dir=str(out_dir), renderer=renderer, do_render=do_render):
-        return _make_chain_preview(chain, inputs, out_dir, renderer, do_render)
+        return _make_chain_preview(chain, inputs, out_dir, renderer, do_render, continue_failed)
 
 
 def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: Path, renderer: str,
-                        do_render: bool) -> ChainPreview:
+                        do_render: bool, continue_failed: bool = False) -> ChainPreview:
     """``make_preview`` for a chain: stage 1 planned on every file, the samples (``_pick_samples`` of that plan) run
     through every stage in memory — plan → apply → verify, each stage on the bytes the stage before it verified; a
-    stage that refuses or fails verification stops that sample there —, the final output written under
+    stage that refuses or fails verification stops that sample there (``continue_failed``, Obliterate mode: a failed
+    check marks the sample failed and the next stage reads its output, as ``run_chain(deliver_unverified=True)`` will
+    do) —, the final output written under
     ``samples/`` (unique names), rendered beside the source. Writes ``chain.json``, PREVIEW.md and preview.json;
     ``logs/preview.log`` has every stage's verdict per sample."""
     from . import diagnostics as diag
@@ -845,7 +852,8 @@ def _make_chain_preview(chain: Dict[str, Any], inputs: Sequence[str], out_dir: P
                             sv.checks = checks
                             if not rec.passed:
                                 sv.passed = False
-                                break
+                                if not continue_failed:
+                                    break
                         except Exception as e:  # noqa: BLE001 — a refusal, or the engine's own failure: the sample's record
                             exc = diag.exception_record(e, phase, data)
                             exc["chain_stage"] = i

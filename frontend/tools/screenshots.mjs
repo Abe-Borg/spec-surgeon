@@ -138,7 +138,21 @@ try {
   await page.waitForTimeout(800);
   await shot(page, "safe-done");
 
-  // 10. The narrow window: 1000 px wide, the documents folded to their title line beside the plan.
+  // 10. Obliterate mode (shown in Settings → Advanced): a copy delivered UNVERIFIED, then the warning it opens with.
+  await scenario("obliterate-done");
+  await page.reload();
+  await page.getByText("Your edited copies").waitFor();
+  await page.waitForTimeout(800);
+  await shot(page, "obliterate-done");
+  const modeSwitch = page.getByRole("group", { name: "Mode" });
+  await modeSwitch.getByRole("button", { name: "Default" }).click();
+  await modeSwitch.getByRole("button", { name: "Obliterate" }).click();
+  await page.getByRole("dialog").filter({ hasText: "What it grants" }).waitFor();
+  await page.waitForTimeout(300);
+  await shot(page, "obliterate-warning");
+  await page.keyboard.press("Escape");
+
+  // 11. The narrow window: 1000 px wide, the documents folded to their title line beside the plan.
   await scenario("preview");
   await page.setViewportSize({ width: 1000, height: 700 });
   await page.reload();

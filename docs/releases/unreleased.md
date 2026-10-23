@@ -37,6 +37,19 @@ Changes since v1.10.0.
   left untouched with the reason and can be handed to Default mode. No AI call.
 - Fixed: creating the copies of a plan per layout whose layout ran as ordered steps stopped with an error.
 
+## Obliterate mode (hidden)
+
+- **A third mode, off the switch until you show it.** Settings → **Advanced** → *Show Obliterate mode* (a second
+  click) adds **Obliterate** to the top bar. Choosing it shows a warning every time — what it grants, what it costs,
+  what still holds — and turns on only after you tick *I understand*. The app never opens in it: a window closed in
+  Obliterate opens in Default.
+- **What it lifts.** Claude may write wording itself (it is in the plan you approve); a custom method may change
+  anything Word stores, not only formatting; and a copy that fails a check is delivered anyway, marked
+  **UNVERIFIED** with the checks it failed, instead of being held back. No automatic recovery runs in this mode.
+- **What it keeps.** Copies only — your originals are never written; a source that changed is never delivered over;
+  the custom method's sandbox and limits; and the independent checks on every copy, their results kept beside it.
+- Entering or leaving it voids the plan on screen; Continue plans the request again under the new rules.
+
 ## Your own version of Claude's drafted wording
 
 - When Claude offers wording for you to pick, **Edit wording** opens it in a box already filled in. **Use this

@@ -33,7 +33,17 @@ from .resources import DEFAULT_MAX_OUTPUT_TOKENS
 STEPS_PER_PAUSE = 48    # model calls between the pauses where the user says to go on
 AUTO_STEPS = 6          # internal steps the coordinator takes on its own after one user action (bounded)
 STAGES = ("empty", "question", "preview", "done", "budget", "resume")
-MODES = ("safe", "default")     # Safe: the buttons, no AI call; Default: the conversation (docs/PLAN-2026-10-23-modes.md)
+# Safe: the buttons, no AI call; Default: the conversation; Obliterate: the conversation without the guardrails that
+# protect a document's content (docs/PLAN-2026-10-23-modes.md M5) — hidden unless Settings → Advanced shows it, chosen
+# only after its warning, never restored at a launch
+MODES = ("safe", "default", "obliterate")
+LAUNCH_MODES = ("safe", "default")
+OBLITERATE_ON = ("Obliterate mode is on. Claude may write wording and custom methods that change anything Word stores, "
+                 "and a copy whose checks fail is delivered marked UNVERIFIED instead of being held back. Copies only; "
+                 "your originals are never written. What was planned before is void.")
+OBLITERATE_OFF = ("Obliterate mode is off: every placed word is yours again, custom methods are formatting only, and a "
+                  "copy whose checks fail is held back. What was planned in Obliterate mode is void.")
+REPLAN = " Continue plans your request again under these rules, or say what you want."
 START_OVER = "Start over from the originals"   # the reply (a chip, a button) that drops the working copies
 LEFT_OUT_REASON = "You asked to leave it out of this request; it stays as it is."
 WORK_TODO = "Work on the documents I set aside"  # the reply (a chip, typed) that begins the pass over the to-do list
@@ -242,11 +252,13 @@ def _same_file_key(path) -> str:
 
 
 class DocumentTask:
-    def __init__(self, session=None, *, journal=None, render=True, mode="default"):
-        if mode not in MODES:
-            raise ValueError(f"mode must be one of {MODES}")
+    def __init__(self, session=None, *, journal=None, render=True, mode="default", obliterate_allowed=False):
+        if mode not in MODES or (mode == "obliterate" and not obliterate_allowed):
+            raise ValueError(f"mode must be one of {LAUNCH_MODES}")
         self.mode = mode
+        self.obliterate_allowed = bool(obliterate_allowed)   # Settings → Advanced → "Show Obliterate mode"
         self.session = session or Session()
+        self.session.unguarded = mode == "obliterate"
         self.session.recovery_attempts = RECOVERY_ATTEMPTS   # the recovery a reviewed outcome plan starts, too
         self.render = render
         self.journal = Path(journal) if journal else None
@@ -254,6 +266,7 @@ class DocumentTask:
         self.decisions: List[str] = []
         self.word_sources: List[str] = []
         self.results: Dict[str, str] = {}
+        self.unverified: Dict[str, List[str]] = {}   # original → the failed checks its copy was delivered with
         self.attachments: List[Attachment] = []
         self.stage = "empty"
         self.problem = ""
@@ -520,6 +533,7 @@ class DocumentTask:
             # the last working copy left with its original: the attached documents are originals again, and the
             # changes the history lists are in none of them
             self.history, self.generation, self.results, self.applied = [], 0, {}, {}
+            self.unverified = {}
             self.stage = "resume" if self.decisions else "empty"
             self.say("No edited copy is attached any more, so the next change starts from your originals.")
         self.save()
@@ -619,7 +633,7 @@ class DocumentTask:
         if not self.working and not self.history and not self.todo and not self.focus:
             return
         self.working, self.generation, self.history, self.decisions = {}, 0, [], []
-        self.results = {}
+        self.results, self.unverified = {}, {}
         self.applied, self.todo, self.focus, self._binned = {}, {}, None, []
         self._sync()
         self._invalidate()
@@ -794,12 +808,32 @@ class DocumentTask:
             self.session.reply(choice_id=chosen.id, render=self.render, log=log, wording=edited)
 
     # ---- Safe mode ----
-    def set_mode(self, mode: str) -> None:
-        """Safe (the buttons, no AI call) or Default (the conversation). The documents, copies, to-do list and any
-        preview stay as they are; only how the next change is asked for differs."""
+    def set_mode(self, mode: str, acknowledged: bool = False) -> None:
+        """Safe (the buttons, no AI call), Default (the conversation) or Obliterate (the conversation without the
+        content guardrails: ``Session.unguarded``). The documents, copies and to-do list stay; between Safe and Default
+        any preview stays too. Obliterate needs the setting that shows it (``obliterate_allowed``) and the user's
+        acknowledgement of its warning each time; entering or leaving it voids what was planned under the other rules
+        (a new conversation follows the new ones)."""
         if mode not in MODES:
             raise ValueError("There is no such mode.")
+        if mode == "obliterate" and not self.obliterate_allowed:
+            raise ValueError("Obliterate mode is hidden. Settings → Advanced shows it.")
+        if mode == "obliterate" and acknowledged is not True:
+            raise ValueError("Read the Obliterate warning and confirm it first.")
+        crossing = (self.mode == "obliterate") != (mode == "obliterate")
+        was_safe = self.mode == "safe"
         self.mode = mode
+        self.session.unguarded = mode == "obliterate"
+        if crossing:
+            if was_safe:
+                self.decisions = []                  # a button's sentence is not a request for a conversation
+            self._invalidate()
+            self.say((OBLITERATE_ON if mode == "obliterate" else OBLITERATE_OFF)
+                     + (REPLAN if self.stage == "resume" else ""))
+            self.save()
+
+    def available_modes(self) -> List[str]:
+        return list(MODES) if self.obliterate_allowed else list(LAUNCH_MODES)
 
     def _recipe(self, recipe_id, inputs, log):
         """A Safe-mode button: its fixed spec (``recipes.build``, from the form and the attachments) through the one
@@ -1180,6 +1214,9 @@ class DocumentTask:
         # a Safe-mode button's, or any plan approved in Safe mode (a Default-mode preview still waiting when the mode
         # changed): no AI step follows, and what the run leaves untouched waits beside the copies, not on the list
         model_free = s.model_free or self.mode == "safe"
+        # Obliterate: no automatic recovery either — a copy whose checks fail is delivered marked unverified, a
+        # refused document goes on the to-do list as in Default mode
+        no_recovery = model_free or self.mode == "obliterate"
         remaining = None
         if held:
             # the files the preview refused never run (Session._without_refused): a user who sets aside every
@@ -1220,6 +1257,8 @@ class DocumentTask:
         if model_free:
             # a Safe-mode button: no recovery (an AI call); what it left untouched is offered to Default mode
             self.left_untouched = self._left_after_run(request, untouched_before)
+        elif no_recovery and s.last_batch is not None:
+            self._binned += self._bin_failed(s.last_batch.files)
         elif s.last_batch is not None and any(f.status != "PASS" for f in s.last_batch.files):
             log("Checking the files that still need work…")
             conversation = s.conversation
@@ -1235,7 +1274,14 @@ class DocumentTask:
             # nothing a plan can recover: a document no layout covered stays as it was, named under "Left untouched",
             # and goes on the to-do list with why
             self._binned += self._bin_failed(s.last_batch.files)
-        if not model_free and s.last_trials is not None and any(not f.passed for f in s.last_trials):
+        if self.mode == "obliterate" and s.last_trials is not None:
+            # a custom method's file whose run stopped before any copy (the sandbox refused it, the source moved)
+            seen = [c["summary"] for g in self._groups() for c in g["changes"]]
+            self._binned += [self._set_aside(Path(t.source), seen, why=WHY_FAILED,
+                                             reason=f"Its copy could not be made: "
+                                                    f"{'; '.join(t.problems[:2]).rstrip('.') or 'the method stopped'}.")
+                             for t in s.last_trials if not t.passed]
+        if not no_recovery and s.last_trials is not None and any(not f.passed for f in s.last_trials):
             log("Checking the files that still need work…")
             s.resolve_remaining(log, options=self._recovery_options())
             self._settle(log)
@@ -1245,7 +1291,7 @@ class DocumentTask:
             self._revision += 1
             self.say("The ready copies are saved. The remaining documents still need attention.")
             return
-        if s.pending_layout_recovery and not model_free:
+        if s.pending_layout_recovery and not no_recovery:
             # a plan per layout: the previous layout's copies are saved; the next layout's documents are checked now
             log("Checking the next layout's documents that still need work…")
             s.resolve_next_layout(log, options=self._recovery_options())
@@ -1260,8 +1306,11 @@ class DocumentTask:
                      (f" Left untouched: {', '.join(e['name'] for e in self.left_untouched)} — each one's reason is "
                       f"beside the copies." if self.left_untouched else ""))
         else:
+            shaky = sum(1 for k in self.results if k in self.unverified)
             self.say(f"{n} document {'copy is' if n == 1 else 'copies are'} ready. You can open them, describe "
-                     f"another change to make on top of them, or start over from the originals.")
+                     f"another change to make on top of them, or start over from the originals." +
+                     (f" {shaky} {'was' if shaky == 1 else 'were'} delivered UNVERIFIED: a check failed, and each "
+                      f"one's failed checks are beside it." if shaky else ""))
         self._advance_generation()
         binned, self._binned = self._binned, []
         if not model_free:
@@ -1286,11 +1335,12 @@ class DocumentTask:
         return out
 
     def _bin_failed(self, files) -> List[str]:
-        """Run results that did not pass and that nothing will check again: on the to-do list with why."""
+        """Run results that did not pass and that nothing will check again: on the to-do list with why (a copy
+        delivered unverified in Obliterate mode is a result, not on the list)."""
         seen = [c["summary"] for g in self._groups() for c in g["changes"]]
         out: List[str] = []
         for item in files:
-            if item.status == "PASS":
+            if item.status == "PASS" or getattr(item, "delivered_to", None):
                 continue
             exc = getattr(item, "exception", None) or {}
             why = exc.get("reason") or getattr(item, "reason", "") or "it did not pass the independent checks"
@@ -1381,6 +1431,7 @@ class DocumentTask:
                 origin = str(self.origin_of(item.source))
                 if item.delivered_to:
                     self.results[origin] = str(item.delivered_to)
+                    self._mark_unverified(origin, getattr(item, "unverified", None))
                 elif (getattr(item, "noop", False) and item.status == "PASS" and item.output
                       and Path(item.output).is_file()):
                     # The engine verifies and saves identical copies too, but intentionally leaves delivered_to
@@ -1389,6 +1440,14 @@ class DocumentTask:
         for item in s.last_trials or []:
             if item.passed and item.output:
                 self.results[str(self.origin_of(item.source))] = str(item.output)
+                self._mark_unverified(str(self.origin_of(item.source)), getattr(item, "unverified", None))
+
+    def _mark_unverified(self, origin: str, failed) -> None:
+        """A copy delivered with failed checks (Obliterate mode) keeps them beside it; a later verified copy clears it."""
+        if failed:
+            self.unverified[origin] = [str(x) for x in failed]
+        else:
+            self.unverified.pop(origin, None)
 
     # ---- what the window shows ----
     def _groups(self):
@@ -1488,7 +1547,8 @@ class DocumentTask:
                                 for f in self._undelivered_findings(getattr(preview, "review", None)))}
 
     def _results_view(self) -> List[Dict[str, Any]]:
-        return [{"source": source, "output": output, "name": Path(output).name}
+        return [{"source": source, "output": output, "name": Path(output).name,
+                 "unverified": list(self.unverified.get(source, []))}
                 for source, output in self.results.items()]
 
     def view(self):
@@ -1586,6 +1646,7 @@ class DocumentTask:
                              "editable": getattr(c, "editable", False)} for c in choices],
                 "samples": samples, "set_aside": set_aside,
                 "warnings": list(dict.fromkeys(warnings)), "results": dict(self.results),
+                "unverified": {k: list(v) for k, v in self.unverified.items()},
                 "action": labels.get(self.stage, ""), "token": self.action_token(),
                 "budget_paused": self.stage == "budget", "steps_per_pause": STEPS_PER_PAUSE,
                 "cost": self._budget.spent_usd,
@@ -1610,7 +1671,7 @@ class DocumentTask:
             "version": 2,
             "attachments": [a.to_dict() for a in self.attachments],
             "messages": self.messages, "decisions": self.decisions, "word_sources": self.word_sources,
-            "results": self.results,
+            "results": self.results, "unverified": self.unverified,
             "recovery": str(self.session.recovery.out_dir) if self.session.recovery else
                         str(self.session.recovery_checkpoint) if self.session.recovery_checkpoint else self._resume_recovery,
             "pending_layouts": [str(x) for x in self.session.pending_layout_recovery],
@@ -1702,6 +1763,9 @@ class DocumentTask:
         if not isinstance(self.word_sources, list) or not all(isinstance(x, str) for x in self.word_sources):
             raise ValueError("The saved wording approvals could not be read.")
         self.results = data.get("results", {})
+        unverified = data.get("unverified", {})
+        self.unverified = ({k: [str(x) for x in v] for k, v in unverified.items()
+                            if k in self.results and isinstance(v, list)} if isinstance(unverified, dict) else {})
         working = data.get("working", {})
         history = data.get("history", [])
         if (isinstance(working, dict) and all(isinstance(k, str) and isinstance(v, str) for k, v in working.items())
@@ -1715,6 +1779,7 @@ class DocumentTask:
             lost = isinstance(working, dict) and bool(working)
             self.working, self.history, self.generation = {}, [], 0
             self.results = {k: v for k, v in self.results.items() if Path(v).is_file()}
+            self.unverified = {k: v for k, v in self.unverified.items() if k in self.results}
             if lost:
                 self.say("The edited copies from your last run could not be found where they were saved, so the next "
                          "change starts from your originals.")

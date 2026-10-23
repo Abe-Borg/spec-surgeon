@@ -30,7 +30,7 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
           },
           {
             t: "Every change is predicted, then proved",
-            d: "Before anything changes, the engine works out from your original exactly what will change in every file. After the edit, a separate checker that shares no code with the editing compares the original and the copy against that prediction — that change, and nothing else. A copy that fails is set aside, never delivered.",
+            d: "Before anything changes, the engine works out from your original exactly what will change in every file. After the edit, a separate checker that shares no code with the editing compares the original and the copy against that prediction — that change, and nothing else. A copy that fails is set aside, never delivered — except in Obliterate mode, hidden unless you show it in Settings, which delivers it marked UNVERIFIED with the checks it failed.",
           },
           {
             t: "Claude plans; the engine edits",
@@ -39,7 +39,8 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
                 Claude turns your words into a plan of built-in operations, and the plan is checked before you see it.
                 When no operation fits, Claude may write a small program instead — formatting only, unless it carries
                 out an outcome plan you are shown — which runs in a sandbox on copies, predicts its own change, and must pass
-                the same checker.
+                the same checker. Obliterate mode lifts the formatting-only limit and lets a failed check through,
+                never the sandbox or the copies-only rule.
               </>
             ),
           },
@@ -50,7 +51,8 @@ export default function WhyTrustIt({ onDeepDive }: { onDeepDive: () => void }) {
                 Text placed in a document must trace to your request, your answers, a choice you picked, or a file you
                 attached; a suggested reply you tap is never used as wording. One exception: when the app falls back to
                 an outcome plan Claude proposed, that plan’s wording is used without a separate pick, and it is shown in
-                the plan you approve.
+                the plan you approve. In Obliterate mode, chosen after its warning, Claude may write wording itself; it
+                is in the plan you approve.
               </>
             ),
           },

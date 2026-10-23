@@ -302,7 +302,7 @@ class Conversation:
                  max_context_tokens: int = DEFAULT_CONTEXT_TOKENS, analysis_limits=None,
                  continuous_recovery: bool = False, word_sources=None, input_files: Sequence[Path] = (),
                  history: Sequence[str] = (), fresh: Sequence[str] = (), context: str = "",
-                 todo: Sequence[str] = ()):
+                 todo: Sequence[str] = (), unguarded: bool = False):
         if mode not in ("chat", "compile"):
             raise ValueError(f"unknown conversation mode {mode!r}")
         self.max_calls = positive_integer("max_calls", MAX_CALLS_PER_TURN if max_calls is None else max_calls)
@@ -348,7 +348,10 @@ class Conversation:
         # frozen for the whole conversation: rebuilding either between calls would invalidate the cache and the
         # model's earlier thinking
         self.tools = compiler.CHAT_TOOLS if mode == "chat" else compiler.TOOLS
-        self.system = compiler.system_prompt(chat=(mode == "chat"))
+        # Obliterate mode (docs/PLAN-2026-10-23-modes.md M5), fixed for the whole conversation: Claude may write wording
+        # (no placed-words trace at the gate) and a custom method is offered whenever one could do the change at all
+        self.unguarded = bool(unguarded)
+        self.system = compiler.system_prompt(chat=(mode == "chat"), unguarded=self.unguarded)
         self.messages: List[Dict[str, Any]] = []
         self.entries: List[Entry] = []
         self.pending: List[Dict[str, Any]] = []   # tool_results owed for the last assistant turn, in call order
@@ -750,7 +753,8 @@ class Conversation:
                         with diag.span("conversation.submission.validate", tool_use_id=_bid(b), model_turn=self.calls) as record:
                             if not errs:
                                 outcome, errs = compiler.compose_submission(spec, self.batch, self.sources,
-                                                                            leave_out=left_out + parked)
+                                                                            leave_out=left_out + parked,
+                                                                            unguarded=self.unguarded)
                             record.update(accepted=not bool(errs), errors=errs,
                                           composed=bool(errs) is False and outcome is not spec)
                     except Exception as e:  # noqa: BLE001 — the call must be answered (rule 14): a spec the checks
@@ -931,6 +935,8 @@ class Conversation:
                                 "proposal": spec.get("proposal") or ""}
             verdict = str(inp.get("custom_transform") or "")
             reason = str(inp.get("custom_transform_reason") or "")
+            if self.unguarded and verdict == "outside_limits":
+                verdict = "possible"              # Obliterate: a custom method has no formatting-only limits
             choices = []
             if verdict == "possible":
                 choices.append(Choice(self._next_choice_id(), "Have Claude write a one-off custom transform for this "
